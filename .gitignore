@@ -1,0 +1,41 @@
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+nbproject/
+.factorypath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env & secrets — NEVER commit real secrets
+.env
+*.local
+secrets/
+
+# Logs
+*.log
+logs/
+
+# Build/runtime
+*.class
+hs_err_pid*
+.attach_pid*

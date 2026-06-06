@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      Shelf-J — parent reactor POM (monorepo).
+      Aggregates all modules: shared contracts, platform services, business services.
+      Build with JDK 21:  JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64 mvn clean install
+    -->
+
+    <!-- Helidon application parent: gives us the Helidon dependency BOM + sane plugin config. -->
+    <parent>
+        <groupId>io.helidon.applications</groupId>
+        <artifactId>helidon-mp</artifactId>
+        <version>4.4.1</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.shelfj</groupId>
+    <artifactId>shelf-j-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>Shelf-J Parent</name>
+    <description>Multi-tenant stock &amp; store management platform — Helidon MP microservices</description>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- Versions for libraries NOT managed by the Helidon BOM -->
+        <flyway.version>10.20.1</flyway.version>
+        <postgresql.version>42.7.4</postgresql.version>
+        <testcontainers.version>1.20.4</testcontainers.version>
+        <junit.version>5.11.3</junit.version>
+        <shelfj.version>0.1.0-SNAPSHOT</shelfj.version>
+    </properties>
+
+    <modules>
+        <!-- shared CONTRACTS only — no business logic -->
+        <module>shared/events-contract</module>
+        <module>shared/common-web</module>
+        <module>shared/common-test</module>
+        <module>services/sample-svc</module>
+        <!-- TEMP: modules below are uncommented as they are scaffolded
+        <module>platform/config</module>
+        <module>platform/discovery</module>
+        <module>platform/gateway</module>
+        -->
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Our own shared modules, version-managed here so children just declare the artifact -->
+            <dependency>
+                <groupId>com.shelfj</groupId>
+                <artifactId>events-contract</artifactId>
+                <version>${shelfj.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.shelfj</groupId>
+                <artifactId>common-web</artifactId>
+                <version>${shelfj.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.shelfj</groupId>
+                <artifactId>common-test</artifactId>
+                <version>${shelfj.version}</version>
+            </dependency>
+
+            <!-- Persistence / migrations (not in Helidon BOM) -->
+            <dependency>
+                <groupId>org.postgresql</groupId>
+                <artifactId>postgresql</artifactId>
+                <version>${postgresql.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-core</artifactId>
+                <version>${flyway.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-database-postgresql</artifactId>
+                <version>${flyway.version}</version>
+            </dependency>
+
+            <!-- Testing -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <!-- Helidon/CDI play nicer with classloader isolation off for tests -->
+                        <useModulePath>false</useModulePath>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.shelfj</groupId>
+        <artifactId>shelf-j-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>events-contract</artifactId>
+    <name>Shelf-J :: shared :: events-contract</name>
+    <description>Event schemas + outbox contract shared across services. CONTRACTS ONLY — no business logic.</description>
+
+    <dependencies>
+        <!-- JSON-B annotations only, to keep payloads serializable. Provided by Helidon BOM. -->
+        <dependency>
+            <groupId>jakarta.json.bind</groupId>
+            <artifactId>jakarta.json.bind-api</artifactId>
+        </dependency>
+    </dependencies>
+</project>
