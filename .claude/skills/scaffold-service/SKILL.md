@@ -1,0 +1,62 @@
+---
+name: scaffold-service
+description: Scaffold a new Shelf-J business microservice (Helidon MP, Java 21) with the standard module layout, layered packages, Flyway migration, health/metrics, config, and Consul registration. Use when creating a brand-new service under services/.
+---
+
+# Scaffold a new Shelf-J microservice
+
+Use this when adding a **new business microservice** to `services/`. It produces a service that already satisfies the [golden rules](../../../CLAUDE.md) and the [Definition of Done](../../../README.md#14-definition-of-done-for-any-service).
+
+> Read first if unsure: [README §6 Anatomy of a service](../../../README.md#6-anatomy-of-one-service-the-template-every-service-copies), the target service's spec in [README §9](../../../README.md#9-the-business-services--full-catalog).
+
+## Inputs to confirm before generating
+
+1. **Service name** — `<x>-svc` (kebab). Must match the name in README §9 and Consul.
+2. **Local dev port** — from [PRD §8](../../../PRD.md) (e.g. `inventory-svc` = 8004). Prod uses 8080 for all.
+3. **Owns (tables)** — the entities this service owns (from its README §9 entry). No other service's tables.
+4. **Events** — published (past tense) + consumed (from README §9 / §10).
+5. **Sync dependencies** — which other services it calls (README §10 sync map).
+
+If any are unknown, stop and check the README — do not invent ownership or events.
+
+## Steps
+
+1. **Create the Maven module** `services/<x>-svc/` and add it to the parent `pom.xml` `<modules>`. Inherit the parent (Java 21, Helidon BOM). Add dependencies: Helidon MP (server, config, health, metrics, JWT-auth, fault-tolerance), Helidon Messaging + Kafka connector (only if it publishes/consumes events), JPA + PostgreSQL driver, Flyway, Bean Validation, and the `shared/common-web` + `shared/events-contract` modules.
+
+2. **Create the package layout** under `src/main/java/com/shelfj/<x>/`:
+   ```
+   api/        # JAX-RS resources — THIN: validate DTO, call service, return DTO. No DB, no logic.
+   dto/        # request/response records (the API contract). Bean Validation annotations here.
+   service/    # business logic + transactions. The brain.
+   domain/     # JPA entities (= tables). Never returned over HTTP.
+   repo/       # persistence. Every tenant query filters tenant_id FIRST.
+   messaging/  # Kafka producers (drain outbox) + consumers (idempotent). Only if eventing.
+   client/     # typed REST clients to other services via discovery. Timeout+retry+breaker+fallback.
+   mapper/     # entity ↔ DTO.
+   config/     # MP Config injection, beans.
+   ```
+
+3. **Wire the cross-cutting basics** (mostly from `shared/common-web`):
+   - Response envelope `{data,error,meta}` + exception mapper (correct HTTP codes, stable error `code`, no stack/SQL leakage).
+   - Tenant context filter: extract `tenant_id`, `userId`, `roles` from the verified JWT; expose to `service/`.
+   - `X-Request-Id` propagation + tracing.
+   - Cursor pagination helper.
+
+4. **Database**: create `src/main/resources/db/migration/V1__init.sql` defining the owned tables. Every tenant-owned table: `id UUID PK`, `tenant_id UUID NOT NULL`, composite index starting `tenant_id`, `timestamptz` UTC times, `NUMERIC` for money/qty, append-only tables have no UPDATE/DELETE paths. Follow the [new-table checklist](../../../README.md#79-database-rules).
+
+5. **Config**: `src/main/resources/META-INF/microprofile-config.properties` with non-secret defaults (port, app name = service name). DB URL, Kafka brokers, secrets come from **config service / env** — never hardcoded. Register the service name with **Consul** on startup; deregister on shutdown.
+
+6. **Health/metrics**: implement `/health/started`, `/health/live`, and `/health/ready` — **ready must check real dependencies** (DB connection + Kafka reachable + config loaded). Expose `/metrics`. (Mostly provided by Helidon MP Health/Metrics; add dependency readiness checks.)
+
+7. **Eventing (if applicable)**:
+   - Add an `outbox` table; publish events by writing to `outbox` in the **same transaction** as the state change, drained to Kafka by `messaging/`.
+   - Consumers are **idempotent** (dedupe on event id / business key) and live in `messaging/` but delegate logic to `service/`.
+   - Topics: `shelfj.<domain>.<event>`. Contracts go in `shared/events-contract`, not here.
+
+8. **Tests**: a unit test for a core `service/` rule + a **Testcontainers** integration test (real Postgres, and Kafka if eventing) covering the service's primary flow. The service is not done without this.
+
+9. **Docker**: ensure it builds with `mvn clean install`, containerizes, and is added to `docker-compose.yml` with a healthcheck (`/health/ready`) and `depends_on: {postgres: service_healthy, kafka: service_healthy, consul: service_healthy}` per [README §12.1](../../../README.md#121-make-docker-compose-model-readiness-gating-not-a-race).
+
+## Verify before declaring done
+
+Run through [README §14 Definition of Done](../../../README.md#14-definition-of-done-for-any-service). Critically: no cross-service DB access, DTOs in/out, tenant filtering, discovery registration, external config, outbox + idempotent consumers, 3 health probes with real readiness, starts in any order, sync calls resilient, tests present, `mvn clean install` green.
