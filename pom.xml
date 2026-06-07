@@ -43,6 +43,7 @@
         <module>shared/common-web</module>
         <module>shared/common-test</module>
         <module>services/sample-svc</module>
+        <module>services/iam-svc</module>
         <module>platform/config</module>
         <module>platform/discovery</module>
         <module>platform/gateway</module>

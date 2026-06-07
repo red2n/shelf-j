@@ -7,7 +7,17 @@ description: Scaffold a new Shelf-J business microservice (Helidon MP, Java 21) 
 
 Use this when adding a **new business microservice** to `services/`. It produces a service that already satisfies the [golden rules](../../../CLAUDE.md) and the [Definition of Done](../../../README.md#14-definition-of-done-for-any-service).
 
-> Read first if unsure: [README §6 Anatomy of a service](../../../README.md#6-anatomy-of-one-service-the-template-every-service-copies), the target service's spec in [README §9](../../../README.md#9-the-business-services--full-catalog).
+> Read first if unsure: [README §6 Anatomy of a service](../../../README.md#6-anatomy-of-one-service-the-template-every-service-copies), the target service's spec in [README §9](../../../README.md#9-the-business-services--full-catalog). **Fastest path: copy `services/sample-svc` (the proven template) and rename.** `services/iam-svc` is a fuller worked example (auth, outbox, validation).
+
+## Helidon 4.4.1 setup gotchas — apply these or things break (learned building sample-svc + iam-svc)
+
+1. **`mainClass` = `io.helidon.Main`** (NOT a custom `Server.create()` main) — else `/health` & `/metrics` 404.
+2. **No catch-all `ExceptionMapper<Throwable>`/`<Exception>`** — it shadows the framework's `/health` & `/metrics` routes. Keep only the specific `ApiExceptionMapper` (in common-web).
+3. **Slim `helidon-microprofile-core` ships JSON-P, not JSON-B** — add `org.glassfish.jersey.media:jersey-media-json-binding:3.1.11` + `org.eclipse:yasson:3.0.4`, or JAX-RS can't serialize DTO records.
+4. **Bean Validation: `@Valid` is ignored / Helidon's mapper leaks internals.** Add `io.helidon.microprofile.bean-validation:helidon-microprofile-bean-validation` (pulls Hibernate Validator) and validate explicitly in the resource with `com.shelfj.web.Validations.validate(dto)` (returns the clean `VALIDATION_FAILED` 400 envelope). Do NOT rely on `@Valid` on resource params.
+5. **Runnable jar needs `target/libs/`** — add `maven-dependency-plugin:copy-dependencies` (phase `package`, outputDir `target/libs`). The Helidon parent sets the jar manifest `Class-Path: libs/*`.
+6. **Build AND run with JDK 21** (`JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64`); machine default `java` is 25.
+7. **JDBC null UUID**: never bind a null UUID via `setObject(i, null)` in `col = ?` — Postgres can't infer the type. Use a separate `col IS NULL` query branch.
 
 ## Inputs to confirm before generating
 
