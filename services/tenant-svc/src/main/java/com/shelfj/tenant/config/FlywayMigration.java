@@ -1,4 +1,4 @@
-package com.shelfj.iam.config;
+package com.shelfj.tenant.config;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
@@ -8,10 +8,6 @@ import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import org.flywaydb.core.Flyway;
 
-/**
- * Runs Flyway migrations on startup (dev/template convenience). Production runs migrations as a separate
- * run-once Job (README §13.3). Failure here is non-fatal: readiness stays red and retries.
- */
 @ApplicationScoped
 public class FlywayMigration {
 
@@ -25,9 +21,9 @@ public class FlywayMigration {
             var result = Flyway.configure()
                     .dataSource(config.dbUrl(), config.dbUser(), config.dbPassword())
                     .locations("classpath:db/migration")
-                    .schemas(config.dbSchema())          // this service's own schema
+                    .schemas(config.dbSchema())
                     .defaultSchema(config.dbSchema())
-                    .createSchemas(true)                  // create it if missing
+                    .createSchemas(true)
                     .baselineOnMigrate(true)
                     .load()
                     .migrate();

@@ -165,6 +165,65 @@ public class UserRepository {
         }
     }
 
+    /**
+     * Stamp a tenant onto a user and grant the OWNER role — idempotently. Re-delivering the same TenantCreated
+     * event must not create a second OWNER role or overwrite a differing tenant (golden rule #7). Returns true if
+     * anything changed.
+     */
+    public boolean bindOwner(UUID userId, UUID tenantId, String ownerRole) {
+        try (Connection c = dataSource.getConnection()) {
+            c.setAutoCommit(false);
+            try {
+                boolean changed = false;
+                // set tenant only if currently null (don't move a user between tenants)
+                try (PreparedStatement ps = c.prepareStatement(
+                        "UPDATE users SET tenant_id = ?, type = 'STAFF' WHERE id = ? AND tenant_id IS NULL")) {
+                    ps.setObject(1, tenantId);
+                    ps.setObject(2, userId);
+                    changed |= ps.executeUpdate() > 0;
+                }
+                // grant OWNER if not already present (idempotent)
+                UUID roleId = roleIdByName(c, ownerRole);
+                try (PreparedStatement ps = c.prepareStatement(
+                        "INSERT INTO user_roles (id, user_id, role_id, store_id) "
+                        + "SELECT ?, ?, ?, NULL WHERE NOT EXISTS "
+                        + "(SELECT 1 FROM user_roles WHERE user_id = ? AND role_id = ? AND store_id IS NULL)")) {
+                    ps.setObject(1, UUID.randomUUID());
+                    ps.setObject(2, userId);
+                    ps.setObject(3, roleId);
+                    ps.setObject(4, userId);
+                    ps.setObject(5, roleId);
+                    changed |= ps.executeUpdate() > 0;
+                }
+                c.commit();
+                return changed;
+            } catch (SQLException e) {
+                c.rollback();
+                throw dbError("bind owner");
+            } finally {
+                c.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            throw dbError("bind owner (connection)");
+        }
+    }
+
+    /**
+     * Record that an event was processed; returns false if it was already processed (dedupe). Used by consumers to
+     * stay idempotent.
+     */
+    public boolean markProcessedIfNew(UUID eventId, String consumer) {
+        String sql = "INSERT INTO processed_events (event_id, consumer) VALUES (?, ?) ON CONFLICT (event_id) DO NOTHING";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setObject(1, eventId);
+            ps.setString(2, consumer);
+            return ps.executeUpdate() > 0;   // 0 rows = conflict = already processed
+        } catch (SQLException e) {
+            throw dbError("mark processed event");
+        }
+    }
+
     // --- audit ---
 
     public void audit(UUID tenantId, UUID userId, String action, String detail) {

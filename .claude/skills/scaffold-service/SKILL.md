@@ -18,6 +18,8 @@ Use this when adding a **new business microservice** to `services/`. It produces
 5. **Runnable jar needs `target/libs/`** — add `maven-dependency-plugin:copy-dependencies` (phase `package`, outputDir `target/libs`). The Helidon parent sets the jar manifest `Class-Path: libs/*`.
 6. **Build AND run with JDK 21** (`JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64`); machine default `java` is 25.
 7. **JDBC null UUID**: never bind a null UUID via `setObject(i, null)` in `col = ?` — Postgres can't infer the type. Use a separate `col IS NULL` query branch.
+8. **Database-per-service = a schema per service.** All services share one Postgres `shelfj` db in compose, so isolate by schema or their Flyway histories collide. Add `shelfj.db.schema` (default = short name, e.g. `iam`); set `ds.setCurrentSchema(schema)` and Flyway `.schemas(s).defaultSchema(s).createSchemas(true)`.
+9. **Background beans (Kafka publisher/consumer) must be EAGER.** A `@PostConstruct`-only `@ApplicationScoped` bean is never instantiated (CDI is lazy) → it silently never runs. Add `void onStart(@Observes @Initialized(ApplicationScoped.class) Object e) {}` to force eager init.
 
 ## Inputs to confirm before generating
 

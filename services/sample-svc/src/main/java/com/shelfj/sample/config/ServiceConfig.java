@@ -28,6 +28,9 @@ public class ServiceConfig {
     @Inject @ConfigProperty(name = "shelfj.db.password", defaultValue = "shelfj_dev_change_me")
     String dbPassword;
 
+    @Inject @ConfigProperty(name = "shelfj.db.schema", defaultValue = "sample")
+    String dbSchema;
+
     @Inject @ConfigProperty(name = "shelfj.consul.host", defaultValue = "localhost")
     String consulHost;
 
@@ -42,6 +45,7 @@ public class ServiceConfig {
     public String dbUrl() { return dbUrl; }
     public String dbUser() { return dbUser; }
     public String dbPassword() { return dbPassword; }
+    public String dbSchema() { return dbSchema; }
     public String consulHost() { return consulHost; }
     public int consulPort() { return consulPort; }
     public boolean consulEnabled() { return consulEnabled; }

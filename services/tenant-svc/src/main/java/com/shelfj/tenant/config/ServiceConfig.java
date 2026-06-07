@@ -1,17 +1,17 @@
-package com.shelfj.iam.config;
+package com.shelfj.tenant.config;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
-/** Typed config for iam-svc (MicroProfile Config; overridden by env / config service). */
+/** Typed config for tenant-svc. */
 @ApplicationScoped
 public class ServiceConfig {
 
-    @Inject @ConfigProperty(name = "shelfj.service.name", defaultValue = "iam-svc")
+    @Inject @ConfigProperty(name = "shelfj.service.name", defaultValue = "tenant-svc")
     String serviceName;
 
-    @Inject @ConfigProperty(name = "server.port", defaultValue = "8001")
+    @Inject @ConfigProperty(name = "server.port", defaultValue = "8002")
     int servicePort;
 
     @Inject @ConfigProperty(name = "shelfj.db.url", defaultValue = "jdbc:postgresql://localhost:5432/shelfj")
@@ -24,7 +24,7 @@ public class ServiceConfig {
     String dbPassword;
 
     // Database-per-service on a shared Postgres = a dedicated schema per service (golden rule #1).
-    @Inject @ConfigProperty(name = "shelfj.db.schema", defaultValue = "iam")
+    @Inject @ConfigProperty(name = "shelfj.db.schema", defaultValue = "tenant")
     String dbSchema;
 
     @Inject @ConfigProperty(name = "shelfj.consul.host", defaultValue = "localhost")
@@ -36,19 +36,6 @@ public class ServiceConfig {
     @Inject @ConfigProperty(name = "shelfj.consul.enabled", defaultValue = "true")
     boolean consulEnabled;
 
-    // --- JWT (HS256 dev secret; production uses RS256 keys from a secret store) ---
-    @Inject @ConfigProperty(name = "shelfj.jwt.issuer", defaultValue = "shelfj")
-    String jwtIssuer;
-
-    @Inject @ConfigProperty(name = "shelfj.jwt.secret", defaultValue = "dev-only-hmac-secret-change-me-please-32+chars")
-    String jwtSecret;
-
-    @Inject @ConfigProperty(name = "shelfj.jwt.access-ttl-seconds", defaultValue = "900")
-    long accessTtlSeconds;
-
-    @Inject @ConfigProperty(name = "shelfj.jwt.refresh-ttl-seconds", defaultValue = "1209600")
-    long refreshTtlSeconds;
-
     public String serviceName() { return serviceName; }
     public int servicePort() { return servicePort; }
     public String dbUrl() { return dbUrl; }
@@ -58,8 +45,4 @@ public class ServiceConfig {
     public String consulHost() { return consulHost; }
     public int consulPort() { return consulPort; }
     public boolean consulEnabled() { return consulEnabled; }
-    public String jwtIssuer() { return jwtIssuer; }
-    public String jwtSecret() { return jwtSecret; }
-    public long accessTtlSeconds() { return accessTtlSeconds; }
-    public long refreshTtlSeconds() { return refreshTtlSeconds; }
 }

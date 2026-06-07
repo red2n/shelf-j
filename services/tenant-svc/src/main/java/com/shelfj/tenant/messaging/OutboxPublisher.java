@@ -1,4 +1,4 @@
-package com.shelfj.iam.messaging;
+package com.shelfj.tenant.messaging;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
@@ -7,7 +7,7 @@ import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import com.shelfj.iam.repo.UserRepository;
+import com.shelfj.tenant.repo.TenantRepository;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -21,40 +21,36 @@ import org.apache.kafka.common.serialization.StringSerializer;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Drains the transactional outbox to Kafka on a timer (at-least-once delivery; consumers must be idempotent).
- *
- * <p>Resilient by design: if Kafka is unreachable, rows stay pending and are retried on the next tick, so iam-svc
- * keeps serving auth even with Kafka down (golden rule: start/run in any order). Disable via
- * {@code shelfj.kafka.enabled=false}.</p>
+ * Drains the transactional outbox to Kafka on a timer (at-least-once; consumers idempotent). Resilient: if Kafka
+ * is down, rows stay pending and retry. Disable via {@code shelfj.kafka.enabled=false}.
  */
 @ApplicationScoped
 public class OutboxPublisher {
 
     private static final Logger LOG = System.getLogger(OutboxPublisher.class.getName());
 
-    @Inject UserRepository users;
+    @Inject TenantRepository repo;
 
     @Inject @ConfigProperty(name = "shelfj.kafka.enabled", defaultValue = "true")
     boolean kafkaEnabled;
-
     @Inject @ConfigProperty(name = "shelfj.kafka.bootstrap", defaultValue = "localhost:9092")
     String bootstrap;
-
     @Inject @ConfigProperty(name = "shelfj.outbox.poll-seconds", defaultValue = "5")
     long pollSeconds;
 
     private KafkaProducer<String, String> producer;
     private ScheduledExecutorService scheduler;
 
-    // Eager startup (see tenant-svc OutboxPublisher note).
+    // Force eager initialization at startup (CDI instantiates @ApplicationScoped beans lazily otherwise,
+    // so @PostConstruct would never fire without an injection point).
     void onStart(@Observes @Initialized(ApplicationScoped.class) Object event) {
-        // no-op: makes the bean eager so @PostConstruct fires
+        // no-op: presence of this observer makes the bean eager; @PostConstruct does the work
     }
 
     @PostConstruct
     void start() {
         if (!kafkaEnabled) {
-            LOG.log(Level.INFO, "Outbox publisher disabled (shelfj.kafka.enabled=false)");
+            LOG.log(Level.INFO, "Outbox publisher disabled");
             return;
         }
         Properties props = new Properties();
@@ -68,7 +64,7 @@ public class OutboxPublisher {
         this.producer = new KafkaProducer<>(props);
 
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "iam-outbox-publisher");
+            Thread t = new Thread(r, "tenant-outbox-publisher");
             t.setDaemon(true);
             return t;
         });
@@ -78,34 +74,23 @@ public class OutboxPublisher {
 
     private void drainQuietly() {
         try {
-            drain();
+            for (var row : repo.pendingOutbox(100)) {
+                try {
+                    producer.send(new ProducerRecord<>(row.topic(), row.id().toString(), row.payload())).get();
+                    repo.markPublished(row.id());
+                } catch (Exception e) {
+                    LOG.log(Level.WARNING, "Publish failed for outbox {0}: {1}", row.id(), e.getMessage());
+                    return;
+                }
+            }
         } catch (Exception e) {
             LOG.log(Level.WARNING, "Outbox drain deferred: " + e.getMessage());
         }
     }
 
-    private void drain() {
-        for (var row : users.pendingOutbox(100)) {
-            try {
-                producer.send(new ProducerRecord<>(row.topic(), row.id().toString(), row.payload()))
-                        .get(); // block per-record; small volume in Phase 1
-                users.markPublished(row.id());
-                LOG.log(Level.DEBUG, "Published outbox {0} to {1}", row.id(), row.topic());
-            } catch (Exception e) {
-                // leave unpublished; retried next tick
-                LOG.log(Level.WARNING, "Failed to publish outbox {0}: {1}", row.id(), e.getMessage());
-                return; // stop this batch; broker likely unavailable
-            }
-        }
-    }
-
     @PreDestroy
     void stop() {
-        if (scheduler != null) {
-            scheduler.shutdownNow();
-        }
-        if (producer != null) {
-            producer.close(Duration.ofSeconds(2));
-        }
+        if (scheduler != null) scheduler.shutdownNow();
+        if (producer != null) producer.close(Duration.ofSeconds(2));
     }
 }

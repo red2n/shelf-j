@@ -20,6 +20,7 @@ public class DataSourceProducer {
         ds.setUrl(config.dbUrl());
         ds.setUser(config.dbUser());
         ds.setPassword(config.dbPassword());
+        ds.setCurrentSchema(config.dbSchema());   // database-per-service via a dedicated schema
         return ds;
     }
 }

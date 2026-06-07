@@ -28,6 +28,9 @@ public class FlywayMigration {
             Flyway flyway = Flyway.configure()
                     .dataSource(config.dbUrl(), config.dbUser(), config.dbPassword())
                     .locations("classpath:db/migration")
+                    .schemas(config.dbSchema())
+                    .defaultSchema(config.dbSchema())
+                    .createSchemas(true)
                     .baselineOnMigrate(true)
                     .load();
             var result = flyway.migrate();
