@@ -3,7 +3,6 @@ package com.shelfj.config;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -55,7 +54,7 @@ public class ConfigResource {
     private void loadInto(Map<String, String> target, String fileName) {
         Properties props = new Properties();
         // Prefer a file in the configured repo dir; fall back to a bundled classpath resource.
-        Path filePath = Path.of(repoDir, fileName);
+        java.nio.file.Path filePath = java.nio.file.Path.of(repoDir, fileName);
         try {
             if (Files.isReadable(filePath)) {
                 try (var in = Files.newInputStream(filePath)) {

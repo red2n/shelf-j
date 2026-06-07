@@ -1,0 +1,12 @@
+# Minimal Prometheus config for local Shelf-J. Scrapes each service's /metrics.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'shelfj-services'
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 'gateway:8080'
+          - 'sample-svc:8080'
+          - 'config:8080'

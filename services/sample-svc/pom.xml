@@ -74,6 +74,11 @@
             <groupId>com.shelfj</groupId>
             <artifactId>events-contract</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.shelfj</groupId>
+            <artifactId>discovery</artifactId>
+            <version>${shelfj.version}</version>
+        </dependency>
 
         <!-- Persistence: plain JDBC + Flyway (Phase 0 template) -->
         <dependency>

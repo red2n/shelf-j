@@ -1,0 +1,163 @@
+# Shelf-J — local development stack.
+#
+# Brings up infrastructure (postgres, kafka, consul, redis, zipkin, prometheus, grafana) with HEALTHCHECKS,
+# then the platform + app services gated on those healthchecks (depends_on: condition: service_healthy) —
+# modelling the production readiness-gated startup (README §12.1, §13) even locally.
+#
+# On this network, services reach each other by NAME (e.g. http://consul:8500, http://sample-svc:8080),
+# so there is no host-IP gymnastics. In compose every service listens on the SAME internal port 8080.
+#
+# Usage:
+#   mvn clean install -DskipTests              # build all jars + libs/ first (needs JDK 21)
+#   docker compose up -d --build               # build images + start everything
+
+name: shelf-j
+
+services:
+  # ---------------------------------------------------------------- infrastructure
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-shelfj}
+      POSTGRES_USER: ${POSTGRES_USER:-shelfj}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shelfj}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  consul:
+    image: hashicorp/consul:latest
+    command: agent -dev -client=0.0.0.0
+    ports: ["8500:8500"]
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # Kafka in KRaft mode (no Zookeeper) — fewer moving parts, no flaky 4lw healthcheck.
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: 0WL1kI1NQdi0DVeRDFPA4g
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  zipkin:
+    image: openzipkin/zipkin:latest
+    ports: ["9411:9411"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9411/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports: ["9090:9090"]
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:latest
+    ports: ["3000:3000"]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    depends_on:
+      prometheus: { condition: service_started }
+
+  # ---------------------------------------------------------------- platform services
+  config:
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: platform/config, SVC_JAR: config-svc }
+    environment:
+      server.port: "8080"
+    ports: ["8888:8080"]
+    depends_on:
+      consul: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ---------------------------------------------------------------- business services
+  sample-svc:
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/sample-svc, SVC_JAR: sample-svc }
+    environment:
+      server.port: "8080"
+      shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
+      shelfj.db.user: ${POSTGRES_USER:-shelfj}
+      shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
+      shelfj.consul.host: consul
+      shelfj.consul.port: "8500"
+      SHELFJ_ADVERTISE_HOST: sample-svc      # Consul health-checks this hostname on the compose network
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka:    { condition: service_healthy }
+      consul:   { condition: service_healthy }
+      config:   { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ---------------------------------------------------------------- gateway (single public door)
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: platform/gateway, SVC_JAR: gateway }
+    environment:
+      server.port: "8080"
+      shelfj.consul.host: consul
+      shelfj.consul.port: "8500"
+    ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]   # the ONLY app port published to the host (8080 may be taken locally)
+    depends_on:
+      consul:     { condition: service_healthy }
+      sample-svc: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  pgdata:

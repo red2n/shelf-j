@@ -43,11 +43,9 @@
         <module>shared/common-web</module>
         <module>shared/common-test</module>
         <module>services/sample-svc</module>
-        <!-- TEMP: modules below are uncommented as they are scaffolded
         <module>platform/config</module>
         <module>platform/discovery</module>
         <module>platform/gateway</module>
-        -->
     </modules>
 
     <dependencyManagement>
