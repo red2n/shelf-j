@@ -1,4 +1,4 @@
-package com.shelfj.product.health;
+package com.shelfj.service;
 
 import java.sql.Connection;
 import javax.sql.DataSource;
@@ -9,19 +9,27 @@ import org.eclipse.microprofile.health.HealthCheckResponse;
 import org.eclipse.microprofile.health.Liveness;
 import org.eclipse.microprofile.health.Readiness;
 
-public class HealthChecks {
+/**
+ * Shared health probes: liveness = process alive; readiness = DB reachable (so services start in any order —
+ * README §7.8). Liveness deliberately does NOT check the DB (a DB outage must not get the pod killed).
+ */
+public final class HealthChecks {
+
+    private HealthChecks() {}
 
     @Liveness
     @ApplicationScoped
-    public static class Live implements HealthCheck {
+    public static class ProcessLiveness implements HealthCheck {
+        @Inject ServiceSettings settings;
+
         @Override public HealthCheckResponse call() {
-            return HealthCheckResponse.up("product-svc");
+            return HealthCheckResponse.up(settings.serviceName());
         }
     }
 
     @Readiness
     @ApplicationScoped
-    public static class Ready implements HealthCheck {
+    public static class DatabaseReadiness implements HealthCheck {
         @Inject DataSource dataSource;
 
         @Override public HealthCheckResponse call() {

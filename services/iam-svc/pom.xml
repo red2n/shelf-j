@@ -61,6 +61,10 @@
             <artifactId>discovery</artifactId>
             <version>${shelfj.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.shelfj</groupId>
+            <artifactId>common-service</artifactId>
+        </dependency>
 
         <!-- Persistence: JDBC + Flyway (template baseline) -->
         <dependency>

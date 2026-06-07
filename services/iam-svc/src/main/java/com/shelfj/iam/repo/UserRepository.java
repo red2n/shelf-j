@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.UUID;
 import javax.sql.DataSource;
 import com.shelfj.iam.domain.User;
+import com.shelfj.service.OutboxStore;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -21,10 +22,11 @@ import jakarta.inject.Inject;
  * Persistence for users, roles, refresh tokens, audit, and the outbox.
  *
  * <p>JDBC (template baseline). Write paths that must be atomic with the outbox (e.g. register) use
- * {@link #createUserWithOutbox} so the user row and the {@code UserRegistered} outbox row commit together.</p>
+ * {@link #createUserWithOutbox} so the user row and the {@code UserRegistered} outbox row commit together.
+ * Implements {@link OutboxStore} so the shared OutboxPublisher can drain its outbox.</p>
  */
 @ApplicationScoped
-public class UserRepository {
+public class UserRepository implements OutboxStore {
 
     @Inject
     DataSource dataSource;
@@ -266,6 +268,7 @@ public class UserRepository {
     }
 
     /** Pending outbox rows for the publisher (oldest first). */
+    @Override
     public List<PendingOutbox> pendingOutbox(int limit) {
         String sql = "SELECT id, topic, payload FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?";
         List<PendingOutbox> out = new ArrayList<>();
@@ -283,6 +286,7 @@ public class UserRepository {
         }
     }
 
+    @Override
     public void markPublished(UUID outboxId) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("UPDATE outbox SET published_at = now() WHERE id = ?")) {
@@ -292,6 +296,4 @@ public class UserRepository {
             throw dbError("mark outbox published");
         }
     }
-
-    public record PendingOutbox(UUID id, String topic, String payload) {}
 }

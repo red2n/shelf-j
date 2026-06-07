@@ -15,6 +15,7 @@ import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
 import com.shelfj.product.domain.Domain.Product;
 import com.shelfj.product.domain.Domain.Variant;
+import com.shelfj.service.OutboxStore;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -24,7 +25,7 @@ import jakarta.inject.Inject;
  * via the outbox in the same transaction (golden rule #6).
  */
 @ApplicationScoped
-public class ProductRepository {
+public class ProductRepository implements OutboxStore {
 
     @Inject
     DataSource dataSource;
@@ -149,7 +150,8 @@ public class ProductRepository {
                 ProductRepository::mapVariant, "list variants");
     }
 
-    // --- outbox drain ---
+    // --- outbox drain (OutboxStore) ---
+    @Override
     public List<PendingOutbox> pendingOutbox(int limit) {
         return query("SELECT id, topic, payload FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?",
                 ps -> ps.setInt(1, limit),
@@ -157,11 +159,10 @@ public class ProductRepository {
                 "read outbox");
     }
 
+    @Override
     public void markPublished(UUID id) {
         exec("UPDATE outbox SET published_at = now() WHERE id = ?", ps -> ps.setObject(1, id), "mark outbox published");
     }
-
-    public record PendingOutbox(UUID id, String topic, String payload) {}
 
     // --- inserts/helpers ---
 

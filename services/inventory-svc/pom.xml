@@ -58,6 +58,10 @@
             <artifactId>discovery</artifactId>
             <version>${shelfj.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.shelfj</groupId>
+            <artifactId>common-service</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.postgresql</groupId>

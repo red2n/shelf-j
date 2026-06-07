@@ -42,13 +42,14 @@
         <module>shared/events-contract</module>
         <module>shared/common-web</module>
         <module>shared/common-test</module>
+        <module>platform/discovery</module>
+        <module>shared/common-service</module>
         <module>services/sample-svc</module>
         <module>services/iam-svc</module>
         <module>services/tenant-svc</module>
         <module>services/product-svc</module>
         <module>services/inventory-svc</module>
         <module>platform/config</module>
-        <module>platform/discovery</module>
         <module>platform/gateway</module>
     </modules>
 
@@ -68,6 +69,11 @@
             <dependency>
                 <groupId>com.shelfj</groupId>
                 <artifactId>common-test</artifactId>
+                <version>${shelfj.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.shelfj</groupId>
+                <artifactId>common-service</artifactId>
                 <version>${shelfj.version}</version>
             </dependency>
 

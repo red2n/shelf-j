@@ -1,12 +1,13 @@
 package com.shelfj.iam.config;
 
+import com.shelfj.service.ServiceSettings;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /** Typed config for iam-svc (MicroProfile Config; overridden by env / config service). */
 @ApplicationScoped
-public class ServiceConfig {
+public class ServiceConfig implements ServiceSettings {
 
     @Inject @ConfigProperty(name = "shelfj.service.name", defaultValue = "iam-svc")
     String serviceName;
@@ -49,6 +50,14 @@ public class ServiceConfig {
     @Inject @ConfigProperty(name = "shelfj.jwt.refresh-ttl-seconds", defaultValue = "1209600")
     long refreshTtlSeconds;
 
+    // --- Kafka / outbox (for the shared OutboxPublisher) ---
+    @Inject @ConfigProperty(name = "shelfj.kafka.enabled", defaultValue = "true")
+    boolean kafkaEnabled;
+    @Inject @ConfigProperty(name = "shelfj.kafka.bootstrap", defaultValue = "localhost:9092")
+    String kafkaBootstrap;
+    @Inject @ConfigProperty(name = "shelfj.outbox.poll-seconds", defaultValue = "5")
+    long outboxPollSeconds;
+
     public String serviceName() { return serviceName; }
     public int servicePort() { return servicePort; }
     public String dbUrl() { return dbUrl; }
@@ -58,6 +67,9 @@ public class ServiceConfig {
     public String consulHost() { return consulHost; }
     public int consulPort() { return consulPort; }
     public boolean consulEnabled() { return consulEnabled; }
+    public boolean kafkaEnabled() { return kafkaEnabled; }
+    public String kafkaBootstrap() { return kafkaBootstrap; }
+    public long outboxPollSeconds() { return outboxPollSeconds; }
     public String jwtIssuer() { return jwtIssuer; }
     public String jwtSecret() { return jwtSecret; }
     public long accessTtlSeconds() { return accessTtlSeconds; }

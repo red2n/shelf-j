@@ -9,6 +9,16 @@ Use this when adding a **new business microservice** to `services/`. It produces
 
 > Read first if unsure: [README §6 Anatomy of a service](../../../README.md#6-anatomy-of-one-service-the-template-every-service-copies), the target service's spec in [README §9](../../../README.md#9-the-business-services--full-catalog). **Fastest path: copy `services/sample-svc` (the proven template) and rename.** `services/iam-svc` is a fuller worked example (auth, outbox, validation).
 
+## Reuse `shared/common-service` — do NOT re-write infra (saves ~100 lines/service; keeps Duplo low)
+
+The DataSource producer, Flyway runner, Consul registrar, health checks, and Kafka outbox publisher live in `shared/common-service`. A new service:
+1. Depends on `com.shelfj:common-service`.
+2. `ServiceConfig implements com.shelfj.service.ServiceSettings` (serviceName/port, db url/user/pwd/schema, consul host/port/enabled, kafka enabled/bootstrap, outboxPollSeconds). Add any service-specific config as extra fields.
+3. If it has an outbox: its repo `implements com.shelfj.service.OutboxStore` (`pendingOutbox` + `markPublished`, using `OutboxStore.PendingOutbox`). If it has no outbox, skip this — the shared publisher no-ops.
+4. **Do NOT create** `DataSourceProducer`, `FlywayMigration`, `ConsulRegistration`, `HealthChecks`, or `OutboxPublisher` — they are shared. Keep only service-specific messaging (consumers, sweepers).
+
+Validate after adding a service: `scripts/duplo.sh` (duplication should stay ~10%).
+
 ## Helidon 4.4.1 setup gotchas — apply these or things break (learned building sample-svc + iam-svc)
 
 1. **`mainClass` = `io.helidon.Main`** (NOT a custom `Server.create()` main) — else `/health` & `/metrics` 404.

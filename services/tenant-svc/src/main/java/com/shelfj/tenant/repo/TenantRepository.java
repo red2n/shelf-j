@@ -13,6 +13,7 @@ import javax.sql.DataSource;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.Tenant;
 import com.shelfj.tenant.domain.Domain.Zone;
+import com.shelfj.service.OutboxStore;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -20,10 +21,10 @@ import jakarta.inject.Inject;
 /**
  * Persistence for tenants/stores/zones/staff + outbox. Multi-row writes that must be atomic with their events
  * (create tenant, create store+default-zone) run in one transaction with the outbox insert (golden rule #6).
- * Every store/zone/staff query filters tenant_id FIRST (golden rule #3).
+ * Every store/zone/staff query filters tenant_id FIRST (golden rule #3). Implements {@link OutboxStore}.
  */
 @ApplicationScoped
-public class TenantRepository {
+public class TenantRepository implements OutboxStore {
 
     @Inject
     DataSource dataSource;
@@ -178,7 +179,8 @@ public class TenantRepository {
         }
     }
 
-    // --- outbox drain ---
+    // --- outbox drain (OutboxStore) ---
+    @Override
     public List<PendingOutbox> pendingOutbox(int limit) {
         String sql = "SELECT id, topic, payload FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?";
         List<PendingOutbox> out = new ArrayList<>();
@@ -191,14 +193,13 @@ public class TenantRepository {
         } catch (SQLException e) { throw dbError("read outbox"); }
     }
 
+    @Override
     public void markPublished(UUID id) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("UPDATE outbox SET published_at = now() WHERE id = ?")) {
             ps.setObject(1, id); ps.executeUpdate();
         } catch (SQLException e) { throw dbError("mark outbox published"); }
     }
-
-    public record PendingOutbox(UUID id, String topic, String payload) {}
 
     // --- tx + mapping helpers ---
 

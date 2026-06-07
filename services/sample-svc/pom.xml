@@ -72,6 +72,10 @@
         </dependency>
         <dependency>
             <groupId>com.shelfj</groupId>
+            <artifactId>common-service</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.shelfj</groupId>
             <artifactId>events-contract</artifactId>
         </dependency>
         <dependency>

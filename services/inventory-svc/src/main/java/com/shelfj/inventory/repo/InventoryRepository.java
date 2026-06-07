@@ -17,6 +17,7 @@ import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.MoveType;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.service.OutboxStore;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -26,7 +27,7 @@ import jakarta.inject.Inject;
  * ledger). FIFO deduction locks batch rows with {@code FOR UPDATE}. Every query filters tenant_id first.
  */
 @ApplicationScoped
-public class InventoryRepository {
+public class InventoryRepository implements OutboxStore {
 
     @Inject
     DataSource dataSource;
@@ -273,7 +274,8 @@ public class InventoryRepository {
         }
     }
 
-    // ---------------------------------------------------------------- outbox + processed-events
+    // ---------------------------------------------------------------- outbox (OutboxStore) + processed-events
+    @Override
     public List<PendingOutbox> pendingOutbox(int limit) {
         return query("SELECT id, topic, payload FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?",
                 ps -> ps.setInt(1, limit),
@@ -281,6 +283,7 @@ public class InventoryRepository {
                 "read outbox");
     }
 
+    @Override
     public void markPublished(UUID id) {
         exec("UPDATE outbox SET published_at = now() WHERE id = ?", ps -> ps.setObject(1, id), "mark outbox published");
     }
@@ -295,8 +298,6 @@ public class InventoryRepository {
             throw dbError("mark processed event");
         }
     }
-
-    public record PendingOutbox(UUID id, String topic, String payload) {}
 
     // ---------------------------------------------------------------- tx + helpers
     private interface TxWork<R> { R run(Connection c) throws SQLException; }
