@@ -45,6 +45,7 @@
         <module>services/sample-svc</module>
         <module>services/iam-svc</module>
         <module>services/tenant-svc</module>
+        <module>services/product-svc</module>
         <module>platform/config</module>
         <module>platform/discovery</module>
         <module>platform/gateway</module>
