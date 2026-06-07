@@ -165,6 +165,32 @@ services:
       retries: 12
       start_period: 30s
 
+  inventory-svc:
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/inventory-svc, SVC_JAR: inventory-svc }
+    environment:
+      server.port: "8080"
+      shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
+      shelfj.db.user: ${POSTGRES_USER:-shelfj}
+      shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
+      shelfj.consul.host: consul
+      shelfj.consul.port: "8500"
+      shelfj.kafka.bootstrap: kafka:29092
+      SHELFJ_ADVERTISE_HOST: inventory-svc
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka:    { condition: service_healthy }
+      consul:   { condition: service_healthy }
+      config:   { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
   product-svc:
     build:
       context: .
