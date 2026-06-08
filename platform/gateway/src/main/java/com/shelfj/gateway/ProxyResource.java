@@ -10,8 +10,10 @@ import io.helidon.webclient.api.WebClient;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
@@ -85,6 +87,56 @@ public class ProxyResource {
                       .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
               stampIdentity(req, inboundHeaders);
               return relay(req.submit(body == null ? "" : body), requestId);
+            })
+        .orElseGet(() -> serviceUnavailable(service));
+  }
+
+  @PUT
+  @Path("/{service}/{path: .*}")
+  @Consumes(MediaType.APPLICATION_JSON)
+  @Produces(MediaType.APPLICATION_JSON)
+  public Response proxyPut(
+      @PathParam("service") String service,
+      @PathParam("path") String path,
+      @Context UriInfo uriInfo,
+      @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders,
+      String body) {
+    return resolve(service)
+        .map(
+            instance -> {
+              String requestId = newRequestId();
+              String target = instance.baseUri() + "/" + path + queryString(uriInfo);
+              var req =
+                  webClient
+                      .put(target)
+                      .header(io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId)
+                      .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
+              stampIdentity(req, inboundHeaders);
+              return relay(req.submit(body == null ? "" : body), requestId);
+            })
+        .orElseGet(() -> serviceUnavailable(service));
+  }
+
+  @DELETE
+  @Path("/{service}/{path: .*}")
+  @Produces(MediaType.APPLICATION_JSON)
+  public Response proxyDelete(
+      @PathParam("service") String service,
+      @PathParam("path") String path,
+      @Context UriInfo uriInfo,
+      @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders) {
+    return resolve(service)
+        .map(
+            instance -> {
+              String requestId = newRequestId();
+              String target = instance.baseUri() + "/" + path + queryString(uriInfo);
+              var req =
+                  webClient
+                      .delete(target)
+                      .header(
+                          io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId);
+              stampIdentity(req, inboundHeaders);
+              return relay(req.request(), requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }

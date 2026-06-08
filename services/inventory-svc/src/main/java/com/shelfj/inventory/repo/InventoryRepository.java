@@ -15,6 +15,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -389,7 +391,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setBigDecimal(7, b.remainingQty());
       ps.setBigDecimal(8, b.costPrice());
       ps.setDate(9, b.expiryDate() == null ? null : Date.valueOf(b.expiryDate()));
-      ps.setObject(10, b.createdAt());
+      ps.setObject(10, b.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -407,8 +409,8 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setBigDecimal(5, r.qty());
       ps.setObject(6, r.orderId());
       ps.setString(7, r.status());
-      ps.setObject(8, r.expiresAt());
-      ps.setObject(9, r.createdAt());
+      ps.setObject(8, r.expiresAt() == null ? null : r.expiresAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(9, r.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -443,7 +445,8 @@ public class InventoryRepository extends BaseOutboxRepository {
   }
 
   private static Reservation mapReservation(ResultSet rs) throws SQLException {
-    Instant exp = rs.getObject("expires_at", Instant.class);
+    OffsetDateTime expOdt = rs.getObject("expires_at", OffsetDateTime.class);
+    Instant exp = expOdt == null ? null : expOdt.toInstant();
     return new Reservation(
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
@@ -453,6 +456,6 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getObject("order_id", UUID.class),
         rs.getString("status"),
         exp,
-        rs.getObject("created_at", Instant.class));
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 }
