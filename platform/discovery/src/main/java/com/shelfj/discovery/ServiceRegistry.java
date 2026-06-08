@@ -7,6 +7,7 @@ import java.util.Optional;
  * {@link ConsulClient}, so the lookup mechanism can change without touching the gateway proxy
  * (DIP).
  */
+@FunctionalInterface
 public interface ServiceRegistry {
   Optional<ServiceInstance> resolve(String serviceName);
 }

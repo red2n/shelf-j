@@ -14,7 +14,6 @@ import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -223,7 +222,7 @@ public class InventoryRepository implements OutboxStore {
     // on-hand from batches LEFT JOINed to pre-aggregated HELD reservations (avoids an ungrouped
     // correlated subquery).
     String sql =
-            """
+        """
                 SELECT b.store_id, b.variant_id,
                        COALESCE(SUM(b.remaining_qty),0) AS on_hand,
                        COALESCE(MAX(res.reserved),0) AS reserved
@@ -235,8 +234,7 @@ public class InventoryRepository implements OutboxStore {
                 ) res ON res.store_id = b.store_id AND res.variant_id = b.variant_id
                 WHERE b.tenant_id = ?"""
             + (storeId != null ? " AND b.store_id = ?" : "")
-            +
-            """
+            + """
 
                 GROUP BY b.store_id, b.variant_id
                 ORDER BY b.store_id, b.variant_id""";
@@ -381,7 +379,7 @@ public class InventoryRepository implements OutboxStore {
       ps.setBigDecimal(7, b.remainingQty());
       ps.setBigDecimal(8, b.costPrice());
       ps.setDate(9, b.expiryDate() == null ? null : Date.valueOf(b.expiryDate()));
-      ps.setTimestamp(10, Timestamp.from(b.createdAt()));
+      ps.setObject(10, b.createdAt());
       ps.executeUpdate();
     }
   }
@@ -398,8 +396,8 @@ public class InventoryRepository implements OutboxStore {
       ps.setBigDecimal(5, r.qty());
       ps.setObject(6, r.orderId());
       ps.setString(7, r.status());
-      ps.setTimestamp(8, r.expiresAt() == null ? null : Timestamp.from(r.expiresAt()));
-      ps.setTimestamp(9, Timestamp.from(r.createdAt()));
+      ps.setObject(8, r.expiresAt());
+      ps.setObject(9, r.createdAt());
       ps.executeUpdate();
     }
   }
@@ -482,14 +480,17 @@ public class InventoryRepository implements OutboxStore {
   }
 
   // ---------------------------------------------------------------- tx + helpers
+  @FunctionalInterface
   private interface TxWork<R> {
     R run(Connection c) throws SQLException;
   }
 
+  @FunctionalInterface
   private interface Binder {
     void bind(PreparedStatement ps) throws SQLException;
   }
 
+  @FunctionalInterface
   private interface RowMapper<T> {
     T map(ResultSet rs) throws SQLException;
   }
@@ -540,7 +541,7 @@ public class InventoryRepository implements OutboxStore {
   }
 
   private static Reservation mapReservation(ResultSet rs) throws SQLException {
-    Timestamp exp = rs.getTimestamp("expires_at");
+    Instant exp = rs.getObject("expires_at", Instant.class);
     return new Reservation(
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
@@ -549,8 +550,8 @@ public class InventoryRepository implements OutboxStore {
         rs.getBigDecimal("qty"),
         rs.getObject("order_id", UUID.class),
         rs.getString("status"),
-        exp == null ? null : exp.toInstant(),
-        rs.getTimestamp("created_at").toInstant());
+        exp,
+        rs.getObject("created_at", Instant.class));
   }
 
   private static ApiException dbError(String what, Throwable cause) {

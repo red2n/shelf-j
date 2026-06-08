@@ -741,6 +741,15 @@ cd services/product-svc
 mvn helidon:dev             # or: java -jar target/product-svc.jar
 ```
 
+**3.1 — Build a native image**
+```bash
+export GRAALVM_HOME=/path/to/graalvm
+export JAVA_HOME=$GRAALVM_HOME
+cd services/product-svc
+mvn -Pnative clean package
+```
+The resulting native binary will be in `target/product-svc`.
+
 **4 — Run the gateway** (after at least one service + discovery are up)
 ```bash
 cd platform/gateway

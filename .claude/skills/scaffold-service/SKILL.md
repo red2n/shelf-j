@@ -26,8 +26,9 @@ Validate after adding a service: `scripts/duplo.sh` (duplication should stay ~10
 3. **Slim `helidon-microprofile-core` ships JSON-P, not JSON-B** — add `org.glassfish.jersey.media:jersey-media-json-binding:3.1.11` + `org.eclipse:yasson:3.0.4`, or JAX-RS can't serialize DTO records.
 4. **Bean Validation: `@Valid` is ignored / Helidon's mapper leaks internals.** Add `io.helidon.microprofile.bean-validation:helidon-microprofile-bean-validation` (pulls Hibernate Validator) and validate explicitly in the resource with `com.shelfj.web.Validations.validate(dto)` (returns the clean `VALIDATION_FAILED` 400 envelope). Do NOT rely on `@Valid` on resource params.
 5. **Runnable jar needs `target/libs/`** — add `maven-dependency-plugin:copy-dependencies` (phase `package`, outputDir `target/libs`). The Helidon parent sets the jar manifest `Class-Path: libs/*`.
-6. **Build AND run with JDK 21** (`JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64`); machine default `java` is 25.
-7. **JDBC null UUID**: never bind a null UUID via `setObject(i, null)` in `col = ?` — Postgres can't infer the type. Use a separate `col IS NULL` query branch.
+6. **Native image support is optional.** If you want GraalVM native builds, add a `native` Maven profile using `org.graalvm.buildtools:native-maven-plugin` and build with `mvn -Pnative clean package` under GraalVM `JAVA_HOME`.
+7. **Build AND run with JDK 21** (`JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64`); machine default `java` is 25.
+8. **JDBC null UUID**: never bind a null UUID via `setObject(i, null)` in `col = ?` — Postgres can't infer the type. Use a separate `col IS NULL` query branch.
 8. **Database-per-service = a schema per service.** All services share one Postgres `shelfj` db in compose, so isolate by schema or their Flyway histories collide. Add `shelfj.db.schema` (default = short name, e.g. `iam`); set `ds.setCurrentSchema(schema)` and Flyway `.schemas(s).defaultSchema(s).createSchemas(true)`.
 9. **Background beans (Kafka publisher/consumer) must be EAGER.** A `@PostConstruct`-only `@ApplicationScoped` bean is never instantiated (CDI is lazy) → it silently never runs. Add `void onStart(@Observes @Initialized(ApplicationScoped.class) Object e) {}` to force eager init.
 

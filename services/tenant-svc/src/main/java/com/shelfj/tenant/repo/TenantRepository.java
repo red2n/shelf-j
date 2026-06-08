@@ -281,6 +281,7 @@ public class TenantRepository implements OutboxStore {
 
   // --- tx + mapping helpers ---
 
+  @FunctionalInterface
   private interface TxWork<R> {
     R run(Connection c) throws SQLException;
   }
@@ -333,6 +334,7 @@ public class TenantRepository implements OutboxStore {
     }
   }
 
+  @FunctionalInterface
   private interface RowMapper<T> {
     T map(ResultSet rs) throws SQLException;
   }

@@ -8,6 +8,7 @@ import com.shelfj.iam.domain.User;
 import com.shelfj.iam.dto.Dtos.TokenResponse;
 import com.shelfj.iam.repo.RefreshTokenRepository;
 import com.shelfj.iam.repo.UserRepository;
+import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -48,13 +49,12 @@ public class AuthService {
             Instant.now());
 
     String payload =
-            """
+        """
                 {"eventId":"%s","eventType":"UserRegistered","tenantId":null,"aggregateId":"%s",\
                 "occurredAt":"%s","email":"%s","type":"CUSTOMER"}"""
             .formatted(UUID.randomUUID(), userId, Instant.now(), email);
     var outbox =
-        new UserRepository.OutboxRow(
-            "UserRegistered", "shelfj.iam.user-registered", null, userId, payload);
+        new OutboxRow("UserRegistered", "shelfj.iam.user-registered", null, userId, payload);
 
     users.createUserWithOutbox(user, "CUSTOMER", outbox);
     users.audit(null, userId, "USER_REGISTERED", email);

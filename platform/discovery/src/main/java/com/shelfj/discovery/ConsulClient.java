@@ -42,7 +42,7 @@ public class ConsulClient implements ServiceRegistry {
   public String register(String serviceName, String advertiseHost, int port) {
     String serviceId = serviceName + "-" + port;
     String body =
-            """
+        """
                 {
                   "ID": "%s",
                   "Name": "%s",

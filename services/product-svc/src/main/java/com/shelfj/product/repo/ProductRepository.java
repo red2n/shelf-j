@@ -162,8 +162,12 @@ public class ProductRepository implements OutboxStore {
         sql.toString(),
         ps -> {
           int i = 1;
-          ps.setObject(i++, tenantId);
-          if (categoryId != null) ps.setObject(i++, categoryId);
+          ps.setObject(i, tenantId);
+          i++;
+          if (categoryId != null) {
+            ps.setObject(i, categoryId);
+            i++;
+          }
           ps.setInt(i, limit);
         },
         ProductRepository::mapProduct,
@@ -272,14 +276,17 @@ public class ProductRepository implements OutboxStore {
   }
 
   // tx + small JDBC helpers
+  @FunctionalInterface
   private interface TxWork<R> {
     R run(Connection c) throws SQLException;
   }
 
+  @FunctionalInterface
   private interface Binder {
     void bind(PreparedStatement ps) throws SQLException;
   }
 
+  @FunctionalInterface
   private interface RowMapper<T> {
     T map(ResultSet rs) throws SQLException;
   }

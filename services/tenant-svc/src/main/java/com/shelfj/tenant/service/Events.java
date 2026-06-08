@@ -10,8 +10,7 @@ final class Events {
 
   static String tenantCreated(
       UUID tenantId, UUID ownerUserId, String name, String country, String currency) {
-    return
-        """
+    return """
                 {"eventId":"%s","eventType":"TenantCreated","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
                 "ownerUserId":"%s","name":"%s","country":"%s","currency":"%s"}"""
         .formatted(
@@ -27,24 +26,21 @@ final class Events {
 
   static String storeCreated(
       UUID tenantId, UUID storeId, String code, String type, boolean isDefault) {
-    return
-        """
+    return """
                 {"eventId":"%s","eventType":"StoreCreated","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
                 "code":"%s","type":"%s","isDefault":%s}"""
         .formatted(UUID.randomUUID(), tenantId, storeId, Instant.now(), code, type, isDefault);
   }
 
   static String zoneCreated(UUID tenantId, UUID storeId, UUID zoneId, String code, String type) {
-    return
-        """
+    return """
                 {"eventId":"%s","eventType":"ZoneCreated","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
                 "storeId":"%s","code":"%s","type":"%s"}"""
         .formatted(UUID.randomUUID(), tenantId, zoneId, Instant.now(), storeId, code, type);
   }
 
   static String staffAssigned(UUID tenantId, UUID userId, UUID storeId, String role) {
-    return
-        """
+    return """
                 {"eventId":"%s","eventType":"StaffAssigned","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
                 "userId":"%s","storeId":"%s","role":"%s"}"""
         .formatted(UUID.randomUUID(), tenantId, userId, Instant.now(), userId, storeId, role);

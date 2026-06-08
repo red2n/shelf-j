@@ -74,8 +74,8 @@
              trigger this rule; Java 21 pattern switches are fine. -->
         <exclude name="SwitchStmtsShouldHaveDefault"/>
 
-        <!-- Record compact constructors (e.g. public ErrorBody { details = ...; }) trigger this
-             rule because PMD 7.x doesn't recognise the compact-constructor assignment as "used".
+        <!-- Record compact constructors with inline field assignments trigger this
+             rule because PMD 7.x doesn't recognise the compact-constructor assignment as used.
              The rule still fires correctly for normal method bodies. -->
         <exclude name="UnusedAssignment"/>
 
