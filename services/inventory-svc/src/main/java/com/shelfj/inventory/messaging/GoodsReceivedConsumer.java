@@ -95,9 +95,7 @@ class GoodsReceivedConsumer {
     if (!running) return;
     try {
       var records = consumer.poll(Duration.ofMillis(500));
-      for (var rec : records) {
-        handler.handle(rec.value());
-      }
+      records.forEach(rec -> handler.handle(rec.value()));
     } catch (Exception e) {
       LOG.log(Level.WARNING, "GoodsReceived poll deferred: " + e.getMessage());
     }

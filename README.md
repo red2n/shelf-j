@@ -299,6 +299,7 @@ These three are the scaffolding. Build them in **Phase 0** before any business s
 - **Authentication:** validate the JWT once; reject anonymous calls to protected routes; allow public routes (storefront browse, login, register).
 - **Authorization (coarse):** block by role where appropriate before traffic reaches a service.
 - **Rate limiting:** protect against abuse (stricter on `/auth`, login).
+- **Brute-force protection:** block repeated failed auth attempts on login endpoints.
 - **Request id:** generate/propagate `X-Request-Id` for tracing.
 - **CORS & TLS termination.**
 - **Header hygiene:** strip internal headers from inbound, add identity headers for downstream.
@@ -319,6 +320,17 @@ These three are the scaffolding. Build them in **Phase 0** before any business s
 | `/api/admin/purchases/**` | purchase-svc | MANAGER/STOREKEEPER |
 | `/api/admin/customers/**` | customer-svc | OWNER/MANAGER |
 | `/api/admin/reports/**` | reporting-svc | OWNER/MANAGER |
+
+### Gateway configuration
+The gateway exposes configurable protection defaults through MicroProfile Config in `platform/gateway/src/main/resources/META-INF/microprofile-config.properties`.
+
+Key properties:
+- `shelfj.gateway.rate-limit.enabled` — enable/disable gateway rate limiting.
+- `shelfj.gateway.rate-limit.requests-per-minute` — allowed request rate per client IP.
+- `shelfj.gateway.brute-force.enabled` — enable/disable login brute-force protection.
+- `shelfj.gateway.brute-force.max-failures` — failed login attempts before temporary block.
+- `shelfj.gateway.brute-force.block-minutes` — block duration after too many failures.
+- `shelfj.gateway.brute-force.login-path` — login endpoint path fragment used for brute-force detection.
 
 ### 8.2 `platform/discovery`
 **Role:** service registry (Consul).
