@@ -37,6 +37,14 @@
             <artifactId>helidon-microprofile-metrics</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.helidon.microprofile.telemetry</groupId>
+            <artifactId>helidon-microprofile-telemetry</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-zipkin</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.helidon.logging</groupId>
             <artifactId>helidon-logging-jul</artifactId>
             <scope>runtime</scope>

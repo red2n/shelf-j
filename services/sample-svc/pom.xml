@@ -41,6 +41,15 @@
             <groupId>io.helidon.microprofile.metrics</groupId>
             <artifactId>helidon-microprofile-metrics</artifactId>
         </dependency>
+        <!-- Distributed tracing via OpenTelemetry (MicroProfile Telemetry) -->
+        <dependency>
+            <groupId>io.helidon.microprofile.telemetry</groupId>
+            <artifactId>helidon-microprofile-telemetry</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-zipkin</artifactId>
+        </dependency>
         <!-- JUL logging backend (quickstart uses this) -->
         <dependency>
             <groupId>io.helidon.logging</groupId>
