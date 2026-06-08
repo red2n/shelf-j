@@ -1,0 +1,101 @@
+# Shelf-J — Prometheus configuration.
+# All Helidon MP services expose /metrics in Prometheus format.
+# Infrastructure exporters (node, postgres, redis) expose standard exporter endpoints.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    project: 'shelf-j'
+    env: 'local'
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+
+  # ── Prometheus self-monitoring ──────────────────────────────────────────────
+  - job_name: 'prometheus'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['localhost:9090']
+        labels: { service: 'prometheus', layer: 'infra' }
+
+  # ── Platform services ───────────────────────────────────────────────────────
+  - job_name: 'gateway'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['gateway:8080']
+        labels: { service: 'gateway', layer: 'platform' }
+
+  - job_name: 'config'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['config:8080']
+        labels: { service: 'config', layer: 'platform' }
+
+  # ── Business services ───────────────────────────────────────────────────────
+  - job_name: 'iam-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['iam-svc:8080']
+        labels: { service: 'iam-svc', layer: 'business' }
+
+  - job_name: 'tenant-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['tenant-svc:8080']
+        labels: { service: 'tenant-svc', layer: 'business' }
+
+  - job_name: 'inventory-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['inventory-svc:8080']
+        labels: { service: 'inventory-svc', layer: 'business' }
+
+  - job_name: 'product-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['product-svc:8080']
+        labels: { service: 'product-svc', layer: 'business' }
+
+  - job_name: 'sample-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['sample-svc:8080']
+        labels: { service: 'sample-svc', layer: 'business' }
+
+  # ── Infrastructure exporters ────────────────────────────────────────────────
+
+  # Host-level CPU, memory, disk, network (node_exporter)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels: { service: 'node', layer: 'infra' }
+
+  # PostgreSQL internals — connections, query times, table/index stats
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels: { service: 'postgres', layer: 'infra' }
+
+  # Redis — memory, ops/sec, keyspace, evictions
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels: { service: 'redis', layer: 'infra' }
+
+  # Consul — agent health, peer count, RPC latency
+  - job_name: 'consul'
+    metrics_path: /v1/agent/metrics
+    params:
+      format: ['prometheus']
+    static_configs:
+      - targets: ['consul:8500']
+        labels: { service: 'consul', layer: 'infra' }
+
+  # OTEL Collector — pipeline queue depth, exporter success/failure
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8888']
+        labels: { service: 'otel-collector', layer: 'infra' }
