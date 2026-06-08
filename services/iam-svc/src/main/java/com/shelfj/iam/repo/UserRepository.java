@@ -38,8 +38,8 @@ public class UserRepository implements OutboxStore {
         // Separate branches so a null tenant maps to "IS NULL" cleanly (JDBC can't infer the type of a
         // null UUID bind parameter inside "tenant_id = ?").
         String sql = tenantId == null
-                ? "SELECT * FROM users WHERE lower(email) = lower(?) AND tenant_id IS NULL"
-                : "SELECT * FROM users WHERE lower(email) = lower(?) AND tenant_id = ?";
+                ? "SELECT id, tenant_id, type, email, phone, password_hash, status, created_at FROM users WHERE lower(email) = lower(?) AND tenant_id IS NULL"
+                : "SELECT id, tenant_id, type, email, phone, password_hash, status, created_at FROM users WHERE lower(email) = lower(?) AND tenant_id = ?";
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, email);
@@ -55,7 +55,7 @@ public class UserRepository implements OutboxStore {
     }
 
     public Optional<User> findById(UUID id) {
-        String sql = "SELECT * FROM users WHERE id = ?";
+        String sql = "SELECT id, tenant_id, type, email, phone, password_hash, status, created_at FROM users WHERE id = ?";
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, id);

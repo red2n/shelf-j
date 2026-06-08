@@ -2,7 +2,7 @@
 
 This file is auto-loaded into every Claude Code session for this repository. It gives an AI agent the context and rules needed to work on Shelf-J correctly. **Read it fully before making changes.**
 
-> **Deep docs:** [PRD.md](PRD.md) = what & why · [README.md](README.md) = how (concepts, per-service catalog, conventions) · [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md) = tenant onboarding + location model. When detail is needed, open those. This file is the fast briefing + the hard rules.
+> **Deep docs:** [PRD.md](PRD.md) = what & why · [README.md](README.md) = how (concepts, per-service catalog, conventions) · [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md) = tenant onboarding + location model · [docs/coding-standards.md](docs/coding-standards.md) = SQL rules + SOLID rules (enforced on every change). When detail is needed, open those. This file is the fast briefing + the hard rules.
 
 ---
 
@@ -40,7 +40,7 @@ Tenant (a business)
 
 ## The golden rules (non-negotiable — apply to EVERY service)
 
-These are the condensed form of [README §3](README.md#3-the-golden-rules-an-ai-agent-must-follow-these). Violating one is a bug even if the code runs.
+These are the condensed form of [README §3](README.md#3-the-golden-rules-an-ai-agent-must-follow-these). Violating one is a bug even if the code runs. **SQL and SOLID rules are in [docs/coding-standards.md](docs/coding-standards.md) and must be applied to every change.**
 
 1. **Database-per-service.** No service reads another service's tables. No cross-service SQL joins. Need foreign data → call the owning service (REST) or consume its events.
 2. **Gateway is the only public door.** Business services are never exposed to the internet directly.
@@ -147,4 +147,5 @@ Self-check against [README §14](README.md#14-definition-of-done-for-any-service
 - **Where does X live / who owns this data?** → [README §9](README.md#9-the-business-services--full-catalog) (per-service ownership table).
 - **How do services talk for this flow?** → [README §10](README.md#10-how-services-talk-to-each-other) (sync map + event map + checkout saga).
 - **Onboarding / stores / zones / delivery?** → [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md).
+- **SQL or SOLID rule question?** → [docs/coding-standards.md](docs/coding-standards.md).
 - **A decision isn't settled?** → [PRD §11 open questions](PRD.md). Don't silently guess on those; surface them.

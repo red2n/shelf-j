@@ -43,7 +43,7 @@ public class ProductRepository implements OutboxStore {
     }
 
     public List<Brand> listBrands(UUID tenantId) {
-        return query("SELECT * FROM brands WHERE tenant_id = ? ORDER BY name", ps -> ps.setObject(1, tenantId),
+        return query("SELECT id, tenant_id, name, created_at FROM brands WHERE tenant_id = ? ORDER BY name", ps -> ps.setObject(1, tenantId),
                 ProductRepository::mapBrand, "list brands");
     }
 
@@ -62,14 +62,14 @@ public class ProductRepository implements OutboxStore {
     }
 
     public Optional<Category> findCategory(UUID tenantId, UUID id) {
-        var list = query("SELECT * FROM categories WHERE tenant_id = ? AND id = ?",
+        var list = query("SELECT id, tenant_id, parent_id, name, created_at FROM categories WHERE tenant_id = ? AND id = ?",
                 ps -> { ps.setObject(1, tenantId); ps.setObject(2, id); },
                 ProductRepository::mapCategory, "find category");
         return list.stream().findFirst();
     }
 
     public List<Category> listCategories(UUID tenantId) {
-        return query("SELECT * FROM categories WHERE tenant_id = ? ORDER BY name", ps -> ps.setObject(1, tenantId),
+        return query("SELECT id, tenant_id, parent_id, name, created_at FROM categories WHERE tenant_id = ? ORDER BY name", ps -> ps.setObject(1, tenantId),
                 ProductRepository::mapCategory, "list categories");
     }
 
@@ -101,7 +101,7 @@ public class ProductRepository implements OutboxStore {
     }
 
     public Optional<Product> findProduct(UUID tenantId, UUID id) {
-        var list = query("SELECT * FROM products WHERE tenant_id = ? AND id = ?",
+        var list = query("SELECT id, tenant_id, name, description, brand_id, category_id, status, sellable_online, sellable_pos, created_at, updated_at FROM products WHERE tenant_id = ? AND id = ?",
                 ps -> { ps.setObject(1, tenantId); ps.setObject(2, id); },
                 ProductRepository::mapProduct, "find product");
         return list.stream().findFirst();
@@ -109,7 +109,7 @@ public class ProductRepository implements OutboxStore {
 
     /** List active products for a tenant, optionally filtered by category, newest first, with a simple limit. */
     public List<Product> listProducts(UUID tenantId, UUID categoryId, boolean onlineOnly, int limit) {
-        StringBuilder sql = new StringBuilder("SELECT * FROM products WHERE tenant_id = ? AND status = 'ACTIVE'");
+        StringBuilder sql = new StringBuilder("SELECT id, tenant_id, name, description, brand_id, category_id, status, sellable_online, sellable_pos, created_at, updated_at FROM products WHERE tenant_id = ? AND status = 'ACTIVE'");
         if (categoryId != null) sql.append(" AND category_id = ?");
         if (onlineOnly) sql.append(" AND sellable_online = true");
         sql.append(" ORDER BY created_at DESC LIMIT ?");
@@ -145,7 +145,7 @@ public class ProductRepository implements OutboxStore {
     }
 
     public List<Variant> listVariants(UUID tenantId, UUID productId) {
-        return query("SELECT * FROM product_variants WHERE tenant_id = ? AND product_id = ? ORDER BY created_at",
+        return query("SELECT id, tenant_id, product_id, sku, barcode, attributes, unit, created_at FROM product_variants WHERE tenant_id = ? AND product_id = ? ORDER BY created_at",
                 ps -> { ps.setObject(1, tenantId); ps.setObject(2, productId); },
                 ProductRepository::mapVariant, "list variants");
     }

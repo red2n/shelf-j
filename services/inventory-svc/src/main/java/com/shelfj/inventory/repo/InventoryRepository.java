@@ -211,7 +211,7 @@ public class InventoryRepository implements OutboxStore {
 
     private Reservation loadReservationForUpdate(Connection c, UUID tenantId, UUID id) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT * FROM reservations WHERE tenant_id=? AND id=? FOR UPDATE")) {
+                "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, created_at FROM reservations WHERE tenant_id=? AND id=? FOR UPDATE")) {
             ps.setObject(1, tenantId); ps.setObject(2, id);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) throw ApiException.notFound("RESERVATION_NOT_FOUND", "No such reservation");

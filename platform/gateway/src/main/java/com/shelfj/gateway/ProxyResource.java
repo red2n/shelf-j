@@ -2,14 +2,13 @@ package com.shelfj.gateway;
 
 import java.util.Optional;
 import java.util.UUID;
-import com.shelfj.discovery.ConsulClient;
 import com.shelfj.discovery.ServiceInstance;
+import com.shelfj.discovery.ServiceRegistry;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.ErrorBody;
 import com.shelfj.web.HttpHeaders;
 import io.helidon.webclient.api.HttpClientResponse;
 import io.helidon.webclient.api.WebClient;
-import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
@@ -35,17 +34,8 @@ import jakarta.ws.rs.core.UriInfo;
 @ApplicationScoped
 public class ProxyResource {
 
-    @Inject
-    GatewayConfig config;
-
-    private ConsulClient consul;
-    private WebClient webClient;
-
-    @PostConstruct
-    void init() {
-        this.consul = new ConsulClient(config.consulHost(), config.consulPort());
-        this.webClient = WebClient.builder().build();
-    }
+    @Inject ServiceRegistry registry;
+    @Inject WebClient webClient;
 
     @GET
     @Path("/{service}/{path: .*}")
@@ -87,7 +77,7 @@ public class ProxyResource {
     // --- helpers ---
 
     private Optional<ServiceInstance> resolve(String service) {
-        return consul.resolve(service);
+        return registry.resolve(service);
     }
 
     /**

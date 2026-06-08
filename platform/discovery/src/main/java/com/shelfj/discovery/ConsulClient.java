@@ -19,7 +19,7 @@ import jakarta.json.JsonObject;
  * Services use it to register themselves; the gateway uses it to resolve upstreams. There is no Helidon-native
  * Consul integration, so we call the Consul agent HTTP API directly via Helidon WebClient.</p>
  */
-public class ConsulClient {
+public class ConsulClient implements ServiceRegistry {
 
     private static final Logger LOG = System.getLogger(ConsulClient.class.getName());
 

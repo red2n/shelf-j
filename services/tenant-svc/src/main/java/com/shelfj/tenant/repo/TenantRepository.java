@@ -74,15 +74,15 @@ public class TenantRepository implements OutboxStore {
     // --- lookups (tenant-scoped) ---
 
     public Optional<Tenant> findTenant(UUID tenantId) {
-        return one("SELECT * FROM tenants WHERE id = ?", tenantId, TenantRepository::mapTenant);
+        return one("SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency, created_at FROM tenants WHERE id = ?", tenantId, TenantRepository::mapTenant);
     }
 
     public List<Store> listStores(UUID tenantId) {
-        return many("SELECT * FROM stores WHERE tenant_id = ? ORDER BY created_at", tenantId, TenantRepository::mapStore);
+        return many("SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode, geo_lat, geo_lng, timezone, business_hours, status, is_default, created_at FROM stores WHERE tenant_id = ? ORDER BY created_at", tenantId, TenantRepository::mapStore);
     }
 
     public Optional<Store> findStore(UUID tenantId, UUID storeId) {
-        String sql = "SELECT * FROM stores WHERE tenant_id = ? AND id = ?";
+        String sql = "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode, geo_lat, geo_lng, timezone, business_hours, status, is_default, created_at FROM stores WHERE tenant_id = ? AND id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, tenantId);
             ps.setObject(2, storeId);
@@ -93,7 +93,7 @@ public class TenantRepository implements OutboxStore {
     }
 
     public List<Zone> listZones(UUID tenantId, UUID storeId) {
-        String sql = "SELECT * FROM zones WHERE tenant_id = ? AND store_id = ? ORDER BY created_at";
+        String sql = "SELECT id, tenant_id, store_id, name, code, type, status, created_at FROM zones WHERE tenant_id = ? AND store_id = ? ORDER BY created_at";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, tenantId);
             ps.setObject(2, storeId);
