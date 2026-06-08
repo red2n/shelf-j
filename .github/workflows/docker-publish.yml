@@ -1,0 +1,143 @@
+name: Build & Publish Docker Images
+
+# Triggers on every merge to main and on version tags.
+# CI (ci.yml) gates quality; this workflow only publishes — it skips tests.
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  # Produces e.g. ghcr.io/red2n/shelf-j-gateway
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/shelf-j
+
+jobs:
+  # ── 1. Build all JARs ──────────────────────────────────────────────────────
+  build-jars:
+    name: Maven build (skip tests)
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build all modules
+        run: mvn -B -V clean install -DskipTests
+
+      - name: Upload JARs and libs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-jars
+          # Preserve directory structure so Dockerfile.svc path references work.
+          path: |
+            platform/*/target/*.jar
+            platform/*/target/libs
+            services/*/target/*.jar
+            services/*/target/libs
+          retention-days: 1
+
+  # ── 2. Build & push Docker images (parallel matrix) ───────────────────────
+  docker-publish:
+    name: Docker — ${{ matrix.service.name }}
+    needs: build-jars
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - { name: gateway,       svc_path: platform/gateway,       svc_jar: gateway       }
+          - { name: config,        svc_path: platform/config,        svc_jar: config-svc    }
+          - { name: iam-svc,       svc_path: services/iam-svc,       svc_jar: iam-svc       }
+          - { name: tenant-svc,    svc_path: services/tenant-svc,    svc_jar: tenant-svc    }
+          - { name: product-svc,   svc_path: services/product-svc,   svc_jar: product-svc   }
+          - { name: inventory-svc, svc_path: services/inventory-svc, svc_jar: inventory-svc }
+          - { name: sample-svc,    svc_path: services/sample-svc,    svc_jar: sample-svc    }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download JARs
+        uses: actions/download-artifact@v4
+        with:
+          name: service-jars
+          # Restore at repo root so paths like platform/gateway/target/... are intact.
+          path: .
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}
+          tags: |
+            # latest on main branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            # branch name (e.g. main)
+            type=ref,event=branch
+            # semver tag (e.g. v1.2.3 → 1.2.3, 1.2, 1)
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            # short commit sha (e.g. sha-abc1234)
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.svc
+          push: true
+          build-args: |
+            SVC_PATH=${{ matrix.service.svc_path }}
+            SVC_JAR=${{ matrix.service.svc_jar }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GHA layer cache per service — avoids re-pulling base JRE layer
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+
+  # ── 3. Summary — list all published image digests ─────────────────────────
+  publish-summary:
+    name: Publish summary
+    needs: docker-publish
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+      - name: Print image URLs
+        run: |
+          echo "## Published images" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Image |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          for svc in gateway config iam-svc tenant-svc product-svc inventory-svc sample-svc; do
+            echo "| $svc | \`${{ env.IMAGE_PREFIX }}-${svc}:latest\` |" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** \`${{ github.ref_name }}\` @ \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
