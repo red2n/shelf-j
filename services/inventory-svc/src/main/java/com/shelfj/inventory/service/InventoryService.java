@@ -5,7 +5,7 @@ import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.repo.InventoryRepository;
-import com.shelfj.inventory.repo.InventoryRepository.OutboxRow;
+import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;

@@ -978,3 +978,57 @@ A service is **not finished** until **all** of these are true. An AI agent shoul
 ---
 
 *Companion document: [PRD.md](PRD.md) — product requirements, architecture rationale, roadmap, open decisions.*
+
+## Appendix: Database tables per service
+
+This project uses Flyway migrations under `services/<service>/src/main/resources/db/migration/` to define each service schema. Below is a consolidated list of the primary tables created by those migrations (one schema per service):
+
+- `iam-svc`
+  - `users`
+  - `roles`
+  - `user_roles`
+  - `refresh_tokens`
+  - `otp_codes`
+  - `audit_log`
+  - `outbox`
+  - `processed_events`
+
+- `inventory-svc`
+  - `inventory_batches`
+  - `stock_movements`
+  - `reservations`
+  - `reorder_thresholds`
+  - `processed_events`
+  - `outbox`
+
+- `product-svc`
+  - `brands`
+  - `categories`
+  - `products`
+  - `product_variants`
+  - `product_media`
+  - `outbox`
+
+- `tenant-svc`
+  - `tenants`
+  - `stores`
+  - `zones`
+  - `staff_assignments`
+  - `outbox`
+
+- `sample-svc`
+  - `widgets`
+
+Notes:
+
+- Each service applies its migrations into its own PostgreSQL schema (configured via `shelfj.db.schema`) inside the shared `shelfj` database used in `docker-compose.yml`.
+- The `outbox` table and `processed_events` (idempotency) table appear in multiple services as part of the event/outbox pattern.
+- To view the live schemas and tables in the running Postgres container, use these commands:
+
+```bash
+docker exec -it shelf-j-postgres-1 psql -U shelfj -d shelfj -c '\dn'
+docker exec -it shelf-j-postgres-1 psql -U shelfj -d shelfj -c '\dt iam.*'
+docker exec -it shelf-j-postgres-1 psql -U shelfj -d shelfj -c 'SELECT * FROM iam.users LIMIT 10;'
+```
+
+If you want, I can also add this appendix as a separate markdown file under `docs/` and link to it from this README.

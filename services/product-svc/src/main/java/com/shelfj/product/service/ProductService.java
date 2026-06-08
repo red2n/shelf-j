@@ -10,7 +10,7 @@ import com.shelfj.product.dto.Dtos.CreateProductRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
 import com.shelfj.product.repo.ProductRepository;
-import com.shelfj.product.repo.ProductRepository.OutboxRow;
+import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;

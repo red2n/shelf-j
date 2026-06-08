@@ -4,11 +4,38 @@ This folder contains k6 test cases for realtime gateway validation, including lo
 
 ## Contents
 
-- `common.js`: shared helper utilities and configuration values.
-- `gateway-login-protection.js`: combined gateway login protection test for rate limiting and brute-force blocking.
-- `gateway-rate-limit-stress.js`: high-concurrency stress test to verify gateway rate limiting.
-- `gateway-smoke-it.js`: lightweight integration test for gateway login behavior.
 
+DB validation
+-------------
+
+This `k6/db` folder contains SQL and shell scripts you can use to validate the database after running k6 tests. Because `k6` runs inside a JS sandbox it does not execute psql directly; instead the pattern used here is:
+
+- Run the API tests with `k6` to exercise the HTTP endpoints.
+- Run the validation shell scripts in `k6/db/` which invoke `psql` against the running Postgres container to assert the expected rows exist.
+
+Examples
+--------
+
+Run the IAM CRUD test and then validate that the user exists:
+
+```bash
+# run the k6 test (creates a single user)
+k6 run k6/iam-crud.js --env BASE_URL=http://localhost:8090
+
+# validate the user list (best-effort)
+export PGHOST=localhost
+export PGPORT=5432
+export PGUSER=shelfj
+export PGDATABASE=shelfj
+./k6/db/validate_all.sh
+```
+
+If you want a targeted check for the IAM user created by `iam-crud.js`, copy the email printed/logged by the k6 run and pass it to `k6/db/validate_iam.sh`.
+
+Notes
+-----
+- The validation scripts are intentionally tolerant: they attempt queries in the service schema and will continue if a schema/table is not present. Adjust queries to fit your local schema names if you changed `shelfj.db.schema` values.
+- For CI, you can wire the validation scripts as shell steps after `k6` runs; for robust assertions integrate a test-harness that runs SQL checks programmatically.
 ## Run tests
 
 Install `k6` first, then run one of the scripts:

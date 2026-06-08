@@ -4,10 +4,10 @@ import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.MoveType;
 import com.shelfj.inventory.domain.Domain.Reservation;
-import com.shelfj.service.OutboxStore;
+import com.shelfj.service.BaseOutboxRepository;
+import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.Date;
@@ -18,7 +18,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import javax.sql.DataSource;
 
 /**
  * Stock persistence (JDBC). All mutations are transactional and append a {@code stock_movements}
@@ -26,12 +25,7 @@ import javax.sql.DataSource;
  * filters tenant_id first.
  */
 @ApplicationScoped
-public class InventoryRepository implements OutboxStore {
-
-  @Inject DataSource dataSource;
-
-  public record OutboxRow(
-      String eventType, String topic, UUID tenantId, UUID aggregateId, String payload) {}
+public class InventoryRepository extends BaseOutboxRepository {
 
   // ---------------------------------------------------------------- receive
   /** Create a batch + RECEIVE movement + outbox event, atomically. */
@@ -69,8 +63,6 @@ public class InventoryRepository implements OutboxStore {
       OutboxRow event) {
     inTx(
         c -> {
-          // apply delta to the FIFO-first batch with capacity; for positive delta, create a
-          // no-expiry batch.
           if (delta.signum() >= 0) {
             Batch b =
                 new Batch(
@@ -197,7 +189,8 @@ public class InventoryRepository implements OutboxStore {
   /** Find HELD reservations that have expired (for the sweeper). */
   public List<UUID> expiredHeldReservations(int limit) {
     return query(
-        "SELECT id FROM reservations WHERE status = 'HELD' AND expires_at IS NOT NULL AND expires_at < now() LIMIT ?",
+        "SELECT id FROM reservations WHERE status = 'HELD'"
+            + " AND expires_at IS NOT NULL AND expires_at < now() LIMIT ?",
         ps -> ps.setInt(1, limit),
         rs -> rs.getObject("id", UUID.class),
         "find expired reservations");
@@ -219,8 +212,6 @@ public class InventoryRepository implements OutboxStore {
    * (store,variant).
    */
   public List<Level> levels(UUID tenantId, UUID storeId) {
-    // on-hand from batches LEFT JOINed to pre-aggregated HELD reservations (avoids an ungrouped
-    // correlated subquery).
     String sql =
         """
                 SELECT b.store_id, b.variant_id,
@@ -258,6 +249,22 @@ public class InventoryRepository implements OutboxStore {
         "load levels");
   }
 
+  // ---------------------------------------------------------------- processed events
+
+  public boolean markProcessedIfNew(UUID eventId, String consumer) {
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "INSERT INTO processed_events (event_id, consumer) VALUES (?,?)"
+                    + " ON CONFLICT (event_id) DO NOTHING")) {
+      ps.setObject(1, eventId);
+      ps.setString(2, consumer);
+      return ps.executeUpdate() > 0;
+    } catch (SQLException e) {
+      throw dbError("mark processed event", e);
+    }
+  }
+
   // ---------------------------------------------------------------- internals
 
   /** Available = sum(remaining batches) − sum(HELD reservations), with the batch rows locked. */
@@ -267,8 +274,8 @@ public class InventoryRepository implements OutboxStore {
     BigDecimal onHand = BigDecimal.ZERO;
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT remaining_qty FROM inventory_batches "
-                + "WHERE tenant_id=? AND store_id=? AND variant_id=? FOR UPDATE")) {
+            "SELECT remaining_qty FROM inventory_batches"
+                + " WHERE tenant_id=? AND store_id=? AND variant_id=? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, storeId);
       ps.setObject(3, variantId);
@@ -279,8 +286,8 @@ public class InventoryRepository implements OutboxStore {
     BigDecimal reserved = BigDecimal.ZERO;
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT COALESCE(SUM(qty),0) AS q FROM reservations "
-                + "WHERE tenant_id=? AND store_id=? AND variant_id=? AND status='HELD'")) {
+            "SELECT COALESCE(SUM(qty),0) AS q FROM reservations"
+                + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND status='HELD'")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, storeId);
       ps.setObject(3, variantId);
@@ -306,12 +313,12 @@ public class InventoryRepository implements OutboxStore {
       UUID refId)
       throws SQLException {
     BigDecimal toDeduct = qty;
-    String sql =
-        "SELECT id, remaining_qty FROM inventory_batches "
-            + "WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty > 0 "
-            + "ORDER BY expiry_date ASC NULLS LAST, created_at ASC FOR UPDATE";
     List<Object[]> batches = new ArrayList<>();
-    try (PreparedStatement ps = c.prepareStatement(sql)) {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, remaining_qty FROM inventory_batches"
+                + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty > 0"
+                + " ORDER BY expiry_date ASC NULLS LAST, created_at ASC FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, storeId);
       ps.setObject(3, variantId);
@@ -347,7 +354,8 @@ public class InventoryRepository implements OutboxStore {
       throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, created_at FROM reservations WHERE tenant_id=? AND id=? FOR UPDATE")) {
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+                + " created_at FROM reservations WHERE tenant_id=? AND id=? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, id);
       try (ResultSet rs = ps.executeQuery()) {
@@ -368,8 +376,10 @@ public class InventoryRepository implements OutboxStore {
   private void insertBatch(Connection c, Batch b) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "INSERT INTO inventory_batches (id, tenant_id, store_id, variant_id, batch_no, received_qty, "
-                + "remaining_qty, cost_price, expiry_date, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+            "INSERT INTO inventory_batches"
+                + " (id, tenant_id, store_id, variant_id, batch_no, received_qty,"
+                + " remaining_qty, cost_price, expiry_date, created_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, b.id());
       ps.setObject(2, b.tenantId());
       ps.setObject(3, b.storeId());
@@ -387,8 +397,9 @@ public class InventoryRepository implements OutboxStore {
   private void insertReservation(Connection c, Reservation r) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "INSERT INTO reservations (id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, created_at) "
-                + "VALUES (?,?,?,?,?,?,?,?,?)")) {
+            "INSERT INTO reservations"
+                + " (id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, created_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, r.id());
       ps.setObject(2, r.tenantId());
       ps.setObject(3, r.storeId());
@@ -415,8 +426,9 @@ public class InventoryRepository implements OutboxStore {
       throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "INSERT INTO stock_movements (id, tenant_id, store_id, variant_id, batch_id, type, qty, ref_type, ref_id) "
-                + "VALUES (?,?,?,?,?,?,?,?,?)")) {
+            "INSERT INTO stock_movements"
+                + " (id, tenant_id, store_id, variant_id, batch_id, type, qty, ref_type, ref_id)"
+                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, UUID.randomUUID());
       ps.setObject(2, tenantId);
       ps.setObject(3, storeId);
@@ -427,116 +439,6 @@ public class InventoryRepository implements OutboxStore {
       ps.setString(8, refType);
       ps.setObject(9, refId);
       ps.executeUpdate();
-    }
-  }
-
-  private void insertOutbox(Connection c, OutboxRow o) throws SQLException {
-    if (o == null) return;
-    try (PreparedStatement ps =
-        c.prepareStatement(
-            "INSERT INTO outbox (id, event_type, topic, tenant_id, aggregate_id, payload) VALUES (?,?,?,?,?,?)")) {
-      ps.setObject(1, UUID.randomUUID());
-      ps.setString(2, o.eventType());
-      ps.setString(3, o.topic());
-      ps.setObject(4, o.tenantId());
-      ps.setObject(5, o.aggregateId());
-      ps.setString(6, o.payload());
-      ps.executeUpdate();
-    }
-  }
-
-  // ---------------------------------------------------------------- outbox (OutboxStore) +
-  // processed-events
-  @Override
-  public List<PendingOutbox> pendingOutbox(int limit) {
-    return query(
-        "SELECT id, topic, payload FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?",
-        ps -> ps.setInt(1, limit),
-        rs ->
-            new PendingOutbox(
-                rs.getObject("id", UUID.class), rs.getString("topic"), rs.getString("payload")),
-        "read outbox");
-  }
-
-  @Override
-  public void markPublished(UUID id) {
-    exec(
-        "UPDATE outbox SET published_at = now() WHERE id = ?",
-        ps -> ps.setObject(1, id),
-        "mark outbox published");
-  }
-
-  public boolean markProcessedIfNew(UUID eventId, String consumer) {
-    try (Connection c = dataSource.getConnection();
-        PreparedStatement ps =
-            c.prepareStatement(
-                "INSERT INTO processed_events (event_id, consumer) VALUES (?,?) ON CONFLICT (event_id) DO NOTHING")) {
-      ps.setObject(1, eventId);
-      ps.setString(2, consumer);
-      return ps.executeUpdate() > 0;
-    } catch (SQLException e) {
-      throw dbError("mark processed event", e);
-    }
-  }
-
-  // ---------------------------------------------------------------- tx + helpers
-  @FunctionalInterface
-  private interface TxWork<R> {
-    R run(Connection c) throws SQLException;
-  }
-
-  @FunctionalInterface
-  private interface Binder {
-    void bind(PreparedStatement ps) throws SQLException;
-  }
-
-  @FunctionalInterface
-  private interface RowMapper<T> {
-    T map(ResultSet rs) throws SQLException;
-  }
-
-  private <R> R inTx(TxWork<R> work, String what) {
-    try (Connection c = dataSource.getConnection()) {
-      c.setAutoCommit(false);
-      try {
-        R r = work.run(c);
-        c.commit();
-        return r;
-      } catch (ApiException ae) {
-        c.rollback();
-        throw ae;
-      } catch (SQLException e) {
-        c.rollback();
-        throw dbError(what, e);
-      } finally {
-        c.setAutoCommit(true);
-      }
-    } catch (SQLException e) {
-      throw dbError(what + " (connection)", e);
-    }
-  }
-
-  private void exec(String sql, Binder binder, String what) {
-    try (Connection c = dataSource.getConnection();
-        PreparedStatement ps = c.prepareStatement(sql)) {
-      binder.bind(ps);
-      ps.executeUpdate();
-    } catch (SQLException e) {
-      throw dbError(what, e);
-    }
-  }
-
-  private <T> List<T> query(String sql, Binder binder, RowMapper<T> mapper, String what) {
-    try (Connection c = dataSource.getConnection();
-        PreparedStatement ps = c.prepareStatement(sql)) {
-      binder.bind(ps);
-      try (ResultSet rs = ps.executeQuery()) {
-        List<T> out = new ArrayList<>();
-        while (rs.next()) out.add(mapper.map(rs));
-        return out;
-      }
-    } catch (SQLException e) {
-      throw dbError(what, e);
     }
   }
 
@@ -552,9 +454,5 @@ public class InventoryRepository implements OutboxStore {
         rs.getString("status"),
         exp,
         rs.getObject("created_at", Instant.class));
-  }
-
-  private static ApiException dbError(String what, Throwable cause) {
-    return new ApiException(500, "DB_ERROR", "Failed to " + what, List.of(), cause);
   }
 }

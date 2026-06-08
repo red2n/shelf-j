@@ -1,5 +1,6 @@
 package com.shelfj.tenant.service;
 
+import com.shelfj.service.OutboxRow;
 import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.StoreWithZone;
@@ -11,7 +12,6 @@ import com.shelfj.tenant.dto.Dtos.CreateTenantRequest;
 import com.shelfj.tenant.dto.Dtos.CreateZoneRequest;
 import com.shelfj.tenant.dto.Dtos.OnboardingStatus;
 import com.shelfj.tenant.repo.TenantRepository;
-import com.shelfj.tenant.repo.TenantRepository.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;

@@ -4,33 +4,26 @@ import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
 import com.shelfj.product.domain.Domain.Product;
 import com.shelfj.product.domain.Domain.Variant;
-import com.shelfj.service.OutboxStore;
+import com.shelfj.service.BaseOutboxRepository;
+import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import javax.sql.DataSource;
 
 /**
  * Catalog persistence (JDBC). Every query filters tenant_id FIRST (golden rule #3). Writes that
  * emit an event do so via the outbox in the same transaction (golden rule #6).
  */
 @ApplicationScoped
-public class ProductRepository implements OutboxStore {
-
-  @Inject DataSource dataSource;
-
-  public record OutboxRow(
-      String eventType, String topic, UUID tenantId, UUID aggregateId, String payload) {}
+public class ProductRepository extends BaseOutboxRepository {
 
   // --- brands ---
   public Brand createBrand(UUID tenantId, String name) {
@@ -58,7 +51,6 @@ public class ProductRepository implements OutboxStore {
   // --- categories ---
   public Category createCategory(UUID tenantId, UUID parentId, String name) {
     var c = new Category(UUID.randomUUID(), tenantId, parentId, name, Instant.now());
-    // validate parent belongs to tenant (if provided)
     if (parentId != null && findCategory(tenantId, parentId).isEmpty()) {
       throw ApiException.badRequest("PARENT_NOT_FOUND", "parentId not found in this tenant");
     }
@@ -76,16 +68,16 @@ public class ProductRepository implements OutboxStore {
   }
 
   public Optional<Category> findCategory(UUID tenantId, UUID id) {
-    var list =
-        query(
+    return query(
             "SELECT id, tenant_id, parent_id, name, created_at FROM categories WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
             },
             ProductRepository::mapCategory,
-            "find category");
-    return list.stream().findFirst();
+            "find category")
+        .stream()
+        .findFirst();
   }
 
   public List<Category> listCategories(UUID tenantId) {
@@ -110,10 +102,11 @@ public class ProductRepository implements OutboxStore {
   public Product updateProductWithOutbox(Product p, OutboxRow event) {
     return inTx(
         c -> {
-          String sql =
-              "UPDATE products SET name=?, description=?, brand_id=?, category_id=?, status=?, "
-                  + "sellable_online=?, sellable_pos=?, updated_at=? WHERE tenant_id=? AND id=?";
-          try (PreparedStatement ps = c.prepareStatement(sql)) {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE products SET name=?, description=?, brand_id=?, category_id=?, status=?,"
+                      + " sellable_online=?, sellable_pos=?, updated_at=?"
+                      + " WHERE tenant_id=? AND id=?")) {
             ps.setString(1, p.name());
             ps.setString(2, p.description());
             ps.setObject(3, p.brandId());
@@ -124,9 +117,8 @@ public class ProductRepository implements OutboxStore {
             ps.setTimestamp(8, Timestamp.from(p.updatedAt()));
             ps.setObject(9, p.tenantId());
             ps.setObject(10, p.id());
-            if (ps.executeUpdate() == 0) {
+            if (ps.executeUpdate() == 0)
               throw ApiException.notFound("PRODUCT_NOT_FOUND", "No such product in this tenant");
-            }
           }
           insertOutbox(c, event);
           return p;
@@ -135,26 +127,27 @@ public class ProductRepository implements OutboxStore {
   }
 
   public Optional<Product> findProduct(UUID tenantId, UUID id) {
-    var list =
-        query(
-            "SELECT id, tenant_id, name, description, brand_id, category_id, status, sellable_online, sellable_pos, created_at, updated_at FROM products WHERE tenant_id = ? AND id = ?",
+    return query(
+            "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
+                + " sellable_online, sellable_pos, created_at, updated_at"
+                + " FROM products WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
             },
             ProductRepository::mapProduct,
-            "find product");
-    return list.stream().findFirst();
+            "find product")
+        .stream()
+        .findFirst();
   }
 
-  /**
-   * List active products for a tenant, optionally filtered by category, newest first, with a simple
-   * limit.
-   */
+  /** List active products for a tenant, optionally filtered by category, newest first. */
   public List<Product> listProducts(UUID tenantId, UUID categoryId, boolean onlineOnly, int limit) {
     StringBuilder sql =
         new StringBuilder(
-            "SELECT id, tenant_id, name, description, brand_id, category_id, status, sellable_online, sellable_pos, created_at, updated_at FROM products WHERE tenant_id = ? AND status = 'ACTIVE'");
+            "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
+                + " sellable_online, sellable_pos, created_at, updated_at"
+                + " FROM products WHERE tenant_id = ? AND status = 'ACTIVE'");
     if (categoryId != null) sql.append(" AND category_id = ?");
     if (onlineOnly) sql.append(" AND sellable_online = true");
     sql.append(" ORDER BY created_at DESC LIMIT ?");
@@ -178,7 +171,6 @@ public class ProductRepository implements OutboxStore {
   public Variant createVariantWithOutbox(Variant v, OutboxRow event) {
     return inTx(
         c -> {
-          // ensure parent product exists in tenant
           try (PreparedStatement ps =
               c.prepareStatement("SELECT 1 FROM products WHERE tenant_id=? AND id=?")) {
             ps.setObject(1, v.tenantId());
@@ -188,10 +180,11 @@ public class ProductRepository implements OutboxStore {
                 throw ApiException.notFound("PRODUCT_NOT_FOUND", "Parent product not found");
             }
           }
-          String sql =
-              "INSERT INTO product_variants (id, tenant_id, product_id, sku, barcode, attributes, unit, created_at) "
-                  + "VALUES (?,?,?,?,?,?,?,?)";
-          try (PreparedStatement ps = c.prepareStatement(sql)) {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO product_variants"
+                      + " (id, tenant_id, product_id, sku, barcode, attributes, unit, created_at)"
+                      + " VALUES (?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, v.id());
             ps.setObject(2, v.tenantId());
             ps.setObject(3, v.productId());
@@ -210,7 +203,8 @@ public class ProductRepository implements OutboxStore {
 
   public List<Variant> listVariants(UUID tenantId, UUID productId) {
     return query(
-        "SELECT id, tenant_id, product_id, sku, barcode, attributes, unit, created_at FROM product_variants WHERE tenant_id = ? AND product_id = ? ORDER BY created_at",
+        "SELECT id, tenant_id, product_id, sku, barcode, attributes, unit, created_at"
+            + " FROM product_variants WHERE tenant_id = ? AND product_id = ? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, productId);
@@ -219,33 +213,23 @@ public class ProductRepository implements OutboxStore {
         "list variants");
   }
 
-  // --- outbox drain (OutboxStore) ---
   @Override
-  public List<PendingOutbox> pendingOutbox(int limit) {
-    return query(
-        "SELECT id, topic, payload FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?",
-        ps -> ps.setInt(1, limit),
-        rs ->
-            new PendingOutbox(
-                rs.getObject("id", UUID.class), rs.getString("topic"), rs.getString("payload")),
-        "read outbox");
+  protected RuntimeException handleTxSqlException(String what, SQLException e) {
+    if (UNIQUE_VIOLATION.equals(e.getSQLState()))
+      return new ApiException(
+          409, "DUPLICATE", "A record with that unique value already exists", List.of(), e);
+    return dbError(what, e);
   }
 
-  @Override
-  public void markPublished(UUID id) {
-    exec(
-        "UPDATE outbox SET published_at = now() WHERE id = ?",
-        ps -> ps.setObject(1, id),
-        "mark outbox published");
-  }
-
-  // --- inserts/helpers ---
+  // --- inserts / mappers ---
 
   private void insertProduct(Connection c, Product p) throws SQLException {
-    String sql =
-        "INSERT INTO products (id, tenant_id, name, description, brand_id, category_id, status, "
-            + "sellable_online, sellable_pos, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)";
-    try (PreparedStatement ps = c.prepareStatement(sql)) {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO products"
+                + " (id, tenant_id, name, description, brand_id, category_id, status,"
+                + " sellable_online, sellable_pos, created_at, updated_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, p.id());
       ps.setObject(2, p.tenantId());
       ps.setString(3, p.name());
@@ -258,86 +242,6 @@ public class ProductRepository implements OutboxStore {
       ps.setTimestamp(10, Timestamp.from(p.createdAt()));
       ps.setTimestamp(11, Timestamp.from(p.updatedAt()));
       ps.executeUpdate();
-    }
-  }
-
-  private void insertOutbox(Connection c, OutboxRow o) throws SQLException {
-    try (PreparedStatement ps =
-        c.prepareStatement(
-            "INSERT INTO outbox (id, event_type, topic, tenant_id, aggregate_id, payload) VALUES (?,?,?,?,?,?)")) {
-      ps.setObject(1, UUID.randomUUID());
-      ps.setString(2, o.eventType());
-      ps.setString(3, o.topic());
-      ps.setObject(4, o.tenantId());
-      ps.setObject(5, o.aggregateId());
-      ps.setString(6, o.payload());
-      ps.executeUpdate();
-    }
-  }
-
-  // tx + small JDBC helpers
-  @FunctionalInterface
-  private interface TxWork<R> {
-    R run(Connection c) throws SQLException;
-  }
-
-  @FunctionalInterface
-  private interface Binder {
-    void bind(PreparedStatement ps) throws SQLException;
-  }
-
-  @FunctionalInterface
-  private interface RowMapper<T> {
-    T map(ResultSet rs) throws SQLException;
-  }
-
-  private static final String UNIQUE_VIOLATION = "23505";
-
-  private <R> R inTx(TxWork<R> work, String what) {
-    try (Connection c = dataSource.getConnection()) {
-      c.setAutoCommit(false);
-      try {
-        R r = work.run(c);
-        c.commit();
-        return r;
-      } catch (SQLException e) {
-        c.rollback();
-        if (UNIQUE_VIOLATION.equals(e.getSQLState())) {
-          throw new ApiException(
-              409, "DUPLICATE", "A record with that unique value already exists", List.of(), e);
-        }
-        throw dbError(what, e);
-      } finally {
-        c.setAutoCommit(true);
-      }
-    } catch (SQLException e) {
-      throw dbError(what + " (connection)", e);
-    }
-  }
-
-  private void exec(String sql, Binder binder, String what) {
-    try (Connection c = dataSource.getConnection();
-        PreparedStatement ps = c.prepareStatement(sql)) {
-      binder.bind(ps);
-      ps.executeUpdate();
-    } catch (SQLException e) {
-      if (UNIQUE_VIOLATION.equals(e.getSQLState()))
-        throw new ApiException(409, "DUPLICATE", "Already exists", List.of(), e);
-      throw dbError(what, e);
-    }
-  }
-
-  private <T> List<T> query(String sql, Binder binder, RowMapper<T> mapper, String what) {
-    try (Connection c = dataSource.getConnection();
-        PreparedStatement ps = c.prepareStatement(sql)) {
-      binder.bind(ps);
-      try (ResultSet rs = ps.executeQuery()) {
-        List<T> out = new ArrayList<>();
-        while (rs.next()) out.add(mapper.map(rs));
-        return out;
-      }
-    } catch (SQLException e) {
-      throw dbError(what, e);
     }
   }
 
@@ -383,9 +287,5 @@ public class ProductRepository implements OutboxStore {
         rs.getString("attributes"),
         rs.getString("unit"),
         rs.getTimestamp("created_at").toInstant());
-  }
-
-  private static ApiException dbError(String what, Throwable cause) {
-    return new ApiException(500, "DB_ERROR", "Failed to " + what, List.of(), cause);
   }
 }
