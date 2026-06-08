@@ -766,7 +766,21 @@ curl http://localhost:8500/v1/agent/services   # Consul: registered services
 
 **Ports:** see PRD §8 (gateway 8080, config 8888, consul 8500, services 8001–8012, postgres 5432, kafka 9092, redis 6379, zipkin 9411, prometheus 9090, grafana 3000). Remember these per-service ports are a **local-dev convenience only** — in production every service listens on the same internal port; see §13.
 
-### 12.1 Make docker-compose model readiness gating (not a race)
+### 12.1 GitHub Actions CI and release
+
+This repository is configured with GitHub Actions for automated build and release.
+
+- `ci.yml` runs on push and pull request events targeting `main` and `master`.
+- `release.yml` runs when a tag matching `v*` is pushed.
+- The release workflow builds the full Maven reactor and uploads generated module JARs as GitHub release assets.
+
+To publish a release:
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+### 12.2 Make docker-compose model readiness gating (not a race)
 
 Even locally, don't let services start before Postgres/Kafka are actually accepting connections. Use **healthchecks** + `depends_on: condition: service_healthy` so compose waits for a dependency to be *healthy*, not merely *started*. This mirrors (in miniature) the production readiness gates in §13.
 

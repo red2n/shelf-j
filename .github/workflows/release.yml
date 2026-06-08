@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build release package
+        run: mvn -U -B -V clean install
+
+      - name: Collect release artifacts
+        run: |
+          mkdir -p release-artifacts
+          find . -path '*/target/*.jar' -type f -not -path '*/target/dependency/*' -exec cp {} release-artifacts/ \;
+          ls -1 release-artifacts
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Shelf-J Release ${{ github.ref_name }}
+          body: |
+            Shelf-J release built from commit ${{ github.sha }}.
+          files: release-artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
