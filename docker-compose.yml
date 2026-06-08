@@ -357,6 +357,7 @@ services:
   # ---------------------------------------------------------------- platform services
 
   config:
+    image: ghcr.io/red2n/shelf-j-config:${SHELFJ_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
@@ -379,6 +380,7 @@ services:
   # ---------------------------------------------------------------- business services
 
   iam-svc:
+    image: ghcr.io/red2n/shelf-j-iam-svc:${SHELFJ_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
@@ -409,6 +411,7 @@ services:
       start_period: 30s
 
   tenant-svc:
+    image: ghcr.io/red2n/shelf-j-tenant-svc:${SHELFJ_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
@@ -439,6 +442,7 @@ services:
       start_period: 30s
 
   inventory-svc:
+    image: ghcr.io/red2n/shelf-j-inventory-svc:${SHELFJ_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
@@ -469,6 +473,7 @@ services:
       start_period: 30s
 
   product-svc:
+    image: ghcr.io/red2n/shelf-j-product-svc:${SHELFJ_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
@@ -499,6 +504,7 @@ services:
       start_period: 30s
 
   sample-svc:
+    image: ghcr.io/red2n/shelf-j-sample-svc:${SHELFJ_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
@@ -530,6 +536,7 @@ services:
   # ---------------------------------------------------------------- gateway (single public door)
 
   gateway:
+    image: ghcr.io/red2n/shelf-j-gateway:${SHELFJ_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.svc
