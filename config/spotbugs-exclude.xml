@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs exclusion filter for Shelf-J.
+
+  Suppresses false positives that arise from CDI/Jakarta EE patterns that SpotBugs
+  cannot reason about statically (injection, proxy subclassing, lifecycle callbacks).
+  Only add entries here when the finding is a confirmed false positive — never suppress
+  real bugs.
+-->
+<FindBugsFilter>
+
+    <!--
+      CDI-injected fields are never set by a constructor, so SpotBugs flags them as
+      "field is never written" or "may not be initialized". The CDI container writes
+      them at runtime via proxying.
+    -->
+    <Match>
+        <Bug pattern="UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR"/>
+        <Or>
+            <Annotation name="jakarta.inject.Inject"/>
+            <Annotation name="jakarta.enterprise.inject.Inject"/>
+        </Or>
+    </Match>
+
+    <!--
+      Java records expose their component accessor methods, which return the internal
+      field reference directly. For immutable value types (records) this is intentional —
+      the record IS the value; exposing its fields is correct.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="~.*\.(dto|domain)\..*"/>
+    </Match>
+
+    <!--
+      JDBC PreparedStatement and ResultSet are always closed via try-with-resources in
+      this codebase. SpotBugs occasionally misses the try-with-resources pattern when
+      the resource is opened inside a lambda or inner class.
+    -->
+    <Match>
+        <Bug pattern="OBL_UNSATISFIED_OBLIGATION_EXCEPTION_EDGE"/>
+        <Class name="~.*\.repo\..*"/>
+    </Match>
+
+    <!--
+      Kafka consumer/producer are closed in @PreDestroy — SpotBugs cannot trace the
+      CDI lifecycle so it flags them as potential resource leaks.
+    -->
+    <Match>
+        <Bug pattern="OBL_UNSATISFIED_OBLIGATION,OBL_UNSATISFIED_OBLIGATION_EXCEPTION_EDGE"/>
+        <Class name="~.*\.messaging\..*"/>
+    </Match>
+
+    <!--
+      System.Logger is the JDK's built-in logger (java.lang.System.Logger). SpotBugs
+      sometimes flags the static initialisation pattern as a potential issue.
+    -->
+    <Match>
+        <Bug pattern="LG_LOST_LOGGER_DUE_TO_WEAK_REFERENCE"/>
+    </Match>
+
+    <!--
+      Java text blocks (multi-line string literals) are stored with LF (\n) in the
+      bytecode constant pool. When the text block is used with String.formatted(),
+      SpotBugs 4.8.x fires VA_FORMAT_STRING_USES_NEWLINE, incorrectly treating the
+      embedded newlines as platform-dependent escape sequences. HTTP/JSON bodies
+      intentionally use LF and do not need %n. This is a SpotBugs false positive for
+      text blocks.
+    -->
+    <Match>
+        <Bug pattern="VA_FORMAT_STRING_USES_NEWLINE"/>
+    </Match>
+
+</FindBugsFilter>

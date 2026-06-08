@@ -18,8 +18,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
 /**
- * Public authentication endpoints (README §9.1). These are reachable without a tenant/JWT — they MINT identity.
- * Thin controllers: validate DTO, delegate to {@link AuthService}, return the envelope.
+ * Public authentication endpoints (README §9.1). These are reachable without a tenant/JWT — they
+ * MINT identity. Thin controllers: validate DTO, delegate to {@link AuthService}, return the
+ * envelope.
  */
 @Path("/auth")
 @ApplicationScoped
@@ -27,36 +28,35 @@ import jakarta.ws.rs.core.Response;
 @Consumes(MediaType.APPLICATION_JSON)
 public class AuthResource {
 
-    @Inject
-    AuthService auth;
+  @Inject AuthService auth;
 
-    @POST
-    @Path("/register")
-    public Response register(RegisterRequest req) {
-        Validations.validate(req);
-        TokenResponse tokens = auth.register(req.email(), req.password(), req.phone());
-        return Response.status(Response.Status.CREATED).entity(ApiResponse.ok(tokens)).build();
-    }
+  @POST
+  @Path("/register")
+  public Response register(RegisterRequest req) {
+    Validations.validate(req);
+    TokenResponse tokens = auth.register(req.email(), req.password(), req.phone());
+    return Response.status(Response.Status.CREATED).entity(ApiResponse.ok(tokens)).build();
+  }
 
-    @POST
-    @Path("/login")
-    public ApiResponse<TokenResponse> login(LoginRequest req) {
-        Validations.validate(req);
-        return ApiResponse.ok(auth.login(req.email(), req.password()));
-    }
+  @POST
+  @Path("/login")
+  public ApiResponse<TokenResponse> login(LoginRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(auth.login(req.email(), req.password()));
+  }
 
-    @POST
-    @Path("/refresh")
-    public ApiResponse<TokenResponse> refresh(RefreshRequest req) {
-        Validations.validate(req);
-        return ApiResponse.ok(auth.refresh(req.refreshToken()));
-    }
+  @POST
+  @Path("/refresh")
+  public ApiResponse<TokenResponse> refresh(RefreshRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(auth.refresh(req.refreshToken()));
+  }
 
-    @POST
-    @Path("/logout")
-    public ApiResponse<String> logout(LogoutRequest req) {
-        Validations.validate(req);
-        auth.logout(req.refreshToken());
-        return ApiResponse.ok("logged_out");
-    }
+  @POST
+  @Path("/logout")
+  public ApiResponse<String> logout(LogoutRequest req) {
+    Validations.validate(req);
+    auth.logout(req.refreshToken());
+    return ApiResponse.ok("logged_out");
+  }
 }

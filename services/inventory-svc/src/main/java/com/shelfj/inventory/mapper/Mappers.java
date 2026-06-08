@@ -9,19 +9,29 @@ import com.shelfj.inventory.dto.Dtos.ReservationResponse;
 
 public final class Mappers {
 
-    private Mappers() {}
+  private Mappers() {}
 
-    public static LevelResponse toLevel(Level l) {
-        return new LevelResponse(l.storeId().toString(), l.variantId().toString(), l.onHand(), l.reserved(), l.available());
-    }
+  public static LevelResponse toLevel(Level l) {
+    return new LevelResponse(
+        l.storeId().toString(), l.variantId().toString(), l.onHand(), l.reserved(), l.available());
+  }
 
-    public static ReservationResponse toReservation(Reservation r) {
-        return new ReservationResponse(r.id().toString(), r.storeId().toString(), r.variantId().toString(),
-                r.qty(), r.status(), r.expiresAt() == null ? null : r.expiresAt().toString());
-    }
+  public static ReservationResponse toReservation(Reservation r) {
+    return new ReservationResponse(
+        r.id().toString(),
+        r.storeId().toString(),
+        r.variantId().toString(),
+        r.qty(),
+        r.status(),
+        r.expiresAt() == null ? null : r.expiresAt().toString());
+  }
 
-    public static BatchResponse toBatch(Batch b) {
-        return new BatchResponse(b.id().toString(), b.storeId().toString(), b.variantId().toString(),
-                b.receivedQty(), b.remainingQty());
-    }
+  public static BatchResponse toBatch(Batch b) {
+    return new BatchResponse(
+        b.id().toString(),
+        b.storeId().toString(),
+        b.variantId().toString(),
+        b.receivedQty(),
+        b.remainingQty());
+  }
 }

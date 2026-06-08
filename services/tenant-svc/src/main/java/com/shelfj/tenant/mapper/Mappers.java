@@ -10,17 +10,19 @@ import com.shelfj.tenant.dto.Dtos.ZoneResponse;
 /** Entity → DTO conversion (never expose entities over HTTP). */
 public final class Mappers {
 
-    private Mappers() {}
+  private Mappers() {}
 
-    public static TenantResponse toTenant(Tenant t) {
-        return new TenantResponse(t.id().toString(), t.name(), t.status(), t.country(), t.currency());
-    }
+  public static TenantResponse toTenant(Tenant t) {
+    return new TenantResponse(t.id().toString(), t.name(), t.status(), t.country(), t.currency());
+  }
 
-    public static StoreResponse toStore(Store s) {
-        return new StoreResponse(s.id().toString(), s.name(), s.code(), s.type(), s.status(), s.isDefault(), s.timezone());
-    }
+  public static StoreResponse toStore(Store s) {
+    return new StoreResponse(
+        s.id().toString(), s.name(), s.code(), s.type(), s.status(), s.isDefault(), s.timezone());
+  }
 
-    public static ZoneResponse toZone(Zone z) {
-        return new ZoneResponse(z.id().toString(), z.storeId().toString(), z.name(), z.code(), z.type(), z.status());
-    }
+  public static ZoneResponse toZone(Zone z) {
+    return new ZoneResponse(
+        z.id().toString(), z.storeId().toString(), z.name(), z.code(), z.type(), z.status());
+  }
 }

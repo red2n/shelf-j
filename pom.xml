@@ -35,6 +35,17 @@
         <testcontainers.version>1.20.4</testcontainers.version>
         <junit.version>5.11.3</junit.version>
         <shelfj.version>0.1.0-SNAPSHOT</shelfj.version>
+
+        <!-- Quality tooling versions -->
+        <archunit.version>1.3.0</archunit.version>
+        <spotbugs-plugin.version>4.8.6.4</spotbugs-plugin.version>
+        <pmd-plugin.version>3.25.0</pmd-plugin.version>
+        <fmt-plugin.version>2.23</fmt-plugin.version>
+
+        <!-- Quality gate skip flags (override per-module or on CLI with -Dspotbugs.skip=true etc.) -->
+        <spotbugs.skip>false</spotbugs.skip>
+        <pmd.skip>false</pmd.skip>
+        <maven.fmt.skip>false</maven.fmt.skip>
     </properties>
 
     <modules>
@@ -109,6 +120,14 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+
+            <!-- Quality: ArchUnit — architecture rule tests (used in common-test + each service) -->
+            <dependency>
+                <groupId>com.tngtech.archunit</groupId>
+                <artifactId>archunit-junit5</artifactId>
+                <version>${archunit.version}</version>
+                <scope>compile</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -123,7 +142,97 @@
                         <useModulePath>false</useModulePath>
                     </configuration>
                 </plugin>
+
+                <!-- ── google-java-format ─────────────────────────────────────────────
+                     Run `mvn fmt:format` to auto-fix. `mvn fmt:check` (or verify phase)
+                     fails the build if any file diverges from canonical format.        -->
+                <plugin>
+                    <groupId>com.spotify.fmt</groupId>
+                    <artifactId>fmt-maven-plugin</artifactId>
+                    <version>${fmt-plugin.version}</version>
+                    <configuration>
+                        <skip>${maven.fmt.skip}</skip>
+                    </configuration>
+                </plugin>
+
+                <!-- ── SpotBugs ──────────────────────────────────────────────────────
+                     Detects likely bugs: null-dereference, resource leaks, bad JDBC use.
+                     CDI false-positives are suppressed via spotbugs-exclude.xml.        -->
+                <plugin>
+                    <groupId>com.github.spotbugs</groupId>
+                    <artifactId>spotbugs-maven-plugin</artifactId>
+                    <version>${spotbugs-plugin.version}</version>
+                    <configuration>
+                        <effort>Max</effort>
+                        <threshold>Medium</threshold>
+                        <failOnError>true</failOnError>
+                        <skip>${spotbugs.skip}</skip>
+                        <excludeFilterFile>${maven.multiModuleProjectDirectory}/config/spotbugs-exclude.xml</excludeFilterFile>
+                    </configuration>
+                </plugin>
+
+                <!-- ── PMD ───────────────────────────────────────────────────────────
+                     Flags error-prone patterns and dead code. Ruleset in config/pmd-ruleset.xml
+                     excludes noisy CDI/framework false-positives.                      -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-pmd-plugin</artifactId>
+                    <version>${pmd-plugin.version}</version>
+                    <configuration>
+                        <rulesets>
+                            <ruleset>${maven.multiModuleProjectDirectory}/config/pmd-ruleset.xml</ruleset>
+                        </rulesets>
+                        <failOnViolation>true</failOnViolation>
+                        <printFailingErrors>true</printFailingErrors>
+                        <targetJdk>21</targetJdk>
+                        <skip>${pmd.skip}</skip>
+                        <excludeRoots>
+                            <excludeRoot>target/generated-sources</excludeRoot>
+                        </excludeRoots>
+                    </configuration>
+                </plugin>
             </plugins>
         </pluginManagement>
+
+        <plugins>
+            <!-- fmt:check runs at validate (first phase) — fastest possible feedback on format violations -->
+            <plugin>
+                <groupId>com.spotify.fmt</groupId>
+                <artifactId>fmt-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>format-check</id>
+                        <phase>validate</phase>
+                        <goals><goal>check</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- SpotBugs runs at verify (after compile + test) -->
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>spotbugs-check</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- PMD runs at verify -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-pmd-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>pmd-check</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
 </project>

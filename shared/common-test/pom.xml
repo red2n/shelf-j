@@ -17,6 +17,14 @@
 
     <dependencies>
         <!-- Compile scope: this IS a test-support library other modules depend on (test scope) -->
+
+        <!-- ArchUnit — compile scope so ShelfJArchRules compiles here and is transitively
+             available to every service that depends on common-test at test scope. -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers</artifactId>
