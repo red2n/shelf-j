@@ -1,0 +1,4 @@
+# PgBouncer userlist — AUTH_TYPE=trust so passwords are not verified in dev.
+# In production: switch AUTH_TYPE to scram-sha-256 and store hashed credentials.
+# Format: "username" "password-or-hash"
+"shelfj" ""
