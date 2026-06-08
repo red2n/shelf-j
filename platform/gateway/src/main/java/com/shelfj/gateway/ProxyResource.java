@@ -53,12 +53,12 @@ public class ProxyResource {
         .map(
             instance -> {
               String requestId = newRequestId();
-              String target = instance.baseUri() + "/" + path + queryString(uriInfo);
               var req =
                   webClient
-                      .get(target)
+                      .get(instance.baseUri() + "/" + path)
                       .header(
                           io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId);
+              addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
               return relay(req.request(), requestId);
             })
@@ -79,12 +79,12 @@ public class ProxyResource {
         .map(
             instance -> {
               String requestId = newRequestId();
-              String target = instance.baseUri() + "/" + path + queryString(uriInfo);
               var req =
                   webClient
-                      .post(target)
+                      .post(instance.baseUri() + "/" + path)
                       .header(io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId)
                       .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
+              addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
               return relay(req.submit(body == null ? "" : body), requestId);
             })
@@ -105,12 +105,12 @@ public class ProxyResource {
         .map(
             instance -> {
               String requestId = newRequestId();
-              String target = instance.baseUri() + "/" + path + queryString(uriInfo);
               var req =
                   webClient
-                      .put(target)
+                      .put(instance.baseUri() + "/" + path)
                       .header(io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId)
                       .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
+              addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
               return relay(req.submit(body == null ? "" : body), requestId);
             })
@@ -129,12 +129,12 @@ public class ProxyResource {
         .map(
             instance -> {
               String requestId = newRequestId();
-              String target = instance.baseUri() + "/" + path + queryString(uriInfo);
               var req =
                   webClient
-                      .delete(target)
+                      .delete(instance.baseUri() + "/" + path)
                       .header(
                           io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId);
+              addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
               return relay(req.request(), requestId);
             })
@@ -191,12 +191,14 @@ public class ProxyResource {
         .build();
   }
 
-  private static String newRequestId() {
-    return UUID.randomUUID().toString();
+  private static void addQueryParams(
+      io.helidon.webclient.api.HttpClientRequest req, UriInfo uriInfo) {
+    uriInfo
+        .getQueryParameters()
+        .forEach((key, values) -> req.queryParam(key, values.toArray(String[]::new)));
   }
 
-  private static String queryString(UriInfo uriInfo) {
-    String q = uriInfo.getRequestUri().getRawQuery();
-    return (q == null || q.isBlank()) ? "" : "?" + q;
+  private static String newRequestId() {
+    return UUID.randomUUID().toString();
   }
 }

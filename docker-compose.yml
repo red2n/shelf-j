@@ -252,6 +252,7 @@ services:
       server.port: "8080"
       shelfj.consul.host: consul
       shelfj.consul.port: "8500"
+      shelfj.gateway.rate-limit.requests-per-minute: "2000"
     ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]   # the ONLY app port published to the host (8080 may be taken locally)
     depends_on:
       consul:     { condition: service_healthy }
