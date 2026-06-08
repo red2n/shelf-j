@@ -15,7 +15,8 @@ public record User(
     String phone,
     String passwordHash,
     String status, // ACTIVE | DISABLED
-    Instant createdAt) {
+    Instant createdAt,
+    Instant updatedAt) {
   public static final String TYPE_STAFF = "STAFF";
   public static final String TYPE_CUSTOMER = "CUSTOMER";
   public static final String STATUS_ACTIVE = "ACTIVE";

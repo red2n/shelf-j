@@ -20,7 +20,12 @@ public final class Domain {
       BigDecimal remainingQty,
       BigDecimal costPrice,
       LocalDate expiryDate,
-      Instant createdAt) {}
+      Instant createdAt,
+      String status) {
+    public static final String STATUS_ACTIVE = "ACTIVE";
+    public static final String STATUS_DEPLETED = "DEPLETED";
+    public static final String STATUS_EXPIRED = "EXPIRED";
+  }
 
   /** Stock level rollup for a (store, variant). */
   public record Level(
@@ -40,6 +45,21 @@ public final class Domain {
     public static final String CONSUMED = "CONSUMED";
     public static final String RELEASED = "RELEASED";
   }
+
+  public record Movement(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      UUID batchId,
+      String type,
+      BigDecimal qty,
+      String refType,
+      UUID refId,
+      Instant createdAt) {}
+
+  public record Threshold(
+      UUID id, UUID tenantId, UUID storeId, UUID variantId, BigDecimal threshold) {}
 
   /** Movement types (stock_movements.type). qty is signed (+in / -out). */
   public static final class MoveType {

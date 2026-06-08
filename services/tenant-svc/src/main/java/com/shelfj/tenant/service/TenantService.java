@@ -11,6 +11,10 @@ import com.shelfj.tenant.dto.Dtos.CreateStoreRequest;
 import com.shelfj.tenant.dto.Dtos.CreateTenantRequest;
 import com.shelfj.tenant.dto.Dtos.CreateZoneRequest;
 import com.shelfj.tenant.dto.Dtos.OnboardingStatus;
+import com.shelfj.tenant.dto.Dtos.PatchStatusRequest;
+import com.shelfj.tenant.dto.Dtos.UpdateStoreRequest;
+import com.shelfj.tenant.dto.Dtos.UpdateTenantRequest;
+import com.shelfj.tenant.dto.Dtos.UpdateZoneRequest;
 import com.shelfj.tenant.repo.TenantRepository;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -41,6 +45,7 @@ public class TenantService {
    */
   public Tenant createTenant(UUID ownerUserId, CreateTenantRequest req) {
     UUID tenantId = UUID.randomUUID();
+    Instant nowTenant = Instant.now();
     var tenant =
         new Tenant(
             tenantId,
@@ -51,7 +56,8 @@ public class TenantService {
             ownerUserId,
             req.country().toUpperCase(Locale.ROOT),
             req.currency().toUpperCase(Locale.ROOT),
-            Instant.now());
+            nowTenant,
+            nowTenant);
     var event =
         new OutboxRow(
             "TenantCreated",
@@ -78,6 +84,7 @@ public class TenantService {
       UUID tenantId, CreateStoreRequest req, boolean isDefault) {
     UUID storeId = UUID.randomUUID();
     String type = req.type() == null || req.type().isBlank() ? Store.TYPE_STORE : req.type();
+    Instant nowStore = Instant.now();
     var store =
         new Store(
             storeId,
@@ -97,7 +104,8 @@ public class TenantService {
             req.businessHours(),
             "ACTIVE",
             isDefault,
-            Instant.now());
+            nowStore,
+            nowStore);
 
     // Always create a DEFAULT zone so stock has a home (golden rule of the location model).
     UUID zoneId = UUID.randomUUID();
@@ -110,7 +118,8 @@ public class TenantService {
             "DEFAULT",
             Zone.TYPE_DEFAULT,
             "ACTIVE",
-            Instant.now());
+            nowStore,
+            nowStore);
 
     var storeEvent =
         new OutboxRow(
@@ -137,8 +146,10 @@ public class TenantService {
             () -> ApiException.notFound("STORE_NOT_FOUND", "No such store in this tenant"));
     UUID zoneId = UUID.randomUUID();
     String type = req.type() == null || req.type().isBlank() ? "AISLE" : req.type();
+    Instant nowZone = Instant.now();
     var zone =
-        new Zone(zoneId, tenantId, storeId, req.name(), req.code(), type, "ACTIVE", Instant.now());
+        new Zone(
+            zoneId, tenantId, storeId, req.name(), req.code(), type, "ACTIVE", nowZone, nowZone);
     var event =
         new OutboxRow(
             "ZoneCreated",
@@ -195,6 +206,66 @@ public class TenantService {
     if (!hasStore) next.add("Create your first store (POST /onboarding/stores)");
     if (hasStore) next.add("Add products, map zones, invite staff");
     return new OnboardingStatus(active, hasStore, next);
+  }
+
+  public Tenant updateTenant(UUID tenantId, UpdateTenantRequest req) {
+    getTenant(tenantId);
+    return repo.updateTenant(
+        tenantId,
+        req.businessName().trim(),
+        req.legalName() == null ? null : req.legalName().trim());
+  }
+
+  public Store getStore(UUID tenantId, UUID storeId) {
+    return repo.findStore(tenantId, storeId)
+        .orElseThrow(() -> ApiException.notFound("STORE_NOT_FOUND", "No such store"));
+  }
+
+  public Store updateStore(UUID tenantId, UUID storeId, UpdateStoreRequest req) {
+    getStore(tenantId, storeId);
+    return repo.updateStore(
+        tenantId,
+        storeId,
+        req.name(),
+        req.line1(),
+        req.line2(),
+        req.city(),
+        req.state(),
+        req.country(),
+        req.pincode(),
+        req.geoLat(),
+        req.geoLng(),
+        req.timezone() == null ? "UTC" : req.timezone(),
+        req.businessHours());
+  }
+
+  public Store patchStoreStatus(UUID tenantId, UUID storeId, PatchStatusRequest req) {
+    getStore(tenantId, storeId);
+    return repo.updateStoreStatus(tenantId, storeId, req.status());
+  }
+
+  public Zone getZone(UUID tenantId, UUID zoneId) {
+    return repo.findZone(tenantId, zoneId)
+        .orElseThrow(() -> ApiException.notFound("ZONE_NOT_FOUND", "No such zone"));
+  }
+
+  public Zone updateZone(UUID tenantId, UUID zoneId, UpdateZoneRequest req) {
+    getZone(tenantId, zoneId);
+    String type = req.type() == null || req.type().isBlank() ? "AISLE" : req.type();
+    return repo.updateZone(tenantId, zoneId, req.name(), req.code(), type);
+  }
+
+  public Zone patchZoneStatus(UUID tenantId, UUID zoneId, PatchStatusRequest req) {
+    getZone(tenantId, zoneId);
+    return repo.updateZoneStatus(tenantId, zoneId, req.status());
+  }
+
+  public List<com.shelfj.tenant.domain.Domain.StaffAssignment> listStaff(UUID tenantId) {
+    return repo.listStaff(tenantId);
+  }
+
+  public void removeStaff(UUID tenantId, UUID userId, UUID storeId) {
+    repo.removeStaff(tenantId, userId, storeId);
   }
 
   private static UUID parseUuid(String s, String field) {

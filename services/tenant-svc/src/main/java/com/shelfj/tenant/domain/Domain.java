@@ -17,7 +17,8 @@ public final class Domain {
       UUID ownerUserId,
       String country,
       String currency,
-      Instant createdAt) {
+      Instant createdAt,
+      Instant updatedAt) {
     public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_ACTIVE = "ACTIVE";
   }
@@ -40,8 +41,10 @@ public final class Domain {
       String businessHours,
       String status,
       boolean isDefault,
-      Instant createdAt) {
+      Instant createdAt,
+      Instant updatedAt) {
     public static final String TYPE_STORE = "STORE";
+    public static final String TYPE_WAREHOUSE = "WAREHOUSE";
   }
 
   public record Zone(
@@ -52,7 +55,8 @@ public final class Domain {
       String code,
       String type,
       String status,
-      Instant createdAt) {
+      Instant createdAt,
+      Instant updatedAt) {
     public static final String TYPE_DEFAULT = "DEFAULT";
   }
 

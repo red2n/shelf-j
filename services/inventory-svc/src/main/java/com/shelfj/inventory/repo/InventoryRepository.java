@@ -3,14 +3,15 @@ package com.shelfj.inventory.repo;
 import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.MoveType;
+import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
 import java.sql.Connection;
-import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -19,6 +20,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -77,7 +79,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                     delta,
                     null,
                     null,
-                    Instant.now());
+                    Instant.now(),
+                    Batch.STATUS_ACTIVE);
             insertBatch(c, b);
           } else {
             deductFifo(
@@ -251,6 +254,189 @@ public class InventoryRepository extends BaseOutboxRepository {
         "load levels");
   }
 
+  // ---------------------------------------------------------------- batches (read)
+
+  public List<Batch> listBatches(UUID tenantId, UUID storeId, UUID variantId, int limit) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, variant_id, batch_no, received_qty,"
+                + " remaining_qty, cost_price, expiry_date, created_at, status"
+                + " FROM inventory_batches WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND store_id = ?");
+    if (variantId != null) sb.append(" AND variant_id = ?");
+    sb.append(" ORDER BY created_at DESC LIMIT ?");
+    String sql = sb.toString();
+    return query(
+        sql,
+        ps -> {
+          int i = 1;
+          ps.setObject(i, tenantId);
+          i++;
+          if (storeId != null) {
+            ps.setObject(i, storeId);
+            i++;
+          }
+          if (variantId != null) {
+            ps.setObject(i, variantId);
+            i++;
+          }
+          ps.setInt(i, limit);
+        },
+        InventoryRepository::mapBatch,
+        "list batches");
+  }
+
+  public Optional<Batch> getBatch(UUID tenantId, UUID batchId) {
+    var list =
+        query(
+            "SELECT id, tenant_id, store_id, variant_id, batch_no, received_qty,"
+                + " remaining_qty, cost_price, expiry_date, created_at, status"
+                + " FROM inventory_batches WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, batchId);
+            },
+            InventoryRepository::mapBatch,
+            "get batch");
+    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  // ---------------------------------------------------------------- movements (read)
+
+  public List<Movement> listMovements(
+      UUID tenantId, UUID storeId, UUID variantId, String type, int limit) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, variant_id, batch_id, type, qty, ref_type, ref_id,"
+                + " created_at FROM stock_movements WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND store_id = ?");
+    if (variantId != null) sb.append(" AND variant_id = ?");
+    if (type != null) sb.append(" AND type = ?");
+    sb.append(" ORDER BY created_at DESC LIMIT ?");
+    String sql = sb.toString();
+    return query(
+        sql,
+        ps -> {
+          int i = 1;
+          ps.setObject(i, tenantId);
+          i++;
+          if (storeId != null) {
+            ps.setObject(i, storeId);
+            i++;
+          }
+          if (variantId != null) {
+            ps.setObject(i, variantId);
+            i++;
+          }
+          if (type != null) {
+            ps.setString(i, type);
+            i++;
+          }
+          ps.setInt(i, limit);
+        },
+        InventoryRepository::mapMovement,
+        "list movements");
+  }
+
+  // ---------------------------------------------------------------- reservations (read)
+
+  public List<Reservation> listReservations(UUID tenantId, UUID storeId, String status, int limit) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+                + " created_at FROM reservations WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND store_id = ?");
+    if (status != null) sb.append(" AND status = ?");
+    sb.append(" ORDER BY created_at DESC LIMIT ?");
+    String sql = sb.toString();
+    return query(
+        sql,
+        ps -> {
+          int i = 1;
+          ps.setObject(i, tenantId);
+          i++;
+          if (storeId != null) {
+            ps.setObject(i, storeId);
+            i++;
+          }
+          if (status != null) {
+            ps.setString(i, status);
+            i++;
+          }
+          ps.setInt(i, limit);
+        },
+        InventoryRepository::mapReservation,
+        "list reservations");
+  }
+
+  public Optional<Reservation> findReservation(UUID tenantId, UUID reservationId) {
+    var list =
+        query(
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+                + " created_at FROM reservations WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, reservationId);
+            },
+            InventoryRepository::mapReservation,
+            "get reservation");
+    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  // ---------------------------------------------------------------- thresholds
+
+  public Threshold upsertThreshold(Threshold t) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO reorder_thresholds (id, tenant_id, store_id, variant_id, threshold)"
+                      + " VALUES (?,?,?,?,?)"
+                      + " ON CONFLICT (tenant_id, store_id, variant_id)"
+                      + " DO UPDATE SET threshold = EXCLUDED.threshold"
+                      + " RETURNING id, tenant_id, store_id, variant_id, threshold")) {
+            ps.setObject(1, t.id());
+            ps.setObject(2, t.tenantId());
+            ps.setObject(3, t.storeId());
+            ps.setObject(4, t.variantId());
+            ps.setBigDecimal(5, t.threshold());
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return new Threshold(
+                  rs.getObject("id", UUID.class),
+                  rs.getObject("tenant_id", UUID.class),
+                  rs.getObject("store_id", UUID.class),
+                  rs.getObject("variant_id", UUID.class),
+                  rs.getBigDecimal("threshold"));
+            }
+          }
+        },
+        "upsert threshold");
+  }
+
+  public List<Threshold> listThresholds(UUID tenantId, UUID storeId) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, variant_id, threshold"
+                + " FROM reorder_thresholds WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND store_id = ?");
+    sb.append(" ORDER BY store_id, variant_id");
+    return query(
+        sb.toString(),
+        ps -> {
+          ps.setObject(1, tenantId);
+          if (storeId != null) ps.setObject(2, storeId);
+        },
+        rs ->
+            new Threshold(
+                rs.getObject("id", UUID.class),
+                rs.getObject("tenant_id", UUID.class),
+                rs.getObject("store_id", UUID.class),
+                rs.getObject("variant_id", UUID.class),
+                rs.getBigDecimal("threshold")),
+        "list thresholds");
+  }
+
   // ---------------------------------------------------------------- processed events
 
   public boolean markProcessedIfNew(UUID eventId, String consumer) {
@@ -272,7 +458,6 @@ public class InventoryRepository extends BaseOutboxRepository {
   /** Available = sum(remaining batches) − sum(HELD reservations), with the batch rows locked. */
   private BigDecimal availableForUpdate(Connection c, UUID tenantId, UUID storeId, UUID variantId)
       throws SQLException {
-    // Lock the batch rows first (FOR UPDATE can't be combined with an aggregate), then sum them.
     BigDecimal onHand = BigDecimal.ZERO;
     try (PreparedStatement ps =
         c.prepareStatement(
@@ -380,8 +565,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO inventory_batches"
                 + " (id, tenant_id, store_id, variant_id, batch_no, received_qty,"
-                + " remaining_qty, cost_price, expiry_date, created_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+                + " remaining_qty, cost_price, expiry_date, created_at, status)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, b.id());
       ps.setObject(2, b.tenantId());
       ps.setObject(3, b.storeId());
@@ -390,8 +575,9 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setBigDecimal(6, b.receivedQty());
       ps.setBigDecimal(7, b.remainingQty());
       ps.setBigDecimal(8, b.costPrice());
-      ps.setDate(9, b.expiryDate() == null ? null : Date.valueOf(b.expiryDate()));
+      ps.setObject(9, b.expiryDate());
       ps.setObject(10, b.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setString(11, b.status() == null ? Batch.STATUS_ACTIVE : b.status());
       ps.executeUpdate();
     }
   }
@@ -442,6 +628,35 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setObject(9, refId);
       ps.executeUpdate();
     }
+  }
+
+  private static Batch mapBatch(ResultSet rs) throws SQLException {
+    return new Batch(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getString("batch_no"),
+        rs.getBigDecimal("received_qty"),
+        rs.getBigDecimal("remaining_qty"),
+        rs.getBigDecimal("cost_price"),
+        rs.getObject("expiry_date", java.time.LocalDate.class),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getString("status"));
+  }
+
+  private static Movement mapMovement(ResultSet rs) throws SQLException {
+    return new Movement(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getObject("batch_id", UUID.class),
+        rs.getString("type"),
+        rs.getBigDecimal("qty"),
+        rs.getString("ref_type"),
+        rs.getObject("ref_id", UUID.class),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
   private static Reservation mapReservation(ResultSet rs) throws SQLException {

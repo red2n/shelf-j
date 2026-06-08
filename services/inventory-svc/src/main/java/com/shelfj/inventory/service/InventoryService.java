@@ -3,7 +3,9 @@ package com.shelfj.inventory.service;
 import com.shelfj.inventory.config.ServiceConfig;
 import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.repo.InventoryRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -45,7 +47,8 @@ public class InventoryService {
             qty,
             costPrice,
             expiry,
-            Instant.now());
+            Instant.now(),
+            Batch.STATUS_ACTIVE);
     var event =
         new OutboxRow(
             "StockReceived",
@@ -121,6 +124,38 @@ public class InventoryService {
   // ---- reads ----
   public List<Level> levels(UUID tenantId, UUID storeId) {
     return repo.levels(tenantId, storeId);
+  }
+
+  public List<Batch> listBatches(UUID tenantId, UUID storeId, UUID variantId, int limit) {
+    return repo.listBatches(tenantId, storeId, variantId, limit);
+  }
+
+  public Batch getBatch(UUID tenantId, UUID batchId) {
+    return repo.getBatch(tenantId, batchId)
+        .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "No such batch"));
+  }
+
+  public List<Movement> listMovements(
+      UUID tenantId, UUID storeId, UUID variantId, String type, int limit) {
+    return repo.listMovements(tenantId, storeId, variantId, type, limit);
+  }
+
+  public List<Reservation> listReservations(UUID tenantId, UUID storeId, String status, int limit) {
+    return repo.listReservations(tenantId, storeId, status, limit);
+  }
+
+  public Reservation getReservation(UUID tenantId, UUID reservationId) {
+    return repo.findReservation(tenantId, reservationId)
+        .orElseThrow(() -> ApiException.notFound("RESERVATION_NOT_FOUND", "No such reservation"));
+  }
+
+  public Threshold setThreshold(UUID tenantId, UUID storeId, UUID variantId, BigDecimal threshold) {
+    return repo.upsertThreshold(
+        new Threshold(UUID.randomUUID(), tenantId, storeId, variantId, threshold));
+  }
+
+  public List<Threshold> listThresholds(UUID tenantId, UUID storeId) {
+    return repo.listThresholds(tenantId, storeId);
   }
 
   // ---- sweeper support ----

@@ -12,8 +12,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,43 +26,98 @@ import java.util.UUID;
 @ApplicationScoped
 public class ProductRepository extends BaseOutboxRepository {
 
-  // --- brands ---
+  // ─────────────────────────────────────────────────────────────── brands
+
   public Brand createBrand(UUID tenantId, String name) {
-    var b = new Brand(UUID.randomUUID(), tenantId, name, Instant.now());
+    Instant now = Instant.now();
+    var b = new Brand(UUID.randomUUID(), tenantId, name, Brand.STATUS_ACTIVE, now, now);
     exec(
-        "INSERT INTO brands (id, tenant_id, name, created_at) VALUES (?,?,?,?)",
+        "INSERT INTO brands (id, tenant_id, name, status, created_at, updated_at)"
+            + " VALUES (?,?,?,?,?,?)",
         ps -> {
           ps.setObject(1, b.id());
           ps.setObject(2, b.tenantId());
           ps.setString(3, b.name());
-          ps.setTimestamp(4, Timestamp.from(b.createdAt()));
+          ps.setString(4, b.status());
+          ps.setObject(5, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(6, now.atOffset(ZoneOffset.UTC));
         },
         "create brand");
     return b;
   }
 
+  public Optional<Brand> findBrand(UUID tenantId, UUID id) {
+    return query(
+            "SELECT id, tenant_id, name, status, created_at, updated_at"
+                + " FROM brands WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            ProductRepository::mapBrand,
+            "find brand")
+        .stream()
+        .findFirst();
+  }
+
   public List<Brand> listBrands(UUID tenantId) {
     return query(
-        "SELECT id, tenant_id, name, created_at FROM brands WHERE tenant_id = ? ORDER BY name",
+        "SELECT id, tenant_id, name, status, created_at, updated_at"
+            + " FROM brands WHERE tenant_id = ? AND status = 'ACTIVE' ORDER BY name",
         ps -> ps.setObject(1, tenantId),
         ProductRepository::mapBrand,
         "list brands");
   }
 
-  // --- categories ---
+  public Brand updateBrand(UUID tenantId, UUID id, String name) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE brands SET name = ?, updated_at = ? WHERE tenant_id = ? AND id = ? AND status = 'ACTIVE'",
+        ps -> {
+          ps.setString(1, name);
+          ps.setObject(2, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(3, tenantId);
+          ps.setObject(4, id);
+        },
+        "update brand");
+    return findBrand(tenantId, id)
+        .orElseThrow(() -> ApiException.notFound("BRAND_NOT_FOUND", "Brand not found"));
+  }
+
+  public Brand deactivateBrand(UUID tenantId, UUID id) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE brands SET status = 'INACTIVE', updated_at = ? WHERE tenant_id = ? AND id = ?",
+        ps -> {
+          ps.setObject(1, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(2, tenantId);
+          ps.setObject(3, id);
+        },
+        "deactivate brand");
+    return findBrand(tenantId, id)
+        .orElseThrow(() -> ApiException.notFound("BRAND_NOT_FOUND", "Brand not found"));
+  }
+
+  // ─────────────────────────────────────────────────────────── categories
+
   public Category createCategory(UUID tenantId, UUID parentId, String name) {
-    var c = new Category(UUID.randomUUID(), tenantId, parentId, name, Instant.now());
+    Instant now = Instant.now();
+    var c =
+        new Category(UUID.randomUUID(), tenantId, parentId, name, Category.STATUS_ACTIVE, now, now);
     if (parentId != null && findCategory(tenantId, parentId).isEmpty()) {
       throw ApiException.badRequest("PARENT_NOT_FOUND", "parentId not found in this tenant");
     }
     exec(
-        "INSERT INTO categories (id, tenant_id, parent_id, name, created_at) VALUES (?,?,?,?,?)",
+        "INSERT INTO categories (id, tenant_id, parent_id, name, status, created_at, updated_at)"
+            + " VALUES (?,?,?,?,?,?,?)",
         ps -> {
           ps.setObject(1, c.id());
           ps.setObject(2, c.tenantId());
           ps.setObject(3, c.parentId());
           ps.setString(4, c.name());
-          ps.setTimestamp(5, Timestamp.from(c.createdAt()));
+          ps.setString(5, c.status());
+          ps.setObject(6, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(7, now.atOffset(ZoneOffset.UTC));
         },
         "create category");
     return c;
@@ -69,7 +125,8 @@ public class ProductRepository extends BaseOutboxRepository {
 
   public Optional<Category> findCategory(UUID tenantId, UUID id) {
     return query(
-            "SELECT id, tenant_id, parent_id, name, created_at FROM categories WHERE tenant_id = ? AND id = ?",
+            "SELECT id, tenant_id, parent_id, name, status, created_at, updated_at"
+                + " FROM categories WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
@@ -82,13 +139,46 @@ public class ProductRepository extends BaseOutboxRepository {
 
   public List<Category> listCategories(UUID tenantId) {
     return query(
-        "SELECT id, tenant_id, parent_id, name, created_at FROM categories WHERE tenant_id = ? ORDER BY name",
+        "SELECT id, tenant_id, parent_id, name, status, created_at, updated_at"
+            + " FROM categories WHERE tenant_id = ? AND status = 'ACTIVE' ORDER BY name",
         ps -> ps.setObject(1, tenantId),
         ProductRepository::mapCategory,
         "list categories");
   }
 
-  // --- products (atomic with outbox) ---
+  public Category updateCategory(UUID tenantId, UUID id, String name, UUID parentId) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE categories SET name = ?, parent_id = ?, updated_at = ?"
+            + " WHERE tenant_id = ? AND id = ? AND status = 'ACTIVE'",
+        ps -> {
+          ps.setString(1, name);
+          ps.setObject(2, parentId);
+          ps.setObject(3, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(4, tenantId);
+          ps.setObject(5, id);
+        },
+        "update category");
+    return findCategory(tenantId, id)
+        .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
+  }
+
+  public Category deactivateCategory(UUID tenantId, UUID id) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE categories SET status = 'INACTIVE', updated_at = ? WHERE tenant_id = ? AND id = ?",
+        ps -> {
+          ps.setObject(1, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(2, tenantId);
+          ps.setObject(3, id);
+        },
+        "deactivate category");
+    return findCategory(tenantId, id)
+        .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
+  }
+
+  // ──────────────────────────────────────────── products (atomic with outbox)
+
   public Product createProductWithOutbox(Product p, OutboxRow event) {
     return inTx(
         c -> {
@@ -104,8 +194,8 @@ public class ProductRepository extends BaseOutboxRepository {
         c -> {
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "UPDATE products SET name=?, description=?, brand_id=?, category_id=?, status=?,"
-                      + " sellable_online=?, sellable_pos=?, updated_at=?"
+                  "UPDATE products SET name=?, description=?, brand_id=?, category_id=?,"
+                      + " status=?, sellable_online=?, sellable_pos=?, updated_at=?"
                       + " WHERE tenant_id=? AND id=?")) {
             ps.setString(1, p.name());
             ps.setString(2, p.description());
@@ -114,7 +204,7 @@ public class ProductRepository extends BaseOutboxRepository {
             ps.setString(5, p.status());
             ps.setBoolean(6, p.sellableOnline());
             ps.setBoolean(7, p.sellablePos());
-            ps.setTimestamp(8, Timestamp.from(p.updatedAt()));
+            ps.setObject(8, p.updatedAt().atOffset(ZoneOffset.UTC));
             ps.setObject(9, p.tenantId());
             ps.setObject(10, p.id());
             if (ps.executeUpdate() == 0)
@@ -141,7 +231,7 @@ public class ProductRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
-  /** List active products for a tenant, optionally filtered by category, newest first. */
+  /** Catalog list — ACTIVE only, optionally online-only, optionally filtered by category. */
   public List<Product> listProducts(UUID tenantId, UUID categoryId, boolean onlineOnly, int limit) {
     StringBuilder sql =
         new StringBuilder(
@@ -167,7 +257,38 @@ public class ProductRepository extends BaseOutboxRepository {
         "list products");
   }
 
-  // --- variants (atomic with outbox) ---
+  /** Admin list — all statuses, optionally filtered by category and/or status. */
+  public List<Product> listProductsAdmin(UUID tenantId, UUID categoryId, String status, int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
+                + " sellable_online, sellable_pos, created_at, updated_at"
+                + " FROM products WHERE tenant_id = ?");
+    if (categoryId != null) sql.append(" AND category_id = ?");
+    if (status != null) sql.append(" AND status = ?");
+    sql.append(" ORDER BY created_at DESC LIMIT ?");
+    return query(
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i, tenantId);
+          i++;
+          if (categoryId != null) {
+            ps.setObject(i, categoryId);
+            i++;
+          }
+          if (status != null) {
+            ps.setString(i, status);
+            i++;
+          }
+          ps.setInt(i, limit);
+        },
+        ProductRepository::mapProduct,
+        "list products admin");
+  }
+
+  // ─────────────────────────────────────────── variants (atomic with outbox)
+
   public Variant createVariantWithOutbox(Variant v, OutboxRow event) {
     return inTx(
         c -> {
@@ -180,37 +301,76 @@ public class ProductRepository extends BaseOutboxRepository {
                 throw ApiException.notFound("PRODUCT_NOT_FOUND", "Parent product not found");
             }
           }
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "INSERT INTO product_variants"
-                      + " (id, tenant_id, product_id, sku, barcode, attributes, unit, created_at)"
-                      + " VALUES (?,?,?,?,?,?,?,?)")) {
-            ps.setObject(1, v.id());
-            ps.setObject(2, v.tenantId());
-            ps.setObject(3, v.productId());
-            ps.setString(4, v.sku());
-            ps.setString(5, v.barcode());
-            ps.setString(6, v.attributes());
-            ps.setString(7, v.unit());
-            ps.setTimestamp(8, Timestamp.from(v.createdAt()));
-            ps.executeUpdate();
-          }
+          insertVariant(c, v);
           insertOutbox(c, event);
           return v;
         },
         "create variant");
   }
 
+  public Optional<Variant> findVariant(UUID tenantId, UUID variantId) {
+    return query(
+            "SELECT id, tenant_id, product_id, sku, barcode, attributes, unit,"
+                + " status, created_at, updated_at"
+                + " FROM product_variants WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, variantId);
+            },
+            ProductRepository::mapVariant,
+            "find variant")
+        .stream()
+        .findFirst();
+  }
+
   public List<Variant> listVariants(UUID tenantId, UUID productId) {
     return query(
-        "SELECT id, tenant_id, product_id, sku, barcode, attributes, unit, created_at"
-            + " FROM product_variants WHERE tenant_id = ? AND product_id = ? ORDER BY created_at",
+        "SELECT id, tenant_id, product_id, sku, barcode, attributes, unit,"
+            + " status, created_at, updated_at"
+            + " FROM product_variants"
+            + " WHERE tenant_id = ? AND product_id = ? AND status = 'ACTIVE'"
+            + " ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, productId);
         },
         ProductRepository::mapVariant,
         "list variants");
+  }
+
+  public Variant updateVariant(
+      UUID tenantId, UUID variantId, String sku, String barcode, String attributes, String unit) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE product_variants SET sku=?, barcode=?, attributes=?, unit=?, updated_at=?"
+            + " WHERE tenant_id=? AND id=? AND status='ACTIVE'",
+        ps -> {
+          ps.setString(1, sku);
+          ps.setString(2, barcode);
+          ps.setString(3, attributes);
+          ps.setString(4, unit);
+          ps.setObject(5, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(6, tenantId);
+          ps.setObject(7, variantId);
+        },
+        "update variant");
+    return findVariant(tenantId, variantId)
+        .orElseThrow(() -> ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found"));
+  }
+
+  public Variant delistVariant(UUID tenantId, UUID variantId) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE product_variants SET status='INACTIVE', updated_at=?"
+            + " WHERE tenant_id=? AND id=?",
+        ps -> {
+          ps.setObject(1, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(2, tenantId);
+          ps.setObject(3, variantId);
+        },
+        "delist variant");
+    return findVariant(tenantId, variantId)
+        .orElseThrow(() -> ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found"));
   }
 
   @Override
@@ -221,7 +381,7 @@ public class ProductRepository extends BaseOutboxRepository {
     return dbError(what, e);
   }
 
-  // --- inserts / mappers ---
+  // ─────────────────────────────────────────────────────── inserts / mappers
 
   private void insertProduct(Connection c, Product p) throws SQLException {
     try (PreparedStatement ps =
@@ -239,8 +399,29 @@ public class ProductRepository extends BaseOutboxRepository {
       ps.setString(7, p.status());
       ps.setBoolean(8, p.sellableOnline());
       ps.setBoolean(9, p.sellablePos());
-      ps.setTimestamp(10, Timestamp.from(p.createdAt()));
-      ps.setTimestamp(11, Timestamp.from(p.updatedAt()));
+      ps.setObject(10, p.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(11, p.updatedAt().atOffset(ZoneOffset.UTC));
+      ps.executeUpdate();
+    }
+  }
+
+  private void insertVariant(Connection c, Variant v) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO product_variants"
+                + " (id, tenant_id, product_id, sku, barcode, attributes, unit,"
+                + " status, created_at, updated_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, v.id());
+      ps.setObject(2, v.tenantId());
+      ps.setObject(3, v.productId());
+      ps.setString(4, v.sku());
+      ps.setString(5, v.barcode());
+      ps.setString(6, v.attributes());
+      ps.setString(7, v.unit());
+      ps.setString(8, v.status());
+      ps.setObject(9, v.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(10, v.updatedAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -250,7 +431,9 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
         rs.getString("name"),
-        rs.getTimestamp("created_at").toInstant());
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
 
   private static Category mapCategory(ResultSet rs) throws SQLException {
@@ -259,7 +442,9 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getObject("tenant_id", UUID.class),
         rs.getObject("parent_id", UUID.class),
         rs.getString("name"),
-        rs.getTimestamp("created_at").toInstant());
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
 
   private static Product mapProduct(ResultSet rs) throws SQLException {
@@ -273,8 +458,8 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getString("status"),
         rs.getBoolean("sellable_online"),
         rs.getBoolean("sellable_pos"),
-        rs.getTimestamp("created_at").toInstant(),
-        rs.getTimestamp("updated_at").toInstant());
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
 
   private static Variant mapVariant(ResultSet rs) throws SQLException {
@@ -286,6 +471,8 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getString("barcode"),
         rs.getString("attributes"),
         rs.getString("unit"),
-        rs.getTimestamp("created_at").toInstant());
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
 }

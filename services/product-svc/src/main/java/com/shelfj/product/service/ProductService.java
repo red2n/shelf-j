@@ -8,7 +8,10 @@ import com.shelfj.product.dto.Dtos.CreateBrandRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
+import com.shelfj.product.dto.Dtos.UpdateBrandRequest;
+import com.shelfj.product.dto.Dtos.UpdateCategoryRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
+import com.shelfj.product.dto.Dtos.UpdateVariantRequest;
 import com.shelfj.product.repo.ProductRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -24,25 +27,60 @@ public class ProductService {
 
   @Inject ProductRepository repo;
 
-  // --- brands / categories ---
+  // ─────────────────────────────────────────────────────────────────── brands
+
   public Brand createBrand(UUID tenantId, CreateBrandRequest req) {
     return repo.createBrand(tenantId, req.name().trim());
+  }
+
+  public Brand getBrand(UUID tenantId, UUID id) {
+    return repo.findBrand(tenantId, id)
+        .orElseThrow(() -> ApiException.notFound("BRAND_NOT_FOUND", "Brand not found"));
   }
 
   public List<Brand> listBrands(UUID tenantId) {
     return repo.listBrands(tenantId);
   }
 
+  public Brand renameBrand(UUID tenantId, UUID id, UpdateBrandRequest req) {
+    getBrand(tenantId, id);
+    return repo.updateBrand(tenantId, id, req.name().trim());
+  }
+
+  public Brand deactivateBrand(UUID tenantId, UUID id) {
+    getBrand(tenantId, id);
+    return repo.deactivateBrand(tenantId, id);
+  }
+
+  // ──────────────────────────────────────────────────────────────── categories
+
   public Category createCategory(UUID tenantId, CreateCategoryRequest req) {
     UUID parentId = parseOptionalUuid(req.parentId(), "parentId");
     return repo.createCategory(tenantId, parentId, req.name().trim());
+  }
+
+  public Category getCategory(UUID tenantId, UUID id) {
+    return repo.findCategory(tenantId, id)
+        .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
   }
 
   public List<Category> listCategories(UUID tenantId) {
     return repo.listCategories(tenantId);
   }
 
-  // --- products ---
+  public Category updateCategory(UUID tenantId, UUID id, UpdateCategoryRequest req) {
+    getCategory(tenantId, id);
+    UUID parentId = parseOptionalUuid(req.parentId(), "parentId");
+    return repo.updateCategory(tenantId, id, req.name().trim(), parentId);
+  }
+
+  public Category deactivateCategory(UUID tenantId, UUID id) {
+    getCategory(tenantId, id);
+    return repo.deactivateCategory(tenantId, id);
+  }
+
+  // ──────────────────────────────────────────────────────────────── products
+
   public Product createProduct(UUID tenantId, CreateProductRequest req) {
     UUID id = UUID.randomUUID();
     Instant now = Instant.now();
@@ -133,9 +171,15 @@ public class ProductService {
     return repo.listProducts(tenantId, categoryId, onlineOnly, limit);
   }
 
-  // --- variants ---
+  public List<Product> listProductsAdmin(UUID tenantId, UUID categoryId, String status, int limit) {
+    return repo.listProductsAdmin(tenantId, categoryId, status, limit);
+  }
+
+  // ──────────────────────────────────────────────────────────────── variants
+
   public Variant createVariant(UUID tenantId, UUID productId, CreateVariantRequest req) {
     UUID id = UUID.randomUUID();
+    Instant now = Instant.now();
     var variant =
         new Variant(
             id,
@@ -145,7 +189,9 @@ public class ProductService {
             req.barcode(),
             req.attributes(),
             req.unit(),
-            Instant.now());
+            Variant.STATUS_ACTIVE,
+            now,
+            now);
     var event =
         new OutboxRow(
             "VariantCreated",
@@ -156,14 +202,29 @@ public class ProductService {
     return repo.createVariantWithOutbox(variant, event);
   }
 
+  public Variant getVariant(UUID tenantId, UUID variantId) {
+    return repo.findVariant(tenantId, variantId)
+        .orElseThrow(() -> ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found"));
+  }
+
   public List<Variant> listVariants(UUID tenantId, UUID productId) {
     return repo.listVariants(tenantId, productId);
   }
 
+  public Variant updateVariant(
+      UUID tenantId, UUID productId, UUID variantId, UpdateVariantRequest req) {
+    getVariant(tenantId, variantId);
+    return repo.updateVariant(
+        tenantId, variantId, req.sku().trim(), req.barcode(), req.attributes(), req.unit());
+  }
+
+  public Variant delistVariant(UUID tenantId, UUID productId, UUID variantId) {
+    getVariant(tenantId, variantId);
+    return repo.delistVariant(tenantId, variantId);
+  }
+
   private static UUID parseOptionalUuid(String s, String field) {
-    if (s == null || s.isBlank()) {
-      return null;
-    }
+    if (s == null || s.isBlank()) return null;
     try {
       return UUID.fromString(s);
     } catch (IllegalArgumentException e) {

@@ -2,30 +2,35 @@ package com.shelfj.tenant.repo;
 
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
+import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.StoreWithZone;
 import com.shelfj.tenant.domain.Domain.Tenant;
 import com.shelfj.tenant.domain.Domain.Zone;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Persistence for tenants/stores/zones/staff + outbox. Multi-row writes that must be atomic with
- * their events (create tenant, create store+default-zone) run in one transaction with the outbox
- * insert (golden rule #6). Every store/zone/staff query filters tenant_id FIRST (golden rule #3).
+ * Persistence for tenants/stores/zones/staff + outbox. Every store/zone/staff query filters
+ * tenant_id FIRST (golden rule #3). Multi-row writes atomic with their outbox events (golden rule
+ * #6).
  */
 @ApplicationScoped
 public class TenantRepository extends BaseOutboxRepository {
 
-  // --- create tenant + TenantCreated outbox (atomic) ---
+  // ─────────────────────────────────────────────── create (atomic with outbox)
+
   public Tenant createTenantWithOutbox(Tenant t, OutboxRow event) {
     return inTx(
         c -> {
@@ -36,7 +41,6 @@ public class TenantRepository extends BaseOutboxRepository {
         "create tenant");
   }
 
-  // --- create store + DEFAULT zone + StoreCreated + ZoneCreated (atomic) ---
   public StoreWithZone createStoreWithDefaultZone(
       Store store, Zone defaultZone, OutboxRow storeEvent, OutboxRow zoneEvent) {
     return inTx(
@@ -61,8 +65,7 @@ public class TenantRepository extends BaseOutboxRepository {
         "create zone");
   }
 
-  public void createStaffWithOutbox(
-      com.shelfj.tenant.domain.Domain.StaffAssignment s, OutboxRow event) {
+  public void createStaffWithOutbox(StaffAssignment s, OutboxRow event) {
     inTx(
         c -> {
           insertStaff(c, s);
@@ -80,20 +83,37 @@ public class TenantRepository extends BaseOutboxRepository {
     return dbError(what, e);
   }
 
-  // --- lookups (tenant-scoped) ---
+  // ─────────────────────────────────────────────────────── tenant reads/writes
 
   public Optional<Tenant> findTenant(UUID tenantId) {
     return one(
         "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-            + " created_at FROM tenants WHERE id = ?",
+            + " created_at, updated_at FROM tenants WHERE id = ?",
         tenantId,
         TenantRepository::mapTenant);
   }
 
+  public Tenant updateTenant(UUID tenantId, String businessName, String legalName) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE tenants SET name = ?, legal_name = ?, updated_at = ? WHERE id = ?",
+        ps -> {
+          ps.setString(1, businessName);
+          ps.setString(2, legalName);
+          ps.setObject(3, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(4, tenantId);
+        },
+        "update tenant");
+    return findTenant(tenantId)
+        .orElseThrow(() -> ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found"));
+  }
+
+  // ──────────────────────────────────────────────────────── store reads/writes
+
   public List<Store> listStores(UUID tenantId) {
     return many(
         "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
-            + " geo_lat, geo_lng, timezone, business_hours, status, is_default, created_at"
+            + " geo_lat, geo_lng, timezone, business_hours, status, is_default, created_at, updated_at"
             + " FROM stores WHERE tenant_id = ? ORDER BY created_at",
         tenantId,
         TenantRepository::mapStore);
@@ -102,7 +122,7 @@ public class TenantRepository extends BaseOutboxRepository {
   public Optional<Store> findStore(UUID tenantId, UUID storeId) {
     return query(
             "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
-                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, created_at"
+                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, created_at, updated_at"
                 + " FROM stores WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -114,16 +134,59 @@ public class TenantRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
-  public List<Zone> listZones(UUID tenantId, UUID storeId) {
-    return query(
-        "SELECT id, tenant_id, store_id, name, code, type, status, created_at"
-            + " FROM zones WHERE tenant_id = ? AND store_id = ? ORDER BY created_at",
+  public Store updateStore(
+      UUID tenantId,
+      UUID storeId,
+      String name,
+      String line1,
+      String line2,
+      String city,
+      String state,
+      String country,
+      String pincode,
+      BigDecimal geoLat,
+      BigDecimal geoLng,
+      String timezone,
+      String businessHours) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE stores SET name=?, line1=?, line2=?, city=?, state=?, country=?, pincode=?,"
+            + " geo_lat=?, geo_lng=?, timezone=?, business_hours=?, updated_at=?"
+            + " WHERE tenant_id=? AND id=?",
         ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, storeId);
+          ps.setString(1, name);
+          ps.setString(2, line1);
+          ps.setString(3, line2);
+          ps.setString(4, city);
+          ps.setString(5, state);
+          ps.setString(6, country);
+          ps.setString(7, pincode);
+          ps.setBigDecimal(8, geoLat);
+          ps.setBigDecimal(9, geoLng);
+          ps.setString(10, timezone);
+          ps.setString(11, businessHours);
+          ps.setObject(12, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(13, tenantId);
+          ps.setObject(14, storeId);
         },
-        TenantRepository::mapZone,
-        "list zones");
+        "update store");
+    return findStore(tenantId, storeId)
+        .orElseThrow(() -> ApiException.notFound("STORE_NOT_FOUND", "Store not found"));
+  }
+
+  public Store updateStoreStatus(UUID tenantId, UUID storeId, String status) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE stores SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?",
+        ps -> {
+          ps.setString(1, status);
+          ps.setObject(2, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(3, tenantId);
+          ps.setObject(4, storeId);
+        },
+        "update store status");
+    return findStore(tenantId, storeId)
+        .orElseThrow(() -> ApiException.notFound("STORE_NOT_FOUND", "Store not found"));
   }
 
   public boolean hasDefaultStore(UUID tenantId) {
@@ -135,14 +198,96 @@ public class TenantRepository extends BaseOutboxRepository {
         .isEmpty();
   }
 
-  // --- inserts ---
+  // ──────────────────────────────────────────────────────── zone reads/writes
+
+  public List<Zone> listZones(UUID tenantId, UUID storeId) {
+    return query(
+        "SELECT id, tenant_id, store_id, name, code, type, status, created_at, updated_at"
+            + " FROM zones WHERE tenant_id = ? AND store_id = ? ORDER BY created_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+        },
+        TenantRepository::mapZone,
+        "list zones");
+  }
+
+  public Optional<Zone> findZone(UUID tenantId, UUID zoneId) {
+    return query(
+            "SELECT id, tenant_id, store_id, name, code, type, status, created_at, updated_at"
+                + " FROM zones WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, zoneId);
+            },
+            TenantRepository::mapZone,
+            "find zone")
+        .stream()
+        .findFirst();
+  }
+
+  public Zone updateZone(UUID tenantId, UUID zoneId, String name, String code, String type) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE zones SET name = ?, code = ?, type = ?, updated_at = ?"
+            + " WHERE tenant_id = ? AND id = ?",
+        ps -> {
+          ps.setString(1, name);
+          ps.setString(2, code);
+          ps.setString(3, type);
+          ps.setObject(4, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(5, tenantId);
+          ps.setObject(6, zoneId);
+        },
+        "update zone");
+    return findZone(tenantId, zoneId)
+        .orElseThrow(() -> ApiException.notFound("ZONE_NOT_FOUND", "Zone not found"));
+  }
+
+  public Zone updateZoneStatus(UUID tenantId, UUID zoneId, String status) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE zones SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?",
+        ps -> {
+          ps.setString(1, status);
+          ps.setObject(2, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(3, tenantId);
+          ps.setObject(4, zoneId);
+        },
+        "update zone status");
+    return findZone(tenantId, zoneId)
+        .orElseThrow(() -> ApiException.notFound("ZONE_NOT_FOUND", "Zone not found"));
+  }
+
+  // ──────────────────────────────────────────────────────── staff reads/writes
+
+  public List<StaffAssignment> listStaff(UUID tenantId) {
+    return many(
+        "SELECT id, tenant_id, user_id, store_id, role, created_at"
+            + " FROM staff_assignments WHERE tenant_id = ? ORDER BY created_at",
+        tenantId,
+        TenantRepository::mapStaff);
+  }
+
+  public void removeStaff(UUID tenantId, UUID userId, UUID storeId) {
+    exec(
+        "DELETE FROM staff_assignments WHERE tenant_id = ? AND user_id = ? AND store_id = ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, userId);
+          ps.setObject(3, storeId);
+        },
+        "remove staff");
+  }
+
+  // ─────────────────────────────────────────────────────────── inserts
 
   private void insertTenant(Connection c, Tenant t) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO tenants"
-                + " (id, name, legal_name, status, plan_id, owner_user_id, country, currency, created_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+                + " (id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
+                + " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, t.id());
       ps.setString(2, t.name());
       ps.setString(3, t.legalName());
@@ -151,7 +296,8 @@ public class TenantRepository extends BaseOutboxRepository {
       ps.setObject(6, t.ownerUserId());
       ps.setString(7, t.country());
       ps.setString(8, t.currency());
-      ps.setTimestamp(9, Timestamp.from(t.createdAt()));
+      ps.setObject(9, t.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(10, t.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -161,8 +307,8 @@ public class TenantRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO stores"
                 + " (id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
-                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, created_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " geo_lat, geo_lng, timezone, business_hours, status, is_default,"
+                + " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, s.id());
       ps.setObject(2, s.tenantId());
       ps.setString(3, s.name());
@@ -180,7 +326,8 @@ public class TenantRepository extends BaseOutboxRepository {
       ps.setString(15, s.businessHours());
       ps.setString(16, s.status());
       ps.setBoolean(17, s.isDefault());
-      ps.setTimestamp(18, Timestamp.from(s.createdAt()));
+      ps.setObject(18, s.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(19, s.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -189,8 +336,8 @@ public class TenantRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO zones"
-                + " (id, tenant_id, store_id, name, code, type, status, created_at)"
-                + " VALUES (?,?,?,?,?,?,?,?)")) {
+                + " (id, tenant_id, store_id, name, code, type, status, created_at, updated_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, z.id());
       ps.setObject(2, z.tenantId());
       ps.setObject(3, z.storeId());
@@ -198,13 +345,13 @@ public class TenantRepository extends BaseOutboxRepository {
       ps.setString(5, z.code());
       ps.setString(6, z.type());
       ps.setString(7, z.status());
-      ps.setTimestamp(8, Timestamp.from(z.createdAt()));
+      ps.setObject(8, z.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(9, z.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
 
-  private void insertStaff(Connection c, com.shelfj.tenant.domain.Domain.StaffAssignment s)
-      throws SQLException {
+  private void insertStaff(Connection c, StaffAssignment s) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO staff_assignments"
@@ -215,7 +362,7 @@ public class TenantRepository extends BaseOutboxRepository {
       ps.setObject(3, s.userId());
       ps.setObject(4, s.storeId());
       ps.setString(5, s.role());
-      ps.setTimestamp(6, Timestamp.from(s.createdAt()));
+      ps.setObject(6, s.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -231,7 +378,7 @@ public class TenantRepository extends BaseOutboxRepository {
     }
   }
 
-  // --- single-UUID query helpers ---
+  // ─────────────────────────────────────────────────── single-arg query helpers
 
   private <T> Optional<T> one(String sql, UUID arg, RowMapper<T> mapper) {
     return query(sql, ps -> ps.setObject(1, arg), mapper, "query").stream().findFirst();
@@ -241,7 +388,7 @@ public class TenantRepository extends BaseOutboxRepository {
     return query(sql, ps -> ps.setObject(1, arg), mapper, "query list");
   }
 
-  // --- row mappers ---
+  // ──────────────────────────────────────────────────────────────── row mappers
 
   private static Tenant mapTenant(ResultSet rs) throws SQLException {
     return new Tenant(
@@ -253,7 +400,8 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getObject("owner_user_id", UUID.class),
         rs.getString("country"),
         rs.getString("currency"),
-        rs.getTimestamp("created_at").toInstant());
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
 
   private static Store mapStore(ResultSet rs) throws SQLException {
@@ -275,7 +423,8 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getString("business_hours"),
         rs.getString("status"),
         rs.getBoolean("is_default"),
-        rs.getTimestamp("created_at").toInstant());
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
 
   private static Zone mapZone(ResultSet rs) throws SQLException {
@@ -287,6 +436,17 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getString("code"),
         rs.getString("type"),
         rs.getString("status"),
-        rs.getTimestamp("created_at").toInstant());
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static StaffAssignment mapStaff(ResultSet rs) throws SQLException {
+    return new StaffAssignment(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("user_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getString("role"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 }

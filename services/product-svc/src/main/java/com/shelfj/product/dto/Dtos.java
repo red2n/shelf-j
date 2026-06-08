@@ -8,10 +8,15 @@ public final class Dtos {
 
   private Dtos() {}
 
-  // requests
+  // ── requests ─────────────────────────────────────────────────────────────────
+
   public record CreateBrandRequest(@NotBlank String name) {}
 
+  public record UpdateBrandRequest(@NotBlank String name) {}
+
   public record CreateCategoryRequest(@NotBlank String name, String parentId) {}
+
+  public record UpdateCategoryRequest(@NotBlank String name, String parentId) {}
 
   public record CreateProductRequest(
       @NotBlank String name,
@@ -32,10 +37,16 @@ public final class Dtos {
   public record CreateVariantRequest(
       @NotBlank String sku, String barcode, String attributes, String unit) {}
 
-  // responses
-  public record BrandResponse(String id, String name) {}
+  public record UpdateVariantRequest(
+      @NotBlank String sku, String barcode, String attributes, String unit) {}
 
-  public record CategoryResponse(String id, String parentId, String name) {}
+  // ── responses ────────────────────────────────────────────────────────────────
+
+  public record BrandResponse(
+      String id, String name, String status, String createdAt, String updatedAt) {}
+
+  public record CategoryResponse(
+      String id, String parentId, String name, String status, String createdAt, String updatedAt) {}
 
   public record ProductResponse(
       String id,
@@ -45,8 +56,18 @@ public final class Dtos {
       String categoryId,
       String status,
       boolean sellableOnline,
-      boolean sellablePos) {}
+      boolean sellablePos,
+      String createdAt,
+      String updatedAt) {}
 
   public record VariantResponse(
-      String id, String productId, String sku, String barcode, String attributes, String unit) {}
+      String id,
+      String productId,
+      String sku,
+      String barcode,
+      String attributes,
+      String unit,
+      String status,
+      String createdAt,
+      String updatedAt) {}
 }

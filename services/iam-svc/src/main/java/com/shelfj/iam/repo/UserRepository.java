@@ -9,7 +9,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -29,15 +30,20 @@ public class UserRepository extends BaseOutboxRepository {
 
   // --- lookups ---
 
+  private static final String SELECT_COLS =
+      "id, tenant_id, type, email, phone, password_hash, status, created_at, updated_at";
+
   /** Find a user by email within a tenant scope (tenantId null = global/customer scope). */
   public Optional<User> findByEmail(UUID tenantId, String email) {
     // Separate branches so a null tenant maps to "IS NULL" cleanly (JDBC can't infer the type of a
     // null UUID bind parameter inside "tenant_id = ?").
     String sql =
         tenantId == null
-            ? "SELECT id, tenant_id, type, email, phone, password_hash, status, created_at"
+            ? "SELECT "
+                + SELECT_COLS
                 + " FROM users WHERE lower(email) = lower(?) AND tenant_id IS NULL"
-            : "SELECT id, tenant_id, type, email, phone, password_hash, status, created_at"
+            : "SELECT "
+                + SELECT_COLS
                 + " FROM users WHERE lower(email) = lower(?) AND tenant_id = ?";
     try (var c = dataSource.getConnection();
         var ps = c.prepareStatement(sql)) {
@@ -53,8 +59,7 @@ public class UserRepository extends BaseOutboxRepository {
 
   public Optional<User> findById(UUID id) {
     return query(
-            "SELECT id, tenant_id, type, email, phone, password_hash, status, created_at"
-                + " FROM users WHERE id = ?",
+            "SELECT " + SELECT_COLS + " FROM users WHERE id = ?",
             ps -> ps.setObject(1, id),
             UserRepository::map,
             "find user by id")
@@ -180,7 +185,21 @@ public class UserRepository extends BaseOutboxRepository {
 
   // --- mapping / helpers ---
 
+  public void updatePassword(UUID userId, String newHash) {
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "UPDATE users SET password_hash = ?, updated_at = now() WHERE id = ?")) {
+      ps.setString(1, newHash);
+      ps.setObject(2, userId);
+      ps.executeUpdate();
+    } catch (SQLException e) {
+      throw dbError("update password", e);
+    }
+  }
+
   private static User map(ResultSet rs) throws SQLException {
+    OffsetDateTime updOdt = rs.getObject("updated_at", OffsetDateTime.class);
     return new User(
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
@@ -189,15 +208,16 @@ public class UserRepository extends BaseOutboxRepository {
         rs.getString("phone"),
         rs.getString("password_hash"),
         rs.getString("status"),
-        rs.getTimestamp("created_at").toInstant());
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        updOdt == null ? null : updOdt.toInstant());
   }
 
   private void insertUser(Connection c, User u) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO users"
-                + " (id, tenant_id, type, email, phone, password_hash, status, created_at)"
-                + " VALUES (?,?,?,?,?,?,?,?)")) {
+                + " (id, tenant_id, type, email, phone, password_hash, status, created_at, updated_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, u.id());
       ps.setObject(2, u.tenantId());
       ps.setString(3, u.type());
@@ -205,7 +225,12 @@ public class UserRepository extends BaseOutboxRepository {
       ps.setString(5, u.phone());
       ps.setString(6, u.passwordHash());
       ps.setString(7, u.status());
-      ps.setTimestamp(8, Timestamp.from(u.createdAt()));
+      ps.setObject(8, u.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(
+          9,
+          u.updatedAt() != null
+              ? u.updatedAt().atOffset(ZoneOffset.UTC)
+              : u.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }

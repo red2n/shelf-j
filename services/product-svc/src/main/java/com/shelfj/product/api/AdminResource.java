@@ -7,11 +7,15 @@ import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
 import com.shelfj.product.dto.Dtos.ProductResponse;
+import com.shelfj.product.dto.Dtos.UpdateBrandRequest;
+import com.shelfj.product.dto.Dtos.UpdateCategoryRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
+import com.shelfj.product.dto.Dtos.UpdateVariantRequest;
 import com.shelfj.product.dto.Dtos.VariantResponse;
 import com.shelfj.product.mapper.Mappers;
 import com.shelfj.product.service.ProductService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -24,6 +28,7 @@ import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
@@ -39,7 +44,8 @@ public class AdminResource {
   @Inject ProductService service;
   @Inject TenantContext ctx;
 
-  // brands
+  // ── brands ───────────────────────────────────────────────────────────────
+
   @POST
   @Path("/brands")
   public Response createBrand(CreateBrandRequest req) {
@@ -54,7 +60,27 @@ public class AdminResource {
         service.listBrands(ctx.requireTenantId()).stream().map(Mappers::toBrand).toList());
   }
 
-  // categories
+  @GET
+  @Path("/brands/{id}")
+  public ApiResponse<BrandResponse> getBrand(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toBrand(service.getBrand(ctx.requireTenantId(), id)));
+  }
+
+  @PUT
+  @Path("/brands/{id}")
+  public ApiResponse<BrandResponse> updateBrand(@PathParam("id") UUID id, UpdateBrandRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(Mappers.toBrand(service.renameBrand(ctx.requireTenantId(), id, req)));
+  }
+
+  @DELETE
+  @Path("/brands/{id}")
+  public ApiResponse<BrandResponse> deactivateBrand(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toBrand(service.deactivateBrand(ctx.requireTenantId(), id)));
+  }
+
+  // ── categories ───────────────────────────────────────────────────────────
+
   @POST
   @Path("/categories")
   public Response createCategory(CreateCategoryRequest req) {
@@ -69,12 +95,57 @@ public class AdminResource {
         service.listCategories(ctx.requireTenantId()).stream().map(Mappers::toCategory).toList());
   }
 
-  // products
+  @GET
+  @Path("/categories/{id}")
+  public ApiResponse<CategoryResponse> getCategory(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toCategory(service.getCategory(ctx.requireTenantId(), id)));
+  }
+
+  @PUT
+  @Path("/categories/{id}")
+  public ApiResponse<CategoryResponse> updateCategory(
+      @PathParam("id") UUID id, UpdateCategoryRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(
+        Mappers.toCategory(service.updateCategory(ctx.requireTenantId(), id, req)));
+  }
+
+  @DELETE
+  @Path("/categories/{id}")
+  public ApiResponse<CategoryResponse> deactivateCategory(@PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        Mappers.toCategory(service.deactivateCategory(ctx.requireTenantId(), id)));
+  }
+
+  // ── products ─────────────────────────────────────────────────────────────
+
   @POST
   @Path("/products")
   public Response createProduct(CreateProductRequest req) {
     Validations.validate(req);
     return created(Mappers.toProduct(service.createProduct(ctx.requireTenantId(), req)));
+  }
+
+  /** Admin list — returns all statuses; optional ?status= and ?category= filters. */
+  @GET
+  @Path("/products")
+  public ApiResponse<List<ProductResponse>> listProductsAdmin(
+      @QueryParam("category") String category,
+      @QueryParam("status") String status,
+      @QueryParam("limit") Integer limit) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID categoryId = parseOptional(category, "category");
+    int clamped = Cursor.clampLimit(limit);
+    return ApiResponse.ok(
+        service.listProductsAdmin(tenantId, categoryId, status, clamped).stream()
+            .map(Mappers::toProduct)
+            .toList());
+  }
+
+  @GET
+  @Path("/products/{id}")
+  public ApiResponse<ProductResponse> getProduct(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toProduct(service.getProduct(ctx.requireTenantId(), id)));
   }
 
   @PUT
@@ -91,7 +162,8 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toProduct(service.delistProduct(ctx.requireTenantId(), id)));
   }
 
-  // variants
+  // ── variants ─────────────────────────────────────────────────────────────
+
   @POST
   @Path("/products/{id}/variants")
   public Response createVariant(@PathParam("id") UUID productId, CreateVariantRequest req) {
@@ -108,7 +180,45 @@ public class AdminResource {
             .toList());
   }
 
+  @GET
+  @Path("/products/{id}/variants/{variantId}")
+  public ApiResponse<VariantResponse> getVariant(
+      @PathParam("id") UUID productId, @PathParam("variantId") UUID variantId) {
+    return ApiResponse.ok(Mappers.toVariant(service.getVariant(ctx.requireTenantId(), variantId)));
+  }
+
+  @PUT
+  @Path("/products/{id}/variants/{variantId}")
+  public ApiResponse<VariantResponse> updateVariant(
+      @PathParam("id") UUID productId,
+      @PathParam("variantId") UUID variantId,
+      UpdateVariantRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(
+        Mappers.toVariant(service.updateVariant(ctx.requireTenantId(), productId, variantId, req)));
+  }
+
+  @DELETE
+  @Path("/products/{id}/variants/{variantId}")
+  public ApiResponse<VariantResponse> delistVariant(
+      @PathParam("id") UUID productId, @PathParam("variantId") UUID variantId) {
+    return ApiResponse.ok(
+        Mappers.toVariant(service.delistVariant(ctx.requireTenantId(), productId, variantId)));
+  }
+
+  // ─────────────────────────────────────────────────────────────────── utils
+
   private static Response created(Object body) {
     return Response.status(Response.Status.CREATED).entity(ApiResponse.ok(body)).build();
+  }
+
+  private static UUID parseOptional(String s, String field) {
+    if (s == null || s.isBlank()) return null;
+    try {
+      return UUID.fromString(s);
+    } catch (IllegalArgumentException e) {
+      throw new com.shelfj.web.ApiException(
+          400, "INVALID_UUID", field + " must be a UUID", List.of(), e);
+    }
   }
 }

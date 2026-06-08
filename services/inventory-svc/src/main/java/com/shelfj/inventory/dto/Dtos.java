@@ -10,13 +10,15 @@ public final class Dtos {
 
   private Dtos() {}
 
+  // ── requests ─────────────────────────────────────────────────────────────────
+
   public record ReceiveRequest(
       @NotBlank String storeId,
       @NotBlank String variantId,
       @NotNull @Positive BigDecimal qty,
       String batchNo,
       BigDecimal costPrice,
-      String expiryDate) {} // expiryDate ISO yyyy-MM-dd
+      String expiryDate) {}
 
   public record AdjustRequest(
       @NotBlank String storeId,
@@ -31,6 +33,13 @@ public final class Dtos {
       String orderId,
       Long ttlSeconds) {}
 
+  public record ThresholdRequest(
+      @NotBlank String storeId,
+      @NotBlank String variantId,
+      @NotNull @Positive BigDecimal threshold) {}
+
+  // ── responses ────────────────────────────────────────────────────────────────
+
   public record LevelResponse(
       String storeId,
       String variantId,
@@ -38,18 +47,39 @@ public final class Dtos {
       BigDecimal reserved,
       BigDecimal available) {}
 
+  public record BatchResponse(
+      String id,
+      String storeId,
+      String variantId,
+      String batchNo,
+      BigDecimal receivedQty,
+      BigDecimal remainingQty,
+      BigDecimal costPrice,
+      String expiryDate,
+      String createdAt,
+      String status) {}
+
   public record ReservationResponse(
       String id,
       String storeId,
       String variantId,
       BigDecimal qty,
+      String orderId,
       String status,
-      String expiresAt) {}
+      String expiresAt,
+      String createdAt) {}
 
-  public record BatchResponse(
+  public record MovementResponse(
       String id,
       String storeId,
       String variantId,
-      BigDecimal receivedQty,
-      BigDecimal remainingQty) {}
+      String batchId,
+      String type,
+      BigDecimal qty,
+      String refType,
+      String refId,
+      String createdAt) {}
+
+  public record ThresholdResponse(
+      String id, String storeId, String variantId, BigDecimal threshold) {}
 }

@@ -8,9 +8,23 @@ public final class Domain {
 
   private Domain() {}
 
-  public record Brand(UUID id, UUID tenantId, String name, Instant createdAt) {}
+  public record Brand(
+      UUID id, UUID tenantId, String name, String status, Instant createdAt, Instant updatedAt) {
+    public static final String STATUS_ACTIVE = "ACTIVE";
+    public static final String STATUS_INACTIVE = "INACTIVE";
+  }
 
-  public record Category(UUID id, UUID tenantId, UUID parentId, String name, Instant createdAt) {}
+  public record Category(
+      UUID id,
+      UUID tenantId,
+      UUID parentId,
+      String name,
+      String status,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String STATUS_ACTIVE = "ACTIVE";
+    public static final String STATUS_INACTIVE = "INACTIVE";
+  }
 
   public record Product(
       UUID id,
@@ -36,5 +50,10 @@ public final class Domain {
       String barcode,
       String attributes,
       String unit,
-      Instant createdAt) {}
+      String status,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String STATUS_ACTIVE = "ACTIVE";
+    public static final String STATUS_INACTIVE = "INACTIVE";
+  }
 }

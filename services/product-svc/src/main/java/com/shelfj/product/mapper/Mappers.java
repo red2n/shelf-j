@@ -8,6 +8,7 @@ import com.shelfj.product.dto.Dtos.BrandResponse;
 import com.shelfj.product.dto.Dtos.CategoryResponse;
 import com.shelfj.product.dto.Dtos.ProductResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
+import java.time.Instant;
 
 /** Entity → DTO conversion. */
 public final class Mappers {
@@ -15,12 +16,18 @@ public final class Mappers {
   private Mappers() {}
 
   public static BrandResponse toBrand(Brand b) {
-    return new BrandResponse(b.id().toString(), b.name());
+    return new BrandResponse(
+        b.id().toString(), b.name(), b.status(), ts(b.createdAt()), ts(b.updatedAt()));
   }
 
   public static CategoryResponse toCategory(Category c) {
     return new CategoryResponse(
-        c.id().toString(), c.parentId() == null ? null : c.parentId().toString(), c.name());
+        c.id().toString(),
+        c.parentId() == null ? null : c.parentId().toString(),
+        c.name(),
+        c.status(),
+        ts(c.createdAt()),
+        ts(c.updatedAt()));
   }
 
   public static ProductResponse toProduct(Product p) {
@@ -32,7 +39,9 @@ public final class Mappers {
         p.categoryId() == null ? null : p.categoryId().toString(),
         p.status(),
         p.sellableOnline(),
-        p.sellablePos());
+        p.sellablePos(),
+        ts(p.createdAt()),
+        ts(p.updatedAt()));
   }
 
   public static VariantResponse toVariant(Variant v) {
@@ -42,6 +51,13 @@ public final class Mappers {
         v.sku(),
         v.barcode(),
         v.attributes(),
-        v.unit());
+        v.unit(),
+        v.status(),
+        ts(v.createdAt()),
+        ts(v.updatedAt()));
+  }
+
+  private static String ts(Instant i) {
+    return i == null ? null : i.toString();
   }
 }

@@ -35,7 +35,18 @@ public final class Dtos {
     }
   }
 
+  /** Change password (authenticated user only). */
+  public record ChangePasswordRequest(
+      @NotBlank String currentPassword, @NotBlank @Size(min = 8, max = 100) String newPassword) {}
+
   /** Current principal (GET /auth/me). */
   public record MeResponse(
-      String userId, String tenantId, String type, java.util.List<String> roles, String email) {}
+      String userId,
+      String tenantId,
+      String type,
+      java.util.List<String> roles,
+      String email,
+      String phone,
+      String status,
+      String createdAt) {}
 }

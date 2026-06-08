@@ -1,8 +1,12 @@
 package com.shelfj.inventory.api;
 
 import com.shelfj.inventory.dto.Dtos.AdjustRequest;
+import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
+import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReceiveRequest;
+import com.shelfj.inventory.dto.Dtos.ThresholdRequest;
+import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
 import com.shelfj.web.ApiException;
@@ -15,6 +19,7 @@ import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
@@ -23,7 +28,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
-/** Admin inventory ops: receive (manual), adjust, levels. Tenant-scoped. */
+/** Admin inventory ops: receive (manual), adjust, levels, batches, movements, thresholds. */
 @Path("/admin/inventory")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
@@ -32,6 +37,8 @@ public class AdminResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
+
+  // ── receive ──────────────────────────────────────────────────────────────
 
   @POST
   @Path("/receive")
@@ -56,6 +63,8 @@ public class AdminResource {
         .build();
   }
 
+  // ── adjust ───────────────────────────────────────────────────────────────
+
   @POST
   @Path("/adjust")
   public ApiResponse<String> adjust(AdjustRequest req) {
@@ -70,6 +79,8 @@ public class AdminResource {
     return ApiResponse.ok("adjusted");
   }
 
+  // ── levels ───────────────────────────────────────────────────────────────
+
   @GET
   @Path("/levels")
   public ApiResponse<List<LevelResponse>> levels(@QueryParam("store") String store) {
@@ -79,6 +90,81 @@ public class AdminResource {
         service.levels(tenantId, storeId).stream().map(Mappers::toLevel).toList();
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
+
+  // ── batches ──────────────────────────────────────────────────────────────
+
+  @GET
+  @Path("/batches")
+  public ApiResponse<List<BatchResponse>> listBatches(
+      @QueryParam("store") String store,
+      @QueryParam("variant") String variant,
+      @QueryParam("limit") Integer limitParam) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    UUID variantId = variant == null || variant.isBlank() ? null : uuid(variant, "variant");
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
+    var items =
+        service.listBatches(tenantId, storeId, variantId, limit).stream()
+            .map(Mappers::toBatch)
+            .toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @GET
+  @Path("/batches/{id}")
+  public ApiResponse<BatchResponse> getBatch(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toBatch(service.getBatch(ctx.requireTenantId(), id)));
+  }
+
+  // ── movements ────────────────────────────────────────────────────────────
+
+  @GET
+  @Path("/movements")
+  public ApiResponse<List<MovementResponse>> listMovements(
+      @QueryParam("store") String store,
+      @QueryParam("variant") String variant,
+      @QueryParam("type") String type,
+      @QueryParam("limit") Integer limitParam) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    UUID variantId = variant == null || variant.isBlank() ? null : uuid(variant, "variant");
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
+    var items =
+        service.listMovements(tenantId, storeId, variantId, type, limit).stream()
+            .map(Mappers::toMovement)
+            .toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  // ── thresholds ───────────────────────────────────────────────────────────
+
+  @POST
+  @Path("/thresholds")
+  public Response setThreshold(ThresholdRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var t =
+        service.setThreshold(
+            tenantId,
+            uuid(req.storeId(), "storeId"),
+            uuid(req.variantId(), "variantId"),
+            req.threshold());
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(Mappers.toThreshold(t)))
+        .build();
+  }
+
+  @GET
+  @Path("/thresholds")
+  public ApiResponse<List<ThresholdResponse>> listThresholds(@QueryParam("store") String store) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    var items =
+        service.listThresholds(tenantId, storeId).stream().map(Mappers::toThreshold).toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  // ── helpers ──────────────────────────────────────────────────────────────
 
   private static UUID uuid(String s, String field) {
     try {

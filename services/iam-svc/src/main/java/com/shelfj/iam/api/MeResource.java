@@ -55,6 +55,9 @@ public class MeResource {
             user.tenantId() == null ? null : user.tenantId().toString(),
             user.type(),
             roles == null ? List.of() : roles,
-            user.email()));
+            user.email(),
+            user.phone(),
+            user.status(),
+            user.createdAt() == null ? null : user.createdAt().toString()));
   }
 }

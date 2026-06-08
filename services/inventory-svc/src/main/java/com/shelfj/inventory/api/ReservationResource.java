@@ -1,5 +1,6 @@
 package com.shelfj.inventory.api;
 
+import com.shelfj.inventory.dto.Dtos.ReservationResponse;
 import com.shelfj.inventory.dto.Dtos.ReserveRequest;
 import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
@@ -10,18 +11,20 @@ import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Internal reservation API (called by order-svc during checkout): hold stock, then consume on
- * confirm or release on cancel/timeout. Tenant-scoped via context (gateway forwards identity).
+ * Reservation API (called by order-svc during checkout): hold, consume, release, and read.
+ * Tenant-scoped via context (gateway forwards identity).
  */
 @Path("/inventory/reservations")
 @ApplicationScoped
@@ -49,6 +52,27 @@ public class ReservationResource {
     return Response.status(Response.Status.CREATED)
         .entity(ApiResponse.ok(Mappers.toReservation(r)))
         .build();
+  }
+
+  @GET
+  public ApiResponse<List<ReservationResponse>> listReservations(
+      @QueryParam("store") String store,
+      @QueryParam("status") String status,
+      @QueryParam("limit") Integer limitParam) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
+    var items =
+        service.listReservations(tenantId, storeId, status, limit).stream()
+            .map(Mappers::toReservation)
+            .toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @GET
+  @Path("/{id}")
+  public ApiResponse<ReservationResponse> getReservation(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toReservation(service.getReservation(ctx.requireTenantId(), id)));
   }
 
   @POST

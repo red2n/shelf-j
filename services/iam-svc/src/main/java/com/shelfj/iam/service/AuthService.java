@@ -37,16 +37,10 @@ public class AuthService {
   public TokenResponse register(String email, String password, String phone) {
     String hash = passwords.hash(password);
     UUID userId = UUID.randomUUID();
+    Instant now = Instant.now();
     var user =
         new User(
-            userId,
-            null,
-            User.TYPE_CUSTOMER,
-            email,
-            phone,
-            hash,
-            User.STATUS_ACTIVE,
-            Instant.now());
+            userId, null, User.TYPE_CUSTOMER, email, phone, hash, User.STATUS_ACTIVE, now, now);
 
     String payload =
         """
@@ -108,6 +102,19 @@ public class AuthService {
     return users
         .findById(userId)
         .orElseThrow(() -> ApiException.unauthorized("USER_NOT_FOUND", "User no longer exists"));
+  }
+
+  /** Change password for an authenticated user (requires current password). */
+  public void changePassword(UUID userId, String currentPassword, String newPassword) {
+    User user =
+        users
+            .findById(userId)
+            .orElseThrow(() -> ApiException.unauthorized("USER_NOT_FOUND", "User not found"));
+    if (!passwords.verify(user.passwordHash(), currentPassword)) {
+      throw ApiException.unauthorized("INVALID_CREDENTIALS", "Current password is incorrect");
+    }
+    users.updatePassword(userId, passwords.hash(newPassword));
+    users.audit(user.tenantId(), userId, "PASSWORD_CHANGED", user.email());
   }
 
   // --- helpers ---
