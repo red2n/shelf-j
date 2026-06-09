@@ -53,7 +53,8 @@ const demandHistoryLatency   = new Trend('demand_history_latency_ms',   true);
 const serialControlLatency   = new Trend('serial_control_latency_ms',   true);
 const uomManagementLatency   = new Trend('uom_management_latency_ms',   true);
 const moveOrderLatency       = new Trend('move_order_latency_ms',       true);
-const transferOrderLatency   = new Trend('transfer_order_latency_ms',   true);
+const transferOrderLatency         = new Trend('transfer_order_latency_ms',   true);
+const negativeUnexpectedSuccess    = new Counter('negative_unexpected_success');
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -114,6 +115,10 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'transferOrders', startTime: '32s',
     },
+    negativeTests: {
+      executor: 'constant-vus', vus: 1, duration: '35s',
+      exec: 'negativeTests', startTime: '38s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -131,6 +136,7 @@ export const options = {
     uom_management_latency_ms:   ['p(95)<600'],
     move_order_latency_ms:       ['p(95)<800'],
     transfer_order_latency_ms:   ['p(95)<800'],
+    negative_unexpected_success: ['count==0'],
   },
 };
 
@@ -459,6 +465,11 @@ export function browseCatalog(d) {
   let res = get('/api/product-svc/catalog/products', tenant.tenantId, tenant.ownerId);
   ok(res, `${tag} catalog list`);
   addLat(Date.now() - t0);
+  check(res, {
+    [`${tag} response envelope has meta.requestId`]: r => {
+      try { return JSON.parse(r.body).meta?.requestId != null; } catch (_) { return false; }
+    },
+  });
 
   res = get('/api/product-svc/admin/categories', tenant.tenantId, tenant.ownerId);
   ok(res, `${tag} list categories`);
@@ -509,6 +520,18 @@ export function completeSale(d) {
   const rOk = check(rRes, { [`${tag} reserve 2xx`]: r => r.status >= 200 && r.status < 300 });
   isIN(d) ? saleSuccessIN.add(rOk ? 1 : 0) : saleSuccessUK.add(rOk ? 1 : 0);
   if (!rOk) { errors.add(1); sleep(0.5); return; }
+
+  // Positive: reserved qty immediately visible in levels (before consume)
+  check(get(`/api/inventory-svc/admin/inventory/levels?store=${store.storeId}`,
+    tenant.tenantId, tenant.ownerId), {
+    [`${tag} reserved≥1 in levels after reserve`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        const entry = items.find(l => l.variantId === vid);
+        return entry && parseFloat(entry.reserved) >= 1;
+      } catch (_) { return false; }
+    },
+  });
 
   const reservationId = body(rRes).id;
   if (!reservationId) { sleep(0.5); return; }
@@ -572,6 +595,17 @@ export function abandonCart(d) {
         const d = JSON.parse(r.body).data;
         return d === 'released' || d?.status === 'RELEASED';
       } catch (_) { return false; }
+    },
+  });
+
+  // Positive: released reservation no longer in HELD list
+  check(get(`/api/inventory-svc/inventory/reservations?store=${store.storeId}&status=HELD&limit=50`,
+    tenant.tenantId, tenant.ownerId), {
+    [`${tag} released reservation absent from HELD list`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return !items.some(res => res.id === reservationId);
+      } catch (_) { return true; }
     },
   });
 
@@ -1073,6 +1107,31 @@ export function demandHistory(d) {
     },
   });
 
+  // 5. Positive: MONTH bucket — coarser granularity, should aggregate cleanly
+  const monthRes = post('/api/inventory-svc/admin/inventory/demand/aggregate',
+    { storeId: store.storeId, bucketType: 'MONTH' },
+    tenant.tenantId, tenant.ownerId);
+  ok(monthRes, `${tag} DH aggregate MONTH`);
+  check(monthRes, {
+    [`${tag} DH MONTH bucketType`]: r => {
+      try { return JSON.parse(r.body).data.bucketType === 'MONTH'; } catch (_) { return false; }
+    },
+    [`${tag} DH MONTH bucketsUpserted≥0`]: r => {
+      try { return typeof JSON.parse(r.body).data.bucketsUpserted === 'number'; } catch (_) { return false; }
+    },
+  });
+
+  // 6. Positive: MONTH history query returns array
+  const monthHistRes = get(
+    `/api/inventory-svc/admin/inventory/demand/history?store=${store.storeId}&bucket_type=MONTH&limit=3`,
+    tenant.tenantId, tenant.ownerId);
+  ok(monthHistRes, `${tag} DH list MONTH history`);
+  check(monthHistRes, {
+    [`${tag} DH MONTH history is array`]: r => {
+      try { return Array.isArray(JSON.parse(r.body).data); } catch (_) { return false; }
+    },
+  });
+
   sleep(1);
 }
 
@@ -1164,6 +1223,17 @@ export function serialControl(d) {
     check(lostRes, {
       [`${tag} SC serial status=LOST`]: r => {
         try { return JSON.parse(r.body).data.status === 'LOST'; } catch (_) { return false; }
+      },
+    });
+
+    // Positive: LOST serial no longer appears in IN_STOCK list
+    check(get(`/api/inventory-svc/admin/inventory/serials?store=${store.storeId}&variant=${vid}&status=IN_STOCK&limit=100`,
+      tenant.tenantId, tenant.ownerId), {
+      [`${tag} SC LOST serial absent from IN_STOCK list`]: r => {
+        try {
+          const items = JSON.parse(r.body).data || [];
+          return !items.some(s => s.id === firstSerial.id);
+        } catch (_) { return true; }
       },
     });
 
@@ -1373,6 +1443,17 @@ export function moveOrders(d) {
     tenant.tenantId, tenant.ownerId);
   ok(getRes, `${tag} MO get by id`);
 
+  // Positive: capture source store level before pick
+  const srcBeforePick = (() => {
+    try {
+      const r = get(`/api/inventory-svc/admin/inventory/levels?store=${fromStore}`,
+        tenant.tenantId, tenant.ownerId);
+      const items = JSON.parse(r.body).data || [];
+      const entry = items.find(l => l.variantId === vid);
+      return entry ? parseFloat(entry.onHand) : 0;
+    } catch (_) { return 0; }
+  })();
+
   // 5. Execute pick — DRAFT → COMPLETED, stock moves from fromStore to toStore
   const t1 = Date.now();
   const pickRes = http.post(
@@ -1390,6 +1471,18 @@ export function moveOrders(d) {
       try {
         const lines = JSON.parse(r.body).data?.lines || [];
         return lines.length > 0 && lines[0].pickedQty != null;
+      } catch (_) { return false; }
+    },
+  });
+
+  // Positive: source store stock decreased after pick
+  check(get(`/api/inventory-svc/admin/inventory/levels?store=${fromStore}`,
+    tenant.tenantId, tenant.ownerId), {
+    [`${tag} MO source levels decreased after pick`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        const entry = items.find(l => l.variantId === vid);
+        return entry && parseFloat(entry.onHand) < srcBeforePick;
       } catch (_) { return false; }
     },
   });
@@ -1507,6 +1600,17 @@ export function transferOrders(d) {
     tenant.tenantId, tenant.ownerId);
   ok(getRes, `${tag} TO get by id`);
 
+  // Positive: capture source store level before ship (INTRANSIT deducts source on ship)
+  const srcBeforeShip = (() => {
+    try {
+      const r = get(`/api/inventory-svc/admin/inventory/levels?store=${fromStore}`,
+        tenant.tenantId, tenant.ownerId);
+      const items = JSON.parse(r.body).data || [];
+      const entry = items.find(l => l.variantId === vid);
+      return entry ? parseFloat(entry.onHand) : 0;
+    } catch (_) { return 0; }
+  })();
+
   // 5. Ship — PENDING → SHIPPED (deducts source, sets shippedQty, stock in transit)
   const t1 = Date.now();
   const shipRes = http.post(
@@ -1524,6 +1628,18 @@ export function transferOrders(d) {
       try {
         const lines = JSON.parse(r.body).data?.lines || [];
         return lines.length > 0 && lines[0].shippedQty != null;
+      } catch (_) { return false; }
+    },
+  });
+
+  // Positive: INTRANSIT ship deducts from source — stock is now in transit
+  check(get(`/api/inventory-svc/admin/inventory/levels?store=${fromStore}`,
+    tenant.tenantId, tenant.ownerId), {
+    [`${tag} TO source levels decreased after INTRANSIT ship`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        const entry = items.find(l => l.variantId === vid);
+        return entry && parseFloat(entry.onHand) < srcBeforeShip;
       } catch (_) { return false; }
     },
   });
@@ -1618,6 +1734,198 @@ export function transferOrders(d) {
       [`${tag} TO cancelled status=CANCELLED`]: r => {
         try { return JSON.parse(r.body).data.status === 'CANCELLED'; } catch (_) { return false; }
       },
+    });
+  }
+
+  sleep(1);
+}
+
+// ── Scenario: negative test suite (4xx expectations) ─────────────────────────
+export function negativeTests(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const other  = isIN(d) ? d.uk : d.india;
+  const store  = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+  const tag    = isIN(d) ? 'IN' : 'UK';
+  const vid    = tenant.variantIds[0];
+  const fakeId = '00000000-0000-0000-0000-000000000099';
+
+  // Assert 4xx; record any unexpected 2xx as a metric failure.
+  function neg(res, label, code) {
+    const is4xx = res.status >= 400 && res.status < 500;
+    if (!is4xx) negativeUnexpectedSuccess.add(1);
+    const assertions = { [`${tag} NEG [${label}] → 4xx`]: r => r.status >= 400 && r.status < 500 };
+    if (code) assertions[`${tag} NEG [${label}] → ${code}`] = r => r.status === code;
+    check(res, assertions);
+  }
+
+  // ── Validation failures (400) ────────────────────────────────────────────────
+
+  // Reserve with negative qty
+  neg(post('/api/inventory-svc/inventory/reservations',
+    { storeId: store.storeId, variantId: vid, qty: -1, ttlSeconds: 60 },
+    tenant.tenantId, tenant.ownerId), 'reserve qty=-1', 400);
+
+  // Reserve with missing required variantId field
+  neg(post('/api/inventory-svc/inventory/reservations',
+    { storeId: store.storeId, qty: 1, ttlSeconds: 60 },
+    tenant.tenantId, tenant.ownerId), 'reserve missing variantId', 400);
+
+  // Stock receive with qty=0
+  neg(post('/api/inventory-svc/admin/inventory/receive',
+    { storeId: store.storeId, variantId: vid, qty: '0', batchNo: `NEG-ZERO-${__ITER}` },
+    tenant.tenantId, tenant.ownerId), 'receive qty=0', 400);
+
+  // Material status with an invalid enum value
+  const batchId = (() => {
+    try {
+      const r = get(`/api/inventory-svc/admin/inventory/batches?store=${store.storeId}&variant=${vid}&limit=1`,
+        tenant.tenantId, tenant.ownerId);
+      return JSON.parse(r.body).data?.[0]?.id || null;
+    } catch (_) { return null; }
+  })();
+  if (batchId) {
+    neg(put(`/api/inventory-svc/admin/inventory/batches/${batchId}/material-status`,
+      { materialStatus: 'SHINY', reason: 'k6-neg' },
+      tenant.tenantId, tenant.ownerId), 'invalid materialStatus enum', 400);
+  }
+
+  // UOM item conversion with factor=0 (must be >0)
+  neg(http.post(`${BASE}/api/product-svc/admin/uom/item-conversions`,
+    JSON.stringify({ variantId: vid, fromUom: 'CASE', toUom: 'EA', factor: '0' }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) }),
+    'UOM factor=0', 400);
+
+  // UOM convert with an unknown unit code
+  neg(get('/api/product-svc/admin/uom/convert?from=BANANA&to=EA&qty=1',
+    tenant.tenantId, tenant.ownerId), 'UOM unknown unit code');
+
+  // ── Not-found (404) ──────────────────────────────────────────────────────────
+
+  // Consume non-existent reservation
+  neg(post(`/api/inventory-svc/inventory/reservations/${fakeId}/consume`,
+    {}, tenant.tenantId, tenant.ownerId), 'consume nonexistent reservation', 404);
+
+  // Release non-existent reservation
+  neg(post(`/api/inventory-svc/inventory/reservations/${fakeId}/release`,
+    {}, tenant.tenantId, tenant.ownerId), 'release nonexistent reservation', 404);
+
+  // GET non-existent serial by ID
+  neg(get(`/api/inventory-svc/admin/inventory/serials/${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent serial', 404);
+
+  // GET non-existent move order
+  neg(get(`/api/inventory-svc/admin/inventory/move-orders/${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent move order', 404);
+
+  // GET non-existent transfer order
+  neg(get(`/api/inventory-svc/admin/inventory/transfers/${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent transfer', 404);
+
+  // Resolve non-existent planning suggestion
+  neg(put(`/api/inventory-svc/admin/inventory/planning/suggestions/${fakeId}/status`,
+    { status: 'ORDERED' }, tenant.tenantId, tenant.ownerId),
+    'resolve nonexistent suggestion', 404);
+
+  // Delete non-existent UOM item conversion
+  neg(http.del(`${BASE}/api/product-svc/admin/uom/item-conversions/${fakeId}`,
+    null, { headers: hdrs(tenant.tenantId, tenant.ownerId) }),
+    'delete nonexistent UOM conversion', 404);
+
+  // ── State-machine violations ─────────────────────────────────────────────────
+
+  if (tenant.stores.length >= 2) {
+    const fromStore = tenant.stores[0].storeId;
+    const toStore   = tenant.stores[1].storeId;
+
+    // Seed source stock for state-machine tests
+    http.post(`${BASE}/api/inventory-svc/admin/inventory/receive`,
+      JSON.stringify({ storeId: fromStore, variantId: vid, qty: '30', batchNo: `NEG-SM-${__ITER}` }),
+      { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+
+    // Double-pick: create + pick → completed, then pick again
+    const mo = (() => {
+      try {
+        return JSON.parse(http.post(`${BASE}/api/inventory-svc/admin/inventory/move-orders`,
+          JSON.stringify({ fromStoreId: fromStore, toStoreId: toStore,
+            lines: [{ variantId: vid, requestedQty: '2' }] }),
+          { headers: hdrs(tenant.tenantId, tenant.ownerId) }).body).data;
+      } catch (_) { return null; }
+    })();
+    if (mo?.id) {
+      // First pick succeeds (DRAFT → COMPLETED)
+      http.post(`${BASE}/api/inventory-svc/admin/inventory/move-orders/${mo.id}/pick`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+      // Second pick on COMPLETED order → must fail
+      neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/move-orders/${mo.id}/pick`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) }),
+        'double-pick completed MO');
+      // Cancel COMPLETED order → must fail (only DRAFT can be cancelled)
+      neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/move-orders/${mo.id}/cancel`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) }),
+        'cancel completed MO');
+    }
+
+    // Receive a PENDING DIRECT transfer before shipping (DIRECT has no separate receive step)
+    const tf1 = (() => {
+      try {
+        return JSON.parse(http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers`,
+          JSON.stringify({ fromStoreId: fromStore, toStoreId: toStore, transferType: 'DIRECT',
+            lines: [{ variantId: vid, requestedQty: '1' }] }),
+          { headers: hdrs(tenant.tenantId, tenant.ownerId) }).body).data;
+      } catch (_) { return null; }
+    })();
+    if (tf1?.id) {
+      // Receive before ship on a DIRECT order → must fail
+      neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf1.id}/receive`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) }),
+        'receive PENDING DIRECT transfer');
+      // Now ship → atomically RECEIVED
+      http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf1.id}/ship`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+      // Ship again on already-RECEIVED order → must fail
+      neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf1.id}/ship`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) }),
+        'double-ship RECEIVED DIRECT transfer');
+    }
+
+    // Cancel a SHIPPED INTRANSIT transfer (only PENDING can be cancelled)
+    const tf2 = (() => {
+      try {
+        return JSON.parse(http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers`,
+          JSON.stringify({ fromStoreId: fromStore, toStoreId: toStore, transferType: 'INTRANSIT',
+            lines: [{ variantId: vid, requestedQty: '1' }] }),
+          { headers: hdrs(tenant.tenantId, tenant.ownerId) }).body).data;
+      } catch (_) { return null; }
+    })();
+    if (tf2?.id) {
+      // Ship → SHIPPED
+      http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf2.id}/ship`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+      // Cancel SHIPPED order → must fail
+      neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf2.id}/cancel`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) }),
+        'cancel SHIPPED INTRANSIT transfer');
+    }
+  }
+
+  // ── Cross-tenant isolation: mutation must be invisible to the other tenant ────
+
+  // Use this tenant's X-Tenant-Id header but supply the other tenant's brand ID.
+  // The service resolves brand by (id, tenant_id) — the other brand is not in this tenant's scope.
+  if (other.brandId) {
+    neg(put(`/api/product-svc/admin/brands/${other.brandId}`,
+      { name: `INJECTED-${slug()}` }, tenant.tenantId, tenant.ownerId),
+      'cross-tenant brand mutation', 404);
+  }
+
+  // Confirm the other tenant's brand is still intact (isolation not broken)
+  if (other.brandId) {
+    const confirmRes = get(`/api/product-svc/admin/brands/${other.brandId}`,
+      other.tenantId, other.ownerId);
+    check(confirmRes, {
+      [`${tag} NEG other-tenant brand still reachable by its own tenant`]: r => r.status === 200,
     });
   }
 
