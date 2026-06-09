@@ -530,6 +530,44 @@ services:
       retries: 12
       start_period: 30s
 
+  order-svc:
+    image: ghcr.io/red2n/shelf-j-order-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/order-svc, SVC_JAR: order-svc }
+    container_name: shelfj-order
+    restart: unless-stopped
+    environment:
+      server.port: "8080"
+      JAVA_TOOL_OPTIONS: "${ORDER_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
+      shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
+      shelfj.db.user: ${POSTGRES_USER:-shelfj}
+      shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
+      shelfj.consul.host: consul
+      shelfj.consul.port: "8500"
+      shelfj.kafka.bootstrap: kafka:29092
+      SHELFJ_ADVERTISE_HOST: order-svc
+      otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+    deploy:
+      resources:
+        limits:
+          memory: "${ORDER_MEM_LIMIT:-700m}"
+        reservations:
+          memory: 128m
+    networks: [shelfj_network]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka:    { condition: service_healthy }
+      consul:   { condition: service_healthy }
+      config:   { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
   product-svc:
     image: ghcr.io/red2n/shelf-j-product-svc:${SHELFJ_TAG:-latest}
     build:

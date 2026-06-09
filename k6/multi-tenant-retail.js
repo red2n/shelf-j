@@ -58,6 +58,9 @@ const costingLatency               = new Trend('costing_latency_ms',           t
 const kanbanLatency                = new Trend('kanban_latency_ms',            true);
 const ropLatency                   = new Trend('rop_latency_ms',               true);
 const negativeUnexpectedSuccess    = new Counter('negative_unexpected_success');
+const orderPosLatency              = new Trend('order_pos_latency_ms',          true);
+const layawayLatency               = new Trend('layaway_latency_ms',            true);
+const giftCardLatency              = new Trend('gift_card_latency_ms',          true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -134,6 +137,18 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'ropPlanning', startTime: '38s',
     },
+    orderPos: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'orderPos', startTime: '40s',
+    },
+    layawayManagement: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'layawayManagement', startTime: '42s',
+    },
+    giftCardManagement: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'giftCardManagement', startTime: '44s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -155,6 +170,9 @@ export const options = {
     kanban_latency_ms:           ['p(95)<800'],
     rop_latency_ms:              ['p(95)<1000'],
     negative_unexpected_success: ['count==0'],
+    order_pos_latency_ms:        ['p(95)<800'],
+    layaway_latency_ms:          ['p(95)<800'],
+    gift_card_latency_ms:        ['p(95)<800'],
   },
 };
 
@@ -2072,6 +2090,195 @@ export function ropPlanning(d) {
   sleep(1);
 }
 
+// ── Gap #14: POS order engine (place, confirm, void, return) ─────────────────
+export function orderPos(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store  = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `orderPos[${tenant.name}]`;
+
+  // 1. Place POS order
+  const t0 = Date.now();
+  const placeRes = post('/api/order-svc/orders', {
+    storeId,
+    channel: 'POS',
+    fulfilmentType: 'INSTORE',
+    items: [{ variantId, qty: 2, unitPrice: '15.00' }],
+    currency: 'USD',
+    idempotencyKey: `pos-order-${__VU}-${__ITER}`,
+  }, tenant.tenantId, tenant.ownerId);
+  orderPosLatency.add(Date.now() - t0);
+  if (!ok(placeRes, `${tag} place order 201`)) { sleep(1); return; }
+  const orderId = (() => { try { return JSON.parse(placeRes.body).data.id; } catch (_) { return null; } })();
+  if (!orderId) { sleep(1); return; }
+
+  // 2. Confirm
+  const confirmRes = post(`/api/order-svc/orders/${orderId}/confirm`, {}, tenant.tenantId, tenant.ownerId);
+  ok(confirmRes, `${tag} confirm order 200`);
+
+  // 3. Return one unit
+  const returnRes = post(`/api/order-svc/orders/${orderId}/returns`, {
+    reason: 'customer changed mind',
+    refundMethod: 'ORIGINAL',
+    items: [{ variantId, qty: 1 }],
+  }, tenant.tenantId, tenant.ownerId);
+  ok(returnRes, `${tag} create return 201`);
+
+  // 4. Place another POS order to void
+  const placeVoidRes = post('/api/order-svc/orders', {
+    storeId,
+    channel: 'POS',
+    fulfilmentType: 'INSTORE',
+    items: [{ variantId, qty: 1, unitPrice: '5.00' }],
+    currency: 'USD',
+    idempotencyKey: `pos-void-${__VU}-${__ITER}`,
+  }, tenant.tenantId, tenant.ownerId);
+  if (placeVoidRes.status === 201) {
+    const voidOrderId = (() => { try { return JSON.parse(placeVoidRes.body).data.id; } catch (_) { return null; } })();
+    if (voidOrderId) {
+      const voidRes = post(`/api/order-svc/orders/${voidOrderId}/void`,
+        { reason: 'cashier error' }, tenant.tenantId, tenant.ownerId);
+      ok(voidRes, `${tag} void POS order 200`);
+    }
+  }
+
+  // 5. Cross-tenant isolation: cannot see other tenant's order
+  const other = isIN(d) ? d.uk : d.india;
+  const isoRes = get(`/api/order-svc/orders/${orderId}`, other.tenantId, other.ownerId);
+  check(isoRes, {
+    [`${tag} cross-tenant order isolation 404`]: r => r.status === 404,
+  });
+
+  sleep(1);
+}
+
+// ── Gap #14: Layaway management ───────────────────────────────────────────────
+export function layawayManagement(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store  = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `layaway[${tenant.name}]`;
+
+  // 1. Create layaway with initial deposit
+  const t0 = Date.now();
+  const createRes = post('/api/order-svc/layaways', {
+    storeId,
+    items: [{ variantId, qty: 1, unitPrice: '100.00' }],
+    initialDeposit: '30.00',
+    paymentMethod: 'CASH',
+    notes: 'holiday gift',
+  }, tenant.tenantId, tenant.ownerId);
+  layawayLatency.add(Date.now() - t0);
+  if (!ok(createRes, `${tag} create layaway 201`)) { sleep(1); return; }
+  const layawayId = (() => { try { return JSON.parse(createRes.body).data.id; } catch (_) { return null; } })();
+  if (!layawayId) { sleep(1); return; }
+
+  // 2. Get layaway
+  const getRes = get(`/api/order-svc/layaways/${layawayId}`, tenant.tenantId, tenant.ownerId);
+  ok(getRes, `${tag} get layaway 200`);
+
+  // 3. Add another deposit (70 to cover balance)
+  const depRes = post(`/api/order-svc/layaways/${layawayId}/deposits`, {
+    amount: '70.00',
+    paymentMethod: 'CARD',
+  }, tenant.tenantId, tenant.ownerId);
+  ok(depRes, `${tag} add deposit 200`);
+
+  // 4. Complete (balance now 0)
+  const completeRes = post(`/api/order-svc/layaways/${layawayId}/complete`,
+    {}, tenant.tenantId, tenant.ownerId);
+  ok(completeRes, `${tag} complete layaway 200`);
+
+  // 5. Create another layaway to cancel
+  const cancelLayRes = post('/api/order-svc/layaways', {
+    storeId,
+    items: [{ variantId, qty: 1, unitPrice: '50.00' }],
+    initialDeposit: '10.00',
+    paymentMethod: 'CASH',
+  }, tenant.tenantId, tenant.ownerId);
+  if (cancelLayRes.status === 201) {
+    const cancelId = (() => { try { return JSON.parse(cancelLayRes.body).data.id; } catch (_) { return null; } })();
+    if (cancelId) {
+      const cancelRes = post(`/api/order-svc/layaways/${cancelId}/cancel`,
+        { reason: 'customer withdrew' }, tenant.tenantId, tenant.ownerId);
+      ok(cancelRes, `${tag} cancel layaway 200`);
+    }
+  }
+
+  // 6. Cross-tenant isolation
+  const other = isIN(d) ? d.uk : d.india;
+  const isoRes = get(`/api/order-svc/layaways/${layawayId}`, other.tenantId, other.ownerId);
+  check(isoRes, {
+    [`${tag} cross-tenant layaway isolation 404`]: r => r.status === 404,
+  });
+
+  sleep(1);
+}
+
+// ── Gap #14: Gift card management ─────────────────────────────────────────────
+export function giftCardManagement(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store  = tenant.stores[0];
+  if (!store) return;
+  const storeId = store.storeId;
+  const tag     = `giftCard[${tenant.name}]`;
+
+  // 1. Issue gift card
+  const t0 = Date.now();
+  const issueRes = post('/api/order-svc/gift-cards', {
+    storeId,
+    amount: '50.00',
+    currency: 'USD',
+  }, tenant.tenantId, tenant.ownerId);
+  giftCardLatency.add(Date.now() - t0);
+  if (!ok(issueRes, `${tag} issue gift card 201`)) { sleep(1); return; }
+  const gcBody = (() => { try { return JSON.parse(issueRes.body).data; } catch (_) { return null; } })();
+  if (!gcBody) { sleep(1); return; }
+  const code = gcBody.code;
+
+  // 2. Lookup
+  const getRes = get(`/api/order-svc/gift-cards/${code}`, tenant.tenantId, tenant.ownerId);
+  ok(getRes, `${tag} get gift card 200`);
+
+  // 3. Reload
+  const reloadRes = post(`/api/order-svc/gift-cards/${code}/reload`,
+    { amount: '20.00', reference: `reload-${__VU}-${__ITER}` },
+    tenant.tenantId, tenant.ownerId);
+  ok(reloadRes, `${tag} reload gift card 200`);
+  check(reloadRes, {
+    [`${tag} balance after reload is 70`]: r => {
+      try { return JSON.parse(r.body).data.currentBalance === 70.0; } catch (_) { return true; }
+    },
+  });
+
+  // 4. Redeem
+  const redeemRes = post(`/api/order-svc/gift-cards/${code}/redeem`,
+    { amount: '30.00', reference: `redeem-${__VU}-${__ITER}` },
+    tenant.tenantId, tenant.ownerId);
+  ok(redeemRes, `${tag} redeem gift card 200`);
+
+  // 5. Transaction history
+  const txRes = get(`/api/order-svc/gift-cards/${code}/transactions`,
+    tenant.tenantId, tenant.ownerId);
+  ok(txRes, `${tag} gift card transactions 200`);
+
+  // 6. Cross-tenant isolation: other tenant cannot see this card
+  const other = isIN(d) ? d.uk : d.india;
+  const isoRes = get(`/api/order-svc/gift-cards/${code}`, other.tenantId, other.ownerId);
+  check(isoRes, {
+    [`${tag} cross-tenant gift card isolation 404`]: r => r.status === 404,
+  });
+
+  sleep(1);
+}
+
 // ── Scenario: negative test suite (4xx expectations) ─────────────────────────
 export function negativeTests(d) {
   if (!d || !d.india || !d.uk) return;
@@ -2367,6 +2574,114 @@ export function negativeTests(d) {
   // GET non-existent ROP plan by unknown variant → 404
   neg(get(`/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${store.storeId}&variant=${fakeId}`,
     tenant.tenantId, tenant.ownerId), 'get nonexistent ROP plan by variant', 404);
+
+  // ── Gap #14: Orders — negative cases ─────────────────────────────────────────
+
+  // Place order missing channel → 400
+  neg(post('/api/order-svc/orders',
+    { storeId: store.storeId,
+      items: [{ variantId: vid, qty: 1, unitPrice: '10.00' }] },
+    tenant.tenantId, tenant.ownerId), 'place order missing channel 400', 400);
+
+  // Place order missing items → 400
+  neg(post('/api/order-svc/orders',
+    { storeId: store.storeId, channel: 'POS', items: [] },
+    tenant.tenantId, tenant.ownerId), 'place order empty items 400', 400);
+
+  // Place order missing storeId → 400
+  neg(post('/api/order-svc/orders',
+    { channel: 'POS', items: [{ variantId: vid, qty: 1, unitPrice: '10.00' }] },
+    tenant.tenantId, tenant.ownerId), 'place order missing storeId 400', 400);
+
+  // GET non-existent order → 404
+  neg(get(`/api/order-svc/orders/${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent order 404', 404);
+
+  // Void ONLINE order → 409
+  const onlineOrderRes = post('/api/order-svc/orders', {
+    storeId: store.storeId,
+    channel: 'ONLINE',
+    items: [{ variantId: vid, qty: 1, unitPrice: '5.00' }],
+    currency: 'USD',
+    idempotencyKey: `neg-online-${__VU}-${__ITER}`,
+  }, tenant.tenantId, tenant.ownerId);
+  if (onlineOrderRes.status === 201) {
+    const onlineId = (() => { try { return JSON.parse(onlineOrderRes.body).data.id; } catch (_) { return null; } })();
+    if (onlineId) {
+      neg(post(`/api/order-svc/orders/${onlineId}/void`,
+        { reason: 'test' }, tenant.tenantId, tenant.ownerId),
+        'void ONLINE order 409', 409);
+    }
+  }
+
+  // ── Gap #14: Layaway — negative cases ────────────────────────────────────────
+
+  // Layaway missing storeId → 400
+  neg(post('/api/order-svc/layaways',
+    { items: [{ variantId: vid, qty: 1, unitPrice: '50.00' }], initialDeposit: '10.00',
+      paymentMethod: 'CASH' },
+    tenant.tenantId, tenant.ownerId), 'layaway missing storeId 400', 400);
+
+  // Layaway missing items → 400
+  neg(post('/api/order-svc/layaways',
+    { storeId: store.storeId, items: [], initialDeposit: '10.00', paymentMethod: 'CASH' },
+    tenant.tenantId, tenant.ownerId), 'layaway empty items 400', 400);
+
+  // Deposit exceeds total → 409
+  neg(post('/api/order-svc/layaways',
+    { storeId: store.storeId,
+      items: [{ variantId: vid, qty: 1, unitPrice: '10.00' }],
+      initialDeposit: '999.00', paymentMethod: 'CASH' },
+    tenant.tenantId, tenant.ownerId), 'layaway deposit exceeds total 409', 409);
+
+  // GET non-existent layaway → 404
+  neg(get(`/api/order-svc/layaways/${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent layaway 404', 404);
+
+  // Complete layaway with outstanding balance → 409
+  const balLayRes = post('/api/order-svc/layaways', {
+    storeId: store.storeId,
+    items: [{ variantId: vid, qty: 1, unitPrice: '100.00' }],
+    initialDeposit: '20.00',
+    paymentMethod: 'CASH',
+  }, tenant.tenantId, tenant.ownerId);
+  if (balLayRes.status === 201) {
+    const balLayId = (() => { try { return JSON.parse(balLayRes.body).data.id; } catch (_) { return null; } })();
+    if (balLayId) {
+      neg(post(`/api/order-svc/layaways/${balLayId}/complete`, {},
+        tenant.tenantId, tenant.ownerId),
+        'complete layaway with balance outstanding 409', 409);
+    }
+  }
+
+  // ── Gap #14: Gift card — negative cases ──────────────────────────────────────
+
+  // Issue gift card missing storeId → 400
+  neg(post('/api/order-svc/gift-cards',
+    { amount: '50.00' }, tenant.tenantId, tenant.ownerId),
+    'issue gift card missing storeId 400', 400);
+
+  // Issue gift card zero amount → 400
+  neg(post('/api/order-svc/gift-cards',
+    { storeId: store.storeId, amount: 0 },
+    tenant.tenantId, tenant.ownerId), 'issue gift card zero amount 400', 400);
+
+  // GET non-existent gift card code → 404
+  neg(get('/api/order-svc/gift-cards/XXXX-XXXX-XXXX-XXXX',
+    tenant.tenantId, tenant.ownerId), 'get nonexistent gift card 404', 404);
+
+  // Redeem more than balance → 409
+  const gcForRedeemRes = post('/api/order-svc/gift-cards',
+    { storeId: store.storeId, amount: '10.00', currency: 'USD' },
+    tenant.tenantId, tenant.ownerId);
+  if (gcForRedeemRes.status === 201) {
+    const gcCode = (() => { try { return JSON.parse(gcForRedeemRes.body).data.code; } catch (_) { return null; } })();
+    if (gcCode) {
+      neg(post(`/api/order-svc/gift-cards/${gcCode}/redeem`,
+        { amount: '999.00' }, tenant.tenantId, tenant.ownerId),
+        'redeem gift card exceeds balance 409', 409);
+    }
+  }
 
   sleep(1);
 }
