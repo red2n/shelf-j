@@ -46,7 +46,9 @@ const saleSuccessUK       = new Rate('sale_success_uk');
 const catalogLatencyIN    = new Trend('catalog_latency_india_ms',    true);
 const catalogLatencyUK    = new Trend('catalog_latency_uk_ms',       true);
 const purchaseLatency     = new Trend('purchase_receive_latency_ms', true);
-const isolationViolations = new Counter('isolation_violations');
+const isolationViolations    = new Counter('isolation_violations');
+const materialControlLatency = new Trend('material_control_latency_ms', true);
+const planningLatency        = new Trend('planning_latency_ms',         true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -79,6 +81,14 @@ export const options = {
       executor: 'constant-vus', vus: 1, duration: '30s',
       exec: 'isolationCheck', startTime: '20s',
     },
+    materialControl: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'materialControl', startTime: '20s',
+    },
+    planningEngine: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'planningEngine', startTime: '22s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -89,6 +99,8 @@ export const options = {
     catalog_latency_india_ms:    ['p(95)<500'],
     catalog_latency_uk_ms:       ['p(95)<500'],
     purchase_receive_latency_ms: ['p(95)<800'],
+    material_control_latency_ms: ['p(95)<600'],
+    planning_latency_ms:         ['p(95)<1000'],
   },
 };
 
@@ -255,7 +267,7 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
         console.warn(`[${tag}] initial receive failed s=${sid} v=${vid}: ${recRes.status}`);
 
       post('/api/inventory-svc/admin/inventory/thresholds',
-        { storeId: sid, variantId: vid, threshold: products.threshold },
+        { storeId: sid, variantId: vid, threshold: products.threshold, maxQty: products.maxQty },
         tenantId, owner.userId);
     }
   }
@@ -324,6 +336,7 @@ export function setup() {
       brand:         'Reliance Digital',
       initCostPrice: '1200.00',
       threshold:     '50.000',
+      maxQty:        '200',
       items: [
         { name: 'Smart TV 43"',   category: 'electronics', attrs: { size: '43in', color: 'Black' } },
         { name: 'Android Phone',  category: 'electronics', attrs: { storage: '128GB', color: 'Blue' } },
@@ -376,6 +389,7 @@ export function setup() {
       brand:         'Marks & Spencer',
       initCostPrice: '150.00',
       threshold:     '25.000',
+      maxQty:        '100',
       items: [
         { name: 'Smart TV 55"',   category: 'electronics', attrs: { size: '55in', color: 'Silver' } },
         { name: 'Laptop 15"',     category: 'electronics', attrs: { ram: '16GB', storage: '512GB' } },
@@ -431,6 +445,14 @@ export function browseCatalog(d) {
     res = get(`/api/inventory-svc/admin/inventory/batches?store=${store.storeId}&variant=${vid}`,
       tenant.tenantId, tenant.ownerId);
     ok(res, `${tag} batches ${store.label}`);
+    check(res, {
+      [`${tag} batch has materialStatus field`]: r => {
+        try {
+          const items = JSON.parse(r.body).data || [];
+          return items.length === 0 || items[0].materialStatus != null;
+        } catch (_) { return true; }
+      },
+    });
 
     res = get(`/api/inventory-svc/admin/inventory/movements?store=${store.storeId}&limit=10`,
       tenant.tenantId, tenant.ownerId);
@@ -549,10 +571,11 @@ export function purchaseReceive(d) {
   purchaseLatency.add(Date.now() - t0);
   ok(recRes, `${tag} purchase receive ${store.label}`);
 
-  // Update reorder threshold after receive
+  // Update reorder threshold after receive (include maxQty — Gap #1)
   post('/api/inventory-svc/admin/inventory/thresholds', {
     storeId: store.storeId, variantId: vid,
     threshold: isIN(d) ? '50.000' : '25.000',
+    maxQty:    isIN(d) ? '200'    : '100',
   }, tenant.tenantId, tenant.ownerId);
 
   // Verify updated levels
@@ -658,6 +681,14 @@ export function catalogAdmin(d) {
     res = get(`/api/inventory-svc/admin/inventory/thresholds?store=${store.storeId}`,
       tenant.tenantId, tenant.ownerId);
     ok(res, `${tag} list thresholds ${store.label}`);
+    check(res, {
+      [`${tag} threshold has maxQty field`]: r => {
+        try {
+          const items = JSON.parse(r.body).data || [];
+          return items.length === 0 || 'maxQty' in items[0];
+        } catch (_) { return true; }
+      },
+    });
 
     res = get(`/api/inventory-svc/admin/inventory/movements?store=${store.storeId}&limit=20`,
       tenant.tenantId, tenant.ownerId);
@@ -749,6 +780,198 @@ export function isolationCheck(d) {
   });
 
   sleep(2);
+}
+
+// ── Scenario: Gap #4 — material status control ────────────────────────────────
+export function materialControl(d) {
+  if (!d) return;
+  const tenant = tenantCtx(d);
+  const store  = storeCtx(tenant);
+  if (!store || !tenant.variantIds.length) return;
+  const tag = isIN(d) ? 'IN' : 'UK';
+  const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
+
+  // 1. List batches — verify materialStatus field present
+  const batchRes = get(
+    `/api/inventory-svc/admin/inventory/batches?store=${store.storeId}&variant=${vid}&limit=5`,
+    tenant.tenantId, tenant.ownerId);
+  ok(batchRes, `${tag} MC list batches`);
+  check(batchRes, {
+    [`${tag} MC batches have materialStatus`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return items.length > 0 && items[0].materialStatus != null;
+      } catch (_) { return false; }
+    },
+  });
+
+  const batchId = (() => {
+    try {
+      const items = JSON.parse(batchRes.body).data || [];
+      const avail = items.find(b => b.materialStatus === 'AVAILABLE');
+      return avail ? avail.id : null;
+    } catch (_) { return null; }
+  })();
+
+  if (!batchId) { sleep(1); return; }
+
+  // 2. Capture levels before quarantine
+  const levelsBefore = (() => {
+    try {
+      const r = get(`/api/inventory-svc/admin/inventory/levels?store=${store.storeId}`,
+        tenant.tenantId, tenant.ownerId);
+      const items = JSON.parse(r.body).data || [];
+      const entry = items.find(l => l.variantId === vid);
+      return entry ? parseFloat(entry.available) : 0;
+    } catch (_) { return 0; }
+  })();
+
+  // 3. Quarantine the batch
+  const t0 = Date.now();
+  const qRes = put(`/api/inventory-svc/admin/inventory/batches/${batchId}/material-status`,
+    { materialStatus: 'QUARANTINE', reason: 'k6-quality-hold' },
+    tenant.tenantId, tenant.ownerId);
+  materialControlLatency.add(Date.now() - t0);
+  ok(qRes, `${tag} MC quarantine batch`);
+  check(qRes, {
+    [`${tag} MC batch materialStatus=QUARANTINE`]: r => {
+      try { return JSON.parse(r.body).data.materialStatus === 'QUARANTINE'; }
+      catch (_) { return false; }
+    },
+  });
+
+  // 4. Levels must drop (quarantined qty excluded from available)
+  const levelsRes = get(`/api/inventory-svc/admin/inventory/levels?store=${store.storeId}`,
+    tenant.tenantId, tenant.ownerId);
+  ok(levelsRes, `${tag} MC levels after quarantine`);
+  check(levelsRes, {
+    [`${tag} MC quarantine excludes batch from available`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        const entry = items.find(l => l.variantId === vid);
+        const after = entry ? parseFloat(entry.available) : 0;
+        return after <= levelsBefore;
+      } catch (_) { return true; }
+    },
+  });
+
+  // 5. Filter batches by material_status=QUARANTINE
+  const qListRes = get(
+    `/api/inventory-svc/admin/inventory/batches?material_status=QUARANTINE&store=${store.storeId}`,
+    tenant.tenantId, tenant.ownerId);
+  ok(qListRes, `${tag} MC list QUARANTINE batches`);
+  check(qListRes, {
+    [`${tag} MC quarantine filter correct`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return items.length > 0 && items.every(b => b.materialStatus === 'QUARANTINE');
+      } catch (_) { return false; }
+    },
+  });
+
+  // 6. Restore to AVAILABLE (inspection passed)
+  const restoreRes = put(`/api/inventory-svc/admin/inventory/batches/${batchId}/material-status`,
+    { materialStatus: 'AVAILABLE', reason: 'k6-inspection-passed' },
+    tenant.tenantId, tenant.ownerId);
+  ok(restoreRes, `${tag} MC restore AVAILABLE`);
+  check(restoreRes, {
+    [`${tag} MC batch restored to AVAILABLE`]: r => {
+      try { return JSON.parse(r.body).data.materialStatus === 'AVAILABLE'; }
+      catch (_) { return false; }
+    },
+  });
+
+  sleep(1);
+}
+
+// ── Scenario: Gap #1 — min-max planning engine ────────────────────────────────
+export function planningEngine(d) {
+  if (!d) return;
+  const tenant = tenantCtx(d);
+  const store  = storeCtx(tenant);
+  if (!store || !tenant.variantIds.length) return;
+  const tag = isIN(d) ? 'IN' : 'UK';
+  const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
+
+  // 1. Set a very high threshold to guarantee an under-stock condition for this run
+  const highThreshold = '500000.000';
+  const highMax       = '600000';
+  const normalThreshold = isIN(d) ? '50.000' : '25.000';
+  const normalMax       = isIN(d) ? '200'    : '100';
+
+  const tRes = post('/api/inventory-svc/admin/inventory/thresholds', {
+    storeId: store.storeId, variantId: vid, threshold: highThreshold, maxQty: highMax,
+  }, tenant.tenantId, tenant.ownerId);
+  ok(tRes, `${tag} PE set high threshold`);
+  check(tRes, {
+    [`${tag} PE threshold has maxQty`]: r => {
+      try { return JSON.parse(r.body).data.maxQty != null; } catch (_) { return false; }
+    },
+  });
+
+  // 2. Run the min-max planning engine
+  const t0 = Date.now();
+  const planRes = post(
+    `/api/inventory-svc/admin/inventory/planning/run?store=${store.storeId}`,
+    {}, tenant.tenantId, tenant.ownerId);
+  planningLatency.add(Date.now() - t0);
+  ok(planRes, `${tag} PE planning run`);
+  check(planRes, {
+    [`${tag} PE run returns array`]: r => {
+      try { return Array.isArray(JSON.parse(r.body).data); } catch (_) { return false; }
+    },
+  });
+
+  // 3. List OPEN suggestions for this store
+  const listRes = get(
+    `/api/inventory-svc/admin/inventory/planning/suggestions?store=${store.storeId}&status=OPEN&limit=5`,
+    tenant.tenantId, tenant.ownerId);
+  ok(listRes, `${tag} PE list OPEN suggestions`);
+
+  const suggestion = (() => {
+    try {
+      const items = JSON.parse(listRes.body).data || [];
+      return items.find(s => s.variantId === vid) || items[0] || null;
+    } catch (_) { return null; }
+  })();
+
+  check(listRes, {
+    [`${tag} PE has open suggestion`]: () => suggestion != null,
+    [`${tag} PE suggestion has correct fields`]: () => {
+      if (!suggestion) return false;
+      return suggestion.minQty != null && suggestion.suggestedQty != null &&
+             suggestion.status === 'OPEN';
+    },
+    [`${tag} PE suggestedQty = maxQty - available`]: () => {
+      if (!suggestion) return false;
+      const expected = parseFloat(highMax) - parseFloat(suggestion.availableQty);
+      return Math.abs(parseFloat(suggestion.suggestedQty) - expected) < 1;
+    },
+  });
+
+  // 4. Resolve suggestion as ORDERED
+  if (suggestion) {
+    const resolveRes = put(
+      `/api/inventory-svc/admin/inventory/planning/suggestions/${suggestion.id}/status`,
+      { status: 'ORDERED' }, tenant.tenantId, tenant.ownerId);
+    ok(resolveRes, `${tag} PE resolve ORDERED`);
+    check(resolveRes, {
+      [`${tag} PE resolved status=ORDERED`]: r => {
+        try { return JSON.parse(r.body).data.status === 'ORDERED'; } catch (_) { return false; }
+      },
+      [`${tag} PE resolved has resolvedAt`]: r => {
+        try { return JSON.parse(r.body).data.resolvedAt != null; } catch (_) { return false; }
+      },
+    });
+  }
+
+  // 5. Reset threshold back to normal so other scenarios are not disrupted
+  post('/api/inventory-svc/admin/inventory/thresholds', {
+    storeId: store.storeId, variantId: vid,
+    threshold: normalThreshold, maxQty: normalMax,
+  }, tenant.tenantId, tenant.ownerId);
+
+  sleep(1);
 }
 
 // ── Required default export ────────────────────────────────────────────────────

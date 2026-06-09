@@ -67,7 +67,6 @@ jobs:
           - { name: tenant-svc,    svc_path: services/tenant-svc,    svc_jar: tenant-svc    }
           - { name: product-svc,   svc_path: services/product-svc,   svc_jar: product-svc   }
           - { name: inventory-svc, svc_path: services/inventory-svc, svc_jar: inventory-svc }
-          - { name: sample-svc,    svc_path: services/sample-svc,    svc_jar: sample-svc    }
 
     steps:
       - name: Checkout
@@ -136,7 +135,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Service | Image |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          for svc in gateway config iam-svc tenant-svc product-svc inventory-svc sample-svc; do
+          for svc in gateway config iam-svc tenant-svc product-svc inventory-svc; do
             echo "| $svc | \`${{ env.IMAGE_PREFIX }}-${svc}:latest\` |" >> $GITHUB_STEP_SUMMARY
           done
           echo "" >> $GITHUB_STEP_SUMMARY
