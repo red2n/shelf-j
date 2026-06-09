@@ -8,6 +8,7 @@ import com.shelfj.inventory.domain.Domain.CycleCountHeader;
 import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
@@ -778,6 +779,51 @@ public class InventoryService {
     int adjusted = repo.applyAdjustments(tenantId, headerId, event);
     repo.updateHeaderStatus(tenantId, headerId, CycleCountHeader.ADJUSTED);
     return adjusted;
+  }
+
+  // ---- Lot Genealogy (Gap #11) ----
+
+  public LotGenealogyLink createLotLink(
+      UUID tenantId,
+      UUID parentBatchId,
+      UUID childBatchId,
+      BigDecimal qty,
+      String relationType,
+      String notes) {
+    String type =
+        relationType != null && !relationType.isBlank() ? relationType : LotGenealogyLink.SPLIT;
+    if (!List.of(LotGenealogyLink.SPLIT, LotGenealogyLink.MERGE, LotGenealogyLink.TRANSFORM)
+        .contains(type)) {
+      throw new ApiException(
+          400,
+          "INVALID_RELATION_TYPE",
+          "relationType must be SPLIT, MERGE, or TRANSFORM",
+          List.of(),
+          null);
+    }
+    var link =
+        new LotGenealogyLink(
+            UUID.randomUUID(),
+            tenantId,
+            parentBatchId,
+            childBatchId,
+            qty,
+            type,
+            notes,
+            Instant.now());
+    return repo.createLotLink(link);
+  }
+
+  public List<LotGenealogyLink> findAncestors(UUID tenantId, UUID batchId) {
+    return repo.findAncestors(tenantId, batchId);
+  }
+
+  public List<LotGenealogyLink> findDescendants(UUID tenantId, UUID batchId) {
+    return repo.findDescendants(tenantId, batchId);
+  }
+
+  public List<LotGenealogyLink> findDirectLinks(UUID tenantId, UUID batchId) {
+    return repo.findDirectLinks(tenantId, batchId);
   }
 
   // ---- ABC analysis (Gap #9) ----

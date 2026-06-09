@@ -7,6 +7,7 @@ import com.shelfj.inventory.domain.Domain.CycleCountHeader;
 import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.MoveType;
@@ -1427,6 +1428,106 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getBigDecimal("user_defined_pct"),
         rs.getBigDecimal("safety_stock_qty"),
         computedOdt == null ? null : computedOdt.toInstant(),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ---------------------------------------------------------------- lot genealogy (Gap #11)
+
+  public LotGenealogyLink createLotLink(LotGenealogyLink link) {
+    return inTx(
+        c -> {
+          String sql =
+              "INSERT INTO lot_genealogy"
+                  + " (id, tenant_id, parent_batch_id, child_batch_id, qty, relation_type, notes)"
+                  + " VALUES (?,?,?,?,?,?,?)"
+                  + " ON CONFLICT (tenant_id, parent_batch_id, child_batch_id) DO NOTHING"
+                  + " RETURNING *";
+          try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setObject(1, link.id());
+            ps.setObject(2, link.tenantId());
+            ps.setObject(3, link.parentBatchId());
+            ps.setObject(4, link.childBatchId());
+            ps.setBigDecimal(5, link.qty());
+            ps.setString(6, link.relationType());
+            ps.setString(7, link.notes());
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next())
+                throw new ApiException(
+                    409, "LOT_LINK_EXISTS", "Genealogy link already exists", List.of(), null);
+              return mapLotLink(rs);
+            }
+          }
+        },
+        "create lot link");
+  }
+
+  public List<LotGenealogyLink> findAncestors(UUID tenantId, UUID batchId) {
+    String sql =
+        "WITH RECURSIVE anc(id, tenant_id, parent_batch_id, child_batch_id, qty,"
+            + " relation_type, notes, created_at) AS ("
+            + "  SELECT * FROM lot_genealogy WHERE tenant_id=? AND child_batch_id=?"
+            + "  UNION ALL"
+            + "  SELECT g.* FROM lot_genealogy g JOIN anc ON g.tenant_id=anc.tenant_id"
+            + "   AND g.child_batch_id=anc.parent_batch_id"
+            + ") CYCLE parent_batch_id SET is_cycle USING path"
+            + " SELECT id, tenant_id, parent_batch_id, child_batch_id, qty,"
+            + "  relation_type, notes, created_at FROM anc WHERE NOT is_cycle";
+    return query(
+        sql,
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, batchId);
+        },
+        InventoryRepository::mapLotLink,
+        "find ancestors");
+  }
+
+  public List<LotGenealogyLink> findDescendants(UUID tenantId, UUID batchId) {
+    String sql =
+        "WITH RECURSIVE des(id, tenant_id, parent_batch_id, child_batch_id, qty,"
+            + " relation_type, notes, created_at) AS ("
+            + "  SELECT * FROM lot_genealogy WHERE tenant_id=? AND parent_batch_id=?"
+            + "  UNION ALL"
+            + "  SELECT g.* FROM lot_genealogy g JOIN des ON g.tenant_id=des.tenant_id"
+            + "   AND g.parent_batch_id=des.child_batch_id"
+            + ") CYCLE child_batch_id SET is_cycle USING path"
+            + " SELECT id, tenant_id, parent_batch_id, child_batch_id, qty,"
+            + "  relation_type, notes, created_at FROM des WHERE NOT is_cycle";
+    return query(
+        sql,
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, batchId);
+        },
+        InventoryRepository::mapLotLink,
+        "find descendants");
+  }
+
+  public List<LotGenealogyLink> findDirectLinks(UUID tenantId, UUID batchId) {
+    String sql =
+        "SELECT * FROM lot_genealogy"
+            + " WHERE tenant_id=? AND (parent_batch_id=? OR child_batch_id=?)"
+            + " ORDER BY created_at";
+    return query(
+        sql,
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, batchId);
+          ps.setObject(3, batchId);
+        },
+        InventoryRepository::mapLotLink,
+        "find direct links");
+  }
+
+  private static LotGenealogyLink mapLotLink(ResultSet rs) throws SQLException {
+    return new LotGenealogyLink(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("parent_batch_id", UUID.class),
+        rs.getObject("child_batch_id", UUID.class),
+        rs.getBigDecimal("qty"),
+        rs.getString("relation_type"),
+        rs.getString("notes"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 

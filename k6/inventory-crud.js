@@ -533,4 +533,194 @@ export default function () {
   check(ccBadLineRes, {
     '[-] enter count on non-existent line → 404': (r) => r.status === 404,
   });
+
+  // ── Gap #11: Lot Genealogy — positive checks ──────────────────────────────
+
+  // We need two batch ids: recRes already gave us a batch — receive a second one
+  let parentBatchId = null;
+  let childBatchId = null;
+  try { parentBatchId = JSON.parse(recRes.body).data.id; } catch (_) {}
+
+  const recRes2 = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/receive`,
+    JSON.stringify({
+      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      variantId,
+      qty: 10,
+      batchNo: `CHILD-${Date.now()}`,
+      costPrice: '9.99',
+    }),
+    { headers: hdrs }
+  );
+  try { childBatchId = JSON.parse(recRes2.body).data.id; } catch (_) {}
+
+  // Create a SPLIT genealogy link (parent → child)
+  const lgCreateRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
+    JSON.stringify({
+      parentBatchId: parentBatchId || '00000000-0000-0000-0000-000000000001',
+      childBatchId: childBatchId || '00000000-0000-0000-0000-000000000002',
+      qty: 10,
+      relationType: 'SPLIT',
+      notes: 'k6 split test',
+    }),
+    { headers: hdrs }
+  );
+  check(lgCreateRes, {
+    '[+] create lot genealogy link 201': (r) => r.status === 201,
+    '[+] lot link has id': (r) => {
+      try { return JSON.parse(r.body).data.id !== undefined; } catch { return false; }
+    },
+    '[+] lot link relationType is SPLIT': (r) => {
+      try { return JSON.parse(r.body).data.relationType === 'SPLIT'; } catch { return false; }
+    },
+  });
+
+  // Receive a third batch so MERGE doesn't create a cycle
+  const recRes3 = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/receive`,
+    JSON.stringify({
+      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      variantId,
+      qty: 5,
+      batchNo: `MERGE-${Date.now()}`,
+      costPrice: '9.99',
+    }),
+    { headers: hdrs }
+  );
+  let mergeBatchId = null;
+  try { mergeBatchId = JSON.parse(recRes3.body).data.id; } catch (_) {}
+
+  // Create a MERGE link: childBatchId + mergeBatchId → new merged batch (use parentBatchId as target)
+  const lgMergeRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
+    JSON.stringify({
+      parentBatchId: mergeBatchId || '00000000-0000-0000-0000-000000000003',
+      childBatchId: childBatchId || '00000000-0000-0000-0000-000000000002',
+      qty: 5,
+      relationType: 'MERGE',
+    }),
+    { headers: hdrs }
+  );
+  check(lgMergeRes, {
+    '[+] create MERGE lot link 201': (r) => r.status === 201,
+  });
+
+  // Get ancestors of childBatchId
+  if (childBatchId) {
+    const lgAncestorsRes = http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy/batch/${childBatchId}/ancestors`,
+      { headers: hdrs }
+    );
+    check(lgAncestorsRes, {
+      '[+] get lot ancestors 200': (r) => r.status === 200,
+      '[+] ancestors list is array': (r) => {
+        try { return Array.isArray(JSON.parse(r.body).data.ancestors); } catch { return false; }
+      },
+    });
+
+    // Get descendants of parentBatchId
+    const lgDescRes = http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy/batch/${parentBatchId}/descendants`,
+      { headers: hdrs }
+    );
+    check(lgDescRes, {
+      '[+] get lot descendants 200': (r) => r.status === 200,
+      '[+] descendants list is array': (r) => {
+        try { return Array.isArray(JSON.parse(r.body).data.descendants); } catch { return false; }
+      },
+    });
+
+    // Get direct links for childBatchId
+    const lgLinksRes = http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy/batch/${childBatchId}/links`,
+      { headers: hdrs }
+    );
+    check(lgLinksRes, {
+      '[+] get direct lot links 200': (r) => r.status === 200,
+      '[+] direct links is array': (r) => {
+        try { return Array.isArray(JSON.parse(r.body).data); } catch { return false; }
+      },
+    });
+  }
+
+  // Idempotent re-create returns conflict (409 / 4xx) — same parent+child pair
+  if (parentBatchId && childBatchId) {
+    const lgDupRes = http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
+      JSON.stringify({ parentBatchId, childBatchId, qty: 10, relationType: 'SPLIT' }),
+      { headers: hdrs }
+    );
+    check(lgDupRes, {
+      '[+] duplicate lot link returns 4xx (idempotent guard)': (r) => r.status >= 400 && r.status < 500,
+    });
+  }
+
+  // ── Gap #11: Lot Genealogy — negative checks ──────────────────────────────
+
+  // Missing parentBatchId
+  const lgNoParentRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
+    JSON.stringify({ childBatchId: childBatchId || '00000000-0000-0000-0000-000000000002', qty: 5,
+      relationType: 'SPLIT' }),
+    { headers: hdrs }
+  );
+  check(lgNoParentRes, {
+    '[-] lot link missing parentBatchId → 400': (r) => r.status === 400,
+  });
+
+  // Missing childBatchId
+  const lgNoChildRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
+    JSON.stringify({ parentBatchId: parentBatchId || '00000000-0000-0000-0000-000000000001',
+      qty: 5, relationType: 'SPLIT' }),
+    { headers: hdrs }
+  );
+  check(lgNoChildRes, {
+    '[-] lot link missing childBatchId → 400': (r) => r.status === 400,
+  });
+
+  // Missing qty
+  const lgNoQtyRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
+    JSON.stringify({
+      parentBatchId: parentBatchId || '00000000-0000-0000-0000-000000000001',
+      childBatchId: mergeBatchId || '00000000-0000-0000-0000-000000000003',
+      relationType: 'SPLIT',
+    }),
+    { headers: hdrs }
+  );
+  check(lgNoQtyRes, {
+    '[-] lot link missing qty → 400': (r) => r.status === 400,
+  });
+
+  // Invalid relationType
+  const lgBadTypeRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
+    JSON.stringify({
+      parentBatchId: parentBatchId || '00000000-0000-0000-0000-000000000001',
+      childBatchId: mergeBatchId || '00000000-0000-0000-0000-000000000003',
+      qty: 5,
+      relationType: 'INVALID',
+    }),
+    { headers: hdrs }
+  );
+  check(lgBadTypeRes, {
+    '[-] lot link invalid relationType → 400': (r) => r.status === 400,
+  });
+
+  // No tenant header → 4xx
+  const lgNoTenantRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
+    JSON.stringify({
+      parentBatchId: '00000000-0000-0000-0000-000000000001',
+      childBatchId: '00000000-0000-0000-0000-000000000002',
+      qty: 5,
+      relationType: 'SPLIT',
+    }),
+    { headers: JSON_CT }
+  );
+  check(lgNoTenantRes, {
+    '[-] lot genealogy no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+  });
 }

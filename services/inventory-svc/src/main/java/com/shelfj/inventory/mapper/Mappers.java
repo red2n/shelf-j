@@ -7,6 +7,7 @@ import com.shelfj.inventory.domain.Domain.CycleCountHeader;
 import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
@@ -25,6 +26,7 @@ import com.shelfj.inventory.dto.Dtos.CycleCountHeaderResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
+import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderLineResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
@@ -187,6 +189,17 @@ public final class Mappers {
         ts(o.createdAt()),
         ts(o.pickedAt()),
         lines.stream().map(Mappers::toMoveOrderLine).toList());
+  }
+
+  public static LotGenealogyLinkResponse toLotLink(LotGenealogyLink l) {
+    return new LotGenealogyLinkResponse(
+        l.id().toString(),
+        l.parentBatchId().toString(),
+        l.childBatchId().toString(),
+        l.qty(),
+        l.relationType(),
+        l.notes(),
+        ts(l.createdAt()));
   }
 
   public static CycleCountLineResponse toCycleCountLine(CycleCountLine l) {

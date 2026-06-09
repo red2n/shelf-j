@@ -283,6 +283,22 @@ public final class Domain {
     public static final String ADJUSTED = "ADJUSTED";
   }
 
+  // ── Gap #11: Lot Genealogy ───────────────────────────────────────────────
+
+  public record LotGenealogyLink(
+      UUID id,
+      UUID tenantId,
+      UUID parentBatchId,
+      UUID childBatchId,
+      BigDecimal qty,
+      String relationType,
+      String notes,
+      Instant createdAt) {
+    public static final String SPLIT = "SPLIT";
+    public static final String MERGE = "MERGE";
+    public static final String TRANSFORM = "TRANSFORM";
+  }
+
   /** Movement types (stock_movements.type). qty is signed (+in / -out). */
   public static final class MoveType {
     private MoveType() {}

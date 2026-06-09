@@ -10,6 +10,7 @@ import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockRequest;
 import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockResult;
 import com.shelfj.inventory.dto.Dtos.CreateCycleCountRequest;
+import com.shelfj.inventory.dto.Dtos.CreateLotLinkRequest;
 import com.shelfj.inventory.dto.Dtos.CreateMoveOrderRequest;
 import com.shelfj.inventory.dto.Dtos.CreateTransferOrderRequest;
 import com.shelfj.inventory.dto.Dtos.CycleCountAdjustResult;
@@ -19,6 +20,8 @@ import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.EnterCountRequest;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
+import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
+import com.shelfj.inventory.dto.Dtos.LotGenealogyTreeResponse;
 import com.shelfj.inventory.dto.Dtos.MaterialStatusRequest;
 import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
@@ -604,6 +607,58 @@ public class AdminResource {
             : null;
     int updated = service.computeSafetyStock(tenantId, storeId, variantId);
     return ApiResponse.ok(new ComputeSafetyStockResult(updated, "DAY"));
+  }
+
+  // ── Lot Genealogy (Gap #11) ──────────────────────────────────────────────
+
+  @POST
+  @Path("/lot-genealogy")
+  public Response createLotLink(CreateLotLinkRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var link =
+        service.createLotLink(
+            tenantId,
+            uuid(req.parentBatchId(), "parentBatchId"),
+            uuid(req.childBatchId(), "childBatchId"),
+            req.qty(),
+            req.relationType(),
+            req.notes());
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(Mappers.toLotLink(link), ApiResponse.Meta.of(ctx.requestId())))
+        .build();
+  }
+
+  @GET
+  @Path("/lot-genealogy/batch/{batchId}/ancestors")
+  public ApiResponse<LotGenealogyTreeResponse> getAncestors(@PathParam("batchId") UUID batchId) {
+    UUID tenantId = ctx.requireTenantId();
+    var ancestors =
+        service.findAncestors(tenantId, batchId).stream().map(Mappers::toLotLink).toList();
+    return ApiResponse.ok(
+        new LotGenealogyTreeResponse(batchId.toString(), ancestors, List.of()),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @GET
+  @Path("/lot-genealogy/batch/{batchId}/descendants")
+  public ApiResponse<LotGenealogyTreeResponse> getDescendants(@PathParam("batchId") UUID batchId) {
+    UUID tenantId = ctx.requireTenantId();
+    var descendants =
+        service.findDescendants(tenantId, batchId).stream().map(Mappers::toLotLink).toList();
+    return ApiResponse.ok(
+        new LotGenealogyTreeResponse(batchId.toString(), List.of(), descendants),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @GET
+  @Path("/lot-genealogy/batch/{batchId}/links")
+  public ApiResponse<List<LotGenealogyLinkResponse>> getDirectLinks(
+      @PathParam("batchId") UUID batchId) {
+    UUID tenantId = ctx.requireTenantId();
+    var links =
+        service.findDirectLinks(tenantId, batchId).stream().map(Mappers::toLotLink).toList();
+    return ApiResponse.ok(links, ApiResponse.Meta.of(ctx.requestId()));
   }
 
   // ── Cycle Counting (Gap #10) ─────────────────────────────────────────────

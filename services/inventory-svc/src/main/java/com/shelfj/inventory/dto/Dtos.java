@@ -191,6 +191,29 @@ public final class Dtos {
       String receivedAt,
       List<TransferOrderLineResponse> lines) {}
 
+  // ── Lot Genealogy (Gap #11) ──────────────────────────────────────────────
+
+  public record CreateLotLinkRequest(
+      @NotBlank String parentBatchId,
+      @NotBlank String childBatchId,
+      @NotNull @Positive BigDecimal qty,
+      String relationType,
+      String notes) {}
+
+  public record LotGenealogyLinkResponse(
+      String id,
+      String parentBatchId,
+      String childBatchId,
+      BigDecimal qty,
+      String relationType,
+      String notes,
+      String createdAt) {}
+
+  public record LotGenealogyTreeResponse(
+      String batchId,
+      List<LotGenealogyLinkResponse> ancestors,
+      List<LotGenealogyLinkResponse> descendants) {}
+
   // ── Cycle Counting (Gap #10) ─────────────────────────────────────────────
 
   public record CreateCycleCountRequest(

@@ -272,7 +272,7 @@
 | ~~8~~ | ~~**Safety stock calculation** (MAD formula + user-defined %)~~ ✅ | ~~inventory-svc~~ | ~~Ch. 14~~ |
 | ~~9~~ | ~~**ABC analysis** — compile + assign A/B/C classes for cycle count frequency~~ ✅ | ~~inventory-svc~~ | ~~Ch. 16~~ |
 | ~~10~~ | ~~**Cycle counting** — schedule, count entry, tolerance approval, adjustment~~ ✅ | ~~inventory-svc~~ | ~~Ch. 17~~ |
-| 11 | **Lot genealogy** — parent/child chain on batches | inventory-svc | Ch. 7 |
+| ~~11~~ | ~~**Lot genealogy** — parent/child chain on batches~~ ✅ | ~~inventory-svc~~ | ~~Ch. 7~~ |
 | 12 | **Item revisions** | product-svc | Ch. 5 |
 | 13 | **Item templates** — bulk attribute assignment | product-svc | Ch. 4 |
 | 14 | **POS transaction engine** — return, post-void, layaway, gift card | order-svc | POS RN |
