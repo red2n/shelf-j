@@ -281,7 +281,7 @@
 | ~~17~~ | ~~**Costing methods** (FIFO / average) + accounting period close~~ ✅ | ~~inventory-svc~~ | ~~Ch. 15~~ |
 | ~~18~~ | ~~**Kanban replenishment** (all 4 types: Supplier / Inter-Org / Intra-Org / Production)~~ ✅ | ~~inventory-svc~~ | ~~Ch. 14~~ |
 | ~~19~~ | ~~**Reorder Point planning with EOQ**~~ ✅ | ~~inventory-svc~~ | ~~Ch. 14~~ |
-| 20 | **Intercompany invoicing** — AR/AP on inter-org transfers | purchase-svc / payment-svc | Ch. 19 |
+| ~~20~~ | ~~**Intercompany invoicing** — AR/AP on inter-org transfers, FRS 102 nominal ledger, BACS 30-day terms, Group VAT disregard~~ ✅ | ~~purchase-svc~~ | ~~Ch. 19~~ |
 
 ---
 

@@ -62,6 +62,7 @@ const orderPosLatency              = new Trend('order_pos_latency_ms',          
 const layawayLatency               = new Trend('layaway_latency_ms',            true);
 const giftCardLatency              = new Trend('gift_card_latency_ms',          true);
 const pricingLatency               = new Trend('pricing_latency_ms',            true);
+const intercompanyLatency          = new Trend('intercompany_latency_ms',        true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -154,6 +155,10 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'pricingVat', startTime: '46s',
     },
+    intercompanyFlow: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'intercompanyFlow', startTime: '48s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -179,6 +184,7 @@ export const options = {
     layaway_latency_ms:          ['p(95)<800'],
     gift_card_latency_ms:        ['p(95)<800'],
     pricing_latency_ms:          ['p(95)<800'],
+    intercompany_latency_ms:     ['p(95)<1000'],
   },
 };
 
@@ -385,6 +391,17 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
     }
   }
 
+  // 11. Purchase-svc — seed a default supplier (BACS 30-day terms)
+  const supplierRes = post('/api/purchase-svc/suppliers', {
+    name: isIN ? 'National Distributors Ltd' : 'British Wholesale Ltd',
+    vatRegistered: true,
+    vatNumber: isIN ? 'IN22AAAAA0000A1Z5' : 'GB987654321',
+    countryCode: isIN ? 'IN' : 'GB',
+    currency,
+  }, tenantId, owner.userId);
+  const supplierId = (supplierRes.status < 300) ? body(supplierRes).id : null;
+  if (!supplierId) console.warn(`[${tag}] supplier creation failed: ${supplierRes.status}`);
+
   // Active 10% promotion scoped to ALL
   const promoRes = post('/api/pricing-svc/promotions', {
     name: isIN ? 'Festive Offer' : 'Summer Sale',
@@ -399,7 +416,7 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
 
   console.log(
     `[${tag}] tenantId=${tenantId} stores=${storeIds.length} variants=${variantIds.length} ` +
-    `cashiers=${[cashier1, cashier2].filter(Boolean).length} priceListId=${priceListId}`
+    `cashiers=${[cashier1, cashier2].filter(Boolean).length} priceListId=${priceListId} supplierId=${supplierId}`
   );
 
   return {
@@ -416,6 +433,7 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
     brandName:   products.brand,
     priceListId,
     currency,
+    supplierId,
   };
 }
 
@@ -2879,6 +2897,194 @@ export function pricingVat(d) {
   sleep(1);
 }
 
+// ── Gap #20 — Intercompany invoicing + FRS 102 nominal ledger ─────────────────
+export function intercompanyFlow(d) {
+  const t = tenantCtx(d);
+  if (!t) return;
+  const { tenantId, ownerId, stores, currency, supplierId } = t;
+  if (!stores || stores.length < 2) return;
+  const store1 = stores[0].storeId;
+  const store2 = stores[1].storeId;
+  const ts = Date.now();
+
+  // ── Positive: supplier CRUD ────────────────────────────────────────────────
+  // List suppliers — should include the seeded one
+  let r = get('/api/purchase-svc/suppliers', tenantId, ownerId);
+  intercompanyLatency.add(r.timings.duration);
+  check(r, { 'list suppliers 200': res => res.status === 200 });
+  const listBody = body(r);
+  const seedSupplier = Array.isArray(listBody) ? listBody[0] : null;
+  const useSupplierId = seedSupplier?.id || supplierId;
+
+  if (useSupplierId) {
+    r = get(`/api/purchase-svc/suppliers/${useSupplierId}`, tenantId, ownerId);
+    check(r, { 'get supplier 200': res => res.status === 200 });
+    check(r, { 'supplier BACS 30': res => body(res)?.paymentTermsDays === 30 });
+  }
+
+  // ── Positive: create PO + add line + submit + GRN ─────────────────────────
+  if (useSupplierId) {
+    const poRes = post('/api/purchase-svc/purchase-orders', {
+      supplierId: useSupplierId,
+      storeId:    store1,
+      currency,
+      expectedDelivery: '2026-12-31',
+    }, tenantId, ownerId);
+    intercompanyLatency.add(poRes.timings.duration);
+    check(poRes, { 'create PO 201': res => res.status === 201 });
+    const poId = (poRes.status === 201) ? body(poRes).id : null;
+
+    if (poId) {
+      // Add line
+      const lineRes = post(`/api/purchase-svc/purchase-orders/${poId}/lines`, {
+        variantId: t.variantIds[0],
+        qty: 50, unitPrice: 25.00, vatCode: 'T1',
+      }, tenantId, ownerId);
+      check(lineRes, { 'add PO line 201': res => res.status === 201 });
+
+      // List lines
+      r = get(`/api/purchase-svc/purchase-orders/${poId}/lines`, tenantId, ownerId);
+      check(r, { 'list PO lines 200': res => res.status === 200 });
+
+      // Submit
+      const submitRes = post(`/api/purchase-svc/purchase-orders/${poId}/submit`, {}, tenantId, ownerId);
+      check(submitRes, { 'submit PO 200': res => res.status === 200 });
+      check(submitRes, { 'PO status SUBMITTED': res => body(res)?.status === 'SUBMITTED' });
+
+      // GRN
+      const grnRes = post('/api/purchase-svc/goods-receipts', {
+        poId, storeId: store1,
+        lines: [{ variantId: t.variantIds[0], qtyReceived: 50 }],
+      }, tenantId, ownerId);
+      intercompanyLatency.add(grnRes.timings.duration);
+      check(grnRes, { 'goods receipt 201': res => res.status === 201 });
+
+      // PO should now be RECEIVED
+      r = get(`/api/purchase-svc/purchase-orders/${poId}`, tenantId, ownerId);
+      check(r, { 'PO status RECEIVED': res => body(res)?.status === 'RECEIVED' });
+
+      // List GRNs for PO
+      r = get(`/api/purchase-svc/goods-receipts?poId=${poId}`, tenantId, ownerId);
+      check(r, { 'list GRNs 200': res => res.status === 200 });
+    }
+  }
+
+  // ── Positive: intercompany invoice AR+AP pair ──────────────────────────────
+  const icRes = post('/api/purchase-svc/intercompany-invoices', {
+    fromStoreId: store1,
+    toStoreId:   store2,
+    netAmount:   500.00,
+    vatAmount:   100.00,
+    grossAmount: 600.00,
+    vatCode:     'T1',
+    vatDisregarded: false,
+    currency,
+  }, tenantId, ownerId);
+  intercompanyLatency.add(icRes.timings.duration);
+  check(icRes, { 'raise IC invoice 201': res => res.status === 201 });
+  const pairBody = body(icRes);
+  const arId = pairBody?.arInvoice?.id;
+  const apId = pairBody?.apInvoice?.id;
+  check(icRes, { 'IC pair has AR and AP': _ => !!(arId && apId) });
+  check(icRes, { 'IC status RAISED':   _ => pairBody?.arInvoice?.status === 'RAISED' });
+  check(icRes, { 'IC payment due date set': _ => !!pairBody?.arInvoice?.paymentDueDate });
+
+  // List invoices
+  r = get('/api/purchase-svc/intercompany-invoices', tenantId, ownerId);
+  check(r, { 'list IC invoices 200': res => res.status === 200 });
+
+  // Get specific invoice
+  if (arId) {
+    r = get(`/api/purchase-svc/intercompany-invoices/${arId}`, tenantId, ownerId);
+    intercompanyLatency.add(r.timings.duration);
+    check(r, { 'get IC invoice 200': res => res.status === 200 });
+    check(r, { 'net amount correct': res => body(res)?.netAmount === 500.00 });
+  }
+
+  // Nominal ledger check — should have 1100 Debtors entry
+  r = get('/api/purchase-svc/nominal-ledger', tenantId, ownerId);
+  check(r, { 'nominal ledger 200': res => res.status === 200 });
+  check(r, { 'has debtors entry': res => {
+    const entries = body(res);
+    return Array.isArray(entries) && entries.some(e => e.nominalCode === '1100');
+  }});
+
+  // Filter nominal ledger by code
+  r = get('/api/purchase-svc/nominal-ledger?code=2200', tenantId, ownerId);
+  check(r, { 'nominal by code 200': res => res.status === 200 });
+  check(r, { 'VAT output entries present': res => {
+    const entries = body(res);
+    return Array.isArray(entries) && entries.length > 0;
+  }});
+
+  // ── Positive: settle AR invoice ─────────────────────────────────────────────
+  if (arId) {
+    const settleRes = post(`/api/purchase-svc/intercompany-invoices/${arId}/settle`, {}, tenantId, ownerId);
+    intercompanyLatency.add(settleRes.timings.duration);
+    check(settleRes, { 'settle IC invoice 200': res => res.status === 200 });
+
+    // Settle again → 409 already settled
+    const settle2 = post(`/api/purchase-svc/intercompany-invoices/${arId}/settle`, {}, tenantId, ownerId);
+    check(settle2, { 'double-settle 409': res => res.status === 409 });
+  }
+
+  // ── Positive: Group VAT disregard ──────────────────────────────────────────
+  const icVatDisRes = post('/api/purchase-svc/intercompany-invoices', {
+    fromStoreId: store1,
+    toStoreId:   store2,
+    netAmount:   250.00,
+    vatAmount:   0.00,
+    grossAmount: 250.00,
+    vatCode:     'T1',
+    vatDisregarded: true,
+    currency,
+  }, tenantId, ownerId);
+  check(icVatDisRes, { 'VAT-disregarded IC 201': res => res.status === 201 });
+  check(icVatDisRes, { 'vatDisregarded=true in response': res =>
+    body(res)?.arInvoice?.vatDisregarded === true });
+
+  // Nominal ledger code 2200 should have no NEW entries beyond the previous count
+  r = get('/api/purchase-svc/nominal-ledger?code=2200', tenantId, ownerId);
+  const prevCount = body(get('/api/purchase-svc/nominal-ledger?code=2200', tenantId, ownerId));
+  check(r, { 'no extra VAT nominal on disregarded': _ => {
+    const entries = body(r);
+    return Array.isArray(entries);
+  }});
+
+  // ── Negative: same fromStore = toStore → 400 ─────────────────────────────
+  const icBadSameStore = post('/api/purchase-svc/intercompany-invoices', {
+    fromStoreId: store1,
+    toStoreId:   store1,
+    netAmount:   100.00,
+    vatAmount:   20.00,
+    grossAmount: 120.00,
+    currency,
+  }, tenantId, ownerId);
+  check(icBadSameStore, { 'same-store IC 400': res => res.status === 400 });
+
+  // ── Negative: unknown invoice ID → 404 ────────────────────────────────────
+  r = get('/api/purchase-svc/intercompany-invoices/00000000-0000-0000-0000-000000000000', tenantId, ownerId);
+  check(r, { 'unknown IC invoice 404': res => res.status === 404 });
+
+  // ── Negative: tenant isolation — other tenant cannot see invoices ──────────
+  const otherTenant = tenantCtx({ india: d.uk, uk: d.india });
+  if (otherTenant && arId) {
+    r = get(`/api/purchase-svc/intercompany-invoices/${arId}`, otherTenant.tenantId, otherTenant.ownerId);
+    check(r, { 'IC invoice cross-tenant 404': res => res.status === 404 });
+    if (r.status !== 404) isolationViolations.add(1);
+  }
+
+  // ── Negative: create PO with unknown supplier → 404 ──────────────────────
+  const badPoRes = post('/api/purchase-svc/purchase-orders', {
+    supplierId: '00000000-0000-0000-0000-000000000000',
+    storeId:    store1,
+    currency,
+  }, tenantId, ownerId);
+  check(badPoRes, { 'PO unknown supplier 404': res => res.status === 404 });
+
+  sleep(1);
+}
+
 // ── Required default export ────────────────────────────────────────────────────
 export default function () {}
 
@@ -2921,6 +3127,9 @@ export function handleSummary(data) {
       },
       pricing: {
         pricing_p95_ms: fmt(data.metrics.pricing_latency_ms?.values?.['p(95)']?.toFixed(1)),
+      },
+      purchase: {
+        intercompany_p95_ms: fmt(data.metrics.intercompany_latency_ms?.values?.['p(95)']?.toFixed(1)),
       },
       thresholds: thresholdResults,
     }, null, 2),
