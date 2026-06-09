@@ -61,6 +61,7 @@ const negativeUnexpectedSuccess    = new Counter('negative_unexpected_success');
 const orderPosLatency              = new Trend('order_pos_latency_ms',          true);
 const layawayLatency               = new Trend('layaway_latency_ms',            true);
 const giftCardLatency              = new Trend('gift_card_latency_ms',          true);
+const pricingLatency               = new Trend('pricing_latency_ms',            true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -149,6 +150,10 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'giftCardManagement', startTime: '44s',
     },
+    pricingVat: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'pricingVat', startTime: '46s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -173,6 +178,7 @@ export const options = {
     order_pos_latency_ms:        ['p(95)<800'],
     layaway_latency_ms:          ['p(95)<800'],
     gift_card_latency_ms:        ['p(95)<800'],
+    pricing_latency_ms:          ['p(95)<800'],
   },
 };
 
@@ -344,9 +350,56 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
     }
   }
 
+  // 10. Pricing — seed UK VAT rates, price list, product VAT categories
+  const currency = isIN ? 'INR' : 'GBP';
+  // T1 = standard rate (20% UK / 18% GST equivalent for IN seeding)
+  post('/api/pricing-svc/vat-rates', {
+    code: 'T1', name: isIN ? 'GST Standard' : 'Standard Rate',
+    rate: isIN ? 0.18 : 0.20,
+    exempt: false,
+    description: isIN ? 'India GST 18%' : 'HMRC UK Standard VAT 20%',
+    effectiveFrom: '2024-01-01T00:00:00Z',
+  }, tenantId, owner.userId);
+  // T0 = zero rate
+  post('/api/pricing-svc/vat-rates', {
+    code: 'T0', name: 'Zero Rate',
+    rate: 0.00, exempt: false,
+    description: 'Zero-rated supply',
+    effectiveFrom: '2024-01-01T00:00:00Z',
+  }, tenantId, owner.userId);
+
+  const plRes = post('/api/pricing-svc/price-lists', {
+    name: `Standard ${currency}`, channel: 'ALL', currency,
+    effectiveFrom: '2024-01-01T00:00:00Z',
+  }, tenantId, owner.userId);
+  const priceListId = (plRes.status < 300) ? body(plRes).id : null;
+
+  if (priceListId) {
+    for (const vid of variantIds) {
+      // Assign variant → T1 VAT category
+      post('/api/pricing-svc/product-vat-categories',
+        { variantId: vid, vatCode: 'T1' }, tenantId, owner.userId);
+      // Add price list item
+      post(`/api/pricing-svc/price-lists/${priceListId}/items`,
+        { variantId: vid, price: isIN ? 1999.00 : 49.99, minQty: 1 }, tenantId, owner.userId);
+    }
+  }
+
+  // Active 10% promotion scoped to ALL
+  const promoRes = post('/api/pricing-svc/promotions', {
+    name: isIN ? 'Festive Offer' : 'Summer Sale',
+    type: 'PERCENT', value: 10, channel: 'ALL',
+    startsAt: '2020-01-01T00:00:00Z',
+  }, tenantId, owner.userId);
+  const promoId = (promoRes.status < 300) ? body(promoRes).id : null;
+  if (promoId) {
+    post(`/api/pricing-svc/promotions/${promoId}/items`,
+      { scopeType: 'ALL' }, tenantId, owner.userId);
+  }
+
   console.log(
     `[${tag}] tenantId=${tenantId} stores=${storeIds.length} variants=${variantIds.length} ` +
-    `cashiers=${[cashier1, cashier2].filter(Boolean).length}`
+    `cashiers=${[cashier1, cashier2].filter(Boolean).length} priceListId=${priceListId}`
   );
 
   return {
@@ -361,6 +414,8 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
     brandId,
     categoryIds: [elecCatId, clothCatId].filter(Boolean),
     brandName:   products.brand,
+    priceListId,
+    currency,
   };
 }
 
@@ -2686,6 +2741,144 @@ export function negativeTests(d) {
   sleep(1);
 }
 
+// ── Gap #15: Pricing VAT ───────────────────────────────────────────────────────
+export function pricingVat(d) {
+  if (!d) return;
+  const tenant = tenantCtx(d);
+  const store  = storeCtx(tenant);
+  const tag    = isIN(d) ? 'IN' : 'UK';
+  if (!store || !tenant.variantIds || tenant.variantIds.length === 0) { sleep(1); return; }
+
+  const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
+  const ordId = `aaaaaaaa-${Date.now().toString(16).padStart(12,'0').slice(0,8)}-0000-0000-aaaaaaaaaaaa`;
+  const lineId = `bbbbbbbb-${Date.now().toString(16).padStart(12,'0').slice(0,8)}-0000-0000-bbbbbbbbbbbb`;
+
+  // ── Positive: get VAT rate T1 ──────────────────────────────────────────────
+  let t0 = Date.now();
+  let res = get('/api/pricing-svc/vat-rates/T1', tenant.tenantId, tenant.ownerId);
+  pricingLatency.add(Date.now() - t0);
+  ok(res, `${tag} get VAT rate T1`);
+  check(res, {
+    [`${tag} VAT rate has rate field`]: r => {
+      try { const v = JSON.parse(r.body).data; return v && v.rate != null; } catch (_) { return false; }
+    },
+  });
+
+  // ── Positive: list all VAT rates ──────────────────────────────────────────
+  res = get('/api/pricing-svc/vat-rates', tenant.tenantId, tenant.ownerId);
+  ok(res, `${tag} list VAT rates`);
+
+  // ── Positive: resolve price with VAT ────────────────────────────────────
+  t0 = Date.now();
+  res = http.post(`${BASE}/api/pricing-svc/prices/resolve`,
+    JSON.stringify({ variantId: vid, channel: 'ALL', qty: 1 }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  pricingLatency.add(Date.now() - t0);
+  const priceOk = ok(res, `${tag} resolve price`);
+  if (priceOk) {
+    check(res, {
+      [`${tag} resolved price has vatCode`]: r => {
+        try { const v = JSON.parse(r.body).data; return v && v.vatCode != null; } catch (_) { return false; }
+      },
+      [`${tag} resolved price has totalWithVat`]: r => {
+        try { const v = JSON.parse(r.body).data; return v && v.totalWithVat != null; } catch (_) { return false; }
+      },
+    });
+  }
+
+  // ── Positive: record tax transaction (POSLog) ───────────────────────────
+  const vatCode = 'T1';
+  const vatRate = 0.20;
+  const net = 49.99;
+  const vat = parseFloat((net * vatRate).toFixed(2));
+  const gross = parseFloat((net + vat).toFixed(2));
+  t0 = Date.now();
+  res = http.post(`${BASE}/api/pricing-svc/tax-transactions`,
+    JSON.stringify({
+      orderId: ordId, orderLineId: lineId, variantId: vid,
+      storeId: store.storeId, vatCode, vatRate, netAmount: net,
+      vatAmount: vat, grossAmount: gross, exempt: false,
+      taxPointDate: new Date().toISOString(),
+    }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  pricingLatency.add(Date.now() - t0);
+  ok(res, `${tag} record tax transaction 201`);
+
+  // ── Positive: list tax transactions by order ────────────────────────────
+  res = get(`/api/pricing-svc/tax-transactions?orderId=${ordId}`,
+    tenant.tenantId, tenant.ownerId);
+  ok(res, `${tag} list tax transactions by order`);
+
+  // ── Positive: MTD VAT return ────────────────────────────────────────────
+  const now = new Date();
+  const y = now.getFullYear();
+  res = get(`/api/pricing-svc/vat-return?from=${y}-01-01T00:00:00Z&to=${y}-12-31T23:59:59Z`,
+    tenant.tenantId, tenant.ownerId);
+  ok(res, `${tag} MTD VAT return`);
+  check(res, {
+    [`${tag} VAT return has box1`]: r => {
+      try { return JSON.parse(r.body).data?.box1 != null; } catch (_) { return false; }
+    },
+  });
+
+  // ── Positive: list promotions ────────────────────────────────────────────
+  res = get('/api/pricing-svc/promotions', tenant.tenantId, tenant.ownerId);
+  ok(res, `${tag} list promotions`);
+
+  // ── Positive: tenant isolation — IN tenant cannot see UK VAT rates ───────
+  if (!isIN(d)) {
+    const crossTenantId = d.india?.tenantId;
+    if (crossTenantId) {
+      res = get('/api/pricing-svc/vat-rates/T1', crossTenantId, tenant.ownerId);
+      check(res, {
+        'pricing isolation: UK rate not visible to IN tenant header':
+          r => r.status === 404 || r.status === 403,
+      });
+      if (res.status >= 200 && res.status < 300) isolationViolations.add(1);
+    }
+  }
+
+  // ── Negative: create VAT rate with rate > 1 → 400 ───────────────────────
+  res = http.post(`${BASE}/api/pricing-svc/vat-rates`,
+    JSON.stringify({ code: 'TX', name: 'Bad Rate', rate: 1.5, exempt: false,
+      effectiveFrom: '2024-01-01T00:00:00Z' }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  check(res, { [`${tag} rate >1 rejected 400`]: r => r.status === 400 });
+  if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
+
+  // ── Negative: resolve price for unknown variant → 404 ────────────────────
+  res = http.post(`${BASE}/api/pricing-svc/prices/resolve`,
+    JSON.stringify({ variantId: '99999999-9999-9999-9999-999999999999', channel: 'ALL', qty: 1 }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  check(res, { [`${tag} resolve unknown variant 404`]: r => r.status === 404 });
+  if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
+
+  // ── Negative: record tax transaction missing orderId → 400 ────────────────
+  res = http.post(`${BASE}/api/pricing-svc/tax-transactions`,
+    JSON.stringify({ variantId: vid, storeId: store.storeId, vatCode: 'T1',
+      vatRate: 0.20, netAmount: 10, vatAmount: 2, grossAmount: 12,
+      exempt: false, taxPointDate: new Date().toISOString() }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  check(res, { [`${tag} tax tx missing orderId 400`]: r => r.status === 400 });
+  if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
+
+  // ── Negative: VAT return with from >= to → 400 ───────────────────────────
+  res = get('/api/pricing-svc/vat-return?from=2025-01-01T00:00:00Z&to=2024-01-01T00:00:00Z',
+    tenant.tenantId, tenant.ownerId);
+  check(res, { [`${tag} VAT return invalid period 400`]: r => r.status === 400 });
+  if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
+
+  // ── Negative: duplicate VAT rate code → 409 ──────────────────────────────
+  res = http.post(`${BASE}/api/pricing-svc/vat-rates`,
+    JSON.stringify({ code: 'T1', name: 'Dup', rate: 0.10, exempt: false,
+      effectiveFrom: '2024-01-01T00:00:00Z' }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  check(res, { [`${tag} duplicate VAT code 409`]: r => r.status === 409 });
+  if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
+
+  sleep(1);
+}
+
 // ── Required default export ────────────────────────────────────────────────────
 export default function () {}
 
@@ -2725,6 +2918,9 @@ export function handleSummary(data) {
       cross_cutting: {
         purchase_receive_p95_ms: fmt(data.metrics.purchase_receive_latency_ms?.values?.['p(95)']?.toFixed(1)),
         isolation_violations:    fmt(data.metrics.isolation_violations?.values?.count),
+      },
+      pricing: {
+        pricing_p95_ms: fmt(data.metrics.pricing_latency_ms?.values?.['p(95)']?.toFixed(1)),
       },
       thresholds: thresholdResults,
     }, null, 2),
