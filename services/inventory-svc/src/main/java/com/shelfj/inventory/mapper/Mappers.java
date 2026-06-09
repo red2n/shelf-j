@@ -11,6 +11,8 @@ import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
+import com.shelfj.inventory.domain.Domain.TransferOrder;
+import com.shelfj.inventory.domain.Domain.TransferOrderLine;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
@@ -22,6 +24,8 @@ import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
+import com.shelfj.inventory.dto.Dtos.TransferOrderLineResponse;
+import com.shelfj.inventory.dto.Dtos.TransferOrderResponse;
 import java.time.Instant;
 import java.util.List;
 
@@ -130,6 +134,30 @@ public final class Mappers {
         b.demandQty(),
         b.movementCount(),
         ts(b.computedAt()));
+  }
+
+  public static TransferOrderLineResponse toTransferOrderLine(TransferOrderLine l) {
+    return new TransferOrderLineResponse(
+        l.id().toString(),
+        l.variantId().toString(),
+        l.requestedQty(),
+        l.shippedQty(),
+        l.receivedQty());
+  }
+
+  public static TransferOrderResponse toTransferOrder(
+      TransferOrder o, List<TransferOrderLine> lines) {
+    return new TransferOrderResponse(
+        o.id().toString(),
+        o.fromStoreId().toString(),
+        o.toStoreId().toString(),
+        o.transferType(),
+        o.status(),
+        o.notes(),
+        ts(o.createdAt()),
+        ts(o.shippedAt()),
+        ts(o.receivedAt()),
+        lines.stream().map(Mappers::toTransferOrderLine).toList());
   }
 
   public static MoveOrderLineResponse toMoveOrderLine(MoveOrderLine l) {

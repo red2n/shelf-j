@@ -94,6 +94,27 @@ final class Events {
         + "}";
   }
 
+  static String transferOrderShipped(
+      UUID tenantId, UUID orderId, UUID fromStoreId, UUID toStoreId) {
+    return EventPayload.base("TransferOrderShipped", tenantId, orderId)
+        + ",\"fromStoreId\":\""
+        + fromStoreId
+        + "\",\"toStoreId\":\""
+        + toStoreId
+        + "\"}";
+  }
+
+  static String transferOrderReceived(UUID tenantId, UUID orderId, UUID toStoreId) {
+    return EventPayload.base("TransferOrderReceived", tenantId, orderId)
+        + ",\"toStoreId\":\""
+        + toStoreId
+        + "\"}";
+  }
+
+  static String transferOrderCancelled(UUID tenantId, UUID orderId) {
+    return EventPayload.base("TransferOrderCancelled", tenantId, orderId) + "}";
+  }
+
   static String moveOrderCompleted(UUID tenantId, UUID orderId, UUID fromStoreId, UUID toStoreId) {
     return EventPayload.base("MoveOrderCompleted", tenantId, orderId)
         + ",\"fromStoreId\":\""

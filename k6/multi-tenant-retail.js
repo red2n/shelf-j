@@ -53,6 +53,7 @@ const demandHistoryLatency   = new Trend('demand_history_latency_ms',   true);
 const serialControlLatency   = new Trend('serial_control_latency_ms',   true);
 const uomManagementLatency   = new Trend('uom_management_latency_ms',   true);
 const moveOrderLatency       = new Trend('move_order_latency_ms',       true);
+const transferOrderLatency   = new Trend('transfer_order_latency_ms',   true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -109,6 +110,10 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'moveOrders', startTime: '30s',
     },
+    transferOrders: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'transferOrders', startTime: '32s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -125,6 +130,7 @@ export const options = {
     serial_control_latency_ms:   ['p(95)<600'],
     uom_management_latency_ms:   ['p(95)<600'],
     move_order_latency_ms:       ['p(95)<800'],
+    transfer_order_latency_ms:   ['p(95)<800'],
   },
 };
 
@@ -1424,6 +1430,192 @@ export function moveOrders(d) {
     ok(cancelRes, `${tag} MO cancel`);
     check(cancelRes, {
       [`${tag} MO cancelled status=CANCELLED`]: r => {
+        try { return JSON.parse(r.body).data.status === 'CANCELLED'; } catch (_) { return false; }
+      },
+    });
+  }
+
+  sleep(1);
+}
+
+export function transferOrders(d) {
+  if (!d) return;
+  const tenant = tenantCtx(d);
+  const tag = isIN(d) ? 'IN' : 'UK';
+  if (!tenant.variantIds.length || tenant.stores.length < 2) return;
+
+  const fromStore = tenant.stores[0].storeId;
+  const toStore   = tenant.stores[1].storeId;
+  const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
+
+  // 1. Seed source store with stock
+  http.post(
+    `${BASE}/api/inventory-svc/admin/inventory/receive`,
+    JSON.stringify({ storeId: fromStore, variantId: vid, qty: '30', batchNo: `TO-SEED-${__ITER}` }),
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+
+  // 2. Create INTRANSIT transfer order (two-phase: ship then receive)
+  const t0 = Date.now();
+  const createRes = http.post(
+    `${BASE}/api/inventory-svc/admin/inventory/transfers`,
+    JSON.stringify({
+      fromStoreId: fromStore,
+      toStoreId: toStore,
+      transferType: 'INTRANSIT',
+      notes: `k6 intransit transfer ${__ITER}`,
+      lines: [{ variantId: vid, requestedQty: '8' }],
+    }),
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+  transferOrderLatency.add(Date.now() - t0);
+  ok(createRes, `${tag} TO create INTRANSIT`);
+  check(createRes, {
+    [`${tag} TO status=PENDING`]: r => {
+      try { return JSON.parse(r.body).data.status === 'PENDING'; } catch (_) { return false; }
+    },
+    [`${tag} TO type=INTRANSIT`]: r => {
+      try { return JSON.parse(r.body).data.transferType === 'INTRANSIT'; } catch (_) { return false; }
+    },
+    [`${tag} TO has 1 line`]: r => {
+      try { return JSON.parse(r.body).data.lines.length === 1; } catch (_) { return false; }
+    },
+  });
+
+  const orderId = (() => {
+    try { return JSON.parse(createRes.body).data?.id || null; } catch (_) { return null; }
+  })();
+  if (!orderId) { sleep(1); return; }
+
+  // 3. List transfers — should include the new PENDING order
+  const listRes = get(
+    `/api/inventory-svc/admin/inventory/transfers?store=${fromStore}&status=PENDING&limit=10`,
+    tenant.tenantId, tenant.ownerId);
+  ok(listRes, `${tag} TO list PENDING`);
+  check(listRes, {
+    [`${tag} TO list contains new order`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return items.some(o => o.id === orderId);
+      } catch (_) { return false; }
+    },
+  });
+
+  // 4. Get order by ID
+  const getRes = get(
+    `/api/inventory-svc/admin/inventory/transfers/${orderId}`,
+    tenant.tenantId, tenant.ownerId);
+  ok(getRes, `${tag} TO get by id`);
+
+  // 5. Ship — PENDING → SHIPPED (deducts source, sets shippedQty, stock in transit)
+  const t1 = Date.now();
+  const shipRes = http.post(
+    `${BASE}/api/inventory-svc/admin/inventory/transfers/${orderId}/ship`,
+    null,
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+  transferOrderLatency.add(Date.now() - t1);
+  ok(shipRes, `${tag} TO ship`);
+  check(shipRes, {
+    [`${tag} TO shipped status=SHIPPED`]: r => {
+      try { return JSON.parse(r.body).data.status === 'SHIPPED'; } catch (_) { return false; }
+    },
+    [`${tag} TO line has shippedQty`]: r => {
+      try {
+        const lines = JSON.parse(r.body).data?.lines || [];
+        return lines.length > 0 && lines[0].shippedQty != null;
+      } catch (_) { return false; }
+    },
+  });
+
+  // 6. Receive — SHIPPED → RECEIVED (adds destination batches)
+  const t2 = Date.now();
+  const receiveRes = http.post(
+    `${BASE}/api/inventory-svc/admin/inventory/transfers/${orderId}/receive`,
+    null,
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+  transferOrderLatency.add(Date.now() - t2);
+  ok(receiveRes, `${tag} TO receive`);
+  check(receiveRes, {
+    [`${tag} TO received status=RECEIVED`]: r => {
+      try { return JSON.parse(r.body).data.status === 'RECEIVED'; } catch (_) { return false; }
+    },
+    [`${tag} TO line has receivedQty`]: r => {
+      try {
+        const lines = JSON.parse(r.body).data?.lines || [];
+        return lines.length > 0 && lines[0].receivedQty != null;
+      } catch (_) { return false; }
+    },
+  });
+
+  // 7. Verify destination store received stock
+  const destLevels = get(
+    `/api/inventory-svc/admin/inventory/levels?store=${toStore}`,
+    tenant.tenantId, tenant.ownerId);
+  ok(destLevels, `${tag} TO dest levels`);
+  check(destLevels, {
+    [`${tag} TO dest store has stock after receive`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        const level = items.find(l => l.variantId === vid);
+        return level && parseFloat(level.onHand) > 0;
+      } catch (_) { return false; }
+    },
+  });
+
+  // 8. Create a DIRECT transfer and ship in one call (PENDING → RECEIVED atomically)
+  const directCreate = http.post(
+    `${BASE}/api/inventory-svc/admin/inventory/transfers`,
+    JSON.stringify({
+      fromStoreId: fromStore,
+      toStoreId: toStore,
+      transferType: 'DIRECT',
+      lines: [{ variantId: vid, requestedQty: '3' }],
+    }),
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+  ok(directCreate, `${tag} TO create DIRECT`);
+  const directId = (() => {
+    try { return JSON.parse(directCreate.body).data?.id || null; } catch (_) { return null; }
+  })();
+  if (directId) {
+    const directShip = http.post(
+      `${BASE}/api/inventory-svc/admin/inventory/transfers/${directId}/ship`,
+      null,
+      { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+    );
+    ok(directShip, `${tag} TO DIRECT ship`);
+    check(directShip, {
+      [`${tag} TO DIRECT completed atomically`]: r => {
+        try { return JSON.parse(r.body).data.status === 'RECEIVED'; } catch (_) { return false; }
+      },
+    });
+  }
+
+  // 9. Create and cancel a PENDING order (only PENDING can be cancelled)
+  const cancelCreate = http.post(
+    `${BASE}/api/inventory-svc/admin/inventory/transfers`,
+    JSON.stringify({
+      fromStoreId: fromStore,
+      toStoreId: toStore,
+      transferType: 'DIRECT',
+      lines: [{ variantId: vid, requestedQty: '1' }],
+    }),
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+  const cancelId = (() => {
+    try { return JSON.parse(cancelCreate.body).data?.id || null; } catch (_) { return null; }
+  })();
+  if (cancelId) {
+    const cancelRes = http.post(
+      `${BASE}/api/inventory-svc/admin/inventory/transfers/${cancelId}/cancel`,
+      null,
+      { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+    );
+    ok(cancelRes, `${tag} TO cancel`);
+    check(cancelRes, {
+      [`${tag} TO cancelled status=CANCELLED`]: r => {
         try { return JSON.parse(r.body).data.status === 'CANCELLED'; } catch (_) { return false; }
       },
     });

@@ -12,6 +12,8 @@ import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
+import com.shelfj.inventory.domain.Domain.TransferOrder;
+import com.shelfj.inventory.domain.Domain.TransferOrderLine;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -1342,6 +1344,343 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getObject("variant_id", UUID.class),
         rs.getBigDecimal("requested_qty"),
         rs.getBigDecimal("picked_qty"));
+  }
+
+  // ---------------------------------------------------------------- transfer orders
+
+  public TransferOrder createTransferOrder(TransferOrder order, List<TransferOrderLine> lines) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO transfer_orders"
+                      + " (id, tenant_id, from_store_id, to_store_id, transfer_type,"
+                      + "  status, notes, created_at)"
+                      + " VALUES (?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, order.id());
+            ps.setObject(2, order.tenantId());
+            ps.setObject(3, order.fromStoreId());
+            ps.setObject(4, order.toStoreId());
+            ps.setString(5, order.transferType());
+            ps.setString(6, order.status());
+            ps.setString(7, order.notes());
+            ps.setObject(8, order.createdAt().atOffset(ZoneOffset.UTC));
+            ps.executeUpdate();
+          }
+          insertTransferLines(c, lines);
+          return order;
+        },
+        "create transfer order");
+  }
+
+  public List<TransferOrder> listTransferOrders(
+      UUID tenantId, UUID storeId, String status, int limit) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, from_store_id, to_store_id, transfer_type,"
+                + " status, notes, created_at, shipped_at, received_at"
+                + " FROM transfer_orders WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND (from_store_id = ? OR to_store_id = ?)");
+    if (status != null) sb.append(" AND status = ?");
+    sb.append(" ORDER BY created_at DESC LIMIT ?");
+    return query(
+        sb.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) {
+            ps.setObject(i++, storeId);
+            ps.setObject(i++, storeId);
+          }
+          if (status != null) ps.setString(i++, status);
+          ps.setInt(i, limit);
+        },
+        InventoryRepository::mapTransferOrder,
+        "list transfer orders");
+  }
+
+  public Optional<TransferOrder> findTransferOrder(UUID tenantId, UUID id) {
+    List<TransferOrder> rows =
+        query(
+            "SELECT id, tenant_id, from_store_id, to_store_id, transfer_type,"
+                + " status, notes, created_at, shipped_at, received_at"
+                + " FROM transfer_orders WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            InventoryRepository::mapTransferOrder,
+            "find transfer order");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  public List<TransferOrderLine> listTransferOrderLines(UUID transferOrderId) {
+    return query(
+        "SELECT id, tenant_id, transfer_order_id, variant_id,"
+            + " requested_qty, shipped_qty, received_qty"
+            + " FROM transfer_order_lines WHERE transfer_order_id = ? ORDER BY id",
+        ps -> ps.setObject(1, transferOrderId),
+        InventoryRepository::mapTransferOrderLine,
+        "list transfer order lines");
+  }
+
+  /**
+   * Ship a PENDING transfer: deducts source store stock via FIFO. For DIRECT type: also creates
+   * destination batch and marks RECEIVED immediately. For INTRANSIT type: only deducts source;
+   * marks SHIPPED (awaiting receive call).
+   */
+  public TransferOrder shipTransferOrder(UUID tenantId, UUID orderId, OutboxRow event) {
+    return inTx(
+        c -> {
+          TransferOrder order = loadTransferOrderForUpdate(c, tenantId, orderId);
+          if (!TransferOrder.PENDING.equals(order.status())) {
+            throw ApiException.unprocessable(
+                "TRANSFER_ORDER_NOT_SHIPPABLE", "Transfer order is " + order.status());
+          }
+          List<TransferOrderLine> lines = listTransferOrderLines(orderId);
+          boolean isDirect = TransferOrder.TYPE_DIRECT.equals(order.transferType());
+
+          for (TransferOrderLine line : lines) {
+            deductFifo(
+                c,
+                tenantId,
+                order.fromStoreId(),
+                line.variantId(),
+                line.requestedQty(),
+                MoveType.TRANSFER,
+                "TRANSFER_ORDER",
+                orderId);
+            if (isDirect) {
+              Batch dest =
+                  new Batch(
+                      UUID.randomUUID(),
+                      tenantId,
+                      order.toStoreId(),
+                      line.variantId(),
+                      "TO-" + orderId.toString().substring(0, 8),
+                      line.requestedQty(),
+                      line.requestedQty(),
+                      null,
+                      null,
+                      Instant.now(),
+                      Batch.STATUS_ACTIVE,
+                      Batch.MATERIAL_AVAILABLE,
+                      null);
+              insertBatch(c, dest);
+              insertMovement(
+                  c,
+                  tenantId,
+                  order.toStoreId(),
+                  line.variantId(),
+                  dest.id(),
+                  MoveType.TRANSFER,
+                  line.requestedQty(),
+                  "TRANSFER_ORDER",
+                  orderId);
+            }
+          }
+
+          // Update lines: shipped_qty = requested_qty (and received_qty for DIRECT)
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  isDirect
+                      ? "UPDATE transfer_order_lines"
+                          + " SET shipped_qty = requested_qty, received_qty = requested_qty"
+                          + " WHERE transfer_order_id = ?"
+                      : "UPDATE transfer_order_lines SET shipped_qty = requested_qty"
+                          + " WHERE transfer_order_id = ?")) {
+            ps.setObject(1, orderId);
+            ps.executeUpdate();
+          }
+
+          TransferOrder updated;
+          String sql =
+              isDirect
+                  ? "UPDATE transfer_orders SET status = 'RECEIVED',"
+                      + " shipped_at = now(), received_at = now()"
+                      + " WHERE tenant_id = ? AND id = ?"
+                      + " RETURNING id, tenant_id, from_store_id, to_store_id, transfer_type,"
+                      + " status, notes, created_at, shipped_at, received_at"
+                  : "UPDATE transfer_orders SET status = 'SHIPPED', shipped_at = now()"
+                      + " WHERE tenant_id = ? AND id = ?"
+                      + " RETURNING id, tenant_id, from_store_id, to_store_id, transfer_type,"
+                      + " status, notes, created_at, shipped_at, received_at";
+          try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              updated = mapTransferOrder(rs);
+            }
+          }
+          insertOutbox(c, event);
+          return updated;
+        },
+        "ship transfer order");
+  }
+
+  /**
+   * Receive a SHIPPED INTRANSIT transfer: creates destination batches for each line. Only valid for
+   * INTRANSIT type in SHIPPED status.
+   */
+  public TransferOrder receiveTransferOrder(UUID tenantId, UUID orderId, OutboxRow event) {
+    return inTx(
+        c -> {
+          TransferOrder order = loadTransferOrderForUpdate(c, tenantId, orderId);
+          if (!TransferOrder.SHIPPED.equals(order.status())) {
+            throw ApiException.unprocessable(
+                "TRANSFER_ORDER_NOT_RECEIVABLE", "Transfer order is " + order.status());
+          }
+          if (TransferOrder.TYPE_DIRECT.equals(order.transferType())) {
+            throw ApiException.unprocessable(
+                "TRANSFER_ORDER_DIRECT_AUTO_RECEIVED",
+                "DIRECT transfers are auto-received on ship");
+          }
+          List<TransferOrderLine> lines = listTransferOrderLines(orderId);
+          for (TransferOrderLine line : lines) {
+            BigDecimal qty = line.shippedQty() == null ? line.requestedQty() : line.shippedQty();
+            Batch dest =
+                new Batch(
+                    UUID.randomUUID(),
+                    tenantId,
+                    order.toStoreId(),
+                    line.variantId(),
+                    "TO-" + orderId.toString().substring(0, 8),
+                    qty,
+                    qty,
+                    null,
+                    null,
+                    Instant.now(),
+                    Batch.STATUS_ACTIVE,
+                    Batch.MATERIAL_AVAILABLE,
+                    null);
+            insertBatch(c, dest);
+            insertMovement(
+                c,
+                tenantId,
+                order.toStoreId(),
+                line.variantId(),
+                dest.id(),
+                MoveType.TRANSFER,
+                qty,
+                "TRANSFER_ORDER",
+                orderId);
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE transfer_order_lines SET received_qty = shipped_qty"
+                      + " WHERE transfer_order_id = ?")) {
+            ps.setObject(1, orderId);
+            ps.executeUpdate();
+          }
+          TransferOrder received;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE transfer_orders SET status = 'RECEIVED', received_at = now()"
+                      + " WHERE tenant_id = ? AND id = ?"
+                      + " RETURNING id, tenant_id, from_store_id, to_store_id, transfer_type,"
+                      + " status, notes, created_at, shipped_at, received_at")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              received = mapTransferOrder(rs);
+            }
+          }
+          insertOutbox(c, event);
+          return received;
+        },
+        "receive transfer order");
+  }
+
+  public Optional<TransferOrder> cancelTransferOrder(UUID tenantId, UUID orderId, OutboxRow event) {
+    return inTx(
+        c -> {
+          TransferOrder order = loadTransferOrderForUpdate(c, tenantId, orderId);
+          if (!TransferOrder.PENDING.equals(order.status())) {
+            return Optional.<TransferOrder>empty();
+          }
+          TransferOrder cancelled;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE transfer_orders SET status = 'CANCELLED'"
+                      + " WHERE tenant_id = ? AND id = ?"
+                      + " RETURNING id, tenant_id, from_store_id, to_store_id, transfer_type,"
+                      + " status, notes, created_at, shipped_at, received_at")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              cancelled = mapTransferOrder(rs);
+            }
+          }
+          insertOutbox(c, event);
+          return Optional.of(cancelled);
+        },
+        "cancel transfer order");
+  }
+
+  private TransferOrder loadTransferOrderForUpdate(Connection c, UUID tenantId, UUID id)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, from_store_id, to_store_id, transfer_type,"
+                + " status, notes, created_at, shipped_at, received_at"
+                + " FROM transfer_orders WHERE tenant_id = ? AND id = ? FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, id);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next())
+          throw ApiException.notFound("TRANSFER_ORDER_NOT_FOUND", "No such transfer order");
+        return mapTransferOrder(rs);
+      }
+    }
+  }
+
+  private void insertTransferLines(Connection c, List<TransferOrderLine> lines)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO transfer_order_lines"
+                + " (id, tenant_id, transfer_order_id, variant_id, requested_qty)"
+                + " VALUES (?,?,?,?,?)")) {
+      for (TransferOrderLine l : lines) {
+        ps.setObject(1, l.id());
+        ps.setObject(2, l.tenantId());
+        ps.setObject(3, l.transferOrderId());
+        ps.setObject(4, l.variantId());
+        ps.setBigDecimal(5, l.requestedQty());
+        ps.addBatch();
+      }
+      ps.executeBatch();
+    }
+  }
+
+  private static TransferOrder mapTransferOrder(ResultSet rs) throws SQLException {
+    OffsetDateTime shippedOdt = rs.getObject("shipped_at", OffsetDateTime.class);
+    OffsetDateTime receivedOdt = rs.getObject("received_at", OffsetDateTime.class);
+    return new TransferOrder(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("from_store_id", UUID.class),
+        rs.getObject("to_store_id", UUID.class),
+        rs.getString("transfer_type"),
+        rs.getString("status"),
+        rs.getString("notes"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        shippedOdt == null ? null : shippedOdt.toInstant(),
+        receivedOdt == null ? null : receivedOdt.toInstant());
+  }
+
+  private static TransferOrderLine mapTransferOrderLine(ResultSet rs) throws SQLException {
+    return new TransferOrderLine(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("transfer_order_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getBigDecimal("requested_qty"),
+        rs.getBigDecimal("shipped_qty"),
+        rs.getBigDecimal("received_qty"));
   }
 
   private static DemandBucket mapDemandBucket(ResultSet rs) throws SQLException {

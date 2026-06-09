@@ -1,11 +1,13 @@
 package com.shelfj.inventory.api;
 
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
+import com.shelfj.inventory.domain.Domain.TransferOrderLine;
 import com.shelfj.inventory.dto.Dtos.AdjustRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateResult;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.CreateMoveOrderRequest;
+import com.shelfj.inventory.dto.Dtos.CreateTransferOrderRequest;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.MaterialStatusRequest;
@@ -20,6 +22,7 @@ import com.shelfj.inventory.dto.Dtos.SerialStatusRequest;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdRequest;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
+import com.shelfj.inventory.dto.Dtos.TransferOrderResponse;
 import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
 import com.shelfj.web.ApiException;
@@ -343,6 +346,81 @@ public class AdminResource {
             .map(Mappers::toDemandBucket)
             .toList();
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  // ── transfer orders (Gap #6) ─────────────────────────────────────────────
+
+  @POST
+  @Path("/transfers")
+  public Response createTransfer(CreateTransferOrderRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    UUID fromStore = uuid(req.fromStoreId(), "fromStoreId");
+    UUID toStore = uuid(req.toStoreId(), "toStoreId");
+    List<TransferOrderLine> lines =
+        req.lines().stream()
+            .map(
+                l ->
+                    new TransferOrderLine(
+                        null,
+                        tenantId,
+                        null,
+                        uuid(l.variantId(), "variantId"),
+                        l.requestedQty(),
+                        null,
+                        null))
+            .toList();
+    var wl =
+        service.createTransferOrder(
+            tenantId, fromStore, toStore, req.transferType(), req.notes(), lines);
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines())))
+        .build();
+  }
+
+  @GET
+  @Path("/transfers")
+  public ApiResponse<List<TransferOrderResponse>> listTransfers(
+      @QueryParam("store") String store,
+      @QueryParam("status") String status,
+      @QueryParam("limit") Integer limitParam) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
+    return ApiResponse.ok(
+        service.listTransferOrders(tenantId, storeId, status, limit).stream()
+            .map(
+                o -> Mappers.toTransferOrder(o, service.getTransferOrder(tenantId, o.id()).lines()))
+            .toList());
+  }
+
+  @GET
+  @Path("/transfers/{id}")
+  public ApiResponse<TransferOrderResponse> getTransfer(@PathParam("id") UUID id) {
+    var wl = service.getTransferOrder(ctx.requireTenantId(), id);
+    return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
+  }
+
+  @POST
+  @Path("/transfers/{id}/ship")
+  public ApiResponse<TransferOrderResponse> shipTransfer(@PathParam("id") UUID id) {
+    var wl = service.shipTransferOrder(ctx.requireTenantId(), id);
+    return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
+  }
+
+  @POST
+  @Path("/transfers/{id}/receive")
+  public ApiResponse<TransferOrderResponse> receiveTransfer(@PathParam("id") UUID id) {
+    var wl = service.receiveTransferOrder(ctx.requireTenantId(), id);
+    return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
+  }
+
+  @POST
+  @Path("/transfers/{id}/cancel")
+  public ApiResponse<TransferOrderResponse> cancelTransfer(@PathParam("id") UUID id) {
+    var cancelled = service.cancelTransferOrder(ctx.requireTenantId(), id);
+    var wl = service.getTransferOrder(ctx.requireTenantId(), cancelled.id());
+    return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
   }
 
   // ── move orders (Gap #5) ─────────────────────────────────────────────────

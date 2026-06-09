@@ -165,6 +165,39 @@ public final class Domain {
       BigDecimal requestedQty,
       BigDecimal pickedQty) {}
 
+  /**
+   * Inter-store transfer order (Gap #6). DIRECT ships and receives atomically; INTRANSIT is
+   * two-phase.
+   */
+  public record TransferOrder(
+      UUID id,
+      UUID tenantId,
+      UUID fromStoreId,
+      UUID toStoreId,
+      String transferType,
+      String status,
+      String notes,
+      Instant createdAt,
+      Instant shippedAt,
+      Instant receivedAt) {
+    public static final String TYPE_DIRECT = "DIRECT";
+    public static final String TYPE_INTRANSIT = "INTRANSIT";
+    public static final String PENDING = "PENDING";
+    public static final String SHIPPED = "SHIPPED";
+    public static final String RECEIVED = "RECEIVED";
+    public static final String CANCELLED = "CANCELLED";
+  }
+
+  /** One SKU line on a transfer order. */
+  public record TransferOrderLine(
+      UUID id,
+      UUID tenantId,
+      UUID transferOrderId,
+      UUID variantId,
+      BigDecimal requestedQty,
+      BigDecimal shippedQty,
+      BigDecimal receivedQty) {}
+
   /** Movement types (stock_movements.type). qty is signed (+in / -out). */
   public static final class MoveType {
     private MoveType() {}

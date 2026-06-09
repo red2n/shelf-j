@@ -12,6 +12,8 @@ import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
+import com.shelfj.inventory.domain.Domain.TransferOrder;
+import com.shelfj.inventory.domain.Domain.TransferOrderLine;
 import com.shelfj.inventory.repo.InventoryRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -483,6 +485,129 @@ public class InventoryService {
                 ApiException.unprocessable(
                     "MOVE_ORDER_NOT_CANCELLABLE",
                     "Move order cannot be cancelled in its current state"));
+  }
+
+  // ---- transfer orders (Gap #6) ----
+
+  public record TransferOrderWithLines(TransferOrder order, List<TransferOrderLine> lines) {}
+
+  public TransferOrderWithLines createTransferOrder(
+      UUID tenantId,
+      UUID fromStoreId,
+      UUID toStoreId,
+      String transferType,
+      String notes,
+      List<TransferOrderLine> lines) {
+    if (lines == null || lines.isEmpty()) {
+      throw new ApiException(
+          400, "NO_LINES", "Transfer order must have at least one line", List.of(), null);
+    }
+    String type =
+        transferType == null ? TransferOrder.TYPE_DIRECT : transferType.toUpperCase(Locale.ROOT);
+    if (!List.of(TransferOrder.TYPE_DIRECT, TransferOrder.TYPE_INTRANSIT).contains(type)) {
+      throw new ApiException(
+          400,
+          "INVALID_TRANSFER_TYPE",
+          "transferType must be DIRECT or INTRANSIT",
+          List.of(),
+          null);
+    }
+    UUID orderId = UUID.randomUUID();
+    Instant now = Instant.now();
+    TransferOrder order =
+        new TransferOrder(
+            orderId,
+            tenantId,
+            fromStoreId,
+            toStoreId,
+            type,
+            TransferOrder.PENDING,
+            notes,
+            now,
+            null,
+            null);
+    List<TransferOrderLine> withIds =
+        lines.stream()
+            .map(
+                l ->
+                    new TransferOrderLine(
+                        UUID.randomUUID(),
+                        tenantId,
+                        orderId,
+                        l.variantId(),
+                        l.requestedQty(),
+                        null,
+                        null))
+            .toList();
+    repo.createTransferOrder(order, withIds);
+    return new TransferOrderWithLines(order, repo.listTransferOrderLines(orderId));
+  }
+
+  public List<TransferOrder> listTransferOrders(
+      UUID tenantId, UUID storeId, String status, int limit) {
+    return repo.listTransferOrders(tenantId, storeId, status, limit);
+  }
+
+  public TransferOrderWithLines getTransferOrder(UUID tenantId, UUID id) {
+    TransferOrder order =
+        repo.findTransferOrder(tenantId, id)
+            .orElseThrow(
+                () -> ApiException.notFound("TRANSFER_ORDER_NOT_FOUND", "No such transfer order"));
+    return new TransferOrderWithLines(order, repo.listTransferOrderLines(id));
+  }
+
+  public TransferOrderWithLines shipTransferOrder(UUID tenantId, UUID id) {
+    TransferOrder existing =
+        repo.findTransferOrder(tenantId, id)
+            .orElseThrow(
+                () -> ApiException.notFound("TRANSFER_ORDER_NOT_FOUND", "No such transfer order"));
+    TransferOrder shipped =
+        repo.shipTransferOrder(
+            tenantId,
+            id,
+            new OutboxRow(
+                "TransferOrderShipped",
+                "shelfj.inventory.transfer-order-shipped",
+                tenantId,
+                id,
+                Events.transferOrderShipped(
+                    tenantId, id, existing.fromStoreId(), existing.toStoreId())));
+    return new TransferOrderWithLines(shipped, repo.listTransferOrderLines(id));
+  }
+
+  public TransferOrderWithLines receiveTransferOrder(UUID tenantId, UUID id) {
+    TransferOrder existing =
+        repo.findTransferOrder(tenantId, id)
+            .orElseThrow(
+                () -> ApiException.notFound("TRANSFER_ORDER_NOT_FOUND", "No such transfer order"));
+    TransferOrder received =
+        repo.receiveTransferOrder(
+            tenantId,
+            id,
+            new OutboxRow(
+                "TransferOrderReceived",
+                "shelfj.inventory.transfer-order-received",
+                tenantId,
+                id,
+                Events.transferOrderReceived(tenantId, id, existing.toStoreId())));
+    return new TransferOrderWithLines(received, repo.listTransferOrderLines(id));
+  }
+
+  public TransferOrder cancelTransferOrder(UUID tenantId, UUID id) {
+    return repo.cancelTransferOrder(
+            tenantId,
+            id,
+            new OutboxRow(
+                "TransferOrderCancelled",
+                "shelfj.inventory.transfer-order-cancelled",
+                tenantId,
+                id,
+                Events.transferOrderCancelled(tenantId, id)))
+        .orElseThrow(
+            () ->
+                ApiException.unprocessable(
+                    "TRANSFER_ORDER_NOT_CANCELLABLE",
+                    "Only PENDING transfer orders can be cancelled"));
   }
 
   // ---- sweeper support ----
