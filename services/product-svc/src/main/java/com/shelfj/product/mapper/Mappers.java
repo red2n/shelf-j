@@ -3,10 +3,16 @@ package com.shelfj.product.mapper;
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
 import com.shelfj.product.domain.Domain.Product;
+import com.shelfj.product.domain.Domain.UomClass;
+import com.shelfj.product.domain.Domain.UomDefinition;
+import com.shelfj.product.domain.Domain.UomItemConversion;
 import com.shelfj.product.domain.Domain.Variant;
 import com.shelfj.product.dto.Dtos.BrandResponse;
 import com.shelfj.product.dto.Dtos.CategoryResponse;
 import com.shelfj.product.dto.Dtos.ProductResponse;
+import com.shelfj.product.dto.Dtos.UomClassResponse;
+import com.shelfj.product.dto.Dtos.UomDefinitionResponse;
+import com.shelfj.product.dto.Dtos.UomItemConversionResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
 import java.time.Instant;
 
@@ -55,6 +61,19 @@ public final class Mappers {
         v.status(),
         ts(v.createdAt()),
         ts(v.updatedAt()));
+  }
+
+  public static UomClassResponse toUomClass(UomClass c) {
+    return new UomClassResponse(c.code(), c.name());
+  }
+
+  public static UomDefinitionResponse toUomDefinition(UomDefinition d) {
+    return new UomDefinitionResponse(d.code(), d.name(), d.classCode());
+  }
+
+  public static UomItemConversionResponse toUomItemConversion(UomItemConversion c) {
+    return new UomItemConversionResponse(
+        c.id().toString(), c.variantId().toString(), c.fromUom(), c.toUom(), c.factor());
   }
 
   private static String ts(Instant i) {

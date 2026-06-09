@@ -51,6 +51,7 @@ const materialControlLatency = new Trend('material_control_latency_ms', true);
 const planningLatency        = new Trend('planning_latency_ms',         true);
 const demandHistoryLatency   = new Trend('demand_history_latency_ms',   true);
 const serialControlLatency   = new Trend('serial_control_latency_ms',   true);
+const uomManagementLatency   = new Trend('uom_management_latency_ms',   true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -99,6 +100,10 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'serialControl', startTime: '26s',
     },
+    uomManagement: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'uomManagement', startTime: '28s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -113,6 +118,7 @@ export const options = {
     planning_latency_ms:         ['p(95)<1000'],
     demand_history_latency_ms:   ['p(95)<800'],
     serial_control_latency_ms:   ['p(95)<600'],
+    uom_management_latency_ms:   ['p(95)<600'],
   },
 };
 
@@ -1168,6 +1174,119 @@ export function serialControl(d) {
         } catch (_) { return false; }
       },
     });
+  }
+
+  sleep(1);
+}
+
+export function uomManagement(d) {
+  if (!d) return;
+  const tenant = tenantCtx(d);
+  const tag = isIN(d) ? 'IN' : 'UK';
+  const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
+
+  // 1. List UOM classes (system-wide — no tenant needed, but we pass tenant for auth)
+  const t0 = Date.now();
+  const classRes = get('/api/product-svc/admin/uom/classes', tenant.tenantId, tenant.ownerId);
+  uomManagementLatency.add(Date.now() - t0);
+  ok(classRes, `${tag} UOM list classes`);
+  check(classRes, {
+    [`${tag} UOM classes non-empty`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return items.length >= 6;
+      } catch (_) { return false; }
+    },
+  });
+
+  // 2. List units filtered by WEIGHT class
+  const unitsRes = get('/api/product-svc/admin/uom/units?class=WEIGHT', tenant.tenantId, tenant.ownerId);
+  ok(unitsRes, `${tag} UOM list WEIGHT units`);
+  check(unitsRes, {
+    [`${tag} UOM WEIGHT units include KG`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return items.some(u => u.code === 'KG');
+      } catch (_) { return false; }
+    },
+  });
+
+  // 3. Standard conversion: 1 KG → G (expect 1000)
+  const t1 = Date.now();
+  const convRes = get('/api/product-svc/admin/uom/convert?from=KG&to=G&qty=1', tenant.tenantId, tenant.ownerId);
+  uomManagementLatency.add(Date.now() - t1);
+  ok(convRes, `${tag} UOM convert KG→G`);
+  check(convRes, {
+    [`${tag} UOM 1 KG = 1000 G`]: r => {
+      try {
+        const result = JSON.parse(r.body).data;
+        return parseFloat(result.convertedQty) === 1000 && result.source === 'STANDARD';
+      } catch (_) { return false; }
+    },
+  });
+
+  // 4. Identity conversion: 5 EA → EA (expect 5, source IDENTITY)
+  const idRes = get('/api/product-svc/admin/uom/convert?from=EA&to=EA&qty=5', tenant.tenantId, tenant.ownerId);
+  ok(idRes, `${tag} UOM identity conversion`);
+  check(idRes, {
+    [`${tag} UOM identity source=IDENTITY`]: r => {
+      try {
+        const result = JSON.parse(r.body).data;
+        return result.source === 'IDENTITY' && parseFloat(result.convertedQty) === 5;
+      } catch (_) { return false; }
+    },
+  });
+
+  // 5. Upsert an item-level conversion for this variant (CASE → EA = 12)
+  const upsertRes = http.post(
+    `${BASE}/api/product-svc/admin/uom/item-conversions`,
+    JSON.stringify({ variantId: vid, fromUom: 'CASE', toUom: 'EA', factor: '12' }),
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+  ok(upsertRes, `${tag} UOM upsert item conversion`);
+  check(upsertRes, {
+    [`${tag} UOM item conversion factor=12`]: r => {
+      try {
+        const result = JSON.parse(r.body).data;
+        return parseFloat(result.factor) === 12 && result.fromUom === 'CASE' && result.toUom === 'EA';
+      } catch (_) { return false; }
+    },
+  });
+
+  // 6. Convert using the item-level override (3 CASE → EA, expect 36)
+  const itemConvRes = get(
+    `/api/product-svc/admin/uom/convert?from=CASE&to=EA&qty=3&variant=${vid}`,
+    tenant.tenantId, tenant.ownerId);
+  ok(itemConvRes, `${tag} UOM item-level convert CASE→EA`);
+  check(itemConvRes, {
+    [`${tag} UOM 3 CASE = 36 EA (item override)`]: r => {
+      try {
+        const result = JSON.parse(r.body).data;
+        return parseFloat(result.convertedQty) === 36 && result.source === 'ITEM';
+      } catch (_) { return false; }
+    },
+  });
+
+  // 7. List item conversions for the variant
+  const listRes = get(
+    `/api/product-svc/admin/uom/item-conversions?variant=${vid}`,
+    tenant.tenantId, tenant.ownerId);
+  ok(listRes, `${tag} UOM list item conversions`);
+  const convId = (() => {
+    try {
+      const items = JSON.parse(listRes.body).data || [];
+      return items[0]?.id || null;
+    } catch (_) { return null; }
+  })();
+
+  // 8. Delete the item conversion
+  if (convId) {
+    const delRes = http.del(
+      `${BASE}/api/product-svc/admin/uom/item-conversions/${convId}`,
+      null,
+      { headers: { 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+    );
+    check(delRes, { [`${tag} UOM item conversion deleted`]: r => r.status === 204 });
   }
 
   sleep(1);

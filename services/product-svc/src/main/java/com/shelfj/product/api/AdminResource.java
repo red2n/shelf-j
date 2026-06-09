@@ -2,11 +2,16 @@ package com.shelfj.product.api;
 
 import com.shelfj.product.dto.Dtos.BrandResponse;
 import com.shelfj.product.dto.Dtos.CategoryResponse;
+import com.shelfj.product.dto.Dtos.ConvertResult;
 import com.shelfj.product.dto.Dtos.CreateBrandRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
 import com.shelfj.product.dto.Dtos.ProductResponse;
+import com.shelfj.product.dto.Dtos.UomClassResponse;
+import com.shelfj.product.dto.Dtos.UomDefinitionResponse;
+import com.shelfj.product.dto.Dtos.UomItemConversionRequest;
+import com.shelfj.product.dto.Dtos.UomItemConversionResponse;
 import com.shelfj.product.dto.Dtos.UpdateBrandRequest;
 import com.shelfj.product.dto.Dtos.UpdateCategoryRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
@@ -31,7 +36,9 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /** Admin catalog CRUD. Tenant-scoped (tenantId from context). */
@@ -204,6 +211,86 @@ public class AdminResource {
       @PathParam("id") UUID productId, @PathParam("variantId") UUID variantId) {
     return ApiResponse.ok(
         Mappers.toVariant(service.delistVariant(ctx.requireTenantId(), productId, variantId)));
+  }
+
+  // ── UOM ──────────────────────────────────────────────────────────────────
+
+  @GET
+  @Path("/uom/classes")
+  public ApiResponse<List<UomClassResponse>> listUomClasses() {
+    return ApiResponse.ok(service.listUomClasses().stream().map(Mappers::toUomClass).toList());
+  }
+
+  @GET
+  @Path("/uom/units")
+  public ApiResponse<List<UomDefinitionResponse>> listUomUnits(
+      @QueryParam("class") String classCode) {
+    return ApiResponse.ok(
+        service.listUomDefinitions(classCode).stream().map(Mappers::toUomDefinition).toList());
+  }
+
+  @GET
+  @Path("/uom/convert")
+  public ApiResponse<ConvertResult> convertUom(
+      @QueryParam("from") String from,
+      @QueryParam("to") String to,
+      @QueryParam("qty") BigDecimal qty,
+      @QueryParam("variant") String variantId) {
+    if (from == null || to == null || qty == null) {
+      throw new com.shelfj.web.ApiException(
+          400, "MISSING_PARAM", "from, to, and qty are required", List.of(), null);
+    }
+    UUID variantUuid = parseOptional(variantId, "variant");
+    UUID tenantId = variantUuid != null ? ctx.requireTenantId() : null;
+    return ApiResponse.ok(
+        service.convert(
+            tenantId,
+            variantUuid,
+            from.toUpperCase(Locale.ROOT),
+            to.toUpperCase(Locale.ROOT),
+            qty));
+  }
+
+  @POST
+  @Path("/uom/item-conversions")
+  public Response upsertItemConversion(UomItemConversionRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    UUID variantId = UUID.fromString(req.variantId());
+    return Response.status(Response.Status.OK)
+        .entity(
+            ApiResponse.ok(
+                Mappers.toUomItemConversion(
+                    service.upsertItemConversion(
+                        tenantId,
+                        variantId,
+                        req.fromUom().toUpperCase(Locale.ROOT),
+                        req.toUom().toUpperCase(Locale.ROOT),
+                        req.factor()))))
+        .build();
+  }
+
+  @GET
+  @Path("/uom/item-conversions")
+  public ApiResponse<List<UomItemConversionResponse>> listItemConversions(
+      @QueryParam("variant") String variantId) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID variantUuid = parseOptional(variantId, "variant");
+    return ApiResponse.ok(
+        service.listItemConversions(tenantId, variantUuid).stream()
+            .map(Mappers::toUomItemConversion)
+            .toList());
+  }
+
+  @DELETE
+  @Path("/uom/item-conversions/{id}")
+  public Response deleteItemConversion(@PathParam("id") UUID id) {
+    boolean deleted = service.deleteItemConversion(ctx.requireTenantId(), id);
+    if (!deleted) {
+      throw new com.shelfj.web.ApiException(
+          404, "CONVERSION_NOT_FOUND", "Item conversion not found", List.of(), null);
+    }
+    return Response.noContent().build();
   }
 
   // ─────────────────────────────────────────────────────────────────── utils

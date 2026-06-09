@@ -1,5 +1,6 @@
 package com.shelfj.product.domain;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -41,6 +42,16 @@ public final class Domain {
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_DELISTED = "DELISTED";
   }
+
+  /** UOM class (system reference — no tenant_id). */
+  public record UomClass(UUID id, String code, String name) {}
+
+  /** UOM definition within a class (system reference). */
+  public record UomDefinition(UUID id, String classCode, String code, String name) {}
+
+  /** Item-level UOM conversion override (tenant + variant scoped). */
+  public record UomItemConversion(
+      UUID id, UUID tenantId, UUID variantId, String fromUom, String toUom, BigDecimal factor) {}
 
   public record Variant(
       UUID id,

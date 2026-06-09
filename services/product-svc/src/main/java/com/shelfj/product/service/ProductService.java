@@ -3,7 +3,11 @@ package com.shelfj.product.service;
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
 import com.shelfj.product.domain.Domain.Product;
+import com.shelfj.product.domain.Domain.UomClass;
+import com.shelfj.product.domain.Domain.UomDefinition;
+import com.shelfj.product.domain.Domain.UomItemConversion;
 import com.shelfj.product.domain.Domain.Variant;
+import com.shelfj.product.dto.Dtos.ConvertResult;
 import com.shelfj.product.dto.Dtos.CreateBrandRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
@@ -17,6 +21,7 @@ import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -221,6 +226,55 @@ public class ProductService {
   public Variant delistVariant(UUID tenantId, UUID productId, UUID variantId) {
     getVariant(tenantId, variantId);
     return repo.delistVariant(tenantId, variantId);
+  }
+
+  // ---- UOM (Gap #2) ----
+
+  public List<UomClass> listUomClasses() {
+    return repo.listUomClasses();
+  }
+
+  public List<UomDefinition> listUomDefinitions(String classCode) {
+    return repo.listUomDefinitions(classCode);
+  }
+
+  public UomItemConversion upsertItemConversion(
+      UUID tenantId, UUID variantId, String fromUom, String toUom, BigDecimal factor) {
+    return repo.upsertItemConversion(
+        new UomItemConversion(UUID.randomUUID(), tenantId, variantId, fromUom, toUom, factor));
+  }
+
+  public List<UomItemConversion> listItemConversions(UUID tenantId, UUID variantId) {
+    return repo.listItemConversions(tenantId, variantId);
+  }
+
+  public boolean deleteItemConversion(UUID tenantId, UUID id) {
+    return repo.deleteItemConversion(tenantId, id);
+  }
+
+  public ConvertResult convert(
+      UUID tenantId, UUID variantId, String fromUom, String toUom, BigDecimal qty) {
+    if (fromUom.equalsIgnoreCase(toUom)) {
+      return new ConvertResult(fromUom, toUom, qty, qty, BigDecimal.ONE, "IDENTITY");
+    }
+    if (variantId != null) {
+      var itemFactor = repo.findItemConversionFactor(tenantId, variantId, fromUom, toUom);
+      if (itemFactor.isPresent()) {
+        BigDecimal f = itemFactor.get();
+        return new ConvertResult(fromUom, toUom, qty, qty.multiply(f), f, "ITEM");
+      }
+    }
+    var stdFactor = repo.findStandardConversionFactor(fromUom, toUom);
+    if (stdFactor.isPresent()) {
+      BigDecimal f = stdFactor.get();
+      return new ConvertResult(fromUom, toUom, qty, qty.multiply(f), f, "STANDARD");
+    }
+    throw new ApiException(
+        404,
+        "CONVERSION_NOT_FOUND",
+        "No conversion from " + fromUom + " to " + toUom,
+        List.of(),
+        null);
   }
 
   private static UUID parseOptionalUuid(String s, String field) {
