@@ -262,19 +262,19 @@
 
 | # | Gap | Service | Oracle Reference |
 |---|---|---|---|
-| 1 | **Min-Max planning engine** — automated replenishment suggestions + auto-requisition | inventory-svc | Ch. 14 |
-| 2 | **Unit of Measure model** — UOM classes, conversions, lot-UOM | product-svc | Ch. 3 |
-| 3 | **Serial number control** — generate, assign, genealogy | inventory-svc | Ch. 8 |
-| 4 | **Material status** — Quarantine / Inspection / Damaged / Recall on batches | inventory-svc | Ch. 9 |
-| 5 | **Move Orders / Pick Wave** — replenishment move orders, express pick release | inventory-svc | Ch. 13 |
-| 6 | **Transfer Orders** — inter-store stock transfers (direct + intransit) | inventory-svc | Ch. 11 |
-| 7 | **Demand history aggregation** — periodic buckets from stock_movements | inventory-svc | Ch. 14 |
+| ~~1~~ | ~~**Min-Max planning engine** — automated replenishment suggestions + auto-requisition~~ ✅ | ~~inventory-svc~~ | ~~Ch. 14~~ |
+| ~~2~~ | ~~**Unit of Measure model** — UOM classes, conversions, lot-UOM~~ ✅ | ~~product-svc~~ | ~~Ch. 3~~ |
+| ~~3~~ | ~~**Serial number control** — generate, assign, genealogy~~ ✅ | ~~inventory-svc~~ | ~~Ch. 8~~ |
+| ~~4~~ | ~~**Material status** — Quarantine / Inspection / Damaged / Recall on batches~~ ✅ | ~~inventory-svc~~ | ~~Ch. 9~~ |
+| ~~5~~ | ~~**Move Orders / Pick Wave** — replenishment move orders, express pick release~~ ✅ | ~~inventory-svc~~ | ~~Ch. 13~~ |
+| ~~6~~ | ~~**Transfer Orders** — inter-store stock transfers (direct + intransit)~~ ✅ | ~~inventory-svc~~ | ~~Ch. 11~~ |
+| ~~7~~ | ~~**Demand history aggregation** — periodic buckets from stock_movements~~ ✅ | ~~inventory-svc~~ | ~~Ch. 14~~ |
 | ~~8~~ | ~~**Safety stock calculation** (MAD formula + user-defined %)~~ ✅ | ~~inventory-svc~~ | ~~Ch. 14~~ |
 | ~~9~~ | ~~**ABC analysis** — compile + assign A/B/C classes for cycle count frequency~~ ✅ | ~~inventory-svc~~ | ~~Ch. 16~~ |
 | ~~10~~ | ~~**Cycle counting** — schedule, count entry, tolerance approval, adjustment~~ ✅ | ~~inventory-svc~~ | ~~Ch. 17~~ |
 | ~~11~~ | ~~**Lot genealogy** — parent/child chain on batches~~ ✅ | ~~inventory-svc~~ | ~~Ch. 7~~ |
 | ~~12~~ | ~~**Item revisions** — append-only versioning per variant with supersession~~ ✅ | ~~product-svc~~ | ~~Ch. 5~~ |
-| 13 | **Item templates** — bulk attribute assignment | product-svc | Ch. 4 |
+| ~~13~~ | ~~**Item templates** — named default-attribute sets applied to variants in one call~~ ✅ | ~~product-svc~~ | ~~Ch. 4~~ |
 | 14 | **POS transaction engine** — return, post-void, layaway, gift card | order-svc | POS RN |
 | 15 | **Tax model** — tax rates, tax-exempt flags, POSLog capture | pricing-svc | POS RN |
 | 16 | **Physical inventory reconciliation** — snapshot, tags, adjustments | inventory-svc | Ch. 18 |

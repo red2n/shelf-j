@@ -96,6 +96,22 @@ public final class Dtos {
       BigDecimal factor,
       String source) {}
 
+  // ── Item Templates (Gap #13) ─────────────────────────────────────────────
+
+  public record CreateItemTemplateRequest(
+      @NotBlank String name, String description, String attributes) {}
+
+  public record ItemTemplateResponse(
+      String id,
+      String name,
+      String description,
+      String attributes,
+      String status,
+      String createdAt) {}
+
+  public record ItemTemplateApplicationResponse(
+      String id, String variantId, String templateId, String appliedAt) {}
+
   // ── Item Revisions (Gap #12) ─────────────────────────────────────────────
 
   public record CreateRevisionRequest(

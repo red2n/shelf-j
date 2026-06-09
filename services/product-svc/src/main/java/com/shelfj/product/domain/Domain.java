@@ -69,6 +69,23 @@ public final class Domain {
     public static final String STATUS_INACTIVE = "INACTIVE";
   }
 
+  // ── Gap #13: Item Templates ──────────────────────────────────────────────
+
+  public record ItemTemplate(
+      UUID id,
+      UUID tenantId,
+      String name,
+      String description,
+      String attributes,
+      String status,
+      Instant createdAt) {
+    public static final String ACTIVE = "ACTIVE";
+    public static final String INACTIVE = "INACTIVE";
+  }
+
+  public record ItemTemplateApplication(
+      UUID id, UUID tenantId, UUID variantId, UUID templateId, Instant appliedAt) {}
+
   // ── Gap #12: Item Revisions ───────────────────────────────────────────────
 
   public record ItemRevision(

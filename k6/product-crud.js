@@ -204,6 +204,104 @@ export default function () {
     { '[-] item conversion missing fromUom 400': (r) => r.status === 400 }
   );
 
+  // ── Item Templates (Gap #13) ─────────────────────────────────────────────
+
+  // [+] Create template
+  const tplRes = http.post(
+    `${baseUrl}/api/product-svc/admin/item-templates`,
+    JSON.stringify({ name: `k6-tpl-${Date.now()}`, description: 'k6 test template', attributes: '{"color":"red","size":"M"}' }),
+    { headers: hdrs }
+  );
+  check(tplRes, { '[+] create item template 201': (r) => r.status === 201 });
+  const templateId = tplRes.status === 201 ? tplRes.json('data.id') : null;
+
+  // [+] List templates
+  check(
+    http.get(`${baseUrl}/api/product-svc/admin/item-templates`, { headers: hdrs }),
+    { '[+] list item templates 200': (r) => r.status === 200 }
+  );
+
+  if (templateId) {
+    // [+] Get template by id
+    check(
+      http.get(`${baseUrl}/api/product-svc/admin/item-templates/${templateId}`, { headers: hdrs }),
+      { '[+] get item template 200': (r) => r.status === 200 }
+    );
+
+    // [+] Apply template to variant (copies attributes onto variant)
+    if (variantId) {
+      const applyRes = http.post(
+        `${baseUrl}/api/product-svc/admin/item-templates/${templateId}/apply/${variantId}`,
+        null,
+        { headers: hdrs }
+      );
+      check(applyRes, { '[+] apply template to variant 200': (r) => r.status === 200 });
+    }
+
+    // [+] Deactivate template
+    check(
+      http.del(`${baseUrl}/api/product-svc/admin/item-templates/${templateId}`, null, { headers: hdrs }),
+      { '[+] deactivate item template 200': (r) => r.status === 200 }
+    );
+  }
+
+  // [-] Create template duplicate name
+  const tplName2 = `k6-tpl2-${Date.now()}`;
+  http.post(
+    `${baseUrl}/api/product-svc/admin/item-templates`,
+    JSON.stringify({ name: tplName2 }),
+    { headers: hdrs }
+  );
+  check(
+    http.post(
+      `${baseUrl}/api/product-svc/admin/item-templates`,
+      JSON.stringify({ name: tplName2 }),
+      { headers: hdrs }
+    ),
+    { '[-] duplicate template name 409': (r) => r.status === 409 }
+  );
+
+  // [-] Create template missing name → 400
+  check(
+    http.post(
+      `${baseUrl}/api/product-svc/admin/item-templates`,
+      JSON.stringify({ description: 'no name' }),
+      { headers: hdrs }
+    ),
+    { '[-] create template missing name 400': (r) => r.status === 400 }
+  );
+
+  // [-] Get unknown template → 404
+  check(
+    http.get(
+      `${baseUrl}/api/product-svc/admin/item-templates/00000000-0000-0000-0000-000000000000`,
+      { headers: hdrs }
+    ),
+    { '[-] get unknown template 404': (r) => r.status === 404 }
+  );
+
+  // [-] Apply unknown template to variant → 404
+  if (variantId) {
+    check(
+      http.post(
+        `${baseUrl}/api/product-svc/admin/item-templates/00000000-0000-0000-0000-000000000000/apply/${variantId}`,
+        null,
+        { headers: hdrs }
+      ),
+      { '[-] apply unknown template 404': (r) => r.status === 404 }
+    );
+  }
+
+  // [-] No tenant header on templates
+  check(
+    http.post(
+      `${baseUrl}/api/product-svc/admin/item-templates`,
+      JSON.stringify({ name: 'no-tenant-tpl' }),
+      { headers: noTenant }
+    ),
+    { '[-] create template no tenant 401': (r) => r.status === 401 }
+  );
+
   // ── Item Revisions (Gap #12) ──────────────────────────────────────────────
 
   if (variantId) {

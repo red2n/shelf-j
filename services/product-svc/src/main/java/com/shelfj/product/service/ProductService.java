@@ -3,6 +3,8 @@ package com.shelfj.product.service;
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
 import com.shelfj.product.domain.Domain.ItemRevision;
+import com.shelfj.product.domain.Domain.ItemTemplate;
+import com.shelfj.product.domain.Domain.ItemTemplateApplication;
 import com.shelfj.product.domain.Domain.Product;
 import com.shelfj.product.domain.Domain.UomClass;
 import com.shelfj.product.domain.Domain.UomDefinition;
@@ -277,6 +279,49 @@ public class ProductService {
         "No conversion from " + fromUom + " to " + toUom,
         List.of(),
         null);
+  }
+
+  // ── Item Templates (Gap #13) ─────────────────────────────────────────────
+
+  public ItemTemplate createTemplate(
+      UUID tenantId, String name, String description, String attributes) {
+    UUID id = UUID.randomUUID();
+    var tpl =
+        new ItemTemplate(
+            id, tenantId, name, description, attributes, ItemTemplate.ACTIVE, Instant.now());
+    var event =
+        new OutboxRow(
+            "ItemTemplateCreated",
+            "shelfj.catalog.item-template-created",
+            tenantId,
+            id,
+            Events.itemTemplateCreated(tenantId, id, name));
+    return repo.createTemplate(tpl, event);
+  }
+
+  public ItemTemplate getTemplate(UUID tenantId, UUID id) {
+    return repo.findTemplate(tenantId, id)
+        .orElseThrow(() -> ApiException.notFound("TEMPLATE_NOT_FOUND", "Template not found"));
+  }
+
+  public List<ItemTemplate> listTemplates(UUID tenantId) {
+    return repo.listTemplates(tenantId);
+  }
+
+  public ItemTemplate deactivateTemplate(UUID tenantId, UUID id) {
+    getTemplate(tenantId, id);
+    return repo.deactivateTemplate(tenantId, id);
+  }
+
+  public ItemTemplateApplication applyTemplate(UUID tenantId, UUID variantId, UUID templateId) {
+    var event =
+        new OutboxRow(
+            "ItemTemplateApplied",
+            "shelfj.catalog.item-template-applied",
+            tenantId,
+            variantId,
+            Events.itemTemplateApplied(tenantId, variantId, templateId));
+    return repo.applyTemplate(tenantId, variantId, templateId, event);
   }
 
   // ── Item Revisions (Gap #12) ──────────────────────────────────────────────

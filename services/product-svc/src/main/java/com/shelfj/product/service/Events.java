@@ -35,6 +35,20 @@ final class Events {
         + "\"}";
   }
 
+  static String itemTemplateCreated(UUID tenantId, UUID templateId, String name) {
+    return EventPayload.base("ItemTemplateCreated", tenantId, templateId)
+        + ",\"name\":\""
+        + EventPayload.esc(name)
+        + "\"}";
+  }
+
+  static String itemTemplateApplied(UUID tenantId, UUID variantId, UUID templateId) {
+    return EventPayload.base("ItemTemplateApplied", tenantId, variantId)
+        + ",\"templateId\":\""
+        + templateId
+        + "\"}";
+  }
+
   static String itemRevisionCreated(
       UUID tenantId, UUID variantId, UUID revisionId, String revision) {
     return EventPayload.base("ItemRevisionCreated", tenantId, revisionId)

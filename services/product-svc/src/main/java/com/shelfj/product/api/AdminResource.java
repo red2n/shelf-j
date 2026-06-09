@@ -5,10 +5,13 @@ import com.shelfj.product.dto.Dtos.CategoryResponse;
 import com.shelfj.product.dto.Dtos.ConvertResult;
 import com.shelfj.product.dto.Dtos.CreateBrandRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
+import com.shelfj.product.dto.Dtos.CreateItemTemplateRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
 import com.shelfj.product.dto.Dtos.CreateRevisionRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
 import com.shelfj.product.dto.Dtos.ItemRevisionResponse;
+import com.shelfj.product.dto.Dtos.ItemTemplateApplicationResponse;
+import com.shelfj.product.dto.Dtos.ItemTemplateResponse;
 import com.shelfj.product.dto.Dtos.ProductResponse;
 import com.shelfj.product.dto.Dtos.UomClassResponse;
 import com.shelfj.product.dto.Dtos.UomDefinitionResponse;
@@ -293,6 +296,48 @@ public class AdminResource {
           404, "CONVERSION_NOT_FOUND", "Item conversion not found", List.of(), null);
     }
     return Response.noContent().build();
+  }
+
+  // ── Item Templates (Gap #13) ─────────────────────────────────────────────
+
+  @POST
+  @Path("/item-templates")
+  public Response createTemplate(CreateItemTemplateRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    return created(
+        Mappers.toTemplate(
+            service.createTemplate(
+                tenantId, req.name().trim(), req.description(), req.attributes())));
+  }
+
+  @GET
+  @Path("/item-templates")
+  public ApiResponse<List<ItemTemplateResponse>> listTemplates() {
+    return ApiResponse.ok(
+        service.listTemplates(ctx.requireTenantId()).stream().map(Mappers::toTemplate).toList());
+  }
+
+  @GET
+  @Path("/item-templates/{id}")
+  public ApiResponse<ItemTemplateResponse> getTemplate(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toTemplate(service.getTemplate(ctx.requireTenantId(), id)));
+  }
+
+  @DELETE
+  @Path("/item-templates/{id}")
+  public ApiResponse<ItemTemplateResponse> deactivateTemplate(@PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        Mappers.toTemplate(service.deactivateTemplate(ctx.requireTenantId(), id)));
+  }
+
+  @POST
+  @Path("/item-templates/{id}/apply/{variantId}")
+  public ApiResponse<ItemTemplateApplicationResponse> applyTemplate(
+      @PathParam("id") UUID templateId, @PathParam("variantId") UUID variantId) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toTemplateApplication(service.applyTemplate(tenantId, variantId, templateId)));
   }
 
   // ── Item Revisions (Gap #12) ──────────────────────────────────────────────
