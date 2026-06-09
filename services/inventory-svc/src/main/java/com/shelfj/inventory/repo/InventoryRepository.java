@@ -1304,7 +1304,8 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setBigDecimal(7, p.serviceLevelPct());
       ps.setBigDecimal(8, p.userDefinedPct());
       try (ResultSet rs = ps.executeQuery()) {
-        rs.next();
+        if (!rs.next())
+          throw dbError("upsert safety stock params", new SQLException("no row returned"));
         return mapSafetyStockParams(rs);
       }
     } catch (SQLException e) {
