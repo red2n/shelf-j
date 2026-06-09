@@ -1,5 +1,7 @@
 package com.shelfj.inventory.mapper;
 
+import com.shelfj.inventory.domain.Domain.AbcAssignment;
+import com.shelfj.inventory.domain.Domain.AbcCompileRun;
 import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
@@ -14,6 +16,8 @@ import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.dto.Dtos.AbcAssignmentResponse;
+import com.shelfj.inventory.dto.Dtos.AbcCompileRunResponse;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
@@ -179,6 +183,29 @@ public final class Mappers {
         ts(o.createdAt()),
         ts(o.pickedAt()),
         lines.stream().map(Mappers::toMoveOrderLine).toList());
+  }
+
+  public static AbcCompileRunResponse toAbcCompileRun(AbcCompileRun r) {
+    return new AbcCompileRunResponse(
+        r.id().toString(),
+        r.storeId() == null ? null : r.storeId().toString(),
+        r.criteria(),
+        r.thresholdA(),
+        r.thresholdAB(),
+        r.itemsCompiled(),
+        ts(r.compiledAt()));
+  }
+
+  public static AbcAssignmentResponse toAbcAssignment(AbcAssignment a) {
+    return new AbcAssignmentResponse(
+        a.id().toString(),
+        a.storeId().toString(),
+        a.variantId().toString(),
+        a.runId().toString(),
+        a.abcClass(),
+        a.score(),
+        a.rank(),
+        ts(a.assignedAt()));
   }
 
   public static SafetyStockParamsResponse toSafetyStockParams(SafetyStockParams p) {

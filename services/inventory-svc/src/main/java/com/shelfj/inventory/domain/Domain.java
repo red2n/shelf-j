@@ -219,6 +219,32 @@ public final class Domain {
     public static final String METHOD_USER_DEFINED = "USER_DEFINED";
   }
 
+  /** Audit record of one ABC compile run (Gap #9). */
+  public record AbcCompileRun(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      String criteria,
+      BigDecimal thresholdA,
+      BigDecimal thresholdAB,
+      int itemsCompiled,
+      Instant compiledAt) {
+    public static final String CRITERIA_VALUE = "VALUE";
+    public static final String CRITERIA_VELOCITY = "VELOCITY";
+  }
+
+  /** Per-(store, variant) ABC class assignment produced by a compile run (Gap #9). */
+  public record AbcAssignment(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      UUID runId,
+      String abcClass,
+      BigDecimal score,
+      int rank,
+      Instant assignedAt) {}
+
   /** Movement types (stock_movements.type). qty is signed (+in / -out). */
   public static final class MoveType {
     private MoveType() {}

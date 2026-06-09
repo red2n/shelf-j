@@ -191,6 +191,30 @@ public final class Dtos {
       String receivedAt,
       List<TransferOrderLineResponse> lines) {}
 
+  // ── ABC Analysis (Gap #9) ────────────────────────────────────────────────
+
+  public record RunAbcRequest(
+      String storeId, String criteria, BigDecimal thresholdA, BigDecimal thresholdAB) {}
+
+  public record AbcCompileRunResponse(
+      String id,
+      String storeId,
+      String criteria,
+      BigDecimal thresholdA,
+      BigDecimal thresholdAB,
+      int itemsCompiled,
+      String compiledAt) {}
+
+  public record AbcAssignmentResponse(
+      String id,
+      String storeId,
+      String variantId,
+      String runId,
+      String abcClass,
+      BigDecimal score,
+      int rank,
+      String assignedAt) {}
+
   // ── Safety Stock (Gap #8) ────────────────────────────────────────────────
 
   public record SetSafetyStockRequest(

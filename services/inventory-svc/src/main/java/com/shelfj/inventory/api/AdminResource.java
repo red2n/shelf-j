@@ -2,6 +2,7 @@ package com.shelfj.inventory.api;
 
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.dto.Dtos.AbcAssignmentResponse;
 import com.shelfj.inventory.dto.Dtos.AdjustRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateResult;
@@ -18,6 +19,7 @@ import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReceiveRequest;
 import com.shelfj.inventory.dto.Dtos.RegisterSerialsRequest;
 import com.shelfj.inventory.dto.Dtos.ResolveSuggestionRequest;
+import com.shelfj.inventory.dto.Dtos.RunAbcRequest;
 import com.shelfj.inventory.dto.Dtos.SafetyStockParamsResponse;
 import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
@@ -492,6 +494,50 @@ public class AdminResource {
     var cancelled = service.cancelMoveOrder(ctx.requireTenantId(), id);
     var wl = service.getMoveOrder(ctx.requireTenantId(), cancelled.id());
     return ApiResponse.ok(Mappers.toMoveOrder(wl.order(), wl.lines()));
+  }
+
+  // ── ABC analysis (Gap #9) ────────────────────────────────────────────────
+
+  @POST
+  @Path("/abc/compile")
+  public Response runAbcCompile(RunAbcRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId =
+        req != null && req.storeId() != null && !req.storeId().isBlank()
+            ? uuid(req.storeId(), "storeId")
+            : null;
+    String criteria = req != null ? req.criteria() : null;
+    var thA = req != null ? req.thresholdA() : null;
+    var thAB = req != null ? req.thresholdAB() : null;
+    var result = service.runAbcCompile(tenantId, storeId, criteria, thA, thAB);
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(Mappers.toAbcCompileRun(result.run())))
+        .build();
+  }
+
+  @GET
+  @Path("/abc/assignments")
+  public ApiResponse<List<AbcAssignmentResponse>> listAbcAssignments(
+      @QueryParam("store") String store,
+      @QueryParam("class") String abcClass,
+      @QueryParam("limit") Integer limitParam) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
+    var items =
+        service.listAbcAssignments(tenantId, storeId, abcClass, limit).stream()
+            .map(Mappers::toAbcAssignment)
+            .toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @GET
+  @Path("/abc/assignments/{storeId}/{variantId}")
+  public ApiResponse<AbcAssignmentResponse> getAbcAssignment(
+      @PathParam("storeId") UUID storeId, @PathParam("variantId") UUID variantId) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toAbcAssignment(service.getAbcAssignment(tenantId, storeId, variantId)));
   }
 
   // ── safety stock (Gap #8) ────────────────────────────────────────────────

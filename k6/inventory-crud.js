@@ -78,6 +78,145 @@ export default function () {
   );
   check(adjRes, { '[+] adjust stock 200': (r) => r.status === 200 });
 
+  // ── Gap #9: ABC Analysis — positive checks ───────────────────────────────
+
+  // Compile with no demand history → run created, 0 items compiled
+  const abcCompileEmptyRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/compile`,
+    JSON.stringify({}),
+    { headers: hdrs }
+  );
+  check(abcCompileEmptyRes, {
+    '[+] abc compile 201': (r) => r.status === 201,
+    '[+] abc compile has itemsCompiled': (r) => {
+      try { return typeof r.json('data.itemsCompiled') === 'number'; } catch (_) { return false; }
+    },
+  });
+
+  // Compile with explicit VALUE criteria and custom thresholds
+  const abcCompileValueRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/compile`,
+    JSON.stringify({
+      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      criteria: 'VALUE',
+      thresholdA: 70,
+      thresholdAB: 90,
+    }),
+    { headers: hdrs }
+  );
+  check(abcCompileValueRes, {
+    '[+] abc compile VALUE 201': (r) => r.status === 201,
+    '[+] abc compile criteria is VALUE': (r) => {
+      try { return r.json('data.criteria') === 'VALUE'; } catch (_) { return false; }
+    },
+  });
+
+  // Compile with VELOCITY criteria
+  const abcCompileVelocityRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/compile`,
+    JSON.stringify({ criteria: 'VELOCITY' }),
+    { headers: hdrs }
+  );
+  check(abcCompileVelocityRes, {
+    '[+] abc compile VELOCITY 201': (r) => r.status === 201,
+  });
+
+  // List ABC assignments (may be empty if no demand data)
+  const abcListRes = http.get(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/assignments`,
+    { headers: hdrs }
+  );
+  check(abcListRes, {
+    '[+] list abc assignments 200': (r) => r.status === 200,
+    '[+] abc assignments is array': (r) => {
+      try { return Array.isArray(r.json('data')); } catch (_) { return false; }
+    },
+  });
+
+  // List filtered by class A
+  const abcListARes = http.get(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/assignments?class=A`,
+    { headers: hdrs }
+  );
+  check(abcListARes, {
+    '[+] list abc class=A 200': (r) => r.status === 200,
+  });
+
+  // Compile is idempotent (re-run same params → 201, previous overwritten)
+  const abcReRunRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/compile`,
+    JSON.stringify({ criteria: 'VALUE', thresholdA: 70, thresholdAB: 90 }),
+    { headers: hdrs }
+  );
+  check(abcReRunRes, {
+    '[+] abc re-compile is idempotent (201)': (r) => r.status === 201,
+  });
+
+  sleep(0.3);
+
+  // ── Gap #9: ABC Analysis — negative checks ────────────────────────────────
+
+  // Invalid criteria
+  const abcBadCriteriaRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/compile`,
+    JSON.stringify({ criteria: 'COST' }),
+    { headers: hdrs }
+  );
+  check(abcBadCriteriaRes, {
+    '[-] invalid abc criteria → 400': (r) => r.status === 400,
+  });
+
+  // thresholdA >= thresholdAB
+  const abcBadThreshRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/compile`,
+    JSON.stringify({ criteria: 'VALUE', thresholdA: 90, thresholdAB: 70 }),
+    { headers: hdrs }
+  );
+  check(abcBadThreshRes, {
+    '[-] thresholdA >= thresholdAB → 400': (r) => r.status === 400,
+  });
+
+  // thresholdA = 0
+  const abcZeroThreshRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/compile`,
+    JSON.stringify({ criteria: 'VALUE', thresholdA: 0, thresholdAB: 90 }),
+    { headers: hdrs }
+  );
+  check(abcZeroThreshRes, {
+    '[-] thresholdA = 0 → 400': (r) => r.status === 400,
+  });
+
+  // Invalid class filter
+  const abcBadClassRes = http.get(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/assignments?class=X`,
+    { headers: hdrs }
+  );
+  check(abcBadClassRes, {
+    '[-] invalid abc class filter → 400': (r) => r.status === 400,
+  });
+
+  // Get assignment for nonexistent variant → 404
+  const abcNotFoundRes = http.get(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/assignments/` +
+      `00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000000`,
+    { headers: hdrs }
+  );
+  check(abcNotFoundRes, {
+    '[-] get non-existent abc assignment → 404': (r) => r.status === 404,
+  });
+
+  // No tenant header → 4xx
+  const abcNoTenantRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/abc/compile`,
+    JSON.stringify({ criteria: 'VALUE' }),
+    { headers: JSON_CT }
+  );
+  check(abcNoTenantRes, {
+    '[-] abc compile no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+  });
+
+  sleep(0.3);
+
   // ── Gap #8: Safety Stock — positive checks ────────────────────────────────
 
   // Set safety stock params (MAD method)

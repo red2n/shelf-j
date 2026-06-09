@@ -1,6 +1,8 @@
 package com.shelfj.inventory.service;
 
 import com.shelfj.inventory.config.ServiceConfig;
+import com.shelfj.inventory.domain.Domain.AbcAssignment;
+import com.shelfj.inventory.domain.Domain.AbcCompileRun;
 import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
@@ -609,6 +611,120 @@ public class InventoryService {
                 ApiException.unprocessable(
                     "TRANSFER_ORDER_NOT_CANCELLABLE",
                     "Only PENDING transfer orders can be cancelled"));
+  }
+
+  // ---- ABC analysis (Gap #9) ----
+
+  /**
+   * Run the ABC compile: score all variants in the tenant (optionally one store), rank descending,
+   * and assign A/B/C using cumulative-value thresholds. Persists one AbcCompileRun + N
+   * AbcAssignment rows (upserted — re-running overwrites previous).
+   *
+   * <p>Criteria VALUE: score = total_demand_qty * avg_cost_price (annual usage value). Criteria
+   * VELOCITY: score = total_demand_qty (movement frequency only). Thresholds are cumulative % of
+   * total score: A = 0..thresholdA, B = thresholdA..thresholdAB, C = rest.
+   */
+  public record AbcCompileResult(AbcCompileRun run, List<AbcAssignment> assignments) {}
+
+  public AbcCompileResult runAbcCompile(
+      UUID tenantId, UUID storeId, String criteria, BigDecimal thresholdA, BigDecimal thresholdAB) {
+
+    String crit =
+        criteria == null ? AbcCompileRun.CRITERIA_VALUE : criteria.toUpperCase(Locale.ROOT);
+    if (!List.of(AbcCompileRun.CRITERIA_VALUE, AbcCompileRun.CRITERIA_VELOCITY).contains(crit)) {
+      throw new ApiException(
+          400, "INVALID_ABC_CRITERIA", "criteria must be VALUE or VELOCITY", List.of(), null);
+    }
+    BigDecimal tA = thresholdA == null ? BigDecimal.valueOf(70) : thresholdA;
+    BigDecimal tAB = thresholdAB == null ? BigDecimal.valueOf(90) : thresholdAB;
+    if (tA.compareTo(BigDecimal.ZERO) <= 0
+        || tA.compareTo(BigDecimal.valueOf(100)) >= 0
+        || tAB.compareTo(tA) <= 0
+        || tAB.compareTo(BigDecimal.valueOf(100)) >= 0) {
+      throw new ApiException(
+          400, "INVALID_ABC_THRESHOLDS", "0 < thresholdA < thresholdAB < 100", List.of(), null);
+    }
+
+    List<Object[]> raw = repo.abcScoringData(tenantId, storeId);
+    if (raw.isEmpty()) {
+      UUID runId = UUID.randomUUID();
+      AbcCompileRun emptyRun =
+          new AbcCompileRun(runId, tenantId, storeId, crit, tA, tAB, 0, Instant.now());
+      repo.persistAbcRun(emptyRun, List.of());
+      return new AbcCompileResult(emptyRun, List.of());
+    }
+
+    // Compute score per row
+    record Scored(UUID storeId, UUID variantId, BigDecimal score) {}
+    List<Scored> scored = new ArrayList<>();
+    for (Object[] row : raw) {
+      UUID sid = (UUID) row[0];
+      UUID vid = (UUID) row[1];
+      BigDecimal demand = (BigDecimal) row[2];
+      BigDecimal cost = (BigDecimal) row[3];
+      BigDecimal s = AbcCompileRun.CRITERIA_VALUE.equals(crit) ? demand.multiply(cost) : demand;
+      scored.add(new Scored(sid, vid, s));
+    }
+    // Sort descending by score
+    scored.sort((a, b) -> b.score().compareTo(a.score()));
+
+    BigDecimal totalScore =
+        scored.stream().map(Scored::score).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    UUID runId = UUID.randomUUID();
+    Instant now = Instant.now();
+    List<AbcAssignment> assignments = new ArrayList<>();
+    BigDecimal cumulative = BigDecimal.ZERO;
+
+    for (int i = 0; i < scored.size(); i++) {
+      Scored s = scored.get(i);
+      cumulative = cumulative.add(s.score());
+      BigDecimal cumulativePct =
+          totalScore.compareTo(BigDecimal.ZERO) == 0
+              ? BigDecimal.valueOf(100)
+              : cumulative
+                  .divide(totalScore, 4, java.math.RoundingMode.HALF_UP)
+                  .multiply(BigDecimal.valueOf(100));
+
+      String abcClass;
+      if (cumulativePct.compareTo(tA) <= 0) abcClass = "A";
+      else if (cumulativePct.compareTo(tAB) <= 0) abcClass = "B";
+      else abcClass = "C";
+
+      assignments.add(
+          new AbcAssignment(
+              UUID.randomUUID(),
+              tenantId,
+              s.storeId(),
+              s.variantId(),
+              runId,
+              abcClass,
+              s.score(),
+              i + 1,
+              now));
+    }
+
+    AbcCompileRun run =
+        new AbcCompileRun(runId, tenantId, storeId, crit, tA, tAB, assignments.size(), now);
+    repo.persistAbcRun(run, assignments);
+    return new AbcCompileResult(run, assignments);
+  }
+
+  public List<AbcAssignment> listAbcAssignments(
+      UUID tenantId, UUID storeId, String abcClass, int limit) {
+    String cls = abcClass == null ? null : abcClass.toUpperCase(Locale.ROOT);
+    if (cls != null && !List.of("A", "B", "C").contains(cls)) {
+      throw new ApiException(400, "INVALID_ABC_CLASS", "class must be A, B, or C", List.of(), null);
+    }
+    return repo.listAbcAssignments(tenantId, storeId, cls, limit);
+  }
+
+  public AbcAssignment getAbcAssignment(UUID tenantId, UUID storeId, UUID variantId) {
+    return repo.findAbcAssignment(tenantId, storeId, variantId)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "ABC_ASSIGNMENT_NOT_FOUND", "No ABC assignment for this variant"));
   }
 
   // ---- safety stock (Gap #8) ----
