@@ -908,10 +908,7 @@ export function isolationCheck(d) {
         } catch (_) { return true; }
       },
     });
-    if (!isolated) {
-      isolationViolations.add(1);
-      console.log(`[ISO-FAIL-1] IN→UK status=${res.status} body=${res.body.slice(0,300)}`);
-    }
+    if (!isolated) isolationViolations.add(1);
   }
 
   // 2. UK tenant queries India store levels → must return empty or 404/403
@@ -928,10 +925,7 @@ export function isolationCheck(d) {
         } catch (_) { return true; }
       },
     });
-    if (!isolated) {
-      isolationViolations.add(1);
-      console.log(`[ISO-FAIL-2] UK→IN status=${res.status} body=${res.body.slice(0,300)}`);
-    }
+    if (!isolated) isolationViolations.add(1);
   }
 
   // 3. India catalog must not contain UK product names
@@ -2856,15 +2850,24 @@ export function pricingVat(d) {
   ok(res, `${tag} list promotions`);
 
   // ── Positive: tenant isolation — IN tenant cannot see UK VAT rates ───────
+  // When using India's header, /vat-rates/T1 should either return 404 (India has no T1)
+  // or return India's own T1 (tenantId === india). Returning UK's T1 (tenantId === uk) is a violation.
   if (!isIN(d)) {
     const crossTenantId = d.india?.tenantId;
     if (crossTenantId) {
       res = get('/api/pricing-svc/vat-rates/T1', crossTenantId, tenant.ownerId);
       check(res, {
         'pricing isolation: UK rate not visible to IN tenant header':
-          r => r.status === 404 || r.status === 403,
+          r => {
+            if (r.status === 404 || r.status === 403) return true;
+            try { return JSON.parse(r.body).data?.tenantId !== d.uk.tenantId; } catch (_) { return true; }
+          },
       });
-      if (res.status >= 200 && res.status < 300) isolationViolations.add(1);
+      if (res.status >= 200 && res.status < 300) {
+        try {
+          if (JSON.parse(res.body).data?.tenantId === d.uk.tenantId) isolationViolations.add(1);
+        } catch (_) {}
+      }
     }
   }
 
