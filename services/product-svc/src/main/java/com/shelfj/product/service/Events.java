@@ -34,4 +34,14 @@ final class Events {
         + EventPayload.esc(sku)
         + "\"}";
   }
+
+  static String itemRevisionCreated(
+      UUID tenantId, UUID variantId, UUID revisionId, String revision) {
+    return EventPayload.base("ItemRevisionCreated", tenantId, revisionId)
+        + ",\"variantId\":\""
+        + variantId
+        + "\",\"revision\":\""
+        + EventPayload.esc(revision)
+        + "\"}";
+  }
 }

@@ -273,7 +273,7 @@
 | ~~9~~ | ~~**ABC analysis** — compile + assign A/B/C classes for cycle count frequency~~ ✅ | ~~inventory-svc~~ | ~~Ch. 16~~ |
 | ~~10~~ | ~~**Cycle counting** — schedule, count entry, tolerance approval, adjustment~~ ✅ | ~~inventory-svc~~ | ~~Ch. 17~~ |
 | ~~11~~ | ~~**Lot genealogy** — parent/child chain on batches~~ ✅ | ~~inventory-svc~~ | ~~Ch. 7~~ |
-| 12 | **Item revisions** | product-svc | Ch. 5 |
+| ~~12~~ | ~~**Item revisions** — append-only versioning per variant with supersession~~ ✅ | ~~product-svc~~ | ~~Ch. 5~~ |
 | 13 | **Item templates** — bulk attribute assignment | product-svc | Ch. 4 |
 | 14 | **POS transaction engine** — return, post-void, layaway, gift card | order-svc | POS RN |
 | 15 | **Tax model** — tax rates, tax-exempt flags, POSLog capture | pricing-svc | POS RN |

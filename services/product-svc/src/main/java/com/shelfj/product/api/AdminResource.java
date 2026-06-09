@@ -6,7 +6,9 @@ import com.shelfj.product.dto.Dtos.ConvertResult;
 import com.shelfj.product.dto.Dtos.CreateBrandRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
+import com.shelfj.product.dto.Dtos.CreateRevisionRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
+import com.shelfj.product.dto.Dtos.ItemRevisionResponse;
 import com.shelfj.product.dto.Dtos.ProductResponse;
 import com.shelfj.product.dto.Dtos.UomClassResponse;
 import com.shelfj.product.dto.Dtos.UomDefinitionResponse;
@@ -291,6 +293,51 @@ public class AdminResource {
           404, "CONVERSION_NOT_FOUND", "Item conversion not found", List.of(), null);
     }
     return Response.noContent().build();
+  }
+
+  // ── Item Revisions (Gap #12) ──────────────────────────────────────────────
+
+  @POST
+  @Path("/products/variants/{variantId}/revisions")
+  public Response createRevision(
+      @PathParam("variantId") UUID variantId, CreateRevisionRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    java.time.LocalDate effectiveDate;
+    try {
+      effectiveDate = java.time.LocalDate.parse(req.effectiveDate());
+    } catch (java.time.format.DateTimeParseException e) {
+      throw new com.shelfj.web.ApiException(
+          400, "INVALID_DATE", "effectiveDate must be ISO date (yyyy-MM-dd)", List.of(), e);
+    }
+    var rev =
+        service.createRevision(
+            tenantId, variantId, req.revision(), req.description(), effectiveDate);
+    return created(Mappers.toRevision(rev));
+  }
+
+  @GET
+  @Path("/products/variants/{variantId}/revisions")
+  public ApiResponse<List<ItemRevisionResponse>> listRevisions(
+      @PathParam("variantId") UUID variantId) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listRevisions(tenantId, variantId).stream().map(Mappers::toRevision).toList());
+  }
+
+  @GET
+  @Path("/products/variants/{variantId}/revisions/current")
+  public ApiResponse<ItemRevisionResponse> currentRevision(@PathParam("variantId") UUID variantId) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toRevision(service.currentRevision(tenantId, variantId)));
+  }
+
+  @GET
+  @Path("/products/variants/{variantId}/revisions/{id}")
+  public ApiResponse<ItemRevisionResponse> getRevision(
+      @PathParam("variantId") UUID variantId, @PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toRevision(service.getRevision(tenantId, id)));
   }
 
   // ─────────────────────────────────────────────────────────────────── utils

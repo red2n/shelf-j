@@ -2,6 +2,7 @@ package com.shelfj.product.service;
 
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
+import com.shelfj.product.domain.Domain.ItemRevision;
 import com.shelfj.product.domain.Domain.Product;
 import com.shelfj.product.domain.Domain.UomClass;
 import com.shelfj.product.domain.Domain.UomDefinition;
@@ -23,6 +24,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -275,6 +277,47 @@ public class ProductService {
         "No conversion from " + fromUom + " to " + toUom,
         List.of(),
         null);
+  }
+
+  // ── Item Revisions (Gap #12) ──────────────────────────────────────────────
+
+  public ItemRevision createRevision(
+      UUID tenantId, UUID variantId, String revision, String description, LocalDate effectiveDate) {
+    UUID id = UUID.randomUUID();
+    var rev =
+        new ItemRevision(
+            id,
+            tenantId,
+            variantId,
+            revision,
+            description,
+            effectiveDate,
+            ItemRevision.ACTIVE,
+            Instant.now());
+    var event =
+        new OutboxRow(
+            "ItemRevisionCreated",
+            "shelfj.catalog.item-revision-created",
+            tenantId,
+            id,
+            Events.itemRevisionCreated(tenantId, variantId, id, revision));
+    return repo.createRevisionWithOutbox(rev, event);
+  }
+
+  public List<ItemRevision> listRevisions(UUID tenantId, UUID variantId) {
+    return repo.listRevisions(tenantId, variantId);
+  }
+
+  public ItemRevision currentRevision(UUID tenantId, UUID variantId) {
+    return repo.currentRevision(tenantId, variantId)
+        .orElseThrow(
+            () ->
+                ApiException.notFound("REVISION_NOT_FOUND", "No active revision for this variant"));
+  }
+
+  public ItemRevision getRevision(UUID tenantId, UUID revisionId) {
+    return repo.findRevision(tenantId, revisionId)
+        .orElseThrow(() -> ApiException.notFound("REVISION_NOT_FOUND", "No such revision"));
   }
 
   private static UUID parseOptionalUuid(String s, String field) {

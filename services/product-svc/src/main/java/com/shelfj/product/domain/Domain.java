@@ -2,6 +2,7 @@ package com.shelfj.product.domain;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 /** Domain records for the product catalog. */
@@ -66,5 +67,20 @@ public final class Domain {
       Instant updatedAt) {
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_INACTIVE = "INACTIVE";
+  }
+
+  // ── Gap #12: Item Revisions ───────────────────────────────────────────────
+
+  public record ItemRevision(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      String revision,
+      String description,
+      LocalDate effectiveDate,
+      String status,
+      Instant createdAt) {
+    public static final String ACTIVE = "ACTIVE";
+    public static final String SUPERSEDED = "SUPERSEDED";
   }
 }

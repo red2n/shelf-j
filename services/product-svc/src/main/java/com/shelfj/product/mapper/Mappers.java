@@ -2,6 +2,7 @@ package com.shelfj.product.mapper;
 
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
+import com.shelfj.product.domain.Domain.ItemRevision;
 import com.shelfj.product.domain.Domain.Product;
 import com.shelfj.product.domain.Domain.UomClass;
 import com.shelfj.product.domain.Domain.UomDefinition;
@@ -9,6 +10,7 @@ import com.shelfj.product.domain.Domain.UomItemConversion;
 import com.shelfj.product.domain.Domain.Variant;
 import com.shelfj.product.dto.Dtos.BrandResponse;
 import com.shelfj.product.dto.Dtos.CategoryResponse;
+import com.shelfj.product.dto.Dtos.ItemRevisionResponse;
 import com.shelfj.product.dto.Dtos.ProductResponse;
 import com.shelfj.product.dto.Dtos.UomClassResponse;
 import com.shelfj.product.dto.Dtos.UomDefinitionResponse;
@@ -74,6 +76,17 @@ public final class Mappers {
   public static UomItemConversionResponse toUomItemConversion(UomItemConversion c) {
     return new UomItemConversionResponse(
         c.id().toString(), c.variantId().toString(), c.fromUom(), c.toUom(), c.factor());
+  }
+
+  public static ItemRevisionResponse toRevision(ItemRevision r) {
+    return new ItemRevisionResponse(
+        r.id().toString(),
+        r.variantId().toString(),
+        r.revision(),
+        r.description(),
+        r.effectiveDate().toString(),
+        r.status(),
+        ts(r.createdAt()));
   }
 
   private static String ts(Instant i) {

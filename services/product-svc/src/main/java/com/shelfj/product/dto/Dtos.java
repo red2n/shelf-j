@@ -95,4 +95,18 @@ public final class Dtos {
       BigDecimal convertedQty,
       BigDecimal factor,
       String source) {}
+
+  // ── Item Revisions (Gap #12) ─────────────────────────────────────────────
+
+  public record CreateRevisionRequest(
+      @NotBlank String revision, String description, @NotBlank String effectiveDate) {}
+
+  public record ItemRevisionResponse(
+      String id,
+      String variantId,
+      String revision,
+      String description,
+      String effectiveDate,
+      String status,
+      String createdAt) {}
 }
