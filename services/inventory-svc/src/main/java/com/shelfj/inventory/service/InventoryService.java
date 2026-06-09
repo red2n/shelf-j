@@ -9,6 +9,7 @@ import com.shelfj.inventory.domain.Domain.CostingMethod;
 import com.shelfj.inventory.domain.Domain.CycleCountHeader;
 import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
+import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
@@ -1154,6 +1155,87 @@ public class InventoryService {
 
   public List<PhysicalInventoryTag> listTags(UUID tenantId, UUID piId) {
     return repo.listTags(tenantId, piId);
+  }
+
+  // ── Gap #18: Kanban Replenishment ────────────────────────────────────────────
+
+  private static final java.util.Set<String> KANBAN_TYPES =
+      java.util.Set.of("SUPPLIER", "INTER_ORG", "INTRA_ORG", "PRODUCTION");
+
+  public KanbanCard createKanbanCard(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      String kanbanType,
+      java.math.BigDecimal reorderQty,
+      UUID sourceStoreId,
+      String supplierRef,
+      String notes) {
+    if (!KANBAN_TYPES.contains(kanbanType)) {
+      throw ApiException.badRequest(
+          "INVALID_KANBAN_TYPE", "kanban type must be one of " + KANBAN_TYPES);
+    }
+    UUID cardId = UUID.randomUUID();
+    KanbanCard card =
+        new KanbanCard(
+            cardId,
+            tenantId,
+            storeId,
+            variantId,
+            kanbanType,
+            KanbanCard.EMPTY,
+            reorderQty,
+            sourceStoreId,
+            supplierRef,
+            notes,
+            null,
+            null,
+            null);
+    var event =
+        new OutboxRow(
+            "KanbanCreated",
+            "shelfj.inventory.kanban-created",
+            tenantId,
+            cardId,
+            Events.kanbanCreated(tenantId, cardId, storeId, variantId, kanbanType));
+    return repo.createKanbanCard(card, event);
+  }
+
+  public KanbanCard triggerKanbanCard(UUID tenantId, UUID cardId, String notes) {
+    KanbanCard card =
+        repo.findKanbanCard(tenantId, cardId)
+            .orElseThrow(() -> ApiException.notFound("KANBAN_NOT_FOUND", "kanban card not found"));
+    var event =
+        new OutboxRow(
+            "KanbanTriggered",
+            "shelfj.inventory.kanban-triggered",
+            tenantId,
+            cardId,
+            Events.kanbanTriggered(tenantId, cardId, card.storeId(), card.variantId()));
+    return repo.triggerKanbanCard(tenantId, cardId, notes, event);
+  }
+
+  public KanbanCard replenishKanbanCard(UUID tenantId, UUID cardId) {
+    KanbanCard card =
+        repo.findKanbanCard(tenantId, cardId)
+            .orElseThrow(() -> ApiException.notFound("KANBAN_NOT_FOUND", "kanban card not found"));
+    var event =
+        new OutboxRow(
+            "KanbanReplenished",
+            "shelfj.inventory.kanban-replenished",
+            tenantId,
+            cardId,
+            Events.kanbanReplenished(tenantId, cardId, card.storeId(), card.variantId()));
+    return repo.replenishKanbanCard(tenantId, cardId, event);
+  }
+
+  public KanbanCard getKanbanCard(UUID tenantId, UUID cardId) {
+    return repo.findKanbanCard(tenantId, cardId)
+        .orElseThrow(() -> ApiException.notFound("KANBAN_NOT_FOUND", "kanban card not found"));
+  }
+
+  public List<KanbanCard> listKanbanCards(UUID tenantId, UUID storeId, String status) {
+    return repo.listKanbanCards(tenantId, storeId, status);
   }
 
   // ── Gap #17: Costing Methods ────────────────────────────────────────────────

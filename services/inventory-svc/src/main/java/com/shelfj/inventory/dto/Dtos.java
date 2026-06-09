@@ -314,6 +314,33 @@ public final class Dtos {
       int movementCount,
       String computedAt) {}
 
+  // ── Gap #18: Kanban Replenishment ────────────────────────────────────────
+
+  public record CreateKanbanCardRequest(
+      @NotBlank String storeId,
+      @NotBlank String variantId,
+      @NotBlank String kanbanType,
+      @NotNull @Positive BigDecimal reorderQty,
+      String sourceStoreId,
+      String supplierRef,
+      String notes) {}
+
+  public record TriggerKanbanRequest(String notes) {}
+
+  public record KanbanCardResponse(
+      String id,
+      String storeId,
+      String variantId,
+      String kanbanType,
+      String status,
+      BigDecimal reorderQty,
+      String sourceStoreId,
+      String supplierRef,
+      String notes,
+      String createdAt,
+      String triggeredAt,
+      String replenishedAt) {}
+
   // ── Gap #17: Costing ─────────────────────────────────────────────────────
 
   public record UpsertCostingMethodRequest(

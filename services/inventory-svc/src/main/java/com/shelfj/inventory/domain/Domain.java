@@ -312,6 +312,32 @@ public final class Domain {
     public static final String RELEASE = "RELEASE";
   }
 
+  // ── Gap #18: Kanban Replenishment ────────────────────────────────────────
+
+  public record KanbanCard(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      String kanbanType,
+      String status,
+      java.math.BigDecimal reorderQty,
+      UUID sourceStoreId,
+      String supplierRef,
+      String notes,
+      Instant createdAt,
+      Instant triggeredAt,
+      Instant replenishedAt) {
+    public static final String SUPPLIER = "SUPPLIER";
+    public static final String INTER_ORG = "INTER_ORG";
+    public static final String INTRA_ORG = "INTRA_ORG";
+    public static final String PRODUCTION = "PRODUCTION";
+    public static final String EMPTY = "EMPTY";
+    public static final String TRIGGERED = "TRIGGERED";
+    public static final String IN_PROGRESS = "IN_PROGRESS";
+    public static final String REPLENISHED = "REPLENISHED";
+  }
+
   // ── Gap #17: Costing ─────────────────────────────────────────────────────
 
   public record CostingMethod(

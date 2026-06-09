@@ -14,6 +14,7 @@ import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockResult;
 import com.shelfj.inventory.dto.Dtos.CostingMethodResponse;
 import com.shelfj.inventory.dto.Dtos.CountTagRequest;
 import com.shelfj.inventory.dto.Dtos.CreateCycleCountRequest;
+import com.shelfj.inventory.dto.Dtos.CreateKanbanCardRequest;
 import com.shelfj.inventory.dto.Dtos.CreateLotLinkRequest;
 import com.shelfj.inventory.dto.Dtos.CreateMoveOrderRequest;
 import com.shelfj.inventory.dto.Dtos.CreatePhysicalInventoryRequest;
@@ -24,6 +25,7 @@ import com.shelfj.inventory.dto.Dtos.CycleCountHeaderResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.EnterCountRequest;
+import com.shelfj.inventory.dto.Dtos.KanbanCardResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyTreeResponse;
@@ -46,6 +48,7 @@ import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdRequest;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderResponse;
+import com.shelfj.inventory.dto.Dtos.TriggerKanbanRequest;
 import com.shelfj.inventory.dto.Dtos.UpsertCostingMethodRequest;
 import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
@@ -896,5 +899,69 @@ public class AdminResource {
   public ApiResponse<AccountingPeriodResponse> closePeriod(@PathParam("id") UUID id) {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(Mappers.toPeriod(service.closePeriod(tenantId, id)));
+  }
+
+  // ── Gap #18: Kanban Replenishment ────────────────────────────────────────────
+
+  @POST
+  @Path("/kanban-cards")
+  public Response createKanbanCard(CreateKanbanCardRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(req.storeId(), "storeId");
+    UUID variantId = uuid(req.variantId(), "variantId");
+    UUID sourceStoreId =
+        req.sourceStoreId() != null && !req.sourceStoreId().isBlank()
+            ? uuid(req.sourceStoreId(), "sourceStoreId")
+            : null;
+    var card =
+        service.createKanbanCard(
+            tenantId,
+            storeId,
+            variantId,
+            req.kanbanType(),
+            req.reorderQty(),
+            sourceStoreId,
+            req.supplierRef(),
+            req.notes());
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(Mappers.toKanbanCard(card)))
+        .build();
+  }
+
+  @GET
+  @Path("/kanban-cards")
+  public ApiResponse<List<KanbanCardResponse>> listKanbanCards(
+      @QueryParam("store") String store, @QueryParam("status") String status) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(store, "store");
+    return ApiResponse.ok(
+        service.listKanbanCards(tenantId, storeId, status).stream()
+            .map(Mappers::toKanbanCard)
+            .toList());
+  }
+
+  @GET
+  @Path("/kanban-cards/{id}")
+  public ApiResponse<KanbanCardResponse> getKanbanCard(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toKanbanCard(service.getKanbanCard(tenantId, id)));
+  }
+
+  @POST
+  @Path("/kanban-cards/{id}/trigger")
+  public ApiResponse<KanbanCardResponse> triggerKanbanCard(
+      @PathParam("id") UUID id, TriggerKanbanRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toKanbanCard(
+            service.triggerKanbanCard(tenantId, id, req != null ? req.notes() : null)));
+  }
+
+  @POST
+  @Path("/kanban-cards/{id}/replenish")
+  public ApiResponse<KanbanCardResponse> replenishKanbanCard(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toKanbanCard(service.replenishKanbanCard(tenantId, id)));
   }
 }

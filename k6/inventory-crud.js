@@ -941,4 +941,125 @@ export default function () {
     ),
     { '[-] open period missing storeId 400': (r) => r.status === 400 }
   );
+
+  // ── Gap #18: Kanban Replenishment ───────────────────────────────────────────
+
+  // [+] Create SUPPLIER kanban card
+  const kanbanRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards`,
+    JSON.stringify({
+      storeId: storeId,
+      variantId: variantId,
+      kanbanType: 'SUPPLIER',
+      reorderQty: 50,
+      supplierRef: 'SUP-001',
+      notes: 'k6 test card'
+    }),
+    { headers: hdrs }
+  );
+  check(kanbanRes, { '[+] create SUPPLIER kanban card 201': (r) => r.status === 201 });
+  const kanbanId = kanbanRes.status === 201 ? kanbanRes.json('data.id') : null;
+
+  // [+] Create INTER_ORG kanban card
+  const kanbanRes2 = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards`,
+    JSON.stringify({
+      storeId: storeId,
+      variantId: variantId,
+      kanbanType: 'INTER_ORG',
+      reorderQty: 30,
+      notes: 'inter-org card'
+    }),
+    { headers: hdrs }
+  );
+  check(kanbanRes2, { '[+] create INTER_ORG kanban card 201': (r) => r.status === 201 });
+  const kanbanId2 = kanbanRes2.status === 201 ? kanbanRes2.json('data.id') : null;
+
+  // [+] List kanban cards
+  check(
+    http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards?store=${storeId}`,
+      { headers: hdrs }
+    ),
+    { '[+] list kanban cards 200': (r) => r.status === 200 }
+  );
+
+  // [+] Get kanban card by id
+  if (kanbanId) {
+    check(
+      http.get(
+        `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards/${kanbanId}`,
+        { headers: hdrs }
+      ),
+      { '[+] get kanban card 200': (r) => r.status === 200 }
+    );
+
+    // [+] Trigger kanban card
+    const triggerRes = http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards/${kanbanId}/trigger`,
+      JSON.stringify({ notes: 'triggered by k6' }),
+      { headers: hdrs }
+    );
+    check(triggerRes, { '[+] trigger kanban card 200': (r) => r.status === 200 });
+
+    // [+] Replenish kanban card
+    if (triggerRes.status === 200) {
+      check(
+        http.post(
+          `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards/${kanbanId}/replenish`,
+          null,
+          { headers: hdrs }
+        ),
+        { '[+] replenish kanban card 200': (r) => r.status === 200 }
+      );
+
+      // [-] Trigger already-replenished card → 409
+      check(
+        http.post(
+          `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards/${kanbanId}/trigger`,
+          JSON.stringify({ notes: 'should fail' }),
+          { headers: hdrs }
+        ),
+        { '[-] trigger non-EMPTY kanban 409': (r) => r.status === 409 }
+      );
+    }
+  }
+
+  // [+] List kanban cards filtered by status
+  check(
+    http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards?store=${storeId}&status=EMPTY`,
+      { headers: hdrs }
+    ),
+    { '[+] list kanban cards by status 200': (r) => r.status === 200 }
+  );
+
+  // [-] Create kanban missing storeId → 400
+  check(
+    http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards`,
+      JSON.stringify({ variantId: variantId, kanbanType: 'SUPPLIER', reorderQty: 10 }),
+      { headers: hdrs }
+    ),
+    { '[-] create kanban missing storeId 400': (r) => r.status === 400 }
+  );
+
+  // [-] Create kanban invalid type → 400
+  check(
+    http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards`,
+      JSON.stringify({ storeId: storeId, variantId: variantId, kanbanType: 'INVALID', reorderQty: 10 }),
+      { headers: hdrs }
+    ),
+    { '[-] create kanban invalid type 400': (r) => r.status === 400 }
+  );
+
+  // [-] Get non-existent kanban card → 404
+  check(
+    http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards/00000000-0000-0000-0000-000000000999`,
+      { headers: hdrs }
+    ),
+    { '[-] get unknown kanban card 404': (r) => r.status === 404 }
+  );
 }

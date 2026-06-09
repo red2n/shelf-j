@@ -8,6 +8,7 @@ import com.shelfj.inventory.domain.Domain.CostingMethod;
 import com.shelfj.inventory.domain.Domain.CycleCountHeader;
 import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
+import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
@@ -31,6 +32,7 @@ import com.shelfj.inventory.dto.Dtos.CostingMethodResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountHeaderResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
+import com.shelfj.inventory.dto.Dtos.KanbanCardResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderLineResponse;
@@ -306,6 +308,22 @@ public final class Mappers {
         ts(pi.startedAt()),
         ts(pi.completedAt()),
         tags.stream().map(Mappers::toTag).toList());
+  }
+
+  public static KanbanCardResponse toKanbanCard(KanbanCard k) {
+    return new KanbanCardResponse(
+        k.id().toString(),
+        k.storeId().toString(),
+        k.variantId().toString(),
+        k.kanbanType(),
+        k.status(),
+        k.reorderQty(),
+        k.sourceStoreId() == null ? null : k.sourceStoreId().toString(),
+        k.supplierRef(),
+        k.notes(),
+        ts(k.createdAt()),
+        ts(k.triggeredAt()),
+        ts(k.replenishedAt()));
   }
 
   public static CostingMethodResponse toCostingMethod(CostingMethod cm) {

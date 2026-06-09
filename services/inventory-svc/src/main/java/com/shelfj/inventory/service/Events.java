@@ -167,6 +167,27 @@ final class Events {
     return EventPayload.base("AccountingPeriodClosed", tenantId, periodId) + "}";
   }
 
+  static String kanbanTriggered(UUID tenantId, UUID cardId, UUID storeId, UUID variantId) {
+    return EventPayload.base("KanbanTriggered", tenantId, cardId)
+        + storeVariant(storeId, variantId)
+        + "}";
+  }
+
+  static String kanbanReplenished(UUID tenantId, UUID cardId, UUID storeId, UUID variantId) {
+    return EventPayload.base("KanbanReplenished", tenantId, cardId)
+        + storeVariant(storeId, variantId)
+        + "}";
+  }
+
+  static String kanbanCreated(
+      UUID tenantId, UUID cardId, UUID storeId, UUID variantId, String kanbanType) {
+    return EventPayload.base("KanbanCreated", tenantId, cardId)
+        + storeVariant(storeId, variantId)
+        + ",\"kanbanType\":\""
+        + kanbanType
+        + "\"}";
+  }
+
   private static String storeVariant(UUID storeId, UUID variantId) {
     return ",\"storeId\":\"" + storeId + "\",\"variantId\":\"" + variantId + "\"";
   }
