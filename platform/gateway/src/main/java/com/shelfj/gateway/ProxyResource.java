@@ -173,8 +173,7 @@ public class ProxyResource {
 
   private Response relay(HttpClientResponse upstream, String requestId) {
     int status = upstream.status().code();
-    Response.ResponseBuilder rb = Response.status(status)
-        .header(HttpHeaders.REQUEST_ID, requestId);
+    Response.ResponseBuilder rb = Response.status(status).header(HttpHeaders.REQUEST_ID, requestId);
     if (status != 204 && status != 205 && status != 304) {
       rb.type(MediaType.APPLICATION_JSON).entity(upstream.as(String.class));
     }

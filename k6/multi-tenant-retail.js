@@ -908,7 +908,10 @@ export function isolationCheck(d) {
         } catch (_) { return true; }
       },
     });
-    if (!isolated) isolationViolations.add(1);
+    if (!isolated) {
+      isolationViolations.add(1);
+      console.log(`[ISO-FAIL-1] IN→UK status=${res.status} body=${res.body.slice(0,300)}`);
+    }
   }
 
   // 2. UK tenant queries India store levels → must return empty or 404/403
@@ -925,7 +928,10 @@ export function isolationCheck(d) {
         } catch (_) { return true; }
       },
     });
-    if (!isolated) isolationViolations.add(1);
+    if (!isolated) {
+      isolationViolations.add(1);
+      console.log(`[ISO-FAIL-2] UK→IN status=${res.status} body=${res.body.slice(0,300)}`);
+    }
   }
 
   // 3. India catalog must not contain UK product names
