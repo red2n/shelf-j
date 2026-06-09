@@ -36,7 +36,8 @@ public final class Dtos {
   public record ThresholdRequest(
       @NotBlank String storeId,
       @NotBlank String variantId,
-      @NotNull @Positive BigDecimal threshold) {}
+      @NotNull @Positive BigDecimal threshold,
+      BigDecimal maxQty) {}
 
   public record MaterialStatusRequest(@NotBlank String materialStatus, String reason) {}
 
@@ -85,5 +86,19 @@ public final class Dtos {
       String createdAt) {}
 
   public record ThresholdResponse(
-      String id, String storeId, String variantId, BigDecimal threshold) {}
+      String id, String storeId, String variantId, BigDecimal threshold, BigDecimal maxQty) {}
+
+  public record SuggestionResponse(
+      String id,
+      String storeId,
+      String variantId,
+      BigDecimal availableQty,
+      BigDecimal minQty,
+      BigDecimal maxQty,
+      BigDecimal suggestedQty,
+      String status,
+      String createdAt,
+      String resolvedAt) {}
+
+  public record ResolveSuggestionRequest(@NotBlank String status) {}
 }

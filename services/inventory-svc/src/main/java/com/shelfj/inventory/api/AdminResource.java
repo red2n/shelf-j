@@ -6,6 +6,8 @@ import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.MaterialStatusRequest;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReceiveRequest;
+import com.shelfj.inventory.dto.Dtos.ResolveSuggestionRequest;
+import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdRequest;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import com.shelfj.inventory.mapper.Mappers;
@@ -162,7 +164,8 @@ public class AdminResource {
             tenantId,
             uuid(req.storeId(), "storeId"),
             uuid(req.variantId(), "variantId"),
-            req.threshold());
+            req.threshold(),
+            req.maxQty());
     return Response.status(Response.Status.CREATED)
         .entity(ApiResponse.ok(Mappers.toThreshold(t)))
         .build();
@@ -176,6 +179,45 @@ public class AdminResource {
     var items =
         service.listThresholds(tenantId, storeId).stream().map(Mappers::toThreshold).toList();
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  // ── planning ─────────────────────────────────────────────────────────────
+
+  @POST
+  @Path("/planning/run")
+  public ApiResponse<List<SuggestionResponse>> runMinMaxPlan(@QueryParam("store") String store) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    var items =
+        service.runMinMaxPlan(tenantId, storeId).stream().map(Mappers::toSuggestion).toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @GET
+  @Path("/planning/suggestions")
+  public ApiResponse<List<SuggestionResponse>> listSuggestions(
+      @QueryParam("store") String store,
+      @QueryParam("status") String status,
+      @QueryParam("limit") Integer limitParam) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    String st = status == null || status.isBlank() ? null : status;
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
+    var items =
+        service.listSuggestions(tenantId, storeId, st, limit).stream()
+            .map(Mappers::toSuggestion)
+            .toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @PUT
+  @Path("/planning/suggestions/{id}/status")
+  public ApiResponse<SuggestionResponse> resolveSuggestion(
+      @PathParam("id") UUID id, ResolveSuggestionRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toSuggestion(service.resolveSuggestion(tenantId, id, req.status())));
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────

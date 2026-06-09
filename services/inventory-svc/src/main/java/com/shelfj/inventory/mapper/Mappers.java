@@ -4,11 +4,13 @@ import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
+import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import java.time.Instant;
 
@@ -64,7 +66,25 @@ public final class Mappers {
 
   public static ThresholdResponse toThreshold(Threshold t) {
     return new ThresholdResponse(
-        t.id().toString(), t.storeId().toString(), t.variantId().toString(), t.threshold());
+        t.id().toString(),
+        t.storeId().toString(),
+        t.variantId().toString(),
+        t.threshold(),
+        t.maxQty());
+  }
+
+  public static SuggestionResponse toSuggestion(Suggestion s) {
+    return new SuggestionResponse(
+        s.id().toString(),
+        s.storeId().toString(),
+        s.variantId().toString(),
+        s.availableQty(),
+        s.minQty(),
+        s.maxQty(),
+        s.suggestedQty(),
+        s.status(),
+        ts(s.createdAt()),
+        ts(s.resolvedAt()));
   }
 
   private static String ts(Instant i) {

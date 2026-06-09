@@ -5,6 +5,7 @@ import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.repo.InventoryRepository;
 import com.shelfj.service.OutboxRow;
@@ -14,7 +15,9 @@ import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /** Stock business logic. All mutations emit a stock event via the outbox (golden rule #6). */
@@ -178,13 +181,85 @@ public class InventoryService {
         .orElseThrow(() -> ApiException.notFound("RESERVATION_NOT_FOUND", "No such reservation"));
   }
 
-  public Threshold setThreshold(UUID tenantId, UUID storeId, UUID variantId, BigDecimal threshold) {
+  public Threshold setThreshold(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal threshold, BigDecimal maxQty) {
     return repo.upsertThreshold(
-        new Threshold(UUID.randomUUID(), tenantId, storeId, variantId, threshold));
+        new Threshold(UUID.randomUUID(), tenantId, storeId, variantId, threshold, maxQty));
   }
 
   public List<Threshold> listThresholds(UUID tenantId, UUID storeId) {
     return repo.listThresholds(tenantId, storeId);
+  }
+
+  // ---- min-max planning engine ----
+
+  /**
+   * Scan every threshold for the tenant (optionally filtered by store), compare against current
+   * available stock, and create OPEN replenishment suggestions for any under-stocked SKU. Skips
+   * SKUs that already have an OPEN suggestion (idempotent).
+   */
+  public List<Suggestion> runMinMaxPlan(UUID tenantId, UUID storeId) {
+    List<Level> levels = repo.levels(tenantId, storeId);
+    Map<String, BigDecimal> avail = new java.util.HashMap<>();
+    for (Level l : levels) {
+      avail.put(l.storeId() + ":" + l.variantId(), l.available());
+    }
+
+    List<Threshold> thresholds = repo.listThresholds(tenantId, storeId);
+    List<Suggestion> created = new ArrayList<>();
+    for (Threshold t : thresholds) {
+      BigDecimal available = avail.getOrDefault(t.storeId() + ":" + t.variantId(), BigDecimal.ZERO);
+      if (available.compareTo(t.threshold()) >= 0) continue;
+
+      BigDecimal target =
+          t.maxQty() != null ? t.maxQty() : t.threshold().multiply(BigDecimal.valueOf(2));
+      BigDecimal suggestedQty = target.subtract(available).max(BigDecimal.ONE);
+      UUID suggId = UUID.randomUUID();
+      var sugg =
+          new Suggestion(
+              suggId,
+              tenantId,
+              t.storeId(),
+              t.variantId(),
+              available,
+              t.threshold(),
+              t.maxQty(),
+              suggestedQty,
+              Suggestion.STATUS_OPEN,
+              Instant.now(),
+              null);
+      var event =
+          new OutboxRow(
+              "ReplenishmentSuggested",
+              "shelfj.inventory.replenishment-suggested",
+              tenantId,
+              suggId,
+              Events.replenishmentSuggested(
+                  tenantId, suggId, t.storeId(), t.variantId(), suggestedQty));
+      repo.insertSuggestionIfAbsent(sugg, event).ifPresent(created::add);
+    }
+    return created;
+  }
+
+  public List<Suggestion> listSuggestions(UUID tenantId, UUID storeId, String status, int limit) {
+    return repo.listSuggestions(tenantId, storeId, status, limit);
+  }
+
+  public Suggestion resolveSuggestion(UUID tenantId, UUID suggId, String newStatus) {
+    if (!List.of(Suggestion.STATUS_ORDERED, Suggestion.STATUS_CANCELLED).contains(newStatus)) {
+      throw new ApiException(
+          400, "INVALID_SUGGESTION_STATUS", "status must be ORDERED or CANCELLED", List.of(), null);
+    }
+    var event =
+        new OutboxRow(
+            "ReplenishmentResolved",
+            "shelfj.inventory.replenishment-resolved",
+            tenantId,
+            suggId,
+            Events.replenishmentResolved(tenantId, suggId, newStatus));
+    return repo.resolveSuggestion(tenantId, suggId, newStatus, event)
+        .orElseThrow(
+            () -> ApiException.notFound("SUGGESTION_NOT_FOUND", "No open suggestion with that id"));
   }
 
   // ---- sweeper support ----

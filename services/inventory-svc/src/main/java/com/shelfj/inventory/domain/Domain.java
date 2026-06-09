@@ -67,7 +67,30 @@ public final class Domain {
       Instant createdAt) {}
 
   public record Threshold(
-      UUID id, UUID tenantId, UUID storeId, UUID variantId, BigDecimal threshold) {}
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal threshold,
+      BigDecimal maxQty) {}
+
+  /** Replenishment suggestion produced by the min-max planning engine. */
+  public record Suggestion(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal availableQty,
+      BigDecimal minQty,
+      BigDecimal maxQty,
+      BigDecimal suggestedQty,
+      String status,
+      Instant createdAt,
+      Instant resolvedAt) {
+    public static final String STATUS_OPEN = "OPEN";
+    public static final String STATUS_ORDERED = "ORDERED";
+    public static final String STATUS_CANCELLED = "CANCELLED";
+  }
 
   /** Movement types (stock_movements.type). qty is signed (+in / -out). */
   public static final class MoveType {

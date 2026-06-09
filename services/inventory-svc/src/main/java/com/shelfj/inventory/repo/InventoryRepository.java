@@ -5,6 +5,7 @@ import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.MoveType;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
@@ -400,24 +401,22 @@ public class InventoryRepository extends BaseOutboxRepository {
         c -> {
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "INSERT INTO reorder_thresholds (id, tenant_id, store_id, variant_id, threshold)"
-                      + " VALUES (?,?,?,?,?)"
+                  "INSERT INTO reorder_thresholds"
+                      + " (id, tenant_id, store_id, variant_id, threshold, max_qty)"
+                      + " VALUES (?,?,?,?,?,?)"
                       + " ON CONFLICT (tenant_id, store_id, variant_id)"
-                      + " DO UPDATE SET threshold = EXCLUDED.threshold"
-                      + " RETURNING id, tenant_id, store_id, variant_id, threshold")) {
+                      + " DO UPDATE SET threshold = EXCLUDED.threshold,"
+                      + " max_qty = EXCLUDED.max_qty"
+                      + " RETURNING id, tenant_id, store_id, variant_id, threshold, max_qty")) {
             ps.setObject(1, t.id());
             ps.setObject(2, t.tenantId());
             ps.setObject(3, t.storeId());
             ps.setObject(4, t.variantId());
             ps.setBigDecimal(5, t.threshold());
+            ps.setBigDecimal(6, t.maxQty());
             try (ResultSet rs = ps.executeQuery()) {
               rs.next();
-              return new Threshold(
-                  rs.getObject("id", UUID.class),
-                  rs.getObject("tenant_id", UUID.class),
-                  rs.getObject("store_id", UUID.class),
-                  rs.getObject("variant_id", UUID.class),
-                  rs.getBigDecimal("threshold"));
+              return mapThreshold(rs);
             }
           }
         },
@@ -427,7 +426,7 @@ public class InventoryRepository extends BaseOutboxRepository {
   public List<Threshold> listThresholds(UUID tenantId, UUID storeId) {
     StringBuilder sb =
         new StringBuilder(
-            "SELECT id, tenant_id, store_id, variant_id, threshold"
+            "SELECT id, tenant_id, store_id, variant_id, threshold, max_qty"
                 + " FROM reorder_thresholds WHERE tenant_id = ?");
     if (storeId != null) sb.append(" AND store_id = ?");
     sb.append(" ORDER BY store_id, variant_id");
@@ -437,13 +436,7 @@ public class InventoryRepository extends BaseOutboxRepository {
           ps.setObject(1, tenantId);
           if (storeId != null) ps.setObject(2, storeId);
         },
-        rs ->
-            new Threshold(
-                rs.getObject("id", UUID.class),
-                rs.getObject("tenant_id", UUID.class),
-                rs.getObject("store_id", UUID.class),
-                rs.getObject("variant_id", UUID.class),
-                rs.getBigDecimal("threshold")),
+        InventoryRepository::mapThreshold,
         "list thresholds");
   }
 
@@ -495,6 +488,91 @@ public class InventoryRepository extends BaseOutboxRepository {
     } catch (SQLException e) {
       throw dbError("mark processed event", e);
     }
+  }
+
+  // ---------------------------------------------------------------- suggestions
+
+  /**
+   * Insert a replenishment suggestion. Returns the suggestion if inserted; empty if an OPEN
+   * suggestion already exists for the same (tenant, store, variant) — idempotent via unique partial
+   * index.
+   */
+  public Optional<Suggestion> insertSuggestionIfAbsent(Suggestion s, OutboxRow event) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO replenishment_suggestions"
+                      + " (id, tenant_id, store_id, variant_id, available_qty,"
+                      + " min_qty, max_qty, suggested_qty, status, created_at)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?)"
+                      + " ON CONFLICT (tenant_id, store_id, variant_id)"
+                      + " WHERE status = 'OPEN' DO NOTHING")) {
+            ps.setObject(1, s.id());
+            ps.setObject(2, s.tenantId());
+            ps.setObject(3, s.storeId());
+            ps.setObject(4, s.variantId());
+            ps.setBigDecimal(5, s.availableQty());
+            ps.setBigDecimal(6, s.minQty());
+            ps.setBigDecimal(7, s.maxQty());
+            ps.setBigDecimal(8, s.suggestedQty());
+            ps.setString(9, s.status());
+            ps.setObject(10, s.createdAt().atOffset(ZoneOffset.UTC));
+            if (ps.executeUpdate() == 0) return Optional.<Suggestion>empty();
+          }
+          insertOutbox(c, event);
+          return Optional.of(s);
+        },
+        "insert suggestion");
+  }
+
+  public List<Suggestion> listSuggestions(UUID tenantId, UUID storeId, String status, int limit) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, variant_id, available_qty, min_qty, max_qty,"
+                + " suggested_qty, status, created_at, resolved_at"
+                + " FROM replenishment_suggestions WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND store_id = ?");
+    if (status != null) sb.append(" AND status = ?");
+    sb.append(" ORDER BY created_at DESC LIMIT ?");
+    return query(
+        sb.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (status != null) ps.setString(i++, status);
+          ps.setInt(i, limit);
+        },
+        InventoryRepository::mapSuggestion,
+        "list suggestions");
+  }
+
+  /** Transition an OPEN suggestion → ORDERED or CANCELLED; emits outbox event. */
+  public Optional<Suggestion> resolveSuggestion(
+      UUID tenantId, UUID suggId, String newStatus, OutboxRow event) {
+    return inTx(
+        c -> {
+          Suggestion updated;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE replenishment_suggestions"
+                      + " SET status = ?, resolved_at = now()"
+                      + " WHERE tenant_id = ? AND id = ? AND status = 'OPEN'"
+                      + " RETURNING id, tenant_id, store_id, variant_id, available_qty,"
+                      + " min_qty, max_qty, suggested_qty, status, created_at, resolved_at")) {
+            ps.setString(1, newStatus);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, suggId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next()) return Optional.<Suggestion>empty();
+              updated = mapSuggestion(rs);
+            }
+          }
+          insertOutbox(c, event);
+          return Optional.of(updated);
+        },
+        "resolve suggestion");
   }
 
   // ---------------------------------------------------------------- internals
@@ -721,5 +799,31 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getString("status"),
         exp,
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static Threshold mapThreshold(ResultSet rs) throws SQLException {
+    return new Threshold(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getBigDecimal("threshold"),
+        rs.getBigDecimal("max_qty"));
+  }
+
+  private static Suggestion mapSuggestion(ResultSet rs) throws SQLException {
+    OffsetDateTime resolvedOdt = rs.getObject("resolved_at", OffsetDateTime.class);
+    return new Suggestion(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getBigDecimal("available_qty"),
+        rs.getBigDecimal("min_qty"),
+        rs.getBigDecimal("max_qty"),
+        rs.getBigDecimal("suggested_qty"),
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        resolvedOdt == null ? null : resolvedOdt.toInstant());
   }
 }

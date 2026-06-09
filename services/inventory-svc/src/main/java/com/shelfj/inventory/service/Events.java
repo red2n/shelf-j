@@ -56,6 +56,22 @@ final class Events {
         + "}";
   }
 
+  static String replenishmentSuggested(
+      UUID tenantId, UUID suggId, UUID storeId, UUID variantId, BigDecimal suggestedQty) {
+    return EventPayload.base("ReplenishmentSuggested", tenantId, suggId)
+        + storeVariant(storeId, variantId)
+        + ",\"suggestedQty\":"
+        + suggestedQty.toPlainString()
+        + "}";
+  }
+
+  static String replenishmentResolved(UUID tenantId, UUID suggId, String status) {
+    return EventPayload.base("ReplenishmentResolved", tenantId, suggId)
+        + ",\"status\":\""
+        + status
+        + "\"}";
+  }
+
   static String materialStatusChanged(
       UUID tenantId, UUID batchId, String materialStatus, String reason) {
     String r = reason == null ? "null" : "\"" + reason.replace("\"", "\\\"") + "\"";
