@@ -3,6 +3,7 @@ package com.shelfj.inventory.api;
 import com.shelfj.inventory.dto.Dtos.AdjustRequest;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
+import com.shelfj.inventory.dto.Dtos.MaterialStatusRequest;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReceiveRequest;
 import com.shelfj.inventory.dto.Dtos.ThresholdRequest;
@@ -18,6 +19,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
@@ -98,13 +100,15 @@ public class AdminResource {
   public ApiResponse<List<BatchResponse>> listBatches(
       @QueryParam("store") String store,
       @QueryParam("variant") String variant,
+      @QueryParam("material_status") String materialStatus,
       @QueryParam("limit") Integer limitParam) {
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
     UUID variantId = variant == null || variant.isBlank() ? null : uuid(variant, "variant");
+    String ms = materialStatus == null || materialStatus.isBlank() ? null : materialStatus;
     int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
     var items =
-        service.listBatches(tenantId, storeId, variantId, limit).stream()
+        service.listBatches(tenantId, storeId, variantId, ms, limit).stream()
             .map(Mappers::toBatch)
             .toList();
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
@@ -114,6 +118,16 @@ public class AdminResource {
   @Path("/batches/{id}")
   public ApiResponse<BatchResponse> getBatch(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toBatch(service.getBatch(ctx.requireTenantId(), id)));
+  }
+
+  @PUT
+  @Path("/batches/{id}/material-status")
+  public ApiResponse<BatchResponse> updateMaterialStatus(
+      @PathParam("id") UUID id, MaterialStatusRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var batch = service.updateMaterialStatus(tenantId, id, req.materialStatus(), req.reason());
+    return ApiResponse.ok(Mappers.toBatch(batch));
   }
 
   // ── movements ────────────────────────────────────────────────────────────

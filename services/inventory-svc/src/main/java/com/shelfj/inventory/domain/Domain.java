@@ -21,10 +21,18 @@ public final class Domain {
       BigDecimal costPrice,
       LocalDate expiryDate,
       Instant createdAt,
-      String status) {
+      String status,
+      String materialStatus,
+      String materialStatusReason) {
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_DEPLETED = "DEPLETED";
     public static final String STATUS_EXPIRED = "EXPIRED";
+
+    public static final String MATERIAL_AVAILABLE = "AVAILABLE";
+    public static final String MATERIAL_QUARANTINE = "QUARANTINE";
+    public static final String MATERIAL_INSPECTION = "INSPECTION";
+    public static final String MATERIAL_DAMAGED = "DAMAGED";
+    public static final String MATERIAL_RECALLED = "RECALLED";
   }
 
   /** Stock level rollup for a (store, variant). */

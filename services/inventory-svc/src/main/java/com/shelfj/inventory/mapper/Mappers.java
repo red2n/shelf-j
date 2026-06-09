@@ -32,7 +32,9 @@ public final class Mappers {
         b.costPrice(),
         b.expiryDate() == null ? null : b.expiryDate().toString(),
         ts(b.createdAt()),
-        b.status());
+        b.status(),
+        b.materialStatus(),
+        b.materialStatusReason());
   }
 
   public static ReservationResponse toReservation(Reservation r) {

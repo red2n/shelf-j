@@ -56,6 +56,17 @@ final class Events {
         + "}";
   }
 
+  static String materialStatusChanged(
+      UUID tenantId, UUID batchId, String materialStatus, String reason) {
+    String r = reason == null ? "null" : "\"" + reason.replace("\"", "\\\"") + "\"";
+    return EventPayload.base("MaterialStatusChanged", tenantId, batchId)
+        + ",\"materialStatus\":\""
+        + materialStatus
+        + "\",\"reason\":"
+        + r
+        + "}";
+  }
+
   private static String storeVariant(UUID storeId, UUID variantId) {
     return ",\"storeId\":\"" + storeId + "\",\"variantId\":\"" + variantId + "\"";
   }

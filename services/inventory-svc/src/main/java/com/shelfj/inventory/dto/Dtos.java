@@ -38,6 +38,8 @@ public final class Dtos {
       @NotBlank String variantId,
       @NotNull @Positive BigDecimal threshold) {}
 
+  public record MaterialStatusRequest(@NotBlank String materialStatus, String reason) {}
+
   // ── responses ────────────────────────────────────────────────────────────────
 
   public record LevelResponse(
@@ -57,7 +59,9 @@ public final class Dtos {
       BigDecimal costPrice,
       String expiryDate,
       String createdAt,
-      String status) {}
+      String status,
+      String materialStatus,
+      String materialStatusReason) {}
 
   public record ReservationResponse(
       String id,

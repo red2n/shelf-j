@@ -48,7 +48,9 @@ public class InventoryService {
             costPrice,
             expiry,
             Instant.now(),
-            Batch.STATUS_ACTIVE);
+            Batch.STATUS_ACTIVE,
+            Batch.MATERIAL_AVAILABLE,
+            null);
     var event =
         new OutboxRow(
             "StockReceived",
@@ -126,8 +128,35 @@ public class InventoryService {
     return repo.levels(tenantId, storeId);
   }
 
-  public List<Batch> listBatches(UUID tenantId, UUID storeId, UUID variantId, int limit) {
-    return repo.listBatches(tenantId, storeId, variantId, limit);
+  public List<Batch> listBatches(
+      UUID tenantId, UUID storeId, UUID variantId, String materialStatus, int limit) {
+    return repo.listBatches(tenantId, storeId, variantId, materialStatus, limit);
+  }
+
+  public Batch updateMaterialStatus(
+      UUID tenantId, UUID batchId, String materialStatus, String reason) {
+    if (!List.of(
+            Batch.MATERIAL_AVAILABLE,
+            Batch.MATERIAL_QUARANTINE,
+            Batch.MATERIAL_INSPECTION,
+            Batch.MATERIAL_DAMAGED,
+            Batch.MATERIAL_RECALLED)
+        .contains(materialStatus)) {
+      throw new ApiException(
+          400,
+          "INVALID_MATERIAL_STATUS",
+          "materialStatus must be AVAILABLE|QUARANTINE|INSPECTION|DAMAGED|RECALLED",
+          List.of(),
+          null);
+    }
+    var event =
+        new OutboxRow(
+            "MaterialStatusChanged",
+            "shelfj.inventory.material-status-changed",
+            tenantId,
+            batchId,
+            Events.materialStatusChanged(tenantId, batchId, materialStatus, reason));
+    return repo.updateMaterialStatus(tenantId, batchId, materialStatus, reason, event);
   }
 
   public Batch getBatch(UUID tenantId, UUID batchId) {

@@ -80,7 +80,9 @@ public class InventoryRepository extends BaseOutboxRepository {
                     null,
                     null,
                     Instant.now(),
-                    Batch.STATUS_ACTIVE);
+                    Batch.STATUS_ACTIVE,
+                    Batch.MATERIAL_AVAILABLE,
+                    null);
             insertBatch(c, b);
           } else {
             deductFifo(
@@ -228,7 +230,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                     FROM reservations WHERE tenant_id = ? AND status = 'HELD'
                     GROUP BY store_id, variant_id
                 ) res ON res.store_id = b.store_id AND res.variant_id = b.variant_id
-                WHERE b.tenant_id = ?"""
+                WHERE b.tenant_id = ? AND b.material_status = 'AVAILABLE'"""
             + (storeId != null ? " AND b.store_id = ?" : "")
             + """
 
@@ -256,14 +258,17 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   // ---------------------------------------------------------------- batches (read)
 
-  public List<Batch> listBatches(UUID tenantId, UUID storeId, UUID variantId, int limit) {
+  public List<Batch> listBatches(
+      UUID tenantId, UUID storeId, UUID variantId, String materialStatus, int limit) {
     StringBuilder sb =
         new StringBuilder(
             "SELECT id, tenant_id, store_id, variant_id, batch_no, received_qty,"
-                + " remaining_qty, cost_price, expiry_date, created_at, status"
+                + " remaining_qty, cost_price, expiry_date, created_at, status,"
+                + " material_status, material_status_reason"
                 + " FROM inventory_batches WHERE tenant_id = ?");
     if (storeId != null) sb.append(" AND store_id = ?");
     if (variantId != null) sb.append(" AND variant_id = ?");
+    if (materialStatus != null) sb.append(" AND material_status = ?");
     sb.append(" ORDER BY created_at DESC LIMIT ?");
     String sql = sb.toString();
     return query(
@@ -280,6 +285,10 @@ public class InventoryRepository extends BaseOutboxRepository {
             ps.setObject(i, variantId);
             i++;
           }
+          if (materialStatus != null) {
+            ps.setString(i, materialStatus);
+            i++;
+          }
           ps.setInt(i, limit);
         },
         InventoryRepository::mapBatch,
@@ -290,7 +299,8 @@ public class InventoryRepository extends BaseOutboxRepository {
     var list =
         query(
             "SELECT id, tenant_id, store_id, variant_id, batch_no, received_qty,"
-                + " remaining_qty, cost_price, expiry_date, created_at, status"
+                + " remaining_qty, cost_price, expiry_date, created_at, status,"
+                + " material_status, material_status_reason"
                 + " FROM inventory_batches WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -437,6 +447,40 @@ public class InventoryRepository extends BaseOutboxRepository {
         "list thresholds");
   }
 
+  // ---------------------------------------------------------------- material status
+
+  /** Change the physical condition of a batch; emits MaterialStatusChanged outbox event. */
+  public Batch updateMaterialStatus(
+      UUID tenantId, UUID batchId, String materialStatus, String reason, OutboxRow event) {
+    return inTx(
+        c -> {
+          Batch updated;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE inventory_batches"
+                      + " SET material_status=?, material_status_reason=?,"
+                      + " material_status_changed_at=now()"
+                      + " WHERE tenant_id=? AND id=?"
+                      + " RETURNING id, tenant_id, store_id, variant_id, batch_no, received_qty,"
+                      + " remaining_qty, cost_price, expiry_date, created_at, status,"
+                      + " material_status, material_status_reason")) {
+            ps.setString(1, materialStatus);
+            ps.setString(2, reason);
+            ps.setObject(3, tenantId);
+            ps.setObject(4, batchId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next()) {
+                throw ApiException.notFound("BATCH_NOT_FOUND", "No such batch");
+              }
+              updated = mapBatch(rs);
+            }
+          }
+          insertOutbox(c, event);
+          return updated;
+        },
+        "update material status");
+  }
+
   // ---------------------------------------------------------------- processed events
 
   public boolean markProcessedIfNew(UUID eventId, String consumer) {
@@ -455,14 +499,15 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   // ---------------------------------------------------------------- internals
 
-  /** Available = sum(remaining batches) − sum(HELD reservations), with the batch rows locked. */
+  /** Available = sum(AVAILABLE remaining batches) − sum(HELD reservations), rows locked. */
   private BigDecimal availableForUpdate(Connection c, UUID tenantId, UUID storeId, UUID variantId)
       throws SQLException {
     BigDecimal onHand = BigDecimal.ZERO;
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT remaining_qty FROM inventory_batches"
-                + " WHERE tenant_id=? AND store_id=? AND variant_id=? FOR UPDATE")) {
+                + " WHERE tenant_id=? AND store_id=? AND variant_id=?"
+                + " AND material_status='AVAILABLE' FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, storeId);
       ps.setObject(3, variantId);
@@ -505,6 +550,7 @@ public class InventoryRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "SELECT id, remaining_qty FROM inventory_batches"
                 + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty > 0"
+                + " AND material_status='AVAILABLE'"
                 + " ORDER BY expiry_date ASC NULLS LAST, created_at ASC FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, storeId);
@@ -565,8 +611,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO inventory_batches"
                 + " (id, tenant_id, store_id, variant_id, batch_no, received_qty,"
-                + " remaining_qty, cost_price, expiry_date, created_at, status)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " remaining_qty, cost_price, expiry_date, created_at, status, material_status)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, b.id());
       ps.setObject(2, b.tenantId());
       ps.setObject(3, b.storeId());
@@ -578,6 +624,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setObject(9, b.expiryDate());
       ps.setObject(10, b.createdAt().atOffset(ZoneOffset.UTC));
       ps.setString(11, b.status() == null ? Batch.STATUS_ACTIVE : b.status());
+      ps.setString(12, b.materialStatus() == null ? Batch.MATERIAL_AVAILABLE : b.materialStatus());
       ps.executeUpdate();
     }
   }
@@ -642,7 +689,9 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getBigDecimal("cost_price"),
         rs.getObject("expiry_date", java.time.LocalDate.class),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
-        rs.getString("status"));
+        rs.getString("status"),
+        rs.getString("material_status"),
+        rs.getString("material_status_reason"));
   }
 
   private static Movement mapMovement(ResultSet rs) throws SQLException {
