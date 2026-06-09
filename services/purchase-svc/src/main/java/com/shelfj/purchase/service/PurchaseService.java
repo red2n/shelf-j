@@ -1,0 +1,464 @@
+package com.shelfj.purchase.service;
+
+import com.shelfj.purchase.domain.Domain;
+import com.shelfj.purchase.domain.Domain.GoodsReceipt;
+import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
+import com.shelfj.purchase.domain.Domain.IntercompanyInvoice;
+import com.shelfj.purchase.domain.Domain.NominalLedgerEntry;
+import com.shelfj.purchase.domain.Domain.PurchaseOrder;
+import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
+import com.shelfj.purchase.domain.Domain.Supplier;
+import com.shelfj.purchase.dto.Dtos.AddPurchaseOrderLineRequest;
+import com.shelfj.purchase.dto.Dtos.CreateGoodsReceiptRequest;
+import com.shelfj.purchase.dto.Dtos.CreatePurchaseOrderRequest;
+import com.shelfj.purchase.dto.Dtos.CreateSupplierRequest;
+import com.shelfj.purchase.dto.Dtos.RaiseIntercompanyInvoiceRequest;
+import com.shelfj.purchase.repo.PurchaseRepository;
+import com.shelfj.web.ApiException;
+import com.shelfj.web.TenantContext;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/** Business logic for purchase-svc. No HTTP types here. */
+@ApplicationScoped
+public class PurchaseService {
+
+  // BACS standard payment terms: 30 days per UK Finance / HMRC guidance
+  private static final int BACS_TERMS_DAYS = 30;
+
+  @Inject PurchaseRepository repo;
+
+  // ── Suppliers ─────────────────────────────────────────────────────────────────
+
+  public Supplier createSupplier(CreateSupplierRequest req, TenantContext ctx) {
+    Supplier s =
+        new Supplier(
+            UUID.randomUUID(),
+            ctx.tenantId(),
+            req.name(),
+            req.vatNumber(),
+            req.vatRegistered(),
+            req.countryCode() != null ? req.countryCode().toUpperCase(java.util.Locale.ROOT) : "GB",
+            req.currency() != null ? req.currency().toUpperCase(java.util.Locale.ROOT) : "GBP",
+            req.paymentTermsDays() != null ? req.paymentTermsDays() : BACS_TERMS_DAYS,
+            Instant.now(),
+            Instant.now());
+    return repo.createSupplier(s);
+  }
+
+  public List<Supplier> listSuppliers(TenantContext ctx) {
+    return repo.findSuppliers(ctx.tenantId());
+  }
+
+  public Supplier getSupplier(TenantContext ctx, UUID id) {
+    return repo.findSupplier(ctx.tenantId(), id)
+        .orElseThrow(
+            () ->
+                ApiException.notFound("PURCHASE_SUPPLIER_NOT_FOUND", "Supplier not found: " + id));
+  }
+
+  // ── Purchase Orders ───────────────────────────────────────────────────────────
+
+  public PurchaseOrder createPurchaseOrder(CreatePurchaseOrderRequest req, TenantContext ctx) {
+    getSupplier(ctx, req.supplierId());
+    PurchaseOrder po =
+        new PurchaseOrder(
+            UUID.randomUUID(),
+            ctx.tenantId(),
+            req.supplierId(),
+            req.storeId(),
+            Domain.PO_DRAFT,
+            req.currency() != null ? req.currency().toUpperCase(java.util.Locale.ROOT) : "GBP",
+            BigDecimal.ZERO,
+            BigDecimal.ZERO,
+            BigDecimal.ZERO,
+            req.expectedDelivery() != null ? LocalDate.parse(req.expectedDelivery()) : null,
+            Instant.now(),
+            Instant.now());
+    return repo.createPurchaseOrder(po, Events.purchaseOrderCreated(ctx.tenantId(), po.id()));
+  }
+
+  public List<PurchaseOrder> listPurchaseOrders(TenantContext ctx) {
+    return repo.findPurchaseOrders(ctx.tenantId());
+  }
+
+  public PurchaseOrder getPurchaseOrder(TenantContext ctx, UUID id) {
+    return repo.findPurchaseOrder(ctx.tenantId(), id)
+        .orElseThrow(
+            () ->
+                ApiException.notFound("PURCHASE_PO_NOT_FOUND", "Purchase order not found: " + id));
+  }
+
+  public PurchaseOrderLine addPurchaseOrderLine(
+      TenantContext ctx, UUID poId, AddPurchaseOrderLineRequest req) {
+    PurchaseOrder po = getPurchaseOrder(ctx, poId);
+    if (!Domain.PO_DRAFT.equals(po.status()))
+      throw ApiException.badRequest(
+          "PURCHASE_PO_NOT_DRAFT", "Lines can only be added to DRAFT purchase orders");
+    PurchaseOrderLine line =
+        new PurchaseOrderLine(
+            UUID.randomUUID(),
+            ctx.tenantId(),
+            poId,
+            req.variantId(),
+            req.qty(),
+            req.unitPrice(),
+            req.vatCode() != null ? req.vatCode().toUpperCase(java.util.Locale.ROOT) : "T1",
+            Instant.now());
+    return repo.addPurchaseOrderLine(line);
+  }
+
+  public List<PurchaseOrderLine> listPurchaseOrderLines(TenantContext ctx, UUID poId) {
+    getPurchaseOrder(ctx, poId);
+    return repo.findPurchaseOrderLines(ctx.tenantId(), poId);
+  }
+
+  public PurchaseOrder submitPurchaseOrder(TenantContext ctx, UUID poId) {
+    PurchaseOrder po = getPurchaseOrder(ctx, poId);
+    if (!Domain.PO_DRAFT.equals(po.status()))
+      throw ApiException.badRequest("PURCHASE_PO_NOT_DRAFT", "Only DRAFT orders can be submitted");
+    repo.updatePurchaseOrderStatus(ctx.tenantId(), poId, Domain.PO_SUBMITTED);
+    return getPurchaseOrder(ctx, poId);
+  }
+
+  // ── Goods Receipts ────────────────────────────────────────────────────────────
+
+  public GoodsReceipt receiveGoods(CreateGoodsReceiptRequest req, TenantContext ctx) {
+    PurchaseOrder po = getPurchaseOrder(ctx, req.poId());
+    if (!Domain.PO_SUBMITTED.equals(po.status()))
+      throw ApiException.badRequest(
+          "PURCHASE_PO_NOT_SUBMITTED", "Only SUBMITTED orders can be received");
+    if (req.lines() == null || req.lines().isEmpty())
+      throw ApiException.badRequest("PURCHASE_GRN_EMPTY", "GRN must have at least one line");
+
+    GoodsReceipt gr =
+        new GoodsReceipt(
+            UUID.randomUUID(),
+            ctx.tenantId(),
+            req.poId(),
+            req.storeId(),
+            Instant.now(),
+            Instant.now());
+    List<GoodsReceiptLine> lines =
+        req.lines().stream()
+            .map(
+                l ->
+                    new GoodsReceiptLine(
+                        UUID.randomUUID(),
+                        ctx.tenantId(),
+                        gr.id(),
+                        l.variantId(),
+                        l.qtyReceived(),
+                        Instant.now()))
+            .toList();
+    return repo.createGoodsReceipt(
+        gr, lines, Events.goodsReceived(ctx.tenantId(), gr.id(), gr.poId()));
+  }
+
+  public List<GoodsReceipt> listGoodsReceipts(TenantContext ctx, UUID poId) {
+    getPurchaseOrder(ctx, poId);
+    return repo.findGoodsReceiptsByPo(ctx.tenantId(), poId);
+  }
+
+  // ── Intercompany Invoices (Gap #20) ───────────────────────────────────────────
+
+  /**
+   * Raises an AR invoice for the sending store and an AP invoice for the receiving store
+   * atomically. Posts the corresponding FRS 102 / UK GAAP double-entry nominal ledger entries.
+   *
+   * <p>BACS payment due date = invoice_date + 30 days (UK standard trade terms).
+   *
+   * <p>Group VAT: if vatDisregarded=true (HMRC VAT Notice 700/2 — same VAT group), no VAT nominal
+   * entries are posted and vat_disregarded is set on both records.
+   *
+   * <p>Transfer pricing: caller provides net_amount which should reflect arm's length pricing per
+   * HMRC INTM (typically: cost price of the transferred goods).
+   */
+  public List<IntercompanyInvoice> raiseIntercompanyInvoices(
+      RaiseIntercompanyInvoiceRequest req, TenantContext ctx) {
+    UUID tenantId = ctx.tenantId();
+    UUID fromStore = UUID.fromString(req.fromStoreId());
+    UUID toStore = UUID.fromString(req.toStoreId());
+    if (fromStore.equals(toStore))
+      throw ApiException.badRequest(
+          "PURCHASE_IC_SAME_STORE", "from and to store must be different");
+
+    UUID transferRef = req.transferRef() != null ? UUID.fromString(req.transferRef()) : null;
+    String vatCode =
+        req.vatCode() != null ? req.vatCode().toUpperCase(java.util.Locale.ROOT) : "T1";
+    String currency =
+        req.currency() != null ? req.currency().toUpperCase(java.util.Locale.ROOT) : "GBP";
+    LocalDate today = LocalDate.now();
+    LocalDate dueDate = today.plusDays(BACS_TERMS_DAYS);
+
+    UUID arId = UUID.randomUUID();
+    UUID apId = UUID.randomUUID();
+
+    IntercompanyInvoice ar =
+        new IntercompanyInvoice(
+            arId,
+            tenantId,
+            Domain.INV_AR,
+            fromStore,
+            toStore,
+            transferRef,
+            req.netAmount(),
+            req.vatAmount(),
+            req.grossAmount(),
+            vatCode,
+            req.vatDisregarded(),
+            Domain.INV_RAISED,
+            today,
+            dueDate,
+            currency,
+            Instant.now());
+
+    IntercompanyInvoice ap =
+        new IntercompanyInvoice(
+            apId,
+            tenantId,
+            Domain.INV_AP,
+            fromStore,
+            toStore,
+            transferRef,
+            req.netAmount(),
+            req.vatAmount(),
+            req.grossAmount(),
+            vatCode,
+            req.vatDisregarded(),
+            Domain.INV_RAISED,
+            today,
+            dueDate,
+            currency,
+            Instant.now());
+
+    // FRS 102 double-entry for AR invoice
+    List<NominalLedgerEntry> arEntries = buildArEntries(tenantId, arId, req, today);
+    // FRS 102 double-entry for AP invoice
+    List<NominalLedgerEntry> apEntries = buildApEntries(tenantId, apId, req, today);
+
+    repo.createIntercompanyInvoice(ar, arEntries, Events.intercompanyInvoiceRaised(tenantId, arId));
+    repo.createIntercompanyInvoice(ap, apEntries, Events.intercompanyInvoiceRaised(tenantId, apId));
+
+    return List.of(ar, ap);
+  }
+
+  private List<NominalLedgerEntry> buildArEntries(
+      UUID tenantId, UUID arId, RaiseIntercompanyInvoiceRequest req, LocalDate today) {
+    String desc = "Intercompany AR invoice " + arId;
+    List<NominalLedgerEntry> entries = new ArrayList<>();
+    BigDecimal gross = req.grossAmount();
+    BigDecimal net = req.netAmount();
+    BigDecimal vat = req.vatAmount();
+
+    // DR 1100 Debtors (gross amount owed to sending store)
+    entries.add(
+        ledgerEntry(
+            tenantId,
+            today,
+            Domain.CODE_DEBTORS,
+            Domain.NAME_DEBTORS,
+            gross,
+            BigDecimal.ZERO,
+            desc,
+            arId));
+    if (!req.vatDisregarded() && vat.compareTo(BigDecimal.ZERO) > 0) {
+      // CR 2200 VAT Output
+      entries.add(
+          ledgerEntry(
+              tenantId,
+              today,
+              Domain.CODE_VAT_OUTPUT,
+              Domain.NAME_VAT_OUTPUT,
+              BigDecimal.ZERO,
+              vat,
+              desc,
+              arId));
+      // CR 4000 Intercompany Sales (net only)
+      entries.add(
+          ledgerEntry(
+              tenantId,
+              today,
+              Domain.CODE_IC_SALES,
+              Domain.NAME_IC_SALES,
+              BigDecimal.ZERO,
+              net,
+              desc,
+              arId));
+    } else {
+      // CR 4000 Intercompany Sales (gross = net when VAT disregarded)
+      entries.add(
+          ledgerEntry(
+              tenantId,
+              today,
+              Domain.CODE_IC_SALES,
+              Domain.NAME_IC_SALES,
+              BigDecimal.ZERO,
+              gross,
+              desc,
+              arId));
+    }
+    return entries;
+  }
+
+  private List<NominalLedgerEntry> buildApEntries(
+      UUID tenantId, UUID apId, RaiseIntercompanyInvoiceRequest req, LocalDate today) {
+    String desc = "Intercompany AP invoice " + apId;
+    List<NominalLedgerEntry> entries = new ArrayList<>();
+    BigDecimal gross = req.grossAmount();
+    BigDecimal net = req.netAmount();
+    BigDecimal vat = req.vatAmount();
+
+    if (!req.vatDisregarded() && vat.compareTo(BigDecimal.ZERO) > 0) {
+      // DR 5000 Purchases (net)
+      entries.add(
+          ledgerEntry(
+              tenantId,
+              today,
+              Domain.CODE_IC_PURCHASES,
+              Domain.NAME_IC_PURCHASES,
+              net,
+              BigDecimal.ZERO,
+              desc,
+              apId));
+      // DR 2201 VAT Input
+      entries.add(
+          ledgerEntry(
+              tenantId,
+              today,
+              Domain.CODE_VAT_INPUT,
+              Domain.NAME_VAT_INPUT,
+              vat,
+              BigDecimal.ZERO,
+              desc,
+              apId));
+    } else {
+      // DR 5000 Purchases (gross = net when VAT disregarded)
+      entries.add(
+          ledgerEntry(
+              tenantId,
+              today,
+              Domain.CODE_IC_PURCHASES,
+              Domain.NAME_IC_PURCHASES,
+              gross,
+              BigDecimal.ZERO,
+              desc,
+              apId));
+    }
+    // CR 2100 Creditors (gross)
+    entries.add(
+        ledgerEntry(
+            tenantId,
+            today,
+            Domain.CODE_CREDITORS,
+            Domain.NAME_CREDITORS,
+            BigDecimal.ZERO,
+            gross,
+            desc,
+            apId));
+    return entries;
+  }
+
+  public IntercompanyInvoice getIntercompanyInvoice(TenantContext ctx, UUID id) {
+    return repo.findIntercompanyInvoice(ctx.tenantId(), id)
+        .orElseThrow(
+            () -> ApiException.notFound("PURCHASE_INVOICE_NOT_FOUND", "Invoice not found: " + id));
+  }
+
+  public List<IntercompanyInvoice> listIntercompanyInvoices(TenantContext ctx) {
+    return repo.findIntercompanyInvoices(ctx.tenantId());
+  }
+
+  public void settleIntercompanyInvoice(TenantContext ctx, UUID id) {
+    IntercompanyInvoice inv = getIntercompanyInvoice(ctx, id);
+    LocalDate today = LocalDate.now();
+    String desc = "Settlement of intercompany invoice " + id;
+    List<NominalLedgerEntry> settlements = new ArrayList<>();
+
+    if (Domain.INV_AR.equals(inv.invoiceType())) {
+      // DR 1200 Bank / CR 1100 Debtors
+      settlements.add(
+          ledgerEntry(
+              ctx.tenantId(),
+              today,
+              Domain.CODE_BANK,
+              Domain.NAME_BANK,
+              inv.grossAmount(),
+              BigDecimal.ZERO,
+              desc,
+              id));
+      settlements.add(
+          ledgerEntry(
+              ctx.tenantId(),
+              today,
+              Domain.CODE_DEBTORS,
+              Domain.NAME_DEBTORS,
+              BigDecimal.ZERO,
+              inv.grossAmount(),
+              desc,
+              id));
+    } else {
+      // DR 2100 Creditors / CR 1200 Bank
+      settlements.add(
+          ledgerEntry(
+              ctx.tenantId(),
+              today,
+              Domain.CODE_CREDITORS,
+              Domain.NAME_CREDITORS,
+              inv.grossAmount(),
+              BigDecimal.ZERO,
+              desc,
+              id));
+      settlements.add(
+          ledgerEntry(
+              ctx.tenantId(),
+              today,
+              Domain.CODE_BANK,
+              Domain.NAME_BANK,
+              BigDecimal.ZERO,
+              inv.grossAmount(),
+              desc,
+              id));
+    }
+    repo.settleIntercompanyInvoice(ctx.tenantId(), id, settlements);
+  }
+
+  // ── Nominal Ledger ────────────────────────────────────────────────────────────
+
+  public List<NominalLedgerEntry> getNominalLedger(
+      TenantContext ctx, String nominalCode, String fromStr, String toStr) {
+    LocalDate from = fromStr != null ? LocalDate.parse(fromStr) : null;
+    LocalDate to = toStr != null ? LocalDate.parse(toStr) : null;
+    return repo.findNominalLedger(ctx.tenantId(), nominalCode, from, to);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────────
+
+  private static NominalLedgerEntry ledgerEntry(
+      UUID tenantId,
+      LocalDate date,
+      String code,
+      String name,
+      BigDecimal debit,
+      BigDecimal credit,
+      String desc,
+      UUID sourceRef) {
+    return new NominalLedgerEntry(
+        UUID.randomUUID(),
+        tenantId,
+        date,
+        code,
+        name,
+        debit,
+        credit,
+        desc,
+        sourceRef,
+        Instant.now());
+  }
+}
