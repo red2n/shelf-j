@@ -8,6 +8,7 @@ import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.MoveType;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
@@ -824,6 +825,159 @@ public class InventoryRepository extends BaseOutboxRepository {
         },
         InventoryRepository::mapDemandBucket,
         "list demand history");
+  }
+
+  // ---------------------------------------------------------------- safety stock (Gap #8)
+
+  public SafetyStockParams upsertSafetyStockParams(
+      com.shelfj.inventory.domain.Domain.SafetyStockParams p) {
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "INSERT INTO safety_stock_params"
+                    + " (id, tenant_id, store_id, variant_id, method, lead_time_days,"
+                    + "  service_level_pct, user_defined_pct)"
+                    + " VALUES (?,?,?,?,?,?,?,?)"
+                    + " ON CONFLICT (tenant_id, store_id, variant_id)"
+                    + " DO UPDATE SET method = EXCLUDED.method,"
+                    + "   lead_time_days = EXCLUDED.lead_time_days,"
+                    + "   service_level_pct = EXCLUDED.service_level_pct,"
+                    + "   user_defined_pct = EXCLUDED.user_defined_pct"
+                    + " RETURNING id, tenant_id, store_id, variant_id, method, lead_time_days,"
+                    + "   service_level_pct, user_defined_pct, safety_stock_qty,"
+                    + "   computed_at, created_at")) {
+      ps.setObject(1, p.id());
+      ps.setObject(2, p.tenantId());
+      ps.setObject(3, p.storeId());
+      ps.setObject(4, p.variantId());
+      ps.setString(5, p.method());
+      ps.setInt(6, p.leadTimeDays());
+      ps.setBigDecimal(7, p.serviceLevelPct());
+      ps.setBigDecimal(8, p.userDefinedPct());
+      try (ResultSet rs = ps.executeQuery()) {
+        rs.next();
+        return mapSafetyStockParams(rs);
+      }
+    } catch (SQLException e) {
+      throw dbError("upsert safety stock params", e);
+    }
+  }
+
+  public Optional<SafetyStockParams> findSafetyStockParams(
+      UUID tenantId, UUID storeId, UUID variantId) {
+    List<SafetyStockParams> rows =
+        query(
+            "SELECT id, tenant_id, store_id, variant_id, method, lead_time_days,"
+                + " service_level_pct, user_defined_pct, safety_stock_qty,"
+                + " computed_at, created_at"
+                + " FROM safety_stock_params WHERE tenant_id = ? AND store_id = ?"
+                + " AND variant_id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, storeId);
+              ps.setObject(3, variantId);
+            },
+            InventoryRepository::mapSafetyStockParams,
+            "find safety stock params");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  public List<SafetyStockParams> listSafetyStockParams(UUID tenantId, UUID storeId, int limit) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, variant_id, method, lead_time_days,"
+                + " service_level_pct, user_defined_pct, safety_stock_qty,"
+                + " computed_at, created_at"
+                + " FROM safety_stock_params WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND store_id = ?");
+    sb.append(" ORDER BY created_at DESC LIMIT ?");
+    return query(
+        sb.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          ps.setInt(i, limit);
+        },
+        InventoryRepository::mapSafetyStockParams,
+        "list safety stock params");
+  }
+
+  public Optional<SafetyStockParams> updateSafetyStockQty(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, Instant computedAt) {
+    List<SafetyStockParams> rows =
+        query(
+            "UPDATE safety_stock_params"
+                + " SET safety_stock_qty = ?, computed_at = ?"
+                + " WHERE tenant_id = ? AND store_id = ? AND variant_id = ?"
+                + " RETURNING id, tenant_id, store_id, variant_id, method, lead_time_days,"
+                + "   service_level_pct, user_defined_pct, safety_stock_qty,"
+                + "   computed_at, created_at",
+            ps -> {
+              ps.setBigDecimal(1, qty);
+              ps.setObject(2, computedAt.atOffset(ZoneOffset.UTC));
+              ps.setObject(3, tenantId);
+              ps.setObject(4, storeId);
+              ps.setObject(5, variantId);
+            },
+            InventoryRepository::mapSafetyStockParams,
+            "update safety stock qty");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /** Returns the last N daily demand buckets for a specific store + variant, oldest-first. */
+  public List<DemandBucket> demandBucketsForCompute(
+      UUID tenantId, UUID storeId, UUID variantId, int maxBuckets) {
+    return query(
+        "SELECT id, tenant_id, store_id, variant_id, bucket_date, bucket_type,"
+            + " demand_qty, movement_count, computed_at"
+            + " FROM demand_history"
+            + " WHERE tenant_id = ? AND store_id = ? AND variant_id = ?"
+            + " AND bucket_type = 'DAY'"
+            + " ORDER BY bucket_date DESC LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setObject(3, variantId);
+          ps.setInt(4, maxBuckets);
+        },
+        InventoryRepository::mapDemandBucket,
+        "demand buckets for safety stock");
+  }
+
+  /** All (store, variant) pairs that have safety stock params for this tenant (optional store). */
+  public List<SafetyStockParams> listSafetyStockParamsAll(UUID tenantId, UUID storeId) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, variant_id, method, lead_time_days,"
+                + " service_level_pct, user_defined_pct, safety_stock_qty,"
+                + " computed_at, created_at"
+                + " FROM safety_stock_params WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND store_id = ?");
+    return query(
+        sb.toString(),
+        ps -> {
+          ps.setObject(1, tenantId);
+          if (storeId != null) ps.setObject(2, storeId);
+        },
+        InventoryRepository::mapSafetyStockParams,
+        "list all safety stock params for compute");
+  }
+
+  private static SafetyStockParams mapSafetyStockParams(ResultSet rs) throws SQLException {
+    OffsetDateTime computedOdt = rs.getObject("computed_at", OffsetDateTime.class);
+    return new SafetyStockParams(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getString("method"),
+        rs.getInt("lead_time_days"),
+        rs.getBigDecimal("service_level_pct"),
+        rs.getBigDecimal("user_defined_pct"),
+        rs.getBigDecimal("safety_stock_qty"),
+        computedOdt == null ? null : computedOdt.toInstant(),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
   // ---------------------------------------------------------------- internals

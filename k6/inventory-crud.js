@@ -27,7 +27,6 @@ function setupTenant() {
   );
   const tenantId = tenantRes.status < 300 ? tenantRes.json('data.id') : null;
 
-  // Create a store to get a real storeId
   let storeId = null;
   if (tenantId) {
     const storeRes = http.post(
@@ -44,13 +43,11 @@ export default function () {
   const ctx = setupTenant();
   const tenantId = ctx && ctx.tenantId;
   const storeId = ctx && ctx.storeId;
-  // Use a deterministic fake variantId — inventory-svc will create/reference the batch
   const variantId = '00000000-0000-0000-0000-000000000099';
-  const hdrs = tenantId
-    ? { ...JSON_CT, 'X-Tenant-Id': tenantId }
-    : { ...JSON_CT };
+  const hdrs = tenantId ? { ...JSON_CT, 'X-Tenant-Id': tenantId } : { ...JSON_CT };
 
-  // Receive stock
+  // ── Gap #1-#7: core inventory positive checks ─────────────────────────────
+
   const recRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/receive`,
     JSON.stringify({
@@ -62,18 +59,13 @@ export default function () {
     }),
     { headers: hdrs }
   );
-  check(recRes, { 'stock received (2xx or validation 4xx)': (r) => r.status < 500 });
+  check(recRes, { '[+] receive stock 201': (r) => r.status === 201 });
 
   sleep(0.5);
 
-  // Check stock levels
-  const levelsRes = http.get(
-    `${baseUrl}/api/inventory-svc/admin/inventory/levels`,
-    { headers: hdrs }
-  );
-  check(levelsRes, { 'levels returned < 500': (r) => r.status < 500 });
+  const levelsRes = http.get(`${baseUrl}/api/inventory-svc/admin/inventory/levels`, { headers: hdrs });
+  check(levelsRes, { '[+] levels 200': (r) => r.status === 200 });
 
-  // Adjust stock
   const adjRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/adjust`,
     JSON.stringify({
@@ -84,5 +76,184 @@ export default function () {
     }),
     { headers: hdrs }
   );
-  check(adjRes, { 'adjust returned < 500': (r) => r.status < 500 });
+  check(adjRes, { '[+] adjust stock 200': (r) => r.status === 200 });
+
+  // ── Gap #8: Safety Stock — positive checks ────────────────────────────────
+
+  // Set safety stock params (MAD method)
+  const ssMADRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
+    JSON.stringify({
+      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      variantId,
+      method: 'MAD',
+      leadTimeDays: 7,
+      serviceLevelPct: 95,
+    }),
+    { headers: hdrs }
+  );
+  check(ssMADRes, {
+    '[+] set safety stock MAD 201': (r) => r.status === 201,
+    '[+] safety stock method is MAD': (r) => {
+      try { return r.json('data.method') === 'MAD'; } catch (_) { return false; }
+    },
+    '[+] safety stock leadTimeDays is 7': (r) => {
+      try { return r.json('data.leadTimeDays') === 7; } catch (_) { return false; }
+    },
+  });
+
+  // Set safety stock params (USER_DEFINED method)
+  const variantId2 = '00000000-0000-0000-0000-000000000098';
+  const ssUDRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
+    JSON.stringify({
+      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      variantId: variantId2,
+      method: 'USER_DEFINED',
+      leadTimeDays: 14,
+      userDefinedPct: 25,
+    }),
+    { headers: hdrs }
+  );
+  check(ssUDRes, {
+    '[+] set safety stock USER_DEFINED 201': (r) => r.status === 201,
+    '[+] safety stock method is USER_DEFINED': (r) => {
+      try { return r.json('data.method') === 'USER_DEFINED'; } catch (_) { return false; }
+    },
+  });
+
+  // List safety stock params
+  const ssListRes = http.get(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
+    { headers: hdrs }
+  );
+  check(ssListRes, {
+    '[+] list safety stock 200': (r) => r.status === 200,
+    '[+] safety stock list is array': (r) => {
+      try { return Array.isArray(r.json('data')); } catch (_) { return false; }
+    },
+  });
+
+  // Compute safety stock (no demand history yet → returns 0 or rows=N computed)
+  const ssComputeRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock/compute`,
+    JSON.stringify({ storeId: storeId || '00000000-0000-0000-0000-000000000001' }),
+    { headers: hdrs }
+  );
+  check(ssComputeRes, {
+    '[+] compute safety stock 200': (r) => r.status === 200,
+    '[+] compute result has computed field': (r) => {
+      try { return typeof r.json('data.computed') === 'number'; } catch (_) { return false; }
+    },
+  });
+
+  // Get single safety stock params by storeId/variantId
+  if (storeId) {
+    const ssGetRes = http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock/${storeId}/${variantId}`,
+      { headers: hdrs }
+    );
+    check(ssGetRes, {
+      '[+] get safety stock params 200': (r) => r.status === 200,
+      '[+] get safety stock params returns storeId': (r) => {
+        try { return typeof r.json('data.storeId') === 'string'; } catch (_) { return false; }
+      },
+    });
+  }
+
+  // Upsert idempotency: re-posting same variant should update (not 409)
+  const ssUpsertRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
+    JSON.stringify({
+      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      variantId,
+      method: 'MAD',
+      leadTimeDays: 10,
+      serviceLevelPct: 98,
+    }),
+    { headers: hdrs }
+  );
+  check(ssUpsertRes, {
+    '[+] upsert safety stock is idempotent (2xx)': (r) => r.status < 300,
+    '[+] upsert updates leadTimeDays to 10': (r) => {
+      try { return r.json('data.leadTimeDays') === 10; } catch (_) { return false; }
+    },
+  });
+
+  sleep(0.3);
+
+  // ── Gap #8: Safety Stock — negative checks ────────────────────────────────
+
+  // Missing method field (should default gracefully or return 400)
+  const ssMissingVariantRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
+    JSON.stringify({
+      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      // variantId missing
+      method: 'MAD',
+    }),
+    { headers: hdrs }
+  );
+  check(ssMissingVariantRes, {
+    '[-] missing variantId → 400': (r) => r.status === 400,
+  });
+
+  // Invalid method value
+  const ssBadMethodRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
+    JSON.stringify({
+      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      variantId: '00000000-0000-0000-0000-000000000097',
+      method: 'INVALID_METHOD',
+    }),
+    { headers: hdrs }
+  );
+  check(ssBadMethodRes, {
+    '[-] invalid method → 400': (r) => r.status === 400,
+  });
+
+  // USER_DEFINED without userDefinedPct
+  const ssMissingPctRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
+    JSON.stringify({
+      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      variantId: '00000000-0000-0000-0000-000000000096',
+      method: 'USER_DEFINED',
+      // userDefinedPct missing
+    }),
+    { headers: hdrs }
+  );
+  check(ssMissingPctRes, {
+    '[-] USER_DEFINED without userDefinedPct → 400': (r) => r.status === 400,
+  });
+
+  // Get non-existent safety stock params → 404
+  const ssNotFoundRes = http.get(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock/` +
+      `00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000000`,
+    { headers: hdrs }
+  );
+  check(ssNotFoundRes, {
+    '[-] get non-existent safety stock → 404': (r) => r.status === 404,
+  });
+
+  // No tenant header → 401
+  const ssNoTenantRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
+    JSON.stringify({ storeId: '00000000-0000-0000-0000-000000000001', variantId, method: 'MAD' }),
+    { headers: JSON_CT }
+  );
+  check(ssNoTenantRes, {
+    '[-] no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+  });
+
+  // Invalid UUID for storeId
+  const ssBadUUIDRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
+    JSON.stringify({ storeId: 'not-a-uuid', variantId, method: 'MAD' }),
+    { headers: hdrs }
+  );
+  check(ssBadUUIDRes, {
+    '[-] invalid storeId UUID → 400': (r) => r.status === 400,
+  });
 }

@@ -7,6 +7,7 @@ import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
@@ -20,6 +21,7 @@ import com.shelfj.inventory.dto.Dtos.MoveOrderLineResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
+import com.shelfj.inventory.dto.Dtos.SafetyStockParamsResponse;
 import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
@@ -177,6 +179,20 @@ public final class Mappers {
         ts(o.createdAt()),
         ts(o.pickedAt()),
         lines.stream().map(Mappers::toMoveOrderLine).toList());
+  }
+
+  public static SafetyStockParamsResponse toSafetyStockParams(SafetyStockParams p) {
+    return new SafetyStockParamsResponse(
+        p.id().toString(),
+        p.storeId().toString(),
+        p.variantId().toString(),
+        p.method(),
+        p.leadTimeDays(),
+        p.serviceLevelPct(),
+        p.userDefinedPct(),
+        p.safetyStockQty(),
+        ts(p.computedAt()),
+        ts(p.createdAt()));
   }
 
   private static String ts(Instant i) {

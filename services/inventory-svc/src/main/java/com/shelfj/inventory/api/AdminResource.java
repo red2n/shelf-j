@@ -6,6 +6,8 @@ import com.shelfj.inventory.dto.Dtos.AdjustRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateResult;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
+import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockRequest;
+import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockResult;
 import com.shelfj.inventory.dto.Dtos.CreateMoveOrderRequest;
 import com.shelfj.inventory.dto.Dtos.CreateTransferOrderRequest;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
@@ -16,9 +18,11 @@ import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReceiveRequest;
 import com.shelfj.inventory.dto.Dtos.RegisterSerialsRequest;
 import com.shelfj.inventory.dto.Dtos.ResolveSuggestionRequest;
+import com.shelfj.inventory.dto.Dtos.SafetyStockParamsResponse;
 import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
 import com.shelfj.inventory.dto.Dtos.SerialStatusRequest;
+import com.shelfj.inventory.dto.Dtos.SetSafetyStockRequest;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdRequest;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
@@ -488,6 +492,66 @@ public class AdminResource {
     var cancelled = service.cancelMoveOrder(ctx.requireTenantId(), id);
     var wl = service.getMoveOrder(ctx.requireTenantId(), cancelled.id());
     return ApiResponse.ok(Mappers.toMoveOrder(wl.order(), wl.lines()));
+  }
+
+  // ── safety stock (Gap #8) ────────────────────────────────────────────────
+
+  @POST
+  @Path("/safety-stock")
+  public Response setSafetyStock(SetSafetyStockRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var params =
+        service.setSafetyStockParams(
+            tenantId,
+            uuid(req.storeId(), "storeId"),
+            uuid(req.variantId(), "variantId"),
+            req.method(),
+            req.leadTimeDays(),
+            req.serviceLevelPct(),
+            req.userDefinedPct());
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(Mappers.toSafetyStockParams(params)))
+        .build();
+  }
+
+  @GET
+  @Path("/safety-stock")
+  public ApiResponse<List<SafetyStockParamsResponse>> listSafetyStock(
+      @QueryParam("store") String store, @QueryParam("limit") Integer limitParam) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
+    var items =
+        service.listSafetyStockParams(tenantId, storeId, limit).stream()
+            .map(Mappers::toSafetyStockParams)
+            .toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @GET
+  @Path("/safety-stock/{storeId}/{variantId}")
+  public ApiResponse<SafetyStockParamsResponse> getSafetyStock(
+      @PathParam("storeId") UUID storeId, @PathParam("variantId") UUID variantId) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toSafetyStockParams(service.getSafetyStockParams(tenantId, storeId, variantId)));
+  }
+
+  @POST
+  @Path("/safety-stock/compute")
+  public ApiResponse<ComputeSafetyStockResult> computeSafetyStock(ComputeSafetyStockRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId =
+        req != null && req.storeId() != null && !req.storeId().isBlank()
+            ? uuid(req.storeId(), "storeId")
+            : null;
+    UUID variantId =
+        req != null && req.variantId() != null && !req.variantId().isBlank()
+            ? uuid(req.variantId(), "variantId")
+            : null;
+    int updated = service.computeSafetyStock(tenantId, storeId, variantId);
+    return ApiResponse.ok(new ComputeSafetyStockResult(updated, "DAY"));
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────

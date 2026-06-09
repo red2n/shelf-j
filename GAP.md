@@ -269,7 +269,7 @@
 | 5 | **Move Orders / Pick Wave** — replenishment move orders, express pick release | inventory-svc | Ch. 13 |
 | 6 | **Transfer Orders** — inter-store stock transfers (direct + intransit) | inventory-svc | Ch. 11 |
 | 7 | **Demand history aggregation** — periodic buckets from stock_movements | inventory-svc | Ch. 14 |
-| 8 | **Safety stock calculation** (MAD formula + user-defined %) | inventory-svc | Ch. 14 |
+| ~~8~~ | ~~**Safety stock calculation** (MAD formula + user-defined %)~~ ✅ | ~~inventory-svc~~ | ~~Ch. 14~~ |
 | 9 | **ABC analysis** — compile + assign A/B/C classes for cycle count frequency | inventory-svc | Ch. 16 |
 | 10 | **Cycle counting** — schedule, count entry, tolerance approval, adjustment | inventory-svc | Ch. 17 |
 | 11 | **Lot genealogy** — parent/child chain on batches | inventory-svc | Ch. 7 |

@@ -8,6 +8,7 @@ import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
@@ -608,6 +609,135 @@ public class InventoryService {
                 ApiException.unprocessable(
                     "TRANSFER_ORDER_NOT_CANCELLABLE",
                     "Only PENDING transfer orders can be cancelled"));
+  }
+
+  // ---- safety stock (Gap #8) ----
+
+  public SafetyStockParams setSafetyStockParams(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      String method,
+      Integer leadTimeDays,
+      BigDecimal serviceLevelPct,
+      BigDecimal userDefinedPct) {
+
+    String m = method == null ? SafetyStockParams.METHOD_MAD : method.toUpperCase(Locale.ROOT);
+    if (!List.of(SafetyStockParams.METHOD_MAD, SafetyStockParams.METHOD_USER_DEFINED).contains(m)) {
+      throw new ApiException(
+          400,
+          "INVALID_SAFETY_STOCK_METHOD",
+          "method must be MAD or USER_DEFINED",
+          List.of(),
+          null);
+    }
+    if (SafetyStockParams.METHOD_USER_DEFINED.equals(m)
+        && (userDefinedPct == null || userDefinedPct.signum() <= 0)) {
+      throw new ApiException(
+          400,
+          "USER_DEFINED_PCT_REQUIRED",
+          "userDefinedPct > 0 is required when method is USER_DEFINED",
+          List.of(),
+          null);
+    }
+    int ltd = leadTimeDays == null || leadTimeDays < 1 ? 7 : leadTimeDays;
+    BigDecimal slp = serviceLevelPct == null ? BigDecimal.valueOf(95) : serviceLevelPct;
+
+    var params =
+        new SafetyStockParams(
+            UUID.randomUUID(),
+            tenantId,
+            storeId,
+            variantId,
+            m,
+            ltd,
+            slp,
+            userDefinedPct,
+            null,
+            null,
+            Instant.now());
+    return repo.upsertSafetyStockParams(params);
+  }
+
+  public SafetyStockParams getSafetyStockParams(UUID tenantId, UUID storeId, UUID variantId) {
+    return repo.findSafetyStockParams(tenantId, storeId, variantId)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "SAFETY_STOCK_PARAMS_NOT_FOUND", "No safety stock params for this variant"));
+  }
+
+  public List<SafetyStockParams> listSafetyStockParams(UUID tenantId, UUID storeId, int limit) {
+    return repo.listSafetyStockParams(tenantId, storeId, limit);
+  }
+
+  /**
+   * Re-compute safety_stock_qty for every (store, variant) row that has params. Returns the count
+   * of rows updated. Rows with no demand history get safety_stock_qty = 0. Optional storeId/
+   * variantId narrow the run to one row.
+   */
+  public int computeSafetyStock(UUID tenantId, UUID storeId, UUID variantId) {
+    List<SafetyStockParams> targets;
+    if (variantId != null && storeId != null) {
+      targets =
+          repo.findSafetyStockParams(tenantId, storeId, variantId).map(List::of).orElse(List.of());
+    } else {
+      targets = repo.listSafetyStockParamsAll(tenantId, storeId);
+    }
+    int updated = 0;
+    Instant now = Instant.now();
+    for (SafetyStockParams p : targets) {
+      BigDecimal qty = computeForOne(p);
+      repo.updateSafetyStockQty(p.tenantId(), p.storeId(), p.variantId(), qty, now);
+      updated++;
+    }
+    return updated;
+  }
+
+  private BigDecimal computeForOne(SafetyStockParams p) {
+    // Fetch last 30 daily buckets (enough for meaningful MAD)
+    List<DemandBucket> buckets =
+        repo.demandBucketsForCompute(p.tenantId(), p.storeId(), p.variantId(), 30);
+    if (buckets.isEmpty()) return BigDecimal.ZERO;
+
+    int n = buckets.size();
+    BigDecimal sum =
+        buckets.stream().map(DemandBucket::demandQty).reduce(BigDecimal.ZERO, BigDecimal::add);
+    BigDecimal mean = sum.divide(BigDecimal.valueOf(n), 6, java.math.RoundingMode.HALF_UP);
+
+    if (SafetyStockParams.METHOD_USER_DEFINED.equals(p.method())) {
+      // safety_stock = (mean * lead_time_days) * (userDefinedPct / 100)
+      BigDecimal avgOverLead = mean.multiply(BigDecimal.valueOf(p.leadTimeDays()));
+      BigDecimal pct =
+          p.userDefinedPct().divide(BigDecimal.valueOf(100), 6, java.math.RoundingMode.HALF_UP);
+      return avgOverLead.multiply(pct).setScale(3, java.math.RoundingMode.HALF_UP);
+    }
+
+    // MAD = mean of |demand_i − mean|
+    BigDecimal madSum =
+        buckets.stream()
+            .map(b -> b.demandQty().subtract(mean).abs())
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    BigDecimal mad = madSum.divide(BigDecimal.valueOf(n), 6, java.math.RoundingMode.HALF_UP);
+
+    // z-score lookup for common service levels; linear interpolation not needed — standard table
+    double sl = p.serviceLevelPct().doubleValue();
+    double z;
+    if (sl >= 99.0) z = 2.326;
+    else if (sl >= 98.0) z = 2.054;
+    else if (sl >= 97.0) z = 1.881;
+    else if (sl >= 95.0) z = 1.645;
+    else if (sl >= 90.0) z = 1.282;
+    else if (sl >= 85.0) z = 1.036;
+    else z = 0.842;
+
+    // safety_stock = z * MAD * sqrt(lead_time_days)
+    double sqrtLt = Math.sqrt(p.leadTimeDays());
+    BigDecimal ss =
+        mad.multiply(BigDecimal.valueOf(z))
+            .multiply(BigDecimal.valueOf(sqrtLt))
+            .setScale(3, java.math.RoundingMode.HALF_UP);
+    return ss.max(BigDecimal.ZERO);
   }
 
   // ---- sweeper support ----

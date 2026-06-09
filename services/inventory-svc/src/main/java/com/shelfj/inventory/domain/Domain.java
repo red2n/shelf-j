@@ -198,6 +198,27 @@ public final class Domain {
       BigDecimal shippedQty,
       BigDecimal receivedQty) {}
 
+  /**
+   * Safety stock parameters + last computed result for a (store, variant) pair (Gap #8). method MAD
+   * uses Mean Absolute Deviation from demand buckets. method USER_DEFINED uses a user-supplied
+   * percentage of avg demand over lead time.
+   */
+  public record SafetyStockParams(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      String method,
+      int leadTimeDays,
+      BigDecimal serviceLevelPct,
+      BigDecimal userDefinedPct,
+      BigDecimal safetyStockQty,
+      Instant computedAt,
+      Instant createdAt) {
+    public static final String METHOD_MAD = "MAD";
+    public static final String METHOD_USER_DEFINED = "USER_DEFINED";
+  }
+
   /** Movement types (stock_movements.type). qty is signed (+in / -out). */
   public static final class MoveType {
     private MoveType() {}

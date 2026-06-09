@@ -191,6 +191,32 @@ public final class Dtos {
       String receivedAt,
       List<TransferOrderLineResponse> lines) {}
 
+  // ── Safety Stock (Gap #8) ────────────────────────────────────────────────
+
+  public record SetSafetyStockRequest(
+      @NotBlank String storeId,
+      @NotBlank String variantId,
+      @NotBlank String method,
+      Integer leadTimeDays,
+      BigDecimal serviceLevelPct,
+      BigDecimal userDefinedPct) {}
+
+  public record ComputeSafetyStockRequest(String storeId, String variantId) {}
+
+  public record SafetyStockParamsResponse(
+      String id,
+      String storeId,
+      String variantId,
+      String method,
+      int leadTimeDays,
+      BigDecimal serviceLevelPct,
+      BigDecimal userDefinedPct,
+      BigDecimal safetyStockQty,
+      String computedAt,
+      String createdAt) {}
+
+  public record ComputeSafetyStockResult(int computed, String bucketType) {}
+
   public record AggregateRequest(String storeId, String bucketType, String since) {}
 
   public record AggregateResult(int bucketsUpserted, String bucketType) {}
