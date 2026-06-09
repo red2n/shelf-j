@@ -158,7 +158,7 @@ public class PurchaseService {
                         Instant.now()))
             .toList();
     return repo.createGoodsReceipt(
-        gr, lines, Events.goodsReceived(ctx.tenantId(), gr.id(), gr.poId()));
+        gr, lines, Events.goodsReceived(ctx.tenantId(), gr.id(), gr.storeId(), gr.poId(), lines));
   }
 
   public List<GoodsReceipt> listGoodsReceipts(TenantContext ctx, UUID poId) {

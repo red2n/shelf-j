@@ -157,10 +157,10 @@ public final class Dtos {
   // ── Tax Transactions (POSLog) ─────────────────────────────────────────────
 
   public record RecordTaxTransactionRequest(
-      @NotBlank String orderId,
-      @NotBlank String orderLineId,
-      @NotBlank String variantId,
-      @NotBlank String storeId,
+      @NotNull UUID orderId,
+      @NotNull UUID orderLineId,
+      @NotNull UUID variantId,
+      @NotNull UUID storeId,
       @NotBlank String vatCode,
       @NotNull @PositiveOrZero BigDecimal vatRate,
       @NotNull @PositiveOrZero BigDecimal netAmount,

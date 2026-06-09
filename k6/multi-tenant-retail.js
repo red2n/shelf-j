@@ -233,6 +233,12 @@ function jwtPayload(token) {
 // Random 6-char uppercase slug.
 function slug() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
 
+// Random UUID v4.
+function genUuid() {
+  const h = () => (Math.random() * 0x10000 | 0).toString(16).padStart(4, '0');
+  return `${h()}${h()}-${h()}-4${h().slice(1)}-${(8 + (Math.random() * 4 | 0)).toString(16)}${h().slice(1)}-${h()}${h()}${h()}`;
+}
+
 // Receive stock at a store and return the response.
 function apiReceiveStock(tenantId, userId, storeId, variantId, qty, costPrice, batchPrefix) {
   return post('/api/inventory-svc/admin/inventory/receive', {
@@ -2768,8 +2774,8 @@ export function pricingVat(d) {
   if (!store || !tenant.variantIds || tenant.variantIds.length === 0) { sleep(1); return; }
 
   const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
-  const ordId = `aaaaaaaa-${Date.now().toString(16).padStart(12,'0').slice(0,8)}-0000-0000-aaaaaaaaaaaa`;
-  const lineId = `bbbbbbbb-${Date.now().toString(16).padStart(12,'0').slice(0,8)}-0000-0000-bbbbbbbbbbbb`;
+  const ordId  = genUuid();
+  const lineId = genUuid();
 
   // ── Positive: get VAT rate T1 ──────────────────────────────────────────────
   let t0 = Date.now();

@@ -1,6 +1,8 @@
 package com.shelfj.purchase.service;
 
+import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
 import com.shelfj.service.OutboxRow;
+import java.util.List;
 import java.util.UUID;
 
 /** Outbox event factory for purchase-svc. */
@@ -17,13 +19,30 @@ final class Events {
         "{\"poId\":\"" + poId + "\"}");
   }
 
-  static OutboxRow goodsReceived(UUID tenantId, UUID grId, UUID poId) {
+  static OutboxRow goodsReceived(
+      UUID tenantId, UUID grId, UUID storeId, UUID poId, List<GoodsReceiptLine> lines) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("{\"eventId\":\"")
+        .append(grId)
+        .append("\",\"tenantId\":\"")
+        .append(tenantId)
+        .append("\",\"storeId\":\"")
+        .append(storeId)
+        .append("\",\"refId\":\"")
+        .append(poId)
+        .append("\",\"lines\":[");
+    for (int i = 0; i < lines.size(); i++) {
+      if (i > 0) sb.append(",");
+      GoodsReceiptLine l = lines.get(i);
+      sb.append("{\"variantId\":\"")
+          .append(l.variantId())
+          .append("\",\"qty\":")
+          .append(l.qtyReceived())
+          .append("}");
+    }
+    sb.append("]}");
     return new OutboxRow(
-        "GoodsReceived",
-        "shelfj.purchase.goods-received",
-        tenantId,
-        grId,
-        "{\"grId\":\"" + grId + "\",\"poId\":\"" + poId + "\"}");
+        "GoodsReceived", "shelfj.purchase.goods-received", tenantId, grId, sb.toString());
   }
 
   static OutboxRow intercompanyInvoiceRaised(UUID tenantId, UUID invoiceId) {
