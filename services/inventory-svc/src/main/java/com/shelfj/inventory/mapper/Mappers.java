@@ -3,6 +3,8 @@ package com.shelfj.inventory.mapper;
 import com.shelfj.inventory.domain.Domain.AbcAssignment;
 import com.shelfj.inventory.domain.Domain.AbcCompileRun;
 import com.shelfj.inventory.domain.Domain.Batch;
+import com.shelfj.inventory.domain.Domain.CycleCountHeader;
+import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
@@ -19,6 +21,8 @@ import com.shelfj.inventory.domain.Domain.TransferOrderLine;
 import com.shelfj.inventory.dto.Dtos.AbcAssignmentResponse;
 import com.shelfj.inventory.dto.Dtos.AbcCompileRunResponse;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
+import com.shelfj.inventory.dto.Dtos.CycleCountHeaderResponse;
+import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderLineResponse;
@@ -183,6 +187,43 @@ public final class Mappers {
         ts(o.createdAt()),
         ts(o.pickedAt()),
         lines.stream().map(Mappers::toMoveOrderLine).toList());
+  }
+
+  public static CycleCountLineResponse toCycleCountLine(CycleCountLine l) {
+    return new CycleCountLineResponse(
+        l.id().toString(),
+        l.variantId().toString(),
+        l.systemQty(),
+        l.countedQty(),
+        l.variance(),
+        l.variancePct(),
+        l.status(),
+        ts(l.countedAt()));
+  }
+
+  public static CycleCountHeaderResponse toCycleCountHeader(
+      CycleCountHeader h, List<CycleCountLine> lines) {
+    int counted = (int) lines.stream().filter(l -> !CycleCountLine.OPEN.equals(l.status())).count();
+    int approved =
+        (int)
+            lines.stream()
+                .filter(
+                    l ->
+                        CycleCountLine.APPROVED.equals(l.status())
+                            || CycleCountLine.ADJUSTED.equals(l.status()))
+                .count();
+    return new CycleCountHeaderResponse(
+        h.id().toString(),
+        h.storeId().toString(),
+        h.name(),
+        h.abcClasses(),
+        h.tolerancePct(),
+        h.status(),
+        lines.size(),
+        counted,
+        approved,
+        ts(h.createdAt()),
+        ts(h.completedAt()));
   }
 
   public static AbcCompileRunResponse toAbcCompileRun(AbcCompileRun r) {

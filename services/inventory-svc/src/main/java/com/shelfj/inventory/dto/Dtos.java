@@ -191,6 +191,43 @@ public final class Dtos {
       String receivedAt,
       List<TransferOrderLineResponse> lines) {}
 
+  // ── Cycle Counting (Gap #10) ─────────────────────────────────────────────
+
+  public record CreateCycleCountRequest(
+      @NotBlank String storeId,
+      @NotBlank String name,
+      String abcClasses,
+      BigDecimal tolerancePct) {}
+
+  public record EnterCountRequest(@NotNull BigDecimal countedQty) {}
+
+  public record CycleCountLineResponse(
+      String id,
+      String variantId,
+      BigDecimal systemQty,
+      BigDecimal countedQty,
+      BigDecimal variance,
+      BigDecimal variancePct,
+      String status,
+      String countedAt) {}
+
+  public record CycleCountHeaderResponse(
+      String id,
+      String storeId,
+      String name,
+      String abcClasses,
+      BigDecimal tolerancePct,
+      String status,
+      int totalLines,
+      int countedLines,
+      int approvedLines,
+      String createdAt,
+      String completedAt) {}
+
+  public record CycleCountApproveResult(int autoApproved, int flagged) {}
+
+  public record CycleCountAdjustResult(int adjusted) {}
+
   // ── ABC Analysis (Gap #9) ────────────────────────────────────────────────
 
   public record RunAbcRequest(

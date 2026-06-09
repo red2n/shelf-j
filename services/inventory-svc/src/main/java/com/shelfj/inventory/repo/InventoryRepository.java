@@ -3,6 +3,8 @@ package com.shelfj.inventory.repo;
 import com.shelfj.inventory.domain.Domain.AbcAssignment;
 import com.shelfj.inventory.domain.Domain.AbcCompileRun;
 import com.shelfj.inventory.domain.Domain.Batch;
+import com.shelfj.inventory.domain.Domain.CycleCountHeader;
+import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
@@ -827,6 +829,307 @@ public class InventoryRepository extends BaseOutboxRepository {
         },
         InventoryRepository::mapDemandBucket,
         "list demand history");
+  }
+
+  // ---------------------------------------------------------------- cycle counting (Gap #10)
+
+  public CycleCountHeader createCycleCountHeader(
+      CycleCountHeader header, List<CycleCountLine> lines) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO cycle_count_headers"
+                      + " (id, tenant_id, store_id, name, abc_classes, tolerance_pct,"
+                      + "  status, created_at)"
+                      + " VALUES (?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, header.id());
+            ps.setObject(2, header.tenantId());
+            ps.setObject(3, header.storeId());
+            ps.setString(4, header.name());
+            ps.setString(5, header.abcClasses());
+            ps.setBigDecimal(6, header.tolerancePct());
+            ps.setString(7, header.status());
+            ps.setObject(8, header.createdAt().atOffset(ZoneOffset.UTC));
+            ps.executeUpdate();
+          }
+          if (!lines.isEmpty()) {
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "INSERT INTO cycle_count_lines"
+                        + " (id, tenant_id, header_id, store_id, variant_id, system_qty)"
+                        + " VALUES (?,?,?,?,?,?)")) {
+              for (CycleCountLine l : lines) {
+                ps.setObject(1, l.id());
+                ps.setObject(2, l.tenantId());
+                ps.setObject(3, l.headerId());
+                ps.setObject(4, l.storeId());
+                ps.setObject(5, l.variantId());
+                ps.setBigDecimal(6, l.systemQty());
+                ps.addBatch();
+              }
+              ps.executeBatch();
+            }
+          }
+          return header;
+        },
+        "create cycle count");
+  }
+
+  public List<CycleCountHeader> listCycleCountHeaders(
+      UUID tenantId, UUID storeId, String status, int limit) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, name, abc_classes, tolerance_pct,"
+                + " status, created_at, completed_at"
+                + " FROM cycle_count_headers WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND store_id = ?");
+    if (status != null) sb.append(" AND status = ?");
+    sb.append(" ORDER BY created_at DESC LIMIT ?");
+    return query(
+        sb.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (status != null) ps.setString(i++, status);
+          ps.setInt(i, limit);
+        },
+        InventoryRepository::mapCycleCountHeader,
+        "list cycle count headers");
+  }
+
+  public Optional<CycleCountHeader> findCycleCountHeader(UUID tenantId, UUID headerId) {
+    List<CycleCountHeader> rows =
+        query(
+            "SELECT id, tenant_id, store_id, name, abc_classes, tolerance_pct,"
+                + " status, created_at, completed_at"
+                + " FROM cycle_count_headers WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, headerId);
+            },
+            InventoryRepository::mapCycleCountHeader,
+            "find cycle count header");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  public List<CycleCountLine> listCycleCountLines(UUID headerId) {
+    return query(
+        "SELECT id, tenant_id, header_id, store_id, variant_id, system_qty,"
+            + " counted_qty, variance, variance_pct, status, counted_at"
+            + " FROM cycle_count_lines WHERE header_id = ? ORDER BY variant_id",
+        ps -> ps.setObject(1, headerId),
+        InventoryRepository::mapCycleCountLine,
+        "list cycle count lines");
+  }
+
+  public Optional<CycleCountLine> findCycleCountLine(UUID tenantId, UUID lineId) {
+    List<CycleCountLine> rows =
+        query(
+            "SELECT id, tenant_id, header_id, store_id, variant_id, system_qty,"
+                + " counted_qty, variance, variance_pct, status, counted_at"
+                + " FROM cycle_count_lines WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, lineId);
+            },
+            InventoryRepository::mapCycleCountLine,
+            "find cycle count line");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /** Record counted_qty + computed variance on one line; set status COUNTED. */
+  public Optional<CycleCountLine> enterCount(
+      UUID tenantId,
+      UUID lineId,
+      BigDecimal countedQty,
+      BigDecimal variance,
+      BigDecimal variancePct) {
+    List<CycleCountLine> rows =
+        query(
+            "UPDATE cycle_count_lines"
+                + " SET counted_qty = ?, variance = ?, variance_pct = ?,"
+                + "     status = 'COUNTED', counted_at = now()"
+                + " WHERE tenant_id = ? AND id = ? AND status IN ('OPEN','COUNTED')"
+                + " RETURNING id, tenant_id, header_id, store_id, variant_id, system_qty,"
+                + "   counted_qty, variance, variance_pct, status, counted_at",
+            ps -> {
+              ps.setBigDecimal(1, countedQty);
+              ps.setBigDecimal(2, variance);
+              ps.setBigDecimal(3, variancePct);
+              ps.setObject(4, tenantId);
+              ps.setObject(5, lineId);
+            },
+            InventoryRepository::mapCycleCountLine,
+            "enter count");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /** Bulk-set status on lines; returns count updated. */
+  public int bulkUpdateLineStatus(UUID headerId, List<UUID> lineIds, String newStatus) {
+    if (lineIds.isEmpty()) return 0;
+    try (var c = dataSource.getConnection()) {
+      StringBuilder sb =
+          new StringBuilder(
+              "UPDATE cycle_count_lines SET status = ? WHERE header_id = ? AND id = ANY(?)");
+      try (var ps = c.prepareStatement(sb.toString())) {
+        ps.setString(1, newStatus);
+        ps.setObject(2, headerId);
+        ps.setArray(3, c.createArrayOf("uuid", lineIds.toArray()));
+        return ps.executeUpdate();
+      }
+    } catch (SQLException e) {
+      throw dbError("bulk update line status", e);
+    }
+  }
+
+  /** Update header status. Returns updated header or empty if not found. */
+  public Optional<CycleCountHeader> updateHeaderStatus(
+      UUID tenantId, UUID headerId, String newStatus) {
+    List<CycleCountHeader> rows =
+        query(
+            "UPDATE cycle_count_headers SET status = ?,"
+                + " completed_at = CASE WHEN ? IN ('ADJUSTED','CLOSED') THEN now()"
+                + "                     ELSE completed_at END"
+                + " WHERE tenant_id = ? AND id = ?"
+                + " RETURNING id, tenant_id, store_id, name, abc_classes, tolerance_pct,"
+                + "   status, created_at, completed_at",
+            ps -> {
+              ps.setString(1, newStatus);
+              ps.setString(2, newStatus);
+              ps.setObject(3, tenantId);
+              ps.setObject(4, headerId);
+            },
+            InventoryRepository::mapCycleCountHeader,
+            "update header status");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /**
+   * Apply stock adjustments for all APPROVED lines and mark them ADJUSTED in one transaction.
+   * Returns the number of lines adjusted.
+   */
+  public int applyAdjustments(UUID tenantId, UUID headerId, OutboxRow event) {
+    return inTx(
+        c -> {
+          List<CycleCountLine> approved =
+              query(
+                  "SELECT id, tenant_id, header_id, store_id, variant_id, system_qty,"
+                      + " counted_qty, variance, variance_pct, status, counted_at"
+                      + " FROM cycle_count_lines"
+                      + " WHERE header_id = ? AND status = 'APPROVED'",
+                  ps -> ps.setObject(1, headerId),
+                  InventoryRepository::mapCycleCountLine,
+                  "list approved lines for adjustment");
+          for (CycleCountLine line : approved) {
+            if (line.variance() == null || line.variance().signum() == 0) continue;
+            if (line.variance().signum() > 0) {
+              // positive variance: system under-counted — add stock
+              Batch adj =
+                  new Batch(
+                      UUID.randomUUID(),
+                      tenantId,
+                      line.storeId(),
+                      line.variantId(),
+                      "CC-" + headerId.toString().substring(0, 8),
+                      line.variance(),
+                      line.variance(),
+                      null,
+                      null,
+                      Instant.now(),
+                      Batch.STATUS_ACTIVE,
+                      Batch.MATERIAL_AVAILABLE,
+                      null);
+              insertBatch(c, adj);
+              insertMovement(
+                  c,
+                  tenantId,
+                  line.storeId(),
+                  line.variantId(),
+                  adj.id(),
+                  MoveType.ADJUST,
+                  line.variance(),
+                  "CYCLE_COUNT",
+                  headerId);
+            } else {
+              // negative variance: system over-counted — deduct stock
+              deductFifo(
+                  c,
+                  tenantId,
+                  line.storeId(),
+                  line.variantId(),
+                  line.variance().negate(),
+                  MoveType.ADJUST,
+                  "CYCLE_COUNT",
+                  headerId);
+            }
+          }
+          if (!approved.isEmpty()) {
+            List<UUID> approvedIds = approved.stream().map(CycleCountLine::id).toList();
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE cycle_count_lines SET status = 'ADJUSTED'"
+                        + " WHERE header_id = ? AND id = ANY(?)")) {
+              ps.setObject(1, headerId);
+              ps.setArray(2, c.createArrayOf("uuid", approvedIds.toArray()));
+              ps.executeUpdate();
+            }
+          }
+          insertOutbox(c, event);
+          return approved.size();
+        },
+        "apply cycle count adjustments");
+  }
+
+  /** Returns on-hand available qty for a (store, variant). Used when generating lines. */
+  public BigDecimal onHandQty(UUID tenantId, UUID storeId, UUID variantId) {
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "SELECT COALESCE(SUM(remaining_qty),0) AS q"
+                    + " FROM inventory_batches"
+                    + " WHERE tenant_id=? AND store_id=? AND variant_id=?"
+                    + " AND material_status='AVAILABLE'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? rs.getBigDecimal("q") : BigDecimal.ZERO;
+      }
+    } catch (SQLException e) {
+      throw dbError("on-hand qty", e);
+    }
+  }
+
+  private static CycleCountHeader mapCycleCountHeader(ResultSet rs) throws SQLException {
+    OffsetDateTime completedOdt = rs.getObject("completed_at", OffsetDateTime.class);
+    return new CycleCountHeader(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getString("name"),
+        rs.getString("abc_classes"),
+        rs.getBigDecimal("tolerance_pct"),
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        completedOdt == null ? null : completedOdt.toInstant());
+  }
+
+  private static CycleCountLine mapCycleCountLine(ResultSet rs) throws SQLException {
+    OffsetDateTime countedOdt = rs.getObject("counted_at", OffsetDateTime.class);
+    return new CycleCountLine(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("header_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getBigDecimal("system_qty"),
+        rs.getBigDecimal("counted_qty"),
+        rs.getBigDecimal("variance"),
+        rs.getBigDecimal("variance_pct"),
+        rs.getString("status"),
+        countedOdt == null ? null : countedOdt.toInstant());
   }
 
   // ---------------------------------------------------------------- ABC analysis (Gap #9)

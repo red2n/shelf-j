@@ -4,6 +4,8 @@ import com.shelfj.inventory.config.ServiceConfig;
 import com.shelfj.inventory.domain.Domain.AbcAssignment;
 import com.shelfj.inventory.domain.Domain.AbcCompileRun;
 import com.shelfj.inventory.domain.Domain.Batch;
+import com.shelfj.inventory.domain.Domain.CycleCountHeader;
+import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
@@ -611,6 +613,171 @@ public class InventoryService {
                 ApiException.unprocessable(
                     "TRANSFER_ORDER_NOT_CANCELLABLE",
                     "Only PENDING transfer orders can be cancelled"));
+  }
+
+  // ---- cycle counting (Gap #10) ----
+
+  public record CycleCountWithLines(CycleCountHeader header, List<CycleCountLine> lines) {}
+
+  /**
+   * Create a cycle count for a store. Lines are generated from ABC assignments matching abcClasses
+   * (defaults to all). Each line captures the current system on-hand qty as a snapshot. If no ABC
+   * assignments exist, no lines are generated (count proceeds as manual).
+   */
+  public CycleCountWithLines createCycleCount(
+      UUID tenantId, UUID storeId, String name, String abcClasses, BigDecimal tolerancePct) {
+
+    String classes =
+        abcClasses == null || abcClasses.isBlank() ? "A,B,C" : abcClasses.toUpperCase(Locale.ROOT);
+    BigDecimal tol = tolerancePct == null ? BigDecimal.valueOf(5) : tolerancePct;
+    if (tol.compareTo(BigDecimal.ZERO) < 0 || tol.compareTo(BigDecimal.valueOf(100)) > 0) {
+      throw new ApiException(
+          400, "INVALID_TOLERANCE", "tolerancePct must be 0–100", List.of(), null);
+    }
+
+    UUID headerId = UUID.randomUUID();
+    Instant now = Instant.now();
+    CycleCountHeader header =
+        new CycleCountHeader(
+            headerId, tenantId, storeId, name, classes, tol, CycleCountHeader.OPEN, now, null);
+
+    // Generate lines from ABC assignments that match requested classes
+    List<String> requestedClasses = List.of(classes.split(","));
+    List<AbcAssignment> assignments = repo.listAbcAssignments(tenantId, storeId, null, 1000);
+    List<CycleCountLine> lines = new ArrayList<>();
+    for (AbcAssignment a : assignments) {
+      if (!requestedClasses.contains(a.abcClass())) continue;
+      BigDecimal onHand = repo.onHandQty(tenantId, storeId, a.variantId());
+      lines.add(
+          new CycleCountLine(
+              UUID.randomUUID(),
+              tenantId,
+              headerId,
+              storeId,
+              a.variantId(),
+              onHand,
+              null,
+              null,
+              null,
+              CycleCountLine.OPEN,
+              null));
+    }
+
+    repo.createCycleCountHeader(header, lines);
+    return new CycleCountWithLines(header, lines);
+  }
+
+  public List<CycleCountWithLines> listCycleCounts(
+      UUID tenantId, UUID storeId, String status, int limit) {
+    return repo.listCycleCountHeaders(tenantId, storeId, status, limit).stream()
+        .map(h -> new CycleCountWithLines(h, repo.listCycleCountLines(h.id())))
+        .toList();
+  }
+
+  public CycleCountWithLines getCycleCount(UUID tenantId, UUID headerId) {
+    CycleCountHeader header =
+        repo.findCycleCountHeader(tenantId, headerId)
+            .orElseThrow(
+                () -> ApiException.notFound("CYCLE_COUNT_NOT_FOUND", "No such cycle count"));
+    return new CycleCountWithLines(header, repo.listCycleCountLines(headerId));
+  }
+
+  /** Record the physically counted qty for one line; computes variance. */
+  public CycleCountLine enterCount(
+      UUID tenantId, UUID headerId, UUID lineId, BigDecimal countedQty) {
+    if (countedQty.signum() < 0) {
+      throw new ApiException(400, "INVALID_COUNT", "countedQty must be >= 0", List.of(), null);
+    }
+    // Verify line belongs to this header + tenant
+    CycleCountLine existing =
+        repo.findCycleCountLine(tenantId, lineId)
+            .orElseThrow(() -> ApiException.notFound("COUNT_LINE_NOT_FOUND", "No such count line"));
+    if (!existing.headerId().equals(headerId)) {
+      throw new ApiException(
+          400, "LINE_HEADER_MISMATCH", "Line does not belong to this count", List.of(), null);
+    }
+    BigDecimal variance = countedQty.subtract(existing.systemQty());
+    BigDecimal variancePct =
+        existing.systemQty().compareTo(BigDecimal.ZERO) == 0
+            ? BigDecimal.valueOf(100)
+            : variance
+                .abs()
+                .divide(existing.systemQty(), 4, java.math.RoundingMode.HALF_UP)
+                .multiply(BigDecimal.valueOf(100));
+
+    // Advance header to IN_PROGRESS if still OPEN
+    repo.findCycleCountHeader(tenantId, headerId)
+        .ifPresent(
+            h -> {
+              if (CycleCountHeader.OPEN.equals(h.status())) {
+                repo.updateHeaderStatus(tenantId, headerId, CycleCountHeader.IN_PROGRESS);
+              }
+            });
+
+    return repo.enterCount(tenantId, lineId, countedQty, variance, variancePct)
+        .orElseThrow(
+            () ->
+                ApiException.unprocessable(
+                    "COUNT_LINE_NOT_UPDATABLE", "Line cannot be updated in its current state"));
+  }
+
+  public record ApproveResult(int autoApproved, int flagged) {}
+
+  /**
+   * For all COUNTED lines: if |variancePct| <= tolerancePct → APPROVED; else REJECTED (awaits
+   * manual override or re-count). Advances header to PENDING_APPROVAL if any are flagged, or
+   * directly to ADJUSTED-ready state.
+   */
+  public ApproveResult approveWithTolerance(UUID tenantId, UUID headerId) {
+    CycleCountHeader header =
+        repo.findCycleCountHeader(tenantId, headerId)
+            .orElseThrow(
+                () -> ApiException.notFound("CYCLE_COUNT_NOT_FOUND", "No such cycle count"));
+    if (CycleCountHeader.ADJUSTED.equals(header.status())
+        || CycleCountHeader.CLOSED.equals(header.status())) {
+      throw new ApiException(
+          422, "CYCLE_COUNT_CLOSED", "Cycle count is already " + header.status(), List.of(), null);
+    }
+
+    List<CycleCountLine> lines = repo.listCycleCountLines(headerId);
+    List<UUID> toApprove = new ArrayList<>();
+    List<UUID> toFlag = new ArrayList<>();
+    for (CycleCountLine l : lines) {
+      if (!CycleCountLine.COUNTED.equals(l.status())) continue;
+      BigDecimal absPct = l.variancePct() == null ? BigDecimal.ZERO : l.variancePct().abs();
+      if (absPct.compareTo(header.tolerancePct()) <= 0) toApprove.add(l.id());
+      else toFlag.add(l.id());
+    }
+    repo.bulkUpdateLineStatus(headerId, toApprove, CycleCountLine.APPROVED);
+    repo.bulkUpdateLineStatus(headerId, toFlag, CycleCountLine.REJECTED);
+
+    String newHeaderStatus =
+        toFlag.isEmpty() ? CycleCountHeader.IN_PROGRESS : CycleCountHeader.PENDING_APPROVAL;
+    repo.updateHeaderStatus(tenantId, headerId, newHeaderStatus);
+    return new ApproveResult(toApprove.size(), toFlag.size());
+  }
+
+  /** Apply stock adjustments for all APPROVED lines, then close the count header. */
+  public int adjustCycleCount(UUID tenantId, UUID headerId) {
+    CycleCountHeader header =
+        repo.findCycleCountHeader(tenantId, headerId)
+            .orElseThrow(
+                () -> ApiException.notFound("CYCLE_COUNT_NOT_FOUND", "No such cycle count"));
+    if (CycleCountHeader.ADJUSTED.equals(header.status())
+        || CycleCountHeader.CLOSED.equals(header.status())) {
+      throw new ApiException(
+          422, "CYCLE_COUNT_CLOSED", "Cycle count is already closed", List.of(), null);
+    }
+    var event =
+        new OutboxRow(
+            "CycleCountAdjusted",
+            "shelfj.inventory.cycle-count-adjusted",
+            tenantId,
+            headerId,
+            Events.cycleCountAdjusted(tenantId, headerId));
+    int adjusted = repo.applyAdjustments(tenantId, headerId, event);
+    repo.updateHeaderStatus(tenantId, headerId, CycleCountHeader.ADJUSTED);
+    return adjusted;
   }
 
   // ---- ABC analysis (Gap #9) ----

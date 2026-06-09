@@ -9,9 +9,15 @@ import com.shelfj.inventory.dto.Dtos.AggregateResult;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockRequest;
 import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockResult;
+import com.shelfj.inventory.dto.Dtos.CreateCycleCountRequest;
 import com.shelfj.inventory.dto.Dtos.CreateMoveOrderRequest;
 import com.shelfj.inventory.dto.Dtos.CreateTransferOrderRequest;
+import com.shelfj.inventory.dto.Dtos.CycleCountAdjustResult;
+import com.shelfj.inventory.dto.Dtos.CycleCountApproveResult;
+import com.shelfj.inventory.dto.Dtos.CycleCountHeaderResponse;
+import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
+import com.shelfj.inventory.dto.Dtos.EnterCountRequest;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.MaterialStatusRequest;
 import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
@@ -598,6 +604,79 @@ public class AdminResource {
             : null;
     int updated = service.computeSafetyStock(tenantId, storeId, variantId);
     return ApiResponse.ok(new ComputeSafetyStockResult(updated, "DAY"));
+  }
+
+  // ── Cycle Counting (Gap #10) ─────────────────────────────────────────────
+
+  @POST
+  @Path("/cycle-counts")
+  public Response createCycleCount(CreateCycleCountRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var result =
+        service.createCycleCount(
+            tenantId,
+            uuid(req.storeId(), "storeId"),
+            req.name(),
+            req.abcClasses() != null ? req.abcClasses() : "A,B,C",
+            req.tolerancePct() != null ? req.tolerancePct() : java.math.BigDecimal.valueOf(5));
+    var resp = Mappers.toCycleCountHeader(result.header(), result.lines());
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(resp, ApiResponse.Meta.of(ctx.requestId())))
+        .build();
+  }
+
+  @GET
+  @Path("/cycle-counts")
+  public ApiResponse<List<CycleCountHeaderResponse>> listCycleCounts(
+      @QueryParam("storeId") UUID storeId,
+      @QueryParam("status") String status,
+      @QueryParam("limit") Integer limit) {
+    UUID tenantId = ctx.requireTenantId();
+    int lim = limit != null ? limit : 20;
+    var headers = service.listCycleCounts(tenantId, storeId, status, lim);
+    var items =
+        headers.stream().map(cwl -> Mappers.toCycleCountHeader(cwl.header(), cwl.lines())).toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @GET
+  @Path("/cycle-counts/{id}")
+  public ApiResponse<CycleCountHeaderResponse> getCycleCount(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    var cwl = service.getCycleCount(tenantId, id);
+    return ApiResponse.ok(
+        Mappers.toCycleCountHeader(cwl.header(), cwl.lines()),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @POST
+  @Path("/cycle-counts/{id}/lines/{lineId}/count")
+  public ApiResponse<CycleCountLineResponse> enterCount(
+      @PathParam("id") UUID headerId, @PathParam("lineId") UUID lineId, EnterCountRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var line = service.enterCount(tenantId, headerId, lineId, req.countedQty());
+    return ApiResponse.ok(Mappers.toCycleCountLine(line), ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @POST
+  @Path("/cycle-counts/{id}/approve")
+  public ApiResponse<CycleCountApproveResult> approveCycleCount(@PathParam("id") UUID headerId) {
+    UUID tenantId = ctx.requireTenantId();
+    var result = service.approveWithTolerance(tenantId, headerId);
+    return ApiResponse.ok(
+        new CycleCountApproveResult(result.autoApproved(), result.flagged()),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @POST
+  @Path("/cycle-counts/{id}/adjust")
+  public ApiResponse<CycleCountAdjustResult> adjustCycleCount(@PathParam("id") UUID headerId) {
+    UUID tenantId = ctx.requireTenantId();
+    int adjusted = service.adjustCycleCount(tenantId, headerId);
+    return ApiResponse.ok(
+        new CycleCountAdjustResult(adjusted), ApiResponse.Meta.of(ctx.requestId()));
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────

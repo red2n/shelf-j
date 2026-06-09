@@ -128,6 +128,10 @@ final class Events {
     return EventPayload.base("MoveOrderCancelled", tenantId, orderId) + "}";
   }
 
+  static String cycleCountAdjusted(UUID tenantId, UUID headerId) {
+    return EventPayload.base("CycleCountAdjusted", tenantId, headerId) + "}";
+  }
+
   private static String storeVariant(UUID storeId, UUID variantId) {
     return ",\"storeId\":\"" + storeId + "\",\"variantId\":\"" + variantId + "\"";
   }

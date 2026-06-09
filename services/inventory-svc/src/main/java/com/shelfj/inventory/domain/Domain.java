@@ -245,6 +245,44 @@ public final class Domain {
       int rank,
       Instant assignedAt) {}
 
+  /** Cycle count header — defines scope, tolerance, and lifecycle status (Gap #10). */
+  public record CycleCountHeader(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      String name,
+      String abcClasses,
+      BigDecimal tolerancePct,
+      String status,
+      Instant createdAt,
+      Instant completedAt) {
+    public static final String OPEN = "OPEN";
+    public static final String IN_PROGRESS = "IN_PROGRESS";
+    public static final String PENDING_APPROVAL = "PENDING_APPROVAL";
+    public static final String ADJUSTED = "ADJUSTED";
+    public static final String CLOSED = "CLOSED";
+  }
+
+  /** One (store, variant) line within a cycle count (Gap #10). */
+  public record CycleCountLine(
+      UUID id,
+      UUID tenantId,
+      UUID headerId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal systemQty,
+      BigDecimal countedQty,
+      BigDecimal variance,
+      BigDecimal variancePct,
+      String status,
+      Instant countedAt) {
+    public static final String OPEN = "OPEN";
+    public static final String COUNTED = "COUNTED";
+    public static final String APPROVED = "APPROVED";
+    public static final String REJECTED = "REJECTED";
+    public static final String ADJUSTED = "ADJUSTED";
+  }
+
   /** Movement types (stock_movements.type). qty is signed (+in / -out). */
   public static final class MoveType {
     private MoveType() {}
