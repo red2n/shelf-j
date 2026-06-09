@@ -54,6 +54,9 @@ const serialControlLatency   = new Trend('serial_control_latency_ms',   true);
 const uomManagementLatency   = new Trend('uom_management_latency_ms',   true);
 const moveOrderLatency       = new Trend('move_order_latency_ms',       true);
 const transferOrderLatency         = new Trend('transfer_order_latency_ms',   true);
+const costingLatency               = new Trend('costing_latency_ms',           true);
+const kanbanLatency                = new Trend('kanban_latency_ms',            true);
+const ropLatency                   = new Trend('rop_latency_ms',               true);
 const negativeUnexpectedSuccess    = new Counter('negative_unexpected_success');
 
 // ── Scenario options ───────────────────────────────────────────────────────────
@@ -1755,6 +1758,320 @@ export function transferOrders(d) {
   sleep(1);
 }
 
+// ── Scenario: costing methods + accounting periods (Gap #17) ─────────────────
+export function costingControl(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store   = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `[+] costingControl(${tenant.label})`;
+
+  const t0 = Date.now();
+
+  // ── Costing method UPSERT (AVERAGE) ────────────────────────────────────────
+  const cmRes = put('/api/inventory-svc/admin/inventory/costing-methods',
+    { storeId, variantId, method: 'AVERAGE' },
+    tenant.tenantId, tenant.ownerId);
+  check(cmRes, {
+    [`${tag} upsert AVERAGE costing method 200`]: r => r.status === 200,
+  });
+  costingLatency.add(Date.now() - t0);
+
+  // ── Retrieve by variant ────────────────────────────────────────────────────
+  const cmGet = get(
+    `/api/inventory-svc/admin/inventory/costing-methods/by-variant?store=${storeId}&variant=${variantId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(cmGet, {
+    [`${tag} get costing method by-variant 200`]: r => r.status === 200,
+    [`${tag} costing method returned AVERAGE`]: r => {
+      try { return JSON.parse(r.body).data.method === 'AVERAGE'; } catch (_) { return false; }
+    },
+  });
+
+  // ── Switch to FIFO ─────────────────────────────────────────────────────────
+  const fifoRes = put('/api/inventory-svc/admin/inventory/costing-methods',
+    { storeId, variantId, method: 'FIFO' },
+    tenant.tenantId, tenant.ownerId);
+  check(fifoRes, {
+    [`${tag} switch to FIFO 200`]: r => r.status === 200,
+  });
+
+  // ── List costing methods ───────────────────────────────────────────────────
+  const listCm = get(`/api/inventory-svc/admin/inventory/costing-methods?store=${storeId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(listCm, {
+    [`${tag} list costing methods 200`]: r => r.status === 200,
+  });
+
+  // ── Open accounting period (unique date per iteration to avoid duplicate conflicts) ──
+  const periodDate = new Date(Date.now() - __ITER * 86400000).toISOString().slice(0, 10);
+  const periodRes = post('/api/inventory-svc/admin/inventory/accounting-periods',
+    { storeId, periodName: `P-${__ITER}-${tenant.label}`, periodDate },
+    tenant.tenantId, tenant.ownerId);
+  check(periodRes, {
+    [`${tag} open accounting period 201`]: r => r.status === 201,
+  });
+
+  const periodId = (() => {
+    try { return JSON.parse(periodRes.body).data.id; } catch (_) { return null; }
+  })();
+
+  // ── Get period by id ──────────────────────────────────────────────────────
+  if (periodId) {
+    const pGet = get(`/api/inventory-svc/admin/inventory/accounting-periods/${periodId}`,
+      tenant.tenantId, tenant.ownerId);
+    check(pGet, {
+      [`${tag} get accounting period 200`]: r => r.status === 200,
+      [`${tag} period status is OPEN`]: r => {
+        try { return JSON.parse(r.body).data.status === 'OPEN'; } catch (_) { return false; }
+      },
+    });
+
+    // ── Close period ─────────────────────────────────────────────────────────
+    const closeRes = post(`/api/inventory-svc/admin/inventory/accounting-periods/${periodId}/close`,
+      {}, tenant.tenantId, tenant.ownerId);
+    check(closeRes, {
+      [`${tag} close accounting period 200`]: r => r.status === 200,
+    });
+
+    // ── Confirm CLOSED ────────────────────────────────────────────────────────
+    const pClosed = get(`/api/inventory-svc/admin/inventory/accounting-periods/${periodId}`,
+      tenant.tenantId, tenant.ownerId);
+    check(pClosed, {
+      [`${tag} period is now CLOSED`]: r => {
+        try { return JSON.parse(r.body).data.status === 'CLOSED'; } catch (_) { return false; }
+      },
+    });
+  }
+
+  // ── List periods ──────────────────────────────────────────────────────────
+  const listP = get(`/api/inventory-svc/admin/inventory/accounting-periods?store=${storeId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(listP, {
+    [`${tag} list accounting periods 200`]: r => r.status === 200,
+  });
+
+  // ── Cross-tenant isolation: costing method of other tenant must be invisible
+  const other = isIN(d) ? d.uk : d.india;
+  if (other.stores && other.stores.length) {
+    const otherStore   = other.stores[0].storeId;
+    const otherVariant = other.variantIds?.[0];
+    if (otherVariant) {
+      // List costing methods scoped to other tenant's store using THIS tenant's JWT → empty
+      const xRes = get(
+        `/api/inventory-svc/admin/inventory/costing-methods?store=${otherStore}`,
+        tenant.tenantId, tenant.ownerId);
+      check(xRes, {
+        [`${tag} cross-tenant costing isolation — no leakage`]: r => {
+          if (r.status !== 200) return true; // service rejected = isolation held
+          try {
+            const items = JSON.parse(r.body).data;
+            return !Array.isArray(items) || items.length === 0;
+          } catch (_) { return true; }
+        },
+      });
+    }
+  }
+
+  sleep(1);
+}
+
+// ── Scenario: kanban replenishment (Gap #18) ──────────────────────────────────
+export function kanbanControl(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store   = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `[+] kanbanControl(${tenant.label})`;
+
+  const t0 = Date.now();
+
+  // ── Create SUPPLIER kanban card ────────────────────────────────────────────
+  const cardRes = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId, variantId, kanbanType: 'SUPPLIER', reorderQty: '50', supplierRef: `SUP-${__ITER}` },
+    tenant.tenantId, tenant.ownerId);
+  check(cardRes, {
+    [`${tag} create SUPPLIER kanban card 201`]: r => r.status === 201,
+  });
+  kanbanLatency.add(Date.now() - t0);
+
+  const cardId = (() => {
+    try { return JSON.parse(cardRes.body).data.id; } catch (_) { return null; }
+  })();
+
+  // ── Create INTER_ORG kanban card ───────────────────────────────────────────
+  const interRes = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId, variantId, kanbanType: 'INTER_ORG', reorderQty: '20' },
+    tenant.tenantId, tenant.ownerId);
+  check(interRes, {
+    [`${tag} create INTER_ORG kanban card 201`]: r => r.status === 201,
+  });
+
+  // ── List kanban cards ──────────────────────────────────────────────────────
+  const listRes = get(`/api/inventory-svc/admin/inventory/kanban-cards?store=${storeId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(listRes, {
+    [`${tag} list kanban cards 200`]: r => r.status === 200,
+  });
+
+  if (cardId) {
+    // ── Get by id ─────────────────────────────────────────────────────────────
+    const getRes = get(`/api/inventory-svc/admin/inventory/kanban-cards/${cardId}`,
+      tenant.tenantId, tenant.ownerId);
+    check(getRes, {
+      [`${tag} get kanban card 200`]: r => r.status === 200,
+      [`${tag} card status is EMPTY`]: r => {
+        try { return JSON.parse(r.body).data.status === 'EMPTY'; } catch (_) { return false; }
+      },
+    });
+
+    // ── Trigger ───────────────────────────────────────────────────────────────
+    const trigRes = post(`/api/inventory-svc/admin/inventory/kanban-cards/${cardId}/trigger`,
+      {}, tenant.tenantId, tenant.ownerId);
+    check(trigRes, {
+      [`${tag} trigger kanban card 200`]: r => r.status === 200,
+      [`${tag} card status is TRIGGERED`]: r => {
+        try { return JSON.parse(r.body).data.status === 'TRIGGERED'; } catch (_) { return false; }
+      },
+    });
+
+    // ── Replenish ─────────────────────────────────────────────────────────────
+    const repRes = post(`/api/inventory-svc/admin/inventory/kanban-cards/${cardId}/replenish`,
+      {}, tenant.tenantId, tenant.ownerId);
+    check(repRes, {
+      [`${tag} replenish kanban card 200`]: r => r.status === 200,
+      [`${tag} card status is REPLENISHED`]: r => {
+        try { return JSON.parse(r.body).data.status === 'REPLENISHED'; } catch (_) { return false; }
+      },
+    });
+  }
+
+  // ── Create INTRA_ORG and PRODUCTION variants ───────────────────────────────
+  const intraRes = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId, variantId, kanbanType: 'INTRA_ORG', reorderQty: '10' },
+    tenant.tenantId, tenant.ownerId);
+  check(intraRes, {
+    [`${tag} create INTRA_ORG kanban card 201`]: r => r.status === 201,
+  });
+
+  const prodRes = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId, variantId, kanbanType: 'PRODUCTION', reorderQty: '100' },
+    tenant.tenantId, tenant.ownerId);
+  check(prodRes, {
+    [`${tag} create PRODUCTION kanban card 201`]: r => r.status === 201,
+  });
+
+  // ── Filter by status ──────────────────────────────────────────────────────
+  const byStatus = get(
+    `/api/inventory-svc/admin/inventory/kanban-cards?store=${storeId}&status=EMPTY`,
+    tenant.tenantId, tenant.ownerId);
+  check(byStatus, {
+    [`${tag} filter kanban cards by EMPTY status 200`]: r => r.status === 200,
+  });
+
+  // ── Cross-tenant isolation ────────────────────────────────────────────────
+  const other = isIN(d) ? d.uk : d.india;
+  if (other.stores && other.stores.length) {
+    const xRes = get(
+      `/api/inventory-svc/admin/inventory/kanban-cards?store=${other.stores[0].storeId}`,
+      tenant.tenantId, tenant.ownerId);
+    check(xRes, {
+      [`${tag} cross-tenant kanban isolation — no leakage`]: r => {
+        if (r.status !== 200) return true;
+        try {
+          const items = JSON.parse(r.body).data;
+          return !Array.isArray(items) || items.length === 0;
+        } catch (_) { return true; }
+      },
+    });
+  }
+
+  sleep(1);
+}
+
+// ── Scenario: reorder point + EOQ planning (Gap #19) ─────────────────────────
+export function ropPlanning(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store   = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `[+] ropPlanning(${tenant.label})`;
+
+  const t0 = Date.now();
+
+  // ── Upsert ROP plan ────────────────────────────────────────────────────────
+  const upsertRes = put('/api/inventory-svc/admin/inventory/rop-plans',
+    { storeId, variantId, leadTimeDays: 7, orderingCost: '25.00',
+      holdingCostPct: '0.20', unitCost: '10.00' },
+    tenant.tenantId, tenant.ownerId);
+  check(upsertRes, {
+    [`${tag} upsert ROP plan 200`]: r => r.status === 200,
+  });
+  ropLatency.add(Date.now() - t0);
+
+  // ── Get by variant ────────────────────────────────────────────────────────
+  const getRes = get(
+    `/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${storeId}&variant=${variantId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(getRes, {
+    [`${tag} get ROP plan by variant 200`]: r => r.status === 200,
+    [`${tag} ROP plan has correct leadTimeDays`]: r => {
+      try { return JSON.parse(r.body).data.leadTimeDays === 7; } catch (_) { return false; }
+    },
+  });
+
+  // ── List ROP plans ────────────────────────────────────────────────────────
+  const listRes = get(`/api/inventory-svc/admin/inventory/rop-plans?store=${storeId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(listRes, {
+    [`${tag} list ROP plans 200`]: r => r.status === 200,
+  });
+
+  // ── Trigger compute ───────────────────────────────────────────────────────
+  const computeRes = post(
+    `/api/inventory-svc/admin/inventory/rop-plans/compute?store=${storeId}`,
+    {}, tenant.tenantId, tenant.ownerId);
+  check(computeRes, {
+    [`${tag} compute ROP+EOQ 200`]: r => r.status === 200,
+  });
+
+  // ── After compute: verify rop/eoq fields are populated (may be null if no demand data)
+  const afterCompute = get(
+    `/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${storeId}&variant=${variantId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(afterCompute, {
+    [`${tag} ROP plan still retrievable after compute`]: r => r.status === 200,
+  });
+
+  // ── Cross-tenant isolation ────────────────────────────────────────────────
+  const other = isIN(d) ? d.uk : d.india;
+  if (other.stores && other.stores.length && other.variantIds?.length) {
+    const xRes = get(
+      `/api/inventory-svc/admin/inventory/rop-plans?store=${other.stores[0].storeId}`,
+      tenant.tenantId, tenant.ownerId);
+    check(xRes, {
+      [`${tag} cross-tenant ROP isolation — no leakage`]: r => {
+        if (r.status !== 200) return true;
+        try {
+          const items = JSON.parse(r.body).data;
+          return !Array.isArray(items) || items.length === 0;
+        } catch (_) { return true; }
+      },
+    });
+  }
+
+  sleep(1);
+}
+
 // ── Scenario: negative test suite (4xx expectations) ─────────────────────────
 export function negativeTests(d) {
   if (!d || !d.india || !d.uk) return;
@@ -1943,6 +2260,113 @@ export function negativeTests(d) {
       [`${tag} NEG other-tenant brand still reachable by its own tenant`]: r => r.status === 200,
     });
   }
+
+  // ── Gap #17: Costing Methods + Accounting Periods ────────────────────────────
+
+  // Invalid costing method enum → 400
+  neg(put('/api/inventory-svc/admin/inventory/costing-methods',
+    { storeId: store.storeId, variantId: vid, method: 'LIFO' },
+    tenant.tenantId, tenant.ownerId), 'invalid costing method LIFO', 400);
+
+  // Missing variantId in costing method upsert → 400
+  neg(put('/api/inventory-svc/admin/inventory/costing-methods',
+    { storeId: store.storeId, method: 'AVERAGE' },
+    tenant.tenantId, tenant.ownerId), 'costing method missing variantId', 400);
+
+  // Open period with missing storeId → 400
+  neg(post('/api/inventory-svc/admin/inventory/accounting-periods',
+    { periodName: 'NEG-PERIOD', periodDate: '2025-01-01' },
+    tenant.tenantId, tenant.ownerId), 'open period missing storeId', 400);
+
+  // Close a non-existent period → 409 (service returns conflict for not-found-or-already-closed)
+  neg(post(`/api/inventory-svc/admin/inventory/accounting-periods/${fakeId}/close`,
+    {}, tenant.tenantId, tenant.ownerId), 'close nonexistent period', 409);
+
+  // Open two periods for the same store+date → 409
+  const dupDate = '2020-06-01';
+  const p1Res = post('/api/inventory-svc/admin/inventory/accounting-periods',
+    { storeId: store.storeId, periodName: 'DUP-P1', periodDate: dupDate },
+    tenant.tenantId, tenant.ownerId);
+  if (p1Res.status === 201) {
+    neg(post('/api/inventory-svc/admin/inventory/accounting-periods',
+      { storeId: store.storeId, periodName: 'DUP-P2', periodDate: dupDate },
+      tenant.tenantId, tenant.ownerId), 'duplicate period same date 409', 409);
+  }
+
+  // Close an already-closed period → 409 (create + close + close again)
+  const closeDate = '2019-12-31';
+  const pClose = post('/api/inventory-svc/admin/inventory/accounting-periods',
+    { storeId: store.storeId, periodName: 'CLOSE-NEG', periodDate: closeDate },
+    tenant.tenantId, tenant.ownerId);
+  const pCloseId = (() => { try { return JSON.parse(pClose.body).data.id; } catch (_) { return null; } })();
+  if (pCloseId) {
+    post(`/api/inventory-svc/admin/inventory/accounting-periods/${pCloseId}/close`,
+      {}, tenant.tenantId, tenant.ownerId);
+    neg(post(`/api/inventory-svc/admin/inventory/accounting-periods/${pCloseId}/close`,
+      {}, tenant.tenantId, tenant.ownerId), 'close already-closed period 409', 409);
+  }
+
+  // ── Gap #18: Kanban Replenishment ─────────────────────────────────────────────
+
+  // Invalid kanban type → 400
+  neg(post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId: store.storeId, variantId: vid, kanbanType: 'INVALID', reorderQty: '10' },
+    tenant.tenantId, tenant.ownerId), 'invalid kanban type', 400);
+
+  // Missing storeId → 400
+  neg(post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { variantId: vid, kanbanType: 'SUPPLIER', reorderQty: '10' },
+    tenant.tenantId, tenant.ownerId), 'kanban missing storeId', 400);
+
+  // GET non-existent kanban card → 404
+  neg(get(`/api/inventory-svc/admin/inventory/kanban-cards/${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent kanban card', 404);
+
+  // Trigger already-TRIGGERED card → 409 (create → trigger → trigger again)
+  const kTrig = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId: store.storeId, variantId: vid, kanbanType: 'SUPPLIER', reorderQty: '5' },
+    tenant.tenantId, tenant.ownerId);
+  const kTrigId = (() => { try { return JSON.parse(kTrig.body).data.id; } catch (_) { return null; } })();
+  if (kTrigId) {
+    post(`/api/inventory-svc/admin/inventory/kanban-cards/${kTrigId}/trigger`,
+      {}, tenant.tenantId, tenant.ownerId);
+    neg(post(`/api/inventory-svc/admin/inventory/kanban-cards/${kTrigId}/trigger`,
+      {}, tenant.tenantId, tenant.ownerId), 'double-trigger kanban 409', 409);
+  }
+
+  // Replenish an EMPTY card (not yet triggered) → 409
+  const kEmpty = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId: store.storeId, variantId: vid, kanbanType: 'INTER_ORG', reorderQty: '5' },
+    tenant.tenantId, tenant.ownerId);
+  const kEmptyId = (() => { try { return JSON.parse(kEmpty.body).data.id; } catch (_) { return null; } })();
+  if (kEmptyId) {
+    neg(post(`/api/inventory-svc/admin/inventory/kanban-cards/${kEmptyId}/replenish`,
+      {}, tenant.tenantId, tenant.ownerId), 'replenish EMPTY kanban 409', 409);
+  }
+
+  // ── Gap #19: Reorder Point + EOQ ─────────────────────────────────────────────
+
+  // Missing storeId → 400
+  neg(put('/api/inventory-svc/admin/inventory/rop-plans',
+    { variantId: vid, leadTimeDays: 7, orderingCost: '25.00',
+      holdingCostPct: '0.20', unitCost: '10.00' },
+    tenant.tenantId, tenant.ownerId), 'ROP plan missing storeId', 400);
+
+  // Missing variantId → 400
+  neg(put('/api/inventory-svc/admin/inventory/rop-plans',
+    { storeId: store.storeId, leadTimeDays: 7, orderingCost: '25.00',
+      holdingCostPct: '0.20', unitCost: '10.00' },
+    tenant.tenantId, tenant.ownerId), 'ROP plan missing variantId', 400);
+
+  // Negative leadTimeDays → 400
+  neg(put('/api/inventory-svc/admin/inventory/rop-plans',
+    { storeId: store.storeId, variantId: vid, leadTimeDays: -1,
+      orderingCost: '25.00', holdingCostPct: '0.20', unitCost: '10.00' },
+    tenant.tenantId, tenant.ownerId), 'ROP plan negative leadTimeDays', 400);
+
+  // GET non-existent ROP plan by unknown variant → 404
+  neg(get(`/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${store.storeId}&variant=${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent ROP plan by variant', 404);
 
   sleep(1);
 }

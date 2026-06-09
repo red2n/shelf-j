@@ -2662,7 +2662,7 @@ public class InventoryRepository extends BaseOutboxRepository {
               "UPDATE reorder_point_plans rp"
                   + " SET avg_daily_demand = sub.avg_daily,"
                   + "     rop = ROUND(sub.avg_daily * rp.lead_time_days"
-                  + "           + COALESCE(ss.safety_stock_qty, 0), 3),"
+                  + "           + COALESCE(sub.safety_stock_qty, 0), 3),"
                   + "     eoq = CASE WHEN rp.unit_cost > 0 AND rp.holding_cost_pct > 0"
                   + "               THEN ROUND(SQRT(2.0 * sub.avg_daily * 365"
                   + "                    * rp.ordering_cost"
@@ -2670,15 +2670,16 @@ public class InventoryRepository extends BaseOutboxRepository {
                   + "               ELSE NULL END,"
                   + "     computed_at = now()"
                   + " FROM ("
-                  + "   SELECT variant_id,"
-                  + "          COALESCE(AVG(demand_qty), 0) / 30.0 AS avg_daily"
-                  + "   FROM demand_buckets"
-                  + "   WHERE tenant_id=? AND store_id=? AND bucket_type='MONTH'"
-                  + "   GROUP BY variant_id"
+                  + "   SELECT d.variant_id,"
+                  + "          COALESCE(AVG(d.demand_qty), 0) / 30.0 AS avg_daily,"
+                  + "          MAX(ss.safety_stock_qty) AS safety_stock_qty"
+                  + "   FROM demand_history d"
+                  + "   LEFT JOIN safety_stock_params ss"
+                  + "     ON ss.tenant_id=d.tenant_id AND ss.store_id=d.store_id"
+                  + "     AND ss.variant_id=d.variant_id"
+                  + "   WHERE d.tenant_id=? AND d.store_id=? AND d.bucket_type='MONTH'"
+                  + "   GROUP BY d.variant_id"
                   + " ) sub"
-                  + " LEFT JOIN safety_stock_params ss"
-                  + "   ON ss.tenant_id=rp.tenant_id AND ss.store_id=rp.store_id"
-                  + "   AND ss.variant_id=rp.variant_id"
                   + " WHERE rp.tenant_id=? AND rp.store_id=?"
                   + "   AND rp.variant_id = sub.variant_id";
           try (PreparedStatement ps = c.prepareStatement(sql)) {
@@ -2960,12 +2961,24 @@ public class InventoryRepository extends BaseOutboxRepository {
             ps.setObject(2, storeId);
             ps.setString(3, periodName);
             ps.setObject(4, java.sql.Date.valueOf(periodDate));
-            ResultSet rs = ps.executeQuery();
-            if (!rs.next())
-              throw ApiException.unprocessable("PERIOD_OPEN_ERROR", "open period returned nothing");
-            AccountingPeriod ap = mapPeriod(rs);
-            insertOutbox(c, event);
-            return ap;
+            try {
+              ResultSet rs = ps.executeQuery();
+              if (!rs.next())
+                throw ApiException.unprocessable(
+                    "PERIOD_OPEN_ERROR", "open period returned nothing");
+              AccountingPeriod ap = mapPeriod(rs);
+              insertOutbox(c, event);
+              return ap;
+            } catch (java.sql.SQLException sqle) {
+              if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+                throw new ApiException(
+                    409,
+                    "PERIOD_DUPLICATE_DATE",
+                    "a period already exists for this date",
+                    java.util.List.of(),
+                    sqle);
+              throw sqle;
+            }
           }
         },
         "open accounting period");
