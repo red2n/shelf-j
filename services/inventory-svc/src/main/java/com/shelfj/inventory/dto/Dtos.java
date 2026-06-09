@@ -314,6 +314,32 @@ public final class Dtos {
       int movementCount,
       String computedAt) {}
 
+  // ── Gap #19: Reorder Point + EOQ ─────────────────────────────────────────
+
+  public record UpsertRopPlanRequest(
+      @NotBlank String storeId,
+      @NotBlank String variantId,
+      @NotNull @Positive Integer leadTimeDays,
+      @NotNull @Positive BigDecimal orderingCost,
+      @NotNull @Positive BigDecimal holdingCostPct,
+      @NotNull @Positive BigDecimal unitCost) {}
+
+  public record RopPlanResponse(
+      String id,
+      String storeId,
+      String variantId,
+      int leadTimeDays,
+      BigDecimal orderingCost,
+      BigDecimal holdingCostPct,
+      BigDecimal unitCost,
+      BigDecimal avgDailyDemand,
+      BigDecimal rop,
+      BigDecimal eoq,
+      String computedAt,
+      String createdAt) {}
+
+  public record ComputeRopResult(int computed) {}
+
   // ── Gap #18: Kanban Replenishment ────────────────────────────────────────
 
   public record CreateKanbanCardRequest(

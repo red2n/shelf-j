@@ -119,6 +119,18 @@ export const options = {
       executor: 'constant-vus', vus: 1, duration: '35s',
       exec: 'negativeTests', startTime: '38s',
     },
+    costingControl: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'costingControl', startTime: '34s',
+    },
+    kanbanControl: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'kanbanControl', startTime: '36s',
+    },
+    ropPlanning: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'ropPlanning', startTime: '38s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -136,6 +148,9 @@ export const options = {
     uom_management_latency_ms:   ['p(95)<600'],
     move_order_latency_ms:       ['p(95)<800'],
     transfer_order_latency_ms:   ['p(95)<800'],
+    costing_latency_ms:          ['p(95)<800'],
+    kanban_latency_ms:           ['p(95)<800'],
+    rop_latency_ms:              ['p(95)<1000'],
     negative_unexpected_success: ['count==0'],
   },
 };

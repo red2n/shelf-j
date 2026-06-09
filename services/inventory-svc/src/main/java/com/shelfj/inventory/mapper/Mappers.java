@@ -16,6 +16,7 @@ import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
+import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
@@ -41,6 +42,7 @@ import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryTagResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
+import com.shelfj.inventory.dto.Dtos.RopPlanResponse;
 import com.shelfj.inventory.dto.Dtos.SafetyStockParamsResponse;
 import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
@@ -308,6 +310,22 @@ public final class Mappers {
         ts(pi.startedAt()),
         ts(pi.completedAt()),
         tags.stream().map(Mappers::toTag).toList());
+  }
+
+  public static RopPlanResponse toRopPlan(ReorderPointPlan p) {
+    return new RopPlanResponse(
+        p.id().toString(),
+        p.storeId().toString(),
+        p.variantId().toString(),
+        p.leadTimeDays(),
+        p.orderingCost(),
+        p.holdingCostPct(),
+        p.unitCost(),
+        p.avgDailyDemand(),
+        p.rop(),
+        p.eoq(),
+        ts(p.computedAt()),
+        ts(p.createdAt()));
   }
 
   public static KanbanCardResponse toKanbanCard(KanbanCard k) {

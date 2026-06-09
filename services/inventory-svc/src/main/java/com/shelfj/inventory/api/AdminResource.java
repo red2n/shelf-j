@@ -9,6 +9,7 @@ import com.shelfj.inventory.dto.Dtos.AdjustRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateResult;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
+import com.shelfj.inventory.dto.Dtos.ComputeRopResult;
 import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockRequest;
 import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockResult;
 import com.shelfj.inventory.dto.Dtos.CostingMethodResponse;
@@ -38,6 +39,7 @@ import com.shelfj.inventory.dto.Dtos.PhysicalInventoryTagResponse;
 import com.shelfj.inventory.dto.Dtos.ReceiveRequest;
 import com.shelfj.inventory.dto.Dtos.RegisterSerialsRequest;
 import com.shelfj.inventory.dto.Dtos.ResolveSuggestionRequest;
+import com.shelfj.inventory.dto.Dtos.RopPlanResponse;
 import com.shelfj.inventory.dto.Dtos.RunAbcRequest;
 import com.shelfj.inventory.dto.Dtos.SafetyStockParamsResponse;
 import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
@@ -50,6 +52,7 @@ import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderResponse;
 import com.shelfj.inventory.dto.Dtos.TriggerKanbanRequest;
 import com.shelfj.inventory.dto.Dtos.UpsertCostingMethodRequest;
+import com.shelfj.inventory.dto.Dtos.UpsertRopPlanRequest;
 import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
 import com.shelfj.web.ApiException;
@@ -963,5 +966,54 @@ public class AdminResource {
   public ApiResponse<KanbanCardResponse> replenishKanbanCard(@PathParam("id") UUID id) {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(Mappers.toKanbanCard(service.replenishKanbanCard(tenantId, id)));
+  }
+
+  // ── Gap #19: Reorder Point + EOQ ─────────────────────────────────────────────
+
+  @PUT
+  @Path("/rop-plans")
+  public ApiResponse<RopPlanResponse> upsertRopPlan(UpsertRopPlanRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(req.storeId(), "storeId");
+    UUID variantId = uuid(req.variantId(), "variantId");
+    return ApiResponse.ok(
+        Mappers.toRopPlan(
+            service.upsertRopPlan(
+                tenantId,
+                storeId,
+                variantId,
+                req.leadTimeDays(),
+                req.orderingCost(),
+                req.holdingCostPct(),
+                req.unitCost())));
+  }
+
+  @GET
+  @Path("/rop-plans")
+  public ApiResponse<List<RopPlanResponse>> listRopPlans(@QueryParam("store") String store) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(store, "store");
+    return ApiResponse.ok(
+        service.listRopPlans(tenantId, storeId).stream().map(Mappers::toRopPlan).toList());
+  }
+
+  @GET
+  @Path("/rop-plans/by-variant")
+  public ApiResponse<RopPlanResponse> getRopPlan(
+      @QueryParam("store") String store, @QueryParam("variant") String variant) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(store, "store");
+    UUID variantId = uuid(variant, "variant");
+    return ApiResponse.ok(Mappers.toRopPlan(service.getRopPlan(tenantId, storeId, variantId)));
+  }
+
+  @POST
+  @Path("/rop-plans/compute")
+  public ApiResponse<ComputeRopResult> computeRopPlans(@QueryParam("store") String store) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(store, "store");
+    int count = service.computeRopPlans(tenantId, storeId);
+    return ApiResponse.ok(new ComputeRopResult(count));
   }
 }

@@ -312,6 +312,23 @@ public final class Domain {
     public static final String RELEASE = "RELEASE";
   }
 
+  // ── Gap #19: Reorder Point + EOQ ─────────────────────────────────────────
+
+  public record ReorderPointPlan(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      int leadTimeDays,
+      java.math.BigDecimal orderingCost,
+      java.math.BigDecimal holdingCostPct,
+      java.math.BigDecimal unitCost,
+      java.math.BigDecimal avgDailyDemand,
+      java.math.BigDecimal rop,
+      java.math.BigDecimal eoq,
+      Instant computedAt,
+      Instant createdAt) {}
+
   // ── Gap #18: Kanban Replenishment ────────────────────────────────────────
 
   public record KanbanCard(

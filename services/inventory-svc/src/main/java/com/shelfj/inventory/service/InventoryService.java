@@ -17,6 +17,7 @@ import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
+import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
@@ -1155,6 +1156,54 @@ public class InventoryService {
 
   public List<PhysicalInventoryTag> listTags(UUID tenantId, UUID piId) {
     return repo.listTags(tenantId, piId);
+  }
+
+  // ── Gap #19: Reorder Point + EOQ ─────────────────────────────────────────────
+
+  public ReorderPointPlan upsertRopPlan(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      int leadTimeDays,
+      java.math.BigDecimal orderingCost,
+      java.math.BigDecimal holdingCostPct,
+      java.math.BigDecimal unitCost) {
+    var plan =
+        new ReorderPointPlan(
+            null,
+            tenantId,
+            storeId,
+            variantId,
+            leadTimeDays,
+            orderingCost,
+            holdingCostPct,
+            unitCost,
+            null,
+            null,
+            null,
+            null,
+            null);
+    var event =
+        new OutboxRow(
+            "RopPlanUpdated",
+            "shelfj.inventory.rop-plan-updated",
+            tenantId,
+            variantId,
+            Events.ropPlanUpdated(tenantId, storeId, variantId));
+    return repo.upsertRopPlan(plan, event);
+  }
+
+  public ReorderPointPlan getRopPlan(UUID tenantId, UUID storeId, UUID variantId) {
+    return repo.findRopPlan(tenantId, storeId, variantId)
+        .orElseThrow(() -> ApiException.notFound("ROP_NOT_FOUND", "ROP plan not found"));
+  }
+
+  public List<ReorderPointPlan> listRopPlans(UUID tenantId, UUID storeId) {
+    return repo.listRopPlans(tenantId, storeId);
+  }
+
+  public int computeRopPlans(UUID tenantId, UUID storeId) {
+    return repo.computeRopPlans(tenantId, storeId);
   }
 
   // ── Gap #18: Kanban Replenishment ────────────────────────────────────────────

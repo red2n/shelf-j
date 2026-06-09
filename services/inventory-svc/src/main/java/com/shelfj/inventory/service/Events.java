@@ -179,6 +179,21 @@ final class Events {
         + "}";
   }
 
+  static String ropPlanUpdated(UUID tenantId, UUID storeId, UUID variantId) {
+    return EventPayload.base("RopPlanUpdated", tenantId, variantId)
+        + storeVariant(storeId, variantId)
+        + "}";
+  }
+
+  static String ropComputed(UUID tenantId, UUID storeId, int count) {
+    return EventPayload.base("RopComputed", tenantId, storeId)
+        + ",\"storeId\":\""
+        + storeId
+        + "\",\"count\":"
+        + count
+        + "}";
+  }
+
   static String kanbanCreated(
       UUID tenantId, UUID cardId, UUID storeId, UUID variantId, String kanbanType) {
     return EventPayload.base("KanbanCreated", tenantId, cardId)

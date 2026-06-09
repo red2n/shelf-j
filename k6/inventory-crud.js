@@ -1062,4 +1062,68 @@ export default function () {
     ),
     { '[-] get unknown kanban card 404': (r) => r.status === 404 }
   );
+
+  // ── Gap #19: Reorder Point + EOQ ────────────────────────────────────────────
+
+  // [+] Upsert ROP plan
+  const ropRes = http.put(
+    `${baseUrl}/api/inventory-svc/admin/inventory/rop-plans`,
+    JSON.stringify({
+      storeId: storeId,
+      variantId: variantId,
+      leadTimeDays: 7,
+      orderingCost: 50.00,
+      holdingCostPct: 0.20,
+      unitCost: 10.00
+    }),
+    { headers: hdrs }
+  );
+  check(ropRes, { '[+] upsert ROP plan 200': (r) => r.status === 200 });
+
+  // [+] Get ROP plan by variant
+  check(
+    http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${storeId}&variant=${variantId}`,
+      { headers: hdrs }
+    ),
+    { '[+] get ROP plan by variant 200': (r) => r.status === 200 }
+  );
+
+  // [+] List ROP plans for store
+  check(
+    http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/rop-plans?store=${storeId}`,
+      { headers: hdrs }
+    ),
+    { '[+] list ROP plans 200': (r) => r.status === 200 }
+  );
+
+  // [+] Compute ROP plans (may compute 0 if no demand buckets; still 200)
+  check(
+    http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/rop-plans/compute?store=${storeId}`,
+      null,
+      { headers: hdrs }
+    ),
+    { '[+] compute ROP plans 200': (r) => r.status === 200 }
+  );
+
+  // [-] Upsert ROP missing storeId → 400
+  check(
+    http.put(
+      `${baseUrl}/api/inventory-svc/admin/inventory/rop-plans`,
+      JSON.stringify({ variantId: variantId, leadTimeDays: 7, orderingCost: 50, holdingCostPct: 0.2, unitCost: 10 }),
+      { headers: hdrs }
+    ),
+    { '[-] upsert ROP missing storeId 400': (r) => r.status === 400 }
+  );
+
+  // [-] Get unknown ROP plan → 404
+  check(
+    http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${storeId}&variant=00000000-0000-0000-0000-000000000998`,
+      { headers: hdrs }
+    ),
+    { '[-] get unknown ROP plan 404': (r) => r.status === 404 }
+  );
 }
