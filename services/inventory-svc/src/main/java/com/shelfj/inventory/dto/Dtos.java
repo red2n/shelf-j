@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
+import java.util.List;
 
 /** Request/response DTOs for inventory-svc. No tenant_id in requests — it comes from context. */
 public final class Dtos {
@@ -101,6 +102,35 @@ public final class Dtos {
       String resolvedAt) {}
 
   public record ResolveSuggestionRequest(@NotBlank String status) {}
+
+  public record RegisterSerialsRequest(
+      @NotBlank String batchId,
+      @NotBlank String storeId,
+      @NotBlank String variantId,
+      List<String> serials,
+      Integer autoQty,
+      String prefix) {}
+
+  public record SerialStatusRequest(@NotBlank String status) {}
+
+  public record SerialNumberResponse(
+      String id,
+      String storeId,
+      String variantId,
+      String batchId,
+      String serialNo,
+      String status,
+      String receivedAt,
+      String soldAt) {}
+
+  public record SerialMovementResponse(
+      String id,
+      String serialId,
+      String fromStatus,
+      String toStatus,
+      String refType,
+      String refId,
+      String createdAt) {}
 
   public record AggregateRequest(String storeId, String bucketType, String since) {}
 

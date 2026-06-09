@@ -50,6 +50,7 @@ const isolationViolations    = new Counter('isolation_violations');
 const materialControlLatency = new Trend('material_control_latency_ms', true);
 const planningLatency        = new Trend('planning_latency_ms',         true);
 const demandHistoryLatency   = new Trend('demand_history_latency_ms',   true);
+const serialControlLatency   = new Trend('serial_control_latency_ms',   true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -94,6 +95,10 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'demandHistory', startTime: '24s',
     },
+    serialControl: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'serialControl', startTime: '26s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -107,6 +112,7 @@ export const options = {
     material_control_latency_ms: ['p(95)<600'],
     planning_latency_ms:         ['p(95)<1000'],
     demand_history_latency_ms:   ['p(95)<800'],
+    serial_control_latency_ms:   ['p(95)<600'],
   },
 };
 
@@ -1048,6 +1054,121 @@ export function demandHistory(d) {
       try { return Array.isArray(JSON.parse(r.body).data); } catch (_) { return false; }
     },
   });
+
+  sleep(1);
+}
+
+// ── Scenario: Gap #3 — serial number control ─────────────────────────────────
+export function serialControl(d) {
+  if (!d) return;
+  const tenant = tenantCtx(d);
+  const store  = storeCtx(tenant);
+  if (!store || !tenant.variantIds.length) return;
+  const tag = isIN(d) ? 'IN' : 'UK';
+  const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
+
+  // 1. Get a batch ID for this store + variant (serials must link to a batch)
+  const batchRes = get(
+    `/api/inventory-svc/admin/inventory/batches?store=${store.storeId}&variant=${vid}&limit=1`,
+    tenant.tenantId, tenant.ownerId);
+  const batchId = (() => {
+    try {
+      const items = JSON.parse(batchRes.body).data || [];
+      return items[0]?.id || null;
+    } catch (_) { return null; }
+  })();
+  if (!batchId) { sleep(1); return; }
+
+  // 2. Register 5 auto-generated serials for this batch
+  const t0 = Date.now();
+  const regRes = post('/api/inventory-svc/admin/inventory/serials/register', {
+    batchId, storeId: store.storeId, variantId: vid, autoQty: 5, prefix: 'K6',
+  }, tenant.tenantId, tenant.ownerId);
+  serialControlLatency.add(Date.now() - t0);
+  ok(regRes, `${tag} SC register serials`);
+  check(regRes, {
+    [`${tag} SC registered 5 serials`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return Array.isArray(items) && items.length === 5;
+      } catch (_) { return false; }
+    },
+    [`${tag} SC serials are IN_STOCK`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return items.length > 0 && items[0].serialNo != null && items[0].status === 'IN_STOCK';
+      } catch (_) { return false; }
+    },
+  });
+
+  const firstSerial = (() => {
+    try { return JSON.parse(regRes.body).data?.[0] || null; } catch (_) { return null; }
+  })();
+
+  // 3. List IN_STOCK serials for this variant
+  const listRes = get(
+    `/api/inventory-svc/admin/inventory/serials?store=${store.storeId}&variant=${vid}&status=IN_STOCK&limit=10`,
+    tenant.tenantId, tenant.ownerId);
+  ok(listRes, `${tag} SC list IN_STOCK serials`);
+  check(listRes, {
+    [`${tag} SC list has IN_STOCK serials`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return items.length > 0 && items.every(s => s.status === 'IN_STOCK');
+      } catch (_) { return false; }
+    },
+  });
+
+  if (firstSerial) {
+    // 4. Lookup by serial_no
+    const lookupRes = get(
+      `/api/inventory-svc/admin/inventory/serials/lookup?serial_no=${firstSerial.serialNo}`,
+      tenant.tenantId, tenant.ownerId);
+    ok(lookupRes, `${tag} SC lookup by serial_no`);
+    check(lookupRes, {
+      [`${tag} SC lookup matches serialNo`]: r => {
+        try { return JSON.parse(r.body).data.serialNo === firstSerial.serialNo; }
+        catch (_) { return false; }
+      },
+    });
+
+    // 5. Get the serial by ID
+    const getRes = get(
+      `/api/inventory-svc/admin/inventory/serials/${firstSerial.id}`,
+      tenant.tenantId, tenant.ownerId);
+    ok(getRes, `${tag} SC get serial by id`);
+
+    // 6. Change status to LOST
+    const lostRes = put(
+      `/api/inventory-svc/admin/inventory/serials/${firstSerial.id}/status`,
+      { status: 'LOST' }, tenant.tenantId, tenant.ownerId);
+    ok(lostRes, `${tag} SC mark LOST`);
+    check(lostRes, {
+      [`${tag} SC serial status=LOST`]: r => {
+        try { return JSON.parse(r.body).data.status === 'LOST'; } catch (_) { return false; }
+      },
+    });
+
+    // 7. Fetch genealogy — must contain at least 2 movements (RECEIVE + LOST transition)
+    const histRes = get(
+      `/api/inventory-svc/admin/inventory/serials/${firstSerial.id}/history`,
+      tenant.tenantId, tenant.ownerId);
+    ok(histRes, `${tag} SC genealogy`);
+    check(histRes, {
+      [`${tag} SC genealogy has ≥2 movements`]: r => {
+        try {
+          const items = JSON.parse(r.body).data || [];
+          return items.length >= 2;
+        } catch (_) { return false; }
+      },
+      [`${tag} SC genealogy last movement toStatus=LOST`]: r => {
+        try {
+          const items = JSON.parse(r.body).data || [];
+          return items.length > 0 && items[items.length - 1].toStatus === 'LOST';
+        } catch (_) { return false; }
+      },
+    });
+  }
 
   sleep(1);
 }

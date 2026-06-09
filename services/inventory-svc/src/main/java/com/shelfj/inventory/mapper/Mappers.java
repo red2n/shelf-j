@@ -5,6 +5,8 @@ import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.SerialMovement;
+import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
@@ -12,6 +14,8 @@ import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
+import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
+import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import java.time.Instant;
@@ -87,6 +91,29 @@ public final class Mappers {
         s.status(),
         ts(s.createdAt()),
         ts(s.resolvedAt()));
+  }
+
+  public static SerialNumberResponse toSerial(SerialNumber s) {
+    return new SerialNumberResponse(
+        s.id().toString(),
+        s.storeId().toString(),
+        s.variantId().toString(),
+        s.batchId() == null ? null : s.batchId().toString(),
+        s.serialNo(),
+        s.status(),
+        ts(s.receivedAt()),
+        ts(s.soldAt()));
+  }
+
+  public static SerialMovementResponse toSerialMovement(SerialMovement m) {
+    return new SerialMovementResponse(
+        m.id().toString(),
+        m.serialId().toString(),
+        m.fromStatus(),
+        m.toStatus(),
+        m.refType(),
+        m.refId() == null ? null : m.refId().toString(),
+        ts(m.createdAt()));
   }
 
   public static DemandBucketResponse toDemandBucket(DemandBucket b) {

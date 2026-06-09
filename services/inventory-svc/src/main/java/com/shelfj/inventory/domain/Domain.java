@@ -108,6 +108,36 @@ public final class Domain {
     public static final String BUCKET_MONTH = "MONTH";
   }
 
+  /** An individual tracked unit — used for high-value / warranty items (Gap #3). */
+  public record SerialNumber(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      UUID batchId,
+      String serialNo,
+      String status,
+      Instant receivedAt,
+      Instant soldAt) {
+    public static final String IN_STOCK = "IN_STOCK";
+    public static final String RESERVED = "RESERVED";
+    public static final String SOLD = "SOLD";
+    public static final String RETURNED = "RETURNED";
+    public static final String LOST = "LOST";
+    public static final String DAMAGED = "DAMAGED";
+  }
+
+  /** One entry in the genealogy log for a serial number (append-only). */
+  public record SerialMovement(
+      UUID id,
+      UUID tenantId,
+      UUID serialId,
+      String fromStatus,
+      String toStatus,
+      String refType,
+      UUID refId,
+      Instant createdAt) {}
+
   /** Movement types (stock_movements.type). qty is signed (+in / -out). */
   public static final class MoveType {
     private MoveType() {}

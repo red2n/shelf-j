@@ -72,6 +72,17 @@ final class Events {
         + "\"}";
   }
 
+  static String serialsRegistered(UUID tenantId, UUID batchId, int count) {
+    return EventPayload.base("SerialsRegistered", tenantId, batchId) + ",\"count\":" + count + "}";
+  }
+
+  static String serialStatusChanged(UUID tenantId, UUID serialId, String status) {
+    return EventPayload.base("SerialStatusChanged", tenantId, serialId)
+        + ",\"status\":\""
+        + status
+        + "\"}";
+  }
+
   static String materialStatusChanged(
       UUID tenantId, UUID batchId, String materialStatus, String reason) {
     String r = reason == null ? "null" : "\"" + reason.replace("\"", "\\\"") + "\"";

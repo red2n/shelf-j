@@ -6,6 +6,8 @@ import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.SerialMovement;
+import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.repo.InventoryRepository;
@@ -261,6 +263,114 @@ public class InventoryService {
     return repo.resolveSuggestion(tenantId, suggId, newStatus, event)
         .orElseThrow(
             () -> ApiException.notFound("SUGGESTION_NOT_FOUND", "No open suggestion with that id"));
+  }
+
+  // ---- serial number control (Gap #3) ----
+
+  public List<SerialNumber> registerSerials(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      UUID batchId,
+      List<String> serials,
+      Integer autoQty,
+      String prefix) {
+    List<String> serialNos;
+    if (serials != null && !serials.isEmpty()) {
+      if (serials.size() > 200)
+        throw new ApiException(
+            400, "TOO_MANY_SERIALS", "max 200 serials per call", List.of(), null);
+      serialNos = serials;
+    } else if (autoQty != null && autoQty > 0) {
+      if (autoQty > 200)
+        throw new ApiException(400, "TOO_MANY_SERIALS", "autoQty max 200", List.of(), null);
+      String pfx = prefix == null || prefix.isBlank() ? "SN" : prefix;
+      serialNos = new ArrayList<>();
+      for (int i = 0; i < autoQty; i++) {
+        serialNos.add(generateSerialNo(pfx, i));
+      }
+    } else {
+      throw new ApiException(
+          400, "SERIALS_REQUIRED", "provide serials list or autoQty > 0", List.of(), null);
+    }
+    Instant now = Instant.now();
+    var domainSerials =
+        serialNos.stream()
+            .map(
+                sno ->
+                    new SerialNumber(
+                        UUID.randomUUID(),
+                        tenantId,
+                        storeId,
+                        variantId,
+                        batchId,
+                        sno,
+                        SerialNumber.IN_STOCK,
+                        now,
+                        null))
+            .toList();
+    var event =
+        new OutboxRow(
+            "SerialsRegistered",
+            "shelfj.inventory.serials-registered",
+            tenantId,
+            batchId,
+            Events.serialsRegistered(tenantId, batchId, domainSerials.size()));
+    return repo.registerSerials(domainSerials, event);
+  }
+
+  public List<SerialNumber> listSerials(
+      UUID tenantId, UUID storeId, UUID variantId, String status, int limit) {
+    return repo.listSerials(tenantId, storeId, variantId, status, limit);
+  }
+
+  public SerialNumber getSerial(UUID tenantId, UUID serialId) {
+    return repo.findSerial(tenantId, serialId)
+        .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
+  }
+
+  public SerialNumber lookupSerialByNo(UUID tenantId, String serialNo) {
+    return repo.findSerialByNo(tenantId, serialNo)
+        .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
+  }
+
+  public SerialNumber updateSerialStatus(UUID tenantId, UUID serialId, String newStatus) {
+    if (!List.of(
+            SerialNumber.IN_STOCK,
+            SerialNumber.RESERVED,
+            SerialNumber.SOLD,
+            SerialNumber.RETURNED,
+            SerialNumber.LOST,
+            SerialNumber.DAMAGED)
+        .contains(newStatus)) {
+      throw new ApiException(
+          400,
+          "INVALID_SERIAL_STATUS",
+          "status must be IN_STOCK|RESERVED|SOLD|RETURNED|LOST|DAMAGED",
+          List.of(),
+          null);
+    }
+    var event =
+        new OutboxRow(
+            "SerialStatusChanged",
+            "shelfj.inventory.serial-status-changed",
+            tenantId,
+            serialId,
+            Events.serialStatusChanged(tenantId, serialId, newStatus));
+    return repo.updateSerialStatus(tenantId, serialId, newStatus, event)
+        .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
+  }
+
+  public List<SerialMovement> listSerialHistory(UUID tenantId, UUID serialId) {
+    return repo.listSerialHistory(tenantId, serialId);
+  }
+
+  private static String generateSerialNo(String prefix, int index) {
+    String rand =
+        Long.toHexString(System.nanoTime() ^ ((long) index * 0x9E3779B97F4A7C15L))
+            .toUpperCase()
+            .substring(0, 8);
+    return prefix + "-" + rand;
   }
 
   // ---- demand history (Gap #7) ----
