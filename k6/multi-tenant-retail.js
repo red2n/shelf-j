@@ -49,6 +49,7 @@ const purchaseLatency     = new Trend('purchase_receive_latency_ms', true);
 const isolationViolations    = new Counter('isolation_violations');
 const materialControlLatency = new Trend('material_control_latency_ms', true);
 const planningLatency        = new Trend('planning_latency_ms',         true);
+const demandHistoryLatency   = new Trend('demand_history_latency_ms',   true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -89,6 +90,10 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'planningEngine', startTime: '22s',
     },
+    demandHistory: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'demandHistory', startTime: '24s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -101,6 +106,7 @@ export const options = {
     purchase_receive_latency_ms: ['p(95)<800'],
     material_control_latency_ms: ['p(95)<600'],
     planning_latency_ms:         ['p(95)<1000'],
+    demand_history_latency_ms:   ['p(95)<800'],
   },
 };
 
@@ -970,6 +976,78 @@ export function planningEngine(d) {
     storeId: store.storeId, variantId: vid,
     threshold: normalThreshold, maxQty: normalMax,
   }, tenant.tenantId, tenant.ownerId);
+
+  sleep(1);
+}
+
+// ── Scenario: Gap #7 — demand history aggregation ────────────────────────────
+export function demandHistory(d) {
+  if (!d) return;
+  const tenant = tenantCtx(d);
+  const store  = storeCtx(tenant);
+  if (!store) return;
+  const tag = isIN(d) ? 'IN' : 'UK';
+
+  // 1. Aggregate WEEK demand for this store (UPSERT from stock_movements type='SALE')
+  const t0 = Date.now();
+  const aggRes = post('/api/inventory-svc/admin/inventory/demand/aggregate',
+    { storeId: store.storeId, bucketType: 'WEEK' },
+    tenant.tenantId, tenant.ownerId);
+  demandHistoryLatency.add(Date.now() - t0);
+  ok(aggRes, `${tag} DH aggregate WEEK`);
+  check(aggRes, {
+    [`${tag} DH bucketsUpserted is number`]: r => {
+      try {
+        const data = JSON.parse(r.body).data || {};
+        return typeof data.bucketsUpserted === 'number' && data.bucketsUpserted >= 0;
+      } catch (_) { return false; }
+    },
+    [`${tag} DH bucketType=WEEK`]: r => {
+      try { return JSON.parse(r.body).data.bucketType === 'WEEK'; } catch (_) { return false; }
+    },
+  });
+
+  // 2. Query weekly demand history for this store
+  const histRes = get(
+    `/api/inventory-svc/admin/inventory/demand/history?store=${store.storeId}&bucket_type=WEEK&limit=10`,
+    tenant.tenantId, tenant.ownerId);
+  ok(histRes, `${tag} DH list WEEK history`);
+  check(histRes, {
+    [`${tag} DH WEEK history is array`]: r => {
+      try { return Array.isArray(JSON.parse(r.body).data); } catch (_) { return false; }
+    },
+    [`${tag} DH WEEK history has demand fields`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return items.length === 0 ||
+          (items[0].demandQty != null && items[0].movementCount != null &&
+           items[0].bucketDate != null && items[0].bucketType === 'WEEK');
+      } catch (_) { return true; }
+    },
+  });
+
+  // 3. Incremental DAY aggregate — only last 7 days (tests the 'since' parameter)
+  const since = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+  const incrRes = post('/api/inventory-svc/admin/inventory/demand/aggregate',
+    { storeId: store.storeId, bucketType: 'DAY', since },
+    tenant.tenantId, tenant.ownerId);
+  ok(incrRes, `${tag} DH incremental DAY since ${since}`);
+  check(incrRes, {
+    [`${tag} DH DAY aggregate has bucketType`]: r => {
+      try { return JSON.parse(r.body).data.bucketType === 'DAY'; } catch (_) { return false; }
+    },
+  });
+
+  // 4. Query daily history for this store (may be empty if no sales today)
+  const dayRes = get(
+    `/api/inventory-svc/admin/inventory/demand/history?store=${store.storeId}&bucket_type=DAY&limit=7`,
+    tenant.tenantId, tenant.ownerId);
+  ok(dayRes, `${tag} DH list DAY history`);
+  check(dayRes, {
+    [`${tag} DH DAY history is array`]: r => {
+      try { return Array.isArray(JSON.parse(r.body).data); } catch (_) { return false; }
+    },
+  });
 
   sleep(1);
 }

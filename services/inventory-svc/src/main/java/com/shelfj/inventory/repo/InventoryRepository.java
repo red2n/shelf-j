@@ -1,6 +1,7 @@
 package com.shelfj.inventory.repo;
 
 import com.shelfj.inventory.domain.Domain.Batch;
+import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.MoveType;
 import com.shelfj.inventory.domain.Domain.Movement;
@@ -17,6 +18,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -575,6 +577,85 @@ public class InventoryRepository extends BaseOutboxRepository {
         "resolve suggestion");
   }
 
+  // ---------------------------------------------------------------- demand history
+
+  /**
+   * UPSERT demand buckets by aggregating SALE movements. bucketType is caller-validated
+   * (DAY|WEEK|MONTH) and embedded as a literal for use in date_trunc — safe after validation.
+   * Returns rows affected.
+   */
+  public int aggregateDemand(UUID tenantId, UUID storeId, String bucketType, LocalDate since) {
+    String trunc =
+        switch (bucketType) {
+          case "DAY" -> "day";
+          case "MONTH" -> "month";
+          default -> "week";
+        };
+    StringBuilder sql =
+        new StringBuilder(
+            "INSERT INTO demand_history"
+                + " (id, tenant_id, store_id, variant_id, bucket_date, bucket_type,"
+                + "  demand_qty, movement_count, computed_at)"
+                + " SELECT gen_random_uuid(), sm.tenant_id, sm.store_id, sm.variant_id,"
+                + "        date_trunc('"
+                + trunc
+                + "', sm.created_at)::DATE,"
+                + "        '"
+                + bucketType
+                + "',"
+                + "        SUM(ABS(sm.qty)),"
+                + "        CAST(COUNT(*) AS INT),"
+                + "        now()"
+                + " FROM stock_movements sm"
+                + " WHERE sm.tenant_id = ? AND sm.type = 'SALE'");
+    if (storeId != null) sql.append(" AND sm.store_id = ?");
+    if (since != null) sql.append(" AND sm.created_at >= ?");
+    sql.append(
+        " GROUP BY sm.tenant_id, sm.store_id, sm.variant_id,"
+            + " date_trunc('"
+            + trunc
+            + "', sm.created_at)::DATE"
+            + " ON CONFLICT (tenant_id, store_id, variant_id, bucket_date, bucket_type)"
+            + " DO UPDATE SET demand_qty = EXCLUDED.demand_qty,"
+            + "               movement_count = EXCLUDED.movement_count,"
+            + "               computed_at = EXCLUDED.computed_at");
+    try (var c = dataSource.getConnection();
+        var ps = c.prepareStatement(sql.toString())) {
+      int i = 1;
+      ps.setObject(i++, tenantId);
+      if (storeId != null) ps.setObject(i++, storeId);
+      if (since != null) ps.setObject(i, since.atStartOfDay().atOffset(ZoneOffset.UTC));
+      return ps.executeUpdate();
+    } catch (SQLException e) {
+      throw dbError("aggregate demand", e);
+    }
+  }
+
+  public List<DemandBucket> listDemandHistory(
+      UUID tenantId, UUID storeId, UUID variantId, String bucketType, int limit) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, variant_id, bucket_date, bucket_type,"
+                + " demand_qty, movement_count, computed_at"
+                + " FROM demand_history WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND store_id = ?");
+    if (variantId != null) sb.append(" AND variant_id = ?");
+    if (bucketType != null) sb.append(" AND bucket_type = ?");
+    sb.append(" ORDER BY bucket_date DESC, store_id, variant_id LIMIT ?");
+    return query(
+        sb.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (variantId != null) ps.setObject(i++, variantId);
+          if (bucketType != null) ps.setString(i++, bucketType);
+          ps.setInt(i, limit);
+        },
+        InventoryRepository::mapDemandBucket,
+        "list demand history");
+  }
+
   // ---------------------------------------------------------------- internals
 
   /** Available = sum(AVAILABLE remaining batches) − sum(HELD reservations), rows locked. */
@@ -825,5 +906,18 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getString("status"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         resolvedOdt == null ? null : resolvedOdt.toInstant());
+  }
+
+  private static DemandBucket mapDemandBucket(ResultSet rs) throws SQLException {
+    return new DemandBucket(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getObject("bucket_date", LocalDate.class),
+        rs.getString("bucket_type"),
+        rs.getBigDecimal("demand_qty"),
+        rs.getInt("movement_count"),
+        rs.getObject("computed_at", OffsetDateTime.class).toInstant());
   }
 }

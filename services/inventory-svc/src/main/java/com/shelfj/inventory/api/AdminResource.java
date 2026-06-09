@@ -1,7 +1,10 @@
 package com.shelfj.inventory.api;
 
 import com.shelfj.inventory.dto.Dtos.AdjustRequest;
+import com.shelfj.inventory.dto.Dtos.AggregateRequest;
+import com.shelfj.inventory.dto.Dtos.AggregateResult;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
+import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.MaterialStatusRequest;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
@@ -218,6 +221,44 @@ public class AdminResource {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
         Mappers.toSuggestion(service.resolveSuggestion(tenantId, id, req.status())));
+  }
+
+  // ── demand history ───────────────────────────────────────────────────────
+
+  @POST
+  @Path("/demand/aggregate")
+  public ApiResponse<AggregateResult> aggregateDemand(AggregateRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId =
+        req != null && req.storeId() != null && !req.storeId().isBlank()
+            ? uuid(req.storeId(), "storeId")
+            : null;
+    String bucketType = req != null && req.bucketType() != null ? req.bucketType() : "WEEK";
+    LocalDate since = null;
+    if (req != null && req.since() != null && !req.since().isBlank()) {
+      since = parseDate(req.since());
+    }
+    int bucketsUpserted = service.aggregateDemand(tenantId, storeId, bucketType, since);
+    return ApiResponse.ok(new AggregateResult(bucketsUpserted, bucketType));
+  }
+
+  @GET
+  @Path("/demand/history")
+  public ApiResponse<List<DemandBucketResponse>> listDemandHistory(
+      @QueryParam("store") String store,
+      @QueryParam("variant") String variant,
+      @QueryParam("bucket_type") String bucketType,
+      @QueryParam("limit") Integer limitParam) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    UUID variantId = variant == null || variant.isBlank() ? null : uuid(variant, "variant");
+    String bt = bucketType == null || bucketType.isBlank() ? null : bucketType;
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
+    var items =
+        service.listDemandHistory(tenantId, storeId, variantId, bt, limit).stream()
+            .map(Mappers::toDemandBucket)
+            .toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────

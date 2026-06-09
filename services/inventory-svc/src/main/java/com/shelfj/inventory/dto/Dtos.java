@@ -101,4 +101,17 @@ public final class Dtos {
       String resolvedAt) {}
 
   public record ResolveSuggestionRequest(@NotBlank String status) {}
+
+  public record AggregateRequest(String storeId, String bucketType, String since) {}
+
+  public record AggregateResult(int bucketsUpserted, String bucketType) {}
+
+  public record DemandBucketResponse(
+      String storeId,
+      String variantId,
+      String bucketDate,
+      String bucketType,
+      BigDecimal demandQty,
+      int movementCount,
+      String computedAt) {}
 }

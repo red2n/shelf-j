@@ -2,6 +2,7 @@ package com.shelfj.inventory.service;
 
 import com.shelfj.inventory.config.ServiceConfig;
 import com.shelfj.inventory.domain.Domain.Batch;
+import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
@@ -260,6 +261,24 @@ public class InventoryService {
     return repo.resolveSuggestion(tenantId, suggId, newStatus, event)
         .orElseThrow(
             () -> ApiException.notFound("SUGGESTION_NOT_FOUND", "No open suggestion with that id"));
+  }
+
+  // ---- demand history (Gap #7) ----
+
+  public int aggregateDemand(UUID tenantId, UUID storeId, String bucketType, LocalDate since) {
+    String bt = bucketType == null ? DemandBucket.BUCKET_WEEK : bucketType.toUpperCase();
+    if (!List.of(DemandBucket.BUCKET_DAY, DemandBucket.BUCKET_WEEK, DemandBucket.BUCKET_MONTH)
+        .contains(bt)) {
+      throw new ApiException(
+          400, "INVALID_BUCKET_TYPE", "bucketType must be DAY, WEEK, or MONTH", List.of(), null);
+    }
+    return repo.aggregateDemand(tenantId, storeId, bt, since);
+  }
+
+  public List<DemandBucket> listDemandHistory(
+      UUID tenantId, UUID storeId, UUID variantId, String bucketType, int limit) {
+    String bt = bucketType == null ? null : bucketType.toUpperCase();
+    return repo.listDemandHistory(tenantId, storeId, variantId, bt, limit);
   }
 
   // ---- sweeper support ----

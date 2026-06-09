@@ -92,6 +92,22 @@ public final class Domain {
     public static final String STATUS_CANCELLED = "CANCELLED";
   }
 
+  /** Aggregated demand bucket (Gap #7). period = date_trunc(bucketType, SALE movements). */
+  public record DemandBucket(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      LocalDate bucketDate,
+      String bucketType,
+      BigDecimal demandQty,
+      int movementCount,
+      Instant computedAt) {
+    public static final String BUCKET_DAY = "DAY";
+    public static final String BUCKET_WEEK = "WEEK";
+    public static final String BUCKET_MONTH = "MONTH";
+  }
+
   /** Movement types (stock_movements.type). qty is signed (+in / -out). */
   public static final class MoveType {
     private MoveType() {}

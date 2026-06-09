@@ -1,12 +1,14 @@
 package com.shelfj.inventory.mapper;
 
 import com.shelfj.inventory.domain.Domain.Batch;
+import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
+import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
@@ -85,6 +87,17 @@ public final class Mappers {
         s.status(),
         ts(s.createdAt()),
         ts(s.resolvedAt()));
+  }
+
+  public static DemandBucketResponse toDemandBucket(DemandBucket b) {
+    return new DemandBucketResponse(
+        b.storeId().toString(),
+        b.variantId().toString(),
+        b.bucketDate().toString(),
+        b.bucketType(),
+        b.demandQty(),
+        b.movementCount(),
+        ts(b.computedAt()));
   }
 
   private static String ts(Instant i) {
