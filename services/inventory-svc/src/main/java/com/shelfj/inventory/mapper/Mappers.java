@@ -2,7 +2,9 @@ package com.shelfj.inventory.mapper;
 
 import com.shelfj.inventory.domain.Domain.AbcAssignment;
 import com.shelfj.inventory.domain.Domain.AbcCompileRun;
+import com.shelfj.inventory.domain.Domain.AccountingPeriod;
 import com.shelfj.inventory.domain.Domain.Batch;
+import com.shelfj.inventory.domain.Domain.CostingMethod;
 import com.shelfj.inventory.domain.Domain.CycleCountHeader;
 import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
@@ -23,7 +25,9 @@ import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
 import com.shelfj.inventory.dto.Dtos.AbcAssignmentResponse;
 import com.shelfj.inventory.dto.Dtos.AbcCompileRunResponse;
+import com.shelfj.inventory.dto.Dtos.AccountingPeriodResponse;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
+import com.shelfj.inventory.dto.Dtos.CostingMethodResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountHeaderResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
@@ -302,6 +306,27 @@ public final class Mappers {
         ts(pi.startedAt()),
         ts(pi.completedAt()),
         tags.stream().map(Mappers::toTag).toList());
+  }
+
+  public static CostingMethodResponse toCostingMethod(CostingMethod cm) {
+    return new CostingMethodResponse(
+        cm.id().toString(),
+        cm.storeId().toString(),
+        cm.variantId().toString(),
+        cm.method(),
+        cm.averageCost(),
+        cm.updatedAt().toString());
+  }
+
+  public static AccountingPeriodResponse toPeriod(AccountingPeriod ap) {
+    return new AccountingPeriodResponse(
+        ap.id().toString(),
+        ap.storeId().toString(),
+        ap.periodName(),
+        ap.periodDate().toString(),
+        ap.status(),
+        ts(ap.openedAt()),
+        ts(ap.closedAt()));
   }
 
   private static String ts(Instant i) {

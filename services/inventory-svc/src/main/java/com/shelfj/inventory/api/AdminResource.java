@@ -3,6 +3,7 @@ package com.shelfj.inventory.api;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
 import com.shelfj.inventory.dto.Dtos.AbcAssignmentResponse;
+import com.shelfj.inventory.dto.Dtos.AccountingPeriodResponse;
 import com.shelfj.inventory.dto.Dtos.AddTagRequest;
 import com.shelfj.inventory.dto.Dtos.AdjustRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateRequest;
@@ -10,6 +11,7 @@ import com.shelfj.inventory.dto.Dtos.AggregateResult;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockRequest;
 import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockResult;
+import com.shelfj.inventory.dto.Dtos.CostingMethodResponse;
 import com.shelfj.inventory.dto.Dtos.CountTagRequest;
 import com.shelfj.inventory.dto.Dtos.CreateCycleCountRequest;
 import com.shelfj.inventory.dto.Dtos.CreateLotLinkRequest;
@@ -28,6 +30,7 @@ import com.shelfj.inventory.dto.Dtos.LotGenealogyTreeResponse;
 import com.shelfj.inventory.dto.Dtos.MaterialStatusRequest;
 import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
+import com.shelfj.inventory.dto.Dtos.OpenPeriodRequest;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryTagResponse;
 import com.shelfj.inventory.dto.Dtos.ReceiveRequest;
@@ -43,6 +46,7 @@ import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdRequest;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderResponse;
+import com.shelfj.inventory.dto.Dtos.UpsertCostingMethodRequest;
 import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
 import com.shelfj.web.ApiException;
@@ -819,5 +823,78 @@ public class AdminResource {
     UUID tenantId = ctx.requireTenantId();
     var pi = service.completePhysicalInventory(tenantId, id);
     return ApiResponse.ok(Mappers.toPhysicalInventory(pi, service.listTags(tenantId, id)));
+  }
+
+  // ── Gap #17: Costing Methods ────────────────────────────────────────────────
+
+  @PUT
+  @Path("/costing-methods")
+  public ApiResponse<CostingMethodResponse> upsertCostingMethod(UpsertCostingMethodRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(req.storeId(), "storeId");
+    UUID variantId = uuid(req.variantId(), "variantId");
+    return ApiResponse.ok(
+        Mappers.toCostingMethod(
+            service.upsertCostingMethod(tenantId, storeId, variantId, req.method())));
+  }
+
+  @GET
+  @Path("/costing-methods")
+  public ApiResponse<List<CostingMethodResponse>> listCostingMethods(
+      @QueryParam("store") String store) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(store, "store");
+    return ApiResponse.ok(
+        service.listCostingMethods(tenantId, storeId).stream()
+            .map(Mappers::toCostingMethod)
+            .toList());
+  }
+
+  @GET
+  @Path("/costing-methods/by-variant")
+  public ApiResponse<CostingMethodResponse> getCostingMethod(
+      @QueryParam("store") String store, @QueryParam("variant") String variant) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(store, "store");
+    UUID variantId = uuid(variant, "variant");
+    return ApiResponse.ok(
+        Mappers.toCostingMethod(service.getCostingMethod(tenantId, storeId, variantId)));
+  }
+
+  @POST
+  @Path("/accounting-periods")
+  public Response openPeriod(OpenPeriodRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(req.storeId(), "storeId");
+    var period = service.openPeriod(tenantId, storeId, req.periodName(), req.periodDate());
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(Mappers.toPeriod(period)))
+        .build();
+  }
+
+  @GET
+  @Path("/accounting-periods")
+  public ApiResponse<List<AccountingPeriodResponse>> listPeriods(
+      @QueryParam("store") String store) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(store, "store");
+    return ApiResponse.ok(
+        service.listPeriods(tenantId, storeId).stream().map(Mappers::toPeriod).toList());
+  }
+
+  @GET
+  @Path("/accounting-periods/{id}")
+  public ApiResponse<AccountingPeriodResponse> getPeriod(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toPeriod(service.getPeriod(tenantId, id)));
+  }
+
+  @POST
+  @Path("/accounting-periods/{id}/close")
+  public ApiResponse<AccountingPeriodResponse> closePeriod(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toPeriod(service.closePeriod(tenantId, id)));
   }
 }

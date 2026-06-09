@@ -314,6 +314,31 @@ public final class Dtos {
       int movementCount,
       String computedAt) {}
 
+  // ── Gap #17: Costing ─────────────────────────────────────────────────────
+
+  public record UpsertCostingMethodRequest(
+      @NotBlank String storeId, @NotBlank String variantId, @NotBlank String method) {}
+
+  public record CostingMethodResponse(
+      String id,
+      String storeId,
+      String variantId,
+      String method,
+      BigDecimal averageCost,
+      String updatedAt) {}
+
+  public record OpenPeriodRequest(
+      @NotBlank String storeId, @NotBlank String periodName, @NotBlank String periodDate) {}
+
+  public record AccountingPeriodResponse(
+      String id,
+      String storeId,
+      String periodName,
+      String periodDate,
+      String status,
+      String openedAt,
+      String closedAt) {}
+
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
 
   public record CreatePhysicalInventoryRequest(@NotBlank String storeId, String notes) {}

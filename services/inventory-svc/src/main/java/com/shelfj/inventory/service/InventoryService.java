@@ -3,7 +3,9 @@ package com.shelfj.inventory.service;
 import com.shelfj.inventory.config.ServiceConfig;
 import com.shelfj.inventory.domain.Domain.AbcAssignment;
 import com.shelfj.inventory.domain.Domain.AbcCompileRun;
+import com.shelfj.inventory.domain.Domain.AccountingPeriod;
 import com.shelfj.inventory.domain.Domain.Batch;
+import com.shelfj.inventory.domain.Domain.CostingMethod;
 import com.shelfj.inventory.domain.Domain.CycleCountHeader;
 import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
@@ -1152,5 +1154,66 @@ public class InventoryService {
 
   public List<PhysicalInventoryTag> listTags(UUID tenantId, UUID piId) {
     return repo.listTags(tenantId, piId);
+  }
+
+  // ── Gap #17: Costing Methods ────────────────────────────────────────────────
+
+  public CostingMethod upsertCostingMethod(
+      UUID tenantId, UUID storeId, UUID variantId, String method) {
+    if (!"FIFO".equals(method) && !"AVERAGE".equals(method)) {
+      throw ApiException.badRequest("INVALID_COSTING_METHOD", "method must be FIFO or AVERAGE");
+    }
+    var event =
+        new OutboxRow(
+            "CostingMethodUpdated",
+            "shelfj.inventory.costing-method-updated",
+            tenantId,
+            variantId,
+            Events.costingMethodUpdated(tenantId, storeId, variantId, method));
+    return repo.upsertCostingMethod(tenantId, storeId, variantId, method, event);
+  }
+
+  public CostingMethod getCostingMethod(UUID tenantId, UUID storeId, UUID variantId) {
+    return repo.findCostingMethod(tenantId, storeId, variantId)
+        .orElseThrow(
+            () -> ApiException.notFound("COSTING_METHOD_NOT_FOUND", "costing method not found"));
+  }
+
+  public List<CostingMethod> listCostingMethods(UUID tenantId, UUID storeId) {
+    return repo.listCostingMethods(tenantId, storeId);
+  }
+
+  public AccountingPeriod openPeriod(
+      UUID tenantId, UUID storeId, String periodName, String periodDate) {
+    LocalDate date = LocalDate.parse(periodDate);
+    var event =
+        new OutboxRow(
+            "AccountingPeriodOpened",
+            "shelfj.inventory.accounting-period-opened",
+            tenantId,
+            storeId,
+            Events.accountingPeriodOpened(tenantId, storeId, periodName, periodDate));
+    return repo.openPeriod(tenantId, storeId, periodName, date, event);
+  }
+
+  public AccountingPeriod closePeriod(UUID tenantId, UUID periodId) {
+    var event =
+        new OutboxRow(
+            "AccountingPeriodClosed",
+            "shelfj.inventory.accounting-period-closed",
+            tenantId,
+            periodId,
+            Events.accountingPeriodClosed(tenantId, periodId));
+    return repo.closePeriod(tenantId, periodId, event);
+  }
+
+  public AccountingPeriod getPeriod(UUID tenantId, UUID periodId) {
+    return repo.findPeriod(tenantId, periodId)
+        .orElseThrow(
+            () -> ApiException.notFound("PERIOD_NOT_FOUND", "accounting period not found"));
+  }
+
+  public List<AccountingPeriod> listPeriods(UUID tenantId, UUID storeId) {
+    return repo.listPeriods(tenantId, storeId);
   }
 }

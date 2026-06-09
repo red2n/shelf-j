@@ -312,6 +312,33 @@ public final class Domain {
     public static final String RELEASE = "RELEASE";
   }
 
+  // ── Gap #17: Costing ─────────────────────────────────────────────────────
+
+  public record CostingMethod(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      String method,
+      java.math.BigDecimal averageCost,
+      Instant updatedAt) {
+    public static final String FIFO = "FIFO";
+    public static final String AVERAGE = "AVERAGE";
+  }
+
+  public record AccountingPeriod(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      String periodName,
+      java.time.LocalDate periodDate,
+      String status,
+      Instant openedAt,
+      Instant closedAt) {
+    public static final String OPEN = "OPEN";
+    public static final String CLOSED = "CLOSED";
+  }
+
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
 
   public record PhysicalInventory(

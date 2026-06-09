@@ -143,6 +143,30 @@ final class Events {
     return EventPayload.base("PhysicalInventoryCompleted", tenantId, piId) + "}";
   }
 
+  static String costingMethodUpdated(UUID tenantId, UUID storeId, UUID variantId, String method) {
+    return EventPayload.base("CostingMethodUpdated", tenantId, null)
+        + storeVariant(storeId, variantId)
+        + ",\"method\":\""
+        + method
+        + "\"}";
+  }
+
+  static String accountingPeriodOpened(
+      UUID tenantId, UUID storeId, String periodName, String periodDate) {
+    return EventPayload.base("AccountingPeriodOpened", tenantId, null)
+        + ",\"storeId\":\""
+        + storeId
+        + "\",\"periodName\":\""
+        + periodName
+        + "\",\"periodDate\":\""
+        + periodDate
+        + "\"}";
+  }
+
+  static String accountingPeriodClosed(UUID tenantId, UUID periodId) {
+    return EventPayload.base("AccountingPeriodClosed", tenantId, periodId) + "}";
+  }
+
   private static String storeVariant(UUID storeId, UUID variantId) {
     return ",\"storeId\":\"" + storeId + "\",\"variantId\":\"" + variantId + "\"";
   }

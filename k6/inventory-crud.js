@@ -820,4 +820,125 @@ export default function () {
     ),
     { '[-] create PI no tenant 401': (r) => r.status === 401 }
   );
+
+  // ── Gap #17: Costing Methods ────────────────────────────────────────────────
+
+  // [+] Upsert costing method AVERAGE
+  const costingRes = http.put(
+    `${baseUrl}/api/inventory-svc/admin/inventory/costing-methods`,
+    JSON.stringify({ storeId: storeId, variantId: variantId, method: 'AVERAGE' }),
+    { headers: hdrs }
+  );
+  check(costingRes, { '[+] upsert costing method 200': (r) => r.status === 200 });
+
+  // [+] Get costing method by variant
+  check(
+    http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/costing-methods/by-variant?store=${storeId}&variant=${variantId}`,
+      { headers: hdrs }
+    ),
+    { '[+] get costing method by variant 200': (r) => r.status === 200 }
+  );
+
+  // [+] List costing methods for store
+  check(
+    http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/costing-methods?store=${storeId}`,
+      { headers: hdrs }
+    ),
+    { '[+] list costing methods 200': (r) => r.status === 200 }
+  );
+
+  // [+] Switch to FIFO
+  check(
+    http.put(
+      `${baseUrl}/api/inventory-svc/admin/inventory/costing-methods`,
+      JSON.stringify({ storeId: storeId, variantId: variantId, method: 'FIFO' }),
+      { headers: hdrs }
+    ),
+    { '[+] switch costing method to FIFO 200': (r) => r.status === 200 }
+  );
+
+  // [-] Invalid method → 400
+  check(
+    http.put(
+      `${baseUrl}/api/inventory-svc/admin/inventory/costing-methods`,
+      JSON.stringify({ storeId: storeId, variantId: variantId, method: 'LIFO' }),
+      { headers: hdrs }
+    ),
+    { '[-] upsert invalid costing method 400': (r) => r.status === 400 }
+  );
+
+  // [-] Missing variantId → 400
+  check(
+    http.put(
+      `${baseUrl}/api/inventory-svc/admin/inventory/costing-methods`,
+      JSON.stringify({ storeId: storeId, method: 'AVERAGE' }),
+      { headers: hdrs }
+    ),
+    { '[-] upsert costing method missing variantId 400': (r) => r.status === 400 }
+  );
+
+  // ── Accounting Periods ──────────────────────────────────────────────────────
+
+  // [+] Open an accounting period
+  const periodRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/accounting-periods`,
+    JSON.stringify({ storeId: storeId, periodName: 'June 2026', periodDate: '2026-06-01' }),
+    { headers: hdrs }
+  );
+  check(periodRes, { '[+] open accounting period 201': (r) => r.status === 201 });
+  const periodId = periodRes.status === 201 ? periodRes.json('data.id') : null;
+
+  // [+] Get accounting period
+  if (periodId) {
+    check(
+      http.get(
+        `${baseUrl}/api/inventory-svc/admin/inventory/accounting-periods/${periodId}`,
+        { headers: hdrs }
+      ),
+      { '[+] get accounting period 200': (r) => r.status === 200 }
+    );
+  }
+
+  // [+] List accounting periods
+  check(
+    http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/accounting-periods?store=${storeId}`,
+      { headers: hdrs }
+    ),
+    { '[+] list accounting periods 200': (r) => r.status === 200 }
+  );
+
+  if (periodId) {
+    // [+] Close the accounting period
+    check(
+      http.post(
+        `${baseUrl}/api/inventory-svc/admin/inventory/accounting-periods/${periodId}/close`,
+        null,
+        { headers: hdrs }
+      ),
+      { '[+] close accounting period 200': (r) => r.status === 200 }
+    );
+
+    // [-] Close already-closed period → 409
+    check(
+      http.post(
+        `${baseUrl}/api/inventory-svc/admin/inventory/accounting-periods/${periodId}/close`,
+        null,
+        { headers: hdrs }
+      ),
+      { '[-] close already-closed period 409': (r) => r.status === 409 }
+    );
+  }
+
+  // [-] Open period missing storeId → 400
+  check(
+    http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/accounting-periods`,
+      JSON.stringify({ periodName: 'July 2026', periodDate: '2026-07-01' }),
+      { headers: hdrs }
+    ),
+    { '[-] open period missing storeId 400': (r) => r.status === 400 }
+  );
 }
