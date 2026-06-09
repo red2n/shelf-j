@@ -311,4 +311,35 @@ public final class Domain {
     public static final String RESERVE = "RESERVE";
     public static final String RELEASE = "RELEASE";
   }
+
+  // ── Gap #16: Physical Inventory ──────────────────────────────────────────
+
+  public record PhysicalInventory(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      String status,
+      String notes,
+      Instant startedAt,
+      Instant completedAt) {
+    public static final String OPEN = "OPEN";
+    public static final String COUNTING = "COUNTING";
+    public static final String COMPLETED = "COMPLETED";
+  }
+
+  public record PhysicalInventoryTag(
+      UUID id,
+      UUID tenantId,
+      UUID physicalInventoryId,
+      UUID variantId,
+      UUID zoneId,
+      java.math.BigDecimal systemQty,
+      java.math.BigDecimal countedQty,
+      java.math.BigDecimal adjustmentQty,
+      String status,
+      Instant countedAt) {
+    public static final String OPEN = "OPEN";
+    public static final String COUNTED = "COUNTED";
+    public static final String ADJUSTED = "ADJUSTED";
+  }
 }

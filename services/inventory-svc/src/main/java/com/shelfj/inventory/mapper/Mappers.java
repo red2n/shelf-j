@@ -11,6 +11,8 @@ import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
+import com.shelfj.inventory.domain.Domain.PhysicalInventory;
+import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
@@ -30,6 +32,8 @@ import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderLineResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
+import com.shelfj.inventory.dto.Dtos.PhysicalInventoryResponse;
+import com.shelfj.inventory.dto.Dtos.PhysicalInventoryTagResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
 import com.shelfj.inventory.dto.Dtos.SafetyStockParamsResponse;
 import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
@@ -274,6 +278,30 @@ public final class Mappers {
         p.safetyStockQty(),
         ts(p.computedAt()),
         ts(p.createdAt()));
+  }
+
+  public static PhysicalInventoryTagResponse toTag(PhysicalInventoryTag t) {
+    return new PhysicalInventoryTagResponse(
+        t.id().toString(),
+        t.variantId().toString(),
+        t.zoneId() == null ? null : t.zoneId().toString(),
+        t.systemQty(),
+        t.countedQty(),
+        t.adjustmentQty(),
+        t.status(),
+        ts(t.countedAt()));
+  }
+
+  public static PhysicalInventoryResponse toPhysicalInventory(
+      PhysicalInventory pi, List<PhysicalInventoryTag> tags) {
+    return new PhysicalInventoryResponse(
+        pi.id().toString(),
+        pi.storeId().toString(),
+        pi.status(),
+        pi.notes(),
+        ts(pi.startedAt()),
+        ts(pi.completedAt()),
+        tags.stream().map(Mappers::toTag).toList());
   }
 
   private static String ts(Instant i) {

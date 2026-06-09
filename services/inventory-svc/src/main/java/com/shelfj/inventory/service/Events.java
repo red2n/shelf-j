@@ -132,6 +132,17 @@ final class Events {
     return EventPayload.base("CycleCountAdjusted", tenantId, headerId) + "}";
   }
 
+  static String physicalInventoryCreated(UUID tenantId, UUID piId, UUID storeId) {
+    return EventPayload.base("PhysicalInventoryCreated", tenantId, piId)
+        + ",\"storeId\":\""
+        + storeId
+        + "\"}";
+  }
+
+  static String physicalInventoryCompleted(UUID tenantId, UUID piId) {
+    return EventPayload.base("PhysicalInventoryCompleted", tenantId, piId) + "}";
+  }
+
   private static String storeVariant(UUID storeId, UUID variantId) {
     return ",\"storeId\":\"" + storeId + "\",\"variantId\":\"" + variantId + "\"";
   }

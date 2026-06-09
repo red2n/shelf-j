@@ -723,4 +723,101 @@ export default function () {
   check(lgNoTenantRes, {
     '[-] lot genealogy no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
   });
+
+  // ── Gap #16: Physical Inventory ──────────────────────────────────────────
+
+  // [+] Create physical inventory
+  const piRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/physical-inventories`,
+    JSON.stringify({ storeId: storeId, notes: 'k6 test count' }),
+    { headers: hdrs }
+  );
+  check(piRes, { '[+] create physical inventory 201': (r) => r.status === 201 });
+  const piId = piRes.status === 201 ? piRes.json('data.id') : null;
+
+  // [+] List physical inventories
+  check(
+    http.get(`${baseUrl}/api/inventory-svc/admin/inventory/physical-inventories`, { headers: hdrs }),
+    { '[+] list physical inventories 200': (r) => r.status === 200 }
+  );
+
+  if (piId && variantId) {
+    // [+] Add a tag (snapshot system qty)
+    const tagRes = http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/physical-inventories/${piId}/tags`,
+      JSON.stringify({ variantId: variantId, systemQty: 100 }),
+      { headers: hdrs }
+    );
+    check(tagRes, { '[+] add physical inventory tag 200': (r) => r.status === 200 });
+    const tagId = tagRes.status === 200 ? tagRes.json('data.id') : null;
+
+    // [+] Get physical inventory (with tags)
+    check(
+      http.get(
+        `${baseUrl}/api/inventory-svc/admin/inventory/physical-inventories/${piId}`,
+        { headers: hdrs }
+      ),
+      { '[+] get physical inventory 200': (r) => r.status === 200 }
+    );
+
+    if (tagId) {
+      // [+] Enter count
+      const countRes = http.post(
+        `${baseUrl}/api/inventory-svc/admin/inventory/physical-inventories/${piId}/tags/${tagId}/count`,
+        JSON.stringify({ countedQty: 95 }),
+        { headers: hdrs }
+      );
+      check(countRes, { '[+] count physical inventory tag 200': (r) => r.status === 200 });
+    }
+
+    // [+] Complete (applies adjustments)
+    const completeRes = http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/physical-inventories/${piId}/complete`,
+      null,
+      { headers: hdrs }
+    );
+    check(completeRes, { '[+] complete physical inventory 200': (r) => r.status === 200 });
+
+    // [-] Complete again → 409
+    check(
+      http.post(
+        `${baseUrl}/api/inventory-svc/admin/inventory/physical-inventories/${piId}/complete`,
+        null,
+        { headers: hdrs }
+      ),
+      { '[-] complete already-completed PI 409': (r) => r.status === 409 }
+    );
+  }
+
+  // [-] Create PI missing storeId → 400
+  check(
+    http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/physical-inventories`,
+      JSON.stringify({ notes: 'no store' }),
+      { headers: hdrs }
+    ),
+    { '[-] create PI missing storeId 400': (r) => r.status === 400 }
+  );
+
+  // [-] Add tag missing variantId → 400
+  if (piId) {
+    check(
+      http.post(
+        `${baseUrl}/api/inventory-svc/admin/inventory/physical-inventories/${piId}/tags`,
+        JSON.stringify({ systemQty: 10 }),
+        { headers: hdrs }
+      ),
+      { '[-] add tag missing variantId 400': (r) => r.status === 400 }
+    );
+  }
+
+  // [-] No tenant header
+  check(
+    http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/physical-inventories`,
+      JSON.stringify({ storeId: storeId }),
+      { headers: JSON_CT }
+    ),
+    { '[-] create PI no tenant 401': (r) => r.status === 401 }
+  );
 }

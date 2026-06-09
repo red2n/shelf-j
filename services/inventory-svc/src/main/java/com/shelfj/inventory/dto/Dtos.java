@@ -313,4 +313,32 @@ public final class Dtos {
       BigDecimal demandQty,
       int movementCount,
       String computedAt) {}
+
+  // ── Gap #16: Physical Inventory ──────────────────────────────────────────
+
+  public record CreatePhysicalInventoryRequest(@NotBlank String storeId, String notes) {}
+
+  public record AddTagRequest(
+      @NotBlank String variantId, String zoneId, @NotNull BigDecimal systemQty) {}
+
+  public record CountTagRequest(@NotNull BigDecimal countedQty) {}
+
+  public record PhysicalInventoryTagResponse(
+      String id,
+      String variantId,
+      String zoneId,
+      BigDecimal systemQty,
+      BigDecimal countedQty,
+      BigDecimal adjustmentQty,
+      String status,
+      String countedAt) {}
+
+  public record PhysicalInventoryResponse(
+      String id,
+      String storeId,
+      String status,
+      String notes,
+      String startedAt,
+      String completedAt,
+      List<PhysicalInventoryTagResponse> tags) {}
 }

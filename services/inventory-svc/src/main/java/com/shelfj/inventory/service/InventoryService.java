@@ -12,6 +12,8 @@ import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
+import com.shelfj.inventory.domain.Domain.PhysicalInventory;
+import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
@@ -1084,5 +1086,71 @@ public class InventoryService {
     } catch (RuntimeException e) {
       throw new ApiException(400, "INVALID_UUID", field + " must be a UUID", List.of(), e);
     }
+  }
+
+  // ── Gap #16: Physical Inventory ──────────────────────────────────────────
+
+  public PhysicalInventory createPhysicalInventory(UUID tenantId, UUID storeId, String notes) {
+    UUID id = UUID.randomUUID();
+    var pi =
+        new PhysicalInventory(
+            id, tenantId, storeId, PhysicalInventory.OPEN, notes, Instant.now(), null);
+    var event =
+        new OutboxRow(
+            "PhysicalInventoryCreated",
+            "shelfj.inventory.physical-inventory-created",
+            tenantId,
+            id,
+            Events.physicalInventoryCreated(tenantId, id, storeId));
+    return repo.createPhysicalInventory(pi, event);
+  }
+
+  public PhysicalInventory getPhysicalInventory(UUID tenantId, UUID id) {
+    return repo.findPhysicalInventory(tenantId, id)
+        .orElseThrow(() -> ApiException.notFound("PI_NOT_FOUND", "Physical inventory not found"));
+  }
+
+  public List<PhysicalInventory> listPhysicalInventories(UUID tenantId, String storeId) {
+    UUID storeUuid = storeId != null ? parseUuid(storeId, "storeId") : null;
+    return repo.listPhysicalInventories(tenantId, storeUuid);
+  }
+
+  public PhysicalInventoryTag addTag(
+      UUID tenantId, UUID piId, UUID variantId, UUID zoneId, BigDecimal systemQty) {
+    getPhysicalInventory(tenantId, piId);
+    var tag =
+        new PhysicalInventoryTag(
+            UUID.randomUUID(),
+            tenantId,
+            piId,
+            variantId,
+            zoneId,
+            systemQty,
+            null,
+            null,
+            PhysicalInventoryTag.OPEN,
+            null);
+    return repo.addTag(tag);
+  }
+
+  public PhysicalInventoryTag countTag(
+      UUID tenantId, UUID piId, UUID tagId, BigDecimal countedQty) {
+    return repo.countTag(tenantId, piId, tagId, countedQty);
+  }
+
+  public PhysicalInventory completePhysicalInventory(UUID tenantId, UUID piId) {
+    getPhysicalInventory(tenantId, piId);
+    var event =
+        new OutboxRow(
+            "PhysicalInventoryCompleted",
+            "shelfj.inventory.physical-inventory-completed",
+            tenantId,
+            piId,
+            Events.physicalInventoryCompleted(tenantId, piId));
+    return repo.completePhysicalInventory(tenantId, piId, event);
+  }
+
+  public List<PhysicalInventoryTag> listTags(UUID tenantId, UUID piId) {
+    return repo.listTags(tenantId, piId);
   }
 }
