@@ -4,6 +4,8 @@ import com.shelfj.inventory.config.ServiceConfig;
 import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.MoveOrder;
+import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
@@ -20,6 +22,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -368,7 +371,7 @@ public class InventoryService {
   private static String generateSerialNo(String prefix, int index) {
     String rand =
         Long.toHexString(System.nanoTime() ^ ((long) index * 0x9E3779B97F4A7C15L))
-            .toUpperCase()
+            .toUpperCase(Locale.ROOT)
             .substring(0, 8);
     return prefix + "-" + rand;
   }
@@ -376,7 +379,7 @@ public class InventoryService {
   // ---- demand history (Gap #7) ----
 
   public int aggregateDemand(UUID tenantId, UUID storeId, String bucketType, LocalDate since) {
-    String bt = bucketType == null ? DemandBucket.BUCKET_WEEK : bucketType.toUpperCase();
+    String bt = bucketType == null ? DemandBucket.BUCKET_WEEK : bucketType.toUpperCase(Locale.ROOT);
     if (!List.of(DemandBucket.BUCKET_DAY, DemandBucket.BUCKET_WEEK, DemandBucket.BUCKET_MONTH)
         .contains(bt)) {
       throw new ApiException(
@@ -387,8 +390,99 @@ public class InventoryService {
 
   public List<DemandBucket> listDemandHistory(
       UUID tenantId, UUID storeId, UUID variantId, String bucketType, int limit) {
-    String bt = bucketType == null ? null : bucketType.toUpperCase();
+    String bt = bucketType == null ? null : bucketType.toUpperCase(Locale.ROOT);
     return repo.listDemandHistory(tenantId, storeId, variantId, bt, limit);
+  }
+
+  // ---- move orders (Gap #5) ----
+
+  public MoveOrder createMoveOrder(
+      UUID tenantId,
+      UUID fromStoreId,
+      UUID toStoreId,
+      String fromZone,
+      String toZone,
+      String notes,
+      List<MoveOrderLine> lines) {
+    if (lines == null || lines.isEmpty()) {
+      throw new ApiException(
+          400, "NO_LINES", "Move order must have at least one line", List.of(), null);
+    }
+    UUID orderId = UUID.randomUUID();
+    Instant now = Instant.now();
+    MoveOrder order =
+        new MoveOrder(
+            orderId,
+            tenantId,
+            fromStoreId,
+            toStoreId,
+            fromZone,
+            toZone,
+            notes,
+            MoveOrder.DRAFT,
+            now,
+            null);
+    List<MoveOrderLine> withIds =
+        lines.stream()
+            .map(
+                l ->
+                    new MoveOrderLine(
+                        UUID.randomUUID(),
+                        tenantId,
+                        orderId,
+                        l.variantId(),
+                        l.requestedQty(),
+                        null))
+            .toList();
+    return repo.createMoveOrder(order, withIds);
+  }
+
+  public List<MoveOrder> listMoveOrders(UUID tenantId, UUID storeId, String status, int limit) {
+    return repo.listMoveOrders(tenantId, storeId, status, limit);
+  }
+
+  public record MoveOrderWithLines(MoveOrder order, List<MoveOrderLine> lines) {}
+
+  public MoveOrderWithLines getMoveOrder(UUID tenantId, UUID id) {
+    MoveOrder order =
+        repo.findMoveOrder(tenantId, id)
+            .orElseThrow(() -> ApiException.notFound("MOVE_ORDER_NOT_FOUND", "No such move order"));
+    return new MoveOrderWithLines(order, repo.listMoveOrderLines(id));
+  }
+
+  public MoveOrderWithLines pickMoveOrder(UUID tenantId, UUID id) {
+    MoveOrder existing =
+        repo.findMoveOrder(tenantId, id)
+            .orElseThrow(() -> ApiException.notFound("MOVE_ORDER_NOT_FOUND", "No such move order"));
+    MoveOrder picked =
+        repo.pickMoveOrder(
+            tenantId,
+            id,
+            new OutboxRow(
+                "MoveOrderCompleted",
+                "shelfj.inventory.move-order-completed",
+                tenantId,
+                id,
+                Events.moveOrderCompleted(
+                    tenantId, id, existing.fromStoreId(), existing.toStoreId())));
+    return new MoveOrderWithLines(picked, repo.listMoveOrderLines(id));
+  }
+
+  public MoveOrder cancelMoveOrder(UUID tenantId, UUID id) {
+    return repo.cancelMoveOrder(
+            tenantId,
+            id,
+            new OutboxRow(
+                "MoveOrderCancelled",
+                "shelfj.inventory.move-order-cancelled",
+                tenantId,
+                id,
+                Events.moveOrderCancelled(tenantId, id)))
+        .orElseThrow(
+            () ->
+                ApiException.unprocessable(
+                    "MOVE_ORDER_NOT_CANCELLABLE",
+                    "Move order cannot be cancelled in its current state"));
   }
 
   // ---- sweeper support ----

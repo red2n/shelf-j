@@ -138,6 +138,33 @@ public final class Domain {
       UUID refId,
       Instant createdAt) {}
 
+  /** A request to move stock from one store/zone to another within the same tenant (Gap #5). */
+  public record MoveOrder(
+      UUID id,
+      UUID tenantId,
+      UUID fromStoreId,
+      UUID toStoreId,
+      String fromZone,
+      String toZone,
+      String notes,
+      String status,
+      Instant createdAt,
+      Instant pickedAt) {
+    public static final String DRAFT = "DRAFT";
+    public static final String OPEN = "OPEN";
+    public static final String COMPLETED = "COMPLETED";
+    public static final String CANCELLED = "CANCELLED";
+  }
+
+  /** One SKU line on a move order. */
+  public record MoveOrderLine(
+      UUID id,
+      UUID tenantId,
+      UUID moveOrderId,
+      UUID variantId,
+      BigDecimal requestedQty,
+      BigDecimal pickedQty) {}
+
   /** Movement types (stock_movements.type). qty is signed (+in / -out). */
   public static final class MoveType {
     private MoveType() {}

@@ -52,6 +52,7 @@ const planningLatency        = new Trend('planning_latency_ms',         true);
 const demandHistoryLatency   = new Trend('demand_history_latency_ms',   true);
 const serialControlLatency   = new Trend('serial_control_latency_ms',   true);
 const uomManagementLatency   = new Trend('uom_management_latency_ms',   true);
+const moveOrderLatency       = new Trend('move_order_latency_ms',       true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -104,6 +105,10 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'uomManagement', startTime: '28s',
     },
+    moveOrders: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'moveOrders', startTime: '30s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -119,6 +124,7 @@ export const options = {
     demand_history_latency_ms:   ['p(95)<800'],
     serial_control_latency_ms:   ['p(95)<600'],
     uom_management_latency_ms:   ['p(95)<600'],
+    move_order_latency_ms:       ['p(95)<800'],
   },
 };
 
@@ -1287,6 +1293,140 @@ export function uomManagement(d) {
       { headers: { 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
     );
     check(delRes, { [`${tag} UOM item conversion deleted`]: r => r.status === 204 });
+  }
+
+  sleep(1);
+}
+
+export function moveOrders(d) {
+  if (!d) return;
+  const tenant = tenantCtx(d);
+  const tag = isIN(d) ? 'IN' : 'UK';
+  const store = storeCtx(tenant);
+  if (!store || !tenant.variantIds.length) return;
+
+  // Use store1 as source, store2 as destination (inter-store pick wave)
+  const fromStore = tenant.stores[0].storeId;
+  const toStore   = tenant.stores[1].storeId;
+  const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
+
+  // 1. First ensure source store has stock (receive a small batch)
+  http.post(
+    `${BASE}/api/inventory-svc/admin/inventory/receive`,
+    JSON.stringify({ storeId: fromStore, variantId: vid, qty: '20', batchNo: `MO-SEED-${__ITER}` }),
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+
+  // 2. Create a move order DRAFT
+  const t0 = Date.now();
+  const createRes = http.post(
+    `${BASE}/api/inventory-svc/admin/inventory/move-orders`,
+    JSON.stringify({
+      fromStoreId: fromStore,
+      toStoreId: toStore,
+      fromZone: 'RECEIVING',
+      toZone: 'SHELF-A',
+      notes: `k6 pick wave ${__ITER}`,
+      lines: [{ variantId: vid, requestedQty: '5' }],
+    }),
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+  moveOrderLatency.add(Date.now() - t0);
+  ok(createRes, `${tag} MO create`);
+  check(createRes, {
+    [`${tag} MO created status=DRAFT`]: r => {
+      try { return JSON.parse(r.body).data.status === 'DRAFT'; } catch (_) { return false; }
+    },
+    [`${tag} MO has 1 line`]: r => {
+      try { return JSON.parse(r.body).data.lines.length === 1; } catch (_) { return false; }
+    },
+  });
+
+  const orderId = (() => {
+    try { return JSON.parse(createRes.body).data?.id || null; } catch (_) { return null; }
+  })();
+  if (!orderId) { sleep(1); return; }
+
+  // 3. List move orders — should include the new one
+  const listRes = get(
+    `/api/inventory-svc/admin/inventory/move-orders?store=${fromStore}&status=DRAFT&limit=10`,
+    tenant.tenantId, tenant.ownerId);
+  ok(listRes, `${tag} MO list DRAFT`);
+  check(listRes, {
+    [`${tag} MO list contains new order`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        return items.some(o => o.id === orderId);
+      } catch (_) { return false; }
+    },
+  });
+
+  // 4. Get order by ID
+  const getRes = get(
+    `/api/inventory-svc/admin/inventory/move-orders/${orderId}`,
+    tenant.tenantId, tenant.ownerId);
+  ok(getRes, `${tag} MO get by id`);
+
+  // 5. Execute pick — DRAFT → COMPLETED, stock moves from fromStore to toStore
+  const t1 = Date.now();
+  const pickRes = http.post(
+    `${BASE}/api/inventory-svc/admin/inventory/move-orders/${orderId}/pick`,
+    null,
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+  moveOrderLatency.add(Date.now() - t1);
+  ok(pickRes, `${tag} MO pick`);
+  check(pickRes, {
+    [`${tag} MO picked status=COMPLETED`]: r => {
+      try { return JSON.parse(r.body).data.status === 'COMPLETED'; } catch (_) { return false; }
+    },
+    [`${tag} MO line has pickedQty`]: r => {
+      try {
+        const lines = JSON.parse(r.body).data?.lines || [];
+        return lines.length > 0 && lines[0].pickedQty != null;
+      } catch (_) { return false; }
+    },
+  });
+
+  // 6. Verify destination store received stock
+  const destLevels = get(
+    `/api/inventory-svc/admin/inventory/levels?store=${toStore}`,
+    tenant.tenantId, tenant.ownerId);
+  ok(destLevels, `${tag} MO dest levels`);
+  check(destLevels, {
+    [`${tag} MO dest store has stock after pick`]: r => {
+      try {
+        const items = JSON.parse(r.body).data || [];
+        const level = items.find(l => l.variantId === vid);
+        return level && parseFloat(level.onHand) > 0;
+      } catch (_) { return false; }
+    },
+  });
+
+  // 7. Create and cancel a second move order
+  const cancelCreate = http.post(
+    `${BASE}/api/inventory-svc/admin/inventory/move-orders`,
+    JSON.stringify({
+      fromStoreId: fromStore, toStoreId: toStore,
+      lines: [{ variantId: vid, requestedQty: '2' }],
+    }),
+    { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+  );
+  const cancelId = (() => {
+    try { return JSON.parse(cancelCreate.body).data?.id || null; } catch (_) { return null; }
+  })();
+  if (cancelId) {
+    const cancelRes = http.post(
+      `${BASE}/api/inventory-svc/admin/inventory/move-orders/${cancelId}/cancel`,
+      null,
+      { headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.tenantId, 'X-User-Id': tenant.ownerId } }
+    );
+    ok(cancelRes, `${tag} MO cancel`);
+    check(cancelRes, {
+      [`${tag} MO cancelled status=CANCELLED`]: r => {
+        try { return JSON.parse(r.body).data.status === 'CANCELLED'; } catch (_) { return false; }
+      },
+    });
   }
 
   sleep(1);

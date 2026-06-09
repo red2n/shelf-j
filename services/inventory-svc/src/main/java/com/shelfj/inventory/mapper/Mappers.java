@@ -3,6 +3,8 @@ package com.shelfj.inventory.mapper;
 import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.MoveOrder;
+import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
@@ -12,6 +14,8 @@ import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
+import com.shelfj.inventory.dto.Dtos.MoveOrderLineResponse;
+import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
 import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
@@ -19,6 +23,7 @@ import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import java.time.Instant;
+import java.util.List;
 
 public final class Mappers {
 
@@ -125,6 +130,25 @@ public final class Mappers {
         b.demandQty(),
         b.movementCount(),
         ts(b.computedAt()));
+  }
+
+  public static MoveOrderLineResponse toMoveOrderLine(MoveOrderLine l) {
+    return new MoveOrderLineResponse(
+        l.id().toString(), l.variantId().toString(), l.requestedQty(), l.pickedQty());
+  }
+
+  public static MoveOrderResponse toMoveOrder(MoveOrder o, List<MoveOrderLine> lines) {
+    return new MoveOrderResponse(
+        o.id().toString(),
+        o.fromStoreId().toString(),
+        o.toStoreId().toString(),
+        o.fromZone(),
+        o.toZone(),
+        o.notes(),
+        o.status(),
+        ts(o.createdAt()),
+        ts(o.pickedAt()),
+        lines.stream().map(Mappers::toMoveOrderLine).toList());
   }
 
   private static String ts(Instant i) {

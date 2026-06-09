@@ -94,6 +94,19 @@ final class Events {
         + "}";
   }
 
+  static String moveOrderCompleted(UUID tenantId, UUID orderId, UUID fromStoreId, UUID toStoreId) {
+    return EventPayload.base("MoveOrderCompleted", tenantId, orderId)
+        + ",\"fromStoreId\":\""
+        + fromStoreId
+        + "\",\"toStoreId\":\""
+        + toStoreId
+        + "\"}";
+  }
+
+  static String moveOrderCancelled(UUID tenantId, UUID orderId) {
+    return EventPayload.base("MoveOrderCancelled", tenantId, orderId) + "}";
+  }
+
   private static String storeVariant(UUID storeId, UUID variantId) {
     return ",\"storeId\":\"" + storeId + "\",\"variantId\":\"" + variantId + "\"";
   }

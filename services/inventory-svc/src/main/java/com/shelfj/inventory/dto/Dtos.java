@@ -132,6 +132,34 @@ public final class Dtos {
       String refId,
       String createdAt) {}
 
+  // ── Move Orders (Gap #5) ─────────────────────────────────────────────────────
+
+  public record MoveOrderLineRequest(
+      @NotBlank String variantId, @NotNull @Positive BigDecimal requestedQty) {}
+
+  public record CreateMoveOrderRequest(
+      @NotBlank String fromStoreId,
+      @NotBlank String toStoreId,
+      String fromZone,
+      String toZone,
+      String notes,
+      @NotNull List<MoveOrderLineRequest> lines) {}
+
+  public record MoveOrderLineResponse(
+      String id, String variantId, BigDecimal requestedQty, BigDecimal pickedQty) {}
+
+  public record MoveOrderResponse(
+      String id,
+      String fromStoreId,
+      String toStoreId,
+      String fromZone,
+      String toZone,
+      String notes,
+      String status,
+      String createdAt,
+      String pickedAt,
+      List<MoveOrderLineResponse> lines) {}
+
   public record AggregateRequest(String storeId, String bucketType, String since) {}
 
   public record AggregateResult(int bucketsUpserted, String bucketType) {}

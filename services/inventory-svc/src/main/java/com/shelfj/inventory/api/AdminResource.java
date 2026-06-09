@@ -1,12 +1,15 @@
 package com.shelfj.inventory.api;
 
+import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.dto.Dtos.AdjustRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateResult;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
+import com.shelfj.inventory.dto.Dtos.CreateMoveOrderRequest;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
 import com.shelfj.inventory.dto.Dtos.MaterialStatusRequest;
+import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ReceiveRequest;
 import com.shelfj.inventory.dto.Dtos.RegisterSerialsRequest;
@@ -340,6 +343,73 @@ public class AdminResource {
             .map(Mappers::toDemandBucket)
             .toList();
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  // ── move orders (Gap #5) ─────────────────────────────────────────────────
+
+  @POST
+  @Path("/move-orders")
+  public Response createMoveOrder(CreateMoveOrderRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    UUID fromStore = uuid(req.fromStoreId(), "fromStoreId");
+    UUID toStore = uuid(req.toStoreId(), "toStoreId");
+    List<MoveOrderLine> lines =
+        req.lines().stream()
+            .map(
+                l ->
+                    new MoveOrderLine(
+                        null,
+                        tenantId,
+                        null,
+                        uuid(l.variantId(), "variantId"),
+                        l.requestedQty(),
+                        null))
+            .toList();
+    var order =
+        service.createMoveOrder(
+            tenantId, fromStore, toStore, req.fromZone(), req.toZone(), req.notes(), lines);
+    var withLines = service.getMoveOrder(tenantId, order.id());
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(Mappers.toMoveOrder(withLines.order(), withLines.lines())))
+        .build();
+  }
+
+  @GET
+  @Path("/move-orders")
+  public ApiResponse<List<MoveOrderResponse>> listMoveOrders(
+      @QueryParam("store") String store,
+      @QueryParam("status") String status,
+      @QueryParam("limit") Integer limitParam) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
+    return ApiResponse.ok(
+        service.listMoveOrders(tenantId, storeId, status, limit).stream()
+            .map(o -> Mappers.toMoveOrder(o, service.getMoveOrder(tenantId, o.id()).lines()))
+            .toList());
+  }
+
+  @GET
+  @Path("/move-orders/{id}")
+  public ApiResponse<MoveOrderResponse> getMoveOrder(@PathParam("id") UUID id) {
+    var wl = service.getMoveOrder(ctx.requireTenantId(), id);
+    return ApiResponse.ok(Mappers.toMoveOrder(wl.order(), wl.lines()));
+  }
+
+  @POST
+  @Path("/move-orders/{id}/pick")
+  public ApiResponse<MoveOrderResponse> pickMoveOrder(@PathParam("id") UUID id) {
+    var wl = service.pickMoveOrder(ctx.requireTenantId(), id);
+    return ApiResponse.ok(Mappers.toMoveOrder(wl.order(), wl.lines()));
+  }
+
+  @POST
+  @Path("/move-orders/{id}/cancel")
+  public ApiResponse<MoveOrderResponse> cancelMoveOrder(@PathParam("id") UUID id) {
+    var cancelled = service.cancelMoveOrder(ctx.requireTenantId(), id);
+    var wl = service.getMoveOrder(ctx.requireTenantId(), cancelled.id());
+    return ApiResponse.ok(Mappers.toMoveOrder(wl.order(), wl.lines()));
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────

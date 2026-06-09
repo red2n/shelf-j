@@ -3,6 +3,8 @@ package com.shelfj.inventory.repo;
 import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.MoveOrder;
+import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.MoveType;
 import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.Reservation;
@@ -1098,6 +1100,248 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getString("ref_type"),
         rs.getObject("ref_id", UUID.class),
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ---------------------------------------------------------------- move orders
+
+  public MoveOrder createMoveOrder(MoveOrder order, List<MoveOrderLine> lines) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO move_orders"
+                      + " (id, tenant_id, from_store_id, to_store_id, from_zone, to_zone,"
+                      + "  notes, status, created_at)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, order.id());
+            ps.setObject(2, order.tenantId());
+            ps.setObject(3, order.fromStoreId());
+            ps.setObject(4, order.toStoreId());
+            ps.setString(5, order.fromZone());
+            ps.setString(6, order.toZone());
+            ps.setString(7, order.notes());
+            ps.setString(8, order.status());
+            ps.setObject(9, order.createdAt().atOffset(ZoneOffset.UTC));
+            ps.executeUpdate();
+          }
+          insertLines(c, lines);
+          return order;
+        },
+        "create move order");
+  }
+
+  public List<MoveOrder> listMoveOrders(UUID tenantId, UUID storeId, String status, int limit) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, from_store_id, to_store_id, from_zone, to_zone,"
+                + " notes, status, created_at, picked_at"
+                + " FROM move_orders WHERE tenant_id = ?");
+    if (storeId != null) sb.append(" AND (from_store_id = ? OR to_store_id = ?)");
+    if (status != null) sb.append(" AND status = ?");
+    sb.append(" ORDER BY created_at DESC LIMIT ?");
+    return query(
+        sb.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) {
+            ps.setObject(i++, storeId);
+            ps.setObject(i++, storeId);
+          }
+          if (status != null) ps.setString(i++, status);
+          ps.setInt(i, limit);
+        },
+        InventoryRepository::mapMoveOrder,
+        "list move orders");
+  }
+
+  public Optional<MoveOrder> findMoveOrder(UUID tenantId, UUID id) {
+    List<MoveOrder> rows =
+        query(
+            "SELECT id, tenant_id, from_store_id, to_store_id, from_zone, to_zone,"
+                + " notes, status, created_at, picked_at"
+                + " FROM move_orders WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            InventoryRepository::mapMoveOrder,
+            "find move order");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  public List<MoveOrderLine> listMoveOrderLines(UUID moveOrderId) {
+    return query(
+        "SELECT id, tenant_id, move_order_id, variant_id, requested_qty, picked_qty"
+            + " FROM move_order_lines WHERE move_order_id = ? ORDER BY id",
+        ps -> ps.setObject(1, moveOrderId),
+        InventoryRepository::mapMoveOrderLine,
+        "list move order lines");
+  }
+
+  /**
+   * Execute pick: FIFO-deduct from source store, create receiving batch in destination store,
+   * record TRANSFER movements on both sides, mark order COMPLETED.
+   */
+  public MoveOrder pickMoveOrder(UUID tenantId, UUID orderId, OutboxRow event) {
+    return inTx(
+        c -> {
+          MoveOrder order = loadMoveOrderForUpdate(c, tenantId, orderId);
+          if (MoveOrder.COMPLETED.equals(order.status())
+              || MoveOrder.CANCELLED.equals(order.status())) {
+            throw ApiException.unprocessable(
+                "MOVE_ORDER_NOT_PICKABLE", "Move order is " + order.status());
+          }
+          List<MoveOrderLine> lines = listMoveOrderLines(orderId);
+          for (MoveOrderLine line : lines) {
+            deductFifo(
+                c,
+                tenantId,
+                order.fromStoreId(),
+                line.variantId(),
+                line.requestedQty(),
+                MoveType.TRANSFER,
+                "MOVE_ORDER",
+                orderId);
+            Batch dest =
+                new Batch(
+                    UUID.randomUUID(),
+                    tenantId,
+                    order.toStoreId(),
+                    line.variantId(),
+                    "MO-" + orderId.toString().substring(0, 8),
+                    line.requestedQty(),
+                    line.requestedQty(),
+                    null,
+                    null,
+                    Instant.now(),
+                    Batch.STATUS_ACTIVE,
+                    Batch.MATERIAL_AVAILABLE,
+                    null);
+            insertBatch(c, dest);
+            insertMovement(
+                c,
+                tenantId,
+                order.toStoreId(),
+                line.variantId(),
+                dest.id(),
+                MoveType.TRANSFER,
+                line.requestedQty(),
+                "MOVE_ORDER",
+                orderId);
+          }
+          MoveOrder completed;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE move_orders SET status = 'COMPLETED', picked_at = now()"
+                      + " WHERE tenant_id = ? AND id = ?"
+                      + " RETURNING id, tenant_id, from_store_id, to_store_id, from_zone, to_zone,"
+                      + " notes, status, created_at, picked_at")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              completed = mapMoveOrder(rs);
+            }
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE move_order_lines SET picked_qty = requested_qty"
+                      + " WHERE move_order_id = ?")) {
+            ps.setObject(1, orderId);
+            ps.executeUpdate();
+          }
+          insertOutbox(c, event);
+          return completed;
+        },
+        "pick move order");
+  }
+
+  public Optional<MoveOrder> cancelMoveOrder(UUID tenantId, UUID orderId, OutboxRow event) {
+    return inTx(
+        c -> {
+          MoveOrder order = loadMoveOrderForUpdate(c, tenantId, orderId);
+          if (MoveOrder.COMPLETED.equals(order.status())
+              || MoveOrder.CANCELLED.equals(order.status())) {
+            return Optional.<MoveOrder>empty();
+          }
+          MoveOrder cancelled;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE move_orders SET status = 'CANCELLED'"
+                      + " WHERE tenant_id = ? AND id = ?"
+                      + " RETURNING id, tenant_id, from_store_id, to_store_id, from_zone, to_zone,"
+                      + " notes, status, created_at, picked_at")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              cancelled = mapMoveOrder(rs);
+            }
+          }
+          insertOutbox(c, event);
+          return Optional.of(cancelled);
+        },
+        "cancel move order");
+  }
+
+  private MoveOrder loadMoveOrderForUpdate(Connection c, UUID tenantId, UUID id)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, from_store_id, to_store_id, from_zone, to_zone,"
+                + " notes, status, created_at, picked_at"
+                + " FROM move_orders WHERE tenant_id = ? AND id = ? FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, id);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) throw ApiException.notFound("MOVE_ORDER_NOT_FOUND", "No such move order");
+        return mapMoveOrder(rs);
+      }
+    }
+  }
+
+  private void insertLines(Connection c, List<MoveOrderLine> lines) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO move_order_lines"
+                + " (id, tenant_id, move_order_id, variant_id, requested_qty)"
+                + " VALUES (?,?,?,?,?)")) {
+      for (MoveOrderLine l : lines) {
+        ps.setObject(1, l.id());
+        ps.setObject(2, l.tenantId());
+        ps.setObject(3, l.moveOrderId());
+        ps.setObject(4, l.variantId());
+        ps.setBigDecimal(5, l.requestedQty());
+        ps.addBatch();
+      }
+      ps.executeBatch();
+    }
+  }
+
+  private static MoveOrder mapMoveOrder(ResultSet rs) throws SQLException {
+    OffsetDateTime pickedOdt = rs.getObject("picked_at", OffsetDateTime.class);
+    return new MoveOrder(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("from_store_id", UUID.class),
+        rs.getObject("to_store_id", UUID.class),
+        rs.getString("from_zone"),
+        rs.getString("to_zone"),
+        rs.getString("notes"),
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        pickedOdt == null ? null : pickedOdt.toInstant());
+  }
+
+  private static MoveOrderLine mapMoveOrderLine(ResultSet rs) throws SQLException {
+    return new MoveOrderLine(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("move_order_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getBigDecimal("requested_qty"),
+        rs.getBigDecimal("picked_qty"));
   }
 
   private static DemandBucket mapDemandBucket(ResultSet rs) throws SQLException {
