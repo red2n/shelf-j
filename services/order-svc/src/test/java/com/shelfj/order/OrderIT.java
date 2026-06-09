@@ -136,7 +136,7 @@ class OrderIT {
     String body = r1.readEntity(String.class);
     assertThat(body, containsString("ACTIVE"));
     assertThat(body, containsString("30"));
-    String layawayId = extractId(body);
+    String layawayId = extractLayawayId(body);
 
     // add more deposit
     Response r2 =
@@ -205,6 +205,23 @@ class OrderIT {
 
   private static String extractId(String json) {
     int start = json.indexOf("\"id\":\"") + 6;
+    int end = json.indexOf("\"", start);
+    return json.substring(start, end);
+  }
+
+  /**
+   * JSON-B (Yasson) serialises record components alphabetically, so in LayawayResponse the
+   * "deposits" array (with its own "id" fields) appears before the top-level "id" in the JSON
+   * stream. A naïve first-occurrence search grabs a deposit UUID instead of the layaway UUID. This
+   * helper skips past the closing "]" of the deposits array and then reads the next "id" value,
+   * which is the layaway's own id.
+   */
+  private static String extractLayawayId(String json) {
+    // Find where the "deposits" array key starts, then skip to its closing ']'
+    int depositsKey = json.indexOf("\"deposits\":");
+    int depositsArrayClose = json.indexOf("]", depositsKey);
+    // The next "id" after the deposits array is the top-level layaway id
+    int start = json.indexOf("\"id\":\"", depositsArrayClose) + 6;
     int end = json.indexOf("\"", start);
     return json.substring(start, end);
   }
