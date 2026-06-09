@@ -1,7 +1,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 
-export const baseUrl = __ENV.BASE_URL || 'http://localhost:8080';
+export const baseUrl = __ENV.BASE_URL || 'http://localhost:8090';
 export const loginPath = __ENV.LOGIN_PATH || '/api/iam-svc/auth/login';
 export const invalidCredentials = JSON.parse(
   __ENV.INVALID_CREDENTIALS || '{"email":"invalid-user@example.com","password":"invalid-pass"}'

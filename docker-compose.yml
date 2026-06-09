@@ -170,8 +170,17 @@ services:
       KAFKA_NUM_PARTITIONS: 12
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       CLUSTER_ID: 0WL1kI1NQdi0DVeRDFPA4g
+      # JVM heap — override with KAFKA_HEAP_OPTS in .env for larger machines.
+      KAFKA_HEAP_OPTS: "${KAFKA_HEAP_OPTS:--Xms512m -Xmx1g}"
+      KAFKA_JVM_PERFORMANCE_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:+ExplicitGCInvokesConcurrent"
     volumes: ["kafka_data:/var/lib/kafka/data"]
     networks: [shelfj_network]
+    deploy:
+      resources:
+        limits:
+          memory: "${KAFKA_MEM_LIMIT:-1300m}"
+        reservations:
+          memory: 512m
     healthcheck:
       test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
       interval: 10s
@@ -188,6 +197,13 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: shelfj-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      JAVA_OPTS: "${KAFKA_UI_JAVA_OPTS:--Xms128m -Xmx384m}"
+    deploy:
+      resources:
+        limits:
+          memory: "${KAFKA_UI_MEM_LIMIT:-550m}"
+        reservations:
+          memory: 128m
     depends_on:
       kafka: { condition: service_healthy }
     networks: [shelfj_network]
@@ -215,6 +231,14 @@ services:
     container_name: shelfj-zipkin
     restart: unless-stopped
     ports: ["9411:9411"]
+    environment:
+      JAVA_OPTS: "${ZIPKIN_JAVA_OPTS:--Xms128m -Xmx512m}"
+    deploy:
+      resources:
+        limits:
+          memory: "${ZIPKIN_MEM_LIMIT:-700m}"
+        reservations:
+          memory: 128m
     networks: [shelfj_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9411/health || exit 1"]
@@ -302,6 +326,12 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=7d
       - --web.enable-lifecycle
+    deploy:
+      resources:
+        limits:
+          memory: "${PROMETHEUS_MEM_LIMIT:-512m}"
+        reservations:
+          memory: 64m
     ports: ["9090:9090"]
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -366,6 +396,13 @@ services:
     restart: unless-stopped
     environment:
       server.port: "8080"
+      JAVA_TOOL_OPTIONS: "${CONFIG_JAVA_OPTS:--Xms64m -Xmx256m -XX:+UseG1GC}"
+    deploy:
+      resources:
+        limits:
+          memory: "${CONFIG_MEM_LIMIT:-384m}"
+        reservations:
+          memory: 64m
     ports: ["8888:8080"]
     networks: [shelfj_network]
     depends_on:
@@ -389,6 +426,7 @@ services:
     restart: unless-stopped
     environment:
       server.port: "8080"
+      JAVA_TOOL_OPTIONS: "${IAM_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
       shelfj.db.user: ${POSTGRES_USER:-shelfj}
       shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
@@ -397,6 +435,12 @@ services:
       shelfj.kafka.bootstrap: kafka:29092
       SHELFJ_ADVERTISE_HOST: iam-svc
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+    deploy:
+      resources:
+        limits:
+          memory: "${IAM_MEM_LIMIT:-700m}"
+        reservations:
+          memory: 128m
     networks: [shelfj_network]
     depends_on:
       postgres: { condition: service_healthy }
@@ -420,6 +464,7 @@ services:
     restart: unless-stopped
     environment:
       server.port: "8080"
+      JAVA_TOOL_OPTIONS: "${TENANT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
       shelfj.db.user: ${POSTGRES_USER:-shelfj}
       shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
@@ -428,6 +473,12 @@ services:
       shelfj.kafka.bootstrap: kafka:29092
       SHELFJ_ADVERTISE_HOST: tenant-svc
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+    deploy:
+      resources:
+        limits:
+          memory: "${TENANT_MEM_LIMIT:-700m}"
+        reservations:
+          memory: 128m
     networks: [shelfj_network]
     depends_on:
       postgres: { condition: service_healthy }
@@ -451,6 +502,7 @@ services:
     restart: unless-stopped
     environment:
       server.port: "8080"
+      JAVA_TOOL_OPTIONS: "${INVENTORY_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
       shelfj.db.user: ${POSTGRES_USER:-shelfj}
       shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
@@ -459,6 +511,12 @@ services:
       shelfj.kafka.bootstrap: kafka:29092
       SHELFJ_ADVERTISE_HOST: inventory-svc
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+    deploy:
+      resources:
+        limits:
+          memory: "${INVENTORY_MEM_LIMIT:-700m}"
+        reservations:
+          memory: 128m
     networks: [shelfj_network]
     depends_on:
       postgres: { condition: service_healthy }
@@ -482,6 +540,7 @@ services:
     restart: unless-stopped
     environment:
       server.port: "8080"
+      JAVA_TOOL_OPTIONS: "${PRODUCT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
       shelfj.db.user: ${POSTGRES_USER:-shelfj}
       shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
@@ -490,36 +549,12 @@ services:
       shelfj.kafka.bootstrap: kafka:29092
       SHELFJ_ADVERTISE_HOST: product-svc
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
-    networks: [shelfj_network]
-    depends_on:
-      postgres: { condition: service_healthy }
-      kafka:    { condition: service_healthy }
-      consul:   { condition: service_healthy }
-      config:   { condition: service_started }
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
-
-  sample-svc:
-    image: ghcr.io/red2n/shelf-j-sample-svc:${SHELFJ_TAG:-latest}
-    build:
-      context: .
-      dockerfile: Dockerfile.svc
-      args: { SVC_PATH: services/sample-svc, SVC_JAR: sample-svc }
-    container_name: shelfj-sample
-    restart: unless-stopped
-    environment:
-      server.port: "8080"
-      shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
-      shelfj.db.user: ${POSTGRES_USER:-shelfj}
-      shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
-      shelfj.consul.host: consul
-      shelfj.consul.port: "8500"
-      SHELFJ_ADVERTISE_HOST: sample-svc
-      otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+    deploy:
+      resources:
+        limits:
+          memory: "${PRODUCT_MEM_LIMIT:-700m}"
+        reservations:
+          memory: 128m
     networks: [shelfj_network]
     depends_on:
       postgres: { condition: service_healthy }
@@ -545,15 +580,21 @@ services:
     restart: unless-stopped
     environment:
       server.port: "8080"
+      JAVA_TOOL_OPTIONS: "${GATEWAY_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       shelfj.consul.host: consul
       shelfj.consul.port: "8500"
       shelfj.gateway.rate-limit.requests-per-minute: "10000"
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+    deploy:
+      resources:
+        limits:
+          memory: "${GATEWAY_MEM_LIMIT:-700m}"
+        reservations:
+          memory: 128m
     ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]   # the ONLY app port published to the host
     networks: [shelfj_network]
     depends_on:
       consul:     { condition: service_healthy }
-      sample-svc: { condition: service_started }
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
       interval: 10s

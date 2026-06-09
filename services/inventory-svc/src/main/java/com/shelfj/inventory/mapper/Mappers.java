@@ -1,16 +1,57 @@
 package com.shelfj.inventory.mapper;
 
+import com.shelfj.inventory.domain.Domain.AbcAssignment;
+import com.shelfj.inventory.domain.Domain.AbcCompileRun;
+import com.shelfj.inventory.domain.Domain.AccountingPeriod;
 import com.shelfj.inventory.domain.Domain.Batch;
+import com.shelfj.inventory.domain.Domain.CostingMethod;
+import com.shelfj.inventory.domain.Domain.CycleCountHeader;
+import com.shelfj.inventory.domain.Domain.CycleCountLine;
+import com.shelfj.inventory.domain.Domain.DemandBucket;
+import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
+import com.shelfj.inventory.domain.Domain.MoveOrder;
+import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
+import com.shelfj.inventory.domain.Domain.PhysicalInventory;
+import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
+import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.inventory.domain.Domain.Reservation;
+import com.shelfj.inventory.domain.Domain.SafetyStockParams;
+import com.shelfj.inventory.domain.Domain.SerialMovement;
+import com.shelfj.inventory.domain.Domain.SerialNumber;
+import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
+import com.shelfj.inventory.domain.Domain.TransferOrder;
+import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.dto.Dtos.AbcAssignmentResponse;
+import com.shelfj.inventory.dto.Dtos.AbcCompileRunResponse;
+import com.shelfj.inventory.dto.Dtos.AccountingPeriodResponse;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
+import com.shelfj.inventory.dto.Dtos.CostingMethodResponse;
+import com.shelfj.inventory.dto.Dtos.CycleCountHeaderResponse;
+import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
+import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
+import com.shelfj.inventory.dto.Dtos.KanbanCardResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
+import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
+import com.shelfj.inventory.dto.Dtos.MoveOrderLineResponse;
+import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
+import com.shelfj.inventory.dto.Dtos.PhysicalInventoryResponse;
+import com.shelfj.inventory.dto.Dtos.PhysicalInventoryTagResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
+import com.shelfj.inventory.dto.Dtos.RopPlanResponse;
+import com.shelfj.inventory.dto.Dtos.SafetyStockParamsResponse;
+import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
+import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
+import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
+import com.shelfj.inventory.dto.Dtos.TransferOrderLineResponse;
+import com.shelfj.inventory.dto.Dtos.TransferOrderResponse;
 import java.time.Instant;
+import java.util.List;
 
 public final class Mappers {
 
@@ -32,7 +73,9 @@ public final class Mappers {
         b.costPrice(),
         b.expiryDate() == null ? null : b.expiryDate().toString(),
         ts(b.createdAt()),
-        b.status());
+        b.status(),
+        b.materialStatus(),
+        b.materialStatusReason());
   }
 
   public static ReservationResponse toReservation(Reservation r) {
@@ -62,7 +105,264 @@ public final class Mappers {
 
   public static ThresholdResponse toThreshold(Threshold t) {
     return new ThresholdResponse(
-        t.id().toString(), t.storeId().toString(), t.variantId().toString(), t.threshold());
+        t.id().toString(),
+        t.storeId().toString(),
+        t.variantId().toString(),
+        t.threshold(),
+        t.maxQty());
+  }
+
+  public static SuggestionResponse toSuggestion(Suggestion s) {
+    return new SuggestionResponse(
+        s.id().toString(),
+        s.storeId().toString(),
+        s.variantId().toString(),
+        s.availableQty(),
+        s.minQty(),
+        s.maxQty(),
+        s.suggestedQty(),
+        s.status(),
+        ts(s.createdAt()),
+        ts(s.resolvedAt()));
+  }
+
+  public static SerialNumberResponse toSerial(SerialNumber s) {
+    return new SerialNumberResponse(
+        s.id().toString(),
+        s.storeId().toString(),
+        s.variantId().toString(),
+        s.batchId() == null ? null : s.batchId().toString(),
+        s.serialNo(),
+        s.status(),
+        ts(s.receivedAt()),
+        ts(s.soldAt()));
+  }
+
+  public static SerialMovementResponse toSerialMovement(SerialMovement m) {
+    return new SerialMovementResponse(
+        m.id().toString(),
+        m.serialId().toString(),
+        m.fromStatus(),
+        m.toStatus(),
+        m.refType(),
+        m.refId() == null ? null : m.refId().toString(),
+        ts(m.createdAt()));
+  }
+
+  public static DemandBucketResponse toDemandBucket(DemandBucket b) {
+    return new DemandBucketResponse(
+        b.storeId().toString(),
+        b.variantId().toString(),
+        b.bucketDate().toString(),
+        b.bucketType(),
+        b.demandQty(),
+        b.movementCount(),
+        ts(b.computedAt()));
+  }
+
+  public static TransferOrderLineResponse toTransferOrderLine(TransferOrderLine l) {
+    return new TransferOrderLineResponse(
+        l.id().toString(),
+        l.variantId().toString(),
+        l.requestedQty(),
+        l.shippedQty(),
+        l.receivedQty());
+  }
+
+  public static TransferOrderResponse toTransferOrder(
+      TransferOrder o, List<TransferOrderLine> lines) {
+    return new TransferOrderResponse(
+        o.id().toString(),
+        o.fromStoreId().toString(),
+        o.toStoreId().toString(),
+        o.transferType(),
+        o.status(),
+        o.notes(),
+        ts(o.createdAt()),
+        ts(o.shippedAt()),
+        ts(o.receivedAt()),
+        lines.stream().map(Mappers::toTransferOrderLine).toList());
+  }
+
+  public static MoveOrderLineResponse toMoveOrderLine(MoveOrderLine l) {
+    return new MoveOrderLineResponse(
+        l.id().toString(), l.variantId().toString(), l.requestedQty(), l.pickedQty());
+  }
+
+  public static MoveOrderResponse toMoveOrder(MoveOrder o, List<MoveOrderLine> lines) {
+    return new MoveOrderResponse(
+        o.id().toString(),
+        o.fromStoreId().toString(),
+        o.toStoreId().toString(),
+        o.fromZone(),
+        o.toZone(),
+        o.notes(),
+        o.status(),
+        ts(o.createdAt()),
+        ts(o.pickedAt()),
+        lines.stream().map(Mappers::toMoveOrderLine).toList());
+  }
+
+  public static LotGenealogyLinkResponse toLotLink(LotGenealogyLink l) {
+    return new LotGenealogyLinkResponse(
+        l.id().toString(),
+        l.parentBatchId().toString(),
+        l.childBatchId().toString(),
+        l.qty(),
+        l.relationType(),
+        l.notes(),
+        ts(l.createdAt()));
+  }
+
+  public static CycleCountLineResponse toCycleCountLine(CycleCountLine l) {
+    return new CycleCountLineResponse(
+        l.id().toString(),
+        l.variantId().toString(),
+        l.systemQty(),
+        l.countedQty(),
+        l.variance(),
+        l.variancePct(),
+        l.status(),
+        ts(l.countedAt()));
+  }
+
+  public static CycleCountHeaderResponse toCycleCountHeader(
+      CycleCountHeader h, List<CycleCountLine> lines) {
+    int counted = (int) lines.stream().filter(l -> !CycleCountLine.OPEN.equals(l.status())).count();
+    int approved =
+        (int)
+            lines.stream()
+                .filter(
+                    l ->
+                        CycleCountLine.APPROVED.equals(l.status())
+                            || CycleCountLine.ADJUSTED.equals(l.status()))
+                .count();
+    return new CycleCountHeaderResponse(
+        h.id().toString(),
+        h.storeId().toString(),
+        h.name(),
+        h.abcClasses(),
+        h.tolerancePct(),
+        h.status(),
+        lines.size(),
+        counted,
+        approved,
+        ts(h.createdAt()),
+        ts(h.completedAt()));
+  }
+
+  public static AbcCompileRunResponse toAbcCompileRun(AbcCompileRun r) {
+    return new AbcCompileRunResponse(
+        r.id().toString(),
+        r.storeId() == null ? null : r.storeId().toString(),
+        r.criteria(),
+        r.thresholdA(),
+        r.thresholdAB(),
+        r.itemsCompiled(),
+        ts(r.compiledAt()));
+  }
+
+  public static AbcAssignmentResponse toAbcAssignment(AbcAssignment a) {
+    return new AbcAssignmentResponse(
+        a.id().toString(),
+        a.storeId().toString(),
+        a.variantId().toString(),
+        a.runId().toString(),
+        a.abcClass(),
+        a.score(),
+        a.rank(),
+        ts(a.assignedAt()));
+  }
+
+  public static SafetyStockParamsResponse toSafetyStockParams(SafetyStockParams p) {
+    return new SafetyStockParamsResponse(
+        p.id().toString(),
+        p.storeId().toString(),
+        p.variantId().toString(),
+        p.method(),
+        p.leadTimeDays(),
+        p.serviceLevelPct(),
+        p.userDefinedPct(),
+        p.safetyStockQty(),
+        ts(p.computedAt()),
+        ts(p.createdAt()));
+  }
+
+  public static PhysicalInventoryTagResponse toTag(PhysicalInventoryTag t) {
+    return new PhysicalInventoryTagResponse(
+        t.id().toString(),
+        t.variantId().toString(),
+        t.zoneId() == null ? null : t.zoneId().toString(),
+        t.systemQty(),
+        t.countedQty(),
+        t.adjustmentQty(),
+        t.status(),
+        ts(t.countedAt()));
+  }
+
+  public static PhysicalInventoryResponse toPhysicalInventory(
+      PhysicalInventory pi, List<PhysicalInventoryTag> tags) {
+    return new PhysicalInventoryResponse(
+        pi.id().toString(),
+        pi.storeId().toString(),
+        pi.status(),
+        pi.notes(),
+        ts(pi.startedAt()),
+        ts(pi.completedAt()),
+        tags.stream().map(Mappers::toTag).toList());
+  }
+
+  public static RopPlanResponse toRopPlan(ReorderPointPlan p) {
+    return new RopPlanResponse(
+        p.id().toString(),
+        p.storeId().toString(),
+        p.variantId().toString(),
+        p.leadTimeDays(),
+        p.orderingCost(),
+        p.holdingCostPct(),
+        p.unitCost(),
+        p.avgDailyDemand(),
+        p.rop(),
+        p.eoq(),
+        ts(p.computedAt()),
+        ts(p.createdAt()));
+  }
+
+  public static KanbanCardResponse toKanbanCard(KanbanCard k) {
+    return new KanbanCardResponse(
+        k.id().toString(),
+        k.storeId().toString(),
+        k.variantId().toString(),
+        k.kanbanType(),
+        k.status(),
+        k.reorderQty(),
+        k.sourceStoreId() == null ? null : k.sourceStoreId().toString(),
+        k.supplierRef(),
+        k.notes(),
+        ts(k.createdAt()),
+        ts(k.triggeredAt()),
+        ts(k.replenishedAt()));
+  }
+
+  public static CostingMethodResponse toCostingMethod(CostingMethod cm) {
+    return new CostingMethodResponse(
+        cm.id().toString(),
+        cm.storeId().toString(),
+        cm.variantId().toString(),
+        cm.method(),
+        cm.averageCost(),
+        cm.updatedAt().toString());
+  }
+
+  public static AccountingPeriodResponse toPeriod(AccountingPeriod ap) {
+    return new AccountingPeriodResponse(
+        ap.id().toString(),
+        ap.storeId().toString(),
+        ap.periodName(),
+        ap.periodDate().toString(),
+        ap.status(),
+        ts(ap.openedAt()),
+        ts(ap.closedAt()));
   }
 
   private static String ts(Instant i) {

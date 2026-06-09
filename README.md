@@ -717,7 +717,7 @@ Build in this order. Do not start a phase until the previous one's exit check pa
 
 ## 12. Local development
 
-> **Phase 0 is implemented.** The commands below work today against the scaffolded platform (gateway, discovery, config) + `sample-svc`. See [docs/SCAFFOLDING-STATUS.md](docs/SCAFFOLDING-STATUS.md) for current build status.
+> **Phase 0 + Phase 1 are implemented.** Platform (gateway, discovery, config) and all back-office business services are live. See [docs/SCAFFOLDING-STATUS.md](docs/SCAFFOLDING-STATUS.md) for current build status.
 
 **Prerequisites:** **JDK 21** (Temurin), Maven 3.9+, Docker + Docker Compose.
 
@@ -729,11 +729,9 @@ Build in this order. Do not start a phase until the previous one's exit check pa
 **Fastest path — whole stack via compose:**
 ```bash
 JAVA_HOME=$JAVA_HOME mvn clean install -DskipTests   # build jars + libs/ (Kafka runs in KRaft mode, no Zookeeper)
-docker compose up -d --build                          # infra + config + sample-svc + gateway, readiness-gated
+docker compose up -d --build                          # infra + config + gateway + all business services, readiness-gated
 # Gateway is published on host port 8090 (8080 may be taken locally; override via GATEWAY_HOST_PORT).
-curl -X POST http://localhost:8090/api/sample-svc/widgets \
-  -H 'Content-Type: application/json' \
-  -H 'X-Tenant-Id: 11111111-1111-1111-1111-111111111111' -d '{"name":"hello"}'
+curl http://localhost:8090/api/inventory-svc/health/ready
 docker compose down
 ```
 
@@ -1015,9 +1013,6 @@ This project uses Flyway migrations under `services/<service>/src/main/resources
   - `zones`
   - `staff_assignments`
   - `outbox`
-
-- `sample-svc`
-  - `widgets`
 
 Notes:
 

@@ -25,11 +25,24 @@
     <!--
       Java records expose their component accessor methods, which return the internal
       field reference directly. For immutable value types (records) this is intentional —
-      the record IS the value; exposing its fields is correct.
+      the record IS the value; exposing its fields is correct. Covers dto, domain, and
+      lightweight value records nested inside service classes.
     -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
-        <Class name="~.*\.(dto|domain)\..*"/>
+        <Class name="~.*\.(dto|domain|service)\..*"/>
+    </Match>
+
+    <!--
+      aggregateDemand builds a PreparedStatement SQL string dynamically to embed a
+      date_trunc literal (day/week/month). The literal is validated upstream against
+      an allow-list (DAY|WEEK|MONTH) before reaching this method, so there is no SQL
+      injection risk. SpotBugs cannot trace the call-site validation.
+    -->
+    <Match>
+        <Bug pattern="SQL_PREPARED_STATEMENT_GENERATED_FROM_NONCONSTANT_STRING"/>
+        <Class name="com.shelfj.inventory.repo.InventoryRepository"/>
+        <Method name="aggregateDemand"/>
     </Match>
 
     <!--

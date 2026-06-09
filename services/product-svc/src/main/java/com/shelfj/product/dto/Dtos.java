@@ -2,6 +2,8 @@ package com.shelfj.product.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import java.math.BigDecimal;
 
 /** Request/response DTOs for product-svc. No tenant_id in requests — it comes from context. */
 public final class Dtos {
@@ -70,4 +72,57 @@ public final class Dtos {
       String status,
       String createdAt,
       String updatedAt) {}
+
+  // ── UOM ──────────────────────────────────────────────────────────────────
+
+  public record UomClassResponse(String code, String name) {}
+
+  public record UomDefinitionResponse(String code, String name, String classCode) {}
+
+  public record UomItemConversionRequest(
+      @NotBlank String variantId,
+      @NotBlank String fromUom,
+      @NotBlank String toUom,
+      @NotNull @Positive BigDecimal factor) {}
+
+  public record UomItemConversionResponse(
+      String id, String variantId, String fromUom, String toUom, BigDecimal factor) {}
+
+  public record ConvertResult(
+      String fromUom,
+      String toUom,
+      BigDecimal originalQty,
+      BigDecimal convertedQty,
+      BigDecimal factor,
+      String source) {}
+
+  // ── Item Templates (Gap #13) ─────────────────────────────────────────────
+
+  public record CreateItemTemplateRequest(
+      @NotBlank String name, String description, String attributes) {}
+
+  public record ItemTemplateResponse(
+      String id,
+      String name,
+      String description,
+      String attributes,
+      String status,
+      String createdAt) {}
+
+  public record ItemTemplateApplicationResponse(
+      String id, String variantId, String templateId, String appliedAt) {}
+
+  // ── Item Revisions (Gap #12) ─────────────────────────────────────────────
+
+  public record CreateRevisionRequest(
+      @NotBlank String revision, String description, @NotBlank String effectiveDate) {}
+
+  public record ItemRevisionResponse(
+      String id,
+      String variantId,
+      String revision,
+      String description,
+      String effectiveDate,
+      String status,
+      String createdAt) {}
 }

@@ -52,6 +52,19 @@
              these as constants would add noise without improving readability. -->
         <exclude name="AvoidDuplicateLiterals"/>
 
+        <!-- JDBC parameter binders use `ps.setObject(i++, value)` to sequentially bind
+             positional parameters. The post-increment inside the method argument is the
+             idiomatic and correct pattern for this use case; extracting it as a separate
+             statement would obscure the one-parameter-per-call intent. -->
+        <exclude name="AssignmentInOperand"/>
+
+        <!-- Service boundary constants (e.g. MAX_SERIALS = 200, DEFAULT_LIMIT = 20) are
+             intentionally written as literals near the validation logic they control, so
+             readers see the constraint at the point of enforcement rather than searching
+             for a constant declaration. These are not "magic numbers" — they are domain
+             limits that belong in the method body. -->
+        <exclude name="AvoidLiteralsInIfCondition"/>
+
     </rule>
 
     <!-- ── Best practices ──────────────────────────────────────────────────── -->

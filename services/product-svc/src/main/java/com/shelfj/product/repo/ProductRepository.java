@@ -2,13 +2,21 @@ package com.shelfj.product.repo;
 
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
+import com.shelfj.product.domain.Domain.ItemRevision;
+import com.shelfj.product.domain.Domain.ItemTemplate;
+import com.shelfj.product.domain.Domain.ItemTemplateApplication;
 import com.shelfj.product.domain.Domain.Product;
+import com.shelfj.product.domain.Domain.UomClass;
+import com.shelfj.product.domain.Domain.UomDefinition;
+import com.shelfj.product.domain.Domain.UomItemConversion;
 import com.shelfj.product.domain.Domain.Variant;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -426,6 +434,132 @@ public class ProductRepository extends BaseOutboxRepository {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────── UOM
+
+  public List<UomClass> listUomClasses() {
+    return query(
+        "SELECT id, code, name FROM uom_classes ORDER BY name",
+        ps -> {},
+        rs ->
+            new UomClass(
+                rs.getObject("id", UUID.class), rs.getString("code"), rs.getString("name")),
+        "list uom classes");
+  }
+
+  public List<UomDefinition> listUomDefinitions(String classCode) {
+    if (classCode != null) {
+      return query(
+          "SELECT id, class_code, code, name FROM uom_definitions WHERE class_code = ? ORDER BY name",
+          ps -> ps.setString(1, classCode),
+          ProductRepository::mapUomDef,
+          "list uom definitions by class");
+    }
+    return query(
+        "SELECT id, class_code, code, name FROM uom_definitions ORDER BY class_code, name",
+        ps -> {},
+        ProductRepository::mapUomDef,
+        "list all uom definitions");
+  }
+
+  public Optional<BigDecimal> findStandardConversionFactor(String fromUom, String toUom) {
+    var list =
+        query(
+            "SELECT factor FROM uom_standard_conversions WHERE from_uom = ? AND to_uom = ?",
+            ps -> {
+              ps.setString(1, fromUom);
+              ps.setString(2, toUom);
+            },
+            rs -> rs.getBigDecimal("factor"),
+            "find std conversion");
+    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  public UomItemConversion upsertItemConversion(UomItemConversion c) {
+    return inTx(
+        conn -> {
+          try (PreparedStatement ps =
+              conn.prepareStatement(
+                  "INSERT INTO uom_item_conversions"
+                      + " (id, tenant_id, variant_id, from_uom, to_uom, factor)"
+                      + " VALUES (?,?,?,?,?,?)"
+                      + " ON CONFLICT (tenant_id, variant_id, from_uom, to_uom)"
+                      + " DO UPDATE SET factor = EXCLUDED.factor"
+                      + " RETURNING id, tenant_id, variant_id, from_uom, to_uom, factor")) {
+            ps.setObject(1, c.id());
+            ps.setObject(2, c.tenantId());
+            ps.setObject(3, c.variantId());
+            ps.setString(4, c.fromUom());
+            ps.setString(5, c.toUom());
+            ps.setBigDecimal(6, c.factor());
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return mapItemConversion(rs);
+            }
+          }
+        },
+        "upsert item conversion");
+  }
+
+  public List<UomItemConversion> listItemConversions(UUID tenantId, UUID variantId) {
+    return query(
+        "SELECT id, tenant_id, variant_id, from_uom, to_uom, factor"
+            + " FROM uom_item_conversions WHERE tenant_id = ? AND variant_id = ?"
+            + " ORDER BY from_uom, to_uom",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, variantId);
+        },
+        ProductRepository::mapItemConversion,
+        "list item conversions");
+  }
+
+  public boolean deleteItemConversion(UUID tenantId, UUID id) {
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement("DELETE FROM uom_item_conversions WHERE tenant_id = ? AND id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, id);
+      return ps.executeUpdate() > 0;
+    } catch (SQLException e) {
+      throw dbError("delete item conversion", e);
+    }
+  }
+
+  public Optional<BigDecimal> findItemConversionFactor(
+      UUID tenantId, UUID variantId, String fromUom, String toUom) {
+    var list =
+        query(
+            "SELECT factor FROM uom_item_conversions"
+                + " WHERE tenant_id = ? AND variant_id = ? AND from_uom = ? AND to_uom = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, variantId);
+              ps.setString(3, fromUom);
+              ps.setString(4, toUom);
+            },
+            rs -> rs.getBigDecimal("factor"),
+            "find item conversion factor");
+    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  private static UomDefinition mapUomDef(ResultSet rs) throws SQLException {
+    return new UomDefinition(
+        rs.getObject("id", UUID.class),
+        rs.getString("class_code"),
+        rs.getString("code"),
+        rs.getString("name"));
+  }
+
+  private static UomItemConversion mapItemConversion(ResultSet rs) throws SQLException {
+    return new UomItemConversion(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getString("from_uom"),
+        rs.getString("to_uom"),
+        rs.getBigDecimal("factor"));
+  }
+
   private static Brand mapBrand(ResultSet rs) throws SQLException {
     return new Brand(
         rs.getObject("id", UUID.class),
@@ -445,6 +579,98 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getString("status"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ─────────────────────────────────────────────────────── item revisions (Gap #12)
+
+  public ItemRevision createRevisionWithOutbox(ItemRevision rev, OutboxRow event) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE item_revisions SET status='SUPERSEDED'"
+                      + " WHERE tenant_id=? AND variant_id=? AND status='ACTIVE'"
+                      + " AND effective_date <= ?")) {
+            ps.setObject(1, rev.tenantId());
+            ps.setObject(2, rev.variantId());
+            ps.setObject(3, Date.valueOf(rev.effectiveDate()));
+            ps.executeUpdate();
+          }
+          String sql =
+              "INSERT INTO item_revisions"
+                  + " (id, tenant_id, variant_id, revision, description, effective_date, status)"
+                  + " VALUES (?,?,?,?,?,?,?) RETURNING *";
+          try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setObject(1, rev.id());
+            ps.setObject(2, rev.tenantId());
+            ps.setObject(3, rev.variantId());
+            ps.setString(4, rev.revision());
+            ps.setString(5, rev.description());
+            ps.setObject(6, Date.valueOf(rev.effectiveDate()));
+            ps.setString(7, rev.status());
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next())
+                throw new ApiException(
+                    409, "REVISION_EXISTS", "Revision already exists", List.of(), null);
+              ItemRevision saved = mapRevision(rs);
+              insertOutbox(c, event);
+              return saved;
+            }
+          }
+        },
+        "create item revision");
+  }
+
+  public List<ItemRevision> listRevisions(UUID tenantId, UUID variantId) {
+    return query(
+        "SELECT * FROM item_revisions WHERE tenant_id=? AND variant_id=?"
+            + " ORDER BY effective_date DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, variantId);
+        },
+        ProductRepository::mapRevision,
+        "list item revisions");
+  }
+
+  public Optional<ItemRevision> currentRevision(UUID tenantId, UUID variantId) {
+    var rows =
+        query(
+            "SELECT * FROM item_revisions WHERE tenant_id=? AND variant_id=?"
+                + " AND effective_date <= CURRENT_DATE"
+                + " ORDER BY effective_date DESC LIMIT 1",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, variantId);
+            },
+            ProductRepository::mapRevision,
+            "current item revision");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  public Optional<ItemRevision> findRevision(UUID tenantId, UUID revisionId) {
+    var rows =
+        query(
+            "SELECT * FROM item_revisions WHERE tenant_id=? AND id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, revisionId);
+            },
+            ProductRepository::mapRevision,
+            "find item revision");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  private static ItemRevision mapRevision(ResultSet rs) throws SQLException {
+    return new ItemRevision(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getString("revision"),
+        rs.getString("description"),
+        rs.getDate("effective_date").toLocalDate(),
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
   private static Product mapProduct(ResultSet rs) throws SQLException {
@@ -474,5 +700,126 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getString("status"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Item Templates (Gap #13) ─────────────────────────────────────────────
+
+  public ItemTemplate createTemplate(ItemTemplate t, OutboxRow event) {
+    return inTx(
+        c -> {
+          String sql =
+              "INSERT INTO item_templates (id, tenant_id, name, description, attributes, status)"
+                  + " VALUES (?,?,?,?,?,?) RETURNING *";
+          try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setObject(1, t.id());
+            ps.setObject(2, t.tenantId());
+            ps.setString(3, t.name());
+            ps.setString(4, t.description());
+            ps.setString(5, t.attributes());
+            ps.setString(6, t.status());
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next())
+                throw new ApiException(
+                    409, "TEMPLATE_EXISTS", "Template name already exists", List.of(), null);
+              ItemTemplate saved = mapTemplate(rs);
+              insertOutbox(c, event);
+              return saved;
+            }
+          }
+        },
+        "create item template");
+  }
+
+  public Optional<ItemTemplate> findTemplate(UUID tenantId, UUID id) {
+    var rows =
+        query(
+            "SELECT * FROM item_templates WHERE tenant_id=? AND id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            ProductRepository::mapTemplate,
+            "find item template");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  public List<ItemTemplate> listTemplates(UUID tenantId) {
+    return query(
+        "SELECT * FROM item_templates WHERE tenant_id=? AND status='ACTIVE' ORDER BY name",
+        ps -> ps.setObject(1, tenantId),
+        ProductRepository::mapTemplate,
+        "list item templates");
+  }
+
+  public ItemTemplate deactivateTemplate(UUID tenantId, UUID id) {
+    exec(
+        "UPDATE item_templates SET status='INACTIVE' WHERE tenant_id=? AND id=?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, id);
+        },
+        "deactivate item template");
+    return findTemplate(tenantId, id)
+        .orElseThrow(() -> ApiException.notFound("TEMPLATE_NOT_FOUND", "Template not found"));
+  }
+
+  public ItemTemplateApplication applyTemplate(
+      UUID tenantId, UUID variantId, UUID templateId, OutboxRow event) {
+    return inTx(
+        c -> {
+          ItemTemplate tpl =
+              findTemplate(tenantId, templateId)
+                  .orElseThrow(
+                      () -> ApiException.notFound("TEMPLATE_NOT_FOUND", "Template not found"));
+          // Copy attributes onto the variant (only when template has attributes)
+          if (tpl.attributes() != null && !tpl.attributes().isBlank()) {
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE product_variants SET attributes=? WHERE tenant_id=? AND id=?")) {
+              ps.setString(1, tpl.attributes());
+              ps.setObject(2, tenantId);
+              ps.setObject(3, variantId);
+              ps.executeUpdate();
+            }
+          }
+          UUID appId = UUID.randomUUID();
+          String insertSql =
+              "INSERT INTO item_template_applications"
+                  + " (id, tenant_id, variant_id, template_id) VALUES (?,?,?,?) RETURNING *";
+          try (PreparedStatement ps = c.prepareStatement(insertSql)) {
+            ps.setObject(1, appId);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, variantId);
+            ps.setObject(4, templateId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next())
+                throw new ApiException(500, "DB_ERROR", "apply template failed", List.of(), null);
+              ItemTemplateApplication app = mapApplication(rs);
+              insertOutbox(c, event);
+              return app;
+            }
+          }
+        },
+        "apply item template");
+  }
+
+  private static ItemTemplate mapTemplate(ResultSet rs) throws SQLException {
+    return new ItemTemplate(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getString("name"),
+        rs.getString("description"),
+        rs.getString("attributes"),
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static ItemTemplateApplication mapApplication(ResultSet rs) throws SQLException {
+    return new ItemTemplateApplication(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getObject("template_id", UUID.class),
+        rs.getObject("applied_at", OffsetDateTime.class).toInstant());
   }
 }

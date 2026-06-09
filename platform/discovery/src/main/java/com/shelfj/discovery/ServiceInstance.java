@@ -3,7 +3,7 @@ package com.shelfj.discovery;
 /**
  * A discovered, healthy instance of a service: where to reach it.
  *
- * @param serviceName logical name (e.g. {@code "sample-svc"})
+ * @param serviceName logical name (e.g. {@code "inventory-svc"})
  * @param host reachable host/IP
  * @param port reachable port
  */
