@@ -27,13 +27,32 @@ scrape_configs:
       - source_labels: [__meta_docker_container_id]
         target_label: container_id
     pipeline_stages:
+      # Unwrap Docker's JSON log wrapper: {"log":"...", "stream":"...", "time":"..."}
       - docker: {}
+
+      # Shelf-J services emit: [LEVEL] 2026-06-09T19:55:46.123Z [src] message
+      # Stack traces continue on lines that do NOT start with '['.
+      # Infrastructure services (consul, kafka, postgres) have varied formats;
+      # those lines are passed through as-is and land as level="unknown".
       - multiline:
-          firstline: '^\d{4}-\d{2}-\d{2}'
-          max_wait_time: 3s
+          firstline: '^\['
+          max_wait_time: 2s
+
+      # Extract level from [LEVEL] prefix (SEVERE, WARNING, INFO, FINE, FINER, FINEST)
       - regex:
-          expression: '(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[\.\d]*[Z+\-\d:]*)\s+(?P<level>[A-Z]+)\s+(?P<message>.*)'
+          expression: '^\[(?P<level>[A-Z]+)\]\s+(?P<timestamp>\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\[(?P<src>[^\]]+)\]\s+(?P<message>.*)'
+
+      # Add level as a Loki label — enables fast filtering: {level="WARNING"}
       - labels:
           level:
-      - output:
-          source: message
+
+      # Parse the extracted timestamp so Loki uses the app's clock, not the
+      # Promtail ingest time. Lines that didn't match the regex keep their
+      # Docker timestamp (the `docker: {}` stage sets it).
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02T15:04:05.000Z"
+          fallback_formats:
+            - "2006-01-02T15:04:05.000000Z"
+            - RFC3339
+          action_on_failure: skip

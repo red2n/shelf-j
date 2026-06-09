@@ -16,7 +16,7 @@ distributor:
 ingester:
   max_block_bytes: 1_000_000
   max_block_duration: 5m
-  complete_block_timeout: 1m
+  complete_block_timeout: 2m
 
 compactor:
   compaction:
@@ -31,7 +31,7 @@ metrics_generator:
       source: tempo
       cluster: shelf-j
   storage:
-    path: /tmp/tempo/generator/wal
+    path: /var/tempo/generator/wal
     remote_write:
       - url: http://prometheus:9090/api/v1/write
         send_exemplars: true
@@ -42,9 +42,9 @@ storage:
     block:
       bloom_filter_false_positive: .05
     wal:
-      path: /tmp/tempo/wal
+      path: /var/tempo/wal
     local:
-      path: /tmp/tempo/blocks
+      path: /var/tempo/blocks
 
 querier:
   frontend_worker:
@@ -58,7 +58,6 @@ query_frontend:
     duration_slo: 5s
 
 overrides:
-  defaults:
-    metrics_generator:
-      processors: [service-graphs, span-metrics]
-      generate_native_histograms: both
+  ingestion_tenant_shard_size: 0
+  user_configurable_overrides:
+    enabled: false
