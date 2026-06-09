@@ -24,7 +24,7 @@
     </properties>
 
     <dependencies>
-        <!-- MicroProfile core (CDI, JAX-RS, Config) + health + metrics + JUL (proven sample-svc baseline) -->
+        <!-- MicroProfile core (CDI, JAX-RS, Config) + health + metrics + JUL -->
         <dependency>
             <groupId>io.helidon.microprofile.bundles</groupId>
             <artifactId>helidon-microprofile-core</artifactId>

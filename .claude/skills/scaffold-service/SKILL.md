@@ -7,7 +7,7 @@ description: Scaffold a new Shelf-J business microservice (Helidon MP, Java 21) 
 
 Use this when adding a **new business microservice** to `services/`. It produces a service that already satisfies the [golden rules](../../../CLAUDE.md) and the [Definition of Done](../../../README.md#14-definition-of-done-for-any-service).
 
-> Read first if unsure: [README §6 Anatomy of a service](../../../README.md#6-anatomy-of-one-service-the-template-every-service-copies), the target service's spec in [README §9](../../../README.md#9-the-business-services--full-catalog). **Fastest path: copy `services/sample-svc` (the proven template) and rename.** `services/iam-svc` is a fuller worked example (auth, outbox, validation).
+> Read first if unsure: [README §6 Anatomy of a service](../../../README.md#6-anatomy-of-one-service-the-template-every-service-copies), the target service's spec in [README §9](../../../README.md#9-the-business-services--full-catalog). **Fastest path: use `services/iam-svc` as the structural reference** (auth, outbox, validation) or `services/inventory-svc` for a full domain-rich example.
 
 ## Reuse `shared/common-service` — do NOT re-write infra (saves ~100 lines/service; keeps Duplo low)
 
@@ -19,7 +19,7 @@ The DataSource producer, Flyway runner, Consul registrar, health checks, and Kaf
 
 Validate after adding a service: `scripts/duplo.sh` (duplication should stay ~10%).
 
-## Helidon 4.4.1 setup gotchas — apply these or things break (learned building sample-svc + iam-svc)
+## Helidon 4.4.1 setup gotchas — apply these or things break (learned building iam-svc + inventory-svc)
 
 1. **`mainClass` = `io.helidon.Main`** (NOT a custom `Server.create()` main) — else `/health` & `/metrics` 404.
 2. **No catch-all `ExceptionMapper<Throwable>`/`<Exception>`** — it shadows the framework's `/health` & `/metrics` routes. Keep only the specific `ApiExceptionMapper` (in common-web).

@@ -35,7 +35,7 @@ public class OutboxPublisher {
 
   @Inject ServiceSettings settings;
 
-  /** Optional: a service without an outbox (e.g. sample-svc) provides no OutboxStore bean. */
+  /** Optional: a service without an outbox provides no OutboxStore bean; publisher no-ops. */
   @Inject Instance<OutboxStore> storeInstance;
 
   private OutboxStore store;

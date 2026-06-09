@@ -49,12 +49,6 @@ scrape_configs:
       - targets: ['product-svc:8080']
         labels: { service: 'product-svc', layer: 'business' }
 
-  - job_name: 'sample-svc'
-    metrics_path: /metrics
-    static_configs:
-      - targets: ['sample-svc:8080']
-        labels: { service: 'sample-svc', layer: 'business' }
-
   # ── Prometheus self-monitoring ──────────────────────────────────────────────
   - job_name: 'prometheus'
     metrics_path: /metrics
