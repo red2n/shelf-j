@@ -17,6 +17,7 @@
 #   9411  zipkin           4317  otel-collector  4318  otel-collector (HTTP)
 #   9090  prometheus       3100  grafana         5555  pgadmin
 #   8888  config           8090  gateway (public entry point)
+#   3200  tempo            3101  loki
 
 name: shelf-j
 
@@ -33,6 +34,8 @@ volumes:
   prometheus_data:
   grafana_data:
   pgadmin_data:
+  loki_data:
+  tempo_data:
 
 services:
   # ---------------------------------------------------------------- infrastructure
@@ -264,6 +267,8 @@ services:
       - ./infra/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     depends_on:
       zipkin: { condition: service_healthy }
+      loki:   { condition: service_healthy }
+      tempo:  { condition: service_healthy }
     networks: [shelfj_network]
 
   # node_exporter — host CPU, memory, disk, network metrics.
@@ -326,6 +331,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=7d
       - --web.enable-lifecycle
+      - --web.enable-remote-write-receiver
     deploy:
       resources:
         limits:
@@ -360,6 +366,8 @@ services:
       - grafana_data:/var/lib/grafana
     depends_on:
       prometheus: { condition: service_healthy }
+      loki:       { condition: service_healthy }
+      tempo:      { condition: service_healthy }
     networks: [shelfj_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
@@ -383,6 +391,77 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ---------------------------------------------------------------- observability: logs + traces
+
+  # Loki — log aggregation backend. Receives logs from Promtail and OTEL collector.
+  loki:
+    image: grafana/loki:3.1.0
+    container_name: shelfj-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yaml
+    ports: ["3101:3100"]
+    volumes:
+      - ./infra/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    networks: [shelfj_network]
+    deploy:
+      resources:
+        limits:
+          memory: "${LOKI_MEM_LIMIT:-512m}"
+        reservations:
+          memory: 64m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Promtail — scrapes Docker container logs and ships them to Loki.
+  promtail:
+    image: grafana/promtail:3.1.0
+    container_name: shelfj-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    volumes:
+      - ./infra/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks: [shelfj_network]
+    deploy:
+      resources:
+        limits:
+          memory: "${PROMTAIL_MEM_LIMIT:-256m}"
+        reservations:
+          memory: 32m
+    depends_on:
+      loki: { condition: service_healthy }
+
+  # Tempo — distributed tracing backend. Receives OTLP traces from the OTEL collector.
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: shelfj-tempo
+    restart: unless-stopped
+    command: -config.file=/etc/tempo/tempo-config.yaml
+    ports:
+      - "3200:3200"   # Tempo HTTP API (Grafana datasource)
+    volumes:
+      - ./infra/tempo-config.yaml:/etc/tempo/tempo-config.yaml:ro
+      - tempo_data:/tmp/tempo
+    networks: [shelfj_network]
+    deploy:
+      resources:
+        limits:
+          memory: "${TEMPO_MEM_LIMIT:-512m}"
+        reservations:
+          memory: 64m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   # ---------------------------------------------------------------- platform services
 
