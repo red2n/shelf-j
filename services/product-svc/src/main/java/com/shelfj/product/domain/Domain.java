@@ -70,6 +70,34 @@ public final class Domain {
     public static final String STATUS_INACTIVE = "INACTIVE";
   }
 
+  // ── Gap #33: Supplier / Customer Cross-References ────────────────────────
+
+  public record ItemCrossReference(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      String partyType,
+      UUID partyId,
+      String partyName,
+      String crossRefNumber,
+      Instant createdAt) {
+    public static final String SUPPLIER = "SUPPLIER";
+    public static final String CUSTOMER = "CUSTOMER";
+  }
+
+  // ── Gap #32: Item Relationships ─────────────────────────────────────────
+
+  public record ItemRelationship(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      UUID relatedVariantId,
+      String relationshipType,
+      Instant createdAt) {
+    public static final String SUBSTITUTE = "SUBSTITUTE";
+    public static final String COMPLEMENTARY = "COMPLEMENTARY";
+  }
+
   // ── Gap #13: Item Templates ──────────────────────────────────────────────
 
   public record ItemTemplate(

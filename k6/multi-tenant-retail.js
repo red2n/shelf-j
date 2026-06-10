@@ -919,6 +919,136 @@ export function catalogAdmin(d) {
     }
   }
 
+  // ── Gap #33: cross-references — positive round-trip ───────────────────────
+  if (tenant.variantIds.length > 0) {
+    const xVid = tenant.variantIds[0];
+    const supplierId = genUuid();
+    const customerId = genUuid();
+
+    // Create SUPPLIER cross-ref
+    res = post(`/api/product-svc/admin/products/variants/${xVid}/cross-references`, {
+      partyType: 'SUPPLIER', partyId: supplierId,
+      partyName: `Supplier-${tag}`, crossRefNumber: `SUP-${slug()}`,
+    }, tenant.tenantId, tenant.ownerId);
+    ok(res, `${tag} create SUPPLIER cross-ref`);
+    check(res, {
+      [`${tag} cross-ref partyType=SUPPLIER`]: r => {
+        try { return JSON.parse(r.body).data.partyType === 'SUPPLIER'; }
+        catch (_) { return false; }
+      },
+    });
+    const xrefId = (() => {
+      try { return JSON.parse(res.body).data.id; } catch (_) { return null; }
+    })();
+
+    // Create CUSTOMER cross-ref
+    res = post(`/api/product-svc/admin/products/variants/${xVid}/cross-references`, {
+      partyType: 'CUSTOMER', partyId: customerId,
+      partyName: `Customer-${tag}`, crossRefNumber: `CUST-${slug()}`,
+    }, tenant.tenantId, tenant.ownerId);
+    ok(res, `${tag} create CUSTOMER cross-ref`);
+
+    // List all cross-refs — must include both
+    res = get(`/api/product-svc/admin/products/variants/${xVid}/cross-references`,
+      tenant.tenantId, tenant.ownerId);
+    ok(res, `${tag} list cross-refs`);
+    check(res, {
+      [`${tag} cross-ref list has ≥2 items`]: r => {
+        try { return (JSON.parse(r.body).data || []).length >= 2; }
+        catch (_) { return false; }
+      },
+    });
+
+    // Filter by partyType=SUPPLIER — only SUPPLIER entries returned
+    res = get(`/api/product-svc/admin/products/variants/${xVid}/cross-references?partyType=SUPPLIER`,
+      tenant.tenantId, tenant.ownerId);
+    ok(res, `${tag} list cross-refs filtered SUPPLIER`);
+    check(res, {
+      [`${tag} cross-ref filter returns only SUPPLIER`]: r => {
+        try {
+          const items = JSON.parse(r.body).data || [];
+          return items.length > 0 && items.every(x => x.partyType === 'SUPPLIER');
+        } catch (_) { return false; }
+      },
+    });
+
+    // Delete the SUPPLIER cross-ref
+    if (xrefId) {
+      res = http.del(
+        `${BASE}/api/product-svc/admin/products/variants/${xVid}/cross-references/${xrefId}`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+      check(res, { [`${tag} delete cross-ref → 204`]: r => r.status === 204 });
+    }
+  }
+
+  // ── Gap #32: item relationships — positive round-trip ─────────────────────
+  if (tenant.variantIds.length >= 2) {
+    // Use VU-specific direction so concurrent VUs don't collide on the unique key
+    const [vidA, vidB] = __VU % 2 === 0
+      ? [tenant.variantIds[0], tenant.variantIds[1]]
+      : [tenant.variantIds[1], tenant.variantIds[0]];
+
+    // Create SUBSTITUTE relationship
+    res = post(`/api/product-svc/admin/products/variants/${vidA}/relationships`,
+      { relatedVariantId: vidB, relationshipType: 'SUBSTITUTE' },
+      tenant.tenantId, tenant.ownerId);
+    ok(res, `${tag} create SUBSTITUTE relationship`);
+    check(res, {
+      [`${tag} relationship has relationshipType SUBSTITUTE`]: r => {
+        try { return JSON.parse(r.body).data.relationshipType === 'SUBSTITUTE'; }
+        catch (_) { return false; }
+      },
+    });
+    const relId = (() => {
+      try { return JSON.parse(res.body).data.id; } catch (_) { return null; }
+    })();
+
+    // Create COMPLEMENTARY relationship (different type, same pair — unique key allows it)
+    res = post(`/api/product-svc/admin/products/variants/${vidA}/relationships`,
+      { relatedVariantId: vidB, relationshipType: 'COMPLEMENTARY' },
+      tenant.tenantId, tenant.ownerId);
+    ok(res, `${tag} create COMPLEMENTARY relationship`);
+    const compRelId = (() => {
+      try { return JSON.parse(res.body).data.id; } catch (_) { return null; }
+    })();
+
+    // List relationships for vidA — must include both
+    res = get(`/api/product-svc/admin/products/variants/${vidA}/relationships`,
+      tenant.tenantId, tenant.ownerId);
+    ok(res, `${tag} list relationships`);
+    check(res, {
+      [`${tag} relationship list has items`]: r => {
+        try { return (JSON.parse(r.body).data || []).length >= 2; }
+        catch (_) { return false; }
+      },
+    });
+
+    // Delete SUBSTITUTE then COMPLEMENTARY so the block is idempotent across iterations
+    if (relId) {
+      res = http.del(
+        `${BASE}/api/product-svc/admin/products/variants/${vidA}/relationships/${relId}`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+      check(res, { [`${tag} delete relationship → 204`]: r => r.status === 204 });
+
+      // Confirm SUBSTITUTE is gone
+      res = get(`/api/product-svc/admin/products/variants/${vidA}/relationships`,
+        tenant.tenantId, tenant.ownerId);
+      check(res, {
+        [`${tag} relationship deleted — list shrinks`]: r => {
+          try { return (JSON.parse(r.body).data || []).every(x => x.id !== relId); }
+          catch (_) { return true; }
+        },
+      });
+    }
+
+    // Delete COMPLEMENTARY so it doesn't accumulate across iterations
+    if (compRelId) {
+      http.del(
+        `${BASE}/api/product-svc/admin/products/variants/${vidA}/relationships/${compRelId}`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+    }
+  }
+
   if (store) {
     // Thresholds + movements for current store
     res = get(`/api/inventory-svc/admin/inventory/thresholds?store=${store.storeId}`,
@@ -1134,7 +1264,9 @@ export function planningEngine(d) {
   const store  = storeCtx(tenant);
   if (!store || !tenant.variantIds.length) return;
   const tag = isIN(d) ? 'IN' : 'UK';
-  const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
+  // VU-specific offset so concurrent VUs don't race on the same (store, variant) suggestion
+  const vuOffset = __VU % tenant.variantIds.length;
+  const vid = tenant.variantIds[(__ITER + vuOffset) % tenant.variantIds.length];
 
   // 1. Set a very high threshold to guarantee an under-stock condition for this run
   const highThreshold = '500000.000';
@@ -1193,19 +1325,24 @@ export function planningEngine(d) {
   });
 
   // 4. Resolve suggestion as ORDERED
+  // Accept 404 as valid — another concurrent VU may have already resolved this suggestion
   if (suggestion) {
     const resolveRes = put(
       `/api/inventory-svc/admin/inventory/planning/suggestions/${suggestion.id}/status`,
       { status: 'ORDERED' }, tenant.tenantId, tenant.ownerId);
-    ok(resolveRes, `${tag} PE resolve ORDERED`);
     check(resolveRes, {
-      [`${tag} PE resolved status=ORDERED`]: r => {
-        try { return JSON.parse(r.body).data.status === 'ORDERED'; } catch (_) { return false; }
-      },
-      [`${tag} PE resolved has resolvedAt`]: r => {
-        try { return JSON.parse(r.body).data.resolvedAt != null; } catch (_) { return false; }
-      },
+      [`${tag} PE resolve ORDERED 200 or 404`]: r => r.status === 200 || r.status === 404,
     });
+    if (resolveRes.status === 200) {
+      check(resolveRes, {
+        [`${tag} PE resolved status=ORDERED`]: r => {
+          try { return JSON.parse(r.body).data.status === 'ORDERED'; } catch (_) { return false; }
+        },
+        [`${tag} PE resolved has resolvedAt`]: r => {
+          try { return JSON.parse(r.body).data.resolvedAt != null; } catch (_) { return false; }
+        },
+      });
+    }
   }
 
   // 5. Reset threshold back to normal so other scenarios are not disrupted
@@ -2503,6 +2640,100 @@ export function negativeTests(d) {
         { sku: '  ', barcode: null, manufacturerPn: 'MFR-NEG-003', unit: 'PCS' },
         tenant.tenantId, tenant.ownerId), 'variant update blank sku with MPN → 400', 400);
     }
+  }
+
+  // ── Gap #33: cross-references — negative cases ─────────────────────────────
+
+  if (tenant.variantIds.length > 0) {
+    const xnVid = tenant.variantIds[0];
+    const validPartyId = genUuid();
+
+    // Invalid partyType → 400
+    neg(post(`/api/product-svc/admin/products/variants/${xnVid}/cross-references`,
+      { partyType: 'BROKER', partyId: validPartyId, crossRefNumber: 'XYZ' },
+      tenant.tenantId, tenant.ownerId), 'cross-ref invalid partyType → 400', 400);
+
+    // Non-UUID partyId → 400
+    neg(post(`/api/product-svc/admin/products/variants/${xnVid}/cross-references`,
+      { partyType: 'SUPPLIER', partyId: 'not-a-uuid', crossRefNumber: 'XYZ' },
+      tenant.tenantId, tenant.ownerId), 'cross-ref non-UUID partyId → 400', 400);
+
+    // Missing crossRefNumber → 400
+    neg(post(`/api/product-svc/admin/products/variants/${xnVid}/cross-references`,
+      { partyType: 'SUPPLIER', partyId: validPartyId },
+      tenant.tenantId, tenant.ownerId), 'cross-ref missing crossRefNumber → 400', 400);
+
+    // Duplicate (same variant + partyType + partyId) → 409
+    const dupXRef = post(`/api/product-svc/admin/products/variants/${xnVid}/cross-references`,
+      { partyType: 'SUPPLIER', partyId: validPartyId, crossRefNumber: 'DUP-001' },
+      tenant.tenantId, tenant.ownerId);
+    if (dupXRef.status === 201) {
+      neg(post(`/api/product-svc/admin/products/variants/${xnVid}/cross-references`,
+        { partyType: 'SUPPLIER', partyId: validPartyId, crossRefNumber: 'DUP-002' },
+        tenant.tenantId, tenant.ownerId), 'duplicate cross-ref → 409', 409);
+    }
+
+    // Delete non-existent → 404
+    neg(http.del(
+      `${BASE}/api/product-svc/admin/products/variants/${xnVid}/cross-references/${fakeId}`,
+      null, { headers: hdrs(tenant.tenantId, tenant.ownerId) }),
+      'delete nonexistent cross-ref → 404', 404);
+  }
+
+  // ── Gap #32: item relationships — negative cases ────────────────────────────
+
+  if (tenant.variantIds.length >= 2) {
+    const rv0 = tenant.variantIds[0];
+    const rv1 = tenant.variantIds[1];
+
+    // Invalid relationshipType enum → 400
+    neg(post(`/api/product-svc/admin/products/variants/${rv0}/relationships`,
+      { relatedVariantId: rv1, relationshipType: 'ENEMIES' },
+      tenant.tenantId, tenant.ownerId), 'relationship invalid type → 400', 400);
+
+    // Self-relationship → 400
+    neg(post(`/api/product-svc/admin/products/variants/${rv0}/relationships`,
+      { relatedVariantId: rv0, relationshipType: 'SUBSTITUTE' },
+      tenant.tenantId, tenant.ownerId), 'relationship self-ref → 400', 400);
+
+    // Non-UUID relatedVariantId → 400
+    neg(post(`/api/product-svc/admin/products/variants/${rv0}/relationships`,
+      { relatedVariantId: 'not-a-uuid', relationshipType: 'SUBSTITUTE' },
+      tenant.tenantId, tenant.ownerId), 'relationship invalid relatedVariantId → 400', 400);
+
+    // Missing relationshipType → 400
+    neg(post(`/api/product-svc/admin/products/variants/${rv0}/relationships`,
+      { relatedVariantId: rv1 },
+      tenant.tenantId, tenant.ownerId), 'relationship missing type → 400', 400);
+
+    // Duplicate relationship → 409 (create, test dup, then clean up to avoid cross-iteration conflict)
+    const dupType = 'COMPLEMENTARY';
+    const dup1 = post(`/api/product-svc/admin/products/variants/${rv0}/relationships`,
+      { relatedVariantId: rv1, relationshipType: dupType },
+      tenant.tenantId, tenant.ownerId);
+    if (dup1.status === 201) {
+      const dup1Id = (() => { try { return JSON.parse(dup1.body).data.id; } catch (_) { return null; } })();
+      neg(post(`/api/product-svc/admin/products/variants/${rv0}/relationships`,
+        { relatedVariantId: rv1, relationshipType: dupType },
+        tenant.tenantId, tenant.ownerId), 'duplicate relationship → 409', 409);
+      if (dup1Id) {
+        http.del(`${BASE}/api/product-svc/admin/products/variants/${rv0}/relationships/${dup1Id}`,
+          null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+      }
+    }
+
+    // Cross-tenant: UK variant ID used with India token (or vice versa) — relatedVariant not found
+    if (other.variantIds && other.variantIds.length > 0) {
+      neg(post(`/api/product-svc/admin/products/variants/${rv0}/relationships`,
+        { relatedVariantId: other.variantIds[0], relationshipType: 'SUBSTITUTE' },
+        tenant.tenantId, tenant.ownerId), 'relationship cross-tenant relatedVariant → 404', 404);
+    }
+
+    // Delete non-existent relationship → 404
+    neg(http.del(
+      `${BASE}/api/product-svc/admin/products/variants/${rv0}/relationships/${fakeId}`,
+      null, { headers: hdrs(tenant.tenantId, tenant.ownerId) }),
+      'delete nonexistent relationship → 404', 404);
   }
 
   // ── Not-found (404) ──────────────────────────────────────────────────────────

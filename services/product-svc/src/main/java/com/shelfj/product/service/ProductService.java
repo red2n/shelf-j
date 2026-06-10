@@ -2,6 +2,8 @@ package com.shelfj.product.service;
 
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
+import com.shelfj.product.domain.Domain.ItemCrossReference;
+import com.shelfj.product.domain.Domain.ItemRelationship;
 import com.shelfj.product.domain.Domain.ItemRevision;
 import com.shelfj.product.domain.Domain.ItemTemplate;
 import com.shelfj.product.domain.Domain.ItemTemplateApplication;
@@ -13,6 +15,8 @@ import com.shelfj.product.domain.Domain.Variant;
 import com.shelfj.product.dto.Dtos.ConvertResult;
 import com.shelfj.product.dto.Dtos.CreateBrandRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
+import com.shelfj.product.dto.Dtos.CreateItemCrossReferenceRequest;
+import com.shelfj.product.dto.Dtos.CreateItemRelationshipRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
 import com.shelfj.product.dto.Dtos.UpdateBrandRequest;
@@ -237,6 +241,82 @@ public class ProductService {
   public Variant delistVariant(UUID tenantId, UUID productId, UUID variantId) {
     getVariant(tenantId, variantId);
     return repo.delistVariant(tenantId, variantId);
+  }
+
+  // ── Supplier / Customer Cross-References (Gap #33) ──────────────────────
+
+  public ItemCrossReference createCrossReference(
+      UUID tenantId, UUID variantId, CreateItemCrossReferenceRequest req) {
+    String type = req.partyType().toUpperCase(java.util.Locale.ROOT);
+    if (!ItemCrossReference.SUPPLIER.equals(type) && !ItemCrossReference.CUSTOMER.equals(type)) {
+      throw ApiException.badRequest("INVALID_PARTY_TYPE", "partyType must be SUPPLIER or CUSTOMER");
+    }
+    UUID partyId;
+    try {
+      partyId = UUID.fromString(req.partyId());
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(400, "INVALID_UUID", "partyId must be a UUID", List.of(), e);
+    }
+    getVariant(tenantId, variantId);
+    return repo.createCrossReference(
+        new ItemCrossReference(
+            UUID.randomUUID(),
+            tenantId,
+            variantId,
+            type,
+            partyId,
+            req.partyName(),
+            req.crossRefNumber().trim(),
+            Instant.now()));
+  }
+
+  public List<ItemCrossReference> listCrossReferences(
+      UUID tenantId, UUID variantId, String partyType) {
+    getVariant(tenantId, variantId);
+    String type = partyType != null ? partyType.toUpperCase(java.util.Locale.ROOT) : null;
+    return repo.listCrossReferences(tenantId, variantId, type);
+  }
+
+  public void deleteCrossReference(UUID tenantId, UUID id) {
+    if (!repo.deleteCrossReference(tenantId, id)) {
+      throw ApiException.notFound("CROSS_REF_NOT_FOUND", "Cross reference not found");
+    }
+  }
+
+  // ── Item Relationships (Gap #32) ────────────────────────────────────────
+
+  public ItemRelationship createRelationship(
+      UUID tenantId, UUID variantId, CreateItemRelationshipRequest req) {
+    UUID relatedId;
+    try {
+      relatedId = UUID.fromString(req.relatedVariantId());
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(400, "INVALID_UUID", "relatedVariantId must be a UUID", List.of(), e);
+    }
+    String type = req.relationshipType().toUpperCase(java.util.Locale.ROOT);
+    if (!ItemRelationship.SUBSTITUTE.equals(type) && !ItemRelationship.COMPLEMENTARY.equals(type)) {
+      throw ApiException.badRequest(
+          "INVALID_RELATIONSHIP_TYPE", "relationshipType must be SUBSTITUTE or COMPLEMENTARY");
+    }
+    if (variantId.equals(relatedId)) {
+      throw ApiException.badRequest("SELF_RELATIONSHIP", "A variant cannot relate to itself");
+    }
+    getVariant(tenantId, variantId);
+    getVariant(tenantId, relatedId);
+    return repo.createRelationship(
+        new ItemRelationship(
+            UUID.randomUUID(), tenantId, variantId, relatedId, type, Instant.now()));
+  }
+
+  public List<ItemRelationship> listRelationships(UUID tenantId, UUID variantId) {
+    getVariant(tenantId, variantId);
+    return repo.listRelationships(tenantId, variantId);
+  }
+
+  public void deleteRelationship(UUID tenantId, UUID id) {
+    if (!repo.deleteRelationship(tenantId, id)) {
+      throw ApiException.notFound("RELATIONSHIP_NOT_FOUND", "Item relationship not found");
+    }
   }
 
   // ---- UOM (Gap #2) ----

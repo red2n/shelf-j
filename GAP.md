@@ -311,8 +311,8 @@
 
 | # | Gap | Service | Notes |
 |---|---|---|---|
-| 32 | **Item relationships** — substitute / complementary links between variants | product-svc | No `item_relationships` table or endpoint |
-| 33 | **Supplier / customer cross-references** — supplier part-number cross-ref table | product-svc | No cross-ref table in any migration |
+| ~~32~~ | ~~**Item relationships** — substitute / complementary links between variants~~ ✅ | ~~product-svc~~ | ~~V7__item_relationships.sql + Domain/DTO/Repo/Service/Resource; POST/GET/DELETE /products/variants/{id}/relationships; k6 positive + 6 negative cases~~ |
+| ~~33~~ | ~~**Supplier / customer cross-references** — supplier part-number cross-ref table~~ ✅ | ~~product-svc~~ | ~~V8__supplier_cross_references.sql; POST/GET/DELETE /variants/{id}/cross-references; positive + negative k6 coverage~~ |
 | ~~34~~ | ~~**Manufacturer part numbers** — `manufacturer_pn` field on `product_variants`~~ ✅ | ~~product-svc~~ | ~~V6__manufacturer_pn.sql + Domain/DTO/Repo/Mapper/Service; positive + negative k6 coverage~~ |
 | 35 | **Item catalog groups / descriptive elements** — structured spec metadata beyond `attributes JSONB` | product-svc | Variants use an untyped JSONB bag only |
 | 36 | **18 Oracle attribute groups** — typed model for Lead Times, Purchasing, Receiving, WIP, Web, etc. | product-svc | No attribute group model; untyped JSONB only |

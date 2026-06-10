@@ -2,6 +2,8 @@ package com.shelfj.product.repo;
 
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
+import com.shelfj.product.domain.Domain.ItemCrossReference;
+import com.shelfj.product.domain.Domain.ItemRelationship;
 import com.shelfj.product.domain.Domain.ItemRevision;
 import com.shelfj.product.domain.Domain.ItemTemplate;
 import com.shelfj.product.domain.Domain.ItemTemplateApplication;
@@ -709,6 +711,143 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getString("status"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Supplier / Customer Cross-References (Gap #33) ──────────────────────
+
+  public ItemCrossReference createCrossReference(ItemCrossReference x) {
+    exec(
+        "INSERT INTO item_cross_references"
+            + " (id, tenant_id, variant_id, party_type, party_id, party_name,"
+            + " cross_ref_number, created_at)"
+            + " VALUES (?,?,?,?,?,?,?,?)",
+        ps -> {
+          ps.setObject(1, x.id());
+          ps.setObject(2, x.tenantId());
+          ps.setObject(3, x.variantId());
+          ps.setString(4, x.partyType());
+          ps.setObject(5, x.partyId());
+          ps.setString(6, x.partyName());
+          ps.setString(7, x.crossRefNumber());
+          ps.setObject(8, x.createdAt().atOffset(ZoneOffset.UTC));
+        },
+        "create cross reference");
+    return x;
+  }
+
+  public List<ItemCrossReference> listCrossReferences(
+      UUID tenantId, UUID variantId, String partyType) {
+    if (partyType != null) {
+      return query(
+          "SELECT id, tenant_id, variant_id, party_type, party_id, party_name,"
+              + " cross_ref_number, created_at"
+              + " FROM item_cross_references"
+              + " WHERE tenant_id = ? AND variant_id = ? AND party_type = ?"
+              + " ORDER BY created_at",
+          ps -> {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, variantId);
+            ps.setString(3, partyType);
+          },
+          ProductRepository::mapCrossReference,
+          "list cross references by type");
+    }
+    return query(
+        "SELECT id, tenant_id, variant_id, party_type, party_id, party_name,"
+            + " cross_ref_number, created_at"
+            + " FROM item_cross_references"
+            + " WHERE tenant_id = ? AND variant_id = ? ORDER BY created_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, variantId);
+        },
+        ProductRepository::mapCrossReference,
+        "list cross references");
+  }
+
+  public boolean deleteCrossReference(UUID tenantId, UUID id) {
+    Instant[] found = {null};
+    query(
+        "DELETE FROM item_cross_references WHERE tenant_id = ? AND id = ? RETURNING id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, id);
+        },
+        rs -> {
+          found[0] = Instant.now();
+          return found[0];
+        },
+        "delete cross reference");
+    return found[0] != null;
+  }
+
+  private static ItemCrossReference mapCrossReference(ResultSet rs) throws SQLException {
+    return new ItemCrossReference(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getString("party_type"),
+        rs.getObject("party_id", UUID.class),
+        rs.getString("party_name"),
+        rs.getString("cross_ref_number"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Item Relationships (Gap #32) ────────────────────────────────────────
+
+  public ItemRelationship createRelationship(ItemRelationship r) {
+    exec(
+        "INSERT INTO item_relationships"
+            + " (id, tenant_id, variant_id, related_variant_id, relationship_type, created_at)"
+            + " VALUES (?,?,?,?,?,?)",
+        ps -> {
+          ps.setObject(1, r.id());
+          ps.setObject(2, r.tenantId());
+          ps.setObject(3, r.variantId());
+          ps.setObject(4, r.relatedVariantId());
+          ps.setString(5, r.relationshipType());
+          ps.setObject(6, r.createdAt().atOffset(ZoneOffset.UTC));
+        },
+        "create item relationship");
+    return r;
+  }
+
+  public List<ItemRelationship> listRelationships(UUID tenantId, UUID variantId) {
+    return query(
+        "SELECT id, tenant_id, variant_id, related_variant_id, relationship_type, created_at"
+            + " FROM item_relationships WHERE tenant_id = ? AND variant_id = ? ORDER BY created_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, variantId);
+        },
+        ProductRepository::mapRelationship,
+        "list item relationships");
+  }
+
+  public boolean deleteRelationship(UUID tenantId, UUID id) {
+    Instant[] found = {null};
+    query(
+        "DELETE FROM item_relationships WHERE tenant_id = ? AND id = ? RETURNING id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, id);
+        },
+        rs -> {
+          found[0] = Instant.now();
+          return found[0];
+        },
+        "delete item relationship");
+    return found[0] != null;
+  }
+
+  private static ItemRelationship mapRelationship(ResultSet rs) throws SQLException {
+    return new ItemRelationship(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getObject("related_variant_id", UUID.class),
+        rs.getString("relationship_type"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
   // ── Item Templates (Gap #13) ─────────────────────────────────────────────

@@ -105,6 +105,35 @@ public final class Dtos {
       BigDecimal factor,
       String source) {}
 
+  // ── Supplier / Customer Cross-References (Gap #33) ───────────────────────
+
+  public record CreateItemCrossReferenceRequest(
+      @NotBlank String partyType,
+      @NotBlank String partyId,
+      String partyName,
+      @NotBlank String crossRefNumber) {}
+
+  public record ItemCrossReferenceResponse(
+      String id,
+      String variantId,
+      String partyType,
+      String partyId,
+      String partyName,
+      String crossRefNumber,
+      String createdAt) {}
+
+  // ── Item Relationships (Gap #32) ─────────────────────────────────────────
+
+  public record CreateItemRelationshipRequest(
+      @NotBlank String relatedVariantId, @NotBlank String relationshipType) {}
+
+  public record ItemRelationshipResponse(
+      String id,
+      String variantId,
+      String relatedVariantId,
+      String relationshipType,
+      String createdAt) {}
+
   // ── Item Templates (Gap #13) ─────────────────────────────────────────────
 
   public record CreateItemTemplateRequest(

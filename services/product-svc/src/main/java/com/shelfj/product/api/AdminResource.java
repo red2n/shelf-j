@@ -5,10 +5,14 @@ import com.shelfj.product.dto.Dtos.CategoryResponse;
 import com.shelfj.product.dto.Dtos.ConvertResult;
 import com.shelfj.product.dto.Dtos.CreateBrandRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
+import com.shelfj.product.dto.Dtos.CreateItemCrossReferenceRequest;
+import com.shelfj.product.dto.Dtos.CreateItemRelationshipRequest;
 import com.shelfj.product.dto.Dtos.CreateItemTemplateRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
 import com.shelfj.product.dto.Dtos.CreateRevisionRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
+import com.shelfj.product.dto.Dtos.ItemCrossReferenceResponse;
+import com.shelfj.product.dto.Dtos.ItemRelationshipResponse;
 import com.shelfj.product.dto.Dtos.ItemRevisionResponse;
 import com.shelfj.product.dto.Dtos.ItemTemplateApplicationResponse;
 import com.shelfj.product.dto.Dtos.ItemTemplateResponse;
@@ -338,6 +342,66 @@ public class AdminResource {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
         Mappers.toTemplateApplication(service.applyTemplate(tenantId, variantId, templateId)));
+  }
+
+  // ── Supplier / Customer Cross-References (Gap #33) ───────────────────────
+
+  @POST
+  @Path("/products/variants/{variantId}/cross-references")
+  public Response createCrossReference(
+      @PathParam("variantId") UUID variantId, CreateItemCrossReferenceRequest req) {
+    Validations.validate(req);
+    return created(
+        Mappers.toCrossReference(
+            service.createCrossReference(ctx.requireTenantId(), variantId, req)));
+  }
+
+  @GET
+  @Path("/products/variants/{variantId}/cross-references")
+  public ApiResponse<List<ItemCrossReferenceResponse>> listCrossReferences(
+      @PathParam("variantId") UUID variantId, @QueryParam("partyType") String partyType) {
+    return ApiResponse.ok(
+        service.listCrossReferences(ctx.requireTenantId(), variantId, partyType).stream()
+            .map(Mappers::toCrossReference)
+            .toList());
+  }
+
+  @DELETE
+  @Path("/products/variants/{variantId}/cross-references/{id}")
+  public Response deleteCrossReference(
+      @PathParam("variantId") UUID variantId, @PathParam("id") UUID id) {
+    service.deleteCrossReference(ctx.requireTenantId(), id);
+    return Response.noContent().build();
+  }
+
+  // ── Item Relationships (Gap #32) ─────────────────────────────────────────
+
+  @POST
+  @Path("/products/variants/{variantId}/relationships")
+  public Response createRelationship(
+      @PathParam("variantId") UUID variantId, CreateItemRelationshipRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    return created(Mappers.toRelationship(service.createRelationship(tenantId, variantId, req)));
+  }
+
+  @GET
+  @Path("/products/variants/{variantId}/relationships")
+  public ApiResponse<List<ItemRelationshipResponse>> listRelationships(
+      @PathParam("variantId") UUID variantId) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listRelationships(tenantId, variantId).stream()
+            .map(Mappers::toRelationship)
+            .toList());
+  }
+
+  @DELETE
+  @Path("/products/variants/{variantId}/relationships/{id}")
+  public Response deleteRelationship(
+      @PathParam("variantId") UUID variantId, @PathParam("id") UUID id) {
+    service.deleteRelationship(ctx.requireTenantId(), id);
+    return Response.noContent().build();
   }
 
   // ── Item Revisions (Gap #12) ──────────────────────────────────────────────

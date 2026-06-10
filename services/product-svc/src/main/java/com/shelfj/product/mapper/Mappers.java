@@ -2,6 +2,8 @@ package com.shelfj.product.mapper;
 
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.Category;
+import com.shelfj.product.domain.Domain.ItemCrossReference;
+import com.shelfj.product.domain.Domain.ItemRelationship;
 import com.shelfj.product.domain.Domain.ItemRevision;
 import com.shelfj.product.domain.Domain.ItemTemplate;
 import com.shelfj.product.domain.Domain.ItemTemplateApplication;
@@ -12,6 +14,8 @@ import com.shelfj.product.domain.Domain.UomItemConversion;
 import com.shelfj.product.domain.Domain.Variant;
 import com.shelfj.product.dto.Dtos.BrandResponse;
 import com.shelfj.product.dto.Dtos.CategoryResponse;
+import com.shelfj.product.dto.Dtos.ItemCrossReferenceResponse;
+import com.shelfj.product.dto.Dtos.ItemRelationshipResponse;
 import com.shelfj.product.dto.Dtos.ItemRevisionResponse;
 import com.shelfj.product.dto.Dtos.ItemTemplateApplicationResponse;
 import com.shelfj.product.dto.Dtos.ItemTemplateResponse;
@@ -96,6 +100,26 @@ public final class Mappers {
   public static ItemTemplateApplicationResponse toTemplateApplication(ItemTemplateApplication a) {
     return new ItemTemplateApplicationResponse(
         a.id().toString(), a.variantId().toString(), a.templateId().toString(), ts(a.appliedAt()));
+  }
+
+  public static ItemCrossReferenceResponse toCrossReference(ItemCrossReference x) {
+    return new ItemCrossReferenceResponse(
+        x.id().toString(),
+        x.variantId().toString(),
+        x.partyType(),
+        x.partyId().toString(),
+        x.partyName(),
+        x.crossRefNumber(),
+        ts(x.createdAt()));
+  }
+
+  public static ItemRelationshipResponse toRelationship(ItemRelationship r) {
+    return new ItemRelationshipResponse(
+        r.id().toString(),
+        r.variantId().toString(),
+        r.relatedVariantId().toString(),
+        r.relationshipType(),
+        ts(r.createdAt()));
   }
 
   public static ItemRevisionResponse toRevision(ItemRevision r) {
