@@ -90,6 +90,23 @@ public final class Dtos {
 
   // ── Post-void (Gap #14) ───────────────────────────────────────────────────
 
+  // ── Order list (header-only, no items embedded) ───────────────────────────
+
+  public record OrderSummaryResponse(
+      String id,
+      String storeId,
+      String customerId,
+      String channel,
+      String fulfilmentType,
+      String status,
+      BigDecimal subtotal,
+      BigDecimal taxAmount,
+      BigDecimal discountAmount,
+      BigDecimal total,
+      String currency,
+      String createdAt,
+      String updatedAt) {}
+
   public record VoidRequest(@NotBlank String reason) {}
 
   public record VoidResponse(String orderId, String reason, String voidedAt) {}

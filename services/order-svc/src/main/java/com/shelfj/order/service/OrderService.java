@@ -96,6 +96,17 @@ public class OrderService {
     return repo.createOrder(order, items, Events.orderPlaced(tenantId, orderId, req.channel()));
   }
 
+  public List<Order> listOrders(
+      UUID tenantId,
+      UUID storeId,
+      String channel,
+      String status,
+      Instant from,
+      Instant to,
+      int limit) {
+    return repo.listOrders(tenantId, storeId, channel, status, from, to, limit);
+  }
+
   public Order getOrder(UUID tenantId, UUID orderId) {
     return repo.findOrder(tenantId, orderId)
         .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));

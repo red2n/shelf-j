@@ -19,6 +19,7 @@ import com.shelfj.order.dto.Dtos.LayawayResponse;
 import com.shelfj.order.dto.Dtos.OrderItemResponse;
 import com.shelfj.order.dto.Dtos.OrderResponse;
 import com.shelfj.order.dto.Dtos.OrderStatusHistoryResponse;
+import com.shelfj.order.dto.Dtos.OrderSummaryResponse;
 import com.shelfj.order.dto.Dtos.ReturnItemResponse;
 import com.shelfj.order.dto.Dtos.ReturnResponse;
 import com.shelfj.order.dto.Dtos.VoidResponse;
@@ -52,6 +53,23 @@ public final class Mappers {
         ts(o.createdAt()),
         ts(o.updatedAt()),
         items.stream().map(Mappers::toDto).toList());
+  }
+
+  public static OrderSummaryResponse toSummary(Order o) {
+    return new OrderSummaryResponse(
+        str(o.id()),
+        str(o.storeId()),
+        str(o.customerId()),
+        o.channel(),
+        o.fulfilmentType(),
+        o.status(),
+        o.subtotal(),
+        o.taxAmount(),
+        o.discountAmount(),
+        o.total(),
+        o.currency(),
+        ts(o.createdAt()),
+        ts(o.updatedAt()));
   }
 
   public static OrderStatusHistoryResponse toDto(OrderStatusHistory h) {

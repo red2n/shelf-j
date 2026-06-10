@@ -129,4 +129,43 @@ public final class Domain {
     public static final String ACTIVE = "ACTIVE";
     public static final String SUPERSEDED = "SUPERSEDED";
   }
+
+  // ── Gap #35: Item Catalog Groups & Descriptive Elements ──────────────────
+
+  public record CatalogGroup(
+      UUID id,
+      UUID tenantId,
+      String name,
+      String description,
+      String status,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String ACTIVE = "ACTIVE";
+    public static final String INACTIVE = "INACTIVE";
+  }
+
+  public record CatalogGroupElement(
+      UUID id,
+      UUID tenantId,
+      UUID groupId,
+      String elementName,
+      String dataType,
+      boolean required,
+      String defaultVal,
+      int sortOrder,
+      Instant createdAt) {
+    public static final String TYPE_TEXT = "TEXT";
+    public static final String TYPE_NUMBER = "NUMBER";
+    public static final String TYPE_BOOLEAN = "BOOLEAN";
+    public static final String TYPE_DATE = "DATE";
+  }
+
+  public record VariantCatalogAssignment(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      UUID groupId,
+      String elementVals,
+      Instant createdAt,
+      Instant updatedAt) {}
 }

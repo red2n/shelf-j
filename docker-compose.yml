@@ -569,6 +569,23 @@ services:
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
+  payment-svc:
+    image: ghcr.io/red2n/shelf-j-payment-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/payment-svc, SVC_JAR: payment-svc }
+    container_name: shelfj-payment
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${PAYMENT_JAVA_OPTS:--Xms128m -Xmx256m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: payment-svc
+    mem_limit: ${PAYMENT_MEM_LIMIT:-384m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
   product-svc:
     image: ghcr.io/red2n/shelf-j-product-svc:${SHELFJ_TAG:-latest}
     build:

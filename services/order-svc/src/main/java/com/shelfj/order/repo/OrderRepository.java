@@ -75,6 +75,37 @@ public class OrderRepository extends BaseOutboxRepository {
         "create order");
   }
 
+  public List<Order> listOrders(
+      UUID tenantId,
+      UUID storeId,
+      String channel,
+      String status,
+      Instant from,
+      Instant to,
+      int limit) {
+    StringBuilder sql = new StringBuilder("SELECT * FROM orders WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (channel != null) sql.append(" AND channel=?");
+    if (status != null) sql.append(" AND status=?");
+    if (from != null) sql.append(" AND created_at >= ?");
+    if (to != null) sql.append(" AND created_at <= ?");
+    sql.append(" ORDER BY created_at DESC LIMIT ?");
+    return query(
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (channel != null) ps.setString(i++, channel.toUpperCase(java.util.Locale.ROOT));
+          if (status != null) ps.setString(i++, status.toUpperCase(java.util.Locale.ROOT));
+          if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
+          if (to != null) ps.setObject(i++, to.atOffset(java.time.ZoneOffset.UTC));
+          ps.setInt(i, limit);
+        },
+        rs -> mapOrder(rs),
+        "list orders");
+  }
+
   public Optional<Order> findOrder(UUID tenantId, UUID orderId) {
     var list =
         query(

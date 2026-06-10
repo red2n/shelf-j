@@ -58,7 +58,7 @@
 | Item relationships (substitute / complementary) | ❌ Missing | — |
 | Customer items / cross-references | ❌ Missing | No supplier/customer part-number cross-ref |
 | Manufacturer part numbers | ❌ Missing | — |
-| Item catalog groups / descriptive elements | ❌ Missing | No structured specification metadata |
+| Item catalog groups / descriptive elements | ✅ Done | V9 migration + full CRUD API |
 | Item attribute groups (18 groups: Costing, Lead Times, Purchasing, Receiving, WIP, Service, Web, …) | ❌ Missing | product-svc has `color`, `size`, `weight_grams`, `sku` only |
 | Container types / cartonization | ❌ Missing | — |
 | Picking rules | ❌ Missing | — |
@@ -314,7 +314,7 @@
 | ~~32~~ | ~~**Item relationships** — substitute / complementary links between variants~~ ✅ | ~~product-svc~~ | ~~V7__item_relationships.sql + Domain/DTO/Repo/Service/Resource; POST/GET/DELETE /products/variants/{id}/relationships; k6 positive + 6 negative cases~~ |
 | ~~33~~ | ~~**Supplier / customer cross-references** — supplier part-number cross-ref table~~ ✅ | ~~product-svc~~ | ~~V8__supplier_cross_references.sql; POST/GET/DELETE /variants/{id}/cross-references; positive + negative k6 coverage~~ |
 | ~~34~~ | ~~**Manufacturer part numbers** — `manufacturer_pn` field on `product_variants`~~ ✅ | ~~product-svc~~ | ~~V6__manufacturer_pn.sql + Domain/DTO/Repo/Mapper/Service; positive + negative k6 coverage~~ |
-| 35 | **Item catalog groups / descriptive elements** — structured spec metadata beyond `attributes JSONB` | product-svc | Variants use an untyped JSONB bag only |
+| ~~35~~ | ~~**Item catalog groups / descriptive elements** — structured spec metadata beyond `attributes JSONB`~~ ✅ | ~~product-svc~~ | ~~V9__catalog_groups.sql; catalog_groups + catalog_group_elements + variant_catalog_assignments; full CRUD API; positive + negative k6 coverage~~ |
 | 36 | **18 Oracle attribute groups** — typed model for Lead Times, Purchasing, Receiving, WIP, Web, etc. | product-svc | No attribute group model; untyped JSONB only |
 | 37 | **Container types / cartonization** — container type reference table + variant link | product-svc | Not present |
 | 38 | **Picking rules** — configurable pick-sequence rules (FEFO, FIFO, zone priority) | product-svc / inventory-svc | FIFO index exists; no rule engine |
@@ -348,7 +348,7 @@
 
 | # | Gap | Service | Notes |
 |---|---|---|---|
-| 54 | **payment-svc** — entire service: card/e-check tender, multi-currency arithmetic, VISA PABP, instant credit enrollment | payment-svc *(new)* | Directory does not exist; blocks all payment flows |
+| 54 | **payment-svc** — entire service: card/e-check tender, multi-currency arithmetic, VISA PABP, instant credit enrollment | payment-svc *(new)* | ✅ Done — cash/card/gift-card tender + refund + PaymentCaptured outbox event |
 | 55 | **Shortage alerts** — wire `reorder_thresholds` to notification-svc dispatch when stock < min_qty | inventory-svc + notification-svc | Threshold data stored; zero alert code |
 
 ---

@@ -1,6 +1,8 @@
 package com.shelfj.product.service;
 
 import com.shelfj.product.domain.Domain.Brand;
+import com.shelfj.product.domain.Domain.CatalogGroup;
+import com.shelfj.product.domain.Domain.CatalogGroupElement;
 import com.shelfj.product.domain.Domain.Category;
 import com.shelfj.product.domain.Domain.ItemCrossReference;
 import com.shelfj.product.domain.Domain.ItemRelationship;
@@ -12,14 +14,22 @@ import com.shelfj.product.domain.Domain.UomClass;
 import com.shelfj.product.domain.Domain.UomDefinition;
 import com.shelfj.product.domain.Domain.UomItemConversion;
 import com.shelfj.product.domain.Domain.Variant;
+import com.shelfj.product.domain.Domain.VariantCatalogAssignment;
+import com.shelfj.product.dto.Dtos.AssignCatalogGroupRequest;
+import com.shelfj.product.dto.Dtos.BulkImportError;
+import com.shelfj.product.dto.Dtos.BulkImportRequest;
+import com.shelfj.product.dto.Dtos.BulkImportResult;
 import com.shelfj.product.dto.Dtos.ConvertResult;
 import com.shelfj.product.dto.Dtos.CreateBrandRequest;
+import com.shelfj.product.dto.Dtos.CreateCatalogGroupElementRequest;
+import com.shelfj.product.dto.Dtos.CreateCatalogGroupRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
 import com.shelfj.product.dto.Dtos.CreateItemCrossReferenceRequest;
 import com.shelfj.product.dto.Dtos.CreateItemRelationshipRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
 import com.shelfj.product.dto.Dtos.UpdateBrandRequest;
+import com.shelfj.product.dto.Dtos.UpdateCatalogAssignmentRequest;
 import com.shelfj.product.dto.Dtos.UpdateCategoryRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
 import com.shelfj.product.dto.Dtos.UpdateVariantRequest;
@@ -450,6 +460,218 @@ public class ProductService {
   public ItemRevision getRevision(UUID tenantId, UUID revisionId) {
     return repo.findRevision(tenantId, revisionId)
         .orElseThrow(() -> ApiException.notFound("REVISION_NOT_FOUND", "No such revision"));
+  }
+
+  // ── Bulk Import ──────────────────────────────────────────────────────────
+
+  public BulkImportResult bulkImport(UUID tenantId, BulkImportRequest req) {
+    int catCreated = 0, catSkipped = 0, prodCreated = 0, varCreated = 0;
+    var errors = new java.util.ArrayList<BulkImportError>();
+
+    // ── 1. categories ────────────────────────────────────────────────────────
+    if (req.categories() != null) {
+      for (var c : req.categories()) {
+        try {
+          if (repo.findCategoryByName(tenantId, c.name().trim()).isPresent()) {
+            catSkipped++;
+            continue;
+          }
+          UUID parentId = null;
+          if (c.parentName() != null && !c.parentName().isBlank()) {
+            parentId =
+                repo.findCategoryByName(tenantId, c.parentName().trim())
+                    .map(cat -> cat.id())
+                    .orElseThrow(
+                        () ->
+                            ApiException.badRequest(
+                                "PARENT_NOT_FOUND",
+                                "parent category not found: " + c.parentName()));
+          }
+          repo.createCategory(tenantId, parentId, c.name().trim());
+          catCreated++;
+        } catch (Exception e) {
+          errors.add(new BulkImportError("category:" + c.name(), e.getMessage()));
+        }
+      }
+    }
+
+    // ── 2. products + variants ───────────────────────────────────────────────
+    if (req.products() != null) {
+      for (var p : req.products()) {
+        try {
+          if (p.variants() == null || p.variants().isEmpty()) {
+            errors.add(new BulkImportError("product:" + p.name(), "at least one variant required"));
+            continue;
+          }
+
+          UUID categoryId =
+              p.categoryName() != null && !p.categoryName().isBlank()
+                  ? repo.findCategoryByName(tenantId, p.categoryName().trim())
+                      .map(cat -> cat.id())
+                      .orElse(null)
+                  : null;
+
+          UUID brandId = null;
+          if (p.brandName() != null && !p.brandName().isBlank()) {
+            brandId =
+                repo.findBrandByName(tenantId, p.brandName().trim())
+                    .map(b -> b.id())
+                    .orElseGet(() -> repo.createBrand(tenantId, p.brandName().trim()).id());
+          }
+
+          UUID productId = UUID.randomUUID();
+          Instant now = Instant.now();
+          var product =
+              new com.shelfj.product.domain.Domain.Product(
+                  productId,
+                  tenantId,
+                  p.name().trim(),
+                  p.description(),
+                  brandId,
+                  categoryId,
+                  com.shelfj.product.domain.Domain.Product.STATUS_ACTIVE,
+                  p.sellableOnline() == null || p.sellableOnline(),
+                  p.sellablePos() == null || p.sellablePos(),
+                  now,
+                  now);
+          var productEvent =
+              new OutboxRow(
+                  "ProductCreated",
+                  "shelfj.catalog.product-created",
+                  tenantId,
+                  productId,
+                  Events.productCreated(tenantId, productId, product.name()));
+          repo.createProductWithOutbox(product, productEvent);
+          prodCreated++;
+
+          for (var v : p.variants()) {
+            try {
+              UUID variantId = UUID.randomUUID();
+              var variant =
+                  new com.shelfj.product.domain.Domain.Variant(
+                      variantId,
+                      tenantId,
+                      productId,
+                      v.sku().trim(),
+                      v.barcode(),
+                      v.manufacturerPn(),
+                      v.attributes(),
+                      v.unit(),
+                      com.shelfj.product.domain.Domain.Variant.STATUS_ACTIVE,
+                      now,
+                      now);
+              var variantEvent =
+                  new OutboxRow(
+                      "VariantCreated",
+                      "shelfj.catalog.variant-created",
+                      tenantId,
+                      variantId,
+                      Events.variantCreated(tenantId, variantId, productId, variant.sku()));
+              repo.createVariantWithOutbox(variant, variantEvent);
+              varCreated++;
+            } catch (Exception e) {
+              errors.add(
+                  new BulkImportError("variant:" + v.sku() + " on " + p.name(), e.getMessage()));
+            }
+          }
+        } catch (Exception e) {
+          errors.add(new BulkImportError("product:" + p.name(), e.getMessage()));
+        }
+      }
+    }
+
+    return new BulkImportResult(catCreated, catSkipped, prodCreated, varCreated, errors);
+  }
+
+  // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
+
+  public CatalogGroup createCatalogGroup(UUID tenantId, CreateCatalogGroupRequest req) {
+    return repo.createCatalogGroup(tenantId, req.name().trim(), req.description());
+  }
+
+  public CatalogGroup getCatalogGroup(UUID tenantId, UUID id) {
+    return repo.findCatalogGroup(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("CATALOG_GROUP_NOT_FOUND", "Catalog group not found"));
+  }
+
+  public List<CatalogGroup> listCatalogGroups(UUID tenantId) {
+    return repo.listCatalogGroups(tenantId);
+  }
+
+  public CatalogGroup deactivateCatalogGroup(UUID tenantId, UUID id) {
+    getCatalogGroup(tenantId, id);
+    return repo.deactivateCatalogGroup(tenantId, id);
+  }
+
+  public CatalogGroupElement createCatalogGroupElement(
+      UUID tenantId, UUID groupId, CreateCatalogGroupElementRequest req) {
+    getCatalogGroup(tenantId, groupId);
+    String type = req.dataType().toUpperCase(java.util.Locale.ROOT);
+    if (!CatalogGroupElement.TYPE_TEXT.equals(type)
+        && !CatalogGroupElement.TYPE_NUMBER.equals(type)
+        && !CatalogGroupElement.TYPE_BOOLEAN.equals(type)
+        && !CatalogGroupElement.TYPE_DATE.equals(type)) {
+      throw ApiException.badRequest(
+          "INVALID_DATA_TYPE", "dataType must be TEXT, NUMBER, BOOLEAN or DATE");
+    }
+    return repo.createCatalogGroupElement(
+        new CatalogGroupElement(
+            UUID.randomUUID(),
+            tenantId,
+            groupId,
+            req.elementName().trim(),
+            type,
+            req.required(),
+            req.defaultVal(),
+            req.sortOrder(),
+            Instant.now()));
+  }
+
+  public List<CatalogGroupElement> listCatalogGroupElements(UUID tenantId, UUID groupId) {
+    return repo.listCatalogGroupElements(tenantId, groupId);
+  }
+
+  public void deleteCatalogGroupElement(UUID tenantId, UUID elementId) {
+    if (!repo.deleteCatalogGroupElement(tenantId, elementId)) {
+      throw ApiException.notFound("ELEMENT_NOT_FOUND", "Catalog group element not found");
+    }
+  }
+
+  public VariantCatalogAssignment assignCatalogGroup(
+      UUID tenantId, UUID variantId, AssignCatalogGroupRequest req) {
+    getVariant(tenantId, variantId);
+    UUID groupId = parseOptionalUuid(req.groupId(), "groupId");
+    if (groupId == null) throw ApiException.badRequest("INVALID_GROUP_ID", "groupId is required");
+    getCatalogGroup(tenantId, groupId);
+    return repo.createCatalogAssignment(
+        new VariantCatalogAssignment(
+            UUID.randomUUID(),
+            tenantId,
+            variantId,
+            groupId,
+            req.elementVals() != null ? req.elementVals() : "{}",
+            Instant.now(),
+            Instant.now()));
+  }
+
+  public VariantCatalogAssignment getCatalogAssignment(UUID tenantId, UUID variantId) {
+    return repo.findCatalogAssignment(tenantId, variantId)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "ASSIGNMENT_NOT_FOUND", "No catalog assignment for this variant"));
+  }
+
+  public VariantCatalogAssignment updateCatalogAssignment(
+      UUID tenantId, UUID variantId, UpdateCatalogAssignmentRequest req) {
+    return repo.updateCatalogAssignment(tenantId, variantId, req.elementVals());
+  }
+
+  public void deleteCatalogAssignment(UUID tenantId, UUID variantId) {
+    if (!repo.deleteCatalogAssignment(tenantId, variantId)) {
+      throw ApiException.notFound("ASSIGNMENT_NOT_FOUND", "No catalog assignment for this variant");
+    }
   }
 
   private static UUID parseOptionalUuid(String s, String field) {

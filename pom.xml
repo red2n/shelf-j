@@ -62,6 +62,7 @@
         <module>services/inventory-svc</module>
         <module>services/order-svc</module>
         <module>services/pricing-svc</module>
+        <module>services/payment-svc</module>
         <module>services/purchase-svc</module>
         <module>platform/config</module>
         <module>platform/gateway</module>

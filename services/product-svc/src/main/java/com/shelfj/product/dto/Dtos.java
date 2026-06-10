@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
+import java.util.List;
 
 /** Request/response DTOs for product-svc. No tenant_id in requests — it comes from context. */
 public final class Dtos {
@@ -163,4 +164,78 @@ public final class Dtos {
       String effectiveDate,
       String status,
       String createdAt) {}
+
+  // ── Bulk Import ──────────────────────────────────────────────────────────
+
+  public record ImportCategoryRequest(@NotBlank String name, String parentName) {}
+
+  public record ImportVariantRequest(
+      @NotBlank String sku,
+      String barcode,
+      String manufacturerPn,
+      String unit,
+      String attributes) {}
+
+  public record ImportProductRequest(
+      @NotBlank String name,
+      String description,
+      String categoryName,
+      String brandName,
+      Boolean sellableOnline,
+      Boolean sellablePos,
+      @NotNull List<ImportVariantRequest> variants) {}
+
+  public record BulkImportRequest(
+      List<ImportCategoryRequest> categories, List<ImportProductRequest> products) {}
+
+  public record BulkImportError(String item, String reason) {}
+
+  public record BulkImportResult(
+      int categoriesCreated,
+      int categoriesSkipped,
+      int productsCreated,
+      int variantsCreated,
+      List<BulkImportError> errors) {}
+
+  // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
+
+  public record CreateCatalogGroupRequest(@NotBlank String name, String description) {}
+
+  public record CreateCatalogGroupElementRequest(
+      @NotBlank String elementName,
+      @NotBlank String dataType,
+      boolean required,
+      String defaultVal,
+      int sortOrder) {}
+
+  public record CatalogGroupElementResponse(
+      String id,
+      String groupId,
+      String elementName,
+      String dataType,
+      boolean required,
+      String defaultVal,
+      int sortOrder,
+      String createdAt) {}
+
+  public record CatalogGroupResponse(
+      String id,
+      String name,
+      String description,
+      String status,
+      String createdAt,
+      String updatedAt,
+      List<CatalogGroupElementResponse> elements) {}
+
+  public record AssignCatalogGroupRequest(@NotBlank String groupId, String elementVals) {}
+
+  public record UpdateCatalogAssignmentRequest(String elementVals) {}
+
+  public record CatalogAssignmentResponse(
+      String id,
+      String variantId,
+      String groupId,
+      String elementVals,
+      String createdAt,
+      String updatedAt) {}
 }

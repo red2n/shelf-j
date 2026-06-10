@@ -11,6 +11,8 @@ import com.shelfj.pricing.domain.Domain.TaxTransaction;
 import com.shelfj.pricing.domain.Domain.VatRate;
 import com.shelfj.pricing.domain.Domain.VatReturn;
 import com.shelfj.pricing.dto.Dtos.AddPromotionItemRequest;
+import com.shelfj.pricing.dto.Dtos.BatchUpsertPriceListItemsRequest;
+import com.shelfj.pricing.dto.Dtos.BatchUpsertResult;
 import com.shelfj.pricing.dto.Dtos.CreatePriceListRequest;
 import com.shelfj.pricing.dto.Dtos.CreatePromotionRequest;
 import com.shelfj.pricing.dto.Dtos.CreateVatRateRequest;
@@ -188,6 +190,22 @@ public class PricingService {
             Instant.now(),
             Instant.now());
     return repo.upsertPriceListItem(item, Events.priceChanged(ctx.tenantId(), priceListId));
+  }
+
+  public BatchUpsertResult batchUpsertPriceListItems(
+      TenantContext ctx, UUID priceListId, BatchUpsertPriceListItemsRequest req) {
+    getPriceList(ctx, priceListId);
+    int upserted = 0;
+    var errors = new java.util.ArrayList<String>();
+    for (var r : req.items()) {
+      try {
+        upsertPriceListItem(ctx, priceListId, r);
+        upserted++;
+      } catch (Exception e) {
+        errors.add("variantId=" + r.variantId() + ": " + e.getMessage());
+      }
+    }
+    return new BatchUpsertResult(upserted, errors);
   }
 
   public List<PriceListItem> listPriceListItems(TenantContext ctx, UUID priceListId) {

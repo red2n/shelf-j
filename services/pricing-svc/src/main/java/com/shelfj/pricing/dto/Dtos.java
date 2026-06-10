@@ -93,6 +93,11 @@ public final class Dtos {
       @NotNull @Positive BigDecimal price,
       @NotNull @Positive BigDecimal minQty) {}
 
+  public record BatchUpsertPriceListItemsRequest(
+      @NotNull java.util.List<UpsertPriceListItemRequest> items) {}
+
+  public record BatchUpsertResult(int upserted, java.util.List<String> errors) {}
+
   public record PriceListItemResponse(
       UUID id,
       UUID tenantId,

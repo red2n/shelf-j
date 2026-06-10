@@ -1,9 +1,16 @@
 package com.shelfj.product.api;
 
+import com.shelfj.product.dto.Dtos.AssignCatalogGroupRequest;
 import com.shelfj.product.dto.Dtos.BrandResponse;
+import com.shelfj.product.dto.Dtos.BulkImportRequest;
+import com.shelfj.product.dto.Dtos.BulkImportResult;
+import com.shelfj.product.dto.Dtos.CatalogAssignmentResponse;
+import com.shelfj.product.dto.Dtos.CatalogGroupResponse;
 import com.shelfj.product.dto.Dtos.CategoryResponse;
 import com.shelfj.product.dto.Dtos.ConvertResult;
 import com.shelfj.product.dto.Dtos.CreateBrandRequest;
+import com.shelfj.product.dto.Dtos.CreateCatalogGroupElementRequest;
+import com.shelfj.product.dto.Dtos.CreateCatalogGroupRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
 import com.shelfj.product.dto.Dtos.CreateItemCrossReferenceRequest;
 import com.shelfj.product.dto.Dtos.CreateItemRelationshipRequest;
@@ -22,6 +29,7 @@ import com.shelfj.product.dto.Dtos.UomDefinitionResponse;
 import com.shelfj.product.dto.Dtos.UomItemConversionRequest;
 import com.shelfj.product.dto.Dtos.UomItemConversionResponse;
 import com.shelfj.product.dto.Dtos.UpdateBrandRequest;
+import com.shelfj.product.dto.Dtos.UpdateCatalogAssignmentRequest;
 import com.shelfj.product.dto.Dtos.UpdateCategoryRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
 import com.shelfj.product.dto.Dtos.UpdateVariantRequest;
@@ -447,6 +455,129 @@ public class AdminResource {
       @PathParam("variantId") UUID variantId, @PathParam("id") UUID id) {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(Mappers.toRevision(service.getRevision(tenantId, id)));
+  }
+
+  // ── Bulk Import ──────────────────────────────────────────────────────────
+
+  /**
+   * Import categories and products+variants in one call.
+   *
+   * <p>Body: { "categories": [...], "products": [...] }
+   *
+   * <p>Each category: { "name": "Electronics", "parentName": null } Each product: { "name": "...",
+   * "categoryName": "Electronics", "brandName": "Apple", "sellableOnline": true, "sellablePos":
+   * true, "variants": [{ "sku": "SKU-001", "barcode": "...", "unit": "EA" }] }
+   *
+   * <p>Duplicate categories are skipped. Duplicate SKUs return an error entry but the rest
+   * continue. Always returns 200 with a result summary and any per-row errors.
+   */
+  @POST
+  @Path("/import")
+  public ApiResponse<BulkImportResult> bulkImport(BulkImportRequest req) {
+    if (req == null) {
+      throw new com.shelfj.web.ApiException(
+          400, "INVALID_BODY", "request body required", List.of(), null);
+    }
+    return ApiResponse.ok(service.bulkImport(ctx.requireTenantId(), req));
+  }
+
+  // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
+
+  @POST
+  @Path("/catalog-groups")
+  public Response createCatalogGroup(CreateCatalogGroupRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var group = service.createCatalogGroup(tenantId, req);
+    return created(Mappers.toCatalogGroup(group, List.of()));
+  }
+
+  @GET
+  @Path("/catalog-groups")
+  public ApiResponse<List<CatalogGroupResponse>> listCatalogGroups() {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listCatalogGroups(tenantId).stream()
+            .map(
+                g ->
+                    Mappers.toCatalogGroup(
+                        g,
+                        service.listCatalogGroupElements(tenantId, g.id()).stream()
+                            .map(Mappers::toCatalogGroupElement)
+                            .toList()))
+            .toList());
+  }
+
+  @GET
+  @Path("/catalog-groups/{id}")
+  public ApiResponse<CatalogGroupResponse> getCatalogGroup(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    var group = service.getCatalogGroup(tenantId, id);
+    var elements =
+        service.listCatalogGroupElements(tenantId, id).stream()
+            .map(Mappers::toCatalogGroupElement)
+            .toList();
+    return ApiResponse.ok(Mappers.toCatalogGroup(group, elements));
+  }
+
+  @DELETE
+  @Path("/catalog-groups/{id}")
+  public Response deactivateCatalogGroup(@PathParam("id") UUID id) {
+    service.deactivateCatalogGroup(ctx.requireTenantId(), id);
+    return Response.noContent().build();
+  }
+
+  @POST
+  @Path("/catalog-groups/{groupId}/elements")
+  public Response createCatalogGroupElement(
+      @PathParam("groupId") UUID groupId, CreateCatalogGroupElementRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    return created(
+        Mappers.toCatalogGroupElement(service.createCatalogGroupElement(tenantId, groupId, req)));
+  }
+
+  @DELETE
+  @Path("/catalog-groups/{groupId}/elements/{elementId}")
+  public Response deleteCatalogGroupElement(
+      @PathParam("groupId") UUID groupId, @PathParam("elementId") UUID elementId) {
+    service.deleteCatalogGroupElement(ctx.requireTenantId(), elementId);
+    return Response.noContent().build();
+  }
+
+  @POST
+  @Path("/products/variants/{variantId}/catalog-assignment")
+  public Response assignCatalogGroup(
+      @PathParam("variantId") UUID variantId, AssignCatalogGroupRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    return created(
+        Mappers.toCatalogAssignment(service.assignCatalogGroup(tenantId, variantId, req)));
+  }
+
+  @GET
+  @Path("/products/variants/{variantId}/catalog-assignment")
+  public ApiResponse<CatalogAssignmentResponse> getCatalogAssignment(
+      @PathParam("variantId") UUID variantId) {
+    return ApiResponse.ok(
+        Mappers.toCatalogAssignment(
+            service.getCatalogAssignment(ctx.requireTenantId(), variantId)));
+  }
+
+  @PUT
+  @Path("/products/variants/{variantId}/catalog-assignment")
+  public ApiResponse<CatalogAssignmentResponse> updateCatalogAssignment(
+      @PathParam("variantId") UUID variantId, UpdateCatalogAssignmentRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toCatalogAssignment(service.updateCatalogAssignment(tenantId, variantId, req)));
+  }
+
+  @DELETE
+  @Path("/products/variants/{variantId}/catalog-assignment")
+  public Response deleteCatalogAssignment(@PathParam("variantId") UUID variantId) {
+    service.deleteCatalogAssignment(ctx.requireTenantId(), variantId);
+    return Response.noContent().build();
   }
 
   // ─────────────────────────────────────────────────────────────────── utils

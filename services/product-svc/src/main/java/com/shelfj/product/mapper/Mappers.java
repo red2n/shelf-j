@@ -1,6 +1,8 @@
 package com.shelfj.product.mapper;
 
 import com.shelfj.product.domain.Domain.Brand;
+import com.shelfj.product.domain.Domain.CatalogGroup;
+import com.shelfj.product.domain.Domain.CatalogGroupElement;
 import com.shelfj.product.domain.Domain.Category;
 import com.shelfj.product.domain.Domain.ItemCrossReference;
 import com.shelfj.product.domain.Domain.ItemRelationship;
@@ -12,7 +14,11 @@ import com.shelfj.product.domain.Domain.UomClass;
 import com.shelfj.product.domain.Domain.UomDefinition;
 import com.shelfj.product.domain.Domain.UomItemConversion;
 import com.shelfj.product.domain.Domain.Variant;
+import com.shelfj.product.domain.Domain.VariantCatalogAssignment;
 import com.shelfj.product.dto.Dtos.BrandResponse;
+import com.shelfj.product.dto.Dtos.CatalogAssignmentResponse;
+import com.shelfj.product.dto.Dtos.CatalogGroupElementResponse;
+import com.shelfj.product.dto.Dtos.CatalogGroupResponse;
 import com.shelfj.product.dto.Dtos.CategoryResponse;
 import com.shelfj.product.dto.Dtos.ItemCrossReferenceResponse;
 import com.shelfj.product.dto.Dtos.ItemRelationshipResponse;
@@ -25,6 +31,7 @@ import com.shelfj.product.dto.Dtos.UomDefinitionResponse;
 import com.shelfj.product.dto.Dtos.UomItemConversionResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
 import java.time.Instant;
+import java.util.List;
 
 /** Entity → DTO conversion. */
 public final class Mappers {
@@ -131,6 +138,42 @@ public final class Mappers {
         r.effectiveDate().toString(),
         r.status(),
         ts(r.createdAt()));
+  }
+
+  // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
+
+  public static CatalogGroupResponse toCatalogGroup(
+      CatalogGroup g, List<CatalogGroupElementResponse> elements) {
+    return new CatalogGroupResponse(
+        g.id().toString(),
+        g.name(),
+        g.description(),
+        g.status(),
+        ts(g.createdAt()),
+        ts(g.updatedAt()),
+        elements);
+  }
+
+  public static CatalogGroupElementResponse toCatalogGroupElement(CatalogGroupElement e) {
+    return new CatalogGroupElementResponse(
+        e.id().toString(),
+        e.groupId().toString(),
+        e.elementName(),
+        e.dataType(),
+        e.required(),
+        e.defaultVal(),
+        e.sortOrder(),
+        ts(e.createdAt()));
+  }
+
+  public static CatalogAssignmentResponse toCatalogAssignment(VariantCatalogAssignment a) {
+    return new CatalogAssignmentResponse(
+        a.id().toString(),
+        a.variantId().toString(),
+        a.groupId().toString(),
+        a.elementVals(),
+        ts(a.createdAt()),
+        ts(a.updatedAt()));
   }
 
   private static String ts(Instant i) {

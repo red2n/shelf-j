@@ -1049,6 +1049,92 @@ export function catalogAdmin(d) {
     }
   }
 
+  // ── Gap #35: catalog groups — positive round-trip ────────────────────────
+  if (tenant.variantIds.length > 0) {
+    const cgVid = tenant.variantIds[__ITER % tenant.variantIds.length];
+
+    // Create a catalog group
+    res = post('/api/product-svc/admin/catalog-groups',
+      { name: `${tag}-Group-${slug()}`, description: `${tag} spec group` },
+      tenant.tenantId, tenant.ownerId);
+    ok(res, `${tag} create catalog group`);
+    check(res, {
+      [`${tag} catalog group status field present`]: r => {
+        try { return JSON.parse(r.body).data.status === 'ACTIVE'; } catch (_) { return false; }
+      },
+    });
+    const cgId = (() => { try { return JSON.parse(res.body).data.id; } catch (_) { return null; } })();
+
+    if (cgId) {
+      // Add a TEXT element
+      res = post(`/api/product-svc/admin/catalog-groups/${cgId}/elements`,
+        { elementName: 'colour', dataType: 'TEXT', required: false, sortOrder: 1 },
+        tenant.tenantId, tenant.ownerId);
+      ok(res, `${tag} add catalog group element`);
+      const elemId = (() => { try { return JSON.parse(res.body).data.id; } catch (_) { return null; } })();
+
+      // Add a NUMBER element
+      res = post(`/api/product-svc/admin/catalog-groups/${cgId}/elements`,
+        { elementName: 'weight_kg', dataType: 'NUMBER', required: true, sortOrder: 2 },
+        tenant.tenantId, tenant.ownerId);
+      ok(res, `${tag} add NUMBER element`);
+
+      // GET group — elements must be embedded
+      res = get(`/api/product-svc/admin/catalog-groups/${cgId}`,
+        tenant.tenantId, tenant.ownerId);
+      ok(res, `${tag} get catalog group`);
+      check(res, {
+        [`${tag} catalog group has ≥2 elements`]: r => {
+          try { return (JSON.parse(r.body).data.elements || []).length >= 2; } catch (_) { return false; }
+        },
+      });
+
+      // Assign variant to catalog group
+      res = post(`/api/product-svc/admin/products/variants/${cgVid}/catalog-assignment`,
+        { groupId: cgId, elementVals: '{"colour":"red","weight_kg":"1.5"}' },
+        tenant.tenantId, tenant.ownerId);
+      ok(res, `${tag} assign catalog group to variant`);
+      check(res, {
+        [`${tag} assignment groupId matches`]: r => {
+          try { return JSON.parse(r.body).data.groupId === cgId; } catch (_) { return false; }
+        },
+      });
+
+      // GET assignment
+      res = get(`/api/product-svc/admin/products/variants/${cgVid}/catalog-assignment`,
+        tenant.tenantId, tenant.ownerId);
+      ok(res, `${tag} get catalog assignment`);
+      check(res, {
+        [`${tag} assignment elementVals non-empty`]: r => {
+          try {
+            const v = JSON.parse(r.body).data.elementVals;
+            return v && v !== '{}';
+          } catch (_) { return false; }
+        },
+      });
+
+      // UPDATE assignment
+      res = put(`/api/product-svc/admin/products/variants/${cgVid}/catalog-assignment`,
+        { elementVals: '{"colour":"blue","weight_kg":"2.0"}' },
+        tenant.tenantId, tenant.ownerId);
+      ok(res, `${tag} update catalog assignment`);
+
+      // DELETE assignment
+      http.del(`${BASE}/api/product-svc/admin/products/variants/${cgVid}/catalog-assignment`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+
+      // DELETE element (cleanup)
+      if (elemId) {
+        http.del(`${BASE}/api/product-svc/admin/catalog-groups/${cgId}/elements/${elemId}`,
+          null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+      }
+
+      // Deactivate group (cleanup)
+      http.del(`${BASE}/api/product-svc/admin/catalog-groups/${cgId}`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+    }
+  }
+
   if (store) {
     // Thresholds + movements for current store
     res = get(`/api/inventory-svc/admin/inventory/thresholds?store=${store.storeId}`,
@@ -2736,6 +2822,73 @@ export function negativeTests(d) {
       'delete nonexistent relationship → 404', 404);
   }
 
+  // ── Gap #35: catalog groups — negative cases ────────────────────────────────
+
+  if (tenant.variantIds.length > 0) {
+    const negVid = tenant.variantIds[0];
+
+    // Blank group name → 400
+    neg(post('/api/product-svc/admin/catalog-groups',
+      { name: '' }, tenant.tenantId, tenant.ownerId),
+      'catalog group blank name → 400', 400);
+
+    // Invalid dataType in element → 400
+    // (create a group first, add invalid element, clean up)
+    const tmpGrp = post('/api/product-svc/admin/catalog-groups',
+      { name: `NEG-GROUP-${slug()}` }, tenant.tenantId, tenant.ownerId);
+    const tmpGrpId = (() => { try { return JSON.parse(tmpGrp.body).data.id; } catch (_) { return null; } })();
+    if (tmpGrpId) {
+      neg(post(`/api/product-svc/admin/catalog-groups/${tmpGrpId}/elements`,
+        { elementName: 'x', dataType: 'ENUM', required: false, sortOrder: 0 },
+        tenant.tenantId, tenant.ownerId), 'catalog element invalid dataType → 400', 400);
+
+      // Blank element name → 400
+      neg(post(`/api/product-svc/admin/catalog-groups/${tmpGrpId}/elements`,
+        { elementName: '', dataType: 'TEXT', required: false, sortOrder: 0 },
+        tenant.tenantId, tenant.ownerId), 'catalog element blank name → 400', 400);
+
+      // Duplicate group name within same tenant → 409
+      const dupName = `DUP-CG-${slug()}`;
+      const dup1 = post('/api/product-svc/admin/catalog-groups',
+        { name: dupName }, tenant.tenantId, tenant.ownerId);
+      if (dup1.status === 201) {
+        neg(post('/api/product-svc/admin/catalog-groups',
+          { name: dupName }, tenant.tenantId, tenant.ownerId),
+          'duplicate catalog group name → 409', 409);
+        // Cleanup dup
+        const dup1Id = (() => { try { return JSON.parse(dup1.body).data.id; } catch (_) { return null; } })();
+        if (dup1Id) http.del(`${BASE}/api/product-svc/admin/catalog-groups/${dup1Id}`,
+          null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+      }
+
+      // Assign to non-existent group → 404
+      neg(post(`/api/product-svc/admin/products/variants/${negVid}/catalog-assignment`,
+        { groupId: fakeId }, tenant.tenantId, tenant.ownerId),
+        'assign to nonexistent catalog group → 404', 404);
+
+      // GET assignment for variant with no assignment → 404
+      neg(get(`/api/product-svc/admin/products/variants/${negVid}/catalog-assignment`,
+        tenant.tenantId, tenant.ownerId),
+        'get assignment for unassigned variant → 404', 404);
+
+      // Duplicate assignment → 409
+      const asgn1 = post(`/api/product-svc/admin/products/variants/${negVid}/catalog-assignment`,
+        { groupId: tmpGrpId }, tenant.tenantId, tenant.ownerId);
+      if (asgn1.status === 201) {
+        neg(post(`/api/product-svc/admin/products/variants/${negVid}/catalog-assignment`,
+          { groupId: tmpGrpId }, tenant.tenantId, tenant.ownerId),
+          'duplicate catalog assignment → 409', 409);
+        // Cleanup assignment
+        http.del(`${BASE}/api/product-svc/admin/products/variants/${negVid}/catalog-assignment`,
+          null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+      }
+
+      // Cleanup group
+      http.del(`${BASE}/api/product-svc/admin/catalog-groups/${tmpGrpId}`,
+        null, { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+    }
+  }
+
   // ── Not-found (404) ──────────────────────────────────────────────────────────
 
   // Consume non-existent reservation
@@ -3413,6 +3566,123 @@ export function intercompanyFlow(d) {
     currency,
   }, tenantId, ownerId);
   check(badPoRes, { 'PO unknown supplier 404': res => res.status === 404 });
+
+  sleep(1);
+}
+
+// ── Gap #54: payment-svc tender + refund + GET /orders list ───────────────────
+export function paymentFlow(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store  = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `payment[${tenant.name}]`;
+
+  // 1. Place a POS order to pay against
+  const placeRes = post('/api/order-svc/orders', {
+    storeId,
+    channel: 'POS',
+    fulfilmentType: 'INSTORE',
+    items: [{ variantId, qty: 1, unitPrice: '20.00' }],
+    currency: 'USD',
+    idempotencyKey: `pay-order-${__VU}-${__ITER}`,
+  }, tenant.tenantId, tenant.ownerId);
+  if (!ok(placeRes, `${tag} place order for payment 201`)) { sleep(1); return; }
+  const orderId = (() => { try { return JSON.parse(placeRes.body).data.id; } catch (_) { return null; } })();
+  if (!orderId) { sleep(1); return; }
+
+  // 2. Record CASH tender
+  const cashRes = post('/api/payment-svc/payments', {
+    orderId,
+    amount: '20.00',
+    method: 'CASH',
+    idempotencyKey: `cash-${__VU}-${__ITER}`,
+  }, tenant.tenantId, tenant.ownerId);
+  ok(cashRes, `${tag} record cash tender 201`);
+  const paymentId = (() => { try { return JSON.parse(cashRes.body).data.id; } catch (_) { return null; } })();
+
+  // 3. GET tender by ID
+  if (paymentId) {
+    const getRes = get(`/api/payment-svc/payments/${paymentId}`, tenant.tenantId, tenant.ownerId);
+    check(getRes, { [`${tag} get tender 200`]: r => r.status === 200 });
+  }
+
+  // 4. List tenders by order
+  const listRes = get(`/api/payment-svc/payments/by-order/${orderId}`, tenant.tenantId, tenant.ownerId);
+  check(listRes, { [`${tag} list tenders 200`]: r => r.status === 200 });
+
+  // 5. Record a refund (partial)
+  if (paymentId) {
+    const refundRes = post(`/api/payment-svc/payments/by-order/${orderId}/refunds`, {
+      paymentId,
+      amount: '10.00',
+      method: 'CASH',
+      reason: 'partial return',
+    }, tenant.tenantId, tenant.ownerId);
+    ok(refundRes, `${tag} record refund 201`);
+
+    const listRefRes = get(`/api/payment-svc/payments/by-order/${orderId}/refunds`, tenant.tenantId, tenant.ownerId);
+    check(listRefRes, { [`${tag} list refunds 200`]: r => r.status === 200 });
+  }
+
+  // 6. GET /orders with filters (order-svc)
+  const ordersRes = get(`/api/order-svc/orders?store=${storeId}&channel=POS&limit=5`,
+    tenant.tenantId, tenant.ownerId);
+  check(ordersRes, { [`${tag} list orders with filters 200`]: r => r.status === 200 });
+
+  // 7. Cross-tenant isolation for payment
+  if (paymentId) {
+    const other = isIN(d) ? d.uk : d.india;
+    const isoRes = get(`/api/payment-svc/payments/${paymentId}`, other.tenantId, other.ownerId);
+    check(isoRes, { [`${tag} payment cross-tenant isolation 404`]: r => r.status === 404 });
+  }
+
+  sleep(1);
+}
+
+// ── Bulk import: categories + products + prices ────────────────────────────────
+export function bulkImportFlow(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const tag    = `bulkImport[${tenant.name}]`;
+
+  // 1. Bulk import: 2 new categories + 1 product with 1 variant
+  const importRes = post('/api/product-svc/admin/import', {
+    categories: [
+      { name: `BulkCat-${__VU}-${__ITER}` },
+      { name: `BulkSub-${__VU}-${__ITER}` },
+    ],
+    products: [{
+      name: `BulkProduct-${__VU}-${__ITER}`,
+      categoryName: `BulkCat-${__VU}-${__ITER}`,
+      variants: [{
+        sku: `BSKU-${__VU}-${__ITER}`,
+        unit: 'EACH',
+        attributes: { color: 'blue' },
+      }],
+    }],
+  }, tenant.tenantId, tenant.ownerId);
+  if (!ok(importRes, `${tag} bulk import 200`)) { sleep(1); return; }
+  const result = (() => { try { return JSON.parse(importRes.body).data; } catch (_) { return null; } })();
+  check(importRes, {
+    [`${tag} categories created ≥ 1`]: _ => result && result.categoriesCreated >= 1,
+    [`${tag} products created = 1`]:   _ => result && result.productsCreated === 1,
+    [`${tag} variants created = 1`]:   _ => result && result.variantsCreated === 1,
+  });
+
+  // 2. Re-import same categories — should be skipped not errored
+  const reimportRes = post('/api/product-svc/admin/import', {
+    categories: [{ name: `BulkCat-${__VU}-${__ITER}` }],
+    products: [],
+  }, tenant.tenantId, tenant.ownerId);
+  if (reimportRes.status === 200) {
+    const r2 = (() => { try { return JSON.parse(reimportRes.body).data; } catch (_) { return null; } })();
+    check(reimportRes, {
+      [`${tag} duplicate category skipped`]: _ => r2 && r2.categoriesSkipped >= 1,
+    });
+  }
 
   sleep(1);
 }

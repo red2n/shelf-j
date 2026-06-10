@@ -1,11 +1,13 @@
 package com.shelfj.order.api;
 
 import com.shelfj.order.dto.Dtos.CreateReturnRequest;
+import com.shelfj.order.dto.Dtos.OrderSummaryResponse;
 import com.shelfj.order.dto.Dtos.PlaceOrderRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
 import com.shelfj.order.mapper.Mappers;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -16,8 +18,12 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.UUID;
 
 /** Order lifecycle: place, confirm, cancel, fulfil, void (POS), returns. */
@@ -29,6 +35,32 @@ public class OrderResource {
 
   @Inject OrderService svc;
   @Inject TenantContext ctx;
+
+  /**
+   * List orders for this tenant. All filters are optional.
+   *
+   * <p>?store= UUID — filter by store ?channel= ONLINE|POS — filter by channel ?status=
+   * PENDING|CONFIRMED|FULFILLED|CANCELLED|VOIDED — filter by status ?from= ISO-8601 datetime —
+   * created_at >= from ?to= ISO-8601 datetime — created_at <= to ?limit= 1-100 (default 20)
+   */
+  @GET
+  public ApiResponse<List<OrderSummaryResponse>> list(
+      @QueryParam("store") String store,
+      @QueryParam("channel") String channel,
+      @QueryParam("status") String status,
+      @QueryParam("from") String from,
+      @QueryParam("to") String to,
+      @QueryParam("limit") Integer limit) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store != null && !store.isBlank() ? UUID.fromString(store) : null;
+    Instant fromInst = parseInstant(from, "from");
+    Instant toInst = parseInstant(to, "to");
+    int clamped = Cursor.clampLimit(limit);
+    return ApiResponse.ok(
+        svc.listOrders(tenantId, storeId, channel, status, fromInst, toInst, clamped).stream()
+            .map(Mappers::toSummary)
+            .toList());
+  }
 
   @POST
   public Response place(PlaceOrderRequest req) {
@@ -98,6 +130,22 @@ public class OrderResource {
     var ret = svc.createReturn(ctx.tenantId(), UUID.fromString(id), req, ctx);
     var retItems = svc.getReturnItems(ctx.tenantId(), ret.id());
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(ret, retItems))).build();
+  }
+
+  // ─────────────────────────────────────────────────────────────────── utils
+
+  private static Instant parseInstant(String s, String field) {
+    if (s == null || s.isBlank()) return null;
+    try {
+      return Instant.parse(s);
+    } catch (DateTimeParseException e) {
+      throw new com.shelfj.web.ApiException(
+          400,
+          "INVALID_DATE",
+          field + " must be ISO-8601 (e.g. 2025-01-01T00:00:00Z)",
+          List.of(),
+          e);
+    }
   }
 
   @GET
