@@ -5,6 +5,7 @@ import com.shelfj.payment.domain.Domain.RefundTender;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
@@ -48,8 +49,8 @@ public class PaymentRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO refund_tenders"
                       + " (id, tenant_id, order_id, payment_id, amount, method,"
-                      + "  reference, reason, created_at)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+                      + "  reference, idempotency_key, reason, created_at)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, r.id());
             ps.setObject(2, r.tenantId());
             ps.setObject(3, r.orderId());
@@ -57,14 +58,30 @@ public class PaymentRepository extends BaseOutboxRepository {
             ps.setBigDecimal(5, r.amount());
             ps.setString(6, r.method());
             ps.setString(7, r.reference());
-            ps.setString(8, r.reason());
-            ps.setObject(9, r.createdAt());
+            ps.setString(8, r.idempotencyKey());
+            ps.setString(9, r.reason());
+            ps.setObject(10, r.createdAt());
             ps.executeUpdate();
           }
           insertOutbox(c, event);
           return r;
         },
         "create refund tender");
+  }
+
+  /** Sum all committed refunds for a given payment. Used to enforce cumulative refund cap. */
+  public BigDecimal sumRefunds(UUID tenantId, UUID paymentId) {
+    var rows =
+        query(
+            "SELECT COALESCE(SUM(amount), 0) AS total"
+                + " FROM refund_tenders WHERE tenant_id=? AND payment_id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, paymentId);
+            },
+            rs -> rs.getBigDecimal("total"),
+            "sum refunds");
+    return rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
   }
 
   public Optional<PaymentTender> findTender(UUID tenantId, UUID tenderId) {
@@ -99,7 +116,7 @@ public class PaymentRepository extends BaseOutboxRepository {
   public List<RefundTender> findRefundsByOrder(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, payment_id, amount, method,"
-            + " reference, reason, created_at"
+            + " reference, idempotency_key, reason, created_at"
             + " FROM refund_tenders WHERE tenant_id=? AND order_id=?"
             + " ORDER BY created_at ASC",
         ps -> {
@@ -135,6 +152,7 @@ public class PaymentRepository extends BaseOutboxRepository {
         rs.getBigDecimal("amount"),
         rs.getString("method"),
         rs.getString("reference"),
+        rs.getString("idempotency_key"),
         rs.getString("reason"),
         rs.getTimestamp("created_at").toInstant());
   }

@@ -28,4 +28,15 @@ final class Events {
             "{\"eventType\":\"PaymentFailed\",\"tenantId\":\"%s\",\"paymentId\":\"%s\",\"orderId\":\"%s\"}",
             tenantId, paymentId, orderId));
   }
+
+  static OutboxRow paymentRefunded(UUID tenantId, UUID refundId, UUID orderId) {
+    return new OutboxRow(
+        "PaymentRefunded",
+        "shelfj.payment.payment-refunded",
+        tenantId,
+        refundId,
+        String.format(
+            "{\"eventType\":\"PaymentRefunded\",\"tenantId\":\"%s\",\"refundId\":\"%s\",\"orderId\":\"%s\"}",
+            tenantId, refundId, orderId));
+  }
 }

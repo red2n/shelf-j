@@ -40,6 +40,16 @@ public class GatewayConfig {
   @ConfigProperty(name = "shelfj.gateway.brute-force.login-path", defaultValue = "/auth")
   String bruteForceLoginPath;
 
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.jwt.secret",
+      defaultValue = "dev-only-hmac-secret-change-me-please-32+chars")
+  String jwtSecret;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.jwt.issuer", defaultValue = "shelfj")
+  String jwtIssuer;
+
   public String consulHost() {
     return consulHost;
   }
@@ -70,5 +80,13 @@ public class GatewayConfig {
 
   public String bruteForceLoginPath() {
     return bruteForceLoginPath;
+  }
+
+  public String jwtSecret() {
+    return jwtSecret;
+  }
+
+  public String jwtIssuer() {
+    return jwtIssuer;
   }
 }

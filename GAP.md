@@ -353,20 +353,35 @@
 
 ---
 
+### Tier 6 — Security (confirmed vulnerabilities — must fix before production)
+
+> Identified by static security analysis of the branch diff. All five findings were independently validated by a false-positive filter with confidence ≥ 8/10. **Items 56 and 57 are pre-deployment blockers — the system cannot be safely exposed without them.**
+
+| # | Severity | Gap | Service | Notes |
+|---|---|---|---|---|
+| ~~56~~ | ~~🔴 CRITICAL~~ | ~~**Gateway JWT validation absent**~~ ✅ | ~~gateway~~ | ~~`JwtAuthFilter` (priority 999) validates `Authorization: Bearer`, strips spoofed headers, stamps verified X-Tenant-Id/X-User-Id/X-Roles from JWT claims. `GatewayConfig` provides `shelfj.jwt.secret` + `shelfj.jwt.issuer`.~~ |
+| ~~57~~ | ~~🔴 HIGH~~ | ~~**No role-based access control on any endpoint**~~ ✅ | ~~all services~~ | ~~`AdminAuthorizationFilter` (common-web, priority 2000) enforces ADMIN/STAFF on all `/admin/**` paths, `POST .../refunds`, `POST .../void`, `POST .../confirm`, `POST .../fulfil`. `TenantContext.requireAnyRole()` available for fine-grained guards.~~ |
+| ~~58~~ | ~~🔴 HIGH~~ | ~~**Payment over-refund**~~ ✅ | ~~payment-svc~~ | ~~`PaymentService.recordRefund()` now calls `repo.sumRefunds()` and rejects if cumulative total would exceed original. `idempotency_key` column + unique index added to `refund_tenders`. `PaymentRefunded` event published via outbox.~~ |
+| ~~59~~ | ~~🟡 MEDIUM~~ | ~~**Payment tables uninsertable**~~ ✅ | ~~payment-svc~~ | ~~`V1__init.sql` rewritten: `PARTITION BY LIST` removed from `payment_tenders` and `refund_tenders`. Performance indexes added.~~ |
+| ~~60~~ | ~~🟡 MEDIUM~~ | ~~**Internal schema leaked in bulk import errors**~~ ✅ | ~~product-svc~~ | ~~`ProductService.bulkImport()` now catches `ApiException` separately and returns sanitized user-facing messages for generic `Exception` (no JDBC details in responses).~~ |
+
+---
+
 ## Summary
 
 **Backlog 1 (items 1–20):** ✅ All done — planning engine, UOM, serial control, material status, move/transfer orders, demand history, safety stock, ABC analysis, cycle counting, lot genealogy, item revisions, templates, POS engine, tax/VAT, physical inventory, costing, kanban, ROP with EOQ, intercompany invoicing.
 
 **Backlog 2 Tier 1 (items 21–31):** ✅ All done — reason codes, source types, lot split/merge, expiry sweeper, lot grades, lot-UOM conversions, PAR levels, order modifiers, bulk reservations, history purge, GL zone mapping. All confirmed by V17__tier1_gaps.sql migration and k6 materialControl/planningEngine scenarios.
 
-**Open gaps — 24 items remaining (32–55):**
+**Open gaps — 24 items remaining (32–55 functional; security tier complete):**
 
 | Tier | Items | Theme |
 |---|---|---|
 | 2 — Product catalogue | 32–40 | Item relationships, supplier cross-refs, manufacturer PNs, attribute groups (×18 Oracle groups), container types, picking rules, category flexfields, bulk import |
 | 3 — POS completeness | 41–46 | Price overrides, special orders, full POSLog, receipt printing, POS session idle timeout, tax-exempt flag wired into order-svc |
 | 4 — Reporting & multi-org | 47–53 | Cross-store quantity rollup, supply/demand netting, movement statistics, SIM↔POS sync, shipping network/methods, economic zones, inventory org parameters |
-| 5 — Blockers | 54–55 | payment-svc (entire service absent), shortage alert dispatch to notification-svc |
+| 5 — Blockers | 54–55 | ~~54 payment-svc scaffolded~~ ✅, shortage alert dispatch to notification-svc |
+| **6 — Security** | **56–60** | **✅ All 5 fixed — gateway JWT (JwtAuthFilter), RBAC (AdminAuthorizationFilter), payment over-refund, payment DDL, bulk import error leak** |
 
 ---
 

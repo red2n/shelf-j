@@ -37,6 +37,7 @@ public final class Domain {
       BigDecimal amount,
       String method,
       String reference,
+      String idempotencyKey,
       String reason,
       Instant createdAt) {}
 }

@@ -24,6 +24,7 @@ public final class Dtos {
       @NotNull @DecimalMin("0.01") BigDecimal amount,
       @NotBlank String method,
       String reference,
+      String idempotencyKey,
       String reason) {}
 
   public record TenderResponse(

@@ -148,11 +148,10 @@ public class ProxyResource {
   }
 
   /**
-   * The security boundary. <strong>Phase 0:</strong> forwards the caller-supplied identity headers
-   * as-is so the flow is demonstrable without an auth service. <strong>Phase 2+:</strong> this MUST
-   * instead validate the inbound JWT and set X-Tenant-Id / X-User-Id / X-Roles from the verified
-   * claims, ignoring/stripping any client-supplied copies. Downstream services trust these headers
-   * because only the gateway can reach them.
+   * Forwards the verified identity headers to the upstream service. By the time this runs, {@link
+   * JwtAuthFilter} has already stripped any client-supplied copies and replaced them with values
+   * extracted from the validated JWT. Downstream services trust these headers because only the
+   * gateway can reach them (golden rule #2).
    */
   private void stampIdentity(
       io.helidon.webclient.api.HttpClientRequest req, jakarta.ws.rs.core.HttpHeaders inbound) {

@@ -72,15 +72,18 @@ public class PaymentService {
       throw ApiException.conflict(
           "PAYMENT_ORDER_MISMATCH", "payment does not belong to this order");
 
-    if (req.amount().compareTo(payment.amount()) > 0)
-      throw ApiException.conflict(
-          "REFUND_EXCEEDS_PAYMENT", "refund amount exceeds original payment");
-
     String method = req.method().toUpperCase();
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
           "PAYMENT_INVALID_METHOD",
           "method must be one of CASH, CARD, GIFT_CARD, VOUCHER — got: " + req.method());
+
+    // Cumulative guard: existing refunds + this refund must not exceed original payment.
+    java.math.BigDecimal alreadyRefunded = repo.sumRefunds(tenantId, payment.id());
+    if (alreadyRefunded.add(req.amount()).compareTo(payment.amount()) > 0)
+      throw ApiException.conflict(
+          "REFUND_EXCEEDS_PAYMENT",
+          "total refunds would exceed original payment of " + payment.amount());
 
     UUID refundId = UUID.randomUUID();
     RefundTender refund =
@@ -92,10 +95,11 @@ public class PaymentService {
             req.amount(),
             method,
             req.reference(),
+            req.idempotencyKey(),
             req.reason(),
             Instant.now());
 
-    return repo.createRefund(refund, null);
+    return repo.createRefund(refund, Events.paymentRefunded(tenantId, refundId, orderId));
   }
 
   public List<RefundTender> listRefundsByOrder(UUID tenantId, UUID orderId) {

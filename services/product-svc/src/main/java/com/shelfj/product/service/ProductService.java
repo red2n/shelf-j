@@ -489,8 +489,10 @@ public class ProductService {
           }
           repo.createCategory(tenantId, parentId, c.name().trim());
           catCreated++;
+        } catch (ApiException ae) {
+          errors.add(new BulkImportError("category:" + c.name(), ae.getMessage()));
         } catch (Exception e) {
-          errors.add(new BulkImportError("category:" + c.name(), e.getMessage()));
+          errors.add(new BulkImportError("category:" + c.name(), "Failed to import category"));
         }
       }
     }
@@ -569,13 +571,20 @@ public class ProductService {
                       Events.variantCreated(tenantId, variantId, productId, variant.sku()));
               repo.createVariantWithOutbox(variant, variantEvent);
               varCreated++;
+            } catch (ApiException ae) {
+              errors.add(
+                  new BulkImportError("variant:" + v.sku() + " on " + p.name(), ae.getMessage()));
             } catch (Exception e) {
               errors.add(
-                  new BulkImportError("variant:" + v.sku() + " on " + p.name(), e.getMessage()));
+                  new BulkImportError(
+                      "variant:" + v.sku() + " on " + p.name(),
+                      "Failed to import variant — check SKU uniqueness"));
             }
           }
+        } catch (ApiException ae) {
+          errors.add(new BulkImportError("product:" + p.name(), ae.getMessage()));
         } catch (Exception e) {
-          errors.add(new BulkImportError("product:" + p.name(), e.getMessage()));
+          errors.add(new BulkImportError("product:" + p.name(), "Failed to import product"));
         }
       }
     }
