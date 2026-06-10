@@ -203,6 +203,24 @@ final class Events {
         + "\"}";
   }
 
+  static String lotSplit(UUID tenantId, UUID sourceBatchId, UUID newBatchId, BigDecimal qty) {
+    return EventPayload.base("LotSplit", tenantId, sourceBatchId)
+        + ",\"newBatchId\":\""
+        + newBatchId
+        + "\",\"qty\":"
+        + qty.toPlainString()
+        + "}";
+  }
+
+  static String lotMerge(UUID tenantId, UUID sourceBatchId, UUID targetBatchId, BigDecimal qty) {
+    return EventPayload.base("LotMerge", tenantId, sourceBatchId)
+        + ",\"targetBatchId\":\""
+        + targetBatchId
+        + "\",\"qty\":"
+        + qty.toPlainString()
+        + "}";
+  }
+
   private static String storeVariant(UUID storeId, UUID variantId) {
     return ",\"storeId\":\"" + storeId + "\",\"variantId\":\"" + variantId + "\"";
   }

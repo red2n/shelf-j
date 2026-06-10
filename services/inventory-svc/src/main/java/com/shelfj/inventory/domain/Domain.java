@@ -23,7 +23,8 @@ public final class Domain {
       Instant createdAt,
       String status,
       String materialStatus,
-      String materialStatusReason) {
+      String materialStatusReason,
+      String grade) {
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_DEPLETED = "DEPLETED";
     public static final String STATUS_EXPIRED = "EXPIRED";
@@ -64,6 +65,7 @@ public final class Domain {
       BigDecimal qty,
       String refType,
       UUID refId,
+      String reasonCode,
       Instant createdAt) {}
 
   public record Threshold(
@@ -326,6 +328,9 @@ public final class Domain {
       java.math.BigDecimal avgDailyDemand,
       java.math.BigDecimal rop,
       java.math.BigDecimal eoq,
+      java.math.BigDecimal minOrderQty,
+      java.math.BigDecimal maxOrderQty,
+      java.math.BigDecimal lotMultiplier,
       Instant computedAt,
       Instant createdAt) {}
 
@@ -342,6 +347,9 @@ public final class Domain {
       UUID sourceStoreId,
       String supplierRef,
       String notes,
+      java.math.BigDecimal minOrderQty,
+      java.math.BigDecimal maxOrderQty,
+      java.math.BigDecimal lotMultiplier,
       Instant createdAt,
       Instant triggeredAt,
       Instant replenishedAt) {
@@ -381,6 +389,72 @@ public final class Domain {
     public static final String OPEN = "OPEN";
     public static final String CLOSED = "CLOSED";
   }
+
+  // ── Tier-1 Gap #21: Transaction reason codes ─────────────────────────────
+
+  public record ReasonCode(
+      UUID id, UUID tenantId, String code, String description, boolean active, Instant createdAt) {}
+
+  // ── Tier-1 Gap #22: Configurable transaction source types ────────────────
+
+  public record TransactionSourceType(
+      UUID id, UUID tenantId, String code, String description, boolean active, Instant createdAt) {}
+
+  // ── Tier-1 Gap #23: Lot action (split / merge) ────────────────────────────
+
+  public record LotAction(
+      UUID id,
+      UUID tenantId,
+      String actionType,
+      UUID sourceBatchId,
+      UUID resultBatchId,
+      java.math.BigDecimal qty,
+      String notes,
+      Instant createdAt) {
+    public static final String SPLIT = "SPLIT";
+    public static final String MERGE = "MERGE";
+  }
+
+  // ── Tier-1 Gap #26: Lot-specific UOM conversions ─────────────────────────
+
+  public record LotUomConversion(
+      UUID id,
+      UUID tenantId,
+      UUID batchId,
+      String fromUom,
+      String toUom,
+      java.math.BigDecimal factor,
+      String notes,
+      Instant createdAt) {}
+
+  // ── Tier-1 Gap #27: PAR level configs ────────────────────────────────────
+
+  public record ParLevelConfig(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      java.math.BigDecimal parQty,
+      String uom,
+      String reviewCycle,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String DAILY = "DAILY";
+    public static final String WEEKLY = "WEEKLY";
+    public static final String MONTHLY = "MONTHLY";
+  }
+
+  // ── Tier-1 Gap #31: Zone GL mappings ─────────────────────────────────────
+
+  public record ZoneGlMapping(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID zoneId,
+      String nominalCode,
+      String description,
+      Instant createdAt,
+      Instant updatedAt) {}
 
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
 

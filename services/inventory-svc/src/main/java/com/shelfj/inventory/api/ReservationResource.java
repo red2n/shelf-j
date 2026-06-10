@@ -1,5 +1,7 @@
 package com.shelfj.inventory.api;
 
+import com.shelfj.inventory.dto.Dtos.BatchReserveRequest;
+import com.shelfj.inventory.dto.Dtos.BatchReserveResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
 import com.shelfj.inventory.dto.Dtos.ReserveRequest;
 import com.shelfj.inventory.mapper.Mappers;
@@ -87,6 +89,18 @@ public class ReservationResource {
   public ApiResponse<String> release(@PathParam("id") UUID id) {
     boolean released = service.release(ctx.requireTenantId(), id);
     return ApiResponse.ok(released ? "released" : "noop");
+  }
+
+  // ── Gap #29: Bulk (batch) reservations ────────────────────────────────────
+
+  @POST
+  @Path("/batch")
+  public ApiResponse<BatchReserveResponse> bulkReserve(BatchReserveRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var result = service.bulkReserve(tenantId, req.reservations());
+    var responses = result.results().stream().map(Mappers::toReservation).toList();
+    return ApiResponse.ok(new BatchReserveResponse(result.succeeded(), result.failed(), responses));
   }
 
   private static UUID uuid(String s, String field) {

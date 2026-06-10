@@ -40,6 +40,9 @@ class InventoryIT {
   private static final String S = "22222222-2222-2222-2222-222222222222";
   private static final String V = "33333333-3333-3333-3333-333333333333";
 
+  /** Dedicated variant for the FIFO test so tier-1 stock doesn't pollute its level assertions. */
+  private static final String V_FIFO = "44444444-4444-4444-4444-444444444444";
+
   @Inject WebTarget target;
 
   @AfterAll
@@ -61,6 +64,7 @@ class InventoryIT {
 
   @Test
   void receiveReserveConsumeFifoAndIsolation() {
+    // Use V_FIFO so tier-1 tests receiving into V don't pollute level assertions here.
     // two batches: A (earlier expiry, 10) then B (later, 5)
     assertThat(
         post(
@@ -68,7 +72,7 @@ class InventoryIT {
                 "{\"storeId\":\""
                     + S
                     + "\",\"variantId\":\""
-                    + V
+                    + V_FIFO
                     + "\",\"qty\":10,\"batchNo\":\"A\",\"expiryDate\":\"2026-01-01\"}",
                 T)
             .getStatus(),
@@ -79,30 +83,44 @@ class InventoryIT {
                 "{\"storeId\":\""
                     + S
                     + "\",\"variantId\":\""
-                    + V
+                    + V_FIFO
                     + "\",\"qty\":5,\"batchNo\":\"B\",\"expiryDate\":\"2027-01-01\"}",
                 T)
             .getStatus(),
         is(201));
 
-    // levels: onHand 15, available 15
-    assertThat(get("/admin/inventory/levels", T), containsString("\"available\":15"));
+    // levels for store S — V_FIFO row has onHand 15, available 15
+    assertThat(
+        target
+            .path("/admin/inventory/levels")
+            .queryParam("store", S)
+            .request()
+            .header("X-Tenant-Id", T)
+            .get(String.class),
+        containsString("\"available\":15"));
 
     // reserve 12 → available 3
-    Response r =
+    Response resResp =
         post(
             "/inventory/reservations",
-            "{\"storeId\":\"" + S + "\",\"variantId\":\"" + V + "\",\"qty\":12}",
+            "{\"storeId\":\"" + S + "\",\"variantId\":\"" + V_FIFO + "\",\"qty\":12}",
             T);
-    assertThat(r.getStatus(), is(201));
-    String reservationId = field(r.readEntity(String.class), "id");
-    assertThat(get("/admin/inventory/levels", T), containsString("\"available\":3"));
+    assertThat(resResp.getStatus(), is(201));
+    String reservationId = field(resResp.readEntity(String.class), "id");
+    assertThat(
+        target
+            .path("/admin/inventory/levels")
+            .queryParam("store", S)
+            .request()
+            .header("X-Tenant-Id", T)
+            .get(String.class),
+        containsString("\"available\":3"));
 
     // over-reserve (5 > 3) → 422
     Response over =
         post(
             "/inventory/reservations",
-            "{\"storeId\":\"" + S + "\",\"variantId\":\"" + V + "\",\"qty\":5}",
+            "{\"storeId\":\"" + S + "\",\"variantId\":\"" + V_FIFO + "\",\"qty\":5}",
             T);
     assertThat(over.getStatus(), is(422));
     assertThat(over.readEntity(String.class), containsString("INSUFFICIENT_STOCK"));
@@ -110,11 +128,460 @@ class InventoryIT {
     // consume (FIFO: A drains, B reduced) → onHand 3
     Response consume = post("/inventory/reservations/" + reservationId + "/consume", "", T);
     assertThat(consume.getStatus(), is(200));
-    String levels = get("/admin/inventory/levels", T);
-    assertThat(levels, containsString("\"onHand\":3"));
+    assertThat(
+        target
+            .path("/admin/inventory/levels")
+            .queryParam("store", S)
+            .request()
+            .header("X-Tenant-Id", T)
+            .get(String.class),
+        containsString("\"onHand\":3"));
 
     // tenant isolation
-    assertThat(get("/admin/inventory/levels", OTHER), not(containsString(V)));
+    assertThat(get("/admin/inventory/levels", OTHER), not(containsString(V_FIFO)));
+  }
+
+  // ── Tier-1 Gap #21: Reason codes ─────────────────────────────────────────
+
+  @Test
+  void reasonCode_createAndList() {
+    Response r =
+        post(
+            "/admin/inventory/reason-codes",
+            "{\"code\":\"TEST_DMG\",\"description\":\"Test damage\"}",
+            T);
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("TEST_DMG"));
+
+    String list = get("/admin/inventory/reason-codes", T);
+    assertThat(list, containsString("TEST_DMG"));
+    // System seeded codes also visible
+    assertThat(list, containsString("DAMAGED"));
+  }
+
+  @Test
+  void reasonCode_missingCode_returns400() {
+    Response r = post("/admin/inventory/reason-codes", "{\"description\":\"no code\"}", T);
+    assertThat(r.getStatus(), is(400));
+  }
+
+  @Test
+  void reasonCode_deactivate() {
+    post("/admin/inventory/reason-codes", "{\"code\":\"DEACT_ME\"}", T);
+    String list = get("/admin/inventory/reason-codes", T);
+    String id = fieldNear(list, "\"DEACT_ME\"", "id");
+    Response r = post("/admin/inventory/reason-codes/" + id + "/deactivate", "", T);
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("\"active\":false"));
+  }
+
+  // ── Tier-1 Gap #22: Source types ─────────────────────────────────────────
+
+  @Test
+  void sourceType_createAndList() {
+    Response r =
+        post("/admin/inventory/source-types", "{\"code\":\"POS_SALE\",\"description\":\"POS\"}", T);
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("POS_SALE"));
+
+    String list = get("/admin/inventory/source-types", T);
+    assertThat(list, containsString("POS_SALE"));
+    assertThat(list, containsString("RECEIVE")); // system seed
+  }
+
+  @Test
+  void sourceType_missingCode_returns400() {
+    Response r = post("/admin/inventory/source-types", "{\"description\":\"no code\"}", T);
+    assertThat(r.getStatus(), is(400));
+  }
+
+  // ── Tier-1 Gap #23: Lot split / merge ────────────────────────────────────
+
+  @Test
+  void lotSplit_positive() {
+    // receive a batch first
+    Response rcv =
+        post(
+            "/admin/inventory/receive",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + V
+                + "\",\"qty\":20,\"batchNo\":\"SPLIT-SRC\"}",
+            T);
+    assertThat(rcv.getStatus(), is(201));
+    String srcBatchId = field(rcv.readEntity(String.class), "id");
+
+    Response r =
+        post(
+            "/admin/inventory/lots/split",
+            "{\"sourceBatchId\":\"" + srcBatchId + "\",\"qty\":8,\"batchNo\":\"SPLIT-CHILD\"}",
+            T);
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("SPLIT"));
+  }
+
+  @Test
+  void lotSplit_excessQty_returns422() {
+    Response rcv =
+        post(
+            "/admin/inventory/receive",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + V
+                + "\",\"qty\":5,\"batchNo\":\"SPLIT-SMALL\"}",
+            T);
+    String srcId = field(rcv.readEntity(String.class), "id");
+
+    Response r =
+        post("/admin/inventory/lots/split", "{\"sourceBatchId\":\"" + srcId + "\",\"qty\":999}", T);
+    assertThat(r.getStatus(), is(422));
+    assertThat(r.readEntity(String.class), containsString("INSUFFICIENT_QTY"));
+  }
+
+  @Test
+  void lotSplit_unknownBatch_returns404() {
+    Response r =
+        post(
+            "/admin/inventory/lots/split",
+            "{\"sourceBatchId\":\"00000000-0000-0000-0000-000000000099\",\"qty\":1}",
+            T);
+    assertThat(r.getStatus(), is(404));
+  }
+
+  // ── Tier-1 Gap #24: Expiry alert query ───────────────────────────────────
+
+  @Test
+  void expiringBatches_withinWindow() {
+    post(
+        "/admin/inventory/receive",
+        "{\"storeId\":\""
+            + S
+            + "\",\"variantId\":\""
+            + V
+            + "\",\"qty\":3,\"batchNo\":\"EXP-NEAR\",\"expiryDate\":\"2026-01-15\"}",
+        T);
+
+    String resp =
+        target
+            .path("/admin/inventory/batches/expiring")
+            .queryParam("store", S)
+            .queryParam("withinDays", 3650)
+            .request()
+            .header("X-Tenant-Id", T)
+            .get(String.class);
+    assertThat(resp, containsString("EXP-NEAR"));
+  }
+
+  @Test
+  void expiringBatches_invalidDays_returns400() {
+    Response r =
+        target
+            .path("/admin/inventory/batches/expiring")
+            .queryParam("store", S)
+            .queryParam("withinDays", 9999)
+            .request()
+            .header("X-Tenant-Id", T)
+            .get();
+    assertThat(r.getStatus(), is(400));
+  }
+
+  // ── Tier-1 Gap #25: Grade control ────────────────────────────────────────
+
+  @Test
+  void gradeUpdate_positive() {
+    Response rcv =
+        post(
+            "/admin/inventory/receive",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + V
+                + "\",\"qty\":5,\"batchNo\":\"GRADE-B1\",\"grade\":\"A\"}",
+            T);
+    String batchId = field(rcv.readEntity(String.class), "id");
+
+    Response r =
+        target
+            .path("/admin/inventory/batches/" + batchId + "/grade")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(Entity.entity("{\"grade\":\"B\"}", MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("\"grade\":\"B\""));
+  }
+
+  @Test
+  void gradeUpdate_blankGrade_returns400() {
+    Response rcv =
+        post(
+            "/admin/inventory/receive",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"batchNo\":\"GRADE-B2\"}",
+            T);
+    String batchId = field(rcv.readEntity(String.class), "id");
+
+    Response r =
+        target
+            .path("/admin/inventory/batches/" + batchId + "/grade")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(Entity.entity("{\"grade\":\"\"}", MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(400));
+  }
+
+  // ── Tier-1 Gap #26: Lot UOM conversions ──────────────────────────────────
+
+  @Test
+  void uomConversion_upsertAndList() {
+    Response rcv =
+        post(
+            "/admin/inventory/receive",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + V
+                + "\",\"qty\":10,\"batchNo\":\"UOM-B1\"}",
+            T);
+    String batchId = field(rcv.readEntity(String.class), "id");
+
+    Response r =
+        target
+            .path("/admin/inventory/lots/" + batchId + "/uom-conversions")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(
+                Entity.entity(
+                    "{\"batchId\":\""
+                        + batchId
+                        + "\",\"fromUom\":\"KG\",\"toUom\":\"G\",\"factor\":1000}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("\"factor\":1000"));
+
+    String list = get("/admin/inventory/lots/" + batchId + "/uom-conversions", T);
+    assertThat(list, containsString("KG"));
+  }
+
+  @Test
+  void uomConversion_negFactor_returns400() {
+    Response rcv =
+        post(
+            "/admin/inventory/receive",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + V
+                + "\",\"qty\":2,\"batchNo\":\"UOM-NEG\"}",
+            T);
+    String batchId = field(rcv.readEntity(String.class), "id");
+
+    Response r =
+        target
+            .path("/admin/inventory/lots/" + batchId + "/uom-conversions")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(
+                Entity.entity(
+                    "{\"batchId\":\""
+                        + batchId
+                        + "\",\"fromUom\":\"KG\",\"toUom\":\"G\",\"factor\":-1}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(400));
+  }
+
+  // ── Tier-1 Gap #27: PAR levels ───────────────────────────────────────────
+
+  @Test
+  void parLevel_upsertAndList() {
+    Response r =
+        target
+            .path("/admin/inventory/par-levels")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(
+                Entity.entity(
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"variantId\":\""
+                        + V
+                        + "\",\"parQty\":50,\"reviewCycle\":\"WEEKLY\"}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("\"parQty\":50"));
+
+    String list =
+        target
+            .path("/admin/inventory/par-levels")
+            .queryParam("store", S)
+            .request()
+            .header("X-Tenant-Id", T)
+            .get(String.class);
+    assertThat(list, containsString("WEEKLY"));
+  }
+
+  @Test
+  void parLevel_invalidCycle_returns400() {
+    Response r =
+        target
+            .path("/admin/inventory/par-levels")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(
+                Entity.entity(
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"variantId\":\""
+                        + V
+                        + "\",\"parQty\":10,\"reviewCycle\":\"YEARLY\"}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(400));
+  }
+
+  // ── Tier-1 Gap #28: Order modifiers ──────────────────────────────────────
+
+  @Test
+  void ropOrderModifiers_update() {
+    // create a ROP plan first
+    Response rop =
+        target
+            .path("/admin/inventory/rop-plans")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(
+                Entity.entity(
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"variantId\":\""
+                        + V
+                        + "\",\"leadTimeDays\":7,\"orderingCost\":50,\"holdingCostPct\":0.2,\"unitCost\":10}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(rop.getStatus(), is(200));
+    String ropId = field(rop.readEntity(String.class), "id");
+
+    Response r =
+        target
+            .path("/admin/inventory/rop-plans/" + ropId + "/order-modifiers")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(
+                Entity.entity(
+                    "{\"minOrderQty\":5,\"maxOrderQty\":100,\"lotMultiplier\":5}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("\"minOrderQty\":5"));
+  }
+
+  @Test
+  void ropOrderModifiers_unknownPlan_returns404() {
+    Response r =
+        target
+            .path("/admin/inventory/rop-plans/00000000-0000-0000-0000-000000000099/order-modifiers")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(Entity.entity("{\"minOrderQty\":1}", MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(404));
+  }
+
+  // ── Tier-1 Gap #29: Bulk reservations ────────────────────────────────────
+
+  @Test
+  void bulkReserve_positive() {
+    // ensure stock
+    post(
+        "/admin/inventory/receive",
+        "{\"storeId\":\""
+            + S
+            + "\",\"variantId\":\""
+            + V
+            + "\",\"qty\":100,\"batchNo\":\"BULK-SRC\"}",
+        T);
+
+    Response r =
+        post(
+            "/inventory/reservations/batch",
+            "{\"reservations\":[{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + V
+                + "\",\"qty\":2},"
+                + "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + V
+                + "\",\"qty\":3}]}",
+            T);
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("\"succeeded\":2"));
+  }
+
+  @Test
+  void bulkReserve_emptyList_returns400() {
+    // Missing "reservations" key → 400 (Bean Validation: @NotNull)
+    Response bad = post("/inventory/reservations/batch", "{}", T);
+    assertThat(bad.getStatus(), is(400));
+  }
+
+  // ── Tier-1 Gap #30: Purge movements ──────────────────────────────────────
+
+  @Test
+  void purgeMovements_tooRecent_returns400() {
+    // Trying to purge within 90 days must be rejected
+    Response r =
+        post("/admin/inventory/movements/purge", "{\"before\":\"2026-05-01T00:00:00Z\"}", T);
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("PURGE_TOO_RECENT"));
+  }
+
+  @Test
+  void purgeMovements_oldDate_succeeds() {
+    Response r =
+        post("/admin/inventory/movements/purge", "{\"before\":\"2020-01-01T00:00:00Z\"}", T);
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("\"purged\""));
+  }
+
+  // ── Tier-1 Gap #31: Zone GL mappings ─────────────────────────────────────
+
+  @Test
+  void zoneGlMapping_upsertAndList() {
+    Response r =
+        target
+            .path("/admin/inventory/zone-gl-mappings")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(
+                Entity.entity(
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"nominalCode\":\"1200\",\"description\":\"Stock account\"}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(200));
+    assertThat(r.readEntity(String.class), containsString("\"nominalCode\":\"1200\""));
+
+    String list =
+        target
+            .path("/admin/inventory/zone-gl-mappings")
+            .queryParam("store", S)
+            .request()
+            .header("X-Tenant-Id", T)
+            .get(String.class);
+    assertThat(list, containsString("1200"));
+  }
+
+  @Test
+  void zoneGlMapping_missingNominalCode_returns400() {
+    Response r =
+        target
+            .path("/admin/inventory/zone-gl-mappings")
+            .request()
+            .header("X-Tenant-Id", T)
+            .put(Entity.entity("{\"storeId\":\"" + S + "\"}", MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(400));
   }
 
   private static String field(String json, String name) {
@@ -123,5 +590,17 @@ class InventoryIT {
     if (i < 0) throw new AssertionError(name + " not in " + json);
     int start = i + key.length();
     return json.substring(start, json.indexOf('"', start));
+  }
+
+  /** Find the value of {@code name} in the JSON object that contains {@code marker}. */
+  private static String fieldNear(String json, String marker, String name) {
+    int m = json.indexOf(marker);
+    if (m < 0) throw new AssertionError(marker + " not found in " + json);
+    // scan backward to find the start of the enclosing object
+    int objStart = json.lastIndexOf('{', m);
+    // find the end of the object (next '}' after the marker position)
+    int objEnd = json.indexOf('}', m);
+    String obj = json.substring(objStart, objEnd + 1);
+    return field(obj, name);
   }
 }

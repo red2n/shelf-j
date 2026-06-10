@@ -285,6 +285,74 @@
 
 ---
 
+## Backlog 2 — Verified against actual code (items 21–55)
+
+> Items 1–20 above were derived from the Oracle doc. Items 21–55 were found by reading the real service code and SQL migrations — these gaps exist regardless of what the doc says.
+>
+> **Build order:** Inventory completeness → Product richness → POS → Reporting → Blockers (payment-svc deferred until post-demo).
+
+### Tier 1 — Inventory control completeness
+
+| # | Gap | Service | Notes |
+|---|---|---|---|
+| 21 | **Transaction reason codes** — codified enum table + `reason_code` column on `stock_movements` | inventory-svc | `adjust` accepts free-text `reason` only; no controlled vocabulary |
+| 22 | **Configurable transaction source types** — `transaction_source_types` table replacing hardcoded TEXT comment | inventory-svc | `movement_type` is a hardcoded SQL comment, not a managed reference table |
+| 23 | **Lot action codes** — split / merge / transfer endpoints + corresponding movements | inventory-svc | No `lot_split` or `lot_merge` anywhere in Java or SQL |
+| 24 | **Lot expiry auto-reporting** — scheduled job that alerts on batches past `expiry_date` | inventory-svc | No scheduler or notification dispatch for expired lots |
+| 25 | **Lot grade control** — `grade` column on `inventory_batches` + grade-based picking | inventory-svc | No grade field in any migration |
+| 26 | **Lot-specific UOM conversions** — per-lot conversion override table | inventory-svc | UOM item conversions exist in product-svc; no lot-level override |
+| 27 | **PAR levels / replenishment counting** — `par_level_configs` table + counting endpoint | inventory-svc | Not in any migration or endpoint |
+| 28 | **Order modifiers** — min/max order qty + fixed-lot multiplier on ROP plans, kanban cards, thresholds | inventory-svc | `rop_plans` and `kanban_cards` tables have no modifier columns |
+| 29 | **Reservation batch interface** — bulk `POST /inventory/reservations/batch` endpoint | inventory-svc | Only single-reservation POST exists |
+| 30 | **Purge transaction history** — admin endpoint + optional scheduled job | inventory-svc | No purge path; `stock_movements` grows forever |
+| 31 | **GL account mapping** — subinventory/zone → nominal code mapping table | inventory-svc | No chart-of-accounts link on zones or batches |
+
+### Tier 2 — Product catalogue richness
+
+| # | Gap | Service | Notes |
+|---|---|---|---|
+| 32 | **Item relationships** — substitute / complementary links between variants | product-svc | No `item_relationships` table or endpoint |
+| 33 | **Supplier / customer cross-references** — supplier part-number cross-ref table | product-svc | No cross-ref table in any migration |
+| 34 | **Manufacturer part numbers** — `manufacturer_pn` field on `product_variants` | product-svc | Field absent from schema |
+| 35 | **Item catalog groups / descriptive elements** — structured spec metadata beyond `attributes JSONB` | product-svc | Variants use an untyped JSONB bag only |
+| 36 | **18 Oracle attribute groups** — typed model for Lead Times, Purchasing, Receiving, WIP, Web, etc. | product-svc | No attribute group model; untyped JSONB only |
+| 37 | **Container types / cartonization** — container type reference table + variant link | product-svc | Not present |
+| 38 | **Picking rules** — configurable pick-sequence rules (FEFO, FIFO, zone priority) | product-svc / inventory-svc | FIFO index exists; no rule engine |
+| 39 | **Category flexfields** — multi-set category model (Oracle `category_sets`) replacing flat tree | product-svc | Single flat `parent_id` tree only |
+| 40 | **Open Item Interface** — bulk import endpoint (CSV/JSON) for variants | product-svc | No bulk import endpoint or batch job |
+
+### Tier 3 — POS completeness
+
+| # | Gap | Service | Notes |
+|---|---|---|---|
+| 41 | **Price overrides at POS** — ad-hoc override endpoint + `price_overrides` append-only table | pricing-svc | Named price lists exist; no per-transaction POS override |
+| 42 | **Special orders** — customer order placed at store for future delivery | order-svc | No endpoint or table |
+| 43 | **POSLog / transaction journal** — full POSLog record per completed order | order-svc | `tax_transactions` in pricing-svc is POSLog-compatible; order-svc has no POSLog entity |
+| 44 | **Receipt / e-journal printing** — receipt model + print/email endpoint | order-svc | Nothing in codebase |
+| 45 | **POS session idle timeout** — idle timeout detection + force-logout in iam-svc | iam-svc | JWT refresh exists; no idle-session timeout |
+| 46 | **Tax-exempt flag on orders** — order-svc must pass and record the `exempt` flag returned by pricing-svc `/prices/resolve` | order-svc + pricing-svc | pricing-svc resolves it; order-svc ignores it |
+
+### Tier 4 — Reporting & multi-org
+
+| # | Gap | Service | Notes |
+|---|---|---|---|
+| 47 | **Multi-org quantity report** — cross-store aggregate on-hand view | reporting-svc *(new)* | `aggregateDemand` is per-store only; no cross-store rollup |
+| 48 | **Item supply / demand netting** — on-hand + open POs + open orders combined view | reporting-svc | On-hand only; no supply/demand netting query |
+| 49 | **Movement statistics** — aggregated demand history at tenant level across all stores | reporting-svc | Raw `stock_movements` per store; no tenant-level rollup |
+| 50 | **SIM ↔ POS sync** — Store Inventory Management event bridge between inventory-svc and order-svc | inventory-svc + order-svc | Not modeled anywhere |
+| 51 | **Inter-org shipping network / shipping methods** — route table between stores + method reference | inventory-svc / tenant-svc | Transfer orders exist but no shipping route or method model |
+| 52 | **Multi-entity accounting / economic zones** — extend intercompany invoicing for group structures | purchase-svc | Intercompany invoices exist; no economic zone or multi-entity model |
+| 53 | **Inventory org parameters** — tenant-level profile knobs (enable/disable lot, serial, grade per org) | tenant-svc | No such config knobs in tenant schema |
+
+### Tier 5 — Blockers (post-demo)
+
+| # | Gap | Service | Notes |
+|---|---|---|---|
+| 54 | **payment-svc** — entire service: card/e-check tender, multi-currency arithmetic, VISA PABP, instant credit enrollment | payment-svc *(new)* | Directory does not exist; blocks all payment flows |
+| 55 | **Shortage alerts** — wire `reorder_thresholds` to notification-svc dispatch when stock < min_qty | inventory-svc + notification-svc | Threshold data stored; zero alert code |
+
+---
+
 ## Summary
 
 Shelf-J has a solid multi-tenant structural foundation — tenant/store/zone hierarchy, products, inventory batches, reservations, and an append-only stock movement log. The gaps cluster around three themes:

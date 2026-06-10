@@ -11,12 +11,16 @@ import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
+import com.shelfj.inventory.domain.Domain.LotUomConversion;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
+import com.shelfj.inventory.domain.Domain.ParLevelConfig;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
+import com.shelfj.inventory.domain.Domain.ReasonCode;
 import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
@@ -24,8 +28,10 @@ import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
+import com.shelfj.inventory.domain.Domain.TransactionSourceType;
 import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
 import com.shelfj.inventory.repo.InventoryRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -38,6 +44,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** Stock business logic. All mutations emit a stock event via the outbox (golden rule #6). */
@@ -73,6 +80,7 @@ public class InventoryService {
             Instant.now(),
             Batch.STATUS_ACTIVE,
             Batch.MATERIAL_AVAILABLE,
+            null,
             null);
     var event =
         new OutboxRow(
@@ -1182,6 +1190,9 @@ public class InventoryService {
             null,
             null,
             null,
+            null,
+            null,
+            null,
             null);
     var event =
         new OutboxRow(
@@ -1238,6 +1249,9 @@ public class InventoryService {
             supplierRef,
             notes,
             null,
+            null,
+            null,
+            Instant.now(),
             null,
             null);
     var event =
@@ -1346,5 +1360,241 @@ public class InventoryService {
 
   public List<AccountingPeriod> listPeriods(UUID tenantId, UUID storeId) {
     return repo.listPeriods(tenantId, storeId);
+  }
+
+  // ── Tier-1 Gap #21: Transaction reason codes ─────────────────────────────
+
+  public ReasonCode createReasonCode(UUID tenantId, String code, String description) {
+    return repo.insertReasonCode(tenantId, code.toUpperCase(Locale.ROOT), description);
+  }
+
+  public List<ReasonCode> listReasonCodes(UUID tenantId) {
+    return repo.listReasonCodes(tenantId);
+  }
+
+  public ReasonCode setReasonCodeActive(UUID tenantId, UUID id, boolean active) {
+    return repo.setReasonCodeActive(tenantId, id, active);
+  }
+
+  // ── Tier-1 Gap #22: Transaction source types ──────────────────────────────
+
+  public TransactionSourceType createSourceType(UUID tenantId, String code, String description) {
+    return repo.insertSourceType(tenantId, code.toUpperCase(Locale.ROOT), description);
+  }
+
+  public List<TransactionSourceType> listSourceTypes(UUID tenantId) {
+    return repo.listSourceTypes(tenantId);
+  }
+
+  public TransactionSourceType setSourceTypeActive(UUID tenantId, UUID id, boolean active) {
+    return repo.setSourceTypeActive(tenantId, id, active);
+  }
+
+  // ── Tier-1 Gap #23: Lot actions (split / merge) ───────────────────────────
+
+  public record LotSplitResult(Batch newBatch, LotAction action) {}
+
+  public LotSplitResult splitLot(
+      UUID tenantId, UUID sourceBatchId, BigDecimal qty, String batchNo, String notes) {
+    Batch source =
+        repo.getBatch(tenantId, sourceBatchId)
+            .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Source batch not found"));
+    if (source.remainingQty().compareTo(qty) < 0) {
+      throw ApiException.unprocessable(
+          "INSUFFICIENT_QTY", "Split qty exceeds remaining qty on source batch");
+    }
+    String newBatchNo =
+        batchNo != null
+            ? batchNo
+            : source.batchNo() + "-SPLIT-" + UUID.randomUUID().toString().substring(0, 8);
+    UUID newBatchId = UUID.randomUUID();
+    Batch splitBatch =
+        new Batch(
+            newBatchId,
+            tenantId,
+            source.storeId(),
+            source.variantId(),
+            newBatchNo,
+            qty,
+            qty,
+            source.costPrice(),
+            source.expiryDate(),
+            Instant.now(),
+            Batch.STATUS_ACTIVE,
+            Batch.MATERIAL_AVAILABLE,
+            null,
+            source.grade());
+    OutboxRow splitEvent =
+        new OutboxRow(
+            "LotSplit",
+            "shelfj.inventory.lot-split",
+            tenantId,
+            sourceBatchId,
+            Events.lotSplit(tenantId, sourceBatchId, newBatchId, qty));
+    Batch newBatch = repo.receive(splitBatch, "LOT_SPLIT", sourceBatchId, splitEvent);
+    LotAction action =
+        repo.insertLotAction(tenantId, LotAction.SPLIT, sourceBatchId, newBatch.id(), qty, notes);
+    return new LotSplitResult(newBatch, action);
+  }
+
+  public record LotMergeResult(Batch targetBatch, LotAction action) {}
+
+  public LotMergeResult mergeLot(
+      UUID tenantId, UUID sourceBatchId, UUID targetBatchId, BigDecimal qty, String notes) {
+    Batch source =
+        repo.getBatch(tenantId, sourceBatchId)
+            .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Source batch not found"));
+    repo.getBatch(tenantId, targetBatchId)
+        .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));
+    if (source.remainingQty().compareTo(qty) < 0) {
+      throw ApiException.unprocessable(
+          "INSUFFICIENT_QTY", "Merge qty exceeds remaining qty on source batch");
+    }
+    OutboxRow mergeEvent =
+        new OutboxRow(
+            "LotMerge",
+            "shelfj.inventory.lot-merge",
+            tenantId,
+            sourceBatchId,
+            Events.lotMerge(tenantId, sourceBatchId, targetBatchId, qty));
+    // Deduct from source, add to target
+    repo.adjust(
+        tenantId, source.storeId(), source.variantId(), qty.negate(), "LOT_MERGE_OUT", mergeEvent);
+    OutboxRow addEvent =
+        new OutboxRow(
+            "LotMergeIn",
+            "shelfj.inventory.lot-merge-in",
+            tenantId,
+            targetBatchId,
+            Events.lotMerge(tenantId, sourceBatchId, targetBatchId, qty));
+    repo.adjust(tenantId, source.storeId(), source.variantId(), qty, "LOT_MERGE_IN", addEvent);
+    Batch updated =
+        repo.getBatch(tenantId, targetBatchId)
+            .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));
+    LotAction action =
+        repo.insertLotAction(tenantId, LotAction.MERGE, sourceBatchId, targetBatchId, qty, notes);
+    return new LotMergeResult(updated, action);
+  }
+
+  public List<LotAction> listLotActions(UUID tenantId, UUID batchId) {
+    return repo.listLotActions(tenantId, batchId);
+  }
+
+  // ── Tier-1 Gap #24: Expiry alert query ────────────────────────────────────
+
+  public List<Batch> listExpiringBatches(UUID tenantId, UUID storeId, int withinDays) {
+    if (withinDays < 1 || withinDays > 3650) {
+      throw ApiException.badRequest("INVALID_DAYS", "withinDays must be 1–3650");
+    }
+    return repo.listExpiringBatches(tenantId, storeId, withinDays);
+  }
+
+  // ── Tier-1 Gap #25: Grade control ─────────────────────────────────────────
+
+  public Batch updateBatchGrade(UUID tenantId, UUID batchId, String grade) {
+    if (grade == null || grade.isBlank()) {
+      throw ApiException.badRequest("INVALID_GRADE", "grade must not be blank");
+    }
+    return repo.updateBatchGrade(tenantId, batchId, grade.toUpperCase(Locale.ROOT));
+  }
+
+  // ── Tier-1 Gap #26: Lot UOM conversions ──────────────────────────────────
+
+  public LotUomConversion upsertLotUomConversion(
+      UUID tenantId, UUID batchId, String fromUom, String toUom, BigDecimal factor, String notes) {
+    if (factor.compareTo(BigDecimal.ZERO) <= 0) {
+      throw ApiException.badRequest("INVALID_FACTOR", "UOM conversion factor must be positive");
+    }
+    return repo.upsertLotUomConversion(tenantId, batchId, fromUom, toUom, factor, notes);
+  }
+
+  public List<LotUomConversion> listLotUomConversions(UUID tenantId, UUID batchId) {
+    return repo.listLotUomConversions(tenantId, batchId);
+  }
+
+  // ── Tier-1 Gap #27: PAR levels ────────────────────────────────────────────
+
+  public ParLevelConfig upsertParLevel(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal parQty,
+      String uom,
+      String reviewCycle) {
+    if (parQty.compareTo(BigDecimal.ZERO) <= 0) {
+      throw ApiException.badRequest("INVALID_PAR_QTY", "parQty must be positive");
+    }
+    String cycle =
+        reviewCycle == null ? ParLevelConfig.DAILY : reviewCycle.toUpperCase(Locale.ROOT);
+    if (!Set.of(ParLevelConfig.DAILY, ParLevelConfig.WEEKLY, ParLevelConfig.MONTHLY)
+        .contains(cycle)) {
+      throw ApiException.badRequest(
+          "INVALID_REVIEW_CYCLE", "reviewCycle must be DAILY, WEEKLY, or MONTHLY");
+    }
+    return repo.upsertParLevel(tenantId, storeId, variantId, parQty, uom, cycle);
+  }
+
+  public List<ParLevelConfig> listParLevels(UUID tenantId, UUID storeId) {
+    return repo.listParLevels(tenantId, storeId);
+  }
+
+  public ParLevelConfig getParLevel(UUID tenantId, UUID storeId, UUID variantId) {
+    return repo.findParLevel(tenantId, storeId, variantId)
+        .orElseThrow(() -> ApiException.notFound("PAR_LEVEL_NOT_FOUND", "No PAR level configured"));
+  }
+
+  // ── Tier-1 Gap #28: Order modifiers ──────────────────────────────────────
+
+  public ReorderPointPlan updateRopOrderModifiers(
+      UUID tenantId, UUID ropId, BigDecimal min, BigDecimal max, BigDecimal lotMult) {
+    return repo.updateRopOrderModifiers(tenantId, ropId, min, max, lotMult);
+  }
+
+  public KanbanCard updateKanbanOrderModifiers(
+      UUID tenantId, UUID cardId, BigDecimal min, BigDecimal max, BigDecimal lotMult) {
+    return repo.updateKanbanOrderModifiers(tenantId, cardId, min, max, lotMult);
+  }
+
+  // ── Tier-1 Gap #29: Batch (bulk) reservations ─────────────────────────────
+
+  public record BulkReserveResult(int succeeded, int failed, List<Reservation> results) {}
+
+  public BulkReserveResult bulkReserve(
+      UUID tenantId, List<com.shelfj.inventory.dto.Dtos.ReserveRequest> requests) {
+    List<Reservation> succeeded = new ArrayList<>();
+    int failed = 0;
+    for (var req : requests) {
+      try {
+        UUID storeId = UUID.fromString(req.storeId());
+        UUID variantId = UUID.fromString(req.variantId());
+        UUID orderId = req.orderId() != null ? UUID.fromString(req.orderId()) : null;
+        succeeded.add(reserve(tenantId, storeId, variantId, req.qty(), orderId, req.ttlSeconds()));
+      } catch (Exception ignored) {
+        failed++;
+      }
+    }
+    return new BulkReserveResult(succeeded.size(), failed, succeeded);
+  }
+
+  // ── Tier-1 Gap #30: Purge transaction history ─────────────────────────────
+
+  public int purgeMovementsBefore(UUID tenantId, Instant before) {
+    Instant cutoff = Instant.now().minusSeconds(90L * 24 * 3600);
+    if (before.isAfter(cutoff)) {
+      throw ApiException.badRequest(
+          "PURGE_TOO_RECENT", "Cannot purge movements less than 90 days old");
+    }
+    return repo.purgeMovementsBefore(tenantId, before);
+  }
+
+  // ── Tier-1 Gap #31: Zone GL mappings ─────────────────────────────────────
+
+  public ZoneGlMapping upsertZoneGlMapping(
+      UUID tenantId, UUID storeId, UUID zoneId, String nominalCode, String description) {
+    return repo.upsertZoneGlMapping(tenantId, storeId, zoneId, nominalCode, description);
+  }
+
+  public List<ZoneGlMapping> listZoneGlMappings(UUID tenantId, UUID storeId) {
+    return repo.listZoneGlMappings(tenantId, storeId);
   }
 }

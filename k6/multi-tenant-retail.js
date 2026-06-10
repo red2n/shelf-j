@@ -217,6 +217,13 @@ function ok(res, tag) {
   return passed;
 }
 
+// Assert 2xx or 409 (already-exists is fine for idempotent seeds). Does not count 409 as error.
+function okOrExists(res, tag) {
+  const passed = check(res, { [`${tag} 2xx|409`]: r => r.status < 300 || r.status === 409 });
+  if (!passed) errors.add(1);
+  return res.status < 300; // true only on actual creation
+}
+
 // Extract .data from response body.
 function body(res) {
   try { return JSON.parse(res.body).data || {}; } catch (_) { return {}; }
