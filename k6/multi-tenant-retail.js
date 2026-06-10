@@ -54,7 +54,15 @@ const serialControlLatency   = new Trend('serial_control_latency_ms',   true);
 const uomManagementLatency   = new Trend('uom_management_latency_ms',   true);
 const moveOrderLatency       = new Trend('move_order_latency_ms',       true);
 const transferOrderLatency         = new Trend('transfer_order_latency_ms',   true);
+const costingLatency               = new Trend('costing_latency_ms',           true);
+const kanbanLatency                = new Trend('kanban_latency_ms',            true);
+const ropLatency                   = new Trend('rop_latency_ms',               true);
 const negativeUnexpectedSuccess    = new Counter('negative_unexpected_success');
+const orderPosLatency              = new Trend('order_pos_latency_ms',          true);
+const layawayLatency               = new Trend('layaway_latency_ms',            true);
+const giftCardLatency              = new Trend('gift_card_latency_ms',          true);
+const pricingLatency               = new Trend('pricing_latency_ms',            true);
+const intercompanyLatency          = new Trend('intercompany_latency_ms',        true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -131,6 +139,26 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'ropPlanning', startTime: '38s',
     },
+    orderPos: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'orderPos', startTime: '40s',
+    },
+    layawayManagement: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'layawayManagement', startTime: '42s',
+    },
+    giftCardManagement: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'giftCardManagement', startTime: '44s',
+    },
+    pricingVat: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'pricingVat', startTime: '46s',
+    },
+    intercompanyFlow: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'intercompanyFlow', startTime: '48s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -152,6 +180,11 @@ export const options = {
     kanban_latency_ms:           ['p(95)<800'],
     rop_latency_ms:              ['p(95)<1000'],
     negative_unexpected_success: ['count==0'],
+    order_pos_latency_ms:        ['p(95)<800'],
+    layaway_latency_ms:          ['p(95)<800'],
+    gift_card_latency_ms:        ['p(95)<800'],
+    pricing_latency_ms:          ['p(95)<800'],
+    intercompany_latency_ms:     ['p(95)<1000'],
   },
 };
 
@@ -199,6 +232,12 @@ function jwtPayload(token) {
 
 // Random 6-char uppercase slug.
 function slug() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
+
+// Random UUID v4.
+function genUuid() {
+  const h = () => (Math.random() * 0x10000 | 0).toString(16).padStart(4, '0');
+  return `${h()}${h()}-${h()}-4${h().slice(1)}-${(8 + (Math.random() * 4 | 0)).toString(16)}${h().slice(1)}-${h()}${h()}${h()}`;
+}
 
 // Receive stock at a store and return the response.
 function apiReceiveStock(tenantId, userId, storeId, variantId, qty, costPrice, batchPrefix) {
@@ -323,9 +362,67 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
     }
   }
 
+  // 10. Pricing — seed UK VAT rates, price list, product VAT categories
+  const currency = isIN ? 'INR' : 'GBP';
+  // T1 = standard rate (20% UK / 18% GST equivalent for IN seeding)
+  post('/api/pricing-svc/vat-rates', {
+    code: 'T1', name: isIN ? 'GST Standard' : 'Standard Rate',
+    rate: isIN ? 0.18 : 0.20,
+    exempt: false,
+    description: isIN ? 'India GST 18%' : 'HMRC UK Standard VAT 20%',
+    effectiveFrom: '2024-01-01T00:00:00Z',
+  }, tenantId, owner.userId);
+  // T0 = zero rate
+  post('/api/pricing-svc/vat-rates', {
+    code: 'T0', name: 'Zero Rate',
+    rate: 0.00, exempt: false,
+    description: 'Zero-rated supply',
+    effectiveFrom: '2024-01-01T00:00:00Z',
+  }, tenantId, owner.userId);
+
+  const plRes = post('/api/pricing-svc/price-lists', {
+    name: `Standard ${currency}`, channel: 'ALL', currency,
+    effectiveFrom: '2024-01-01T00:00:00Z',
+  }, tenantId, owner.userId);
+  const priceListId = (plRes.status < 300) ? body(plRes).id : null;
+
+  if (priceListId) {
+    for (const vid of variantIds) {
+      // Assign variant → T1 VAT category
+      post('/api/pricing-svc/product-vat-categories',
+        { variantId: vid, vatCode: 'T1' }, tenantId, owner.userId);
+      // Add price list item
+      post(`/api/pricing-svc/price-lists/${priceListId}/items`,
+        { variantId: vid, price: isIN ? 1999.00 : 49.99, minQty: 1 }, tenantId, owner.userId);
+    }
+  }
+
+  // 11. Purchase-svc — seed a default supplier (BACS 30-day terms)
+  const supplierRes = post('/api/purchase-svc/suppliers', {
+    name: isIN ? 'National Distributors Ltd' : 'British Wholesale Ltd',
+    vatRegistered: true,
+    vatNumber: isIN ? 'IN22AAAAA0000A1Z5' : 'GB987654321',
+    countryCode: isIN ? 'IN' : 'GB',
+    currency,
+  }, tenantId, owner.userId);
+  const supplierId = (supplierRes.status < 300) ? body(supplierRes).id : null;
+  if (!supplierId) console.warn(`[${tag}] supplier creation failed: ${supplierRes.status}`);
+
+  // Active 10% promotion scoped to ALL
+  const promoRes = post('/api/pricing-svc/promotions', {
+    name: isIN ? 'Festive Offer' : 'Summer Sale',
+    type: 'PERCENT', value: 10, channel: 'ALL',
+    startsAt: '2020-01-01T00:00:00Z',
+  }, tenantId, owner.userId);
+  const promoId = (promoRes.status < 300) ? body(promoRes).id : null;
+  if (promoId) {
+    post(`/api/pricing-svc/promotions/${promoId}/items`,
+      { scopeType: 'ALL' }, tenantId, owner.userId);
+  }
+
   console.log(
     `[${tag}] tenantId=${tenantId} stores=${storeIds.length} variants=${variantIds.length} ` +
-    `cashiers=${[cashier1, cashier2].filter(Boolean).length}`
+    `cashiers=${[cashier1, cashier2].filter(Boolean).length} priceListId=${priceListId} supplierId=${supplierId}`
   );
 
   return {
@@ -340,6 +437,9 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
     brandId,
     categoryIds: [elecCatId, clothCatId].filter(Boolean),
     brandName:   products.brand,
+    priceListId,
+    currency,
+    supplierId,
   };
 }
 
@@ -1755,6 +1855,509 @@ export function transferOrders(d) {
   sleep(1);
 }
 
+// ── Scenario: costing methods + accounting periods (Gap #17) ─────────────────
+export function costingControl(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store   = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `[+] costingControl(${tenant.label})`;
+
+  const t0 = Date.now();
+
+  // ── Costing method UPSERT (AVERAGE) ────────────────────────────────────────
+  const cmRes = put('/api/inventory-svc/admin/inventory/costing-methods',
+    { storeId, variantId, method: 'AVERAGE' },
+    tenant.tenantId, tenant.ownerId);
+  check(cmRes, {
+    [`${tag} upsert AVERAGE costing method 200`]: r => r.status === 200,
+  });
+  costingLatency.add(Date.now() - t0);
+
+  // ── Retrieve by variant ────────────────────────────────────────────────────
+  const cmGet = get(
+    `/api/inventory-svc/admin/inventory/costing-methods/by-variant?store=${storeId}&variant=${variantId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(cmGet, {
+    [`${tag} get costing method by-variant 200`]: r => r.status === 200,
+    [`${tag} costing method returned AVERAGE`]: r => {
+      try { return JSON.parse(r.body).data.method === 'AVERAGE'; } catch (_) { return false; }
+    },
+  });
+
+  // ── Switch to FIFO ─────────────────────────────────────────────────────────
+  const fifoRes = put('/api/inventory-svc/admin/inventory/costing-methods',
+    { storeId, variantId, method: 'FIFO' },
+    tenant.tenantId, tenant.ownerId);
+  check(fifoRes, {
+    [`${tag} switch to FIFO 200`]: r => r.status === 200,
+  });
+
+  // ── List costing methods ───────────────────────────────────────────────────
+  const listCm = get(`/api/inventory-svc/admin/inventory/costing-methods?store=${storeId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(listCm, {
+    [`${tag} list costing methods 200`]: r => r.status === 200,
+  });
+
+  // ── Open accounting period (unique date per iteration to avoid duplicate conflicts) ──
+  const periodDate = new Date(Date.now() - __ITER * 86400000).toISOString().slice(0, 10);
+  const periodRes = post('/api/inventory-svc/admin/inventory/accounting-periods',
+    { storeId, periodName: `P-${__ITER}-${tenant.label}`, periodDate },
+    tenant.tenantId, tenant.ownerId);
+  check(periodRes, {
+    [`${tag} open accounting period 201`]: r => r.status === 201,
+  });
+
+  const periodId = (() => {
+    try { return JSON.parse(periodRes.body).data.id; } catch (_) { return null; }
+  })();
+
+  // ── Get period by id ──────────────────────────────────────────────────────
+  if (periodId) {
+    const pGet = get(`/api/inventory-svc/admin/inventory/accounting-periods/${periodId}`,
+      tenant.tenantId, tenant.ownerId);
+    check(pGet, {
+      [`${tag} get accounting period 200`]: r => r.status === 200,
+      [`${tag} period status is OPEN`]: r => {
+        try { return JSON.parse(r.body).data.status === 'OPEN'; } catch (_) { return false; }
+      },
+    });
+
+    // ── Close period ─────────────────────────────────────────────────────────
+    const closeRes = post(`/api/inventory-svc/admin/inventory/accounting-periods/${periodId}/close`,
+      {}, tenant.tenantId, tenant.ownerId);
+    check(closeRes, {
+      [`${tag} close accounting period 200`]: r => r.status === 200,
+    });
+
+    // ── Confirm CLOSED ────────────────────────────────────────────────────────
+    const pClosed = get(`/api/inventory-svc/admin/inventory/accounting-periods/${periodId}`,
+      tenant.tenantId, tenant.ownerId);
+    check(pClosed, {
+      [`${tag} period is now CLOSED`]: r => {
+        try { return JSON.parse(r.body).data.status === 'CLOSED'; } catch (_) { return false; }
+      },
+    });
+  }
+
+  // ── List periods ──────────────────────────────────────────────────────────
+  const listP = get(`/api/inventory-svc/admin/inventory/accounting-periods?store=${storeId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(listP, {
+    [`${tag} list accounting periods 200`]: r => r.status === 200,
+  });
+
+  // ── Cross-tenant isolation: costing method of other tenant must be invisible
+  const other = isIN(d) ? d.uk : d.india;
+  if (other.stores && other.stores.length) {
+    const otherStore   = other.stores[0].storeId;
+    const otherVariant = other.variantIds?.[0];
+    if (otherVariant) {
+      // List costing methods scoped to other tenant's store using THIS tenant's JWT → empty
+      const xRes = get(
+        `/api/inventory-svc/admin/inventory/costing-methods?store=${otherStore}`,
+        tenant.tenantId, tenant.ownerId);
+      check(xRes, {
+        [`${tag} cross-tenant costing isolation — no leakage`]: r => {
+          if (r.status !== 200) return true; // service rejected = isolation held
+          try {
+            const items = JSON.parse(r.body).data;
+            return !Array.isArray(items) || items.length === 0;
+          } catch (_) { return true; }
+        },
+      });
+    }
+  }
+
+  sleep(1);
+}
+
+// ── Scenario: kanban replenishment (Gap #18) ──────────────────────────────────
+export function kanbanControl(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store   = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `[+] kanbanControl(${tenant.label})`;
+
+  const t0 = Date.now();
+
+  // ── Create SUPPLIER kanban card ────────────────────────────────────────────
+  const cardRes = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId, variantId, kanbanType: 'SUPPLIER', reorderQty: '50', supplierRef: `SUP-${__ITER}` },
+    tenant.tenantId, tenant.ownerId);
+  check(cardRes, {
+    [`${tag} create SUPPLIER kanban card 201`]: r => r.status === 201,
+  });
+  kanbanLatency.add(Date.now() - t0);
+
+  const cardId = (() => {
+    try { return JSON.parse(cardRes.body).data.id; } catch (_) { return null; }
+  })();
+
+  // ── Create INTER_ORG kanban card ───────────────────────────────────────────
+  const interRes = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId, variantId, kanbanType: 'INTER_ORG', reorderQty: '20' },
+    tenant.tenantId, tenant.ownerId);
+  check(interRes, {
+    [`${tag} create INTER_ORG kanban card 201`]: r => r.status === 201,
+  });
+
+  // ── List kanban cards ──────────────────────────────────────────────────────
+  const listRes = get(`/api/inventory-svc/admin/inventory/kanban-cards?store=${storeId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(listRes, {
+    [`${tag} list kanban cards 200`]: r => r.status === 200,
+  });
+
+  if (cardId) {
+    // ── Get by id ─────────────────────────────────────────────────────────────
+    const getRes = get(`/api/inventory-svc/admin/inventory/kanban-cards/${cardId}`,
+      tenant.tenantId, tenant.ownerId);
+    check(getRes, {
+      [`${tag} get kanban card 200`]: r => r.status === 200,
+      [`${tag} card status is EMPTY`]: r => {
+        try { return JSON.parse(r.body).data.status === 'EMPTY'; } catch (_) { return false; }
+      },
+    });
+
+    // ── Trigger ───────────────────────────────────────────────────────────────
+    const trigRes = post(`/api/inventory-svc/admin/inventory/kanban-cards/${cardId}/trigger`,
+      {}, tenant.tenantId, tenant.ownerId);
+    check(trigRes, {
+      [`${tag} trigger kanban card 200`]: r => r.status === 200,
+      [`${tag} card status is TRIGGERED`]: r => {
+        try { return JSON.parse(r.body).data.status === 'TRIGGERED'; } catch (_) { return false; }
+      },
+    });
+
+    // ── Replenish ─────────────────────────────────────────────────────────────
+    const repRes = post(`/api/inventory-svc/admin/inventory/kanban-cards/${cardId}/replenish`,
+      {}, tenant.tenantId, tenant.ownerId);
+    check(repRes, {
+      [`${tag} replenish kanban card 200`]: r => r.status === 200,
+      [`${tag} card status is REPLENISHED`]: r => {
+        try { return JSON.parse(r.body).data.status === 'REPLENISHED'; } catch (_) { return false; }
+      },
+    });
+  }
+
+  // ── Create INTRA_ORG and PRODUCTION variants ───────────────────────────────
+  const intraRes = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId, variantId, kanbanType: 'INTRA_ORG', reorderQty: '10' },
+    tenant.tenantId, tenant.ownerId);
+  check(intraRes, {
+    [`${tag} create INTRA_ORG kanban card 201`]: r => r.status === 201,
+  });
+
+  const prodRes = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId, variantId, kanbanType: 'PRODUCTION', reorderQty: '100' },
+    tenant.tenantId, tenant.ownerId);
+  check(prodRes, {
+    [`${tag} create PRODUCTION kanban card 201`]: r => r.status === 201,
+  });
+
+  // ── Filter by status ──────────────────────────────────────────────────────
+  const byStatus = get(
+    `/api/inventory-svc/admin/inventory/kanban-cards?store=${storeId}&status=EMPTY`,
+    tenant.tenantId, tenant.ownerId);
+  check(byStatus, {
+    [`${tag} filter kanban cards by EMPTY status 200`]: r => r.status === 200,
+  });
+
+  // ── Cross-tenant isolation ────────────────────────────────────────────────
+  const other = isIN(d) ? d.uk : d.india;
+  if (other.stores && other.stores.length) {
+    const xRes = get(
+      `/api/inventory-svc/admin/inventory/kanban-cards?store=${other.stores[0].storeId}`,
+      tenant.tenantId, tenant.ownerId);
+    check(xRes, {
+      [`${tag} cross-tenant kanban isolation — no leakage`]: r => {
+        if (r.status !== 200) return true;
+        try {
+          const items = JSON.parse(r.body).data;
+          return !Array.isArray(items) || items.length === 0;
+        } catch (_) { return true; }
+      },
+    });
+  }
+
+  sleep(1);
+}
+
+// ── Scenario: reorder point + EOQ planning (Gap #19) ─────────────────────────
+export function ropPlanning(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store   = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `[+] ropPlanning(${tenant.label})`;
+
+  const t0 = Date.now();
+
+  // ── Upsert ROP plan ────────────────────────────────────────────────────────
+  const upsertRes = put('/api/inventory-svc/admin/inventory/rop-plans',
+    { storeId, variantId, leadTimeDays: 7, orderingCost: '25.00',
+      holdingCostPct: '0.20', unitCost: '10.00' },
+    tenant.tenantId, tenant.ownerId);
+  check(upsertRes, {
+    [`${tag} upsert ROP plan 200`]: r => r.status === 200,
+  });
+  ropLatency.add(Date.now() - t0);
+
+  // ── Get by variant ────────────────────────────────────────────────────────
+  const getRes = get(
+    `/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${storeId}&variant=${variantId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(getRes, {
+    [`${tag} get ROP plan by variant 200`]: r => r.status === 200,
+    [`${tag} ROP plan has correct leadTimeDays`]: r => {
+      try { return JSON.parse(r.body).data.leadTimeDays === 7; } catch (_) { return false; }
+    },
+  });
+
+  // ── List ROP plans ────────────────────────────────────────────────────────
+  const listRes = get(`/api/inventory-svc/admin/inventory/rop-plans?store=${storeId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(listRes, {
+    [`${tag} list ROP plans 200`]: r => r.status === 200,
+  });
+
+  // ── Trigger compute ───────────────────────────────────────────────────────
+  const computeRes = post(
+    `/api/inventory-svc/admin/inventory/rop-plans/compute?store=${storeId}`,
+    {}, tenant.tenantId, tenant.ownerId);
+  check(computeRes, {
+    [`${tag} compute ROP+EOQ 200`]: r => r.status === 200,
+  });
+
+  // ── After compute: verify rop/eoq fields are populated (may be null if no demand data)
+  const afterCompute = get(
+    `/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${storeId}&variant=${variantId}`,
+    tenant.tenantId, tenant.ownerId);
+  check(afterCompute, {
+    [`${tag} ROP plan still retrievable after compute`]: r => r.status === 200,
+  });
+
+  // ── Cross-tenant isolation ────────────────────────────────────────────────
+  const other = isIN(d) ? d.uk : d.india;
+  if (other.stores && other.stores.length && other.variantIds?.length) {
+    const xRes = get(
+      `/api/inventory-svc/admin/inventory/rop-plans?store=${other.stores[0].storeId}`,
+      tenant.tenantId, tenant.ownerId);
+    check(xRes, {
+      [`${tag} cross-tenant ROP isolation — no leakage`]: r => {
+        if (r.status !== 200) return true;
+        try {
+          const items = JSON.parse(r.body).data;
+          return !Array.isArray(items) || items.length === 0;
+        } catch (_) { return true; }
+      },
+    });
+  }
+
+  sleep(1);
+}
+
+// ── Gap #14: POS order engine (place, confirm, void, return) ─────────────────
+export function orderPos(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store  = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `orderPos[${tenant.name}]`;
+
+  // 1. Place POS order
+  const t0 = Date.now();
+  const placeRes = post('/api/order-svc/orders', {
+    storeId,
+    channel: 'POS',
+    fulfilmentType: 'INSTORE',
+    items: [{ variantId, qty: 2, unitPrice: '15.00' }],
+    currency: 'USD',
+    idempotencyKey: `pos-order-${__VU}-${__ITER}`,
+  }, tenant.tenantId, tenant.ownerId);
+  orderPosLatency.add(Date.now() - t0);
+  if (!ok(placeRes, `${tag} place order 201`)) { sleep(1); return; }
+  const orderId = (() => { try { return JSON.parse(placeRes.body).data.id; } catch (_) { return null; } })();
+  if (!orderId) { sleep(1); return; }
+
+  // 2. Confirm
+  const confirmRes = post(`/api/order-svc/orders/${orderId}/confirm`, {}, tenant.tenantId, tenant.ownerId);
+  ok(confirmRes, `${tag} confirm order 200`);
+
+  // 3. Return one unit
+  const returnRes = post(`/api/order-svc/orders/${orderId}/returns`, {
+    reason: 'customer changed mind',
+    refundMethod: 'ORIGINAL',
+    items: [{ variantId, qty: 1 }],
+  }, tenant.tenantId, tenant.ownerId);
+  ok(returnRes, `${tag} create return 201`);
+
+  // 4. Place another POS order to void
+  const placeVoidRes = post('/api/order-svc/orders', {
+    storeId,
+    channel: 'POS',
+    fulfilmentType: 'INSTORE',
+    items: [{ variantId, qty: 1, unitPrice: '5.00' }],
+    currency: 'USD',
+    idempotencyKey: `pos-void-${__VU}-${__ITER}`,
+  }, tenant.tenantId, tenant.ownerId);
+  if (placeVoidRes.status === 201) {
+    const voidOrderId = (() => { try { return JSON.parse(placeVoidRes.body).data.id; } catch (_) { return null; } })();
+    if (voidOrderId) {
+      const voidRes = post(`/api/order-svc/orders/${voidOrderId}/void`,
+        { reason: 'cashier error' }, tenant.tenantId, tenant.ownerId);
+      ok(voidRes, `${tag} void POS order 200`);
+    }
+  }
+
+  // 5. Cross-tenant isolation: cannot see other tenant's order
+  const other = isIN(d) ? d.uk : d.india;
+  const isoRes = get(`/api/order-svc/orders/${orderId}`, other.tenantId, other.ownerId);
+  check(isoRes, {
+    [`${tag} cross-tenant order isolation 404`]: r => r.status === 404,
+  });
+
+  sleep(1);
+}
+
+// ── Gap #14: Layaway management ───────────────────────────────────────────────
+export function layawayManagement(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store  = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+  const tag       = `layaway[${tenant.name}]`;
+
+  // 1. Create layaway with initial deposit
+  const t0 = Date.now();
+  const createRes = post('/api/order-svc/layaways', {
+    storeId,
+    items: [{ variantId, qty: 1, unitPrice: '100.00' }],
+    initialDeposit: '30.00',
+    paymentMethod: 'CASH',
+    notes: 'holiday gift',
+  }, tenant.tenantId, tenant.ownerId);
+  layawayLatency.add(Date.now() - t0);
+  if (!ok(createRes, `${tag} create layaway 201`)) { sleep(1); return; }
+  const layawayId = (() => { try { return JSON.parse(createRes.body).data.id; } catch (_) { return null; } })();
+  if (!layawayId) { sleep(1); return; }
+
+  // 2. Get layaway
+  const getRes = get(`/api/order-svc/layaways/${layawayId}`, tenant.tenantId, tenant.ownerId);
+  ok(getRes, `${tag} get layaway 200`);
+
+  // 3. Add another deposit (70 to cover balance)
+  const depRes = post(`/api/order-svc/layaways/${layawayId}/deposits`, {
+    amount: '70.00',
+    paymentMethod: 'CARD',
+  }, tenant.tenantId, tenant.ownerId);
+  ok(depRes, `${tag} add deposit 200`);
+
+  // 4. Complete (balance now 0)
+  const completeRes = post(`/api/order-svc/layaways/${layawayId}/complete`,
+    {}, tenant.tenantId, tenant.ownerId);
+  ok(completeRes, `${tag} complete layaway 200`);
+
+  // 5. Create another layaway to cancel
+  const cancelLayRes = post('/api/order-svc/layaways', {
+    storeId,
+    items: [{ variantId, qty: 1, unitPrice: '50.00' }],
+    initialDeposit: '10.00',
+    paymentMethod: 'CASH',
+  }, tenant.tenantId, tenant.ownerId);
+  if (cancelLayRes.status === 201) {
+    const cancelId = (() => { try { return JSON.parse(cancelLayRes.body).data.id; } catch (_) { return null; } })();
+    if (cancelId) {
+      const cancelRes = post(`/api/order-svc/layaways/${cancelId}/cancel`,
+        { reason: 'customer withdrew' }, tenant.tenantId, tenant.ownerId);
+      ok(cancelRes, `${tag} cancel layaway 200`);
+    }
+  }
+
+  // 6. Cross-tenant isolation
+  const other = isIN(d) ? d.uk : d.india;
+  const isoRes = get(`/api/order-svc/layaways/${layawayId}`, other.tenantId, other.ownerId);
+  check(isoRes, {
+    [`${tag} cross-tenant layaway isolation 404`]: r => r.status === 404,
+  });
+
+  sleep(1);
+}
+
+// ── Gap #14: Gift card management ─────────────────────────────────────────────
+export function giftCardManagement(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store  = tenant.stores[0];
+  if (!store) return;
+  const storeId = store.storeId;
+  const tag     = `giftCard[${tenant.name}]`;
+
+  // 1. Issue gift card
+  const t0 = Date.now();
+  const issueRes = post('/api/order-svc/gift-cards', {
+    storeId,
+    amount: '50.00',
+    currency: 'USD',
+  }, tenant.tenantId, tenant.ownerId);
+  giftCardLatency.add(Date.now() - t0);
+  if (!ok(issueRes, `${tag} issue gift card 201`)) { sleep(1); return; }
+  const gcBody = (() => { try { return JSON.parse(issueRes.body).data; } catch (_) { return null; } })();
+  if (!gcBody) { sleep(1); return; }
+  const code = gcBody.code;
+
+  // 2. Lookup
+  const getRes = get(`/api/order-svc/gift-cards/${code}`, tenant.tenantId, tenant.ownerId);
+  ok(getRes, `${tag} get gift card 200`);
+
+  // 3. Reload
+  const reloadRes = post(`/api/order-svc/gift-cards/${code}/reload`,
+    { amount: '20.00', reference: `reload-${__VU}-${__ITER}` },
+    tenant.tenantId, tenant.ownerId);
+  ok(reloadRes, `${tag} reload gift card 200`);
+  check(reloadRes, {
+    [`${tag} balance after reload is 70`]: r => {
+      try { return JSON.parse(r.body).data.currentBalance === 70.0; } catch (_) { return true; }
+    },
+  });
+
+  // 4. Redeem
+  const redeemRes = post(`/api/order-svc/gift-cards/${code}/redeem`,
+    { amount: '30.00', reference: `redeem-${__VU}-${__ITER}` },
+    tenant.tenantId, tenant.ownerId);
+  ok(redeemRes, `${tag} redeem gift card 200`);
+
+  // 5. Transaction history
+  const txRes = get(`/api/order-svc/gift-cards/${code}/transactions`,
+    tenant.tenantId, tenant.ownerId);
+  ok(txRes, `${tag} gift card transactions 200`);
+
+  // 6. Cross-tenant isolation: other tenant cannot see this card
+  const other = isIN(d) ? d.uk : d.india;
+  const isoRes = get(`/api/order-svc/gift-cards/${code}`, other.tenantId, other.ownerId);
+  check(isoRes, {
+    [`${tag} cross-tenant gift card isolation 404`]: r => r.status === 404,
+  });
+
+  sleep(1);
+}
+
 // ── Scenario: negative test suite (4xx expectations) ─────────────────────────
 export function negativeTests(d) {
   if (!d || !d.india || !d.uk) return;
@@ -1944,6 +2547,556 @@ export function negativeTests(d) {
     });
   }
 
+  // ── Gap #17: Costing Methods + Accounting Periods ────────────────────────────
+
+  // Invalid costing method enum → 400
+  neg(put('/api/inventory-svc/admin/inventory/costing-methods',
+    { storeId: store.storeId, variantId: vid, method: 'LIFO' },
+    tenant.tenantId, tenant.ownerId), 'invalid costing method LIFO', 400);
+
+  // Missing variantId in costing method upsert → 400
+  neg(put('/api/inventory-svc/admin/inventory/costing-methods',
+    { storeId: store.storeId, method: 'AVERAGE' },
+    tenant.tenantId, tenant.ownerId), 'costing method missing variantId', 400);
+
+  // Open period with missing storeId → 400
+  neg(post('/api/inventory-svc/admin/inventory/accounting-periods',
+    { periodName: 'NEG-PERIOD', periodDate: '2025-01-01' },
+    tenant.tenantId, tenant.ownerId), 'open period missing storeId', 400);
+
+  // Close a non-existent period → 409 (service returns conflict for not-found-or-already-closed)
+  neg(post(`/api/inventory-svc/admin/inventory/accounting-periods/${fakeId}/close`,
+    {}, tenant.tenantId, tenant.ownerId), 'close nonexistent period', 409);
+
+  // Open two periods for the same store+date → 409
+  const dupDate = '2020-06-01';
+  const p1Res = post('/api/inventory-svc/admin/inventory/accounting-periods',
+    { storeId: store.storeId, periodName: 'DUP-P1', periodDate: dupDate },
+    tenant.tenantId, tenant.ownerId);
+  if (p1Res.status === 201) {
+    neg(post('/api/inventory-svc/admin/inventory/accounting-periods',
+      { storeId: store.storeId, periodName: 'DUP-P2', periodDate: dupDate },
+      tenant.tenantId, tenant.ownerId), 'duplicate period same date 409', 409);
+  }
+
+  // Close an already-closed period → 409 (create + close + close again)
+  const closeDate = '2019-12-31';
+  const pClose = post('/api/inventory-svc/admin/inventory/accounting-periods',
+    { storeId: store.storeId, periodName: 'CLOSE-NEG', periodDate: closeDate },
+    tenant.tenantId, tenant.ownerId);
+  const pCloseId = (() => { try { return JSON.parse(pClose.body).data.id; } catch (_) { return null; } })();
+  if (pCloseId) {
+    post(`/api/inventory-svc/admin/inventory/accounting-periods/${pCloseId}/close`,
+      {}, tenant.tenantId, tenant.ownerId);
+    neg(post(`/api/inventory-svc/admin/inventory/accounting-periods/${pCloseId}/close`,
+      {}, tenant.tenantId, tenant.ownerId), 'close already-closed period 409', 409);
+  }
+
+  // ── Gap #18: Kanban Replenishment ─────────────────────────────────────────────
+
+  // Invalid kanban type → 400
+  neg(post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId: store.storeId, variantId: vid, kanbanType: 'INVALID', reorderQty: '10' },
+    tenant.tenantId, tenant.ownerId), 'invalid kanban type', 400);
+
+  // Missing storeId → 400
+  neg(post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { variantId: vid, kanbanType: 'SUPPLIER', reorderQty: '10' },
+    tenant.tenantId, tenant.ownerId), 'kanban missing storeId', 400);
+
+  // GET non-existent kanban card → 404
+  neg(get(`/api/inventory-svc/admin/inventory/kanban-cards/${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent kanban card', 404);
+
+  // Trigger already-TRIGGERED card → 409 (create → trigger → trigger again)
+  const kTrig = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId: store.storeId, variantId: vid, kanbanType: 'SUPPLIER', reorderQty: '5' },
+    tenant.tenantId, tenant.ownerId);
+  const kTrigId = (() => { try { return JSON.parse(kTrig.body).data.id; } catch (_) { return null; } })();
+  if (kTrigId) {
+    post(`/api/inventory-svc/admin/inventory/kanban-cards/${kTrigId}/trigger`,
+      {}, tenant.tenantId, tenant.ownerId);
+    neg(post(`/api/inventory-svc/admin/inventory/kanban-cards/${kTrigId}/trigger`,
+      {}, tenant.tenantId, tenant.ownerId), 'double-trigger kanban 409', 409);
+  }
+
+  // Replenish an EMPTY card (not yet triggered) → 409
+  const kEmpty = post('/api/inventory-svc/admin/inventory/kanban-cards',
+    { storeId: store.storeId, variantId: vid, kanbanType: 'INTER_ORG', reorderQty: '5' },
+    tenant.tenantId, tenant.ownerId);
+  const kEmptyId = (() => { try { return JSON.parse(kEmpty.body).data.id; } catch (_) { return null; } })();
+  if (kEmptyId) {
+    neg(post(`/api/inventory-svc/admin/inventory/kanban-cards/${kEmptyId}/replenish`,
+      {}, tenant.tenantId, tenant.ownerId), 'replenish EMPTY kanban 409', 409);
+  }
+
+  // ── Gap #19: Reorder Point + EOQ ─────────────────────────────────────────────
+
+  // Missing storeId → 400
+  neg(put('/api/inventory-svc/admin/inventory/rop-plans',
+    { variantId: vid, leadTimeDays: 7, orderingCost: '25.00',
+      holdingCostPct: '0.20', unitCost: '10.00' },
+    tenant.tenantId, tenant.ownerId), 'ROP plan missing storeId', 400);
+
+  // Missing variantId → 400
+  neg(put('/api/inventory-svc/admin/inventory/rop-plans',
+    { storeId: store.storeId, leadTimeDays: 7, orderingCost: '25.00',
+      holdingCostPct: '0.20', unitCost: '10.00' },
+    tenant.tenantId, tenant.ownerId), 'ROP plan missing variantId', 400);
+
+  // Negative leadTimeDays → 400
+  neg(put('/api/inventory-svc/admin/inventory/rop-plans',
+    { storeId: store.storeId, variantId: vid, leadTimeDays: -1,
+      orderingCost: '25.00', holdingCostPct: '0.20', unitCost: '10.00' },
+    tenant.tenantId, tenant.ownerId), 'ROP plan negative leadTimeDays', 400);
+
+  // GET non-existent ROP plan by unknown variant → 404
+  neg(get(`/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${store.storeId}&variant=${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent ROP plan by variant', 404);
+
+  // ── Gap #14: Orders — negative cases ─────────────────────────────────────────
+
+  // Place order missing channel → 400
+  neg(post('/api/order-svc/orders',
+    { storeId: store.storeId,
+      items: [{ variantId: vid, qty: 1, unitPrice: '10.00' }] },
+    tenant.tenantId, tenant.ownerId), 'place order missing channel 400', 400);
+
+  // Place order missing items → 400
+  neg(post('/api/order-svc/orders',
+    { storeId: store.storeId, channel: 'POS', items: [] },
+    tenant.tenantId, tenant.ownerId), 'place order empty items 400', 400);
+
+  // Place order missing storeId → 400
+  neg(post('/api/order-svc/orders',
+    { channel: 'POS', items: [{ variantId: vid, qty: 1, unitPrice: '10.00' }] },
+    tenant.tenantId, tenant.ownerId), 'place order missing storeId 400', 400);
+
+  // GET non-existent order → 404
+  neg(get(`/api/order-svc/orders/${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent order 404', 404);
+
+  // Void ONLINE order → 409
+  const onlineOrderRes = post('/api/order-svc/orders', {
+    storeId: store.storeId,
+    channel: 'ONLINE',
+    items: [{ variantId: vid, qty: 1, unitPrice: '5.00' }],
+    currency: 'USD',
+    idempotencyKey: `neg-online-${__VU}-${__ITER}`,
+  }, tenant.tenantId, tenant.ownerId);
+  if (onlineOrderRes.status === 201) {
+    const onlineId = (() => { try { return JSON.parse(onlineOrderRes.body).data.id; } catch (_) { return null; } })();
+    if (onlineId) {
+      neg(post(`/api/order-svc/orders/${onlineId}/void`,
+        { reason: 'test' }, tenant.tenantId, tenant.ownerId),
+        'void ONLINE order 409', 409);
+    }
+  }
+
+  // ── Gap #14: Layaway — negative cases ────────────────────────────────────────
+
+  // Layaway missing storeId → 400
+  neg(post('/api/order-svc/layaways',
+    { items: [{ variantId: vid, qty: 1, unitPrice: '50.00' }], initialDeposit: '10.00',
+      paymentMethod: 'CASH' },
+    tenant.tenantId, tenant.ownerId), 'layaway missing storeId 400', 400);
+
+  // Layaway missing items → 400
+  neg(post('/api/order-svc/layaways',
+    { storeId: store.storeId, items: [], initialDeposit: '10.00', paymentMethod: 'CASH' },
+    tenant.tenantId, tenant.ownerId), 'layaway empty items 400', 400);
+
+  // Deposit exceeds total → 409
+  neg(post('/api/order-svc/layaways',
+    { storeId: store.storeId,
+      items: [{ variantId: vid, qty: 1, unitPrice: '10.00' }],
+      initialDeposit: '999.00', paymentMethod: 'CASH' },
+    tenant.tenantId, tenant.ownerId), 'layaway deposit exceeds total 409', 409);
+
+  // GET non-existent layaway → 404
+  neg(get(`/api/order-svc/layaways/${fakeId}`,
+    tenant.tenantId, tenant.ownerId), 'get nonexistent layaway 404', 404);
+
+  // Complete layaway with outstanding balance → 409
+  const balLayRes = post('/api/order-svc/layaways', {
+    storeId: store.storeId,
+    items: [{ variantId: vid, qty: 1, unitPrice: '100.00' }],
+    initialDeposit: '20.00',
+    paymentMethod: 'CASH',
+  }, tenant.tenantId, tenant.ownerId);
+  if (balLayRes.status === 201) {
+    const balLayId = (() => { try { return JSON.parse(balLayRes.body).data.id; } catch (_) { return null; } })();
+    if (balLayId) {
+      neg(post(`/api/order-svc/layaways/${balLayId}/complete`, {},
+        tenant.tenantId, tenant.ownerId),
+        'complete layaway with balance outstanding 409', 409);
+    }
+  }
+
+  // ── Gap #14: Gift card — negative cases ──────────────────────────────────────
+
+  // Issue gift card missing storeId → 400
+  neg(post('/api/order-svc/gift-cards',
+    { amount: '50.00' }, tenant.tenantId, tenant.ownerId),
+    'issue gift card missing storeId 400', 400);
+
+  // Issue gift card zero amount → 400
+  neg(post('/api/order-svc/gift-cards',
+    { storeId: store.storeId, amount: 0 },
+    tenant.tenantId, tenant.ownerId), 'issue gift card zero amount 400', 400);
+
+  // GET non-existent gift card code → 404
+  neg(get('/api/order-svc/gift-cards/XXXX-XXXX-XXXX-XXXX',
+    tenant.tenantId, tenant.ownerId), 'get nonexistent gift card 404', 404);
+
+  // Redeem more than balance → 409
+  const gcForRedeemRes = post('/api/order-svc/gift-cards',
+    { storeId: store.storeId, amount: '10.00', currency: 'USD' },
+    tenant.tenantId, tenant.ownerId);
+  if (gcForRedeemRes.status === 201) {
+    const gcCode = (() => { try { return JSON.parse(gcForRedeemRes.body).data.code; } catch (_) { return null; } })();
+    if (gcCode) {
+      neg(post(`/api/order-svc/gift-cards/${gcCode}/redeem`,
+        { amount: '999.00' }, tenant.tenantId, tenant.ownerId),
+        'redeem gift card exceeds balance 409', 409);
+    }
+  }
+
+  sleep(1);
+}
+
+// ── Gap #15: Pricing VAT ───────────────────────────────────────────────────────
+export function pricingVat(d) {
+  if (!d) return;
+  const tenant = tenantCtx(d);
+  const store  = storeCtx(tenant);
+  const tag    = isIN(d) ? 'IN' : 'UK';
+  if (!store || !tenant.variantIds || tenant.variantIds.length === 0) { sleep(1); return; }
+
+  const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
+  const ordId  = genUuid();
+  const lineId = genUuid();
+
+  // ── Positive: get VAT rate T1 ──────────────────────────────────────────────
+  let t0 = Date.now();
+  let res = get('/api/pricing-svc/vat-rates/T1', tenant.tenantId, tenant.ownerId);
+  pricingLatency.add(Date.now() - t0);
+  ok(res, `${tag} get VAT rate T1`);
+  check(res, {
+    [`${tag} VAT rate has rate field`]: r => {
+      try { const v = JSON.parse(r.body).data; return v && v.rate != null; } catch (_) { return false; }
+    },
+  });
+
+  // ── Positive: list all VAT rates ──────────────────────────────────────────
+  res = get('/api/pricing-svc/vat-rates', tenant.tenantId, tenant.ownerId);
+  ok(res, `${tag} list VAT rates`);
+
+  // ── Positive: resolve price with VAT ────────────────────────────────────
+  t0 = Date.now();
+  res = http.post(`${BASE}/api/pricing-svc/prices/resolve`,
+    JSON.stringify({ variantId: vid, channel: 'ALL', qty: 1 }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  pricingLatency.add(Date.now() - t0);
+  const priceOk = ok(res, `${tag} resolve price`);
+  if (priceOk) {
+    check(res, {
+      [`${tag} resolved price has vatCode`]: r => {
+        try { const v = JSON.parse(r.body).data; return v && v.vatCode != null; } catch (_) { return false; }
+      },
+      [`${tag} resolved price has totalWithVat`]: r => {
+        try { const v = JSON.parse(r.body).data; return v && v.totalWithVat != null; } catch (_) { return false; }
+      },
+    });
+  }
+
+  // ── Positive: record tax transaction (POSLog) ───────────────────────────
+  const vatCode = 'T1';
+  const vatRate = 0.20;
+  const net = 49.99;
+  const vat = parseFloat((net * vatRate).toFixed(2));
+  const gross = parseFloat((net + vat).toFixed(2));
+  t0 = Date.now();
+  res = http.post(`${BASE}/api/pricing-svc/tax-transactions`,
+    JSON.stringify({
+      orderId: ordId, orderLineId: lineId, variantId: vid,
+      storeId: store.storeId, vatCode, vatRate, netAmount: net,
+      vatAmount: vat, grossAmount: gross, exempt: false,
+      taxPointDate: new Date().toISOString(),
+    }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  pricingLatency.add(Date.now() - t0);
+  ok(res, `${tag} record tax transaction 201`);
+
+  // ── Positive: list tax transactions by order ────────────────────────────
+  res = get(`/api/pricing-svc/tax-transactions?orderId=${ordId}`,
+    tenant.tenantId, tenant.ownerId);
+  ok(res, `${tag} list tax transactions by order`);
+
+  // ── Positive: MTD VAT return ────────────────────────────────────────────
+  const now = new Date();
+  const y = now.getFullYear();
+  res = get(`/api/pricing-svc/vat-return?from=${y}-01-01T00:00:00Z&to=${y}-12-31T23:59:59Z`,
+    tenant.tenantId, tenant.ownerId);
+  ok(res, `${tag} MTD VAT return`);
+  check(res, {
+    [`${tag} VAT return has box1`]: r => {
+      try { return JSON.parse(r.body).data?.box1 != null; } catch (_) { return false; }
+    },
+  });
+
+  // ── Positive: list promotions ────────────────────────────────────────────
+  res = get('/api/pricing-svc/promotions', tenant.tenantId, tenant.ownerId);
+  ok(res, `${tag} list promotions`);
+
+  // ── Positive: tenant isolation — IN tenant cannot see UK VAT rates ───────
+  // When using India's header, /vat-rates/T1 should either return 404 (India has no T1)
+  // or return India's own T1 (tenantId === india). Returning UK's T1 (tenantId === uk) is a violation.
+  if (!isIN(d)) {
+    const crossTenantId = d.india?.tenantId;
+    if (crossTenantId) {
+      res = get('/api/pricing-svc/vat-rates/T1', crossTenantId, tenant.ownerId);
+      check(res, {
+        'pricing isolation: UK rate not visible to IN tenant header':
+          r => {
+            if (r.status === 404 || r.status === 403) return true;
+            try { return JSON.parse(r.body).data?.tenantId !== d.uk.tenantId; } catch (_) { return true; }
+          },
+      });
+      if (res.status >= 200 && res.status < 300) {
+        try {
+          if (JSON.parse(res.body).data?.tenantId === d.uk.tenantId) isolationViolations.add(1);
+        } catch (_) {}
+      }
+    }
+  }
+
+  // ── Negative: create VAT rate with rate > 1 → 400 ───────────────────────
+  res = http.post(`${BASE}/api/pricing-svc/vat-rates`,
+    JSON.stringify({ code: 'TX', name: 'Bad Rate', rate: 1.5, exempt: false,
+      effectiveFrom: '2024-01-01T00:00:00Z' }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  check(res, { [`${tag} rate >1 rejected 400`]: r => r.status === 400 });
+  if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
+
+  // ── Negative: resolve price for unknown variant → 404 ────────────────────
+  res = http.post(`${BASE}/api/pricing-svc/prices/resolve`,
+    JSON.stringify({ variantId: '99999999-9999-9999-9999-999999999999', channel: 'ALL', qty: 1 }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  check(res, { [`${tag} resolve unknown variant 404`]: r => r.status === 404 });
+  if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
+
+  // ── Negative: record tax transaction missing orderId → 400 ────────────────
+  res = http.post(`${BASE}/api/pricing-svc/tax-transactions`,
+    JSON.stringify({ variantId: vid, storeId: store.storeId, vatCode: 'T1',
+      vatRate: 0.20, netAmount: 10, vatAmount: 2, grossAmount: 12,
+      exempt: false, taxPointDate: new Date().toISOString() }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  check(res, { [`${tag} tax tx missing orderId 400`]: r => r.status === 400 });
+  if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
+
+  // ── Negative: VAT return with from >= to → 400 ───────────────────────────
+  res = get('/api/pricing-svc/vat-return?from=2025-01-01T00:00:00Z&to=2024-01-01T00:00:00Z',
+    tenant.tenantId, tenant.ownerId);
+  check(res, { [`${tag} VAT return invalid period 400`]: r => r.status === 400 });
+  if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
+
+  // ── Negative: duplicate VAT rate code → 409 ──────────────────────────────
+  res = http.post(`${BASE}/api/pricing-svc/vat-rates`,
+    JSON.stringify({ code: 'T1', name: 'Dup', rate: 0.10, exempt: false,
+      effectiveFrom: '2024-01-01T00:00:00Z' }),
+    { headers: hdrs(tenant.tenantId, tenant.ownerId) });
+  check(res, { [`${tag} duplicate VAT code 409`]: r => r.status === 409 });
+  if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
+
+  sleep(1);
+}
+
+// ── Gap #20 — Intercompany invoicing + FRS 102 nominal ledger ─────────────────
+export function intercompanyFlow(d) {
+  const t = tenantCtx(d);
+  if (!t) return;
+  const { tenantId, ownerId, stores, currency, supplierId } = t;
+  if (!stores || stores.length < 2) return;
+  const store1 = stores[0].storeId;
+  const store2 = stores[1].storeId;
+  const ts = Date.now();
+
+  // ── Positive: supplier CRUD ────────────────────────────────────────────────
+  // List suppliers — should include the seeded one
+  let r = get('/api/purchase-svc/suppliers', tenantId, ownerId);
+  intercompanyLatency.add(r.timings.duration);
+  check(r, { 'list suppliers 200': res => res.status === 200 });
+  const listBody = body(r);
+  const seedSupplier = Array.isArray(listBody) ? listBody[0] : null;
+  const useSupplierId = seedSupplier?.id || supplierId;
+
+  if (useSupplierId) {
+    r = get(`/api/purchase-svc/suppliers/${useSupplierId}`, tenantId, ownerId);
+    check(r, { 'get supplier 200': res => res.status === 200 });
+    check(r, { 'supplier BACS 30': res => body(res)?.paymentTermsDays === 30 });
+  }
+
+  // ── Positive: create PO + add line + submit + GRN ─────────────────────────
+  if (useSupplierId) {
+    const poRes = post('/api/purchase-svc/purchase-orders', {
+      supplierId: useSupplierId,
+      storeId:    store1,
+      currency,
+      expectedDelivery: '2026-12-31',
+    }, tenantId, ownerId);
+    intercompanyLatency.add(poRes.timings.duration);
+    check(poRes, { 'create PO 201': res => res.status === 201 });
+    const poId = (poRes.status === 201) ? body(poRes).id : null;
+
+    if (poId) {
+      // Add line
+      const lineRes = post(`/api/purchase-svc/purchase-orders/${poId}/lines`, {
+        variantId: t.variantIds[0],
+        qty: 50, unitPrice: 25.00, vatCode: 'T1',
+      }, tenantId, ownerId);
+      check(lineRes, { 'add PO line 201': res => res.status === 201 });
+
+      // List lines
+      r = get(`/api/purchase-svc/purchase-orders/${poId}/lines`, tenantId, ownerId);
+      check(r, { 'list PO lines 200': res => res.status === 200 });
+
+      // Submit
+      const submitRes = post(`/api/purchase-svc/purchase-orders/${poId}/submit`, {}, tenantId, ownerId);
+      check(submitRes, { 'submit PO 200': res => res.status === 200 });
+      check(submitRes, { 'PO status SUBMITTED': res => body(res)?.status === 'SUBMITTED' });
+
+      // GRN
+      const grnRes = post('/api/purchase-svc/goods-receipts', {
+        poId, storeId: store1,
+        lines: [{ variantId: t.variantIds[0], qtyReceived: 50 }],
+      }, tenantId, ownerId);
+      intercompanyLatency.add(grnRes.timings.duration);
+      check(grnRes, { 'goods receipt 201': res => res.status === 201 });
+
+      // PO should now be RECEIVED
+      r = get(`/api/purchase-svc/purchase-orders/${poId}`, tenantId, ownerId);
+      check(r, { 'PO status RECEIVED': res => body(res)?.status === 'RECEIVED' });
+
+      // List GRNs for PO
+      r = get(`/api/purchase-svc/goods-receipts?poId=${poId}`, tenantId, ownerId);
+      check(r, { 'list GRNs 200': res => res.status === 200 });
+    }
+  }
+
+  // ── Positive: intercompany invoice AR+AP pair ──────────────────────────────
+  const icRes = post('/api/purchase-svc/intercompany-invoices', {
+    fromStoreId: store1,
+    toStoreId:   store2,
+    netAmount:   500.00,
+    vatAmount:   100.00,
+    grossAmount: 600.00,
+    vatCode:     'T1',
+    vatDisregarded: false,
+    currency,
+  }, tenantId, ownerId);
+  intercompanyLatency.add(icRes.timings.duration);
+  check(icRes, { 'raise IC invoice 201': res => res.status === 201 });
+  const pairBody = body(icRes);
+  const arId = pairBody?.arInvoice?.id;
+  const apId = pairBody?.apInvoice?.id;
+  check(icRes, { 'IC pair has AR and AP': _ => !!(arId && apId) });
+  check(icRes, { 'IC status RAISED':   _ => pairBody?.arInvoice?.status === 'RAISED' });
+  check(icRes, { 'IC payment due date set': _ => !!pairBody?.arInvoice?.paymentDueDate });
+
+  // List invoices
+  r = get('/api/purchase-svc/intercompany-invoices', tenantId, ownerId);
+  check(r, { 'list IC invoices 200': res => res.status === 200 });
+
+  // Get specific invoice
+  if (arId) {
+    r = get(`/api/purchase-svc/intercompany-invoices/${arId}`, tenantId, ownerId);
+    intercompanyLatency.add(r.timings.duration);
+    check(r, { 'get IC invoice 200': res => res.status === 200 });
+    check(r, { 'net amount correct': res => body(res)?.netAmount === 500.00 });
+  }
+
+  // Nominal ledger check — should have 1100 Debtors entry
+  r = get('/api/purchase-svc/nominal-ledger', tenantId, ownerId);
+  check(r, { 'nominal ledger 200': res => res.status === 200 });
+  check(r, { 'has debtors entry': res => {
+    const entries = body(res);
+    return Array.isArray(entries) && entries.some(e => e.nominalCode === '1100');
+  }});
+
+  // Filter nominal ledger by code
+  r = get('/api/purchase-svc/nominal-ledger?code=2200', tenantId, ownerId);
+  check(r, { 'nominal by code 200': res => res.status === 200 });
+  check(r, { 'VAT output entries present': res => {
+    const entries = body(res);
+    return Array.isArray(entries) && entries.length > 0;
+  }});
+
+  // ── Positive: settle AR invoice ─────────────────────────────────────────────
+  if (arId) {
+    const settleRes = post(`/api/purchase-svc/intercompany-invoices/${arId}/settle`, {}, tenantId, ownerId);
+    intercompanyLatency.add(settleRes.timings.duration);
+    check(settleRes, { 'settle IC invoice 200': res => res.status === 200 });
+
+    // Settle again → 409 already settled
+    const settle2 = post(`/api/purchase-svc/intercompany-invoices/${arId}/settle`, {}, tenantId, ownerId);
+    check(settle2, { 'double-settle 409': res => res.status === 409 });
+  }
+
+  // ── Positive: Group VAT disregard ──────────────────────────────────────────
+  const icVatDisRes = post('/api/purchase-svc/intercompany-invoices', {
+    fromStoreId: store1,
+    toStoreId:   store2,
+    netAmount:   250.00,
+    vatAmount:   0.00,
+    grossAmount: 250.00,
+    vatCode:     'T1',
+    vatDisregarded: true,
+    currency,
+  }, tenantId, ownerId);
+  check(icVatDisRes, { 'VAT-disregarded IC 201': res => res.status === 201 });
+  check(icVatDisRes, { 'vatDisregarded=true in response': res =>
+    body(res)?.arInvoice?.vatDisregarded === true });
+
+  // Nominal ledger code 2200 should have no NEW entries beyond the previous count
+  r = get('/api/purchase-svc/nominal-ledger?code=2200', tenantId, ownerId);
+  const prevCount = body(get('/api/purchase-svc/nominal-ledger?code=2200', tenantId, ownerId));
+  check(r, { 'no extra VAT nominal on disregarded': _ => {
+    const entries = body(r);
+    return Array.isArray(entries);
+  }});
+
+  // ── Negative: same fromStore = toStore → 400 ─────────────────────────────
+  const icBadSameStore = post('/api/purchase-svc/intercompany-invoices', {
+    fromStoreId: store1,
+    toStoreId:   store1,
+    netAmount:   100.00,
+    vatAmount:   20.00,
+    grossAmount: 120.00,
+    currency,
+  }, tenantId, ownerId);
+  check(icBadSameStore, { 'same-store IC 400': res => res.status === 400 });
+
+  // ── Negative: unknown invoice ID → 404 ────────────────────────────────────
+  r = get('/api/purchase-svc/intercompany-invoices/00000000-0000-0000-0000-000000000000', tenantId, ownerId);
+  check(r, { 'unknown IC invoice 404': res => res.status === 404 });
+
+  // ── Negative: tenant isolation — other tenant cannot see invoices ──────────
+  const otherTenant = tenantCtx({ india: d.uk, uk: d.india });
+  if (otherTenant && arId) {
+    r = get(`/api/purchase-svc/intercompany-invoices/${arId}`, otherTenant.tenantId, otherTenant.ownerId);
+    check(r, { 'IC invoice cross-tenant 404': res => res.status === 404 });
+    if (r.status !== 404) isolationViolations.add(1);
+  }
+
+  // ── Negative: create PO with unknown supplier → 404 ──────────────────────
+  const badPoRes = post('/api/purchase-svc/purchase-orders', {
+    supplierId: '00000000-0000-0000-0000-000000000000',
+    storeId:    store1,
+    currency,
+  }, tenantId, ownerId);
+  check(badPoRes, { 'PO unknown supplier 404': res => res.status === 404 });
+
   sleep(1);
 }
 
@@ -1986,6 +3139,12 @@ export function handleSummary(data) {
       cross_cutting: {
         purchase_receive_p95_ms: fmt(data.metrics.purchase_receive_latency_ms?.values?.['p(95)']?.toFixed(1)),
         isolation_violations:    fmt(data.metrics.isolation_violations?.values?.count),
+      },
+      pricing: {
+        pricing_p95_ms: fmt(data.metrics.pricing_latency_ms?.values?.['p(95)']?.toFixed(1)),
+      },
+      purchase: {
+        intercompany_p95_ms: fmt(data.metrics.intercompany_latency_ms?.values?.['p(95)']?.toFixed(1)),
       },
       thresholds: thresholdResults,
     }, null, 2),

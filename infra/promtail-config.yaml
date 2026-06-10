@@ -1,0 +1,58 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: shelf-j-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+        filters:
+          - name: name
+            values: ["shelfj-"]
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        regex: /(.*)
+        target_label: container
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        target_label: project
+      - source_labels: [__meta_docker_container_id]
+        target_label: container_id
+    pipeline_stages:
+      # Unwrap Docker's JSON log wrapper: {"log":"...", "stream":"...", "time":"..."}
+      - docker: {}
+
+      # Shelf-J services emit: [LEVEL] 2026-06-09T19:55:46.123Z [src] message
+      # Stack traces continue on lines that do NOT start with '['.
+      # Infrastructure services (consul, kafka, postgres) have varied formats;
+      # those lines are passed through as-is and land as level="unknown".
+      - multiline:
+          firstline: '^\['
+          max_wait_time: 2s
+
+      # Extract level from [LEVEL] prefix (SEVERE, WARNING, INFO, FINE, FINER, FINEST)
+      - regex:
+          expression: '^\[(?P<level>[A-Z]+)\]\s+(?P<timestamp>\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\[(?P<src>[^\]]+)\]\s+(?P<message>.*)'
+
+      # Add level as a Loki label — enables fast filtering: {level="WARNING"}
+      - labels:
+          level:
+
+      # Parse the extracted timestamp so Loki uses the app's clock, not the
+      # Promtail ingest time. Lines that didn't match the regex keep their
+      # Docker timestamp (the `docker: {}` stage sets it).
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02T15:04:05.000Z"
+          fallback_formats:
+            - "2006-01-02T15:04:05.000000Z"
+            - RFC3339
+          action_on_failure: skip

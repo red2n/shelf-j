@@ -1,22 +1,26 @@
-# Shelf-J — local development stack (production-grade configuration).
+# Shelf-J — local development stack.
 #
-# Brings up infrastructure with HEALTHCHECKS, then platform + business services
-# gated on those healthchecks — modelling production readiness-gated startup.
+# Startup is health-check driven: each layer waits for the previous to be ready.
+# Infra → Platform (config/consul) → Business services (parallel) → Gateway
 #
 # All services share `shelfj_network`; inter-container addressing is by service
-# name on port 8080 (e.g. http://iam-svc:8080).  The only host-published app
-# port is the gateway on 8090.
+# name on port 8080 (e.g. http://iam-svc:8080).
 #
 # Usage:
-#   mvn clean install -DskipTests              # build all JARs first (JDK 21)
-#   docker compose up -d --build               # build images + start everything
+#   cp .env.example .env && nano .env   # set real secrets
+#   mvn clean install -DskipTests       # build all JARs (JDK 21)
+#   docker compose up -d --build        # build images + start everything
 #
-# Port map (host → container):
-#   5432  postgres         5433  pgbouncer       6379  redis
-#   8500  consul           9092  kafka           8081  kafka-ui
-#   9411  zipkin           4317  otel-collector  4318  otel-collector (HTTP)
-#   9090  prometheus       3100  grafana         5555  pgadmin
-#   8888  config           8090  gateway (public entry point)
+# Ports exposed to the host (developers need these):
+#   8090  gateway (public entry point)    3100  grafana
+#   5555  pgadmin                         8500  consul UI
+#   8081  kafka-ui                        9411  zipkin
+#   5432  postgres (direct SQL access)    6379  redis (redis-cli)
+#   9090  prometheus
+#
+# Ports intentionally NOT exposed (internal only — use Grafana for observability):
+#   otel-collector (4317/4318), loki (3100), tempo (3200), node/postgres/redis
+#   exporters (9100/9187/9121), pgbouncer (6432), config-svc (8080)
 
 name: shelf-j
 
@@ -25,7 +29,7 @@ networks:
     name: shelfj_network
     driver: bridge
 
-# ── Named volumes (all stateful services get persistent storage) ─────────────
+# ── Named volumes ────────────────────────────────────────────────────────────
 volumes:
   pgdata:
   redis_data:
@@ -33,13 +37,38 @@ volumes:
   prometheus_data:
   grafana_data:
   pgadmin_data:
+  loki_data:
+  tempo_data:
+
+# ── YAML anchors — shared blocks to avoid repeating 8 env vars per service ──
+x-svc-env: &svc-env
+  server.port: "8080"
+  shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
+  shelfj.db.user: ${POSTGRES_USER:-shelfj}
+  shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
+  shelfj.consul.host: consul
+  shelfj.consul.port: "8500"
+  shelfj.kafka.bootstrap: kafka:29092
+  otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+
+x-svc-depends: &svc-depends
+  postgres: { condition: service_healthy }
+  kafka:    { condition: service_healthy }
+  consul:   { condition: service_healthy }
+  config:   { condition: service_healthy }
+
+x-svc-healthcheck: &svc-healthcheck
+  test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 30s
 
 services:
   # ---------------------------------------------------------------- infrastructure
 
   # PostgreSQL tuned for multi-tenant workload.
   # Defaults sized for a 4–8 GB dev host; override via .env (PG_SHARED_BUFFERS, etc.).
-  # For production K8s, pass these as initContainer args — don't bake them in the image.
   postgres:
     image: postgres:16-alpine
     container_name: shelfj-postgres
@@ -100,8 +129,12 @@ services:
   # PgBouncer — connection pooler (transaction mode, 2000 app → 150 real connections).
   # Business services connect to postgres:5432 directly so that embedded Flyway DDL
   # transactions work without transaction-mode restrictions. Switch app pools to
-  # pgbouncer:5433 once Flyway is separated from the application lifecycle (e.g. k8s Job).
+  # pgbouncer:6432 once Flyway is separated from the application lifecycle.
+  # NOTE: auth_type=trust is fine for local dev (no external access). Change to
+  # scram-sha-256 for any shared or internet-facing deployment.
   pgbouncer:
+    # pgbouncer/pgbouncer does not publish consistent versioned tags beyond 1.15.0;
+    # latest is the only way to get a current release from this image.
     image: pgbouncer/pgbouncer:latest
     container_name: shelfj-pgbouncer
     restart: always
@@ -125,7 +158,6 @@ services:
       PGBOUNCER_AUTH_FILE: /etc/pgbouncer/userlist.txt
     volumes:
       - ./infra/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
-    ports: ["5433:6432"]
     depends_on:
       postgres: { condition: service_healthy }
     networks: [shelfj_network]
@@ -136,7 +168,7 @@ services:
       retries: 5
 
   consul:
-    image: hashicorp/consul:latest
+    image: hashicorp/consul:1.22.0
     container_name: shelfj-consul
     restart: always
     command: agent -dev -client=0.0.0.0
@@ -170,19 +202,13 @@ services:
       KAFKA_NUM_PARTITIONS: 12
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       CLUSTER_ID: 0WL1kI1NQdi0DVeRDFPA4g
-      # JVM heap — override with KAFKA_HEAP_OPTS in .env for larger machines.
       KAFKA_HEAP_OPTS: "${KAFKA_HEAP_OPTS:--Xms512m -Xmx1g}"
       KAFKA_JVM_PERFORMANCE_OPTS: "-XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:+ExplicitGCInvokesConcurrent"
     volumes: ["kafka_data:/var/lib/kafka/data"]
+    mem_limit: ${KAFKA_MEM_LIMIT:-1300m}
     networks: [shelfj_network]
-    deploy:
-      resources:
-        limits:
-          memory: "${KAFKA_MEM_LIMIT:-1300m}"
-        reservations:
-          memory: 512m
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 18
@@ -190,7 +216,7 @@ services:
 
   # Kafka UI — browse topics, consumer groups, and messages.
   kafka-ui:
-    image: provectuslabs/kafka-ui:latest
+    image: provectuslabs/kafka-ui:v0.7.2
     container_name: shelfj-kafka-ui
     restart: unless-stopped
     ports: ["8081:8080"]
@@ -198,12 +224,7 @@ services:
       KAFKA_CLUSTERS_0_NAME: shelfj-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       JAVA_OPTS: "${KAFKA_UI_JAVA_OPTS:--Xms128m -Xmx384m}"
-    deploy:
-      resources:
-        limits:
-          memory: "${KAFKA_UI_MEM_LIMIT:-550m}"
-        reservations:
-          memory: 128m
+    mem_limit: ${KAFKA_UI_MEM_LIMIT:-550m}
     depends_on:
       kafka: { condition: service_healthy }
     networks: [shelfj_network]
@@ -227,18 +248,13 @@ services:
       retries: 12
 
   zipkin:
-    image: openzipkin/zipkin:latest
+    image: openzipkin/zipkin:3.6.1
     container_name: shelfj-zipkin
     restart: unless-stopped
     ports: ["9411:9411"]
     environment:
       JAVA_OPTS: "${ZIPKIN_JAVA_OPTS:--Xms128m -Xmx512m}"
-    deploy:
-      resources:
-        limits:
-          memory: "${ZIPKIN_MEM_LIMIT:-700m}"
-        reservations:
-          memory: 128m
+    mem_limit: ${ZIPKIN_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9411/health || exit 1"]
@@ -246,28 +262,21 @@ services:
       timeout: 5s
       retries: 12
 
-  # OTEL Collector — receives OTLP (gRPC 4317 / HTTP 4318), exports to Zipkin.
-  # Current services send traces directly to Zipkin via the Zipkin exporter.
-  # Migrate services to OTLP by setting:
-  #   otel.traces.exporter=otlp
-  #   otel.exporter.otlp.endpoint=http://otel-collector:4317
-  # and replacing opentelemetry-exporter-zipkin with opentelemetry-exporter-otlp in POMs.
+  # OTEL Collector — receives OTLP traces+logs; exports traces → Tempo+Zipkin, logs → Loki.
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.104.0
     container_name: shelfj-otel-collector
     restart: unless-stopped
     command: ["--config=/etc/otel-collector-config.yaml"]
-    ports:
-      - "4317:4317"   # OTLP gRPC
-      - "4318:4318"   # OTLP HTTP
     volumes:
       - ./infra/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     depends_on:
       zipkin: { condition: service_healthy }
+      loki:   { condition: service_healthy }
+      tempo:  { condition: service_healthy }
     networks: [shelfj_network]
 
-  # node_exporter — host CPU, memory, disk, network metrics.
-  # rootfs bind-mount omitted: WSL2 root is not a shared/slave mount.
+  # node_exporter — host CPU, memory, disk, network metrics (internal only).
   node-exporter:
     image: prom/node-exporter:v1.8.1
     container_name: shelfj-node-exporter
@@ -276,7 +285,6 @@ services:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
-    ports: ["9100:9100"]
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -287,14 +295,13 @@ services:
       timeout: 5s
       retries: 5
 
-  # postgres_exporter — PostgreSQL connections, query stats, table/index health
+  # postgres_exporter — internal; scraped by Prometheus.
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.15.0
     container_name: shelfj-postgres-exporter
     restart: unless-stopped
     environment:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-shelfj}:${POSTGRES_PASSWORD:-shelfj_dev_change_me}@postgres:5432/${POSTGRES_DB:-shelfj}?sslmode=disable"
-    ports: ["9187:9187"]
     depends_on:
       postgres: { condition: service_healthy }
     networks: [shelfj_network]
@@ -304,8 +311,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # redis_exporter — Redis memory, ops/sec, keyspace, evictions.
-  # Distroless image (no shell) — healthcheck not applicable.
+  # redis_exporter — internal; scraped by Prometheus.
   redis-exporter:
     image: oliver006/redis_exporter:v1.62.0
     container_name: shelfj-redis-exporter
@@ -313,7 +319,6 @@ services:
     environment:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_dev_change_me}
-    ports: ["9121:9121"]
     depends_on:
       redis: { condition: service_healthy }
     networks: [shelfj_network]
@@ -326,12 +331,8 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=7d
       - --web.enable-lifecycle
-    deploy:
-      resources:
-        limits:
-          memory: "${PROMETHEUS_MEM_LIMIT:-512m}"
-        reservations:
-          memory: 64m
+      - --web.enable-remote-write-receiver
+    mem_limit: ${PROMETHEUS_MEM_LIMIT:-512m}
     ports: ["9090:9090"]
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -353,13 +354,15 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin_dev_change_me}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-    ports: ["3100:3000"]   # 3100 avoids conflicts with local dev servers on 3000
+    ports: ["3100:3000"]
     volumes:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     depends_on:
       prometheus: { condition: service_healthy }
+      loki:       { condition: service_healthy }
+      tempo:      { condition: service_healthy }
     networks: [shelfj_network]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
@@ -367,9 +370,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # PgAdmin — Postgres GUI. http://localhost:5555 (override with PGADMIN_PORT).
+  # PgAdmin — http://localhost:5555
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: dpage/pgadmin4:9.15.0
     container_name: shelfj-pgadmin
     restart: unless-stopped
     ports: ["${PGADMIN_PORT:-5555}:80"]
@@ -384,6 +387,60 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---------------------------------------------------------------- observability: logs + traces
+
+  # Loki — log aggregation backend (internal; access via Grafana Explore).
+  loki:
+    image: grafana/loki:3.1.0
+    container_name: shelfj-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./infra/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    mem_limit: ${LOKI_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Promtail — scrapes Docker container logs and ships to Loki.
+  promtail:
+    image: grafana/promtail:3.1.0
+    container_name: shelfj-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    volumes:
+      - ./infra/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    mem_limit: ${PROMTAIL_MEM_LIMIT:-256m}
+    networks: [shelfj_network]
+    depends_on:
+      loki: { condition: service_healthy }
+
+  # Tempo — distributed tracing backend (internal; access via Grafana Explore).
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: shelfj-tempo
+    restart: unless-stopped
+    user: root
+    command: -config.file=/etc/tempo/tempo-config.yaml
+    volumes:
+      - ./infra/tempo-config.yaml:/etc/tempo/tempo-config.yaml:ro
+      - tempo_data:/var/tempo
+    mem_limit: ${TEMPO_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
   # ---------------------------------------------------------------- platform services
 
   config:
@@ -397,13 +454,7 @@ services:
     environment:
       server.port: "8080"
       JAVA_TOOL_OPTIONS: "${CONFIG_JAVA_OPTS:--Xms64m -Xmx256m -XX:+UseG1GC}"
-    deploy:
-      resources:
-        limits:
-          memory: "${CONFIG_MEM_LIMIT:-384m}"
-        reservations:
-          memory: 64m
-    ports: ["8888:8080"]
+    mem_limit: ${CONFIG_MEM_LIMIT:-384m}
     networks: [shelfj_network]
     depends_on:
       consul: { condition: service_healthy }
@@ -425,34 +476,13 @@ services:
     container_name: shelfj-iam
     restart: unless-stopped
     environment:
-      server.port: "8080"
+      <<: *svc-env
       JAVA_TOOL_OPTIONS: "${IAM_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
-      shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
-      shelfj.db.user: ${POSTGRES_USER:-shelfj}
-      shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
-      shelfj.consul.host: consul
-      shelfj.consul.port: "8500"
-      shelfj.kafka.bootstrap: kafka:29092
       SHELFJ_ADVERTISE_HOST: iam-svc
-      otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
-    deploy:
-      resources:
-        limits:
-          memory: "${IAM_MEM_LIMIT:-700m}"
-        reservations:
-          memory: 128m
+    mem_limit: ${IAM_MEM_LIMIT:-700m}
     networks: [shelfj_network]
-    depends_on:
-      postgres: { condition: service_healthy }
-      kafka:    { condition: service_healthy }
-      consul:   { condition: service_healthy }
-      config:   { condition: service_started }
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
 
   tenant-svc:
     image: ghcr.io/red2n/shelf-j-tenant-svc:${SHELFJ_TAG:-latest}
@@ -463,34 +493,13 @@ services:
     container_name: shelfj-tenant
     restart: unless-stopped
     environment:
-      server.port: "8080"
+      <<: *svc-env
       JAVA_TOOL_OPTIONS: "${TENANT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
-      shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
-      shelfj.db.user: ${POSTGRES_USER:-shelfj}
-      shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
-      shelfj.consul.host: consul
-      shelfj.consul.port: "8500"
-      shelfj.kafka.bootstrap: kafka:29092
       SHELFJ_ADVERTISE_HOST: tenant-svc
-      otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
-    deploy:
-      resources:
-        limits:
-          memory: "${TENANT_MEM_LIMIT:-700m}"
-        reservations:
-          memory: 128m
+    mem_limit: ${TENANT_MEM_LIMIT:-700m}
     networks: [shelfj_network]
-    depends_on:
-      postgres: { condition: service_healthy }
-      kafka:    { condition: service_healthy }
-      consul:   { condition: service_healthy }
-      config:   { condition: service_started }
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
 
   inventory-svc:
     image: ghcr.io/red2n/shelf-j-inventory-svc:${SHELFJ_TAG:-latest}
@@ -501,34 +510,64 @@ services:
     container_name: shelfj-inventory
     restart: unless-stopped
     environment:
-      server.port: "8080"
+      <<: *svc-env
       JAVA_TOOL_OPTIONS: "${INVENTORY_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
-      shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
-      shelfj.db.user: ${POSTGRES_USER:-shelfj}
-      shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
-      shelfj.consul.host: consul
-      shelfj.consul.port: "8500"
-      shelfj.kafka.bootstrap: kafka:29092
       SHELFJ_ADVERTISE_HOST: inventory-svc
-      otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
-    deploy:
-      resources:
-        limits:
-          memory: "${INVENTORY_MEM_LIMIT:-700m}"
-        reservations:
-          memory: 128m
+    mem_limit: ${INVENTORY_MEM_LIMIT:-700m}
     networks: [shelfj_network]
-    depends_on:
-      postgres: { condition: service_healthy }
-      kafka:    { condition: service_healthy }
-      consul:   { condition: service_healthy }
-      config:   { condition: service_started }
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
+  order-svc:
+    image: ghcr.io/red2n/shelf-j-order-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/order-svc, SVC_JAR: order-svc }
+    container_name: shelfj-order
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${ORDER_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: order-svc
+    mem_limit: ${ORDER_MEM_LIMIT:-700m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
+  purchase-svc:
+    image: ghcr.io/red2n/shelf-j-purchase-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/purchase-svc, SVC_JAR: purchase-svc }
+    container_name: shelfj-purchase
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${PURCHASE_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: purchase-svc
+    mem_limit: ${PURCHASE_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
+  pricing-svc:
+    image: ghcr.io/red2n/shelf-j-pricing-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/pricing-svc, SVC_JAR: pricing-svc }
+    container_name: shelfj-pricing
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${PRICING_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: pricing-svc
+    mem_limit: ${PRICING_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
 
   product-svc:
     image: ghcr.io/red2n/shelf-j-product-svc:${SHELFJ_TAG:-latest}
@@ -539,37 +578,18 @@ services:
     container_name: shelfj-product
     restart: unless-stopped
     environment:
-      server.port: "8080"
+      <<: *svc-env
       JAVA_TOOL_OPTIONS: "${PRODUCT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
-      shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
-      shelfj.db.user: ${POSTGRES_USER:-shelfj}
-      shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
-      shelfj.consul.host: consul
-      shelfj.consul.port: "8500"
-      shelfj.kafka.bootstrap: kafka:29092
       SHELFJ_ADVERTISE_HOST: product-svc
-      otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
-    deploy:
-      resources:
-        limits:
-          memory: "${PRODUCT_MEM_LIMIT:-700m}"
-        reservations:
-          memory: 128m
+    mem_limit: ${PRODUCT_MEM_LIMIT:-700m}
     networks: [shelfj_network]
-    depends_on:
-      postgres: { condition: service_healthy }
-      kafka:    { condition: service_healthy }
-      consul:   { condition: service_healthy }
-      config:   { condition: service_started }
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
 
   # ---------------------------------------------------------------- gateway (single public door)
 
+  # Gateway waits for iam-svc and tenant-svc: these are the services clients hit first.
+  # All others register with Consul and are discoverable once healthy.
   gateway:
     image: ghcr.io/red2n/shelf-j-gateway:${SHELFJ_TAG:-latest}
     build:
@@ -585,16 +605,13 @@ services:
       shelfj.consul.port: "8500"
       shelfj.gateway.rate-limit.requests-per-minute: "10000"
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
-    deploy:
-      resources:
-        limits:
-          memory: "${GATEWAY_MEM_LIMIT:-700m}"
-        reservations:
-          memory: 128m
-    ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]   # the ONLY app port published to the host
+    mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
+    ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]
     networks: [shelfj_network]
     depends_on:
       consul:     { condition: service_healthy }
+      iam-svc:    { condition: service_healthy }
+      tenant-svc: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
       interval: 10s

@@ -1,10 +1,11 @@
-# OTEL Collector — receives OTLP traces from services and exports to Zipkin.
+# OTEL Collector — receives OTLP traces+logs from services.
+# Traces → Tempo (primary) + Zipkin (legacy compat).
+# Logs   → Loki.
 #
-# Current services send traces directly to Zipkin via the Zipkin exporter.
-# This collector is ready for when services are migrated to standard OTLP:
+# Services should export via OTLP:
 #   otel.traces.exporter=otlp
+#   otel.logs.exporter=otlp
 #   otel.exporter.otlp.endpoint=http://otel-collector:4317
-# (also swap opentelemetry-exporter-zipkin → opentelemetry-exporter-otlp in POMs)
 
 receivers:
   otlp:
@@ -18,11 +19,27 @@ processors:
   batch:
     timeout: 5s
     send_batch_size: 512
+  resource:
+    attributes:
+      - key: service.namespace
+        value: shelf-j
+        action: upsert
 
 exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
   zipkin:
     endpoint: http://zipkin:9411/api/v2/spans
     format: proto
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    default_labels_enabled:
+      exporter: false
+      job: true
+      instance: true
+      level: true
   debug:
     verbosity: basic
 
@@ -30,5 +47,9 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch]
-      exporters: [zipkin]
+      processors: [batch, resource]
+      exporters: [otlp/tempo, zipkin]
+    logs:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [loki]

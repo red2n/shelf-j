@@ -172,12 +172,12 @@ public class ProxyResource {
   }
 
   private Response relay(HttpClientResponse upstream, String requestId) {
-    String payload = upstream.as(String.class);
-    return Response.status(upstream.status().code())
-        .type(MediaType.APPLICATION_JSON)
-        .header(HttpHeaders.REQUEST_ID, requestId)
-        .entity(payload)
-        .build();
+    int status = upstream.status().code();
+    Response.ResponseBuilder rb = Response.status(status).header(HttpHeaders.REQUEST_ID, requestId);
+    if (status != 204 && status != 205 && status != 304) {
+      rb.type(MediaType.APPLICATION_JSON).entity(upstream.as(String.class));
+    }
+    return rb.build();
   }
 
   private Response serviceUnavailable(String service) {

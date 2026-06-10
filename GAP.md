@@ -237,12 +237,12 @@
 
 | Oracle POS Feature | Shelf-J State | Notes |
 |---|---|---|
-| POS transaction engine | ❌ Missing | `order-svc` planned but not yet built |
-| Return / refund transactions | ❌ Missing | No RETURN movement maps to a customer-facing return flow |
-| Post-void (cancel completed transaction) | ❌ Missing | No void workflow |
-| Layaway (deposit + deferred pickup) | ❌ Missing | — |
+| POS transaction engine | ✅ Full | order-svc: place/confirm/fulfil/cancel, post-void, returns, layaway, gift cards |
+| Return / refund transactions | ✅ Full | `POST /orders/{id}/returns` with per-line refund calculation |
+| Post-void (cancel completed transaction) | ✅ Full | `POST /orders/{id}/void` (POS-only, append-only pos_void_log) |
+| Layaway (deposit + deferred pickup) | ✅ Full | create, add-deposit, complete, cancel; append-only deposit ledger |
 | Special orders (customer order at store) | ❌ Missing | — |
-| Gift cards (issue / reload / redeem) | ❌ Missing | — |
+| Gift cards (issue / reload / redeem) | ✅ Full | issue, reload, redeem (balance-guard), append-only transaction ledger |
 | Tax-exempt transactions | ❌ Missing | No tax model at all |
 | Tax rate captured in POSLog | ❌ Missing | — |
 | Price overrides / price changes | ❌ Missing | `pricing-svc` planned; not built |
@@ -275,13 +275,13 @@
 | ~~11~~ | ~~**Lot genealogy** — parent/child chain on batches~~ ✅ | ~~inventory-svc~~ | ~~Ch. 7~~ |
 | ~~12~~ | ~~**Item revisions** — append-only versioning per variant with supersession~~ ✅ | ~~product-svc~~ | ~~Ch. 5~~ |
 | ~~13~~ | ~~**Item templates** — named default-attribute sets applied to variants in one call~~ ✅ | ~~product-svc~~ | ~~Ch. 4~~ |
-| 14 | **POS transaction engine** — return, post-void, layaway, gift card | order-svc | POS RN |
-| 15 | **Tax model** — tax rates, tax-exempt flags, POSLog capture | pricing-svc | POS RN |
+| ~~14~~ | ~~**POS transaction engine** — return, post-void, layaway, gift card~~ ✅ | ~~order-svc~~ | ~~POS RN~~ |
+| ~~15~~ | ~~**Tax model** — UK VAT rates (T1/T5/T0/TX), price lists, promotions, POSLog, MTD VAT return~~ ✅ | ~~pricing-svc~~ | ~~POS RN~~ |
 | ~~16~~ | ~~**Physical inventory reconciliation** — snapshot, tag counts, adjustment movements on complete~~ ✅ | ~~inventory-svc~~ | ~~Ch. 18~~ |
 | ~~17~~ | ~~**Costing methods** (FIFO / average) + accounting period close~~ ✅ | ~~inventory-svc~~ | ~~Ch. 15~~ |
 | ~~18~~ | ~~**Kanban replenishment** (all 4 types: Supplier / Inter-Org / Intra-Org / Production)~~ ✅ | ~~inventory-svc~~ | ~~Ch. 14~~ |
 | ~~19~~ | ~~**Reorder Point planning with EOQ**~~ ✅ | ~~inventory-svc~~ | ~~Ch. 14~~ |
-| 20 | **Intercompany invoicing** — AR/AP on inter-org transfers | purchase-svc / payment-svc | Ch. 19 |
+| ~~20~~ | ~~**Intercompany invoicing** — AR/AP on inter-org transfers, FRS 102 nominal ledger, BACS 30-day terms, Group VAT disregard~~ ✅ | ~~purchase-svc~~ | ~~Ch. 19~~ |
 
 ---
 
