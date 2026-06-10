@@ -56,21 +56,25 @@ public class AuthService {
     return issueTokens(user);
   }
 
-  /** Login with email + password (customer scope: tenantId null). */
+  /**
+   * Login with email + password. Email is unique only per tenant scope (a user's row moves out of
+   * the NULL scope once a TenantCreated/StaffAssigned event stamps their tenant), so we search all
+   * scopes and let the password disambiguate.
+   */
   public TokenResponse login(String email, String password) {
-    User user =
-        users
-            .findByEmail(null, email)
-            .orElseThrow(
-                () ->
-                    ApiException.unauthorized("INVALID_CREDENTIALS", "Invalid email or password"));
-    if (!User.STATUS_ACTIVE.equals(user.status())
-        || !passwords.verify(user.passwordHash(), password)) {
-      users.audit(user.tenantId(), user.id(), "LOGIN_FAILED", email);
-      throw ApiException.unauthorized("INVALID_CREDENTIALS", "Invalid email or password");
+    var candidates = users.findAllByEmail(email);
+    for (User user : candidates) {
+      if (User.STATUS_ACTIVE.equals(user.status())
+          && passwords.verify(user.passwordHash(), password)) {
+        users.audit(user.tenantId(), user.id(), "LOGIN_OK", email);
+        return issueTokens(user);
+      }
     }
-    users.audit(user.tenantId(), user.id(), "LOGIN_OK", email);
-    return issueTokens(user);
+    if (!candidates.isEmpty()) {
+      User first = candidates.get(0);
+      users.audit(first.tenantId(), first.id(), "LOGIN_FAILED", email);
+    }
+    throw ApiException.unauthorized("INVALID_CREDENTIALS", "Invalid email or password");
   }
 
   /** Rotate a refresh token → new access + new refresh token; old one is revoked. */

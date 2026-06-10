@@ -57,6 +57,19 @@ public class UserRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * All users with this email across every tenant scope. Email is unique only per scope
+   * (uq_users_tenant_email), so after a user is bound to a tenant their row leaves the NULL scope —
+   * login must search all scopes and disambiguate by password.
+   */
+  public List<User> findAllByEmail(String email) {
+    return query(
+        "SELECT " + SELECT_COLS + " FROM users WHERE lower(email) = lower(?)",
+        ps -> ps.setString(1, email),
+        UserRepository::map,
+        "find users by email");
+  }
+
   public Optional<User> findById(UUID id) {
     return query(
             "SELECT " + SELECT_COLS + " FROM users WHERE id = ?",
@@ -142,6 +155,44 @@ public class UserRepository extends BaseOutboxRepository {
           return changed;
         },
         "bind owner");
+  }
+
+  /**
+   * Stamp a tenant onto a staff user and grant a store-scoped role — idempotently. Mirrors {@link
+   * #bindOwner} but the role is bound to a specific store. Re-delivering the same StaffAssigned
+   * event must not duplicate the role or overwrite a differing tenant (golden rule #7). Returns
+   * true if anything changed.
+   */
+  public boolean bindStaff(UUID userId, UUID tenantId, String roleName, UUID storeId) {
+    return inTx(
+        c -> {
+          boolean changed = false;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE users SET tenant_id = ?, type = 'STAFF'"
+                      + " WHERE id = ? AND tenant_id IS NULL")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, userId);
+            changed |= ps.executeUpdate() > 0;
+          }
+          UUID roleId = roleIdByName(c, roleName);
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO user_roles (id, user_id, role_id, store_id)"
+                      + " SELECT ?, ?, ?, ? WHERE NOT EXISTS"
+                      + " (SELECT 1 FROM user_roles WHERE user_id = ? AND role_id = ? AND store_id = ?)")) {
+            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(2, userId);
+            ps.setObject(3, roleId);
+            ps.setObject(4, storeId);
+            ps.setObject(5, userId);
+            ps.setObject(6, roleId);
+            ps.setObject(7, storeId);
+            changed |= ps.executeUpdate() > 0;
+          }
+          return changed;
+        },
+        "bind staff");
   }
 
   /**
