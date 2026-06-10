@@ -196,6 +196,7 @@ public class ProductService {
             productId,
             req.sku().trim(),
             req.barcode(),
+            req.manufacturerPn(),
             req.attributes(),
             req.unit(),
             Variant.STATUS_ACTIVE,
@@ -224,7 +225,13 @@ public class ProductService {
       UUID tenantId, UUID productId, UUID variantId, UpdateVariantRequest req) {
     getVariant(tenantId, variantId);
     return repo.updateVariant(
-        tenantId, variantId, req.sku().trim(), req.barcode(), req.attributes(), req.unit());
+        tenantId,
+        variantId,
+        req.sku().trim(),
+        req.barcode(),
+        req.manufacturerPn(),
+        req.attributes(),
+        req.unit());
   }
 
   public Variant delistVariant(UUID tenantId, UUID productId, UUID variantId) {

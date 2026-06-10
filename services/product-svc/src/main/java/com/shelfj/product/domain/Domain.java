@@ -60,6 +60,7 @@ public final class Domain {
       UUID productId,
       String sku,
       String barcode,
+      String manufacturerPn,
       String attributes,
       String unit,
       String status,

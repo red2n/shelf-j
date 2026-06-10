@@ -318,7 +318,7 @@ public class ProductRepository extends BaseOutboxRepository {
 
   public Optional<Variant> findVariant(UUID tenantId, UUID variantId) {
     return query(
-            "SELECT id, tenant_id, product_id, sku, barcode, attributes, unit,"
+            "SELECT id, tenant_id, product_id, sku, barcode, manufacturer_pn, attributes, unit,"
                 + " status, created_at, updated_at"
                 + " FROM product_variants WHERE tenant_id = ? AND id = ?",
             ps -> {
@@ -333,7 +333,7 @@ public class ProductRepository extends BaseOutboxRepository {
 
   public List<Variant> listVariants(UUID tenantId, UUID productId) {
     return query(
-        "SELECT id, tenant_id, product_id, sku, barcode, attributes, unit,"
+        "SELECT id, tenant_id, product_id, sku, barcode, manufacturer_pn, attributes, unit,"
             + " status, created_at, updated_at"
             + " FROM product_variants"
             + " WHERE tenant_id = ? AND product_id = ? AND status = 'ACTIVE'"
@@ -347,19 +347,26 @@ public class ProductRepository extends BaseOutboxRepository {
   }
 
   public Variant updateVariant(
-      UUID tenantId, UUID variantId, String sku, String barcode, String attributes, String unit) {
+      UUID tenantId,
+      UUID variantId,
+      String sku,
+      String barcode,
+      String manufacturerPn,
+      String attributes,
+      String unit) {
     Instant now = Instant.now();
     exec(
-        "UPDATE product_variants SET sku=?, barcode=?, attributes=?, unit=?, updated_at=?"
-            + " WHERE tenant_id=? AND id=? AND status='ACTIVE'",
+        "UPDATE product_variants SET sku=?, barcode=?, manufacturer_pn=?, attributes=?, unit=?,"
+            + " updated_at=? WHERE tenant_id=? AND id=? AND status='ACTIVE'",
         ps -> {
           ps.setString(1, sku);
           ps.setString(2, barcode);
-          ps.setString(3, attributes);
-          ps.setString(4, unit);
-          ps.setObject(5, now.atOffset(ZoneOffset.UTC));
-          ps.setObject(6, tenantId);
-          ps.setObject(7, variantId);
+          ps.setString(3, manufacturerPn);
+          ps.setString(4, attributes);
+          ps.setString(5, unit);
+          ps.setObject(6, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(7, tenantId);
+          ps.setObject(8, variantId);
         },
         "update variant");
     return findVariant(tenantId, variantId)
@@ -417,19 +424,20 @@ public class ProductRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO product_variants"
-                + " (id, tenant_id, product_id, sku, barcode, attributes, unit,"
+                + " (id, tenant_id, product_id, sku, barcode, manufacturer_pn, attributes, unit,"
                 + " status, created_at, updated_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, v.id());
       ps.setObject(2, v.tenantId());
       ps.setObject(3, v.productId());
       ps.setString(4, v.sku());
       ps.setString(5, v.barcode());
-      ps.setString(6, v.attributes());
-      ps.setString(7, v.unit());
-      ps.setString(8, v.status());
-      ps.setObject(9, v.createdAt().atOffset(ZoneOffset.UTC));
-      ps.setObject(10, v.updatedAt().atOffset(ZoneOffset.UTC));
+      ps.setString(6, v.manufacturerPn());
+      ps.setString(7, v.attributes());
+      ps.setString(8, v.unit());
+      ps.setString(9, v.status());
+      ps.setObject(10, v.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(11, v.updatedAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -695,6 +703,7 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getObject("product_id", UUID.class),
         rs.getString("sku"),
         rs.getString("barcode"),
+        rs.getString("manufacturer_pn"),
         rs.getString("attributes"),
         rs.getString("unit"),
         rs.getString("status"),

@@ -37,10 +37,18 @@ public final class Dtos {
       @NotNull Boolean sellablePos) {}
 
   public record CreateVariantRequest(
-      @NotBlank String sku, String barcode, String attributes, String unit) {}
+      @NotBlank String sku,
+      String barcode,
+      String manufacturerPn,
+      String attributes,
+      String unit) {}
 
   public record UpdateVariantRequest(
-      @NotBlank String sku, String barcode, String attributes, String unit) {}
+      @NotBlank String sku,
+      String barcode,
+      String manufacturerPn,
+      String attributes,
+      String unit) {}
 
   // ── responses ────────────────────────────────────────────────────────────────
 
@@ -67,6 +75,7 @@ public final class Dtos {
       String productId,
       String sku,
       String barcode,
+      String manufacturerPn,
       String attributes,
       String unit,
       String status,

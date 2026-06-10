@@ -295,17 +295,17 @@
 
 | # | Gap | Service | Notes |
 |---|---|---|---|
-| 21 | **Transaction reason codes** — codified enum table + `reason_code` column on `stock_movements` | inventory-svc | `adjust` accepts free-text `reason` only; no controlled vocabulary |
-| 22 | **Configurable transaction source types** — `transaction_source_types` table replacing hardcoded TEXT comment | inventory-svc | `movement_type` is a hardcoded SQL comment, not a managed reference table |
-| 23 | **Lot action codes** — split / merge / transfer endpoints + corresponding movements | inventory-svc | No `lot_split` or `lot_merge` anywhere in Java or SQL |
-| 24 | **Lot expiry auto-reporting** — scheduled job that alerts on batches past `expiry_date` | inventory-svc | No scheduler or notification dispatch for expired lots |
-| 25 | **Lot grade control** — `grade` column on `inventory_batches` + grade-based picking | inventory-svc | No grade field in any migration |
-| 26 | **Lot-specific UOM conversions** — per-lot conversion override table | inventory-svc | UOM item conversions exist in product-svc; no lot-level override |
-| 27 | **PAR levels / replenishment counting** — `par_level_configs` table + counting endpoint | inventory-svc | Not in any migration or endpoint |
-| 28 | **Order modifiers** — min/max order qty + fixed-lot multiplier on ROP plans, kanban cards, thresholds | inventory-svc | `rop_plans` and `kanban_cards` tables have no modifier columns |
-| 29 | **Reservation batch interface** — bulk `POST /inventory/reservations/batch` endpoint | inventory-svc | Only single-reservation POST exists |
-| 30 | **Purge transaction history** — admin endpoint + optional scheduled job | inventory-svc | No purge path; `stock_movements` grows forever |
-| 31 | **GL account mapping** — subinventory/zone → nominal code mapping table | inventory-svc | No chart-of-accounts link on zones or batches |
+| ~~21~~ | ~~**Transaction reason codes** — codified enum table + `reason_code` column on `stock_movements`~~ ✅ | ~~inventory-svc~~ | ~~V17__tier1_gaps.sql + insertReasonCode/listReasonCodes; POST/GET /reason-codes~~ |
+| ~~22~~ | ~~**Configurable transaction source types** — `transaction_source_types` table replacing hardcoded TEXT comment~~ ✅ | ~~inventory-svc~~ | ~~V17__tier1_gaps.sql + insertSourceType/listSourceTypes; POST/GET /source-types~~ |
+| ~~23~~ | ~~**Lot action codes** — split / merge / transfer endpoints + corresponding movements~~ ✅ | ~~inventory-svc~~ | ~~V17__tier1_gaps.sql `lot_actions` table; splitLot/mergeLot; POST /lots/split, POST /lots/merge~~ |
+| ~~24~~ | ~~**Lot expiry auto-reporting** — scheduled job that alerts on batches past `expiry_date`~~ ✅ | ~~inventory-svc~~ | ~~ExpiryAlertSweeper.java; listExpiringBatches; GET /batches/expiring~~ |
+| ~~25~~ | ~~**Lot grade control** — `grade` column on `inventory_batches` + grade-based picking~~ ✅ | ~~inventory-svc~~ | ~~V17__tier1_gaps.sql `grade` column; updateBatchGrade; PUT /batches/{id}/grade~~ |
+| ~~26~~ | ~~**Lot-specific UOM conversions** — per-lot conversion override table~~ ✅ | ~~inventory-svc~~ | ~~V17__tier1_gaps.sql `lot_uom_conversions` table; upsertLotUomConversion; PUT/GET /lots/{batchId}/uom-conversions~~ |
+| ~~27~~ | ~~**PAR levels / replenishment counting** — `par_level_configs` table + counting endpoint~~ ✅ | ~~inventory-svc~~ | ~~V17__tier1_gaps.sql `par_level_configs`; upsertParLevel/listParLevels; PUT/GET /par-levels~~ |
+| ~~28~~ | ~~**Order modifiers** — min/max order qty + fixed-lot multiplier on ROP plans, kanban cards, thresholds~~ ✅ | ~~inventory-svc~~ | ~~V17__tier1_gaps.sql columns on `reorder_point_plans` + `kanban_cards`; PUT /rop-plans/{id}/order-modifiers, PUT /kanban-cards/{id}/order-modifiers~~ |
+| ~~29~~ | ~~**Reservation batch interface** — bulk `POST /inventory/reservations/batch` endpoint~~ ✅ | ~~inventory-svc~~ | ~~bulkReserve in InventoryService; POST /inventory/reservations/batch~~ |
+| ~~30~~ | ~~**Purge transaction history** — admin endpoint + optional scheduled job~~ ✅ | ~~inventory-svc~~ | ~~purgeMovementsBefore in InventoryRepository; POST /movements/purge~~ |
+| ~~31~~ | ~~**GL account mapping** — subinventory/zone → nominal code mapping table~~ ✅ | ~~inventory-svc~~ | ~~V17__tier1_gaps.sql `zone_gl_mappings` table; PUT/GET /zone-gl-mappings~~ |
 
 ### Tier 2 — Product catalogue richness
 
@@ -313,7 +313,7 @@
 |---|---|---|---|
 | 32 | **Item relationships** — substitute / complementary links between variants | product-svc | No `item_relationships` table or endpoint |
 | 33 | **Supplier / customer cross-references** — supplier part-number cross-ref table | product-svc | No cross-ref table in any migration |
-| 34 | **Manufacturer part numbers** — `manufacturer_pn` field on `product_variants` | product-svc | Field absent from schema |
+| ~~34~~ | ~~**Manufacturer part numbers** — `manufacturer_pn` field on `product_variants`~~ ✅ | ~~product-svc~~ | ~~V6__manufacturer_pn.sql + Domain/DTO/Repo/Mapper/Service; positive + negative k6 coverage~~ |
 | 35 | **Item catalog groups / descriptive elements** — structured spec metadata beyond `attributes JSONB` | product-svc | Variants use an untyped JSONB bag only |
 | 36 | **18 Oracle attribute groups** — typed model for Lead Times, Purchasing, Receiving, WIP, Web, etc. | product-svc | No attribute group model; untyped JSONB only |
 | 37 | **Container types / cartonization** — container type reference table + variant link | product-svc | Not present |
@@ -355,11 +355,18 @@
 
 ## Summary
 
-Shelf-J has a solid multi-tenant structural foundation — tenant/store/zone hierarchy, products, inventory batches, reservations, and an append-only stock movement log. The gaps cluster around three themes:
+**Backlog 1 (items 1–20):** ✅ All done — planning engine, UOM, serial control, material status, move/transfer orders, demand history, safety stock, ABC analysis, cycle counting, lot genealogy, item revisions, templates, POS engine, tax/VAT, physical inventory, costing, kanban, ROP with EOQ, intercompany invoicing.
 
-1. **Planning intelligence** — the data is there but no engine reads `reorder_thresholds` and produces replenishment orders (Oracle Ch. 14 is the entire Planning and Replenishment chapter).
-2. **Inventory control discipline** — serial tracking, material status, lot genealogy, cycle counting, physical inventory (Oracle Ch. 7–9, 17–18).
-3. **POS / commerce layer** — order-svc and pricing-svc are not yet built; the entire Oracle Retail POS feature set is pending.
+**Backlog 2 Tier 1 (items 21–31):** ✅ All done — reason codes, source types, lot split/merge, expiry sweeper, lot grades, lot-UOM conversions, PAR levels, order modifiers, bulk reservations, history purge, GL zone mapping. All confirmed by V17__tier1_gaps.sql migration and k6 materialControl/planningEngine scenarios.
+
+**Open gaps — 24 items remaining (32–55):**
+
+| Tier | Items | Theme |
+|---|---|---|
+| 2 — Product catalogue | 32–40 | Item relationships, supplier cross-refs, manufacturer PNs, attribute groups (×18 Oracle groups), container types, picking rules, category flexfields, bulk import |
+| 3 — POS completeness | 41–46 | Price overrides, special orders, full POSLog, receipt printing, POS session idle timeout, tax-exempt flag wired into order-svc |
+| 4 — Reporting & multi-org | 47–53 | Cross-store quantity rollup, supply/demand netting, movement statistics, SIM↔POS sync, shipping network/methods, economic zones, inventory org parameters |
+| 5 — Blockers | 54–55 | payment-svc (entire service absent), shortage alert dispatch to notification-svc |
 
 ---
 

@@ -62,6 +62,7 @@ public final class Mappers {
         v.productId().toString(),
         v.sku(),
         v.barcode(),
+        v.manufacturerPn(),
         v.attributes(),
         v.unit(),
         v.status(),

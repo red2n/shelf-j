@@ -334,6 +334,7 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
 
   // 8. Products + variants
   const variantIds = [];
+  const productIds = [];
   for (const p of products.items) {
     const pRes = post('/api/product-svc/admin/products', {
       name: p.name, description: p.name,
@@ -344,12 +345,14 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
     }, tenantId, owner.userId);
     const productId = body(pRes).id;
     if (!productId) { console.warn(`[${tag}] product failed: ${p.name}`); continue; }
+    productIds.push(productId);
 
     const vRes = post(`/api/product-svc/admin/products/${productId}/variants`, {
-      sku:        `${tag}-${slug()}`,
-      barcode:    `${tag}${Date.now()}${variantIds.length}`,
-      attributes: JSON.stringify(p.attrs || {}),
-      unit:       'PCS',
+      sku:            `${tag}-${slug()}`,
+      barcode:        `${tag}${Date.now()}${variantIds.length}`,
+      manufacturerPn: `MFR-${tag}-${variantIds.length + 1}`,
+      attributes:     JSON.stringify(p.attrs || {}),
+      unit:           'PCS',
     }, tenantId, owner.userId);
     const variantId = body(vRes).id;
     if (variantId) variantIds.push(variantId);
@@ -441,6 +444,7 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
       cashierId: i === 0 ? cashier1?.userId : cashier2?.userId,
     })),
     variantIds,
+    productIds,
     brandId,
     categoryIds: [elecCatId, clothCatId].filter(Boolean),
     brandName:   products.brand,
@@ -861,6 +865,59 @@ export function catalogAdmin(d) {
 
   res = get('/api/product-svc/admin/categories', tenant.tenantId, tenant.ownerId);
   ok(res, `${tag} list categories`);
+
+  // ── Gap #34: manufacturer_pn — positive round-trip ────────────────────────
+  if (tenant.variantIds.length > 0 && tenant.productIds && tenant.productIds.length > 0) {
+    const chkVid = tenant.variantIds[__ITER % tenant.variantIds.length];
+    const chkPid = tenant.productIds[__ITER % tenant.productIds.length];
+
+    // GET variant list for product — manufacturerPn must be present
+    res = get(`/api/product-svc/admin/products/${chkPid}/variants`,
+      tenant.tenantId, tenant.ownerId);
+    ok(res, `${tag} list variants for product`);
+    check(res, {
+      [`${tag} variant response has manufacturerPn field`]: r => {
+        try {
+          const items = JSON.parse(r.body).data || [];
+          return items.length > 0 && 'manufacturerPn' in items[0];
+        } catch (_) { return false; }
+      },
+      [`${tag} variant manufacturerPn is non-empty string`]: r => {
+        try {
+          const items = JSON.parse(r.body).data || [];
+          return items.length > 0 && typeof items[0].manufacturerPn === 'string'
+            && items[0].manufacturerPn.startsWith('MFR-');
+        } catch (_) { return false; }
+      },
+    });
+
+    // UPDATE variant — change manufacturerPn and verify the new value is returned
+    const currentSku = (() => {
+      try {
+        const items = JSON.parse(res.body).data || [];
+        return items.length > 0 ? items[0] : null;
+      } catch (_) { return null; }
+    })();
+    if (currentSku) {
+      const newMpn = `MFR-UPDATED-${slug()}`;
+      const upRes = put(
+        `/api/product-svc/admin/products/${chkPid}/variants/${currentSku.id}`,
+        {
+          sku:            currentSku.sku,
+          barcode:        currentSku.barcode,
+          manufacturerPn: newMpn,
+          attributes:     currentSku.attributes,
+          unit:           currentSku.unit,
+        }, tenant.tenantId, tenant.ownerId);
+      ok(upRes, `${tag} update variant manufacturerPn`);
+      check(upRes, {
+        [`${tag} updated manufacturerPn matches`]: r => {
+          try { return JSON.parse(r.body).data.manufacturerPn === newMpn; }
+          catch (_) { return false; }
+        },
+      });
+    }
+  }
 
   if (store) {
     // Thresholds + movements for current store
@@ -2425,6 +2482,28 @@ export function negativeTests(d) {
   // UOM convert with an unknown unit code
   neg(get('/api/product-svc/admin/uom/convert?from=BANANA&to=EA&qty=1',
     tenant.tenantId, tenant.ownerId), 'UOM unknown unit code');
+
+  // ── Gap #34: manufacturer_pn — negative cases ────────────────────────────────
+
+  // Blank sku with manufacturerPn provided → 400 (sku is still required)
+  if (tenant.productIds && tenant.productIds.length > 0) {
+    const npPid = tenant.productIds[0];
+    neg(post(`/api/product-svc/admin/products/${npPid}/variants`,
+      { sku: '', barcode: null, manufacturerPn: 'MFR-NEG-001', unit: 'PCS' },
+      tenant.tenantId, tenant.ownerId), 'variant blank sku with MPN → 400', 400);
+
+    // Missing sku field entirely with manufacturerPn present → 400
+    neg(post(`/api/product-svc/admin/products/${npPid}/variants`,
+      { barcode: null, manufacturerPn: 'MFR-NEG-002', unit: 'PCS' },
+      tenant.tenantId, tenant.ownerId), 'variant missing sku with MPN → 400', 400);
+
+    // Update variant: blank sku but non-null manufacturerPn → 400
+    if (tenant.variantIds.length > 0) {
+      neg(put(`/api/product-svc/admin/products/${npPid}/variants/${vid}`,
+        { sku: '  ', barcode: null, manufacturerPn: 'MFR-NEG-003', unit: 'PCS' },
+        tenant.tenantId, tenant.ownerId), 'variant update blank sku with MPN → 400', 400);
+    }
+  }
 
   // ── Not-found (404) ──────────────────────────────────────────────────────────
 
