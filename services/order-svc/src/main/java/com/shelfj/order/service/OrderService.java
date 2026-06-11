@@ -152,6 +152,8 @@ public class OrderService {
   }
 
   public Order fulfillOrder(UUID tenantId, UUID orderId, UUID userId) {
+    Order order = getOrder(tenantId, orderId);
+    List<OrderItem> items = repo.findOrderItems(tenantId, orderId);
     return repo.transitionOrderStatus(
         tenantId,
         orderId,
@@ -159,7 +161,7 @@ public class OrderService {
         Order.STATUS_FULFILLED,
         "fulfilled",
         userId,
-        Events.orderFulfilled(tenantId, orderId));
+        Events.orderFulfilled(tenantId, orderId, order.storeId(), items));
   }
 
   // ── Returns ───────────────────────────────────────────────────────────────
@@ -216,7 +218,10 @@ public class OrderService {
             Instant.now(),
             Instant.now());
 
-    return repo.createReturn(ret, returnItems, Events.orderReturned(tenantId, orderId, returnId));
+    return repo.createReturn(
+        ret,
+        returnItems,
+        Events.orderReturned(tenantId, orderId, returnId, order.storeId(), returnItems));
   }
 
   public List<Return> getReturns(UUID tenantId, UUID orderId) {

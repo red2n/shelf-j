@@ -1,4 +1,4 @@
-package com.shelfj.notification;
+package com.shelfj.reporting;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
@@ -12,11 +12,11 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * Integration test for notification-svc against real Postgres (Testcontainers): list shortage
- * alerts (empty initial state), tenant isolation. Kafka/Consul disabled.
+ * Integration tests for reporting-svc (gaps #47, #48, #49). Runs against real Postgres via
+ * Testcontainers. Kafka/Consul disabled.
  */
 @HelidonTest
-class NotificationIT {
+class ReportingIT {
 
   private static final PostgresSupport PG;
 
@@ -25,12 +25,12 @@ class NotificationIT {
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
     System.setProperty("shelfj.db.password", PG.password());
-    System.setProperty("shelfj.db.schema", "notification");
+    System.setProperty("shelfj.db.schema", "reporting");
     System.setProperty("shelfj.consul.enabled", "false");
     System.setProperty("shelfj.kafka.enabled", "false");
   }
 
-  private static final String T = "11111111-1111-1111-1111-111111111111";
+  private static final String T = "22222222-2222-2222-2222-222222222222";
   private static final String OTHER = "99999999-9999-9999-9999-999999999999";
 
   @Inject WebTarget target;
@@ -49,18 +49,39 @@ class NotificationIT {
         .get();
   }
 
+  /** Gap #47: on-hand returns empty projection for a fresh tenant. */
   @Test
-  void listAlertsEmptyInitially() {
-    Response r = get("/admin/notifications/shortage-alerts", T);
+  void onHandEmptyInitially() {
+    Response r = get("/admin/reports/inventory/on-hand", T);
+    assertThat(r.getStatus(), is(200));
+    String body = r.readEntity(String.class);
+    assertThat(body.contains("\"data\""), is(true));
+    assertThat(body.contains("grandTotal"), is(true));
+  }
+
+  /** Gap #48: supply-demand netting returns empty for a fresh tenant. */
+  @Test
+  void supplyDemandEmptyInitially() {
+    Response r = get("/admin/reports/inventory/supply-demand", T);
     assertThat(r.getStatus(), is(200));
     String body = r.readEntity(String.class);
     assertThat(body.contains("\"data\""), is(true));
   }
 
+  /** Gap #49: movement stats returns empty for a fresh tenant. */
+  @Test
+  void movementStatsEmptyInitially() {
+    Response r = get("/admin/reports/inventory/movement-stats", T);
+    assertThat(r.getStatus(), is(200));
+    String body = r.readEntity(String.class);
+    assertThat(body.contains("\"data\""), is(true));
+  }
+
+  /** Tenant isolation: different tenants see independent data. */
   @Test
   void tenantIsolation() {
-    Response r1 = get("/admin/notifications/shortage-alerts", T);
-    Response r2 = get("/admin/notifications/shortage-alerts", OTHER);
+    Response r1 = get("/admin/reports/inventory/on-hand", T);
+    Response r2 = get("/admin/reports/inventory/on-hand", OTHER);
     assertThat(r1.getStatus(), is(200));
     assertThat(r2.getStatus(), is(200));
   }

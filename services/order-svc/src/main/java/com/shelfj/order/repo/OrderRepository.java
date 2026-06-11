@@ -1178,4 +1178,55 @@ public class OrderRepository extends BaseOutboxRepository {
   private static Instant toInstant(OffsetDateTime odt) {
     return odt == null ? null : odt.toInstant();
   }
+
+  // ── Gap #50: SIM ↔ POS sync — stock position projection ──────────────────
+
+  /**
+   * Upsert the local stock-position projection for one (store, variant). Delta is signed: positive
+   * for receipts/returns, negative for deductions.
+   */
+  public void upsertStockPosition(
+      UUID tenantId, UUID storeId, UUID variantId, java.math.BigDecimal delta) {
+    exec(
+        "INSERT INTO pos_stock_positions (tenant_id, store_id, variant_id, on_hand_qty, updated_at)"
+            + " VALUES (?,?,?,?,now())"
+            + " ON CONFLICT (tenant_id, store_id, variant_id) DO UPDATE"
+            + " SET on_hand_qty = pos_stock_positions.on_hand_qty + excluded.on_hand_qty,"
+            + "     updated_at = now()",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setObject(3, variantId);
+          ps.setBigDecimal(4, delta);
+        },
+        "upsert stock position");
+  }
+
+  public List<com.shelfj.order.domain.Domain.PosStockPosition> findStockPositions(
+      UUID tenantId, UUID storeId, UUID variantId, int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT tenant_id, store_id, variant_id, on_hand_qty, updated_at"
+                + " FROM pos_stock_positions WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (variantId != null) sql.append(" AND variant_id=?");
+    sql.append(" ORDER BY store_id, variant_id LIMIT ?");
+    return query(
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (variantId != null) ps.setObject(i++, variantId);
+          ps.setInt(i, limit);
+        },
+        rs ->
+            new com.shelfj.order.domain.Domain.PosStockPosition(
+                rs.getObject("tenant_id", UUID.class),
+                rs.getObject("store_id", UUID.class),
+                rs.getObject("variant_id", UUID.class),
+                rs.getBigDecimal("on_hand_qty"),
+                toInstant(rs.getObject("updated_at", OffsetDateTime.class))),
+        "find stock positions");
+  }
 }

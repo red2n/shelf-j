@@ -336,10 +336,10 @@
 
 | # | Gap | Service | Notes |
 |---|---|---|---|
-| 47 | **Multi-org quantity report** — cross-store aggregate on-hand view | reporting-svc *(new)* | `aggregateDemand` is per-store only; no cross-store rollup |
-| 48 | **Item supply / demand netting** — on-hand + open POs + open orders combined view | reporting-svc | On-hand only; no supply/demand netting query |
-| 49 | **Movement statistics** — aggregated demand history at tenant level across all stores | reporting-svc | Raw `stock_movements` per store; no tenant-level rollup |
-| 50 | **SIM ↔ POS sync** — Store Inventory Management event bridge between inventory-svc and order-svc | inventory-svc + order-svc | Not modeled anywhere |
+| ~~47~~ | ~~**Multi-org quantity report** — cross-store aggregate on-hand view~~ ✅ | ~~reporting-svc *(new)*~~ | ~~`inventory_projection` table upserted from StockReceived/Deducted/Adjusted events; `GET /admin/reports/inventory/on-hand?storeId=&variantId=` returns per-store rows + grandTotal~~ |
+| ~~48~~ | ~~**Item supply / demand netting** — on-hand + open POs + open orders combined view~~ ✅ | ~~reporting-svc~~ | ~~`open_supply_lines` projection from TransferOrderShipped events; `GET /admin/reports/inventory/supply-demand` returns on-hand + in-transit supply per (store, variant) with netAvailable~~ |
+| ~~49~~ | ~~**Movement statistics** — aggregated demand history at tenant level across all stores~~ ✅ | ~~reporting-svc~~ | ~~`movement_events` append-only table; `GET /admin/reports/inventory/movement-stats?bucketDays=` aggregates totalIn/totalOut by day/week/month bucket per (store, variant)~~ |
+| ~~50~~ | ~~**SIM ↔ POS sync** — Store Inventory Management event bridge between inventory-svc and order-svc~~ ✅ | ~~inventory-svc + order-svc~~ | ~~POS→SIM: OrderFulfilled/OrderReturned consumed by inventory-svc → FIFO deduction + RETURN receipt. SIM→POS: StockReceived/Deducted/Adjusted consumed by order-svc → pos_stock_positions projection + GET /admin/pos/stock-positions~~ |
 | 51 | **Inter-org shipping network / shipping methods** — route table between stores + method reference | inventory-svc / tenant-svc | Transfer orders exist but no shipping route or method model |
 | 52 | **Multi-entity accounting / economic zones** — extend intercompany invoicing for group structures | purchase-svc | Intercompany invoices exist; no economic zone or multi-entity model |
 | 53 | ~~**Inventory org parameters** — tenant-level profile knobs (enable/disable lot, serial, grade per org)~~ ✅ | tenant-svc | `tenant_inventory_config` table + `PUT /admin/inventory-config`, `GET /admin/inventory-config` |
@@ -379,7 +379,7 @@
 |---|---|---|
 | 2 — Product catalogue | ~~39–40~~ ✅ | Category flexfields, bulk import — both done |
 | 3 — POS completeness | ~~41–46~~ ✅ | Price overrides, special orders, POSLog, receipts, POS session idle timeout, tax-exempt — all done |
-| 4 — Reporting & multi-org | 47–53 | Cross-store quantity rollup, supply/demand netting, movement statistics, SIM↔POS sync, shipping network/methods, economic zones, inventory org parameters |
+| 4 — Reporting & multi-org | ~~47–50~~ ✅ · 51–52 open | ~~Cross-store on-hand, supply/demand netting, movement stats, SIM↔POS sync done~~ · Shipping network/methods, economic zones remain |
 | ~~5 — Blockers~~ | ~~55~~ ✅ | ~~Shortage alert dispatch to notification-svc~~ |
 | **6 — Security** | **56–60** | **✅ All 5 fixed — gateway JWT (JwtAuthFilter), RBAC (AdminAuthorizationFilter), payment over-refund, payment DDL, bulk import error leak** |
 

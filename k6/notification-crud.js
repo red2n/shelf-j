@@ -26,7 +26,7 @@ function setupTenant() {
 
 export default function () {
   const tenantId = setupTenant();
-  const hdrs = (extra = {}) => ({ ...JSON_CT, 'X-Tenant-Id': tenantId || 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'X-Roles': 'ADMIN', ...extra });
+  const hdrs = (extra = {}) => ({ ...JSON_CT, 'X-Tenant-Id': tenantId || 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'X-Roles': 'OWNER', ...extra });
 
   // ── Positive: list shortage alerts (empty initially) ─────────────────────
   const list1 = http.get(`${baseUrl}/api/notification-svc/admin/notifications/shortage-alerts`, { headers: hdrs() });
@@ -68,7 +68,7 @@ export default function () {
   // ── Negative: missing tenant header → 401 ────────────────────────────────
   const noTenant = http.get(
     `${baseUrl}/api/notification-svc/admin/notifications/shortage-alerts`,
-    { headers: { ...JSON_CT, 'X-Roles': 'ADMIN' } }
+    { headers: { ...JSON_CT, 'X-Roles': 'OWNER' } }
   );
   check(noTenant, {
     'no tenant 401': r => r.status === 401,

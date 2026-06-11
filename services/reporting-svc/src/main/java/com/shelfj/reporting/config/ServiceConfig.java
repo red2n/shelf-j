@@ -1,4 +1,4 @@
-package com.shelfj.notification.config;
+package com.shelfj.reporting.config;
 
 import com.shelfj.service.BaseServiceConfig;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -9,15 +9,15 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 public class ServiceConfig extends BaseServiceConfig {
 
   @Inject
-  @ConfigProperty(name = "shelfj.service.name", defaultValue = "notification-svc")
+  @ConfigProperty(name = "shelfj.service.name", defaultValue = "reporting-svc")
   String serviceName;
 
   @Inject
-  @ConfigProperty(name = "server.port", defaultValue = "8011")
+  @ConfigProperty(name = "server.port", defaultValue = "8012")
   int servicePort;
 
   @Inject
-  @ConfigProperty(name = "shelfj.db.schema", defaultValue = "notification")
+  @ConfigProperty(name = "shelfj.db.schema", defaultValue = "reporting")
   String dbSchema;
 
   @Override

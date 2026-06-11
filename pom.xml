@@ -65,6 +65,7 @@
         <module>services/payment-svc</module>
         <module>services/purchase-svc</module>
         <module>services/notification-svc</module>
+        <module>services/reporting-svc</module>
         <module>platform/config</module>
         <module>platform/gateway</module>
     </modules>

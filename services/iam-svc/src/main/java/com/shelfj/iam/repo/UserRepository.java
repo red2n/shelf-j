@@ -195,24 +195,6 @@ public class UserRepository extends BaseOutboxRepository {
         "bind staff");
   }
 
-  /**
-   * Record that an event was processed; returns false if it was already processed (dedupe). Used by
-   * consumers to stay idempotent.
-   */
-  public boolean markProcessedIfNew(UUID eventId, String consumer) {
-    try (var c = dataSource.getConnection();
-        var ps =
-            c.prepareStatement(
-                "INSERT INTO processed_events (event_id, consumer) VALUES (?, ?)"
-                    + " ON CONFLICT (event_id) DO NOTHING")) {
-      ps.setObject(1, eventId);
-      ps.setString(2, consumer);
-      return ps.executeUpdate() > 0;
-    } catch (SQLException e) {
-      throw dbError("mark processed event", e);
-    }
-  }
-
   // --- audit ---
 
   public void audit(UUID tenantId, UUID userId, String action, String detail) {

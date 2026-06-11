@@ -173,7 +173,7 @@ public class InventoryRepository extends BaseOutboxRepository {
   /**
    * Consume a HELD reservation: FIFO-deduct from batches, mark CONSUMED, SALE movements + outbox.
    */
-  public void consume(UUID tenantId, UUID reservationId, OutboxRow event) {
+  public void consume(UUID tenantId, UUID reservationId) {
     inTx(
         c -> {
           Reservation r = loadReservationForUpdate(c, tenantId, reservationId);
@@ -204,10 +204,38 @@ public class InventoryRepository extends BaseOutboxRepository {
               zonePriorities);
           checkThresholdTx(c, tenantId, r.storeId(), r.variantId());
           setReservationStatus(c, reservationId, Reservation.CONSUMED);
-          insertOutbox(c, event);
+          // Event built here (not in service layer) because storeId/variantId/qty are only
+          // known after loading the reservation inside this transaction.
+          insertOutbox(
+              c,
+              new OutboxRow(
+                  "StockDeducted",
+                  "shelfj.inventory.stock-deducted",
+                  tenantId,
+                  reservationId,
+                  com.shelfj.inventory.service.Events.stockDeducted(
+                      tenantId, r.storeId(), r.variantId(), reservationId, r.qty())));
           return null;
         },
         "consume reservation");
+  }
+
+  // ---------------------------------------------------------------- deductSale (Gap #50 POS→SIM)
+  /**
+   * FIFO-deduct for a POS sale driven by an OrderFulfilled event (no prior reservation). Creates
+   * SALE movements, checks thresholds, and publishes the StockDeducted outbox event — all in one
+   * transaction.
+   */
+  public void deductSale(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId, OutboxRow event) {
+    inTx(
+        c -> {
+          deductFifo(c, tenantId, storeId, variantId, qty, MoveType.SALE, "ORDER", orderId);
+          checkThresholdTx(c, tenantId, storeId, variantId);
+          insertOutbox(c, event);
+          return null;
+        },
+        "deduct sale from order");
   }
 
   // ---------------------------------------------------------------- release
@@ -516,22 +544,6 @@ public class InventoryRepository extends BaseOutboxRepository {
           return updated;
         },
         "update material status");
-  }
-
-  // ---------------------------------------------------------------- processed events
-
-  public boolean markProcessedIfNew(UUID eventId, String consumer) {
-    try (var c = dataSource.getConnection();
-        var ps =
-            c.prepareStatement(
-                "INSERT INTO processed_events (event_id, consumer) VALUES (?,?)"
-                    + " ON CONFLICT (event_id) DO NOTHING")) {
-      ps.setObject(1, eventId);
-      ps.setString(2, consumer);
-      return ps.executeUpdate() > 0;
-    } catch (SQLException e) {
-      throw dbError("mark processed event", e);
-    }
   }
 
   // ---------------------------------------------------------------- suggestions
@@ -3899,8 +3911,8 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   /**
    * Within an open transaction: if a reorder threshold exists for (tenant, store, variant) and the
-   * current available qty is below it, inserts a StockBelowThreshold outbox event. Called after
-   * any stock-reducing operation so the alert and the deduction are atomic (golden rule #6).
+   * current available qty is below it, inserts a StockBelowThreshold outbox event. Called after any
+   * stock-reducing operation so the alert and the deduction are atomic (golden rule #6).
    */
   private void checkThresholdTx(Connection c, UUID tenantId, UUID storeId, UUID variantId)
       throws SQLException {

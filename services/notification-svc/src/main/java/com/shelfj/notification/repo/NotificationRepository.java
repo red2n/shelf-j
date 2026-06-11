@@ -12,21 +12,6 @@ import java.util.UUID;
 @ApplicationScoped
 public class NotificationRepository extends BaseJdbcRepository {
 
-  /** Returns true if the event was inserted (new); false if already processed (duplicate). */
-  public boolean markProcessedIfNew(UUID eventId, String consumer) {
-    try (var c = dataSource.getConnection();
-        var ps =
-            c.prepareStatement(
-                "INSERT INTO processed_events (event_id, consumer) VALUES (?,?)"
-                    + " ON CONFLICT (event_id) DO NOTHING")) {
-      ps.setObject(1, eventId);
-      ps.setString(2, consumer);
-      return ps.executeUpdate() > 0;
-    } catch (SQLException e) {
-      throw dbError("mark processed event", e);
-    }
-  }
-
   public ShortageAlert insertAlert(ShortageAlert alert) {
     return inTx(
         c -> {

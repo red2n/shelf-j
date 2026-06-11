@@ -259,4 +259,14 @@ public final class Domain {
     public static final String TYPE_PRINT = "PRINT";
     public static final String TYPE_EMAIL = "EMAIL";
   }
+
+  // ── Gap #50: SIM ↔ POS sync — local stock projection ─────────────────────
+
+  /** Local on-hand projection maintained from inventory-svc events. Read-only for POS screens. */
+  public record PosStockPosition(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      java.math.BigDecimal onHandQty,
+      Instant updatedAt) {}
 }

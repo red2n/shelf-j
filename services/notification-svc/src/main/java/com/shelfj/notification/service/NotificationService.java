@@ -23,7 +23,13 @@ public class NotificationService {
       UUID eventId) {
     var alert =
         new ShortageAlert(
-            UUID.randomUUID(), tenantId, storeId, variantId, available, threshold, eventId,
+            UUID.randomUUID(),
+            tenantId,
+            storeId,
+            variantId,
+            available,
+            threshold,
+            eventId,
             Instant.now());
     return repo.insertAlert(alert);
   }

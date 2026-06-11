@@ -34,7 +34,8 @@ public class AdminResource {
     var alerts =
         variantId != null
             ? service.listAlertsByVariant(tenantId, UUID.fromString(variantId), limit)
-            : service.listAlerts(tenantId, storeId != null ? UUID.fromString(storeId) : null, limit);
+            : service.listAlerts(
+                tenantId, storeId != null ? UUID.fromString(storeId) : null, limit);
 
     var dtos = alerts.stream().map(Mappers::toDto).toList();
     return ApiResponse.ok(dtos);

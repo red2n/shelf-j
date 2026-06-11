@@ -266,4 +266,9 @@ public final class Dtos {
       String emailedTo,
       int printCount,
       String generatedAt) {}
+
+  // ── Gap #50: SIM ↔ POS sync ───────────────────────────────────────────────
+
+  public record PosStockPositionResponse(
+      String storeId, String variantId, String onHandQty, String updatedAt) {}
 }

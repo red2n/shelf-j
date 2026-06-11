@@ -30,8 +30,19 @@ public final class Events {
   /**
    * For consume/release the store/variant aren't known at the service layer (resolved in the repo).
    */
-  static String reservationEvent(String type, UUID tenantId, UUID reservationId) {
+  public static String reservationEvent(String type, UUID tenantId, UUID reservationId) {
     return EventPayload.base(type, tenantId, reservationId)
+        + ",\"reservationId\":\""
+        + reservationId
+        + "\"}";
+  }
+
+  public static String stockDeducted(
+      UUID tenantId, UUID storeId, UUID variantId, UUID reservationId, BigDecimal qty) {
+    return EventPayload.base("StockDeducted", tenantId, reservationId)
+        + storeVariant(storeId, variantId)
+        + ",\"qty\":"
+        + qty.toPlainString()
         + ",\"reservationId\":\""
         + reservationId
         + "\"}";

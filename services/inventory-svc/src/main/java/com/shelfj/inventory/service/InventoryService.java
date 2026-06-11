@@ -95,6 +95,49 @@ public class InventoryService {
     return repo.receive(batch, refType, refId, event);
   }
 
+  // ---- Gap #50: POS→SIM deduction (order fulfilled) ----
+  public void deductSaleFromOrder(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
+    var event =
+        new OutboxRow(
+            "StockDeducted",
+            "shelfj.inventory.stock-deducted",
+            tenantId,
+            orderId,
+            Events.stockDeducted(tenantId, storeId, variantId, orderId, qty));
+    repo.deductSale(tenantId, storeId, variantId, qty, orderId, event);
+  }
+
+  // ---- Gap #50: POS→SIM receipt (order returned) ----
+  public void receiveReturnFromOrder(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
+    UUID batchId = UUID.randomUUID();
+    var batch =
+        new Batch(
+            batchId,
+            tenantId,
+            storeId,
+            variantId,
+            "RET-" + orderId.toString().substring(0, 8),
+            qty,
+            qty,
+            null,
+            null,
+            Instant.now(),
+            Batch.STATUS_ACTIVE,
+            Batch.MATERIAL_AVAILABLE,
+            null,
+            null);
+    var event =
+        new OutboxRow(
+            "StockReceived",
+            "shelfj.inventory.stock-received",
+            tenantId,
+            batchId,
+            Events.stockReceived(tenantId, storeId, variantId, batchId, qty));
+    repo.receive(batch, "RETURN", orderId, event);
+  }
+
   // ---- adjust ----
   public void adjust(UUID tenantId, UUID storeId, UUID variantId, BigDecimal delta, String reason) {
     var event =
@@ -135,14 +178,7 @@ public class InventoryService {
 
   // ---- consume (FIFO deduct) ----
   public void consume(UUID tenantId, UUID reservationId) {
-    var event =
-        new OutboxRow(
-            "StockDeducted",
-            "shelfj.inventory.stock-deducted",
-            tenantId,
-            reservationId,
-            Events.reservationEvent("StockDeducted", tenantId, reservationId));
-    repo.consume(tenantId, reservationId, event);
+    repo.consume(tenantId, reservationId);
   }
 
   // ---- release ----

@@ -33,7 +33,7 @@ class ShortageAlertHandler {
       UUID eventId = UUID.fromString(obj.getString("eventId"));
 
       if (!repo.markProcessedIfNew(eventId, CONSUMER_NAME)) {
-        LOG.log(Level.FINE, "StockBelowThreshold {0} already processed — skipped", eventId);
+        LOG.log(Level.DEBUG, "StockBelowThreshold {0} already processed — skipped", eventId);
         return;
       }
 
