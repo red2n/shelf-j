@@ -458,6 +458,36 @@ public final class Domain {
 
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
 
+  // ── Gap #38: Picking Rules ────────────────────────────────────────────────
+
+  public record PickingRule(
+      UUID id,
+      UUID tenantId,
+      String name,
+      String strategy,
+      String gradePreference,
+      String status,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String FIFO = "FIFO";
+    public static final String FEFO = "FEFO";
+    public static final String LIFO = "LIFO";
+    public static final String FEFO_GRADE = "FEFO_GRADE";
+    public static final String ZONE_PRIORITY = "ZONE_PRIORITY";
+    public static final String ACTIVE = "ACTIVE";
+    public static final String INACTIVE = "INACTIVE";
+  }
+
+  public record PickingRuleZonePriority(
+      UUID id, UUID tenantId, UUID ruleId, UUID zoneId, int priority) {}
+
+  public record PickingRuleAssignment(
+      UUID id, UUID tenantId, UUID ruleId, String scopeType, UUID scopeId, Instant createdAt) {
+    public static final String GLOBAL = "GLOBAL";
+    public static final String STORE = "STORE";
+    public static final String PRODUCT = "PRODUCT";
+  }
+
   public record PhysicalInventory(
       UUID id,
       UUID tenantId,

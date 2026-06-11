@@ -130,6 +130,57 @@ public final class Domain {
     public static final String SUPERSEDED = "SUPERSEDED";
   }
 
+  // ── Gap #37: Container Types / Cartonization ────────────────────────────
+
+  public record ContainerType(
+      UUID id,
+      UUID tenantId,
+      String code,
+      String name,
+      String description,
+      java.math.BigDecimal lengthMm,
+      java.math.BigDecimal widthMm,
+      java.math.BigDecimal heightMm,
+      java.math.BigDecimal maxWeightKg,
+      java.math.BigDecimal tareWeightKg,
+      Integer maxUnits,
+      String status,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String ACTIVE = "ACTIVE";
+    public static final String INACTIVE = "INACTIVE";
+  }
+
+  public record VariantContainerLink(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      UUID containerTypeId,
+      int qtyPerContainer,
+      boolean isPrimary,
+      Instant createdAt) {}
+
+  // ── Gap #36: 18 Oracle Item Attribute Groups ─────────────────────────────
+
+  public record ItemAttributeGroup(String groupCode, String name, String description) {}
+
+  public record ItemAttributeGroupField(
+      String groupCode,
+      String fieldCode,
+      String label,
+      String dataType,
+      boolean required,
+      int sortOrder) {}
+
+  public record VariantAttributeGroupValues(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      String groupCode,
+      String values,
+      Instant createdAt,
+      Instant updatedAt) {}
+
   // ── Gap #35: Item Catalog Groups & Descriptive Elements ──────────────────
 
   public record CatalogGroup(
@@ -166,6 +217,39 @@ public final class Domain {
       UUID variantId,
       UUID groupId,
       String elementVals,
+      Instant createdAt,
+      Instant updatedAt) {}
+
+  // ── Gap #39: Category sets (multi-set / flexfield model) ──────────────────
+  public record CategorySet(
+      UUID id,
+      UUID tenantId,
+      String name,
+      String description,
+      String purpose,
+      UUID defaultCatId,
+      boolean controlled,
+      String status,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String ACTIVE = "ACTIVE";
+    public static final String INACTIVE = "INACTIVE";
+    public static final String PURPOSE_GENERAL = "GENERAL";
+    public static final String PURPOSE_INVENTORY = "INVENTORY";
+    public static final String PURPOSE_PURCHASING = "PURCHASING";
+    public static final String PURPOSE_COSTING = "COSTING";
+    public static final String PURPOSE_SALES = "SALES";
+  }
+
+  public record CategorySetMember(
+      UUID id, UUID tenantId, UUID setId, UUID categoryId, Instant createdAt) {}
+
+  public record VariantCategorySetAssignment(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      UUID setId,
+      UUID categoryId,
       Instant createdAt,
       Instant updatedAt) {}
 }

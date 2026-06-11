@@ -5,6 +5,7 @@ import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.StoreWithZone;
 import com.shelfj.tenant.domain.Domain.Tenant;
+import com.shelfj.tenant.domain.Domain.TenantInventoryConfig;
 import com.shelfj.tenant.domain.Domain.Zone;
 import com.shelfj.tenant.dto.Dtos.AssignStaffRequest;
 import com.shelfj.tenant.dto.Dtos.CreateStoreRequest;
@@ -12,9 +13,12 @@ import com.shelfj.tenant.dto.Dtos.CreateTenantRequest;
 import com.shelfj.tenant.dto.Dtos.CreateZoneRequest;
 import com.shelfj.tenant.dto.Dtos.OnboardingStatus;
 import com.shelfj.tenant.dto.Dtos.PatchStatusRequest;
+import com.shelfj.tenant.dto.Dtos.TenantInventoryConfigResponse;
 import com.shelfj.tenant.dto.Dtos.UpdateStoreRequest;
 import com.shelfj.tenant.dto.Dtos.UpdateTenantRequest;
 import com.shelfj.tenant.dto.Dtos.UpdateZoneRequest;
+import com.shelfj.tenant.dto.Dtos.UpsertInventoryConfigRequest;
+import com.shelfj.tenant.mapper.Mappers;
 import com.shelfj.tenant.repo.TenantRepository;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -266,6 +270,58 @@ public class TenantService {
 
   public void removeStaff(UUID tenantId, UUID userId, UUID storeId) {
     repo.removeStaff(tenantId, userId, storeId);
+  }
+
+  // ── Gap #53: Inventory org parameters ────────────────────────────────────
+
+  public TenantInventoryConfigResponse upsertInventoryConfig(
+      UUID tenantId, UpsertInventoryConfigRequest req) {
+    TenantInventoryConfig existing = repo.findInventoryConfig(tenantId).orElse(null);
+    Instant now = Instant.now();
+    UUID id = existing != null ? existing.id() : UUID.randomUUID();
+    Instant createdAt = existing != null ? existing.createdAt() : now;
+    TenantInventoryConfig cfg =
+        new TenantInventoryConfig(
+            id,
+            tenantId,
+            req.lotControlEnabled() != null
+                ? req.lotControlEnabled()
+                : (existing != null ? existing.lotControlEnabled() : true),
+            req.serialControlEnabled() != null
+                ? req.serialControlEnabled()
+                : (existing != null ? existing.serialControlEnabled() : false),
+            req.gradeControlEnabled() != null
+                ? req.gradeControlEnabled()
+                : (existing != null ? existing.gradeControlEnabled() : false),
+            req.expiryTrackingEnabled() != null
+                ? req.expiryTrackingEnabled()
+                : (existing != null ? existing.expiryTrackingEnabled() : true),
+            req.costingMethod() != null
+                ? req.costingMethod()
+                : (existing != null
+                    ? existing.costingMethod()
+                    : TenantInventoryConfig.COSTING_FIFO),
+            req.defaultUom() != null
+                ? req.defaultUom()
+                : (existing != null ? existing.defaultUom() : "EA"),
+            req.reorderAlertEnabled() != null
+                ? req.reorderAlertEnabled()
+                : (existing != null ? existing.reorderAlertEnabled() : true),
+            req.autoReserveOnOrder() != null
+                ? req.autoReserveOnOrder()
+                : (existing != null ? existing.autoReserveOnOrder() : true),
+            createdAt,
+            now);
+    return Mappers.toDto(repo.upsertInventoryConfig(cfg));
+  }
+
+  public TenantInventoryConfigResponse getInventoryConfig(UUID tenantId) {
+    return repo.findInventoryConfig(tenantId)
+        .map(Mappers::toDto)
+        .orElseThrow(
+            () ->
+                new ApiException(
+                    404, "INVENTORY_CONFIG_NOT_FOUND", "No inventory config found", List.of()));
   }
 
   private static UUID parseUuid(String s, String field) {

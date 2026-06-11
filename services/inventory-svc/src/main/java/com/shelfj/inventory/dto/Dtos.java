@@ -533,6 +533,48 @@ public final class Dtos {
       String createdAt,
       String updatedAt) {}
 
+  // ── Gap #38: Picking Rules ────────────────────────────────────────────────
+
+  public record CreatePickingRuleRequest(
+      @NotBlank String name, @NotBlank String strategy, String gradePreference) {}
+
+  public record PickingRuleResponse(
+      String id,
+      String name,
+      String strategy,
+      String gradePreference,
+      String status,
+      String createdAt,
+      String updatedAt) {}
+
+  public record SetZonePrioritiesRequest(@NotNull List<ZonePriorityEntry> zonePriorities) {
+    public record ZonePriorityEntry(@NotBlank String zoneId, int priority) {}
+  }
+
+  public record PickingRuleZonePriorityResponse(String id, String zoneId, int priority) {}
+
+  public record CreatePickingRuleAssignmentRequest(
+      @NotBlank String ruleId, @NotBlank String scopeType, String scopeId) {}
+
+  public record PickingRuleAssignmentResponse(
+      String id, String ruleId, String scopeType, String scopeId, String createdAt) {}
+
+  public record PickingRuleResolveResponse(
+      String appliedRuleId,
+      String appliedRuleName,
+      String strategy,
+      String gradePreference,
+      List<PickBatchPreview> pickOrder) {
+    public record PickBatchPreview(
+        String batchId,
+        String batchNo,
+        String zoneId,
+        java.math.BigDecimal remainingQty,
+        String expiryDate,
+        String grade,
+        String createdAt) {}
+  }
+
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
 
   public record CreatePhysicalInventoryRequest(@NotBlank String storeId, String notes) {}

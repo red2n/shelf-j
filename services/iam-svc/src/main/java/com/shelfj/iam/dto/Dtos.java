@@ -49,4 +49,21 @@ public final class Dtos {
       String phone,
       String status,
       String createdAt) {}
+
+  // ── Gap #45: POS session idle timeout ─────────────────────────────────────
+
+  public record StartPosSessionRequest(@NotBlank String storeId, Integer idleTimeoutSeconds) {}
+
+  public record PosSessionResponse(
+      String id,
+      String tenantId,
+      String userId,
+      String storeId,
+      String startedAt,
+      String lastActivityAt,
+      String endedAt,
+      int idleTimeoutSeconds,
+      String status) {}
+
+  public record IdleSweepResult(int sessionsExpired) {}
 }

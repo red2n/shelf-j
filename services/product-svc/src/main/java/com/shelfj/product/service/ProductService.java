@@ -4,6 +4,11 @@ import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.CatalogGroup;
 import com.shelfj.product.domain.Domain.CatalogGroupElement;
 import com.shelfj.product.domain.Domain.Category;
+import com.shelfj.product.domain.Domain.CategorySet;
+import com.shelfj.product.domain.Domain.CategorySetMember;
+import com.shelfj.product.domain.Domain.ContainerType;
+import com.shelfj.product.domain.Domain.ItemAttributeGroup;
+import com.shelfj.product.domain.Domain.ItemAttributeGroupField;
 import com.shelfj.product.domain.Domain.ItemCrossReference;
 import com.shelfj.product.domain.Domain.ItemRelationship;
 import com.shelfj.product.domain.Domain.ItemRevision;
@@ -14,8 +19,13 @@ import com.shelfj.product.domain.Domain.UomClass;
 import com.shelfj.product.domain.Domain.UomDefinition;
 import com.shelfj.product.domain.Domain.UomItemConversion;
 import com.shelfj.product.domain.Domain.Variant;
+import com.shelfj.product.domain.Domain.VariantAttributeGroupValues;
 import com.shelfj.product.domain.Domain.VariantCatalogAssignment;
+import com.shelfj.product.domain.Domain.VariantCategorySetAssignment;
+import com.shelfj.product.domain.Domain.VariantContainerLink;
+import com.shelfj.product.dto.Dtos.AddCategorySetMemberRequest;
 import com.shelfj.product.dto.Dtos.AssignCatalogGroupRequest;
+import com.shelfj.product.dto.Dtos.AssignVariantCategorySetRequest;
 import com.shelfj.product.dto.Dtos.BulkImportError;
 import com.shelfj.product.dto.Dtos.BulkImportRequest;
 import com.shelfj.product.dto.Dtos.BulkImportResult;
@@ -24,6 +34,7 @@ import com.shelfj.product.dto.Dtos.CreateBrandRequest;
 import com.shelfj.product.dto.Dtos.CreateCatalogGroupElementRequest;
 import com.shelfj.product.dto.Dtos.CreateCatalogGroupRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
+import com.shelfj.product.dto.Dtos.CreateCategorySetRequest;
 import com.shelfj.product.dto.Dtos.CreateItemCrossReferenceRequest;
 import com.shelfj.product.dto.Dtos.CreateItemRelationshipRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
@@ -31,6 +42,7 @@ import com.shelfj.product.dto.Dtos.CreateVariantRequest;
 import com.shelfj.product.dto.Dtos.UpdateBrandRequest;
 import com.shelfj.product.dto.Dtos.UpdateCatalogAssignmentRequest;
 import com.shelfj.product.dto.Dtos.UpdateCategoryRequest;
+import com.shelfj.product.dto.Dtos.UpdateCategorySetRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
 import com.shelfj.product.dto.Dtos.UpdateVariantRequest;
 import com.shelfj.product.repo.ProductRepository;
@@ -465,7 +477,10 @@ public class ProductService {
   // ── Bulk Import ──────────────────────────────────────────────────────────
 
   public BulkImportResult bulkImport(UUID tenantId, BulkImportRequest req) {
-    int catCreated = 0, catSkipped = 0, prodCreated = 0, varCreated = 0;
+    int catCreated = 0;
+    int catSkipped = 0;
+    int prodCreated = 0;
+    int varCreated = 0;
     var errors = new java.util.ArrayList<BulkImportError>();
 
     // ── 1. categories ────────────────────────────────────────────────────────
@@ -681,6 +696,236 @@ public class ProductService {
     if (!repo.deleteCatalogAssignment(tenantId, variantId)) {
       throw ApiException.notFound("ASSIGNMENT_NOT_FOUND", "No catalog assignment for this variant");
     }
+  }
+
+  // ── Container Types (Gap #37) ────────────────────────────────────────────
+
+  public ContainerType createContainerType(
+      UUID tenantId, com.shelfj.product.dto.Dtos.CreateContainerTypeRequest req) {
+    return repo.createContainerType(
+        tenantId,
+        req.code().trim(),
+        req.name().trim(),
+        req.description(),
+        req.lengthMm(),
+        req.widthMm(),
+        req.heightMm(),
+        req.maxWeightKg(),
+        req.tareWeightKg(),
+        req.maxUnits());
+  }
+
+  public ContainerType getContainerType(UUID tenantId, UUID id) {
+    return repo.findContainerType(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("CONTAINER_TYPE_NOT_FOUND", "Container type not found"));
+  }
+
+  public List<ContainerType> listContainerTypes(UUID tenantId) {
+    return repo.listContainerTypes(tenantId);
+  }
+
+  public ContainerType updateContainerType(
+      UUID tenantId, UUID id, com.shelfj.product.dto.Dtos.UpdateContainerTypeRequest req) {
+    getContainerType(tenantId, id);
+    return repo.updateContainerType(
+        tenantId,
+        id,
+        req.name().trim(),
+        req.description(),
+        req.lengthMm(),
+        req.widthMm(),
+        req.heightMm(),
+        req.maxWeightKg(),
+        req.tareWeightKg(),
+        req.maxUnits());
+  }
+
+  public ContainerType deactivateContainerType(UUID tenantId, UUID id) {
+    getContainerType(tenantId, id);
+    return repo.deactivateContainerType(tenantId, id);
+  }
+
+  public VariantContainerLink createVariantContainerLink(
+      UUID tenantId,
+      UUID variantId,
+      com.shelfj.product.dto.Dtos.CreateVariantContainerLinkRequest req) {
+    requireVariant(tenantId, variantId);
+    UUID containerTypeId = UUID.fromString(req.containerTypeId());
+    getContainerType(tenantId, containerTypeId);
+    return repo.createVariantContainerLink(
+        tenantId,
+        variantId,
+        containerTypeId,
+        req.qtyPerContainer(),
+        req.isPrimary() != null && req.isPrimary());
+  }
+
+  public List<VariantContainerLink> listVariantContainerLinks(UUID tenantId, UUID variantId) {
+    requireVariant(tenantId, variantId);
+    return repo.listVariantContainerLinks(tenantId, variantId);
+  }
+
+  public void deleteVariantContainerLink(UUID tenantId, UUID id) {
+    if (!repo.deleteVariantContainerLink(tenantId, id)) {
+      throw ApiException.notFound("CONTAINER_LINK_NOT_FOUND", "Container link not found");
+    }
+  }
+
+  // ── Item Attribute Groups (Gap #36) ─────────────────────────────────────
+
+  public List<ItemAttributeGroup> listAttributeGroups() {
+    return repo.listAttributeGroups();
+  }
+
+  public ItemAttributeGroup getAttributeGroup(String groupCode) {
+    return repo.findAttributeGroup(groupCode.toUpperCase(java.util.Locale.ROOT))
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "ATTRIBUTE_GROUP_NOT_FOUND", "Attribute group not found: " + groupCode));
+  }
+
+  public List<ItemAttributeGroupField> listAttributeGroupFields(String groupCode) {
+    return repo.listAttributeGroupFields(groupCode.toUpperCase(java.util.Locale.ROOT));
+  }
+
+  public VariantAttributeGroupValues upsertVariantAttributeGroupValues(
+      UUID tenantId, UUID variantId, String groupCode, String values) {
+    String code = groupCode.toUpperCase(java.util.Locale.ROOT);
+    repo.findAttributeGroup(code)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "ATTRIBUTE_GROUP_NOT_FOUND", "Unknown attribute group: " + groupCode));
+    requireVariant(tenantId, variantId);
+    return repo.upsertVariantAttributeGroupValues(tenantId, variantId, code, values);
+  }
+
+  public VariantAttributeGroupValues getVariantAttributeGroupValues(
+      UUID tenantId, UUID variantId, String groupCode) {
+    String code = groupCode.toUpperCase(java.util.Locale.ROOT);
+    requireVariant(tenantId, variantId);
+    return repo.findVariantAttributeGroupValues(tenantId, variantId, code)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "ATTRIBUTE_GROUP_VALUES_NOT_FOUND",
+                    "No attribute group values for group " + groupCode + " on this variant"));
+  }
+
+  public List<VariantAttributeGroupValues> listVariantAttributeGroupValues(
+      UUID tenantId, UUID variantId) {
+    requireVariant(tenantId, variantId);
+    return repo.listVariantAttributeGroupValues(tenantId, variantId);
+  }
+
+  public void deleteVariantAttributeGroupValues(UUID tenantId, UUID variantId, String groupCode) {
+    String code = groupCode.toUpperCase(java.util.Locale.ROOT);
+    if (!repo.deleteVariantAttributeGroupValues(tenantId, variantId, code)) {
+      throw ApiException.notFound(
+          "ATTRIBUTE_GROUP_VALUES_NOT_FOUND",
+          "No attribute group values for group " + groupCode + " on this variant");
+    }
+  }
+
+  // ── Gap #39: Category sets ────────────────────────────────────────────────
+
+  public CategorySet createCategorySet(UUID tenantId, CreateCategorySetRequest req) {
+    UUID defCat = parseOptionalUuid(req.defaultCatId(), "defaultCatId");
+    return repo.createCategorySet(
+        new CategorySet(
+            UUID.randomUUID(),
+            tenantId,
+            req.name(),
+            req.description(),
+            req.purpose(),
+            defCat,
+            req.controlled(),
+            CategorySet.ACTIVE,
+            null,
+            null));
+  }
+
+  public List<CategorySet> listCategorySets(UUID tenantId) {
+    return repo.listCategorySets(tenantId);
+  }
+
+  public CategorySet getCategorySet(UUID tenantId, UUID id) {
+    return repo.findCategorySet(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("CATEGORY_SET_NOT_FOUND", "Category set not found"));
+  }
+
+  public CategorySet updateCategorySet(UUID tenantId, UUID id, UpdateCategorySetRequest req) {
+    getCategorySet(tenantId, id);
+    UUID defCat = parseOptionalUuid(req.defaultCatId(), "defaultCatId");
+    return repo.updateCategorySet(
+        tenantId,
+        id,
+        req.name(),
+        req.description(),
+        req.purpose(),
+        defCat,
+        req.controlled(),
+        req.status());
+  }
+
+  public void deleteCategorySet(UUID tenantId, UUID id) {
+    if (!repo.deleteCategorySet(tenantId, id)) {
+      throw ApiException.notFound("CATEGORY_SET_NOT_FOUND", "Category set not found");
+    }
+  }
+
+  public CategorySetMember addCategorySetMember(
+      UUID tenantId, UUID setId, AddCategorySetMemberRequest req) {
+    getCategorySet(tenantId, setId);
+    UUID catId = UUID.fromString(req.categoryId());
+    repo.findCategory(tenantId, catId)
+        .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
+    return repo.addCategorySetMember(
+        new CategorySetMember(UUID.randomUUID(), tenantId, setId, catId, null));
+  }
+
+  public List<CategorySetMember> listCategorySetMembers(UUID tenantId, UUID setId) {
+    getCategorySet(tenantId, setId);
+    return repo.listCategorySetMembers(tenantId, setId);
+  }
+
+  public void deleteCategorySetMember(UUID tenantId, UUID setId, UUID categoryId) {
+    if (!repo.deleteCategorySetMember(tenantId, setId, categoryId)) {
+      throw ApiException.notFound(
+          "CATEGORY_SET_MEMBER_NOT_FOUND", "Category not a member of this set");
+    }
+  }
+
+  public VariantCategorySetAssignment assignVariantCategorySet(
+      UUID tenantId, UUID variantId, AssignVariantCategorySetRequest req) {
+    requireVariant(tenantId, variantId);
+    UUID setId = UUID.fromString(req.setId());
+    UUID catId = UUID.fromString(req.categoryId());
+    getCategorySet(tenantId, setId);
+    return repo.upsertVariantCategorySetAssignment(
+        new VariantCategorySetAssignment(
+            UUID.randomUUID(), tenantId, variantId, setId, catId, null, null));
+  }
+
+  public List<VariantCategorySetAssignment> listVariantCategorySetAssignments(
+      UUID tenantId, UUID variantId) {
+    requireVariant(tenantId, variantId);
+    return repo.listVariantCategorySetAssignments(tenantId, variantId);
+  }
+
+  public void deleteVariantCategorySetAssignment(UUID tenantId, UUID variantId, UUID setId) {
+    if (!repo.deleteVariantCategorySetAssignment(tenantId, variantId, setId)) {
+      throw ApiException.notFound(
+          "CATEGORY_SET_ASSIGNMENT_NOT_FOUND", "Category set assignment not found");
+    }
+  }
+
+  private void requireVariant(UUID tenantId, UUID variantId) {
+    repo.findVariant(tenantId, variantId)
+        .orElseThrow(() -> ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found"));
   }
 
   private static UUID parseOptionalUuid(String s, String field) {

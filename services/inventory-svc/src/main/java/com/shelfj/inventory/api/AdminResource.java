@@ -19,6 +19,8 @@ import com.shelfj.inventory.dto.Dtos.CreateKanbanCardRequest;
 import com.shelfj.inventory.dto.Dtos.CreateLotLinkRequest;
 import com.shelfj.inventory.dto.Dtos.CreateMoveOrderRequest;
 import com.shelfj.inventory.dto.Dtos.CreatePhysicalInventoryRequest;
+import com.shelfj.inventory.dto.Dtos.CreatePickingRuleAssignmentRequest;
+import com.shelfj.inventory.dto.Dtos.CreatePickingRuleRequest;
 import com.shelfj.inventory.dto.Dtos.CreateReasonCodeRequest;
 import com.shelfj.inventory.dto.Dtos.CreateSourceTypeRequest;
 import com.shelfj.inventory.dto.Dtos.CreateTransferOrderRequest;
@@ -44,6 +46,10 @@ import com.shelfj.inventory.dto.Dtos.OpenPeriodRequest;
 import com.shelfj.inventory.dto.Dtos.ParLevelResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryTagResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleAssignmentResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleResolveResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleZonePriorityResponse;
 import com.shelfj.inventory.dto.Dtos.PurgeMovementsRequest;
 import com.shelfj.inventory.dto.Dtos.PurgeResult;
 import com.shelfj.inventory.dto.Dtos.ReasonCodeResponse;
@@ -57,6 +63,7 @@ import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
 import com.shelfj.inventory.dto.Dtos.SerialStatusRequest;
 import com.shelfj.inventory.dto.Dtos.SetSafetyStockRequest;
+import com.shelfj.inventory.dto.Dtos.SetZonePrioritiesRequest;
 import com.shelfj.inventory.dto.Dtos.SourceTypeResponse;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdRequest;
@@ -80,6 +87,7 @@ import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PUT;
@@ -1276,5 +1284,102 @@ public class AdminResource {
         service.listZoneGlMappings(tenantId, storeId).stream()
             .map(Mappers::toZoneGlMapping)
             .toList());
+  }
+
+  // ── Picking Rules (Gap #38) ──────────────────────────────────────────────
+
+  @POST
+  @Path("/picking-rules")
+  public Response createPickingRule(CreatePickingRuleRequest req) {
+    Validations.validate(req);
+    return Response.status(Response.Status.CREATED)
+        .entity(
+            ApiResponse.ok(
+                Mappers.toPickingRule(service.createPickingRule(ctx.requireTenantId(), req))))
+        .build();
+  }
+
+  @GET
+  @Path("/picking-rules")
+  public ApiResponse<List<PickingRuleResponse>> listPickingRules() {
+    return ApiResponse.ok(
+        service.listPickingRules(ctx.requireTenantId()).stream()
+            .map(Mappers::toPickingRule)
+            .toList());
+  }
+
+  @GET
+  @Path("/picking-rules/{id}")
+  public ApiResponse<PickingRuleResponse> getPickingRule(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toPickingRule(service.getPickingRule(ctx.requireTenantId(), id)));
+  }
+
+  @DELETE
+  @Path("/picking-rules/{id}")
+  public ApiResponse<PickingRuleResponse> deactivatePickingRule(@PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        Mappers.toPickingRule(service.deactivatePickingRule(ctx.requireTenantId(), id)));
+  }
+
+  @PUT
+  @Path("/picking-rules/{id}/zone-priorities")
+  public ApiResponse<List<PickingRuleZonePriorityResponse>> setZonePriorities(
+      @PathParam("id") UUID id, SetZonePrioritiesRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(
+        service.setZonePriorities(ctx.requireTenantId(), id, req).stream()
+            .map(Mappers::toZonePriority)
+            .toList());
+  }
+
+  @GET
+  @Path("/picking-rules/{id}/zone-priorities")
+  public ApiResponse<List<PickingRuleZonePriorityResponse>> listZonePriorities(
+      @PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        service.listZonePriorities(ctx.requireTenantId(), id).stream()
+            .map(Mappers::toZonePriority)
+            .toList());
+  }
+
+  @POST
+  @Path("/picking-rule-assignments")
+  public Response createPickingRuleAssignment(CreatePickingRuleAssignmentRequest req) {
+    Validations.validate(req);
+    return Response.status(Response.Status.CREATED)
+        .entity(
+            ApiResponse.ok(
+                Mappers.toPickingRuleAssignment(
+                    service.createPickingRuleAssignment(ctx.requireTenantId(), req))))
+        .build();
+  }
+
+  @GET
+  @Path("/picking-rule-assignments")
+  public ApiResponse<List<PickingRuleAssignmentResponse>> listPickingRuleAssignments() {
+    return ApiResponse.ok(
+        service.listPickingRuleAssignments(ctx.requireTenantId()).stream()
+            .map(Mappers::toPickingRuleAssignment)
+            .toList());
+  }
+
+  @DELETE
+  @Path("/picking-rule-assignments/{id}")
+  public Response deletePickingRuleAssignment(@PathParam("id") UUID id) {
+    service.deletePickingRuleAssignment(ctx.requireTenantId(), id);
+    return Response.noContent().build();
+  }
+
+  @GET
+  @Path("/picking-rules/resolve")
+  public ApiResponse<PickingRuleResolveResponse> resolvePickingRule(
+      @QueryParam("store") String store, @QueryParam("variant") String variant) {
+    UUID tenantId = ctx.requireTenantId();
+    if (store == null || variant == null) {
+      throw new com.shelfj.web.ApiException(
+          400, "MISSING_PARAM", "store and variant are required", List.of(), null);
+    }
+    return ApiResponse.ok(
+        service.resolvePickingRule(tenantId, uuid(store, "store"), uuid(variant, "variant")));
   }
 }

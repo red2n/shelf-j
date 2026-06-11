@@ -7,13 +7,19 @@ import com.shelfj.order.domain.Domain.LayawayDeposit;
 import com.shelfj.order.domain.Domain.LayawayItem;
 import com.shelfj.order.domain.Domain.Order;
 import com.shelfj.order.domain.Domain.OrderItem;
+import com.shelfj.order.domain.Domain.OrderReceipt;
 import com.shelfj.order.domain.Domain.OrderStatusHistory;
+import com.shelfj.order.domain.Domain.PosLogEntry;
 import com.shelfj.order.domain.Domain.PosVoidLog;
 import com.shelfj.order.domain.Domain.Return;
 import com.shelfj.order.domain.Domain.ReturnItem;
+import com.shelfj.order.domain.Domain.SpecialOrder;
+import com.shelfj.order.domain.Domain.SpecialOrderItem;
 import com.shelfj.order.dto.Dtos.AddDepositRequest;
 import com.shelfj.order.dto.Dtos.CreateLayawayRequest;
 import com.shelfj.order.dto.Dtos.CreateReturnRequest;
+import com.shelfj.order.dto.Dtos.CreateSpecialOrderRequest;
+import com.shelfj.order.dto.Dtos.GenerateReceiptRequest;
 import com.shelfj.order.dto.Dtos.IssueGiftCardRequest;
 import com.shelfj.order.dto.Dtos.PlaceOrderRequest;
 import com.shelfj.order.dto.Dtos.RedeemGiftCardRequest;
@@ -43,7 +49,7 @@ public class OrderService {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest("ORDER_NO_ITEMS", "order must have at least one item");
 
-    UUID tenantId = ctx.tenantId();
+    UUID tenantId = ctx.requireTenantId();
     UUID storeId = UUID.fromString(req.storeId());
     UUID customerId = req.customerId() != null ? UUID.fromString(req.customerId()) : null;
     String currency = req.currency() != null ? req.currency() : "USD";
@@ -74,6 +80,7 @@ public class OrderService {
     BigDecimal disc = req.discountAmount() != null ? req.discountAmount() : BigDecimal.ZERO;
     BigDecimal total = subtotal.add(tax).subtract(disc);
 
+    boolean taxExempt = req.taxExempt() != null && req.taxExempt();
     Order order =
         new Order(
             orderId,
@@ -91,7 +98,9 @@ public class OrderService {
             req.notes(),
             req.idempotencyKey(),
             Instant.now(),
-            Instant.now());
+            Instant.now(),
+            taxExempt,
+            req.exemptReason());
 
     return repo.createOrder(order, items, Events.orderPlaced(tenantId, orderId, req.channel()));
   }
@@ -426,6 +435,173 @@ public class OrderService {
                     Events.orderCancelled(tenantId, orderId, "payment failed"));
               }
             });
+  }
+
+  // ── Gap #42: Special orders ───────────────────────────────────────────────
+
+  public SpecialOrder createSpecialOrder(UUID tenantId, CreateSpecialOrderRequest req) {
+    if (req.items() == null || req.items().isEmpty())
+      throw ApiException.badRequest(
+          "SPECIAL_ORDER_NO_ITEMS", "special order must have at least one item");
+
+    UUID soId = UUID.randomUUID();
+    UUID storeId = UUID.fromString(req.storeId());
+    UUID customerId = req.customerId() != null ? UUID.fromString(req.customerId()) : null;
+    String currency = req.currency() != null ? req.currency() : "GBP";
+
+    java.math.BigDecimal subtotal = java.math.BigDecimal.ZERO;
+    List<SpecialOrderItem> items = new ArrayList<>();
+    for (var ir : req.items()) {
+      var line = ir.unitPrice().multiply(ir.qty());
+      subtotal = subtotal.add(line);
+      items.add(
+          new SpecialOrderItem(
+              UUID.randomUUID(),
+              tenantId,
+              soId,
+              UUID.fromString(ir.variantId()),
+              ir.qty(),
+              ir.unitPrice(),
+              line,
+              ir.notes()));
+    }
+
+    java.time.LocalDate delivDate = null;
+    if (req.requestedDeliveryDate() != null && !req.requestedDeliveryDate().isBlank())
+      delivDate = java.time.LocalDate.parse(req.requestedDeliveryDate());
+
+    var so =
+        new SpecialOrder(
+            soId,
+            tenantId,
+            storeId,
+            customerId,
+            req.customerName(),
+            req.customerPhone(),
+            req.customerEmail(),
+            req.deliveryAddress(),
+            delivDate,
+            req.notes(),
+            SpecialOrder.STATUS_PENDING,
+            subtotal,
+            subtotal,
+            currency,
+            req.idempotencyKey(),
+            Instant.now(),
+            Instant.now());
+
+    return repo.createSpecialOrder(so, items);
+  }
+
+  public List<SpecialOrder> listSpecialOrders(
+      UUID tenantId, String storeIdStr, String customerIdStr) {
+    UUID storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
+    UUID customerId = customerIdStr != null ? UUID.fromString(customerIdStr) : null;
+    return repo.listSpecialOrders(tenantId, storeId, customerId);
+  }
+
+  public SpecialOrder getSpecialOrder(UUID tenantId, UUID id) {
+    return repo.findSpecialOrder(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("SPECIAL_ORDER_NOT_FOUND", "special order not found"));
+  }
+
+  public List<SpecialOrderItem> getSpecialOrderItems(UUID tenantId, UUID soId) {
+    getSpecialOrder(tenantId, soId);
+    return repo.findSpecialOrderItems(tenantId, soId);
+  }
+
+  public SpecialOrder confirmSpecialOrder(UUID tenantId, UUID soId, UUID userId) {
+    return repo.transitionSpecialOrderStatus(
+        tenantId,
+        soId,
+        SpecialOrder.STATUS_PENDING,
+        SpecialOrder.STATUS_CONFIRMED,
+        "confirmed",
+        userId);
+  }
+
+  public SpecialOrder fulfilSpecialOrder(UUID tenantId, UUID soId, UUID userId) {
+    return repo.transitionSpecialOrderStatus(
+        tenantId,
+        soId,
+        SpecialOrder.STATUS_CONFIRMED,
+        SpecialOrder.STATUS_FULFILLED,
+        "fulfilled",
+        userId);
+  }
+
+  public SpecialOrder cancelSpecialOrder(UUID tenantId, UUID soId, UUID userId) {
+    var so = getSpecialOrder(tenantId, soId);
+    if (SpecialOrder.STATUS_FULFILLED.equals(so.status()))
+      throw ApiException.conflict(
+          "SPECIAL_ORDER_FULFILLED", "cannot cancel a fulfilled special order");
+    return repo.transitionSpecialOrderStatus(
+        tenantId, soId, so.status(), SpecialOrder.STATUS_CANCELLED, "cancelled", userId);
+  }
+
+  // ── Gap #43: POSLog ───────────────────────────────────────────────────────
+
+  public PosLogEntry recordPosLog(UUID tenantId, UUID orderId, UUID userId) {
+    var order =
+        repo.findOrder(tenantId, orderId)
+            .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
+    if (!Order.CHANNEL_POS.equals(order.channel()))
+      throw ApiException.badRequest("POSLOG_NOT_POS", "POSLog is only for POS channel orders");
+    var entry =
+        new PosLogEntry(
+            UUID.randomUUID(),
+            tenantId,
+            orderId,
+            order.storeId(),
+            userId,
+            order.subtotal(),
+            order.taxAmount(),
+            order.discountAmount(),
+            order.total(),
+            order.currency(),
+            order.taxExempt(),
+            order.exemptReason(),
+            Instant.now(),
+            Instant.now());
+    return repo.insertPosLogEntry(entry);
+  }
+
+  public List<PosLogEntry> listPosLog(UUID tenantId, String storeIdStr) {
+    UUID storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
+    return repo.listPosLog(tenantId, storeId);
+  }
+
+  public List<PosLogEntry> getPosLogByOrder(UUID tenantId, UUID orderId) {
+    return repo.findPosLogByOrder(tenantId, orderId);
+  }
+
+  // ── Gap #44: Receipts ─────────────────────────────────────────────────────
+
+  public OrderReceipt generateReceipt(UUID tenantId, UUID orderId, GenerateReceiptRequest req) {
+    repo.findOrder(tenantId, orderId)
+        .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
+    if (OrderReceipt.TYPE_EMAIL.equals(req.receiptType())
+        && (req.emailedTo() == null || req.emailedTo().isBlank()))
+      throw ApiException.badRequest(
+          "RECEIPT_EMAIL_REQUIRED", "emailedTo required for EMAIL receipts");
+    int printCount = req.printCount() != null ? req.printCount() : 1;
+    var receipt =
+        new OrderReceipt(
+            UUID.randomUUID(),
+            tenantId,
+            orderId,
+            req.receiptType(),
+            req.emailedTo(),
+            printCount,
+            Instant.now());
+    return repo.insertOrderReceipt(receipt);
+  }
+
+  public List<OrderReceipt> listReceipts(UUID tenantId, UUID orderId) {
+    repo.findOrder(tenantId, orderId)
+        .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
+    return repo.findOrderReceipts(tenantId, orderId);
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────

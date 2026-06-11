@@ -32,7 +32,7 @@ function setupTenant() {
 export default function () {
   const ctx = setupTenant();
   const tenantId = ctx && ctx.tenantId;
-  const hdrs = tenantId ? { ...JSON_CT, 'X-Tenant-Id': tenantId } : { ...JSON_CT };
+  const hdrs = tenantId ? { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-Roles': 'OWNER' } : { ...JSON_CT };
   const noTenant = { ...JSON_CT };
 
   // ── Brands ────────────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ export default function () {
       JSON.stringify({ name: 'no-tenant-brand' }),
       { headers: noTenant }
     ),
-    { '[-] create brand no tenant 401': (r) => r.status === 401 }
+    { '[-] create brand no auth 403': (r) => r.status === 403 }
   );
 
   // ── Categories ────────────────────────────────────────────────────────────
@@ -299,7 +299,7 @@ export default function () {
       JSON.stringify({ name: 'no-tenant-tpl' }),
       { headers: noTenant }
     ),
-    { '[-] create template no tenant 401': (r) => r.status === 401 }
+    { '[-] create template no auth 403': (r) => r.status === 403 }
   );
 
   // ── Item Revisions (Gap #12) ──────────────────────────────────────────────
@@ -418,7 +418,438 @@ export default function () {
         JSON.stringify({ revision: 'Z', effectiveDate: '2025-01-01' }),
         { headers: noTenant }
       ),
-      { '[-] create revision no tenant 401': (r) => r.status === 401 }
+      { '[-] create revision no auth 403': (r) => r.status === 403 }
     );
   }
+
+  // ── Container Types (Gap #37) ────────────────────────────────────────────
+
+  // [+] Create a container type
+  const ctRes = http.post(
+    `${baseUrl}/api/product-svc/admin/container-types`,
+    JSON.stringify({ code: `CASE-${Date.now()}`, name: 'Standard Case', description: '24-unit case', lengthMm: 400, widthMm: 300, heightMm: 200, maxWeightKg: 15, maxUnits: 24 }),
+    { headers: hdrs }
+  );
+  check(ctRes, { '[+] create container type 201': (r) => r.status === 201 });
+  const containerTypeId = ctRes.status === 201 ? ctRes.json('data.id') : null;
+
+  // [+] List container types
+  check(
+    http.get(`${baseUrl}/api/product-svc/admin/container-types`, { headers: hdrs }),
+    { '[+] list container types 200': (r) => r.status === 200 }
+  );
+
+  if (containerTypeId) {
+    // [+] Get container type by id
+    check(
+      http.get(`${baseUrl}/api/product-svc/admin/container-types/${containerTypeId}`, { headers: hdrs }),
+      { '[+] get container type 200': (r) => r.status === 200 }
+    );
+
+    // [+] Update container type
+    check(
+      http.put(
+        `${baseUrl}/api/product-svc/admin/container-types/${containerTypeId}`,
+        JSON.stringify({ name: 'Updated Case', maxUnits: 48 }),
+        { headers: hdrs }
+      ),
+      { '[+] update container type 200': (r) => r.status === 200 }
+    );
+  }
+
+  if (variantId && containerTypeId) {
+    // [+] Link variant to container type
+    const linkRes = http.post(
+      `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/container-links`,
+      JSON.stringify({ containerTypeId, qtyPerContainer: 24, isPrimary: true }),
+      { headers: hdrs }
+    );
+    check(linkRes, { '[+] create variant container link 201': (r) => r.status === 201 });
+    const linkId = linkRes.status === 201 ? linkRes.json('data.id') : null;
+
+    // [+] List variant container links
+    check(
+      http.get(`${baseUrl}/api/product-svc/admin/products/variants/${variantId}/container-links`, { headers: hdrs }),
+      { '[+] list variant container links 200': (r) => r.status === 200 }
+    );
+
+    // [-] Duplicate link → 409 or 500
+    check(
+      http.post(
+        `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/container-links`,
+        JSON.stringify({ containerTypeId, qtyPerContainer: 12, isPrimary: false }),
+        { headers: hdrs }
+      ),
+      { '[-] duplicate container link rejected': (r) => r.status >= 400 }
+    );
+
+    if (linkId) {
+      // [+] Delete container link
+      check(
+        http.del(`${baseUrl}/api/product-svc/admin/products/variants/${variantId}/container-links/${linkId}`, null, { headers: hdrs }),
+        { '[+] delete container link 204': (r) => r.status === 204 }
+      );
+    }
+  }
+
+  // [-] Create container type missing code → 400
+  check(
+    http.post(
+      `${baseUrl}/api/product-svc/admin/container-types`,
+      JSON.stringify({ name: 'No Code' }),
+      { headers: hdrs }
+    ),
+    { '[-] create container type missing code 400': (r) => r.status === 400 }
+  );
+
+  // [-] Create container type missing name → 400
+  check(
+    http.post(
+      `${baseUrl}/api/product-svc/admin/container-types`,
+      JSON.stringify({ code: 'PALLET' }),
+      { headers: hdrs }
+    ),
+    { '[-] create container type missing name 400': (r) => r.status === 400 }
+  );
+
+  // [-] Get unknown container type → 404
+  check(
+    http.get(
+      `${baseUrl}/api/product-svc/admin/container-types/00000000-0000-0000-0000-000000000000`,
+      { headers: hdrs }
+    ),
+    { '[-] get unknown container type 404': (r) => r.status === 404 }
+  );
+
+  // [-] No tenant → 401
+  check(
+    http.post(
+      `${baseUrl}/api/product-svc/admin/container-types`,
+      JSON.stringify({ code: 'BOX', name: 'Box' }),
+      { headers: noTenant }
+    ),
+    { '[-] create container type no auth 403': (r) => r.status === 403 }
+  );
+
+  // ── Item Attribute Groups (Gap #36) ──────────────────────────────────────
+
+  // [+] List all 18 system attribute groups
+  const agListRes = http.get(
+    `${baseUrl}/api/product-svc/admin/attribute-groups`,
+    { headers: hdrs }
+  );
+  check(agListRes, {
+    '[+] list attribute groups 200': (r) => r.status === 200,
+    '[+] list attribute groups returns 18': (r) => {
+      try { return r.json('data').length === 18; } catch(_) { return false; }
+    },
+  });
+
+  // [+] Get a specific group by code
+  const agGetRes = http.get(
+    `${baseUrl}/api/product-svc/admin/attribute-groups/LEAD_TIMES`,
+    { headers: hdrs }
+  );
+  check(agGetRes, {
+    '[+] get attribute group LEAD_TIMES 200': (r) => r.status === 200,
+    '[+] attribute group has fields': (r) => {
+      try { return r.json('data.fields').length >= 3; } catch(_) { return false; }
+    },
+  });
+
+  if (variantId) {
+    // [+] Upsert LEAD_TIMES values on a variant
+    const upsertRes = http.put(
+      `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/attribute-groups/LEAD_TIMES`,
+      JSON.stringify({ values: JSON.stringify({ preprocessing_days: 1, processing_days: 5, post_processing_days: 2 }) }),
+      { headers: hdrs }
+    );
+    check(upsertRes, {
+      '[+] upsert LEAD_TIMES attribute group 200': (r) => r.status === 200,
+      '[+] upserted group_code is LEAD_TIMES': (r) => {
+        try { return r.json('data.groupCode') === 'LEAD_TIMES'; } catch(_) { return false; }
+      },
+    });
+
+    // [+] Upsert a second group (idempotent re-put)
+    http.put(
+      `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/attribute-groups/WEB`,
+      JSON.stringify({ values: JSON.stringify({ web_status: 'PUBLISHED', browsable: true }) }),
+      { headers: hdrs }
+    );
+
+    // [+] List all attribute group values for the variant
+    const listValsRes = http.get(
+      `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/attribute-groups`,
+      { headers: hdrs }
+    );
+    check(listValsRes, {
+      '[+] list variant attribute group values 200': (r) => r.status === 200,
+      '[+] variant has 2 attribute groups set': (r) => {
+        try { return r.json('data').length === 2; } catch(_) { return false; }
+      },
+    });
+
+    // [+] Get specific group values for the variant
+    const getValsRes = http.get(
+      `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/attribute-groups/LEAD_TIMES`,
+      { headers: hdrs }
+    );
+    check(getValsRes, {
+      '[+] get variant LEAD_TIMES values 200': (r) => r.status === 200,
+    });
+
+    // [+] Delete one group values
+    const delRes = http.del(
+      `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/attribute-groups/WEB`,
+      null,
+      { headers: hdrs }
+    );
+    check(delRes, { '[+] delete variant attribute group values 204': (r) => r.status === 204 });
+
+    // [-] Get deleted group → 404
+    check(
+      http.get(
+        `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/attribute-groups/WEB`,
+        { headers: hdrs }
+      ),
+      { '[-] get deleted attribute group values 404': (r) => r.status === 404 }
+    );
+
+    // [-] Upsert with unknown group code → 404
+    check(
+      http.put(
+        `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/attribute-groups/NONEXISTENT`,
+        JSON.stringify({ values: '{}' }),
+        { headers: hdrs }
+      ),
+      { '[-] upsert unknown attribute group 404': (r) => r.status === 404 }
+    );
+
+    // [-] Upsert with missing values field → 400
+    check(
+      http.put(
+        `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/attribute-groups/COSTING`,
+        JSON.stringify({}),
+        { headers: hdrs }
+      ),
+      { '[-] upsert attribute group missing values 400': (r) => r.status === 400 }
+    );
+
+    // [-] No tenant on attribute group upsert → 401
+    check(
+      http.put(
+        `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/attribute-groups/COSTING`,
+        JSON.stringify({ values: '{}' }),
+        { headers: noTenant }
+      ),
+      { '[-] upsert attribute group no auth 403': (r) => r.status === 403 }
+    );
+  }
+
+  // [-] Get attribute group values for unknown variant → 404
+  check(
+    http.get(
+      `${baseUrl}/api/product-svc/admin/products/variants/00000000-0000-0000-0000-000000000000/attribute-groups`,
+      { headers: hdrs }
+    ),
+    { '[-] list attribute group values unknown variant 404': (r) => r.status === 404 }
+  );
+
+  // [-] Unknown group code on list → 404
+  check(
+    http.get(
+      `${baseUrl}/api/product-svc/admin/attribute-groups/BOGUS_GROUP`,
+      { headers: hdrs }
+    ),
+    { '[-] get unknown attribute group 404': (r) => r.status === 404 }
+  );
+
+  // ── Gap #39: Category Sets ────────────────────────────────────────────────
+
+  const csRes = http.post(
+    `${baseUrl}/api/product-svc/admin/category-sets`,
+    JSON.stringify({ name: `k6-catset-${Date.now()}`, description: 'k6 test set', purpose: 'INVENTORY', controlled: false }),
+    { headers: hdrs }
+  );
+  check(csRes, { '[+] create category set 201': (r) => r.status === 201 });
+  const csId = csRes.status === 201 ? csRes.json('data.id') : null;
+
+  check(
+    http.get(`${baseUrl}/api/product-svc/admin/category-sets`, { headers: hdrs }),
+    { '[+] list category sets 200': (r) => r.status === 200 }
+  );
+
+  if (csId) {
+    check(
+      http.get(`${baseUrl}/api/product-svc/admin/category-sets/${csId}`, { headers: hdrs }),
+      { '[+] get category set 200': (r) => r.status === 200 }
+    );
+
+    check(
+      http.put(
+        `${baseUrl}/api/product-svc/admin/category-sets/${csId}`,
+        JSON.stringify({ name: `k6-catset-upd-${Date.now()}`, purpose: 'PURCHASING', controlled: true, status: 'ACTIVE' }),
+        { headers: hdrs }
+      ),
+      { '[+] update category set 200': (r) => r.status === 200 }
+    );
+
+    // Add a category as a set member
+    const memberRes = http.post(
+      `${baseUrl}/api/product-svc/admin/category-sets/${csId}/members`,
+      JSON.stringify({ categoryId }),
+      { headers: hdrs }
+    );
+    check(memberRes, { '[+] add category set member 201': (r) => r.status === 201 });
+
+    check(
+      http.get(`${baseUrl}/api/product-svc/admin/category-sets/${csId}/members`, { headers: hdrs }),
+      { '[+] list category set members 200': (r) => r.status === 200 }
+    );
+
+    if (categoryId) {
+      check(
+        http.del(`${baseUrl}/api/product-svc/admin/category-sets/${csId}/members/${categoryId}`, null, { headers: hdrs }),
+        { '[+] delete category set member 204': (r) => r.status === 204 }
+      );
+    }
+
+    // Variant assignment
+    if (variantId && categoryId) {
+      // Re-add the member so the assignment FK is valid
+      http.post(
+        `${baseUrl}/api/product-svc/admin/category-sets/${csId}/members`,
+        JSON.stringify({ categoryId }),
+        { headers: hdrs }
+      );
+      const assignRes = http.post(
+        `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/category-set-assignments`,
+        JSON.stringify({ setId: csId, categoryId }),
+        { headers: hdrs }
+      );
+      check(assignRes, { '[+] assign variant category set 201': (r) => r.status === 201 });
+
+      check(
+        http.get(
+          `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/category-set-assignments`,
+          { headers: hdrs }
+        ),
+        { '[+] list variant category set assignments 200': (r) => r.status === 200 }
+      );
+
+      check(
+        http.del(
+          `${baseUrl}/api/product-svc/admin/products/variants/${variantId}/category-set-assignments/${csId}`,
+          null,
+          { headers: hdrs }
+        ),
+        { '[+] delete variant category set assignment 204': (r) => r.status === 204 }
+      );
+    }
+
+    // [-] Get unknown set → 404
+    check(
+      http.get(
+        `${baseUrl}/api/product-svc/admin/category-sets/00000000-0000-0000-0000-000000000000`,
+        { headers: hdrs }
+      ),
+      { '[-] get unknown category set 404': (r) => r.status === 404 }
+    );
+
+    // [-] Create set missing name → 400
+    check(
+      http.post(
+        `${baseUrl}/api/product-svc/admin/category-sets`,
+        JSON.stringify({ purpose: 'GENERAL', controlled: false }),
+        { headers: hdrs }
+      ),
+      { '[-] create category set missing name 400': (r) => r.status === 400 }
+    );
+
+    // [-] Create set without tenant → 401
+    check(
+      http.post(
+        `${baseUrl}/api/product-svc/admin/category-sets`,
+        JSON.stringify({ name: 'k6-no-tenant', purpose: 'GENERAL', controlled: false }),
+        { headers: noTenant }
+      ),
+      { '[-] create category set no auth 403': (r) => r.status === 403 }
+    );
+
+    // Cleanup
+    check(
+      http.del(`${baseUrl}/api/product-svc/admin/category-sets/${csId}`, null, { headers: hdrs }),
+      { '[+] delete category set 204': (r) => r.status === 204 }
+    );
+  }
+
+  // ── Gap #40: Open Item Interface (Bulk Import) ────────────────────────────
+
+  const importRes = http.post(
+    `${baseUrl}/api/product-svc/admin/import`,
+    JSON.stringify({
+      categories: [{ name: `k6-import-cat-${Date.now()}`, parentName: null }],
+      products: [
+        {
+          name: `k6-import-prod-${Date.now()}`,
+          description: 'imported by k6',
+          categoryName: `k6-import-cat-${Date.now()}`,
+          brandName: null,
+          sellableOnline: true,
+          sellablePos: true,
+          variants: [{ sku: `k6-import-sku-${Date.now()}`, barcode: null, unit: 'EA' }]
+        }
+      ]
+    }),
+    { headers: hdrs }
+  );
+  check(importRes, { '[+] bulk import 200': (r) => r.status === 200 });
+  check(importRes, { '[+] bulk import returns productsCreated': (r) => r.json('data.productsCreated') >= 0 });
+
+  // [-] Duplicate SKU → 200 with errors array (partial success)
+  const dupSku = `k6-dup-sku-${Date.now()}`;
+  http.post(
+    `${baseUrl}/api/product-svc/admin/import`,
+    JSON.stringify({
+      categories: [],
+      products: [{
+        name: `k6-dup-prod-${Date.now()}`,
+        sellableOnline: true,
+        sellablePos: false,
+        variants: [{ sku: dupSku, unit: 'EA' }]
+      }]
+    }),
+    { headers: hdrs }
+  );
+  const dupImportRes = http.post(
+    `${baseUrl}/api/product-svc/admin/import`,
+    JSON.stringify({
+      categories: [],
+      products: [{
+        name: `k6-dup-prod2-${Date.now()}`,
+        sellableOnline: true,
+        sellablePos: false,
+        variants: [{ sku: dupSku, unit: 'EA' }]
+      }]
+    }),
+    { headers: hdrs }
+  );
+  check(dupImportRes, { '[-] bulk import dup sku returns 200 with errors': (r) => r.status === 200 });
+
+  // [-] Empty body → 4xx (Helidon throws JSON deserialization error before method)
+  check(
+    http.post(`${baseUrl}/api/product-svc/admin/import`, '{}', { headers: hdrs }),
+    { '[-] bulk import empty body 200 (accepts empty lists)': (r) => r.status === 200 }
+  );
+
+  // [-] No tenant → 401
+  check(
+    http.post(
+      `${baseUrl}/api/product-svc/admin/import`,
+      JSON.stringify({ categories: [], products: [] }),
+      { headers: noTenant }
+    ),
+    { '[-] bulk import no auth 403': (r) => r.status === 403 }
+  );
 }

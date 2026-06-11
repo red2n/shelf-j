@@ -20,6 +20,9 @@ import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.ParLevelConfig;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
+import com.shelfj.inventory.domain.Domain.PickingRule;
+import com.shelfj.inventory.domain.Domain.PickingRuleAssignment;
+import com.shelfj.inventory.domain.Domain.PickingRuleZonePriority;
 import com.shelfj.inventory.domain.Domain.ReasonCode;
 import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.inventory.domain.Domain.Reservation;
@@ -122,6 +125,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                 MoveType.ADJUST,
                 "ADJUSTMENT",
                 null);
+            checkThresholdTx(c, tenantId, storeId, variantId);
           }
           insertMovement(
               c, tenantId, storeId, variantId, null, MoveType.ADJUST, delta, "ADJUSTMENT", null);
@@ -177,7 +181,16 @@ public class InventoryRepository extends BaseOutboxRepository {
             throw ApiException.unprocessable(
                 "RESERVATION_NOT_HELD", "Reservation is " + r.status());
           }
-          deductFifo(
+          Optional<PickingRule> rule = resolvePickingRule(tenantId, r.storeId(), r.variantId());
+          List<UUID> zonePriorities =
+              rule.filter(rr -> PickingRule.ZONE_PRIORITY.equals(rr.strategy()))
+                  .map(
+                      rr ->
+                          listZonePriorities(tenantId, rr.id()).stream()
+                              .map(PickingRuleZonePriority::zoneId)
+                              .toList())
+                  .orElse(null);
+          deductBatches(
               c,
               tenantId,
               r.storeId(),
@@ -185,7 +198,11 @@ public class InventoryRepository extends BaseOutboxRepository {
               r.qty(),
               MoveType.SALE,
               "ORDER",
-              r.orderId());
+              r.orderId(),
+              rule.map(PickingRule::strategy).orElse(null),
+              rule.map(PickingRule::gradePreference).orElse(null),
+              zonePriorities);
+          checkThresholdTx(c, tenantId, r.storeId(), r.variantId());
           setReservationStatus(c, reservationId, Reservation.CONSUMED);
           insertOutbox(c, event);
           return null;
@@ -1579,8 +1596,8 @@ public class InventoryRepository extends BaseOutboxRepository {
   }
 
   /**
-   * FIFO deduction: walk batches soonest-expiry/oldest-first WITH FOR UPDATE, decrement remaining,
-   * log SALE per batch.
+   * Batch deduction: walk batches in strategy-defined order WITH FOR UPDATE, decrement remaining,
+   * log movement per batch. Strategy defaults to FEFO when null.
    */
   private void deductFifo(
       Connection c,
@@ -1592,6 +1609,23 @@ public class InventoryRepository extends BaseOutboxRepository {
       String refType,
       UUID refId)
       throws SQLException {
+    deductBatches(c, tenantId, storeId, variantId, qty, moveType, refType, refId, null, null, null);
+  }
+
+  void deductBatches(
+      Connection c,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      String moveType,
+      String refType,
+      UUID refId,
+      String strategy,
+      String gradePreference,
+      List<UUID> zonePriorityOrder)
+      throws SQLException {
+    String orderBy = pickOrderClause(strategy, gradePreference, zonePriorityOrder);
     BigDecimal toDeduct = qty;
     List<Object[]> batches = new ArrayList<>();
     try (PreparedStatement ps =
@@ -1599,7 +1633,9 @@ public class InventoryRepository extends BaseOutboxRepository {
             "SELECT id, remaining_qty FROM inventory_batches"
                 + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty > 0"
                 + " AND material_status='AVAILABLE'"
-                + " ORDER BY expiry_date ASC NULLS LAST, created_at ASC FOR UPDATE")) {
+                + " ORDER BY "
+                + orderBy
+                + " FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, storeId);
       ps.setObject(3, variantId);
@@ -2868,7 +2904,8 @@ public class InventoryRepository extends BaseOutboxRepository {
     if (status != null && !status.isBlank()) {
       return query(
           "SELECT id, tenant_id, store_id, variant_id, kanban_type, status, reorder_qty,"
-              + " source_store_id, supplier_ref, notes, created_at, triggered_at, replenished_at"
+              + " source_store_id, supplier_ref, notes, min_order_qty, max_order_qty,"
+              + " lot_multiplier, created_at, triggered_at, replenished_at"
               + " FROM kanban_cards WHERE tenant_id=? AND store_id=? AND status=?"
               + " ORDER BY created_at DESC",
           ps -> {
@@ -2881,7 +2918,8 @@ public class InventoryRepository extends BaseOutboxRepository {
     }
     return query(
         "SELECT id, tenant_id, store_id, variant_id, kanban_type, status, reorder_qty,"
-            + " source_store_id, supplier_ref, notes, created_at, triggered_at, replenished_at"
+            + " source_store_id, supplier_ref, notes, min_order_qty, max_order_qty,"
+            + " lot_multiplier, created_at, triggered_at, replenished_at"
             + " FROM kanban_cards WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
         ps -> {
           ps.setObject(1, tenantId);
@@ -3563,6 +3601,290 @@ public class InventoryRepository extends BaseOutboxRepository {
         "list zone gl mappings");
   }
 
+  // ─────────────────────────────────────────────────── picking rules (Gap #38)
+
+  public PickingRule createPickingRule(
+      UUID tenantId, String name, String strategy, String gradePreference) {
+    Instant now = Instant.now();
+    UUID id = UUID.randomUUID();
+    exec(
+        "INSERT INTO picking_rules (id,tenant_id,name,strategy,grade_preference,status,created_at,updated_at)"
+            + " VALUES (?,?,?,?,?,?,?,?)",
+        ps -> {
+          ps.setObject(1, id);
+          ps.setObject(2, tenantId);
+          ps.setString(3, name);
+          ps.setString(4, strategy);
+          ps.setString(5, gradePreference);
+          ps.setString(6, PickingRule.ACTIVE);
+          ps.setObject(7, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(8, now.atOffset(ZoneOffset.UTC));
+        },
+        "create picking rule");
+    return findPickingRule(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
+  }
+
+  public Optional<PickingRule> findPickingRule(UUID tenantId, UUID id) {
+    return query(
+            "SELECT id,tenant_id,name,strategy,grade_preference,status,created_at,updated_at"
+                + " FROM picking_rules WHERE tenant_id=? AND id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            InventoryRepository::mapPickingRule,
+            "find picking rule")
+        .stream()
+        .findFirst();
+  }
+
+  public List<PickingRule> listPickingRules(UUID tenantId) {
+    return query(
+        "SELECT id,tenant_id,name,strategy,grade_preference,status,created_at,updated_at"
+            + " FROM picking_rules WHERE tenant_id=? AND status='ACTIVE' ORDER BY name",
+        ps -> ps.setObject(1, tenantId),
+        InventoryRepository::mapPickingRule,
+        "list picking rules");
+  }
+
+  public PickingRule deactivatePickingRule(UUID tenantId, UUID id) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE picking_rules SET status='INACTIVE', updated_at=? WHERE tenant_id=? AND id=?",
+        ps -> {
+          ps.setObject(1, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(2, tenantId);
+          ps.setObject(3, id);
+        },
+        "deactivate picking rule");
+    return findPickingRule(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
+  }
+
+  public void replaceZonePriorities(
+      UUID tenantId, UUID ruleId, List<PickingRuleZonePriority> items) {
+    exec(
+        "DELETE FROM picking_rule_zone_priorities WHERE tenant_id=? AND rule_id=?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, ruleId);
+        },
+        "delete zone priorities");
+    for (PickingRuleZonePriority p : items) {
+      exec(
+          "INSERT INTO picking_rule_zone_priorities (id,tenant_id,rule_id,zone_id,priority)"
+              + " VALUES (?,?,?,?,?)",
+          ps -> {
+            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, ruleId);
+            ps.setObject(4, p.zoneId());
+            ps.setInt(5, p.priority());
+          },
+          "insert zone priority");
+    }
+  }
+
+  public List<PickingRuleZonePriority> listZonePriorities(UUID tenantId, UUID ruleId) {
+    return query(
+        "SELECT id,tenant_id,rule_id,zone_id,priority FROM picking_rule_zone_priorities"
+            + " WHERE tenant_id=? AND rule_id=? ORDER BY priority ASC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, ruleId);
+        },
+        InventoryRepository::mapZonePriority,
+        "list zone priorities");
+  }
+
+  public PickingRuleAssignment createPickingRuleAssignment(
+      UUID tenantId, UUID ruleId, String scopeType, UUID scopeId) {
+    Instant now = Instant.now();
+    UUID id = UUID.randomUUID();
+    exec(
+        "INSERT INTO picking_rule_assignments (id,tenant_id,rule_id,scope_type,scope_id,created_at)"
+            + " VALUES (?,?,?,?,?,?)"
+            + " ON CONFLICT (tenant_id,scope_type,scope_id) DO UPDATE"
+            + " SET rule_id=EXCLUDED.rule_id",
+        ps -> {
+          ps.setObject(1, id);
+          ps.setObject(2, tenantId);
+          ps.setObject(3, ruleId);
+          ps.setString(4, scopeType);
+          if (scopeId != null) ps.setObject(5, scopeId);
+          else ps.setNull(5, java.sql.Types.OTHER);
+          ps.setObject(6, now.atOffset(ZoneOffset.UTC));
+        },
+        "create picking rule assignment");
+    return findPickingRuleAssignment(tenantId, scopeType, scopeId)
+        .orElseThrow(
+            () ->
+                ApiException.notFound("ASSIGNMENT_NOT_FOUND", "Picking rule assignment not found"));
+  }
+
+  public Optional<PickingRuleAssignment> findPickingRuleAssignment(
+      UUID tenantId, String scopeType, UUID scopeId) {
+    return query(
+            "SELECT id,tenant_id,rule_id,scope_type,scope_id,created_at"
+                + " FROM picking_rule_assignments WHERE tenant_id=? AND scope_type=?"
+                + " AND (scope_id=? OR (scope_id IS NULL AND ?::uuid IS NULL))",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, scopeType);
+              if (scopeId != null) ps.setObject(3, scopeId);
+              else ps.setNull(3, java.sql.Types.OTHER);
+              if (scopeId != null) ps.setObject(4, scopeId);
+              else ps.setNull(4, java.sql.Types.OTHER);
+            },
+            InventoryRepository::mapPickingRuleAssignment,
+            "find picking rule assignment")
+        .stream()
+        .findFirst();
+  }
+
+  public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId) {
+    return query(
+        "SELECT id,tenant_id,rule_id,scope_type,scope_id,created_at"
+            + " FROM picking_rule_assignments WHERE tenant_id=? ORDER BY scope_type, scope_id",
+        ps -> ps.setObject(1, tenantId),
+        InventoryRepository::mapPickingRuleAssignment,
+        "list picking rule assignments");
+  }
+
+  public boolean deletePickingRuleAssignment(UUID tenantId, UUID id) {
+    Instant[] found = {null};
+    query(
+        "DELETE FROM picking_rule_assignments WHERE tenant_id=? AND id=? RETURNING id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, id);
+        },
+        rs -> {
+          found[0] = Instant.now();
+          return found[0];
+        },
+        "delete picking rule assignment");
+    return found[0] != null;
+  }
+
+  /** Resolve the most-specific applicable picking rule for a (tenant, store, variant) triple. */
+  public Optional<PickingRule> resolvePickingRule(UUID tenantId, UUID storeId, UUID variantId) {
+    return query(
+            "SELECT pr.id,pr.tenant_id,pr.name,pr.strategy,pr.grade_preference,pr.status,"
+                + "pr.created_at,pr.updated_at"
+                + " FROM picking_rule_assignments pra"
+                + " JOIN picking_rules pr ON pr.id=pra.rule_id AND pr.status='ACTIVE'"
+                + " WHERE pra.tenant_id=?"
+                + " AND ((pra.scope_type='PRODUCT' AND pra.scope_id=?)"
+                + "   OR (pra.scope_type='STORE' AND pra.scope_id=?)"
+                + "   OR (pra.scope_type='GLOBAL'))"
+                + " ORDER BY CASE pra.scope_type WHEN 'PRODUCT' THEN 1"
+                + "           WHEN 'STORE' THEN 2 ELSE 3 END LIMIT 1",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, variantId);
+              ps.setObject(3, storeId);
+            },
+            InventoryRepository::mapPickingRule,
+            "resolve picking rule")
+        .stream()
+        .findFirst();
+  }
+
+  /**
+   * Preview pick order for a (tenant, store, variant) — returns available batches in rule order.
+   */
+  public List<Batch> previewPickOrder(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      String strategy,
+      String gradePreference,
+      List<UUID> zonePriorityOrder) {
+    String orderBy = pickOrderClause(strategy, gradePreference, zonePriorityOrder);
+    return query(
+        "SELECT id,tenant_id,store_id,variant_id,batch_no,received_qty,remaining_qty,"
+            + "cost_price,expiry_date,created_at,status,material_status,material_status_reason,grade"
+            + " FROM inventory_batches"
+            + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty>0"
+            + " AND material_status='AVAILABLE'"
+            + " ORDER BY "
+            + orderBy,
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setObject(3, variantId);
+        },
+        InventoryRepository::mapBatch,
+        "preview pick order");
+  }
+
+  /** Returns the ORDER BY clause for the given picking strategy. */
+  private static String pickOrderClause(
+      String strategy, String gradePreference, List<UUID> zonePriorityOrder) {
+    String effectiveStrategy = strategy == null ? PickingRule.FEFO : strategy;
+    return switch (effectiveStrategy) {
+      case PickingRule.FIFO -> "created_at ASC";
+      case PickingRule.LIFO -> "created_at DESC";
+      case PickingRule.FEFO_GRADE ->
+          gradePreference != null
+              ? "CASE WHEN grade='"
+                  + gradePreference.replace("'", "''")
+                  + "' THEN 0 ELSE 1 END ASC,"
+                  + " expiry_date ASC NULLS LAST, created_at ASC"
+              : "expiry_date ASC NULLS LAST, created_at ASC";
+      case PickingRule.ZONE_PRIORITY ->
+          zonePriorityOrder != null && !zonePriorityOrder.isEmpty()
+              ? buildZoneCaseClause(zonePriorityOrder)
+                  + ", expiry_date ASC NULLS LAST, created_at ASC"
+              : "expiry_date ASC NULLS LAST, created_at ASC";
+      default -> "expiry_date ASC NULLS LAST, created_at ASC"; // FEFO
+    };
+  }
+
+  private static String buildZoneCaseClause(List<UUID> zoneOrder) {
+    StringBuilder sb = new StringBuilder("CASE zone_id");
+    for (int i = 0; i < zoneOrder.size(); i++) {
+      sb.append(" WHEN '").append(zoneOrder.get(i)).append("' THEN ").append(i);
+    }
+    sb.append(" ELSE ").append(zoneOrder.size()).append(" END ASC");
+    return sb.toString();
+  }
+
+  private static PickingRule mapPickingRule(ResultSet rs) throws SQLException {
+    return new PickingRule(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getString("name"),
+        rs.getString("strategy"),
+        rs.getString("grade_preference"),
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static PickingRuleZonePriority mapZonePriority(ResultSet rs) throws SQLException {
+    return new PickingRuleZonePriority(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("rule_id", UUID.class),
+        rs.getObject("zone_id", UUID.class),
+        rs.getInt("priority"));
+  }
+
+  private static PickingRuleAssignment mapPickingRuleAssignment(ResultSet rs) throws SQLException {
+    return new PickingRuleAssignment(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("rule_id", UUID.class),
+        rs.getString("scope_type"),
+        rs.getObject("scope_id", UUID.class),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
   private static ZoneGlMapping mapZoneGlMapping(ResultSet rs) throws SQLException {
     return new ZoneGlMapping(
         rs.getObject("id", UUID.class),
@@ -3573,5 +3895,65 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getString("description"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  /**
+   * Within an open transaction: if a reorder threshold exists for (tenant, store, variant) and the
+   * current available qty is below it, inserts a StockBelowThreshold outbox event. Called after
+   * any stock-reducing operation so the alert and the deduction are atomic (golden rule #6).
+   */
+  private void checkThresholdTx(Connection c, UUID tenantId, UUID storeId, UUID variantId)
+      throws SQLException {
+    BigDecimal threshold = null;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT threshold FROM reorder_thresholds"
+                + " WHERE tenant_id=? AND store_id=? AND variant_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) threshold = rs.getBigDecimal("threshold");
+      }
+    }
+    if (threshold == null) return;
+
+    BigDecimal onHand = BigDecimal.ZERO;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT COALESCE(SUM(remaining_qty),0) AS q FROM inventory_batches"
+                + " WHERE tenant_id=? AND store_id=? AND variant_id=?"
+                + " AND material_status='AVAILABLE'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) onHand = rs.getBigDecimal("q");
+      }
+    }
+    BigDecimal reserved = BigDecimal.ZERO;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT COALESCE(SUM(qty),0) AS q FROM reservations"
+                + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND status='HELD'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) reserved = rs.getBigDecimal("q");
+      }
+    }
+    BigDecimal available = onHand.subtract(reserved);
+    if (available.compareTo(threshold) < 0) {
+      insertOutbox(
+          c,
+          new OutboxRow(
+              "StockBelowThreshold",
+              "shelfj.inventory.stock-below-threshold",
+              tenantId,
+              variantId,
+              com.shelfj.inventory.service.Events.stockBelowThreshold(
+                  tenantId, storeId, variantId, available, threshold)));
+    }
   }
 }

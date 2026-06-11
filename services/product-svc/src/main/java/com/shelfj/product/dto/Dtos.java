@@ -197,6 +197,80 @@ public final class Dtos {
       int variantsCreated,
       List<BulkImportError> errors) {}
 
+  // ── Container Types (Gap #37) ───────────────────────────────────────────
+
+  public record CreateContainerTypeRequest(
+      @NotBlank String code,
+      @NotBlank String name,
+      String description,
+      BigDecimal lengthMm,
+      BigDecimal widthMm,
+      BigDecimal heightMm,
+      BigDecimal maxWeightKg,
+      BigDecimal tareWeightKg,
+      Integer maxUnits) {}
+
+  public record UpdateContainerTypeRequest(
+      @NotBlank String name,
+      String description,
+      BigDecimal lengthMm,
+      BigDecimal widthMm,
+      BigDecimal heightMm,
+      BigDecimal maxWeightKg,
+      BigDecimal tareWeightKg,
+      Integer maxUnits) {}
+
+  public record ContainerTypeResponse(
+      String id,
+      String code,
+      String name,
+      String description,
+      BigDecimal lengthMm,
+      BigDecimal widthMm,
+      BigDecimal heightMm,
+      BigDecimal maxWeightKg,
+      BigDecimal tareWeightKg,
+      Integer maxUnits,
+      String status,
+      String createdAt,
+      String updatedAt) {}
+
+  public record CreateVariantContainerLinkRequest(
+      @NotBlank String containerTypeId,
+      @NotNull @Positive Integer qtyPerContainer,
+      Boolean isPrimary) {}
+
+  public record VariantContainerLinkResponse(
+      String id,
+      String variantId,
+      String containerTypeId,
+      String containerTypeCode,
+      String containerTypeName,
+      int qtyPerContainer,
+      boolean isPrimary,
+      String createdAt) {}
+
+  // ── Item Attribute Groups (Gap #36) ─────────────────────────────────────
+
+  public record ItemAttributeGroupFieldResponse(
+      String fieldCode, String label, String dataType, boolean required, int sortOrder) {}
+
+  public record ItemAttributeGroupResponse(
+      String groupCode,
+      String name,
+      String description,
+      List<ItemAttributeGroupFieldResponse> fields) {}
+
+  public record UpsertVariantAttributeGroupRequest(@NotBlank String values) {}
+
+  public record VariantAttributeGroupValuesResponse(
+      String id,
+      String variantId,
+      String groupCode,
+      String values,
+      String createdAt,
+      String updatedAt) {}
+
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
 
   public record CreateCatalogGroupRequest(@NotBlank String name, String description) {}
@@ -236,6 +310,49 @@ public final class Dtos {
       String variantId,
       String groupId,
       String elementVals,
+      String createdAt,
+      String updatedAt) {}
+
+  // ── Gap #39: Category sets ────────────────────────────────────────────────
+  public record CreateCategorySetRequest(
+      @NotBlank String name,
+      String description,
+      @NotBlank String purpose,
+      String defaultCatId,
+      boolean controlled) {}
+
+  public record UpdateCategorySetRequest(
+      String name,
+      String description,
+      String purpose,
+      String defaultCatId,
+      boolean controlled,
+      String status) {}
+
+  public record CategorySetResponse(
+      String id,
+      String name,
+      String description,
+      String purpose,
+      String defaultCatId,
+      boolean controlled,
+      String status,
+      String createdAt,
+      String updatedAt) {}
+
+  public record AddCategorySetMemberRequest(@NotBlank String categoryId) {}
+
+  public record CategorySetMemberResponse(
+      String id, String setId, String categoryId, String createdAt) {}
+
+  public record AssignVariantCategorySetRequest(
+      @NotBlank String setId, @NotBlank String categoryId) {}
+
+  public record VariantCategorySetAssignmentResponse(
+      String id,
+      String variantId,
+      String setId,
+      String categoryId,
       String createdAt,
       String updatedAt) {}
 }

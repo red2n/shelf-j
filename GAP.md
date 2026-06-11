@@ -315,22 +315,22 @@
 | ~~33~~ | ~~**Supplier / customer cross-references** — supplier part-number cross-ref table~~ ✅ | ~~product-svc~~ | ~~V8__supplier_cross_references.sql; POST/GET/DELETE /variants/{id}/cross-references; positive + negative k6 coverage~~ |
 | ~~34~~ | ~~**Manufacturer part numbers** — `manufacturer_pn` field on `product_variants`~~ ✅ | ~~product-svc~~ | ~~V6__manufacturer_pn.sql + Domain/DTO/Repo/Mapper/Service; positive + negative k6 coverage~~ |
 | ~~35~~ | ~~**Item catalog groups / descriptive elements** — structured spec metadata beyond `attributes JSONB`~~ ✅ | ~~product-svc~~ | ~~V9__catalog_groups.sql; catalog_groups + catalog_group_elements + variant_catalog_assignments; full CRUD API; positive + negative k6 coverage~~ |
-| 36 | **18 Oracle attribute groups** — typed model for Lead Times, Purchasing, Receiving, WIP, Web, etc. | product-svc | No attribute group model; untyped JSONB only |
-| 37 | **Container types / cartonization** — container type reference table + variant link | product-svc | Not present |
-| 38 | **Picking rules** — configurable pick-sequence rules (FEFO, FIFO, zone priority) | product-svc / inventory-svc | FIFO index exists; no rule engine |
-| 39 | **Category flexfields** — multi-set category model (Oracle `category_sets`) replacing flat tree | product-svc | Single flat `parent_id` tree only |
-| 40 | **Open Item Interface** — bulk import endpoint (CSV/JSON) for variants | product-svc | No bulk import endpoint or batch job |
+| ~~36~~ | ~~**18 Oracle attribute groups** — typed model for Lead Times, Purchasing, Receiving, WIP, Web, etc.~~ ✅ | ~~product-svc~~ | ~~V10__item_attribute_groups.sql; system-seeded 18 groups + typed fields; variant_attribute_group_values; GET /attribute-groups, PUT/GET/DELETE /variants/{id}/attribute-groups/{groupCode}; k6 positive + negative coverage~~ |
+| ~~37~~ | ~~**Container types / cartonization** — container type reference table + variant link~~ ✅ | ~~product-svc~~ | ~~V11__container_types.sql; container_types + variant_container_links; full CRUD + variant linking; k6 positive + negative coverage~~ |
+| ~~38~~ | ~~**Picking rules** — configurable pick-sequence rules (FEFO, FIFO, LIFO, FEFO_GRADE, ZONE_PRIORITY)~~ ✅ | ~~inventory-svc~~ | ~~V18__picking_rules.sql; picking_rules + zone_priorities + assignments; `deductFifo` wired to rule engine at consume time; POST/GET /picking-rules, zone-priorities, assignments, resolve preview; k6 positive + negative coverage~~ |
+| ~~39~~ | ~~**Category flexfields** — multi-set category model (Oracle `category_sets`) replacing flat tree~~ ✅ | ~~product-svc~~ | ~~V12__category_sets.sql; category_sets + category_set_members + variant_category_set_assignments; full CRUD + variant assignment; k6 positive + negative coverage~~ |
+| ~~40~~ | ~~**Open Item Interface** — bulk import endpoint (CSV/JSON) for variants~~ ✅ | ~~product-svc~~ | ~~POST /admin/import; BulkImportRequest/BulkImportResult; partial-success with per-row error array; k6 positive + negative coverage~~ |
 
 ### Tier 3 — POS completeness
 
 | # | Gap | Service | Notes |
 |---|---|---|---|
-| 41 | **Price overrides at POS** — ad-hoc override endpoint + `price_overrides` append-only table | pricing-svc | Named price lists exist; no per-transaction POS override |
-| 42 | **Special orders** — customer order placed at store for future delivery | order-svc | No endpoint or table |
-| 43 | **POSLog / transaction journal** — full POSLog record per completed order | order-svc | `tax_transactions` in pricing-svc is POSLog-compatible; order-svc has no POSLog entity |
-| 44 | **Receipt / e-journal printing** — receipt model + print/email endpoint | order-svc | Nothing in codebase |
-| 45 | **POS session idle timeout** — idle timeout detection + force-logout in iam-svc | iam-svc | JWT refresh exists; no idle-session timeout |
-| 46 | **Tax-exempt flag on orders** — order-svc must pass and record the `exempt` flag returned by pricing-svc `/prices/resolve` | order-svc + pricing-svc | pricing-svc resolves it; order-svc ignores it |
+| ~~41~~ | ~~**Price overrides at POS** — ad-hoc override endpoint + `price_overrides` append-only table~~ ✅ | ~~pricing-svc~~ | ~~V2__price_overrides.sql; append-only price_overrides; POST/GET /admin/price-overrides; storeId/variantId filter; k6 positive + negative coverage~~ |
+| ~~42~~ | ~~**Special orders** — customer order placed at store for future delivery~~ ✅ | ~~order-svc~~ | ~~V2 migration; special_orders + items + status_history; POST/GET /admin/special-orders, /{id}/confirm, fulfil, cancel; k6 coverage~~ |
+| ~~43~~ | ~~**POSLog / transaction journal** — full POSLog record per completed order~~ ✅ | ~~order-svc~~ | ~~V2 migration; pos_log_entries (append-only); POST/GET /admin/pos-log/orders/{orderId}; storeId filter; k6 coverage~~ |
+| ~~44~~ | ~~**Receipt / e-journal printing** — receipt model + print/email endpoint~~ ✅ | ~~order-svc~~ | ~~V2 migration; order_receipts (append-only); POST/GET /admin/orders/{id}/receipts; PRINT+EMAIL types; k6 coverage~~ |
+| ~~45~~ | ~~**POS session idle timeout** — idle timeout detection + force-logout in iam-svc~~ ✅ | ~~iam-svc~~ | ~~V4 migration; pos_sessions; POST/PUT/DELETE/GET /auth/pos/sessions; POST /sweep revokes idle tokens; k6 coverage~~ |
+| ~~46~~ | ~~**Tax-exempt flag on orders** — order-svc must pass and record the `exempt` flag~~ ✅ | ~~order-svc~~ | ~~V2 migration ALTER TABLE; taxExempt+exemptReason on Order domain + DTOs; propagated through placeOrder; k6 coverage~~ |
 
 ### Tier 4 — Reporting & multi-org
 
@@ -342,14 +342,14 @@
 | 50 | **SIM ↔ POS sync** — Store Inventory Management event bridge between inventory-svc and order-svc | inventory-svc + order-svc | Not modeled anywhere |
 | 51 | **Inter-org shipping network / shipping methods** — route table between stores + method reference | inventory-svc / tenant-svc | Transfer orders exist but no shipping route or method model |
 | 52 | **Multi-entity accounting / economic zones** — extend intercompany invoicing for group structures | purchase-svc | Intercompany invoices exist; no economic zone or multi-entity model |
-| 53 | **Inventory org parameters** — tenant-level profile knobs (enable/disable lot, serial, grade per org) | tenant-svc | No such config knobs in tenant schema |
+| 53 | ~~**Inventory org parameters** — tenant-level profile knobs (enable/disable lot, serial, grade per org)~~ ✅ | tenant-svc | `tenant_inventory_config` table + `PUT /admin/inventory-config`, `GET /admin/inventory-config` |
 
 ### Tier 5 — Blockers (post-demo)
 
 | # | Gap | Service | Notes |
 |---|---|---|---|
 | 54 | **payment-svc** — entire service: card/e-check tender, multi-currency arithmetic, VISA PABP, instant credit enrollment | payment-svc *(new)* | ✅ Done — cash/card/gift-card tender + refund + PaymentCaptured outbox event |
-| 55 | **Shortage alerts** — wire `reorder_thresholds` to notification-svc dispatch when stock < min_qty | inventory-svc + notification-svc | Threshold data stored; zero alert code |
+| ~~55~~ | ~~**Shortage alerts** — wire `reorder_thresholds` to notification-svc dispatch when stock < min_qty~~ ✅ | ~~inventory-svc + notification-svc~~ | ~~`checkThresholdTx` in repo fires within same tx as deduction; StockBelowThreshold outbox event → notification-svc Kafka consumer; `shortage_alerts` table + idempotent dedupe; GET /admin/notifications/shortage-alerts~~ |
 
 ---
 
@@ -373,14 +373,14 @@
 
 **Backlog 2 Tier 1 (items 21–31):** ✅ All done — reason codes, source types, lot split/merge, expiry sweeper, lot grades, lot-UOM conversions, PAR levels, order modifiers, bulk reservations, history purge, GL zone mapping. All confirmed by V17__tier1_gaps.sql migration and k6 materialControl/planningEngine scenarios.
 
-**Open gaps — 24 items remaining (32–55 functional; security tier complete):**
+**Open gaps — 10 items remaining:**
 
 | Tier | Items | Theme |
 |---|---|---|
-| 2 — Product catalogue | 32–40 | Item relationships, supplier cross-refs, manufacturer PNs, attribute groups (×18 Oracle groups), container types, picking rules, category flexfields, bulk import |
-| 3 — POS completeness | 41–46 | Price overrides, special orders, full POSLog, receipt printing, POS session idle timeout, tax-exempt flag wired into order-svc |
+| 2 — Product catalogue | ~~39–40~~ ✅ | Category flexfields, bulk import — both done |
+| 3 — POS completeness | ~~41–46~~ ✅ | Price overrides, special orders, POSLog, receipts, POS session idle timeout, tax-exempt — all done |
 | 4 — Reporting & multi-org | 47–53 | Cross-store quantity rollup, supply/demand netting, movement statistics, SIM↔POS sync, shipping network/methods, economic zones, inventory org parameters |
-| 5 — Blockers | 54–55 | ~~54 payment-svc scaffolded~~ ✅, shortage alert dispatch to notification-svc |
+| ~~5 — Blockers~~ | ~~55~~ ✅ | ~~Shortage alert dispatch to notification-svc~~ |
 | **6 — Security** | **56–60** | **✅ All 5 fixed — gateway JWT (JwtAuthFilter), RBAC (AdminAuthorizationFilter), payment over-refund, payment DDL, bulk import error leak** |
 
 ---

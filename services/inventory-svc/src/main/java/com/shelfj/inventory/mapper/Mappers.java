@@ -19,6 +19,9 @@ import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.ParLevelConfig;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
+import com.shelfj.inventory.domain.Domain.PickingRule;
+import com.shelfj.inventory.domain.Domain.PickingRuleAssignment;
+import com.shelfj.inventory.domain.Domain.PickingRuleZonePriority;
 import com.shelfj.inventory.domain.Domain.ReasonCode;
 import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.inventory.domain.Domain.Reservation;
@@ -51,6 +54,9 @@ import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.ParLevelResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryTagResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleAssignmentResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleZonePriorityResponse;
 import com.shelfj.inventory.dto.Dtos.ReasonCodeResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
 import com.shelfj.inventory.dto.Dtos.RopPlanResponse;
@@ -468,6 +474,31 @@ public final class Mappers {
         z.description(),
         ts(z.createdAt()),
         ts(z.updatedAt()));
+  }
+
+  public static PickingRuleResponse toPickingRule(PickingRule r) {
+    return new PickingRuleResponse(
+        r.id().toString(),
+        r.name(),
+        r.strategy(),
+        r.gradePreference(),
+        r.status(),
+        ts(r.createdAt()),
+        ts(r.updatedAt()));
+  }
+
+  public static PickingRuleZonePriorityResponse toZonePriority(PickingRuleZonePriority p) {
+    return new PickingRuleZonePriorityResponse(
+        p.id().toString(), p.zoneId().toString(), p.priority());
+  }
+
+  public static PickingRuleAssignmentResponse toPickingRuleAssignment(PickingRuleAssignment a) {
+    return new PickingRuleAssignmentResponse(
+        a.id().toString(),
+        a.ruleId().toString(),
+        a.scopeType(),
+        a.scopeId() == null ? null : a.scopeId().toString(),
+        ts(a.createdAt()));
   }
 
   private static String ts(Instant i) {

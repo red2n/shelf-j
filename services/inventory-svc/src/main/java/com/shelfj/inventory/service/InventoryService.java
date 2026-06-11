@@ -20,6 +20,9 @@ import com.shelfj.inventory.domain.Domain.Movement;
 import com.shelfj.inventory.domain.Domain.ParLevelConfig;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
+import com.shelfj.inventory.domain.Domain.PickingRule;
+import com.shelfj.inventory.domain.Domain.PickingRuleAssignment;
+import com.shelfj.inventory.domain.Domain.PickingRuleZonePriority;
 import com.shelfj.inventory.domain.Domain.ReasonCode;
 import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.inventory.domain.Domain.Reservation;
@@ -1596,5 +1599,127 @@ public class InventoryService {
 
   public List<ZoneGlMapping> listZoneGlMappings(UUID tenantId, UUID storeId) {
     return repo.listZoneGlMappings(tenantId, storeId);
+  }
+
+  // ── Picking Rules (Gap #38) ──────────────────────────────────────────────
+
+  public PickingRule createPickingRule(
+      UUID tenantId, com.shelfj.inventory.dto.Dtos.CreatePickingRuleRequest req) {
+    String strategy = req.strategy().toUpperCase(java.util.Locale.ROOT);
+    if (!java.util.Set.of("FIFO", "FEFO", "LIFO", "FEFO_GRADE", "ZONE_PRIORITY")
+        .contains(strategy)) {
+      throw new ApiException(
+          400,
+          "INVALID_STRATEGY",
+          "strategy must be FIFO, FEFO, LIFO, FEFO_GRADE, or ZONE_PRIORITY",
+          List.of(),
+          null);
+    }
+    return repo.createPickingRule(tenantId, req.name().trim(), strategy, req.gradePreference());
+  }
+
+  public PickingRule getPickingRule(UUID tenantId, UUID id) {
+    return repo.findPickingRule(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
+  }
+
+  public List<PickingRule> listPickingRules(UUID tenantId) {
+    return repo.listPickingRules(tenantId);
+  }
+
+  public PickingRule deactivatePickingRule(UUID tenantId, UUID id) {
+    getPickingRule(tenantId, id);
+    return repo.deactivatePickingRule(tenantId, id);
+  }
+
+  public List<PickingRuleZonePriority> setZonePriorities(
+      UUID tenantId, UUID ruleId, com.shelfj.inventory.dto.Dtos.SetZonePrioritiesRequest req) {
+    getPickingRule(tenantId, ruleId);
+    List<PickingRuleZonePriority> items =
+        req.zonePriorities().stream()
+            .map(
+                e ->
+                    new PickingRuleZonePriority(
+                        null, tenantId, ruleId, UUID.fromString(e.zoneId()), e.priority()))
+            .toList();
+    repo.replaceZonePriorities(tenantId, ruleId, items);
+    return repo.listZonePriorities(tenantId, ruleId);
+  }
+
+  public List<PickingRuleZonePriority> listZonePriorities(UUID tenantId, UUID ruleId) {
+    getPickingRule(tenantId, ruleId);
+    return repo.listZonePriorities(tenantId, ruleId);
+  }
+
+  public PickingRuleAssignment createPickingRuleAssignment(
+      UUID tenantId, com.shelfj.inventory.dto.Dtos.CreatePickingRuleAssignmentRequest req) {
+    UUID ruleId = UUID.fromString(req.ruleId());
+    getPickingRule(tenantId, ruleId);
+    String scopeType = req.scopeType().toUpperCase(java.util.Locale.ROOT);
+    if (!java.util.Set.of("GLOBAL", "STORE", "PRODUCT").contains(scopeType)) {
+      throw new ApiException(
+          400,
+          "INVALID_SCOPE_TYPE",
+          "scopeType must be GLOBAL, STORE, or PRODUCT",
+          List.of(),
+          null);
+    }
+    UUID scopeId =
+        (req.scopeId() != null && !req.scopeId().isBlank()) ? UUID.fromString(req.scopeId()) : null;
+    if (!"GLOBAL".equals(scopeType) && scopeId == null) {
+      throw new ApiException(
+          400,
+          "SCOPE_ID_REQUIRED",
+          "scopeId is required for scope type " + scopeType,
+          List.of(),
+          null);
+    }
+    return repo.createPickingRuleAssignment(tenantId, ruleId, scopeType, scopeId);
+  }
+
+  public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId) {
+    return repo.listPickingRuleAssignments(tenantId);
+  }
+
+  public void deletePickingRuleAssignment(UUID tenantId, UUID id) {
+    if (!repo.deletePickingRuleAssignment(tenantId, id)) {
+      throw ApiException.notFound("ASSIGNMENT_NOT_FOUND", "Picking rule assignment not found");
+    }
+  }
+
+  public com.shelfj.inventory.dto.Dtos.PickingRuleResolveResponse resolvePickingRule(
+      UUID tenantId, UUID storeId, UUID variantId) {
+    var rule = repo.resolvePickingRule(tenantId, storeId, variantId).orElse(null);
+    String strategy = rule != null ? rule.strategy() : PickingRule.FEFO;
+    String gradePreference = rule != null ? rule.gradePreference() : null;
+    List<UUID> zonePriorityOrder =
+        (rule != null && PickingRule.ZONE_PRIORITY.equals(strategy))
+            ? repo.listZonePriorities(tenantId, rule.id()).stream()
+                .map(PickingRuleZonePriority::zoneId)
+                .toList()
+            : null;
+    var batches =
+        repo.previewPickOrder(
+            tenantId, storeId, variantId, strategy, gradePreference, zonePriorityOrder);
+    var pickOrder =
+        batches.stream()
+            .map(
+                b ->
+                    new com.shelfj.inventory.dto.Dtos.PickingRuleResolveResponse.PickBatchPreview(
+                        b.id().toString(),
+                        b.batchNo(),
+                        null,
+                        b.remainingQty(),
+                        b.expiryDate() != null ? b.expiryDate().toString() : null,
+                        b.grade(),
+                        b.createdAt().toString()))
+            .toList();
+    return new com.shelfj.inventory.dto.Dtos.PickingRuleResolveResponse(
+        rule != null ? rule.id().toString() : null,
+        rule != null ? rule.name() : null,
+        strategy,
+        gradePreference,
+        pickOrder);
   }
 }

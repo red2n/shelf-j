@@ -65,4 +65,24 @@ public final class Domain {
 
   /** Paired result of creating a store and its default zone atomically. */
   public record StoreWithZone(Store store, Zone defaultZone) {}
+
+  // ── Gap #53: Inventory org parameters ────────────────────────────────────
+
+  public record TenantInventoryConfig(
+      UUID id,
+      UUID tenantId,
+      boolean lotControlEnabled,
+      boolean serialControlEnabled,
+      boolean gradeControlEnabled,
+      boolean expiryTrackingEnabled,
+      String costingMethod,
+      String defaultUom,
+      boolean reorderAlertEnabled,
+      boolean autoReserveOnOrder,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String COSTING_FIFO = "FIFO";
+    public static final String COSTING_AVERAGE = "AVERAGE";
+    public static final String COSTING_STANDARD = "STANDARD";
+  }
 }

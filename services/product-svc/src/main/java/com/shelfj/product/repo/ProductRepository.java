@@ -4,6 +4,11 @@ import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.CatalogGroup;
 import com.shelfj.product.domain.Domain.CatalogGroupElement;
 import com.shelfj.product.domain.Domain.Category;
+import com.shelfj.product.domain.Domain.CategorySet;
+import com.shelfj.product.domain.Domain.CategorySetMember;
+import com.shelfj.product.domain.Domain.ContainerType;
+import com.shelfj.product.domain.Domain.ItemAttributeGroup;
+import com.shelfj.product.domain.Domain.ItemAttributeGroupField;
 import com.shelfj.product.domain.Domain.ItemCrossReference;
 import com.shelfj.product.domain.Domain.ItemRelationship;
 import com.shelfj.product.domain.Domain.ItemRevision;
@@ -14,7 +19,10 @@ import com.shelfj.product.domain.Domain.UomClass;
 import com.shelfj.product.domain.Domain.UomDefinition;
 import com.shelfj.product.domain.Domain.UomItemConversion;
 import com.shelfj.product.domain.Domain.Variant;
+import com.shelfj.product.domain.Domain.VariantAttributeGroupValues;
 import com.shelfj.product.domain.Domain.VariantCatalogAssignment;
+import com.shelfj.product.domain.Domain.VariantCategorySetAssignment;
+import com.shelfj.product.domain.Domain.VariantContainerLink;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -1187,6 +1195,351 @@ public class ProductRepository extends BaseOutboxRepository {
     return found[0] != null;
   }
 
+  // ─────────────────────────────────────────────── container types (Gap #37)
+
+  public ContainerType createContainerType(
+      UUID tenantId,
+      String code,
+      String name,
+      String description,
+      java.math.BigDecimal lengthMm,
+      java.math.BigDecimal widthMm,
+      java.math.BigDecimal heightMm,
+      java.math.BigDecimal maxWeightKg,
+      java.math.BigDecimal tareWeightKg,
+      Integer maxUnits) {
+    Instant now = Instant.now();
+    UUID id = UUID.randomUUID();
+    exec(
+        "INSERT INTO container_types"
+            + " (id,tenant_id,code,name,description,length_mm,width_mm,height_mm,"
+            + "max_weight_kg,tare_weight_kg,max_units,status,created_at,updated_at)"
+            + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ps -> {
+          ps.setObject(1, id);
+          ps.setObject(2, tenantId);
+          ps.setString(3, code.toUpperCase(java.util.Locale.ROOT));
+          ps.setString(4, name);
+          ps.setString(5, description);
+          ps.setBigDecimal(6, lengthMm);
+          ps.setBigDecimal(7, widthMm);
+          ps.setBigDecimal(8, heightMm);
+          ps.setBigDecimal(9, maxWeightKg);
+          ps.setBigDecimal(10, tareWeightKg);
+          if (maxUnits != null) ps.setInt(11, maxUnits);
+          else ps.setNull(11, java.sql.Types.INTEGER);
+          ps.setString(12, ContainerType.ACTIVE);
+          ps.setObject(13, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(14, now.atOffset(ZoneOffset.UTC));
+        },
+        "create container type");
+    return findContainerType(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("CONTAINER_TYPE_NOT_FOUND", "Container type not found"));
+  }
+
+  public Optional<ContainerType> findContainerType(UUID tenantId, UUID id) {
+    return query(
+            "SELECT id,tenant_id,code,name,description,length_mm,width_mm,height_mm,"
+                + "max_weight_kg,tare_weight_kg,max_units,status,created_at,updated_at"
+                + " FROM container_types WHERE tenant_id=? AND id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            ProductRepository::mapContainerType,
+            "find container type")
+        .stream()
+        .findFirst();
+  }
+
+  public List<ContainerType> listContainerTypes(UUID tenantId) {
+    return query(
+        "SELECT id,tenant_id,code,name,description,length_mm,width_mm,height_mm,"
+            + "max_weight_kg,tare_weight_kg,max_units,status,created_at,updated_at"
+            + " FROM container_types WHERE tenant_id=? AND status='ACTIVE' ORDER BY code",
+        ps -> ps.setObject(1, tenantId),
+        ProductRepository::mapContainerType,
+        "list container types");
+  }
+
+  public ContainerType updateContainerType(
+      UUID tenantId,
+      UUID id,
+      String name,
+      String description,
+      java.math.BigDecimal lengthMm,
+      java.math.BigDecimal widthMm,
+      java.math.BigDecimal heightMm,
+      java.math.BigDecimal maxWeightKg,
+      java.math.BigDecimal tareWeightKg,
+      Integer maxUnits) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE container_types SET name=?,description=?,length_mm=?,width_mm=?,height_mm=?,"
+            + "max_weight_kg=?,tare_weight_kg=?,max_units=?,updated_at=?"
+            + " WHERE tenant_id=? AND id=? AND status='ACTIVE'",
+        ps -> {
+          ps.setString(1, name);
+          ps.setString(2, description);
+          ps.setBigDecimal(3, lengthMm);
+          ps.setBigDecimal(4, widthMm);
+          ps.setBigDecimal(5, heightMm);
+          ps.setBigDecimal(6, maxWeightKg);
+          ps.setBigDecimal(7, tareWeightKg);
+          if (maxUnits != null) ps.setInt(8, maxUnits);
+          else ps.setNull(8, java.sql.Types.INTEGER);
+          ps.setObject(9, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(10, tenantId);
+          ps.setObject(11, id);
+        },
+        "update container type");
+    return findContainerType(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("CONTAINER_TYPE_NOT_FOUND", "Container type not found"));
+  }
+
+  public ContainerType deactivateContainerType(UUID tenantId, UUID id) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE container_types SET status='INACTIVE', updated_at=? WHERE tenant_id=? AND id=?",
+        ps -> {
+          ps.setObject(1, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(2, tenantId);
+          ps.setObject(3, id);
+        },
+        "deactivate container type");
+    return findContainerType(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("CONTAINER_TYPE_NOT_FOUND", "Container type not found"));
+  }
+
+  public VariantContainerLink createVariantContainerLink(
+      UUID tenantId, UUID variantId, UUID containerTypeId, int qtyPerContainer, boolean isPrimary) {
+    Instant now = Instant.now();
+    UUID id = UUID.randomUUID();
+    exec(
+        "INSERT INTO variant_container_links"
+            + " (id,tenant_id,variant_id,container_type_id,qty_per_container,is_primary,created_at)"
+            + " VALUES (?,?,?,?,?,?,?)",
+        ps -> {
+          ps.setObject(1, id);
+          ps.setObject(2, tenantId);
+          ps.setObject(3, variantId);
+          ps.setObject(4, containerTypeId);
+          ps.setInt(5, qtyPerContainer);
+          ps.setBoolean(6, isPrimary);
+          ps.setObject(7, now.atOffset(ZoneOffset.UTC));
+        },
+        "create variant container link");
+    return findVariantContainerLink(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("CONTAINER_LINK_NOT_FOUND", "Container link not found"));
+  }
+
+  public Optional<VariantContainerLink> findVariantContainerLink(UUID tenantId, UUID id) {
+    return query(
+            "SELECT id,tenant_id,variant_id,container_type_id,qty_per_container,is_primary,created_at"
+                + " FROM variant_container_links WHERE tenant_id=? AND id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            ProductRepository::mapVariantContainerLink,
+            "find variant container link")
+        .stream()
+        .findFirst();
+  }
+
+  public List<VariantContainerLink> listVariantContainerLinks(UUID tenantId, UUID variantId) {
+    return query(
+        "SELECT id,tenant_id,variant_id,container_type_id,qty_per_container,is_primary,created_at"
+            + " FROM variant_container_links WHERE tenant_id=? AND variant_id=? ORDER BY is_primary DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, variantId);
+        },
+        ProductRepository::mapVariantContainerLink,
+        "list variant container links");
+  }
+
+  public boolean deleteVariantContainerLink(UUID tenantId, UUID id) {
+    Instant[] found = {null};
+    query(
+        "DELETE FROM variant_container_links WHERE tenant_id=? AND id=? RETURNING id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, id);
+        },
+        rs -> {
+          found[0] = Instant.now();
+          return found[0];
+        },
+        "delete variant container link");
+    return found[0] != null;
+  }
+
+  private static ContainerType mapContainerType(ResultSet rs) throws SQLException {
+    return new ContainerType(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getString("code"),
+        rs.getString("name"),
+        rs.getString("description"),
+        rs.getBigDecimal("length_mm"),
+        rs.getBigDecimal("width_mm"),
+        rs.getBigDecimal("height_mm"),
+        rs.getBigDecimal("max_weight_kg"),
+        rs.getBigDecimal("tare_weight_kg"),
+        rs.getObject("max_units") != null ? rs.getInt("max_units") : null,
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static VariantContainerLink mapVariantContainerLink(ResultSet rs) throws SQLException {
+    return new VariantContainerLink(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getObject("container_type_id", UUID.class),
+        rs.getInt("qty_per_container"),
+        rs.getBoolean("is_primary"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ─────────────────────────────────────────── item attribute groups (Gap #36)
+
+  public List<ItemAttributeGroup> listAttributeGroups() {
+    return query(
+        "SELECT group_code, name, description FROM item_attribute_groups ORDER BY group_code",
+        ps -> {},
+        ProductRepository::mapAttributeGroup,
+        "list attribute groups");
+  }
+
+  public Optional<ItemAttributeGroup> findAttributeGroup(String groupCode) {
+    return query(
+            "SELECT group_code, name, description FROM item_attribute_groups WHERE group_code = ?",
+            ps -> ps.setString(1, groupCode),
+            ProductRepository::mapAttributeGroup,
+            "find attribute group")
+        .stream()
+        .findFirst();
+  }
+
+  public List<ItemAttributeGroupField> listAttributeGroupFields(String groupCode) {
+    return query(
+        "SELECT group_code, field_code, label, data_type, required, sort_order"
+            + " FROM item_attribute_group_fields WHERE group_code = ? ORDER BY sort_order",
+        ps -> ps.setString(1, groupCode),
+        ProductRepository::mapAttributeGroupField,
+        "list attribute group fields");
+  }
+
+  public VariantAttributeGroupValues upsertVariantAttributeGroupValues(
+      UUID tenantId, UUID variantId, String groupCode, String values) {
+    Instant now = Instant.now();
+    exec(
+        "INSERT INTO variant_attribute_group_values"
+            + " (id, tenant_id, variant_id, group_code, values, created_at, updated_at)"
+            + " VALUES (?,?,?,?,?::jsonb,?,?)"
+            + " ON CONFLICT (tenant_id, variant_id, group_code)"
+            + " DO UPDATE SET values = EXCLUDED.values, updated_at = EXCLUDED.updated_at",
+        ps -> {
+          ps.setObject(1, UUID.randomUUID());
+          ps.setObject(2, tenantId);
+          ps.setObject(3, variantId);
+          ps.setString(4, groupCode);
+          ps.setString(5, values != null ? values : "{}");
+          ps.setObject(6, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(7, now.atOffset(ZoneOffset.UTC));
+        },
+        "upsert variant attribute group values");
+    return findVariantAttributeGroupValues(tenantId, variantId, groupCode)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "ATTRIBUTE_GROUP_VALUES_NOT_FOUND", "Attribute group values not found"));
+  }
+
+  public Optional<VariantAttributeGroupValues> findVariantAttributeGroupValues(
+      UUID tenantId, UUID variantId, String groupCode) {
+    return query(
+            "SELECT id, tenant_id, variant_id, group_code, values::text, created_at, updated_at"
+                + " FROM variant_attribute_group_values"
+                + " WHERE tenant_id = ? AND variant_id = ? AND group_code = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, variantId);
+              ps.setString(3, groupCode);
+            },
+            ProductRepository::mapVariantAttributeGroupValues,
+            "find variant attribute group values")
+        .stream()
+        .findFirst();
+  }
+
+  public List<VariantAttributeGroupValues> listVariantAttributeGroupValues(
+      UUID tenantId, UUID variantId) {
+    return query(
+        "SELECT id, tenant_id, variant_id, group_code, values::text, created_at, updated_at"
+            + " FROM variant_attribute_group_values"
+            + " WHERE tenant_id = ? AND variant_id = ? ORDER BY group_code",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, variantId);
+        },
+        ProductRepository::mapVariantAttributeGroupValues,
+        "list variant attribute group values");
+  }
+
+  public boolean deleteVariantAttributeGroupValues(
+      UUID tenantId, UUID variantId, String groupCode) {
+    Instant[] found = {null};
+    query(
+        "DELETE FROM variant_attribute_group_values"
+            + " WHERE tenant_id = ? AND variant_id = ? AND group_code = ? RETURNING id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, variantId);
+          ps.setString(3, groupCode);
+        },
+        rs -> {
+          found[0] = Instant.now();
+          return found[0];
+        },
+        "delete variant attribute group values");
+    return found[0] != null;
+  }
+
+  private static ItemAttributeGroup mapAttributeGroup(ResultSet rs) throws SQLException {
+    return new ItemAttributeGroup(
+        rs.getString("group_code"), rs.getString("name"), rs.getString("description"));
+  }
+
+  private static ItemAttributeGroupField mapAttributeGroupField(ResultSet rs) throws SQLException {
+    return new ItemAttributeGroupField(
+        rs.getString("group_code"),
+        rs.getString("field_code"),
+        rs.getString("label"),
+        rs.getString("data_type"),
+        rs.getBoolean("required"),
+        rs.getInt("sort_order"));
+  }
+
+  private static VariantAttributeGroupValues mapVariantAttributeGroupValues(ResultSet rs)
+      throws SQLException {
+    return new VariantAttributeGroupValues(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getString("group_code"),
+        rs.getString("values"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
   private static CatalogGroup mapCatalogGroup(ResultSet rs) throws SQLException {
     return new CatalogGroup(
         rs.getObject("id", UUID.class),
@@ -1218,6 +1571,239 @@ public class ProductRepository extends BaseOutboxRepository {
         rs.getObject("variant_id", UUID.class),
         rs.getObject("group_id", UUID.class),
         rs.getString("element_vals"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ──────────────────────────────────────────── category sets (Gap #39) ──────
+
+  public CategorySet createCategorySet(CategorySet s) {
+    exec(
+        "INSERT INTO category_sets"
+            + " (id, tenant_id, name, description, purpose, default_cat_id, controlled, status)"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ps -> {
+          ps.setObject(1, s.id());
+          ps.setObject(2, s.tenantId());
+          ps.setString(3, s.name());
+          ps.setString(4, s.description());
+          ps.setString(5, s.purpose());
+          ps.setObject(6, s.defaultCatId());
+          ps.setBoolean(7, s.controlled());
+          ps.setString(8, s.status());
+        },
+        "create category set");
+    return findCategorySet(s.tenantId(), s.id()).orElseThrow();
+  }
+
+  public Optional<CategorySet> findCategorySet(UUID tenantId, UUID id) {
+    return query(
+            "SELECT * FROM category_sets WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            ProductRepository::mapCategorySet,
+            "find category set")
+        .stream()
+        .findFirst();
+  }
+
+  public List<CategorySet> listCategorySets(UUID tenantId) {
+    return query(
+        "SELECT * FROM category_sets WHERE tenant_id = ? ORDER BY name",
+        ps -> ps.setObject(1, tenantId),
+        ProductRepository::mapCategorySet,
+        "list category sets");
+  }
+
+  public CategorySet updateCategorySet(
+      UUID tenantId,
+      UUID id,
+      String name,
+      String description,
+      String purpose,
+      UUID defaultCatId,
+      boolean controlled,
+      String status) {
+    exec(
+        "UPDATE category_sets"
+            + " SET name = COALESCE(?, name), description = COALESCE(?, description),"
+            + " purpose = COALESCE(?, purpose), default_cat_id = ?, controlled = ?,"
+            + " status = COALESCE(?, status), updated_at = now()"
+            + " WHERE tenant_id = ? AND id = ?",
+        ps -> {
+          ps.setString(1, name);
+          ps.setString(2, description);
+          ps.setString(3, purpose);
+          ps.setObject(4, defaultCatId);
+          ps.setBoolean(5, controlled);
+          ps.setString(6, status);
+          ps.setObject(7, tenantId);
+          ps.setObject(8, id);
+        },
+        "update category set");
+    return findCategorySet(tenantId, id).orElseThrow();
+  }
+
+  public boolean deleteCategorySet(UUID tenantId, UUID id) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement("DELETE FROM category_sets WHERE tenant_id = ? AND id = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, id);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "delete category set");
+  }
+
+  public CategorySetMember addCategorySetMember(CategorySetMember m) {
+    exec(
+        "INSERT INTO category_set_members (id, tenant_id, set_id, category_id)"
+            + " VALUES (?, ?, ?, ?)"
+            + " ON CONFLICT (tenant_id, set_id, category_id) DO NOTHING",
+        ps -> {
+          ps.setObject(1, m.id());
+          ps.setObject(2, m.tenantId());
+          ps.setObject(3, m.setId());
+          ps.setObject(4, m.categoryId());
+        },
+        "add category set member");
+    return query(
+            "SELECT * FROM category_set_members"
+                + " WHERE tenant_id = ? AND set_id = ? AND category_id = ?",
+            ps -> {
+              ps.setObject(1, m.tenantId());
+              ps.setObject(2, m.setId());
+              ps.setObject(3, m.categoryId());
+            },
+            ProductRepository::mapCategorySetMember,
+            "find category set member")
+        .stream()
+        .findFirst()
+        .orElseThrow();
+  }
+
+  public List<CategorySetMember> listCategorySetMembers(UUID tenantId, UUID setId) {
+    return query(
+        "SELECT * FROM category_set_members WHERE tenant_id = ? AND set_id = ? ORDER BY created_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, setId);
+        },
+        ProductRepository::mapCategorySetMember,
+        "list category set members");
+  }
+
+  public boolean deleteCategorySetMember(UUID tenantId, UUID setId, UUID categoryId) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "DELETE FROM category_set_members"
+                      + " WHERE tenant_id = ? AND set_id = ? AND category_id = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, setId);
+            ps.setObject(3, categoryId);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "delete category set member");
+  }
+
+  public VariantCategorySetAssignment upsertVariantCategorySetAssignment(
+      VariantCategorySetAssignment a) {
+    exec(
+        "INSERT INTO variant_category_set_assignments"
+            + " (id, tenant_id, variant_id, set_id, category_id) VALUES (?, ?, ?, ?, ?)"
+            + " ON CONFLICT (tenant_id, variant_id, set_id)"
+            + " DO UPDATE SET category_id = EXCLUDED.category_id, updated_at = now()",
+        ps -> {
+          ps.setObject(1, a.id());
+          ps.setObject(2, a.tenantId());
+          ps.setObject(3, a.variantId());
+          ps.setObject(4, a.setId());
+          ps.setObject(5, a.categoryId());
+        },
+        "upsert variant category set assignment");
+    return query(
+            "SELECT * FROM variant_category_set_assignments"
+                + " WHERE tenant_id = ? AND variant_id = ? AND set_id = ?",
+            ps -> {
+              ps.setObject(1, a.tenantId());
+              ps.setObject(2, a.variantId());
+              ps.setObject(3, a.setId());
+            },
+            ProductRepository::mapVariantCategorySetAssignment,
+            "find variant category set assignment")
+        .stream()
+        .findFirst()
+        .orElseThrow();
+  }
+
+  public List<VariantCategorySetAssignment> listVariantCategorySetAssignments(
+      UUID tenantId, UUID variantId) {
+    return query(
+        "SELECT * FROM variant_category_set_assignments"
+            + " WHERE tenant_id = ? AND variant_id = ? ORDER BY set_id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, variantId);
+        },
+        ProductRepository::mapVariantCategorySetAssignment,
+        "list variant category set assignments");
+  }
+
+  public boolean deleteVariantCategorySetAssignment(UUID tenantId, UUID variantId, UUID setId) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "DELETE FROM variant_category_set_assignments"
+                      + " WHERE tenant_id = ? AND variant_id = ? AND set_id = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, variantId);
+            ps.setObject(3, setId);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "delete variant category set assignment");
+  }
+
+  private static CategorySet mapCategorySet(ResultSet rs) throws SQLException {
+    UUID defCat = (UUID) rs.getObject("default_cat_id");
+    return new CategorySet(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getString("name"),
+        rs.getString("description"),
+        rs.getString("purpose"),
+        defCat,
+        rs.getBoolean("controlled"),
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static CategorySetMember mapCategorySetMember(ResultSet rs) throws SQLException {
+    return new CategorySetMember(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("set_id", UUID.class),
+        rs.getObject("category_id", UUID.class),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static VariantCategorySetAssignment mapVariantCategorySetAssignment(ResultSet rs)
+      throws SQLException {
+    return new VariantCategorySetAssignment(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getObject("set_id", UUID.class),
+        rs.getObject("category_id", UUID.class),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }

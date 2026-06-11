@@ -1,23 +1,32 @@
 package com.shelfj.product.api;
 
+import com.shelfj.product.dto.Dtos.AddCategorySetMemberRequest;
 import com.shelfj.product.dto.Dtos.AssignCatalogGroupRequest;
+import com.shelfj.product.dto.Dtos.AssignVariantCategorySetRequest;
 import com.shelfj.product.dto.Dtos.BrandResponse;
 import com.shelfj.product.dto.Dtos.BulkImportRequest;
 import com.shelfj.product.dto.Dtos.BulkImportResult;
 import com.shelfj.product.dto.Dtos.CatalogAssignmentResponse;
 import com.shelfj.product.dto.Dtos.CatalogGroupResponse;
 import com.shelfj.product.dto.Dtos.CategoryResponse;
+import com.shelfj.product.dto.Dtos.CategorySetMemberResponse;
+import com.shelfj.product.dto.Dtos.CategorySetResponse;
+import com.shelfj.product.dto.Dtos.ContainerTypeResponse;
 import com.shelfj.product.dto.Dtos.ConvertResult;
 import com.shelfj.product.dto.Dtos.CreateBrandRequest;
 import com.shelfj.product.dto.Dtos.CreateCatalogGroupElementRequest;
 import com.shelfj.product.dto.Dtos.CreateCatalogGroupRequest;
 import com.shelfj.product.dto.Dtos.CreateCategoryRequest;
+import com.shelfj.product.dto.Dtos.CreateCategorySetRequest;
+import com.shelfj.product.dto.Dtos.CreateContainerTypeRequest;
 import com.shelfj.product.dto.Dtos.CreateItemCrossReferenceRequest;
 import com.shelfj.product.dto.Dtos.CreateItemRelationshipRequest;
 import com.shelfj.product.dto.Dtos.CreateItemTemplateRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
 import com.shelfj.product.dto.Dtos.CreateRevisionRequest;
+import com.shelfj.product.dto.Dtos.CreateVariantContainerLinkRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
+import com.shelfj.product.dto.Dtos.ItemAttributeGroupResponse;
 import com.shelfj.product.dto.Dtos.ItemCrossReferenceResponse;
 import com.shelfj.product.dto.Dtos.ItemRelationshipResponse;
 import com.shelfj.product.dto.Dtos.ItemRevisionResponse;
@@ -31,8 +40,14 @@ import com.shelfj.product.dto.Dtos.UomItemConversionResponse;
 import com.shelfj.product.dto.Dtos.UpdateBrandRequest;
 import com.shelfj.product.dto.Dtos.UpdateCatalogAssignmentRequest;
 import com.shelfj.product.dto.Dtos.UpdateCategoryRequest;
+import com.shelfj.product.dto.Dtos.UpdateCategorySetRequest;
+import com.shelfj.product.dto.Dtos.UpdateContainerTypeRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
 import com.shelfj.product.dto.Dtos.UpdateVariantRequest;
+import com.shelfj.product.dto.Dtos.UpsertVariantAttributeGroupRequest;
+import com.shelfj.product.dto.Dtos.VariantAttributeGroupValuesResponse;
+import com.shelfj.product.dto.Dtos.VariantCategorySetAssignmentResponse;
+import com.shelfj.product.dto.Dtos.VariantContainerLinkResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
 import com.shelfj.product.mapper.Mappers;
 import com.shelfj.product.service.ProductService;
@@ -577,6 +592,247 @@ public class AdminResource {
   @Path("/products/variants/{variantId}/catalog-assignment")
   public Response deleteCatalogAssignment(@PathParam("variantId") UUID variantId) {
     service.deleteCatalogAssignment(ctx.requireTenantId(), variantId);
+    return Response.noContent().build();
+  }
+
+  // ── Container Types (Gap #37) ────────────────────────────────────────────
+
+  @POST
+  @Path("/container-types")
+  public Response createContainerType(CreateContainerTypeRequest req) {
+    Validations.validate(req);
+    return created(
+        Mappers.toContainerType(service.createContainerType(ctx.requireTenantId(), req)));
+  }
+
+  @GET
+  @Path("/container-types")
+  public ApiResponse<List<ContainerTypeResponse>> listContainerTypes() {
+    return ApiResponse.ok(
+        service.listContainerTypes(ctx.requireTenantId()).stream()
+            .map(Mappers::toContainerType)
+            .toList());
+  }
+
+  @GET
+  @Path("/container-types/{id}")
+  public ApiResponse<ContainerTypeResponse> getContainerType(@PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        Mappers.toContainerType(service.getContainerType(ctx.requireTenantId(), id)));
+  }
+
+  @PUT
+  @Path("/container-types/{id}")
+  public ApiResponse<ContainerTypeResponse> updateContainerType(
+      @PathParam("id") UUID id, UpdateContainerTypeRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(
+        Mappers.toContainerType(service.updateContainerType(ctx.requireTenantId(), id, req)));
+  }
+
+  @DELETE
+  @Path("/container-types/{id}")
+  public ApiResponse<ContainerTypeResponse> deactivateContainerType(@PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        Mappers.toContainerType(service.deactivateContainerType(ctx.requireTenantId(), id)));
+  }
+
+  @POST
+  @Path("/products/variants/{variantId}/container-links")
+  public Response createVariantContainerLink(
+      @PathParam("variantId") UUID variantId, CreateVariantContainerLinkRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var link = service.createVariantContainerLink(tenantId, variantId, req);
+    var ct = service.getContainerType(tenantId, link.containerTypeId());
+    return created(Mappers.toVariantContainerLink(link, ct.code(), ct.name()));
+  }
+
+  @GET
+  @Path("/products/variants/{variantId}/container-links")
+  public ApiResponse<List<VariantContainerLinkResponse>> listVariantContainerLinks(
+      @PathParam("variantId") UUID variantId) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listVariantContainerLinks(tenantId, variantId).stream()
+            .map(
+                l -> {
+                  var ct = service.getContainerType(tenantId, l.containerTypeId());
+                  return Mappers.toVariantContainerLink(l, ct.code(), ct.name());
+                })
+            .toList());
+  }
+
+  @DELETE
+  @Path("/products/variants/{variantId}/container-links/{id}")
+  public Response deleteVariantContainerLink(
+      @PathParam("variantId") UUID variantId, @PathParam("id") UUID id) {
+    service.deleteVariantContainerLink(ctx.requireTenantId(), id);
+    return Response.noContent().build();
+  }
+
+  // ── Item Attribute Groups (Gap #36) ─────────────────────────────────────
+
+  @GET
+  @Path("/attribute-groups")
+  public ApiResponse<List<ItemAttributeGroupResponse>> listAttributeGroups() {
+    return ApiResponse.ok(
+        service.listAttributeGroups().stream()
+            .map(
+                g ->
+                    Mappers.toAttributeGroup(
+                        g,
+                        service.listAttributeGroupFields(g.groupCode()).stream()
+                            .map(Mappers::toAttributeGroupField)
+                            .toList()))
+            .toList());
+  }
+
+  @GET
+  @Path("/attribute-groups/{groupCode}")
+  public ApiResponse<ItemAttributeGroupResponse> getAttributeGroup(
+      @PathParam("groupCode") String groupCode) {
+    var group = service.getAttributeGroup(groupCode);
+    var fields =
+        service.listAttributeGroupFields(group.groupCode()).stream()
+            .map(Mappers::toAttributeGroupField)
+            .toList();
+    return ApiResponse.ok(Mappers.toAttributeGroup(group, fields));
+  }
+
+  @PUT
+  @Path("/products/variants/{variantId}/attribute-groups/{groupCode}")
+  public ApiResponse<VariantAttributeGroupValuesResponse> upsertVariantAttributeGroupValues(
+      @PathParam("variantId") UUID variantId,
+      @PathParam("groupCode") String groupCode,
+      UpsertVariantAttributeGroupRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toVariantAttributeGroupValues(
+            service.upsertVariantAttributeGroupValues(
+                tenantId, variantId, groupCode, req.values())));
+  }
+
+  @GET
+  @Path("/products/variants/{variantId}/attribute-groups")
+  public ApiResponse<List<VariantAttributeGroupValuesResponse>> listVariantAttributeGroupValues(
+      @PathParam("variantId") UUID variantId) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listVariantAttributeGroupValues(tenantId, variantId).stream()
+            .map(Mappers::toVariantAttributeGroupValues)
+            .toList());
+  }
+
+  @GET
+  @Path("/products/variants/{variantId}/attribute-groups/{groupCode}")
+  public ApiResponse<VariantAttributeGroupValuesResponse> getVariantAttributeGroupValues(
+      @PathParam("variantId") UUID variantId, @PathParam("groupCode") String groupCode) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toVariantAttributeGroupValues(
+            service.getVariantAttributeGroupValues(tenantId, variantId, groupCode)));
+  }
+
+  @DELETE
+  @Path("/products/variants/{variantId}/attribute-groups/{groupCode}")
+  public Response deleteVariantAttributeGroupValues(
+      @PathParam("variantId") UUID variantId, @PathParam("groupCode") String groupCode) {
+    service.deleteVariantAttributeGroupValues(ctx.requireTenantId(), variantId, groupCode);
+    return Response.noContent().build();
+  }
+
+  // ──────────────────────────────────────────────── category sets (Gap #39) ──
+
+  @POST
+  @Path("/category-sets")
+  public Response createCategorySet(CreateCategorySetRequest req) {
+    Validations.validate(req);
+    var cs = service.createCategorySet(ctx.requireTenantId(), req);
+    return created(Mappers.toCategorySet(cs));
+  }
+
+  @GET
+  @Path("/category-sets")
+  public ApiResponse<List<CategorySetResponse>> listCategorySets() {
+    var tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listCategorySets(tenantId).stream().map(Mappers::toCategorySet).toList());
+  }
+
+  @GET
+  @Path("/category-sets/{id}")
+  public ApiResponse<CategorySetResponse> getCategorySet(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toCategorySet(service.getCategorySet(ctx.requireTenantId(), id)));
+  }
+
+  @PUT
+  @Path("/category-sets/{id}")
+  public ApiResponse<CategorySetResponse> updateCategorySet(
+      @PathParam("id") UUID id, UpdateCategorySetRequest req) {
+    return ApiResponse.ok(
+        Mappers.toCategorySet(service.updateCategorySet(ctx.requireTenantId(), id, req)));
+  }
+
+  @DELETE
+  @Path("/category-sets/{id}")
+  public Response deleteCategorySet(@PathParam("id") UUID id) {
+    service.deleteCategorySet(ctx.requireTenantId(), id);
+    return Response.noContent().build();
+  }
+
+  @POST
+  @Path("/category-sets/{id}/members")
+  public Response addCategorySetMember(
+      @PathParam("id") UUID setId, AddCategorySetMemberRequest req) {
+    var m = service.addCategorySetMember(ctx.requireTenantId(), setId, req);
+    return created(Mappers.toCategorySetMember(m));
+  }
+
+  @GET
+  @Path("/category-sets/{id}/members")
+  public ApiResponse<List<CategorySetMemberResponse>> listCategorySetMembers(
+      @PathParam("id") UUID setId) {
+    var tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listCategorySetMembers(tenantId, setId).stream()
+            .map(Mappers::toCategorySetMember)
+            .toList());
+  }
+
+  @DELETE
+  @Path("/category-sets/{id}/members/{categoryId}")
+  public Response deleteCategorySetMember(
+      @PathParam("id") UUID setId, @PathParam("categoryId") UUID categoryId) {
+    service.deleteCategorySetMember(ctx.requireTenantId(), setId, categoryId);
+    return Response.noContent().build();
+  }
+
+  @POST
+  @Path("/products/variants/{variantId}/category-set-assignments")
+  public Response assignVariantCategorySet(
+      @PathParam("variantId") UUID variantId, AssignVariantCategorySetRequest req) {
+    var a = service.assignVariantCategorySet(ctx.requireTenantId(), variantId, req);
+    return created(Mappers.toVariantCategorySetAssignment(a));
+  }
+
+  @GET
+  @Path("/products/variants/{variantId}/category-set-assignments")
+  public ApiResponse<List<VariantCategorySetAssignmentResponse>> listVariantCategorySetAssignments(
+      @PathParam("variantId") UUID variantId) {
+    var tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listVariantCategorySetAssignments(tenantId, variantId).stream()
+            .map(Mappers::toVariantCategorySetAssignment)
+            .toList());
+  }
+
+  @DELETE
+  @Path("/products/variants/{variantId}/category-set-assignments/{setId}")
+  public Response deleteVariantCategorySetAssignment(
+      @PathParam("variantId") UUID variantId, @PathParam("setId") UUID setId) {
+    service.deleteVariantCategorySetAssignment(ctx.requireTenantId(), variantId, setId);
     return Response.noContent().build();
   }
 

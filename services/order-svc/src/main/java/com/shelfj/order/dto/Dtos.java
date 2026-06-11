@@ -29,7 +29,9 @@ public final class Dtos {
       BigDecimal discountAmount,
       String currency,
       String notes,
-      String idempotencyKey) {}
+      String idempotencyKey,
+      Boolean taxExempt,
+      String exemptReason) {}
 
   public record OrderItemResponse(
       String id,
@@ -54,7 +56,9 @@ public final class Dtos {
       String notes,
       String createdAt,
       String updatedAt,
-      List<OrderItemResponse> items) {}
+      List<OrderItemResponse> items,
+      boolean taxExempt,
+      String exemptReason) {}
 
   public record OrderStatusHistoryResponse(
       String id,
@@ -185,4 +189,81 @@ public final class Dtos {
       String orderId,
       String reference,
       String createdAt) {}
+
+  // ── Gap #42: Special orders ───────────────────────────────────────────────
+
+  public record SpecialOrderItemRequest(
+      @NotBlank String variantId,
+      @NotNull @Positive BigDecimal qty,
+      @NotNull @Positive BigDecimal unitPrice,
+      String notes) {}
+
+  public record CreateSpecialOrderRequest(
+      @NotBlank String storeId,
+      String customerId,
+      String customerName,
+      String customerPhone,
+      String customerEmail,
+      String deliveryAddress,
+      String requestedDeliveryDate,
+      String notes,
+      @NotNull List<SpecialOrderItemRequest> items,
+      String currency,
+      String idempotencyKey) {}
+
+  public record SpecialOrderItemResponse(
+      String id,
+      String variantId,
+      BigDecimal qty,
+      BigDecimal unitPrice,
+      BigDecimal lineTotal,
+      String notes) {}
+
+  public record SpecialOrderResponse(
+      String id,
+      String storeId,
+      String customerId,
+      String customerName,
+      String customerPhone,
+      String customerEmail,
+      String deliveryAddress,
+      String requestedDeliveryDate,
+      String notes,
+      String status,
+      BigDecimal subtotal,
+      BigDecimal total,
+      String currency,
+      String createdAt,
+      String updatedAt,
+      List<SpecialOrderItemResponse> items) {}
+
+  // ── Gap #43: POSLog ───────────────────────────────────────────────────────
+
+  public record PosLogEntryResponse(
+      String id,
+      String orderId,
+      String storeId,
+      String cashierId,
+      BigDecimal subtotal,
+      BigDecimal taxAmount,
+      BigDecimal discountAmount,
+      BigDecimal total,
+      String currency,
+      boolean taxExempt,
+      String exemptReason,
+      String transactionTs,
+      String createdAt) {}
+
+  // ── Gap #44: Receipts ─────────────────────────────────────────────────────
+
+  public record GenerateReceiptRequest(
+      @NotBlank String receiptType, String emailedTo, Integer printCount) {}
+
+  public record OrderReceiptResponse(
+      String id,
+      String orderId,
+      String receiptType,
+      String emailedTo,
+      int printCount,
+      String generatedAt) {}
 }

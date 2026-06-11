@@ -27,7 +27,9 @@ public final class Domain {
       String notes,
       String idempotencyKey,
       Instant createdAt,
-      Instant updatedAt) {
+      Instant updatedAt,
+      boolean taxExempt,
+      String exemptReason) {
     public static final String CHANNEL_ONLINE = "ONLINE";
     public static final String CHANNEL_POS = "POS";
     public static final String FULFILMENT_PICKUP = "PICKUP";
@@ -177,5 +179,84 @@ public final class Domain {
     public static final String TX_REDEEM = "REDEEM";
     public static final String TX_REFUND = "REFUND";
     public static final String TX_CANCEL = "CANCEL";
+  }
+
+  // ── Gap #42: Special orders ───────────────────────────────────────────────
+
+  public record SpecialOrder(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID customerId,
+      String customerName,
+      String customerPhone,
+      String customerEmail,
+      String deliveryAddress,
+      java.time.LocalDate requestedDeliveryDate,
+      String notes,
+      String status,
+      BigDecimal subtotal,
+      BigDecimal total,
+      String currency,
+      String idempotencyKey,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String STATUS_PENDING = "PENDING";
+    public static final String STATUS_CONFIRMED = "CONFIRMED";
+    public static final String STATUS_FULFILLED = "FULFILLED";
+    public static final String STATUS_CANCELLED = "CANCELLED";
+  }
+
+  public record SpecialOrderItem(
+      UUID id,
+      UUID tenantId,
+      UUID soId,
+      UUID variantId,
+      BigDecimal qty,
+      BigDecimal unitPrice,
+      BigDecimal lineTotal,
+      String notes) {}
+
+  /** Append-only status audit for special orders. */
+  public record SpecialOrderStatusHistory(
+      UUID id,
+      UUID tenantId,
+      UUID soId,
+      String fromStatus,
+      String toStatus,
+      String reason,
+      UUID changedBy,
+      Instant changedAt) {}
+
+  // ── Gap #43: POSLog entry (append-only) ───────────────────────────────────
+
+  public record PosLogEntry(
+      UUID id,
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      UUID cashierId,
+      BigDecimal subtotal,
+      BigDecimal taxAmount,
+      BigDecimal discountAmount,
+      BigDecimal total,
+      String currency,
+      boolean taxExempt,
+      String exemptReason,
+      Instant transactionTs,
+      Instant createdAt) {}
+
+  // ── Gap #44: Receipt log (append-only) ───────────────────────────────────
+
+  public record OrderReceipt(
+      UUID id,
+      UUID tenantId,
+      UUID orderId,
+      String receiptType,
+      String emailedTo,
+      int printCount,
+      Instant generatedAt) {
+    public static final String TYPE_PRINT = "PRINT";
+    public static final String TYPE_EMAIL = "EMAIL";
   }
 }

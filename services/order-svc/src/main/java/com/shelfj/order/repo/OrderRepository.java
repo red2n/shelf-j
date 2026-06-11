@@ -7,10 +7,14 @@ import com.shelfj.order.domain.Domain.LayawayDeposit;
 import com.shelfj.order.domain.Domain.LayawayItem;
 import com.shelfj.order.domain.Domain.Order;
 import com.shelfj.order.domain.Domain.OrderItem;
+import com.shelfj.order.domain.Domain.OrderReceipt;
 import com.shelfj.order.domain.Domain.OrderStatusHistory;
+import com.shelfj.order.domain.Domain.PosLogEntry;
 import com.shelfj.order.domain.Domain.PosVoidLog;
 import com.shelfj.order.domain.Domain.Return;
 import com.shelfj.order.domain.Domain.ReturnItem;
+import com.shelfj.order.domain.Domain.SpecialOrder;
+import com.shelfj.order.domain.Domain.SpecialOrderItem;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -39,8 +43,9 @@ public class OrderRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO orders"
                       + " (id,tenant_id,store_id,customer_id,channel,fulfilment_type,status,"
-                      + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
+                      + "  tax_exempt,exempt_reason)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, order.id());
             ps.setObject(2, order.tenantId());
             ps.setObject(3, order.storeId());
@@ -55,6 +60,8 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setString(12, order.currency());
             ps.setString(13, order.notes());
             ps.setString(14, order.idempotencyKey());
+            ps.setBoolean(15, order.taxExempt());
+            ps.setString(16, order.exemptReason());
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -710,7 +717,9 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getString("notes"),
         rs.getString("idempotency_key"),
         toInstant(rs.getObject("created_at", OffsetDateTime.class)),
-        toInstant(rs.getObject("updated_at", OffsetDateTime.class)));
+        toInstant(rs.getObject("updated_at", OffsetDateTime.class)),
+        rs.getBoolean("tax_exempt"),
+        rs.getString("exempt_reason"));
   }
 
   private OrderItem mapOrderItem(ResultSet rs) throws SQLException {
@@ -827,6 +836,343 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getObject("order_id", UUID.class),
         rs.getString("reference"),
         toInstant(rs.getObject("created_at", OffsetDateTime.class)));
+  }
+
+  // ── Gap #42: Special orders ───────────────────────────────────────────────
+
+  public SpecialOrder createSpecialOrder(SpecialOrder so, List<SpecialOrderItem> items) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO special_orders"
+                      + " (id,tenant_id,store_id,customer_id,customer_name,customer_phone,"
+                      + "  customer_email,delivery_address,requested_delivery_date,notes,status,"
+                      + "  subtotal,total,currency,idempotency_key)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, so.id());
+            ps.setObject(2, so.tenantId());
+            ps.setObject(3, so.storeId());
+            ps.setObject(4, so.customerId());
+            ps.setString(5, so.customerName());
+            ps.setString(6, so.customerPhone());
+            ps.setString(7, so.customerEmail());
+            ps.setString(8, so.deliveryAddress());
+            ps.setObject(9, so.requestedDeliveryDate());
+            ps.setString(10, so.notes());
+            ps.setString(11, so.status());
+            ps.setBigDecimal(12, so.subtotal());
+            ps.setBigDecimal(13, so.total());
+            ps.setString(14, so.currency());
+            ps.setString(15, so.idempotencyKey());
+            ps.executeUpdate();
+          } catch (java.sql.SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+              throw new ApiException(
+                  409, "SPECIAL_ORDER_DUPLICATE_KEY", "duplicate idempotency key", List.of(), sqle);
+            throw sqle;
+          }
+          for (var item : items) {
+            try (var ps2 =
+                c.prepareStatement(
+                    "INSERT INTO special_order_items (id,tenant_id,so_id,variant_id,qty,unit_price,line_total,notes)"
+                        + " VALUES (?,?,?,?,?,?,?,?)")) {
+              ps2.setObject(1, item.id());
+              ps2.setObject(2, item.tenantId());
+              ps2.setObject(3, item.soId());
+              ps2.setObject(4, item.variantId());
+              ps2.setBigDecimal(5, item.qty());
+              ps2.setBigDecimal(6, item.unitPrice());
+              ps2.setBigDecimal(7, item.lineTotal());
+              ps2.setString(8, item.notes());
+              ps2.executeUpdate();
+            }
+          }
+          appendSpecialOrderHistory(c, so.tenantId(), so.id(), null, so.status(), "created", null);
+          return so;
+        },
+        "create special order");
+  }
+
+  public List<SpecialOrder> listSpecialOrders(UUID tenantId, UUID storeId, UUID customerId) {
+    if (storeId != null) {
+      return query(
+          "SELECT * FROM special_orders WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
+          ps -> {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, storeId);
+          },
+          this::mapSpecialOrder,
+          "list special orders by store");
+    }
+    if (customerId != null) {
+      return query(
+          "SELECT * FROM special_orders WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC",
+          ps -> {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, customerId);
+          },
+          this::mapSpecialOrder,
+          "list special orders by customer");
+    }
+    return query(
+        "SELECT * FROM special_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100",
+        ps -> ps.setObject(1, tenantId),
+        this::mapSpecialOrder,
+        "list special orders");
+  }
+
+  public Optional<SpecialOrder> findSpecialOrder(UUID tenantId, UUID id) {
+    var list =
+        query(
+            "SELECT * FROM special_orders WHERE tenant_id=? AND id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            this::mapSpecialOrder,
+            "find special order");
+    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  public List<SpecialOrderItem> findSpecialOrderItems(UUID tenantId, UUID soId) {
+    return query(
+        "SELECT * FROM special_order_items WHERE tenant_id=? AND so_id=?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, soId);
+        },
+        this::mapSpecialOrderItem,
+        "find special order items");
+  }
+
+  public SpecialOrder transitionSpecialOrderStatus(
+      UUID tenantId,
+      UUID soId,
+      String requiredFrom,
+      String toStatus,
+      String reason,
+      UUID changedBy) {
+    return inTx(
+        c -> {
+          SpecialOrder so = findSpecialOrderInTx(c, tenantId, soId);
+          if (!requiredFrom.equals(so.status()))
+            throw new ApiException(
+                409,
+                "SPECIAL_ORDER_INVALID_TRANSITION",
+                "expected " + requiredFrom + " but was " + so.status(),
+                List.of(),
+                null);
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE special_orders SET status=?, updated_at=now() WHERE tenant_id=? AND id=?")) {
+            ps.setString(1, toStatus);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, soId);
+            ps.executeUpdate();
+          }
+          appendSpecialOrderHistory(c, tenantId, soId, so.status(), toStatus, reason, changedBy);
+          return findSpecialOrderInTx(c, tenantId, soId);
+        },
+        "transition special order status");
+  }
+
+  private SpecialOrder findSpecialOrderInTx(Connection c, UUID tenantId, UUID soId)
+      throws SQLException {
+    try (var ps = c.prepareStatement("SELECT * FROM special_orders WHERE tenant_id=? AND id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, soId);
+      try (var rs = ps.executeQuery()) {
+        if (rs.next()) return mapSpecialOrder(rs);
+        throw new ApiException(
+            404, "SPECIAL_ORDER_NOT_FOUND", "special order not found", List.of(), null);
+      }
+    }
+  }
+
+  private void appendSpecialOrderHistory(
+      Connection c, UUID tenantId, UUID soId, String from, String to, String reason, UUID changedBy)
+      throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "INSERT INTO special_order_status_history (id,tenant_id,so_id,from_status,to_status,reason,changed_by)"
+                + " VALUES (?,?,?,?,?,?,?)")) {
+      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(2, tenantId);
+      ps.setObject(3, soId);
+      ps.setString(4, from);
+      ps.setString(5, to);
+      ps.setString(6, reason);
+      ps.setObject(7, changedBy);
+      ps.executeUpdate();
+    }
+  }
+
+  private SpecialOrder mapSpecialOrder(ResultSet rs) throws SQLException {
+    var rawDate = rs.getObject("requested_delivery_date");
+    java.time.LocalDate delivDate = null;
+    if (rawDate instanceof java.sql.Date sqlDate) delivDate = sqlDate.toLocalDate();
+    return new SpecialOrder(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("customer_id", UUID.class),
+        rs.getString("customer_name"),
+        rs.getString("customer_phone"),
+        rs.getString("customer_email"),
+        rs.getString("delivery_address"),
+        delivDate,
+        rs.getString("notes"),
+        rs.getString("status"),
+        rs.getBigDecimal("subtotal"),
+        rs.getBigDecimal("total"),
+        rs.getString("currency"),
+        rs.getString("idempotency_key"),
+        toInstant(rs.getObject("created_at", OffsetDateTime.class)),
+        toInstant(rs.getObject("updated_at", OffsetDateTime.class)));
+  }
+
+  private SpecialOrderItem mapSpecialOrderItem(ResultSet rs) throws SQLException {
+    return new SpecialOrderItem(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("so_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getBigDecimal("qty"),
+        rs.getBigDecimal("unit_price"),
+        rs.getBigDecimal("line_total"),
+        rs.getString("notes"));
+  }
+
+  // ── Gap #43: POSLog ───────────────────────────────────────────────────────
+
+  public PosLogEntry insertPosLogEntry(PosLogEntry e) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO pos_log_entries"
+                      + " (id,tenant_id,order_id,store_id,cashier_id,subtotal,tax_amount,discount_amount,"
+                      + "  total,currency,tax_exempt,exempt_reason,transaction_ts)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, e.id());
+            ps.setObject(2, e.tenantId());
+            ps.setObject(3, e.orderId());
+            ps.setObject(4, e.storeId());
+            ps.setObject(5, e.cashierId());
+            ps.setBigDecimal(6, e.subtotal());
+            ps.setBigDecimal(7, e.taxAmount());
+            ps.setBigDecimal(8, e.discountAmount());
+            ps.setBigDecimal(9, e.total());
+            ps.setString(10, e.currency());
+            ps.setBoolean(11, e.taxExempt());
+            ps.setString(12, e.exemptReason());
+            ps.setObject(13, e.transactionTs().atOffset(java.time.ZoneOffset.UTC));
+            ps.executeUpdate();
+          } catch (java.sql.SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+              throw new ApiException(
+                  409,
+                  "POSLOG_DUPLICATE",
+                  "POSLog entry already exists for this order",
+                  List.of(),
+                  sqle);
+            throw sqle;
+          }
+          return e;
+        },
+        "insert pos log entry");
+  }
+
+  public List<PosLogEntry> findPosLogByOrder(UUID tenantId, UUID orderId) {
+    return query(
+        "SELECT * FROM pos_log_entries WHERE tenant_id=? AND order_id=?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, orderId);
+        },
+        this::mapPosLogEntry,
+        "find pos log by order");
+  }
+
+  public List<PosLogEntry> listPosLog(UUID tenantId, UUID storeId) {
+    if (storeId != null) {
+      return query(
+          "SELECT * FROM pos_log_entries WHERE tenant_id=? AND store_id=? ORDER BY transaction_ts DESC LIMIT 200",
+          ps -> {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, storeId);
+          },
+          this::mapPosLogEntry,
+          "list pos log by store");
+    }
+    return query(
+        "SELECT * FROM pos_log_entries WHERE tenant_id=? ORDER BY transaction_ts DESC LIMIT 200",
+        ps -> ps.setObject(1, tenantId),
+        this::mapPosLogEntry,
+        "list pos log");
+  }
+
+  private PosLogEntry mapPosLogEntry(ResultSet rs) throws SQLException {
+    return new PosLogEntry(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("order_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("cashier_id", UUID.class),
+        rs.getBigDecimal("subtotal"),
+        rs.getBigDecimal("tax_amount"),
+        rs.getBigDecimal("discount_amount"),
+        rs.getBigDecimal("total"),
+        rs.getString("currency"),
+        rs.getBoolean("tax_exempt"),
+        rs.getString("exempt_reason"),
+        toInstant(rs.getObject("transaction_ts", OffsetDateTime.class)),
+        toInstant(rs.getObject("created_at", OffsetDateTime.class)));
+  }
+
+  // ── Gap #44: Receipts ─────────────────────────────────────────────────────
+
+  public OrderReceipt insertOrderReceipt(OrderReceipt r) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO order_receipts (id,tenant_id,order_id,receipt_type,emailed_to,print_count)"
+                      + " VALUES (?,?,?,?,?,?)")) {
+            ps.setObject(1, r.id());
+            ps.setObject(2, r.tenantId());
+            ps.setObject(3, r.orderId());
+            ps.setString(4, r.receiptType());
+            ps.setString(5, r.emailedTo());
+            ps.setInt(6, r.printCount());
+            ps.executeUpdate();
+          }
+          return r;
+        },
+        "insert order receipt");
+  }
+
+  public List<OrderReceipt> findOrderReceipts(UUID tenantId, UUID orderId) {
+    return query(
+        "SELECT * FROM order_receipts WHERE tenant_id=? AND order_id=? ORDER BY generated_at DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, orderId);
+        },
+        this::mapOrderReceipt,
+        "find order receipts");
+  }
+
+  private OrderReceipt mapOrderReceipt(ResultSet rs) throws SQLException {
+    return new OrderReceipt(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("order_id", UUID.class),
+        rs.getString("receipt_type"),
+        rs.getString("emailed_to"),
+        rs.getInt("print_count"),
+        toInstant(rs.getObject("generated_at", OffsetDateTime.class)));
   }
 
   private static Instant toInstant(OffsetDateTime odt) {

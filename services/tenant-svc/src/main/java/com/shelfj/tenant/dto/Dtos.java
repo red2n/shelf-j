@@ -106,4 +106,30 @@ public final class Dtos {
 
   public record OnboardingStatus(
       boolean tenantActive, boolean hasDefaultStore, List<String> nextSteps) {}
+
+  // ── Gap #53: Inventory org parameters ────────────────────────────────────
+
+  public record UpsertInventoryConfigRequest(
+      Boolean lotControlEnabled,
+      Boolean serialControlEnabled,
+      Boolean gradeControlEnabled,
+      Boolean expiryTrackingEnabled,
+      String costingMethod,
+      String defaultUom,
+      Boolean reorderAlertEnabled,
+      Boolean autoReserveOnOrder) {}
+
+  public record TenantInventoryConfigResponse(
+      String id,
+      String tenantId,
+      boolean lotControlEnabled,
+      boolean serialControlEnabled,
+      boolean gradeControlEnabled,
+      boolean expiryTrackingEnabled,
+      String costingMethod,
+      String defaultUom,
+      boolean reorderAlertEnabled,
+      boolean autoReserveOnOrder,
+      String createdAt,
+      String updatedAt) {}
 }

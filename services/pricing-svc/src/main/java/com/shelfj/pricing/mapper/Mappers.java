@@ -3,6 +3,7 @@ package com.shelfj.pricing.mapper;
 import com.shelfj.pricing.domain.Domain.CustomerVatStatus;
 import com.shelfj.pricing.domain.Domain.PriceList;
 import com.shelfj.pricing.domain.Domain.PriceListItem;
+import com.shelfj.pricing.domain.Domain.PriceOverride;
 import com.shelfj.pricing.domain.Domain.ProductVatCategory;
 import com.shelfj.pricing.domain.Domain.Promotion;
 import com.shelfj.pricing.domain.Domain.PromotionItem;
@@ -13,6 +14,7 @@ import com.shelfj.pricing.domain.Domain.VatReturn;
 import com.shelfj.pricing.dto.Dtos.CustomerVatStatusResponse;
 import com.shelfj.pricing.dto.Dtos.PriceListItemResponse;
 import com.shelfj.pricing.dto.Dtos.PriceListResponse;
+import com.shelfj.pricing.dto.Dtos.PriceOverrideResponse;
 import com.shelfj.pricing.dto.Dtos.ProductVatCategoryResponse;
 import com.shelfj.pricing.dto.Dtos.PromotionItemResponse;
 import com.shelfj.pricing.dto.Dtos.PromotionResponse;
@@ -160,5 +162,18 @@ public final class Mappers {
         vr.box9(),
         vr.periodFrom(),
         vr.periodTo());
+  }
+
+  public static PriceOverrideResponse toDto(PriceOverride p) {
+    return new PriceOverrideResponse(
+        p.id() != null ? p.id().toString() : null,
+        p.orderId() != null ? p.orderId().toString() : null,
+        p.variantId() != null ? p.variantId().toString() : null,
+        p.storeId() != null ? p.storeId().toString() : null,
+        p.originalPrice(),
+        p.overridePrice(),
+        p.overrideReason(),
+        p.overriddenBy() != null ? p.overriddenBy().toString() : null,
+        p.createdAt() != null ? p.createdAt().toString() : null);
   }
 }

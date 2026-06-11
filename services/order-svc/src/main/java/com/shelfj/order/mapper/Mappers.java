@@ -7,21 +7,29 @@ import com.shelfj.order.domain.Domain.LayawayDeposit;
 import com.shelfj.order.domain.Domain.LayawayItem;
 import com.shelfj.order.domain.Domain.Order;
 import com.shelfj.order.domain.Domain.OrderItem;
+import com.shelfj.order.domain.Domain.OrderReceipt;
 import com.shelfj.order.domain.Domain.OrderStatusHistory;
+import com.shelfj.order.domain.Domain.PosLogEntry;
 import com.shelfj.order.domain.Domain.PosVoidLog;
 import com.shelfj.order.domain.Domain.Return;
 import com.shelfj.order.domain.Domain.ReturnItem;
+import com.shelfj.order.domain.Domain.SpecialOrder;
+import com.shelfj.order.domain.Domain.SpecialOrderItem;
 import com.shelfj.order.dto.Dtos.GiftCardResponse;
 import com.shelfj.order.dto.Dtos.GiftCardTransactionResponse;
 import com.shelfj.order.dto.Dtos.LayawayDepositResponse;
 import com.shelfj.order.dto.Dtos.LayawayItemResponse;
 import com.shelfj.order.dto.Dtos.LayawayResponse;
 import com.shelfj.order.dto.Dtos.OrderItemResponse;
+import com.shelfj.order.dto.Dtos.OrderReceiptResponse;
 import com.shelfj.order.dto.Dtos.OrderResponse;
 import com.shelfj.order.dto.Dtos.OrderStatusHistoryResponse;
 import com.shelfj.order.dto.Dtos.OrderSummaryResponse;
+import com.shelfj.order.dto.Dtos.PosLogEntryResponse;
 import com.shelfj.order.dto.Dtos.ReturnItemResponse;
 import com.shelfj.order.dto.Dtos.ReturnResponse;
+import com.shelfj.order.dto.Dtos.SpecialOrderItemResponse;
+import com.shelfj.order.dto.Dtos.SpecialOrderResponse;
 import com.shelfj.order.dto.Dtos.VoidResponse;
 import java.time.Instant;
 import java.util.List;
@@ -52,7 +60,9 @@ public final class Mappers {
         o.notes(),
         ts(o.createdAt()),
         ts(o.updatedAt()),
-        items.stream().map(Mappers::toDto).toList());
+        items.stream().map(Mappers::toDto).toList(),
+        o.taxExempt(),
+        o.exemptReason());
   }
 
   public static OrderSummaryResponse toSummary(Order o) {
@@ -158,6 +168,58 @@ public final class Mappers {
         str(tx.orderId()),
         tx.reference(),
         ts(tx.createdAt()));
+  }
+
+  public static SpecialOrderItemResponse toDto(SpecialOrderItem i) {
+    return new SpecialOrderItemResponse(
+        str(i.id()), str(i.variantId()), i.qty(), i.unitPrice(), i.lineTotal(), i.notes());
+  }
+
+  public static SpecialOrderResponse toDto(SpecialOrder so, List<SpecialOrderItem> items) {
+    return new SpecialOrderResponse(
+        str(so.id()),
+        str(so.storeId()),
+        str(so.customerId()),
+        so.customerName(),
+        so.customerPhone(),
+        so.customerEmail(),
+        so.deliveryAddress(),
+        so.requestedDeliveryDate() != null ? so.requestedDeliveryDate().toString() : null,
+        so.notes(),
+        so.status(),
+        so.subtotal(),
+        so.total(),
+        so.currency(),
+        ts(so.createdAt()),
+        ts(so.updatedAt()),
+        items.stream().map(Mappers::toDto).toList());
+  }
+
+  public static PosLogEntryResponse toDto(PosLogEntry e) {
+    return new PosLogEntryResponse(
+        str(e.id()),
+        str(e.orderId()),
+        str(e.storeId()),
+        str(e.cashierId()),
+        e.subtotal(),
+        e.taxAmount(),
+        e.discountAmount(),
+        e.total(),
+        e.currency(),
+        e.taxExempt(),
+        e.exemptReason(),
+        ts(e.transactionTs()),
+        ts(e.createdAt()));
+  }
+
+  public static OrderReceiptResponse toDto(OrderReceipt r) {
+    return new OrderReceiptResponse(
+        str(r.id()),
+        str(r.orderId()),
+        r.receiptType(),
+        r.emailedTo(),
+        r.printCount(),
+        ts(r.generatedAt()));
   }
 
   private static String str(Object o) {

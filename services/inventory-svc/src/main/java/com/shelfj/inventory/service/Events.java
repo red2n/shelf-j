@@ -5,7 +5,7 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 /** JSON event payloads for the outbox. Past-tense; topic shelfj.inventory.<event>. */
-final class Events {
+public final class Events {
 
   private Events() {}
 
@@ -45,9 +45,9 @@ final class Events {
         + "}";
   }
 
-  static String lowStock(
+  public static String stockBelowThreshold(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal available, BigDecimal threshold) {
-    return EventPayload.base("LowStock", tenantId, variantId)
+    return EventPayload.base("StockBelowThreshold", tenantId, variantId)
         + storeVariant(storeId, variantId)
         + ",\"available\":"
         + available.toPlainString()

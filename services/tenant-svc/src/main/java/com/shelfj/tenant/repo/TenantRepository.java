@@ -6,6 +6,7 @@ import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.StoreWithZone;
 import com.shelfj.tenant.domain.Domain.Tenant;
+import com.shelfj.tenant.domain.Domain.TenantInventoryConfig;
 import com.shelfj.tenant.domain.Domain.Zone;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -448,5 +449,82 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getObject("store_id", UUID.class),
         rs.getString("role"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Gap #53: Inventory org config ────────────────────────────────────────
+
+  public TenantInventoryConfig upsertInventoryConfig(TenantInventoryConfig cfg) {
+    return inTx(
+        c -> {
+          String sql =
+              """
+              INSERT INTO tenant_inventory_config
+                (id, tenant_id, lot_control_enabled, serial_control_enabled,
+                 grade_control_enabled, expiry_tracking_enabled, costing_method,
+                 default_uom, reorder_alert_enabled, auto_reserve_on_order,
+                 created_at, updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+              ON CONFLICT (tenant_id) DO UPDATE SET
+                lot_control_enabled     = EXCLUDED.lot_control_enabled,
+                serial_control_enabled  = EXCLUDED.serial_control_enabled,
+                grade_control_enabled   = EXCLUDED.grade_control_enabled,
+                expiry_tracking_enabled = EXCLUDED.expiry_tracking_enabled,
+                costing_method          = EXCLUDED.costing_method,
+                default_uom             = EXCLUDED.default_uom,
+                reorder_alert_enabled   = EXCLUDED.reorder_alert_enabled,
+                auto_reserve_on_order   = EXCLUDED.auto_reserve_on_order,
+                updated_at              = now()
+              RETURNING *
+              """;
+          try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setObject(1, cfg.id());
+            ps.setObject(2, cfg.tenantId());
+            ps.setBoolean(3, cfg.lotControlEnabled());
+            ps.setBoolean(4, cfg.serialControlEnabled());
+            ps.setBoolean(5, cfg.gradeControlEnabled());
+            ps.setBoolean(6, cfg.expiryTrackingEnabled());
+            ps.setString(7, cfg.costingMethod());
+            ps.setString(8, cfg.defaultUom());
+            ps.setBoolean(9, cfg.reorderAlertEnabled());
+            ps.setBoolean(10, cfg.autoReserveOnOrder());
+            ps.setObject(11, OffsetDateTime.ofInstant(cfg.createdAt(), ZoneOffset.UTC));
+            ps.setObject(12, OffsetDateTime.ofInstant(cfg.updatedAt(), ZoneOffset.UTC));
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return mapInventoryConfig(rs);
+            }
+          }
+        },
+        "upsert inventory config");
+  }
+
+  public Optional<TenantInventoryConfig> findInventoryConfig(UUID tenantId) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement("SELECT * FROM tenant_inventory_config WHERE tenant_id = ?")) {
+            ps.setObject(1, tenantId);
+            try (ResultSet rs = ps.executeQuery()) {
+              return rs.next() ? Optional.of(mapInventoryConfig(rs)) : Optional.empty();
+            }
+          }
+        },
+        "find inventory config");
+  }
+
+  private static TenantInventoryConfig mapInventoryConfig(ResultSet rs) throws SQLException {
+    return new TenantInventoryConfig(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getBoolean("lot_control_enabled"),
+        rs.getBoolean("serial_control_enabled"),
+        rs.getBoolean("grade_control_enabled"),
+        rs.getBoolean("expiry_tracking_enabled"),
+        rs.getString("costing_method"),
+        rs.getString("default_uom"),
+        rs.getBoolean("reorder_alert_enabled"),
+        rs.getBoolean("auto_reserve_on_order"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
 }
