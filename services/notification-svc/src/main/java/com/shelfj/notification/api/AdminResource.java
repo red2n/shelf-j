@@ -29,13 +29,13 @@ public class AdminResource {
       @QueryParam("variantId") String variantId,
       @QueryParam("limit") @DefaultValue("20") int limit) {
     UUID tenantId = ctx.tenantId();
-    if (limit < 1 || limit > 100) limit = 20;
+    int effectiveLimit = (limit < 1 || limit > 100) ? 20 : limit;
 
     var alerts =
         variantId != null
-            ? service.listAlertsByVariant(tenantId, UUID.fromString(variantId), limit)
+            ? service.listAlertsByVariant(tenantId, UUID.fromString(variantId), effectiveLimit)
             : service.listAlerts(
-                tenantId, storeId != null ? UUID.fromString(storeId) : null, limit);
+                tenantId, storeId != null ? UUID.fromString(storeId) : null, effectiveLimit);
 
     var dtos = alerts.stream().map(Mappers::toDto).toList();
     return ApiResponse.ok(dtos);

@@ -11,6 +11,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -27,7 +28,7 @@ public class PaymentService {
   @Inject PaymentRepository repo;
 
   public PaymentTender recordTender(RecordTenderRequest req, TenantContext ctx) {
-    String method = req.method().toUpperCase();
+    String method = req.method().toUpperCase(Locale.ROOT);
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
           "PAYMENT_INVALID_METHOD",
@@ -72,7 +73,7 @@ public class PaymentService {
       throw ApiException.conflict(
           "PAYMENT_ORDER_MISMATCH", "payment does not belong to this order");
 
-    String method = req.method().toUpperCase();
+    String method = req.method().toUpperCase(Locale.ROOT);
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
           "PAYMENT_INVALID_METHOD",

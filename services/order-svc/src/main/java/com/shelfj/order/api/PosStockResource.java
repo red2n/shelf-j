@@ -38,12 +38,12 @@ public class PosStockResource {
       @QueryParam("storeId") String storeIdStr,
       @QueryParam("variantId") String variantIdStr,
       @QueryParam("limit") @DefaultValue("50") int limit) {
-    if (limit > 100) limit = 100;
+    int effectiveLimit = limit > 100 ? 100 : limit;
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
     UUID variantId = variantIdStr != null ? UUID.fromString(variantIdStr) : null;
     List<PosStockPositionResponse> rows =
-        repo.findStockPositions(tenantId, storeId, variantId, limit).stream()
+        repo.findStockPositions(tenantId, storeId, variantId, effectiveLimit).stream()
             .map(PosStockResource::toResponse)
             .toList();
     return Response.ok(ApiResponse.ok(rows)).build();
