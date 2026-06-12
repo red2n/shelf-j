@@ -20,6 +20,20 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.db.schema", defaultValue = "order")
   String dbSchema;
 
+  /**
+   * When true, placeOrder resolves every line's unit price from pricing-svc and ignores the
+   * client-supplied unitPrice (gap #63 — clients must not set their own prices). Defaults to false
+   * so local dev / test rigs without a seeded price catalogue keep working; production MUST enable
+   * it.
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.order.pricing.enforce", defaultValue = "false")
+  boolean pricingEnforce;
+
+  public boolean pricingEnforce() {
+    return pricingEnforce;
+  }
+
   @Override
   public String serviceName() {
     return serviceName;

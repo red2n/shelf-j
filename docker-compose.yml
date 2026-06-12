@@ -117,7 +117,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-shelfj}
       POSTGRES_USER: ${POSTGRES_USER:-shelfj}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     networks: [shelfj_network]
     healthcheck:
@@ -172,7 +172,7 @@ services:
     container_name: shelfj-consul
     restart: always
     command: agent -dev -client=0.0.0.0
-    ports: ["8500:8500"]
+    ports: ["127.0.0.1:8500:8500"]
     networks: [shelfj_network]
     healthcheck:
       test: ["CMD", "consul", "members"]
@@ -185,7 +185,7 @@ services:
     image: confluentinc/cp-kafka:7.6.1
     container_name: shelfj-kafka
     restart: always
-    ports: ["9092:9092"]
+    ports: ["127.0.0.1:9092:9092"]
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -219,7 +219,7 @@ services:
     image: provectuslabs/kafka-ui:v0.7.2
     container_name: shelfj-kafka-ui
     restart: unless-stopped
-    ports: ["8081:8080"]
+    ports: ["127.0.0.1:8081:8080"]
     environment:
       KAFKA_CLUSTERS_0_NAME: shelfj-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
@@ -238,7 +238,7 @@ services:
       --requirepass ${REDIS_PASSWORD:-redis_dev_change_me}
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:6379:6379"]
     volumes: ["redis_data:/data"]
     networks: [shelfj_network]
     healthcheck:
@@ -251,7 +251,7 @@ services:
     image: openzipkin/zipkin:3.6.1
     container_name: shelfj-zipkin
     restart: unless-stopped
-    ports: ["9411:9411"]
+    ports: ["127.0.0.1:9411:9411"]
     environment:
       JAVA_OPTS: "${ZIPKIN_JAVA_OPTS:--Xms128m -Xmx512m}"
     mem_limit: ${ZIPKIN_MEM_LIMIT:-700m}
@@ -333,7 +333,7 @@ services:
       - --web.enable-lifecycle
       - --web.enable-remote-write-receiver
     mem_limit: ${PROMETHEUS_MEM_LIMIT:-512m}
-    ports: ["9090:9090"]
+    ports: ["127.0.0.1:9090:9090"]
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/prometheus/rules:/etc/prometheus/rules:ro
@@ -354,7 +354,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin_dev_change_me}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-    ports: ["3100:3000"]
+    ports: ["127.0.0.1:3100:3000"]
     volumes:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -375,7 +375,7 @@ services:
     image: dpage/pgadmin4:9.15.0
     container_name: shelfj-pgadmin
     restart: unless-stopped
-    ports: ["${PGADMIN_PORT:-5555}:80"]
+    ports: ["127.0.0.1:${PGADMIN_PORT:-5555}:80"]
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@shelfj.dev}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin_dev_change_me}
@@ -479,6 +479,7 @@ services:
       <<: *svc-env
       JAVA_TOOL_OPTIONS: "${IAM_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: iam-svc
+      shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:-local-dev-only-hmac-secret-do-not-use-in-prod}
     mem_limit: ${IAM_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     depends_on: *svc-depends
@@ -530,6 +531,8 @@ services:
       <<: *svc-env
       JAVA_TOOL_OPTIONS: "${ORDER_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: order-svc
+      # Gap #63 — set to true to make order-svc resolve prices from pricing-svc (ignore client prices)
+      shelfj.order.pricing.enforce: ${SHELFJ_ORDER_PRICING_ENFORCE:-false}
     mem_limit: ${ORDER_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     depends_on: *svc-depends
@@ -621,6 +624,7 @@ services:
       shelfj.consul.host: consul
       shelfj.consul.port: "8500"
       shelfj.gateway.rate-limit.requests-per-minute: "10000"
+      shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:-local-dev-only-hmac-secret-do-not-use-in-prod}
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
     ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]

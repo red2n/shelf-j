@@ -36,9 +36,9 @@ import java.util.Set;
 @Priority(Priorities.AUTHENTICATION - 1)
 public class JwtAuthFilter implements ContainerRequestFilter {
 
-  /** Paths under /api/iam-svc that do NOT require a token. */
-  private static final Set<String> PUBLIC_SUFFIXES =
-      Set.of("iam-svc/auth/register", "iam-svc/auth/login", "iam-svc/auth/refresh");
+  /** Exact request paths (normalized, no leading/trailing slash) that do NOT require a token. */
+  private static final Set<String> PUBLIC_PATHS =
+      Set.of("api/iam-svc/auth/register", "api/iam-svc/auth/login", "api/iam-svc/auth/refresh");
 
   @Inject GatewayConfig config;
 
@@ -46,8 +46,13 @@ public class JwtAuthFilter implements ContainerRequestFilter {
 
   @PostConstruct
   void init() {
-    verifier =
-        JWT.require(Algorithm.HMAC256(config.jwtSecret())).withIssuer(config.jwtIssuer()).build();
+    String secret = config.jwtSecret();
+    if (secret == null || secret.trim().length() < 32) {
+      throw new IllegalStateException(
+          "shelfj.jwt.secret must be set and at least 32 characters; refusing to start with a"
+              + " weak or missing JWT secret");
+    }
+    verifier = JWT.require(Algorithm.HMAC256(secret)).withIssuer(config.jwtIssuer()).build();
   }
 
   @Override
@@ -96,16 +101,23 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   }
 
   private static boolean isPublic(String path) {
-    for (String suffix : PUBLIC_SUFFIXES) {
-      if (path.contains(suffix)) return true;
-    }
-    return false;
+    // Exact match only — a substring match would let any URL that merely embeds a public
+    // suffix (e.g. /api/x-svc/foo/iam-svc/auth/login) skip token validation.
+    return PUBLIC_PATHS.contains(normalize(path));
+  }
+
+  private static String normalize(String path) {
+    String p = path;
+    while (p.startsWith("/")) p = p.substring(1);
+    while (p.endsWith("/")) p = p.substring(0, p.length() - 1);
+    return p;
   }
 
   private static Response unauthorized(String message) {
     return Response.status(Response.Status.UNAUTHORIZED)
         .type(MediaType.APPLICATION_JSON)
-        .entity("{\"error\":{\"code\":\"UNAUTHORIZED\",\"message\":\"" + message + "\"}}")
+        .entity(
+            com.shelfj.web.ApiResponse.error(com.shelfj.web.ErrorBody.of("UNAUTHORIZED", message)))
         .build();
   }
 }

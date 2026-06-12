@@ -31,9 +31,12 @@ public class PaymentResource {
 
   /** Record a payment tender for an order. Returns 201 with the tender on success. */
   @POST
-  public Response record(RecordTenderRequest req) {
+  public Response record(
+      @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      RecordTenderRequest req) {
+    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
     Validations.validate(req);
-    var tender = svc.recordTender(req, ctx);
+    var tender = svc.recordTender(req, ctx, effectiveKey(idempotencyKey, req.idempotencyKey()));
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(tender))).build();
   }
 
@@ -52,13 +55,27 @@ public class PaymentResource {
     return Response.ok(ApiResponse.ok(tenders.stream().map(Mappers::toDto).toList())).build();
   }
 
-  /** Record a refund against a previously captured tender. */
+  /** Record a refund against a previously captured tender. MANAGER or above only. */
   @POST
   @Path("/by-order/{orderId}/refunds")
-  public Response recordRefund(@PathParam("orderId") UUID orderId, RecordRefundRequest req) {
+  public Response recordRefund(
+      @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      @PathParam("orderId") UUID orderId,
+      RecordRefundRequest req) {
+    ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
     Validations.validate(req);
-    var refund = svc.recordRefund(ctx.requireTenantId(), orderId, req);
+    var refund =
+        svc.recordRefund(
+            ctx.requireTenantId(),
+            orderId,
+            req,
+            effectiveKey(idempotencyKey, req.idempotencyKey()));
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(refund))).build();
+  }
+
+  /** The standard Idempotency-Key header is authoritative; the body field is a legacy fallback. */
+  private static String effectiveKey(String header, String bodyField) {
+    return header != null && !header.isBlank() ? header : bodyField;
   }
 
   /** List all refunds for a given order. */

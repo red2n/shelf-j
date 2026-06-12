@@ -336,6 +336,117 @@ public class ProductRepository extends BaseOutboxRepository {
         "list products admin");
   }
 
+  /**
+   * Full-text / attribute search for the storefront and POS lookup. Supports name ILIKE (prefix
+   * wildcard), exact SKU, and exact barcode. When sku or barcode is supplied a JOIN to
+   * product_variants is performed — DISTINCT prevents duplicates when a product has several
+   * matching variants.
+   */
+  public List<Product> searchProducts(
+      UUID tenantId, String q, String sku, String barcode, boolean onlineOnly, int limit) {
+    boolean hasVariantFilter = sku != null || barcode != null;
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT DISTINCT p.id, p.tenant_id, p.name, p.description, p.brand_id,"
+                + " p.category_id, p.status, p.sellable_online, p.sellable_pos,"
+                + " p.created_at, p.updated_at FROM products p");
+    if (hasVariantFilter) {
+      sql.append(
+          " JOIN product_variants v"
+              + " ON v.product_id = p.id AND v.tenant_id = p.tenant_id AND v.status = 'ACTIVE'");
+    }
+    sql.append(" WHERE p.tenant_id = ? AND p.status = 'ACTIVE'");
+    if (q != null) sql.append(" AND p.name ILIKE ?");
+    if (sku != null) sql.append(" AND v.sku = ?");
+    if (barcode != null) sql.append(" AND v.barcode = ?");
+    if (onlineOnly) sql.append(" AND p.sellable_online = true");
+    sql.append(" ORDER BY p.created_at DESC LIMIT ?");
+    String finalSql = sql.toString();
+    return query(
+        finalSql,
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (q != null) ps.setString(i++, "%" + q + "%");
+          if (sku != null) ps.setString(i++, sku);
+          if (barcode != null) ps.setString(i++, barcode);
+          ps.setInt(i, limit);
+        },
+        ProductRepository::mapProductAlias,
+        "search products");
+  }
+
+  /** Looks up a variant by barcode and returns it together with its parent product in one query. */
+  public Optional<VariantWithProduct> findVariantByBarcode(UUID tenantId, String barcode) {
+    return query(
+            "SELECT v.id AS v_id, v.tenant_id AS v_tid, v.product_id, v.sku, v.barcode,"
+                + " v.manufacturer_pn, v.attributes, v.unit, v.status AS v_status,"
+                + " v.created_at AS v_cat, v.updated_at AS v_uat,"
+                + " p.id AS p_id, p.name, p.description, p.brand_id, p.category_id,"
+                + " p.status AS p_status, p.sellable_online, p.sellable_pos,"
+                + " p.created_at AS p_cat, p.updated_at AS p_uat"
+                + " FROM product_variants v"
+                + " JOIN products p ON p.id = v.product_id AND p.tenant_id = v.tenant_id"
+                + " WHERE v.tenant_id = ? AND v.barcode = ?"
+                + " AND v.status = 'ACTIVE' AND p.status = 'ACTIVE'",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, barcode);
+            },
+            ProductRepository::mapVariantWithProduct,
+            "find variant by barcode")
+        .stream()
+        .findFirst();
+  }
+
+  /** Carrier for a variant + its parent product, used by the POS barcode-scan query. */
+  public record VariantWithProduct(Variant variant, Product product) {}
+
+  private static Product mapProductAlias(ResultSet rs) throws SQLException {
+    return new Product(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getString("name"),
+        rs.getString("description"),
+        rs.getObject("brand_id", UUID.class),
+        rs.getObject("category_id", UUID.class),
+        rs.getString("status"),
+        rs.getBoolean("sellable_online"),
+        rs.getBoolean("sellable_pos"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static VariantWithProduct mapVariantWithProduct(ResultSet rs) throws SQLException {
+    Variant variant =
+        new Variant(
+            rs.getObject("v_id", UUID.class),
+            rs.getObject("v_tid", UUID.class),
+            rs.getObject("product_id", UUID.class),
+            rs.getString("sku"),
+            rs.getString("barcode"),
+            rs.getString("manufacturer_pn"),
+            rs.getString("attributes"),
+            rs.getString("unit"),
+            rs.getString("v_status"),
+            rs.getObject("v_cat", OffsetDateTime.class).toInstant(),
+            rs.getObject("v_uat", OffsetDateTime.class).toInstant());
+    Product product =
+        new Product(
+            rs.getObject("p_id", UUID.class),
+            rs.getObject("v_tid", UUID.class),
+            rs.getString("name"),
+            rs.getString("description"),
+            rs.getObject("brand_id", UUID.class),
+            rs.getObject("category_id", UUID.class),
+            rs.getString("p_status"),
+            rs.getBoolean("sellable_online"),
+            rs.getBoolean("sellable_pos"),
+            rs.getObject("p_cat", OffsetDateTime.class).toInstant(),
+            rs.getObject("p_uat", OffsetDateTime.class).toInstant());
+    return new VariantWithProduct(variant, product);
+  }
+
   // ─────────────────────────────────────────── variants (atomic with outbox)
 
   public Variant createVariantWithOutbox(Variant v, OutboxRow event) {

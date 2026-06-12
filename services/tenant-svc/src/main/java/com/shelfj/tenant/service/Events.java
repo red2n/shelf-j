@@ -1,9 +1,17 @@
 package com.shelfj.tenant.service;
 
+import static com.shelfj.events.EventPayload.esc;
+
 import java.time.Instant;
 import java.util.UUID;
 
-/** Builds JSON event payloads for the outbox. Past-tense events, topic shelfj.tenant.<event>. */
+/**
+ * Builds JSON event payloads for the outbox. Past-tense events, topic shelfj.tenant.<event>.
+ *
+ * <p>Every interpolated string that originates from a request (tenant name, store/zone codes,
+ * country, currency, role) goes through {@code esc()} — a quote in a tenant name must not be able
+ * to corrupt the event JSON or inject fields into it.
+ */
 final class Events {
 
   private Events() {}
@@ -19,9 +27,9 @@ final class Events {
             tenantId,
             Instant.now(),
             ownerUserId,
-            name,
-            country,
-            currency);
+            esc(name),
+            esc(country),
+            esc(currency));
   }
 
   static String storeCreated(
@@ -29,20 +37,22 @@ final class Events {
     return """
                 {"eventId":"%s","eventType":"StoreCreated","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
                 "code":"%s","type":"%s","isDefault":%s}"""
-        .formatted(UUID.randomUUID(), tenantId, storeId, Instant.now(), code, type, isDefault);
+        .formatted(
+            UUID.randomUUID(), tenantId, storeId, Instant.now(), esc(code), esc(type), isDefault);
   }
 
   static String zoneCreated(UUID tenantId, UUID storeId, UUID zoneId, String code, String type) {
     return """
                 {"eventId":"%s","eventType":"ZoneCreated","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
                 "storeId":"%s","code":"%s","type":"%s"}"""
-        .formatted(UUID.randomUUID(), tenantId, zoneId, Instant.now(), storeId, code, type);
+        .formatted(
+            UUID.randomUUID(), tenantId, zoneId, Instant.now(), storeId, esc(code), esc(type));
   }
 
   static String staffAssigned(UUID tenantId, UUID userId, UUID storeId, String role) {
     return """
                 {"eventId":"%s","eventType":"StaffAssigned","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
                 "userId":"%s","storeId":"%s","role":"%s"}"""
-        .formatted(UUID.randomUUID(), tenantId, userId, Instant.now(), userId, storeId, role);
+        .formatted(UUID.randomUUID(), tenantId, userId, Instant.now(), userId, storeId, esc(role));
   }
 }

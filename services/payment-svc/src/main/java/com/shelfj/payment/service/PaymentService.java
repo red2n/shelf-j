@@ -27,7 +27,8 @@ public class PaymentService {
 
   @Inject PaymentRepository repo;
 
-  public PaymentTender recordTender(RecordTenderRequest req, TenantContext ctx) {
+  public PaymentTender recordTender(
+      RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
     String method = req.method().toUpperCase(Locale.ROOT);
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
@@ -46,7 +47,7 @@ public class PaymentService {
             req.amount(),
             method,
             req.reference(),
-            req.idempotencyKey(),
+            idempotencyKey,
             PaymentTender.STATUS_CAPTURED,
             req.notes(),
             Instant.now());
@@ -63,7 +64,8 @@ public class PaymentService {
     return repo.findTendersByOrder(tenantId, orderId);
   }
 
-  public RefundTender recordRefund(UUID tenantId, UUID orderId, RecordRefundRequest req) {
+  public RefundTender recordRefund(
+      UUID tenantId, UUID orderId, RecordRefundRequest req, String idempotencyKey) {
     PaymentTender payment =
         repo.findTender(tenantId, UUID.fromString(req.paymentId()))
             .orElseThrow(
@@ -96,7 +98,7 @@ public class PaymentService {
             req.amount(),
             method,
             req.reference(),
-            req.idempotencyKey(),
+            idempotencyKey,
             req.reason(),
             Instant.now());
 

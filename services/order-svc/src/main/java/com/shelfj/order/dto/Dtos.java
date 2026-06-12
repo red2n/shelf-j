@@ -3,6 +3,7 @@ package com.shelfj.order.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -16,7 +17,9 @@ public final class Dtos {
   public record OrderItemRequest(
       @NotBlank String variantId,
       @NotNull @Positive BigDecimal qty,
-      @NotNull @Positive BigDecimal unitPrice,
+      // Optional when server-side pricing is enforced (the value is ignored there); required and
+      // trusted only in legacy mode — see ServiceConfig#pricingEnforce.
+      @Positive BigDecimal unitPrice,
       String notes) {}
 
   public record PlaceOrderRequest(
@@ -25,8 +28,8 @@ public final class Dtos {
       @NotBlank String channel,
       String fulfilmentType,
       @NotNull List<OrderItemRequest> items,
-      BigDecimal taxAmount,
-      BigDecimal discountAmount,
+      @PositiveOrZero BigDecimal taxAmount,
+      @PositiveOrZero BigDecimal discountAmount,
       String currency,
       String notes,
       String idempotencyKey,

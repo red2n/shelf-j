@@ -210,6 +210,20 @@ public class ProductService {
     return repo.listProductsAdmin(tenantId, categoryId, status, limit);
   }
 
+  public List<Product> searchProducts(
+      UUID tenantId, String q, String sku, String barcode, boolean onlineOnly, int limit) {
+    return repo.searchProducts(tenantId, q, sku, barcode, onlineOnly, limit);
+  }
+
+  public com.shelfj.product.repo.ProductRepository.VariantWithProduct findVariantByBarcode(
+      UUID tenantId, String barcode) {
+    return repo.findVariantByBarcode(tenantId, barcode)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "VARIANT_NOT_FOUND", "No active variant found for barcode: " + barcode));
+  }
+
   // ──────────────────────────────────────────────────────────────── variants
 
   public Variant createVariant(UUID tenantId, UUID productId, CreateVariantRequest req) {

@@ -82,6 +82,20 @@ public class OrderRepository extends BaseOutboxRepository {
         "create order");
   }
 
+  /** Look up an order by its idempotency key — used to replay a retried checkout. */
+  public Optional<Order> findOrderByIdempotencyKey(UUID tenantId, String idempotencyKey) {
+    return query(
+            "SELECT * FROM orders WHERE tenant_id=? AND idempotency_key=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, idempotencyKey);
+            },
+            rs -> mapOrder(rs),
+            "find order by idempotency key")
+        .stream()
+        .findFirst();
+  }
+
   public List<Order> listOrders(
       UUID tenantId,
       UUID storeId,
@@ -89,6 +103,8 @@ public class OrderRepository extends BaseOutboxRepository {
       String status,
       Instant from,
       Instant to,
+      Instant afterCreatedAt,
+      UUID afterId,
       int limit) {
     StringBuilder sql = new StringBuilder("SELECT * FROM orders WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
@@ -96,7 +112,9 @@ public class OrderRepository extends BaseOutboxRepository {
     if (status != null) sql.append(" AND status=?");
     if (from != null) sql.append(" AND created_at >= ?");
     if (to != null) sql.append(" AND created_at <= ?");
-    sql.append(" ORDER BY created_at DESC LIMIT ?");
+    // Keyset pagination: rows strictly after the cursor in (created_at DESC, id DESC) order.
+    if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) < (?, ?)");
+    sql.append(" ORDER BY created_at DESC, id DESC LIMIT ?");
     return query(
         sql.toString(),
         ps -> {
@@ -107,6 +125,10 @@ public class OrderRepository extends BaseOutboxRepository {
           if (status != null) ps.setString(i++, status.toUpperCase(java.util.Locale.ROOT));
           if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
           if (to != null) ps.setObject(i++, to.atOffset(java.time.ZoneOffset.UTC));
+          if (afterCreatedAt != null && afterId != null) {
+            ps.setObject(i++, afterCreatedAt.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
           ps.setInt(i, limit);
         },
         rs -> mapOrder(rs),

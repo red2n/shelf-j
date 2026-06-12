@@ -49,11 +49,23 @@ class OrderIT {
         .path(path)
         .request()
         .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
   private Response get(String path, String tenant) {
-    return target.path(path).request().header("X-Tenant-Id", tenant).get();
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get();
+  }
+
+  private Response listOrders(String tenant, int limit, String after) {
+    WebTarget t = target.path("/orders").queryParam("limit", limit);
+    if (after != null) t = t.queryParam("after", after);
+    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get();
   }
 
   @Test
@@ -94,6 +106,114 @@ class OrderIT {
             T);
     assertThat(r3.getStatus(), is(201));
     assertThat(r3.readEntity(String.class), containsString("COMPLETED"));
+  }
+
+  @Test
+  void retriedCheckoutWithSameIdempotencyKeyReplaysOriginalOrder() {
+    String orderJson =
+        "{\"storeId\":\""
+            + S
+            + "\","
+            + "\"channel\":\"POS\","
+            + "\"fulfilmentType\":\"INSTORE\","
+            + "\"items\":[{\"variantId\":\""
+            + V
+            + "\",\"qty\":1,\"unitPrice\":5.00}],"
+            + "\"currency\":\"USD\","
+            + "\"idempotencyKey\":\"idem-replay-1\"}";
+
+    Response first = post("/orders", orderJson, T);
+    assertThat(first.getStatus(), is(201));
+    String firstId = extractId(first.readEntity(String.class));
+
+    // retry (e.g. client timeout + resubmit) must return the SAME order, not an error
+    Response retry = post("/orders", orderJson, T);
+    assertThat(retry.getStatus(), is(201));
+    assertThat(extractId(retry.readEntity(String.class)), is(firstId));
+  }
+
+  @Test
+  void negativeTaxAndOversizedDiscountAreRejected() {
+    // negative taxAmount must fail bean validation (gap #63)
+    Response negTax =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}],"
+                + "\"taxAmount\":-5.00,\"currency\":\"USD\"}",
+            T);
+    assertThat(negTax.getStatus(), is(400));
+
+    // discount larger than the subtotal must not drive the total negative
+    Response bigDisc =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}],"
+                + "\"discountAmount\":50.00,\"currency\":\"USD\"}",
+            T);
+    assertThat(bigDisc.getStatus(), is(400));
+    assertThat(bigDisc.readEntity(String.class), containsString("ORDER_DISCOUNT_EXCEEDS_SUBTOTAL"));
+  }
+
+  @Test
+  void listOrdersPaginatesWithCursor() {
+    // Dedicated tenant so orders created by other tests never leak into these pages.
+    String tenant = "44444444-4444-4444-4444-444444444444";
+    var allIds = new java.util.HashSet<String>();
+    for (int i = 0; i < 3; i++) {
+      Response r =
+          post(
+              "/orders",
+              "{\"storeId\":\""
+                  + S
+                  + "\","
+                  + "\"channel\":\"POS\","
+                  + "\"fulfilmentType\":\"INSTORE\","
+                  + "\"items\":[{\"variantId\":\""
+                  + V
+                  + "\",\"qty\":1,\"unitPrice\":1.00}],"
+                  + "\"currency\":\"USD\"}",
+              tenant);
+      assertThat(r.getStatus(), is(201));
+      allIds.add(extractId(r.readEntity(String.class)));
+    }
+
+    // page 1: two orders + a nextCursor
+    Response p1 = listOrders(tenant, 2, null);
+    assertThat(p1.getStatus(), is(200));
+    String body1 = p1.readEntity(String.class);
+    java.util.Set<String> page1 = extractAllIds(body1);
+    assertThat(page1.size(), is(2));
+    String cursor = extractNextCursor(body1);
+    assertThat(cursor, org.hamcrest.Matchers.notNullValue());
+
+    // page 2: the remaining order, no further cursor
+    Response p2 = listOrders(tenant, 2, cursor);
+    assertThat(p2.getStatus(), is(200));
+    String body2 = p2.readEntity(String.class);
+    java.util.Set<String> page2 = extractAllIds(body2);
+    assertThat(page2.size(), is(1));
+    assertThat(extractNextCursor(body2), org.hamcrest.Matchers.nullValue());
+
+    // the two pages cover all three orders with no overlap
+    java.util.Set<String> seen = new java.util.HashSet<>(page1);
+    seen.addAll(page2);
+    assertThat(seen.size(), is(3));
+    assertThat(seen, is(allIds));
+
+    // a garbage cursor is a clean 400, not a 500
+    Response bad = listOrders(tenant, 2, "!!not-base64!!");
+    assertThat(bad.getStatus(), is(400));
+    assertThat(bad.readEntity(String.class), containsString("INVALID_CURSOR"));
   }
 
   @Test
@@ -222,6 +342,31 @@ class OrderIT {
     int depositsArrayClose = json.indexOf("]", depositsKey);
     // The next "id" after the deposits array is the top-level layaway id
     int start = json.indexOf("\"id\":\"", depositsArrayClose) + 6;
+    int end = json.indexOf("\"", start);
+    return json.substring(start, end);
+  }
+
+  private static java.util.Set<String> extractAllIds(String json) {
+    var ids = new java.util.HashSet<String>();
+    int from = 0;
+    while (true) {
+      int start = json.indexOf("\"id\":\"", from);
+      if (start < 0) break;
+      start += 6;
+      int end = json.indexOf("\"", start);
+      ids.add(json.substring(start, end));
+      from = end;
+    }
+    return ids;
+  }
+
+  /** Returns meta.nextCursor, or null when the field is absent/null (no further page). */
+  private static String extractNextCursor(String json) {
+    int key = json.indexOf("\"nextCursor\":");
+    if (key < 0) return null;
+    int valueStart = key + "\"nextCursor\":".length();
+    if (json.startsWith("null", valueStart)) return null;
+    int start = json.indexOf("\"", valueStart) + 1;
     int end = json.indexOf("\"", start);
     return json.substring(start, end);
   }

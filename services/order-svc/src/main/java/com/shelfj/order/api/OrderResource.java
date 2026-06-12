@@ -41,7 +41,8 @@ public class OrderResource {
    *
    * <p>?store= UUID — filter by store ?channel= ONLINE|POS — filter by channel ?status=
    * PENDING|CONFIRMED|FULFILLED|CANCELLED|VOIDED — filter by status ?from= ISO-8601 datetime —
-   * created_at >= from ?to= ISO-8601 datetime — created_at <= to ?limit= 1-100 (default 20)
+   * created_at >= from ?to= ISO-8601 datetime — created_at <= to ?after= opaque cursor from the
+   * previous page's meta.nextCursor ?limit= 1-100 (default 20)
    */
   @GET
   public ApiResponse<List<OrderSummaryResponse>> list(
@@ -50,22 +51,28 @@ public class OrderResource {
       @QueryParam("status") String status,
       @QueryParam("from") String from,
       @QueryParam("to") String to,
+      @QueryParam("after") String after,
       @QueryParam("limit") Integer limit) {
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = store != null && !store.isBlank() ? UUID.fromString(store) : null;
     Instant fromInst = parseInstant(from, "from");
     Instant toInst = parseInstant(to, "to");
     int clamped = Cursor.clampLimit(limit);
+    var page = svc.listOrders(tenantId, storeId, channel, status, fromInst, toInst, after, clamped);
     return ApiResponse.ok(
-        svc.listOrders(tenantId, storeId, channel, status, fromInst, toInst, clamped).stream()
-            .map(Mappers::toSummary)
-            .toList());
+        page.orders().stream().map(Mappers::toSummary).toList(),
+        new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
   @POST
-  public Response place(PlaceOrderRequest req) {
+  public Response place(
+      @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      PlaceOrderRequest req) {
     Validations.validate(req);
-    var order = svc.placeOrder(req, ctx);
+    // The standard Idempotency-Key header is authoritative; the body field is a legacy fallback.
+    String effectiveKey =
+        idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : req.idempotencyKey();
+    var order = svc.placeOrder(req, ctx, effectiveKey);
     var items = svc.getOrderItems(order.tenantId(), order.id());
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }

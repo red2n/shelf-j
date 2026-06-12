@@ -96,7 +96,7 @@ public final class Events {
 
   static String materialStatusChanged(
       UUID tenantId, UUID batchId, String materialStatus, String reason) {
-    String r = reason == null ? "null" : "\"" + reason.replace("\"", "\\\"") + "\"";
+    String r = reason == null ? "null" : "\"" + EventPayload.esc(reason) + "\"";
     return EventPayload.base("MaterialStatusChanged", tenantId, batchId)
         + ",\"materialStatus\":\""
         + materialStatus

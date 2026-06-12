@@ -42,11 +42,16 @@ public class AuthService {
         new User(
             userId, null, User.TYPE_CUSTOMER, email, phone, hash, User.STATUS_ACTIVE, now, now);
 
+    // email is user input — esc() prevents a quoted-local-part address from injecting JSON
     String payload =
         """
                 {"eventId":"%s","eventType":"UserRegistered","tenantId":null,"aggregateId":"%s",\
                 "occurredAt":"%s","email":"%s","type":"CUSTOMER"}"""
-            .formatted(UUID.randomUUID(), userId, Instant.now(), email);
+            .formatted(
+                UUID.randomUUID(),
+                userId,
+                Instant.now(),
+                com.shelfj.events.EventPayload.esc(email));
     var outbox =
         new OutboxRow("UserRegistered", "shelfj.iam.user-registered", null, userId, payload);
 
@@ -118,6 +123,9 @@ public class AuthService {
       throw ApiException.unauthorized("INVALID_CREDENTIALS", "Current password is incorrect");
     }
     users.updatePassword(userId, passwords.hash(newPassword));
+    // Revoke every outstanding refresh token: a password change must invalidate sessions that
+    // may have been established with the old (possibly compromised) credentials.
+    refreshTokens.revokeAllForUser(userId);
     users.audit(user.tenantId(), userId, "PASSWORD_CHANGED", user.email());
   }
 

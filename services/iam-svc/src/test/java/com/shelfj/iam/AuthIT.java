@@ -33,6 +33,7 @@ class AuthIT {
     System.setProperty("shelfj.db.password", PG.password());
     System.setProperty("shelfj.consul.enabled", "false");
     System.setProperty("shelfj.kafka.enabled", "false");
+    System.setProperty("shelfj.jwt.secret", "integration-test-secret-of-at-least-32-chars");
   }
 
   @Inject WebTarget target;
@@ -94,6 +95,74 @@ class AuthIT {
     String body = bad.readEntity(String.class);
     assertThat(body, containsString("VALIDATION_FAILED"));
     assertThat(body, not(containsString("WeldSubclass"))); // no framework internals leaked
+  }
+
+  @Test
+  void changePasswordRevokesOutstandingRefreshTokens() {
+    Response reg =
+        post("/auth/register", "{\"email\":\"rotate@example.com\",\"password\":\"strongpass1\"}");
+    assertThat(reg.getStatus(), is(201));
+    String regBody = reg.readEntity(String.class);
+    String access = extract(regBody, "accessToken");
+    String refresh = extract(regBody, "refreshToken");
+
+    String me =
+        target
+            .path("/auth/me")
+            .request()
+            .header("Authorization", "Bearer " + access)
+            .get(String.class);
+    String userId = extract(me, "userId");
+
+    // change password (X-User-Id simulates the gateway-stamped identity header)
+    Response changed =
+        target
+            .path("/auth/change-password")
+            .request()
+            .header("X-User-Id", userId)
+            .put(
+                Entity.entity(
+                    "{\"currentPassword\":\"strongpass1\",\"newPassword\":\"evenstronger2\"}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(changed.getStatus(), is(200));
+
+    // the pre-change refresh token must be dead
+    Response reuse = post("/auth/refresh", "{\"refreshToken\":\"" + refresh + "\"}");
+    assertThat(reuse.getStatus(), is(401));
+
+    // and the new password logs in
+    Response login =
+        post("/auth/login", "{\"email\":\"rotate@example.com\",\"password\":\"evenstronger2\"}");
+    assertThat(login.getStatus(), is(200));
+  }
+
+  @Test
+  void posSweepRequiresPlatformAdminRole() {
+    // no identity headers → no roles → must be 403, not a tenant-wide sweep
+    Response sweep =
+        target
+            .path("/auth/pos/sessions/sweep")
+            .request()
+            .post(Entity.entity("{}", MediaType.APPLICATION_JSON));
+    assertThat(sweep.getStatus(), is(403));
+
+    // a CUSTOMER (non-admin) must also be rejected
+    Response sweepAsCustomer =
+        target
+            .path("/auth/pos/sessions/sweep")
+            .request()
+            .header("X-Roles", "CUSTOMER")
+            .post(Entity.entity("{}", MediaType.APPLICATION_JSON));
+    assertThat(sweepAsCustomer.getStatus(), is(403));
+
+    // PLATFORM_ADMIN passes the guard and executes (0 idle sessions → 200)
+    Response sweepAsAdmin =
+        target
+            .path("/auth/pos/sessions/sweep")
+            .request()
+            .header("X-Roles", "PLATFORM_ADMIN")
+            .post(Entity.entity("{}", MediaType.APPLICATION_JSON));
+    assertThat(sweepAsAdmin.getStatus(), is(200));
   }
 
   @Test

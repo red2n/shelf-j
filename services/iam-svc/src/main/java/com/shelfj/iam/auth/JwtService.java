@@ -36,7 +36,13 @@ public class JwtService {
 
   @PostConstruct
   void init() {
-    this.algorithm = Algorithm.HMAC256(config.jwtSecret());
+    String secret = config.jwtSecret();
+    if (secret == null || secret.trim().length() < 32) {
+      throw new IllegalStateException(
+          "shelfj.jwt.secret must be set and at least 32 characters; refusing to start with a"
+              + " weak or missing JWT secret");
+    }
+    this.algorithm = Algorithm.HMAC256(secret);
     this.verifier = JWT.require(algorithm).withIssuer(config.jwtIssuer()).build();
   }
 

@@ -82,6 +82,7 @@ class OnboardingIT {
             .path("/admin/stores/" + storeId + "/zones")
             .request()
             .header("X-Tenant-Id", tenantId)
+            .header("X-Roles", "OWNER")
             .get(String.class);
     assertThat(zones, containsString("DEFAULT"));
 
@@ -117,7 +118,12 @@ class OnboardingIT {
 
     // tenant B sees no stores
     String listB =
-        target.path("/admin/stores").request().header("X-Tenant-Id", TENANT_B).get(String.class);
+        target
+            .path("/admin/stores")
+            .request()
+            .header("X-Tenant-Id", TENANT_B)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
     assertThat(listB, not(containsString("A-store")));
   }
 

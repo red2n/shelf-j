@@ -63,6 +63,8 @@ const layawayLatency               = new Trend('layaway_latency_ms',            
 const giftCardLatency              = new Trend('gift_card_latency_ms',          true);
 const pricingLatency               = new Trend('pricing_latency_ms',            true);
 const intercompanyLatency          = new Trend('intercompany_latency_ms',        true);
+// Tier 7 (gaps #61–72): any count here is a security regression at the gateway/order layer.
+const securityViolations           = new Counter('security_violations');
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -159,6 +161,10 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'intercompanyFlow', startTime: '48s',
     },
+    gatewaySecurity: {
+      executor: 'constant-vus', vus: 1, duration: '30s',
+      exec: 'gatewaySecurity', startTime: '50s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -185,6 +191,7 @@ export const options = {
     gift_card_latency_ms:        ['p(95)<800'],
     pricing_latency_ms:          ['p(95)<800'],
     intercompany_latency_ms:     ['p(95)<1000'],
+    security_violations:         ['count==0'],
   },
 };
 
@@ -203,6 +210,10 @@ function post(path, body, token) {
 
 function put(path, body, token) {
   return http.put(`${BASE}${path}`, JSON.stringify(body), { headers: hdrs(token) });
+}
+
+function patch(path, body, token) {
+  return http.patch(`${BASE}${path}`, JSON.stringify(body), { headers: hdrs(token) });
 }
 
 function get(path, token) {
@@ -289,14 +300,21 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
   }
   const tenantId = body(tRes).id;
 
-  // Re-login to get a JWT with the tenant claim (Kafka event binds owner before login returns)
+  // Re-login to get a JWT with the tenant claim (Kafka event binds owner before login returns).
+  // On a cold stack the iam-svc Kafka consumer can take 10-20s to join its group and process
+  // TenantCreated, so poll generously — a token without tenant+OWNER poisons the whole tenant's
+  // seeding (every admin call 401/403s).
   const ownerToken = (() => {
-    // poll up to 4s for iam-svc to process TenantCreated event
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 30; i++) {
       const t = loginUser(owner.email, owner.password);
-      if (t && jwtPayload(t)['tenant']) return t;
+      if (t) {
+        const claims = jwtPayload(t);
+        const roles = claims.roles || [];
+        if (claims.tenant && roles.includes('OWNER')) return t;
+      }
       sleep(1);
     }
+    console.error(`[${tag}] owner token never received tenant+OWNER claims after 30s — seeding will fail`);
     return owner.token; // fallback: use registration token (no tenant claim)
   })();
 
@@ -2449,7 +2467,7 @@ export function orderPos(d) {
 
   // 5. Cross-tenant isolation: cannot see other tenant's order
   const other = isIN(d) ? d.uk : d.india;
-  const isoRes = get(`/api/order-svc/orders/${orderId}`, other.tenantId, other.ownerId);
+  const isoRes = get(`/api/order-svc/orders/${orderId}`, other.ownerToken);
   check(isoRes, {
     [`${tag} cross-tenant order isolation 404`]: r => r.status === 404,
   });
@@ -2515,7 +2533,7 @@ export function layawayManagement(d) {
 
   // 6. Cross-tenant isolation
   const other = isIN(d) ? d.uk : d.india;
-  const isoRes = get(`/api/order-svc/layaways/${layawayId}`, other.tenantId, other.ownerId);
+  const isoRes = get(`/api/order-svc/layaways/${layawayId}`, other.ownerToken);
   check(isoRes, {
     [`${tag} cross-tenant layaway isolation 404`]: r => r.status === 404,
   });
@@ -2570,7 +2588,7 @@ export function giftCardManagement(d) {
 
   // 6. Cross-tenant isolation: other tenant cannot see this card
   const other = isIN(d) ? d.uk : d.india;
-  const isoRes = get(`/api/order-svc/gift-cards/${code}`, other.tenantId, other.ownerId);
+  const isoRes = get(`/api/order-svc/gift-cards/${code}`, other.ownerToken);
   check(isoRes, {
     [`${tag} cross-tenant gift card isolation 404`]: r => r.status === 404,
   });
@@ -2917,7 +2935,7 @@ export function negativeTests(d) {
   // Confirm the other tenant's brand is still intact (isolation not broken)
   if (other.brandId) {
     const confirmRes = get(`/api/product-svc/admin/brands/${other.brandId}`,
-      other.tenantId, other.ownerId);
+      other.ownerToken);
     check(confirmRes, {
       [`${tag} NEG other-tenant brand still reachable by its own tenant`]: r => r.status === 200,
     });
@@ -3431,7 +3449,7 @@ export function intercompanyFlow(d) {
   // ── Negative: tenant isolation — other tenant cannot see invoices ──────────
   const otherTenant = tenantCtx({ india: d.uk, uk: d.india });
   if (otherTenant && arId) {
-    r = get(`/api/purchase-svc/intercompany-invoices/${arId}`, otherTenant.tenantId, otherTenant.ownerId);
+    r = get(`/api/purchase-svc/intercompany-invoices/${arId}`, otherTenant.ownerToken);
     check(r, { 'IC invoice cross-tenant 404': res => res.status === 404 });
     if (r.status !== 404) isolationViolations.add(1);
   }
@@ -3511,7 +3529,7 @@ export function paymentFlow(d) {
   // 7. Cross-tenant isolation for payment
   if (paymentId) {
     const other = isIN(d) ? d.uk : d.india;
-    const isoRes = get(`/api/payment-svc/payments/${paymentId}`, other.tenantId, other.ownerId);
+    const isoRes = get(`/api/payment-svc/payments/${paymentId}`, other.ownerToken);
     check(isoRes, { [`${tag} payment cross-tenant isolation 404`]: r => r.status === 404 });
   }
 
@@ -3558,6 +3576,123 @@ export function bulkImportFlow(d) {
     check(reimportRes, {
       [`${tag} duplicate category skipped`]: _ => r2 && r2.categoriesSkipped >= 1,
     });
+  }
+
+  sleep(1);
+}
+
+// ── Tier 7 (gaps #61–72): gateway security & API conventions ──────────────────
+export function gatewaySecurity(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const store  = tenant.stores[0];
+  if (!store || !tenant.variantIds.length) return;
+  const tag       = isIN(d) ? 'gwSec[IN]' : 'gwSec[UK]';
+  const storeId   = store.storeId;
+  const variantId = tenant.variantIds[0];
+
+  // Gap #61: a URL that merely embeds a public auth suffix must NOT bypass JWT validation.
+  const bypass = http.get(`${BASE}/api/product-svc/products/iam-svc/auth/login`,
+    { headers: { 'Content-Type': 'application/json' } });
+  if (!check(bypass, { [`${tag} embedded public-path suffix → 401`]: r => r.status === 401 })) {
+    securityViolations.add(1);
+  }
+
+  // Gap #70: gateway filter errors use the standard envelope (machine-readable error.code).
+  check(bypass, {
+    [`${tag} 401 carries error.code UNAUTHORIZED`]: r => {
+      try { return JSON.parse(r.body).error.code === 'UNAUTHORIZED'; } catch (_) { return false; }
+    },
+  });
+
+  // Gap #69: internal platform services are not routable even with a valid token.
+  const cfgRes = get('/api/config/configs/iam-svc/default', tenant.ownerToken);
+  check(cfgRes, {
+    [`${tag} internal 'config' service not routable`]: r => r.status === 503 || r.status === 404,
+  });
+  if (cfgRes.status >= 200 && cfgRes.status < 300) securityViolations.add(1);
+
+  // Gap #72 (CORS): no origins configured → preflight must NOT echo any allow-origin header.
+  const pre = http.options(`${BASE}/api/order-svc/orders`, null, { headers: {
+    'Origin': 'https://evil.example.com',
+    'Access-Control-Request-Method': 'POST',
+  }});
+  if (!check(pre, {
+    [`${tag} CORS deny-by-default (no allow-origin)`]: r => !r.headers['Access-Control-Allow-Origin'],
+  })) {
+    securityViolations.add(1);
+  }
+
+  // Gap #66: POS session sweep is platform-admin only — an OWNER must be refused.
+  const sweep = post('/api/iam-svc/auth/pos/sessions/sweep', {}, tenant.ownerToken);
+  if (!check(sweep, { [`${tag} POS sweep with OWNER → 403`]: r => r.status === 403 })) {
+    securityViolations.add(1);
+  }
+
+  // Gaps #67 + #71: the Idempotency-Key HTTP header is forwarded by the gateway and a
+  // retried checkout replays the original order instead of duplicating or erroring.
+  const idemKey   = `gw-idem-${__VU}-${__ITER}-${Date.now()}`;
+  const orderBody = JSON.stringify({
+    storeId, channel: 'POS', fulfilmentType: 'INSTORE',
+    items: [{ variantId, qty: 1, unitPrice: '9.99' }], currency: 'USD',
+  });
+  const idemHeaders = { headers: Object.assign({ 'Idempotency-Key': idemKey }, hdrs(tenant.ownerToken)) };
+  const first = http.post(`${BASE}/api/order-svc/orders`, orderBody, idemHeaders);
+  const retry = http.post(`${BASE}/api/order-svc/orders`, orderBody, idemHeaders);
+  ok(first, `${tag} idempotent place 201`);
+  const firstId = (() => { try { return JSON.parse(first.body).data.id; } catch (_) { return null; } })();
+  const retryId = (() => { try { return JSON.parse(retry.body).data.id; } catch (_) { return null; } })();
+  if (!check(retry, {
+    [`${tag} Idempotency-Key header replay → same order id`]: _ => firstId !== null && firstId === retryId,
+  })) {
+    securityViolations.add(1);
+  }
+
+  // Gap #72 (pagination): GET /orders pages with an opaque cursor and pages never overlap.
+  for (let i = 0; i < 2; i++) {
+    post('/api/order-svc/orders', {
+      storeId, channel: 'POS', fulfilmentType: 'INSTORE',
+      items: [{ variantId, qty: 1, unitPrice: '1.00' }], currency: 'USD',
+    }, tenant.ownerToken);
+  }
+  const page1 = get('/api/order-svc/orders?limit=2', tenant.ownerToken);
+  ok(page1, `${tag} list orders page1 200`);
+  const page1Body = (() => { try { return JSON.parse(page1.body); } catch (_) { return {}; } })();
+  const cursor = page1Body.meta && page1Body.meta.nextCursor;
+  check(page1, { [`${tag} page1 exposes meta.nextCursor`]: _ => !!cursor });
+  if (cursor) {
+    const page2 = get(`/api/order-svc/orders?limit=2&after=${encodeURIComponent(cursor)}`, tenant.ownerToken);
+    ok(page2, `${tag} list orders page2 200`);
+    const ids1 = (page1Body.data || []).map(o => o.id);
+    const ids2 = (() => { try { return (JSON.parse(page2.body).data || []).map(o => o.id); } catch (_) { return []; } })();
+    check(page2, {
+      [`${tag} pages do not overlap`]: _ => ids2.length > 0 && !ids2.some(id => ids1.includes(id)),
+    });
+  }
+  const badCursor = get('/api/order-svc/orders?after=%21%21bogus%21%21', tenant.ownerToken);
+  check(badCursor, { [`${tag} malformed cursor → 400`]: r => r.status === 400 });
+
+  // Gap #72 (PATCH): PATCH is proxied by the gateway end-to-end.
+  const patchRes = patch(`/api/tenant-svc/admin/stores/${storeId}/status`,
+    { status: 'ACTIVE' }, tenant.ownerToken);
+  ok(patchRes, `${tag} PATCH store status via gateway 200`);
+
+  // Gap #63: money inputs are constrained — negative tax and oversized discount are rejected.
+  const negTax = post('/api/order-svc/orders', {
+    storeId, channel: 'POS', fulfilmentType: 'INSTORE',
+    items: [{ variantId, qty: 1, unitPrice: '10.00' }],
+    taxAmount: '-5.00', currency: 'USD',
+  }, tenant.ownerToken);
+  if (!check(negTax, { [`${tag} negative taxAmount → 400`]: r => r.status === 400 })) {
+    securityViolations.add(1);
+  }
+  const bigDisc = post('/api/order-svc/orders', {
+    storeId, channel: 'POS', fulfilmentType: 'INSTORE',
+    items: [{ variantId, qty: 1, unitPrice: '10.00' }],
+    discountAmount: '999.00', currency: 'USD',
+  }, tenant.ownerToken);
+  if (!check(bigDisc, { [`${tag} discount > subtotal → 400`]: r => r.status === 400 })) {
+    securityViolations.add(1);
   }
 
   sleep(1);

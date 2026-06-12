@@ -1,12 +1,17 @@
 package com.shelfj.order.service;
 
+import static com.shelfj.events.EventPayload.esc;
+
 import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.domain.Domain.ReturnItem;
 import com.shelfj.service.OutboxRow;
 import java.util.List;
 import java.util.UUID;
 
-/** Builds {@link OutboxRow} instances for all events published by order-svc. */
+/**
+ * Builds {@link OutboxRow} instances for all events published by order-svc. Request-supplied
+ * strings (channel, cancel reason) are escaped — they must not be able to corrupt event JSON.
+ */
 final class Events {
 
   private Events() {}
@@ -19,7 +24,7 @@ final class Events {
         orderId,
         String.format(
             "{\"eventType\":\"OrderPlaced\",\"tenantId\":\"%s\",\"orderId\":\"%s\",\"channel\":\"%s\"}",
-            tenantId, orderId, channel));
+            tenantId, orderId, esc(channel)));
   }
 
   static OutboxRow orderConfirmed(UUID tenantId, UUID orderId) {
@@ -41,7 +46,7 @@ final class Events {
         orderId,
         String.format(
             "{\"eventType\":\"OrderCancelled\",\"tenantId\":\"%s\",\"orderId\":\"%s\",\"reason\":\"%s\"}",
-            tenantId, orderId, reason == null ? "" : reason));
+            tenantId, orderId, esc(reason)));
   }
 
   static OutboxRow orderFulfilled(

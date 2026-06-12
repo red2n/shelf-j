@@ -83,6 +83,20 @@ public final class Dtos {
       String createdAt,
       String updatedAt) {}
 
+  /** Returned by the POS barcode-scan endpoint — includes product context in one round-trip. */
+  public record VariantScanResponse(
+      String variantId,
+      String productId,
+      String productName,
+      String sku,
+      String barcode,
+      String manufacturerPn,
+      String attributes,
+      String unit,
+      String status,
+      String createdAt,
+      String updatedAt) {}
+
   // ── UOM ──────────────────────────────────────────────────────────────────
 
   public record UomClassResponse(String code, String name) {}

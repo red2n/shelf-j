@@ -55,11 +55,17 @@ class InventoryIT {
         .path(path)
         .request()
         .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
   private String get(String path, String tenant) {
-    return target.path(path).request().header("X-Tenant-Id", tenant).get(String.class);
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get(String.class);
   }
 
   @Test
@@ -96,6 +102,7 @@ class InventoryIT {
             .queryParam("store", S)
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .get(String.class),
         containsString("\"available\":15"));
 
@@ -113,6 +120,7 @@ class InventoryIT {
             .queryParam("store", S)
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .get(String.class),
         containsString("\"available\":3"));
 
@@ -134,6 +142,7 @@ class InventoryIT {
             .queryParam("store", S)
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .get(String.class),
         containsString("\"onHand\":3"));
 
@@ -270,6 +279,7 @@ class InventoryIT {
             .queryParam("withinDays", 3650)
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .get(String.class);
     assertThat(resp, containsString("EXP-NEAR"));
   }
@@ -283,6 +293,7 @@ class InventoryIT {
             .queryParam("withinDays", 9999)
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .get();
     assertThat(r.getStatus(), is(400));
   }
@@ -307,6 +318,7 @@ class InventoryIT {
             .path("/admin/inventory/batches/" + batchId + "/grade")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(Entity.entity("{\"grade\":\"B\"}", MediaType.APPLICATION_JSON));
     assertThat(r.getStatus(), is(200));
     assertThat(r.readEntity(String.class), containsString("\"grade\":\"B\""));
@@ -330,6 +342,7 @@ class InventoryIT {
             .path("/admin/inventory/batches/" + batchId + "/grade")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(Entity.entity("{\"grade\":\"\"}", MediaType.APPLICATION_JSON));
     assertThat(r.getStatus(), is(400));
   }
@@ -354,6 +367,7 @@ class InventoryIT {
             .path("/admin/inventory/lots/" + batchId + "/uom-conversions")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(
                 Entity.entity(
                     "{\"batchId\":\""
@@ -385,6 +399,7 @@ class InventoryIT {
             .path("/admin/inventory/lots/" + batchId + "/uom-conversions")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(
                 Entity.entity(
                     "{\"batchId\":\""
@@ -403,6 +418,7 @@ class InventoryIT {
             .path("/admin/inventory/par-levels")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(
                 Entity.entity(
                     "{\"storeId\":\""
@@ -420,6 +436,7 @@ class InventoryIT {
             .queryParam("store", S)
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .get(String.class);
     assertThat(list, containsString("WEEKLY"));
   }
@@ -431,6 +448,7 @@ class InventoryIT {
             .path("/admin/inventory/par-levels")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(
                 Entity.entity(
                     "{\"storeId\":\""
@@ -452,6 +470,7 @@ class InventoryIT {
             .path("/admin/inventory/rop-plans")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(
                 Entity.entity(
                     "{\"storeId\":\""
@@ -468,6 +487,7 @@ class InventoryIT {
             .path("/admin/inventory/rop-plans/" + ropId + "/order-modifiers")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(
                 Entity.entity(
                     "{\"minOrderQty\":5,\"maxOrderQty\":100,\"lotMultiplier\":5}",
@@ -483,6 +503,7 @@ class InventoryIT {
             .path("/admin/inventory/rop-plans/00000000-0000-0000-0000-000000000099/order-modifiers")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(Entity.entity("{\"minOrderQty\":1}", MediaType.APPLICATION_JSON));
     assertThat(r.getStatus(), is(404));
   }
@@ -554,6 +575,7 @@ class InventoryIT {
             .path("/admin/inventory/zone-gl-mappings")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(
                 Entity.entity(
                     "{\"storeId\":\""
@@ -569,6 +591,7 @@ class InventoryIT {
             .queryParam("store", S)
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .get(String.class);
     assertThat(list, containsString("1200"));
   }
@@ -580,6 +603,7 @@ class InventoryIT {
             .path("/admin/inventory/zone-gl-mappings")
             .request()
             .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
             .put(Entity.entity("{\"storeId\":\"" + S + "\"}", MediaType.APPLICATION_JSON));
     assertThat(r.getStatus(), is(400));
   }

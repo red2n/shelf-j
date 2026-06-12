@@ -40,4 +40,29 @@ public final class Domain {
       String idempotencyKey,
       String reason,
       Instant createdAt) {}
+
+  public record TillSession(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID openedBy,
+      BigDecimal floatAmount,
+      String status,
+      BigDecimal countedCash,
+      BigDecimal overShort,
+      Instant openedAt,
+      Instant closedAt) {
+
+    public static final String STATUS_OPEN = "OPEN";
+    public static final String STATUS_CLOSED = "CLOSED";
+  }
+
+  public record CashDrop(
+      UUID id,
+      UUID tenantId,
+      UUID tillSessionId,
+      BigDecimal amount,
+      UUID recordedBy,
+      String notes,
+      Instant createdAt) {}
 }

@@ -38,10 +38,16 @@ public class ConfigResource {
   @ConfigProperty(name = "shelfj.config.repo", defaultValue = "config-repo")
   String repoDir;
 
+  /** Service/profile names are used to build file paths — keep them to a strict safe charset. */
+  private static final java.util.regex.Pattern SAFE_NAME =
+      java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,64}");
+
   @GET
   @Path("/{service}/{profile}")
   public ApiResponse<Map<String, String>> get(
       @PathParam("service") String service, @PathParam("profile") String profile) {
+    requireSafeName(service, "service");
+    requireSafeName(profile, "profile");
     var merged = new LinkedHashMap<String, String>();
     // base (service.properties) then profile overlay (service-profile.properties)
     loadInto(merged, service + ".properties");
@@ -51,6 +57,17 @@ public class ConfigResource {
           "CONFIG_NOT_FOUND", "No configuration for service=" + service + " profile=" + profile);
     }
     return ApiResponse.ok(merged);
+  }
+
+  /**
+   * Rejects anything outside {@code [A-Za-z0-9_-]} — path separators, dots, and encoded traversal
+   * sequences can otherwise escape the config repo and read arbitrary *.properties on disk.
+   */
+  private static void requireSafeName(String value, String what) {
+    if (value == null || !SAFE_NAME.matcher(value).matches()) {
+      throw ApiException.badRequest(
+          "CONFIG_INVALID_NAME", what + " must match [A-Za-z0-9_-]{1,64}");
+    }
   }
 
   private void loadInto(Map<String, String> target, String fileName) {

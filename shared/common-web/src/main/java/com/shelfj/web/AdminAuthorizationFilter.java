@@ -77,8 +77,7 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     return Response.status(Response.Status.FORBIDDEN)
         .type(MediaType.APPLICATION_JSON)
         .entity(
-            "{\"error\":{\"code\":\"FORBIDDEN\","
-                + "\"message\":\"Insufficient role for this operation\"}}")
+            ApiResponse.error(ErrorBody.of("FORBIDDEN", "Insufficient role for this operation")))
         .build();
   }
 }

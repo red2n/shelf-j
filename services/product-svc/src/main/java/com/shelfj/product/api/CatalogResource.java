@@ -2,6 +2,7 @@ package com.shelfj.product.api;
 
 import com.shelfj.product.dto.Dtos.ProductResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
+import com.shelfj.product.dto.Dtos.VariantScanResponse;
 import com.shelfj.product.mapper.Mappers;
 import com.shelfj.product.service.ProductService;
 import com.shelfj.web.ApiException;
@@ -24,6 +25,13 @@ import java.util.UUID;
  * X-Tenant-Id}, which the gateway resolves from the storefront's domain/subdomain (multi-tenant
  * SaaS standard). Only ACTIVE products show; the online list returns only {@code sellable_online}
  * products.
+ *
+ * <p>Search params on {@code GET /catalog/products}: {@code ?q=} (name contains, case-insensitive),
+ * {@code ?sku=} (exact SKU), {@code ?barcode=} (exact barcode). At least one of q/sku/barcode
+ * routes to the search path; without them, the standard filtered list is returned.
+ *
+ * <p>POS barcode scan: {@code GET /catalog/variants/by-barcode/{code}} returns a {@link
+ * VariantScanResponse} embedding product context so the terminal needs only one round-trip.
  */
 @Path("/catalog")
 @ApplicationScoped
@@ -36,14 +44,30 @@ public class CatalogResource {
   @GET
   @Path("/products")
   public ApiResponse<List<ProductResponse>> list(
-      @QueryParam("category") String category, @QueryParam("limit") Integer limit) {
+      @QueryParam("category") String category,
+      @QueryParam("q") String q,
+      @QueryParam("sku") String sku,
+      @QueryParam("barcode") String barcode,
+      @QueryParam("limit") Integer limit) {
     UUID tenantId = requireTenant();
-    UUID categoryId = parseOptional(category);
     int clamped = Cursor.clampLimit(limit);
-    List<ProductResponse> items =
-        service.listProducts(tenantId, categoryId, true, clamped).stream()
-            .map(Mappers::toProduct)
-            .toList();
+
+    List<ProductResponse> items;
+    if (q != null || sku != null || barcode != null) {
+      String trimQ = blank(q) ? null : q.trim();
+      String trimSku = blank(sku) ? null : sku.trim();
+      String trimBarcode = blank(barcode) ? null : barcode.trim();
+      items =
+          service.searchProducts(tenantId, trimQ, trimSku, trimBarcode, false, clamped).stream()
+              .map(Mappers::toProduct)
+              .toList();
+    } else {
+      UUID categoryId = parseOptionalUuid(category, "INVALID_CATEGORY", "category must be a UUID");
+      items =
+          service.listProducts(tenantId, categoryId, true, clamped).stream()
+              .map(Mappers::toProduct)
+              .toList();
+    }
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
@@ -60,6 +84,21 @@ public class CatalogResource {
     return ApiResponse.ok(items);
   }
 
+  /**
+   * POS barcode-scan lookup. Returns the variant and its parent product in a single response so the
+   * terminal does not need a second round-trip. Returns 404 when no active variant matches.
+   */
+  @GET
+  @Path("/variants/by-barcode/{code}")
+  public ApiResponse<VariantScanResponse> scanByBarcode(@PathParam("code") String code) {
+    UUID tenantId = requireTenant();
+    if (code == null || code.isBlank()) {
+      throw ApiException.badRequest("INVALID_BARCODE", "barcode must not be blank");
+    }
+    var vp = service.findVariantByBarcode(tenantId, code.trim());
+    return ApiResponse.ok(Mappers.toVariantScan(vp.variant(), vp.product()));
+  }
+
   private UUID requireTenant() {
     if (ctx.tenantId() == null) {
       throw ApiException.badRequest(
@@ -68,14 +107,18 @@ public class CatalogResource {
     return ctx.tenantId();
   }
 
-  private static UUID parseOptional(String s) {
-    if (s == null || s.isBlank()) {
+  private static boolean blank(String s) {
+    return s == null || s.isBlank();
+  }
+
+  private static UUID parseOptionalUuid(String s, String code, String message) {
+    if (blank(s)) {
       return null;
     }
     try {
       return UUID.fromString(s);
     } catch (IllegalArgumentException e) {
-      throw new ApiException(400, "INVALID_CATEGORY", "category must be a UUID", List.of(), e);
+      throw new ApiException(400, code, message, List.of(), e);
     }
   }
 }

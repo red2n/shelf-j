@@ -2,7 +2,7 @@ package com.shelfj.order.api;
 
 import com.shelfj.order.domain.Domain.PosStockPosition;
 import com.shelfj.order.dto.Dtos.PosStockPositionResponse;
-import com.shelfj.order.repo.OrderRepository;
+import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.RequestScoped;
@@ -30,7 +30,7 @@ import java.util.UUID;
 @Produces(MediaType.APPLICATION_JSON)
 public class PosStockResource {
 
-  @Inject OrderRepository repo;
+  @Inject OrderService svc;
   @Inject TenantContext ctx;
 
   @GET
@@ -43,7 +43,7 @@ public class PosStockResource {
     UUID storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
     UUID variantId = variantIdStr != null ? UUID.fromString(variantIdStr) : null;
     List<PosStockPositionResponse> rows =
-        repo.findStockPositions(tenantId, storeId, variantId, effectiveLimit).stream()
+        svc.listStockPositions(tenantId, storeId, variantId, effectiveLimit).stream()
             .map(PosStockResource::toResponse)
             .toList();
     return Response.ok(ApiResponse.ok(rows)).build();

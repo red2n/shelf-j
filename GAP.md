@@ -367,6 +367,29 @@
 
 ---
 
+### Tier 7 — Usability & security review (2026-06-11)
+
+> Found by a fresh code audit of the gateway auth stack, iam-svc, order-svc, and common-web filters. Items 61–66 are security; 67–72 are usability/consistency. **61–63 should be fixed before any exposure beyond local dev.**
+
+| # | Severity | Gap | Service | Notes |
+|---|---|---|---|---|
+| 61 | 🔴 HIGH | **JWT public-path bypass via `contains()`** — `JwtAuthFilter.isPublic()` matches `path.contains("iam-svc/auth/login")` etc., so ANY URL embedding a public suffix (e.g. `/api/product-svc/x/iam-svc/auth/login`) skips token validation entirely | gateway | Match the exact normalized path (`equals`/`startsWith` on `api/iam-svc/auth/...`), not substring |
+| 62 | 🔴 HIGH | **Hardcoded fallback JWT secret** — `shelfj.jwt.secret` defaults to `dev-only-hmac-secret-change-me-please-32+chars` in BOTH gateway `GatewayConfig` and iam-svc `ServiceConfig`; a deploy that forgets the env var ships forgeable tokens | gateway + iam-svc | Remove `defaultValue`; fail fast at startup if unset/short outside a `dev` profile. Longer term: RS256/JWKS as already noted in `JwtService` javadoc |
+| 63 | 🔴 HIGH | **Order placement trusts client-supplied money** — `placeOrder` takes `unitPrice` per line from the request and never validates against pricing-svc; `taxAmount`/`discountAmount` have no `@PositiveOrZero`, so a negative tax or oversized discount drives the total down or negative | order-svc | Resolve prices server-side from pricing-svc (price list + active overrides); constrain tax/discount ≥ 0 and discount ≤ subtotal; record manual price deviations via the existing `price_overrides` audit |
+| 64 | 🟡 MEDIUM | **Rate-limit & brute-force keyed on spoofable headers** — `extractClientIp` trusts `X-Forwarded-For`/`X-Real-IP` (attacker rotates header → unlimited tries; unbounded bucket map → memory growth) and falls back to a single shared `"unknown"` key (one client can exhaust everyone's bucket) | gateway | Use the socket remote address (or trust XFF only from a configured proxy CIDR); bound the bucket map (LRU/expiry) |
+| 65 | 🟡 MEDIUM | **BruteForceFilter never actually blocks** — it parses `username` from the body but iam-svc login sends `email`, so the per-user key is never set; AND the request-phase check is `isBlocked(ip)` while failures are recorded under `"user:"+username` — the keys never meet | gateway | Parse `email`, and check both the user key and IP key on the request phase; add a test that drives a real lockout through `/auth/login` |
+| 66 | 🟡 MEDIUM | **Unguarded tenant-global admin ops** — `POST /auth/pos/sessions/sweep` (javadoc says "Admin") matches no `AdminAuthorizationFilter` rule and `sweepIdle()` ignores tenant — any authenticated CUSTOMER can revoke idle POS sessions across ALL tenants. Also `changePassword` doesn't revoke existing refresh tokens (stolen-session survives password reset) | iam-svc | Guard sweep with `requireAnyRole(PLATFORM_ADMIN)` or move under `/admin/`; add `revokeAllForUser(userId)` on password change |
+| 67 | 🟡 MEDIUM | **Duplicate idempotency key → raw 500** — only `ApiException` has a mapper; the unique-index violation from `idx_orders_idem` surfaces as an unmapped exception, so a retried checkout gets a 500 instead of the original order | order-svc (+ common-web) | Catch the constraint violation in `createOrder` and return the existing order (idempotent replay); map `SQLException`/persistence exceptions to a sanitized envelope (NOT a catch-all `Throwable` mapper — see Helidon trap) |
+| 68 | 🟢 LOW | **Outbox JSON built by string-format with user input** — `AuthService.register` interpolates raw email into a JSON template; a legal quoted-local-part email (`"a\"b"@x.com`) corrupts/injects the event payload | iam-svc | Build the payload with Jsonb, not `String.formatted` |
+| 69 | 🟢 LOW | **Gateway proxies any Consul-registered name** — no allowlist; if an internal service (config, discovery) ever registers, it becomes internet-reachable through `/api/{service}/...`. Related: `ConfigResource` builds file paths from raw `{service}/{profile}` params (`../` traversal to any `*.properties` on disk) | gateway + config | Allowlist routable service names in gateway config; reject path params containing `/`, `\`, `..` in ConfigResource |
+| 70 | 🟢 LOW | **Filter error responses bypass the envelope** — 401/403 from `JwtAuthFilter`/`AdminAuthorizationFilter` are hand-built JSON without `meta.requestId`; rate-limit/brute-force 429s are plain text | gateway + common-web | Emit the standard `ApiResponse.error` envelope (+ `Retry-After` kept) so clients parse one shape |
+| 71 | 🟢 LOW | **Idempotency convention drift** — README golden rule #11 says `Idempotency-Key` **header**, but order/payment accept it as a **body field**, and the gateway wouldn't forward the header anyway (ProxyResource forwards only identity + request-id) | gateway + docs | Pick one: keep body field and amend README, or forward the header at the proxy and read it in resources |
+| 72 | 🟢 LOW | **Conventions gaps on read APIs** — `GET /orders` is limit-only (no `after` cursor / `nextCursor` meta per README §7); gateway proxy lacks PATCH; no CORS config exists yet for the future browser frontends | order-svc + gateway | Add cursor pagination, PATCH route, and configurable CORS (allowed origins from config) before frontends land |
+
+> **Structural usability note:** the ONLINE purchase path is currently unreachable end-to-end — CUSTOMER tokens carry no `tenant` claim, `placeOrder` requires one, and cart-svc / customer-svc don't exist yet. Storefront checkout needs a deliberate design for "customer acting within a tenant's store" (e.g. store context resolved from the storefront URL, not the JWT) before Phase 2 closes.
+
+---
+
 ## Summary
 
 **Backlog 1 (items 1–20):** ✅ All done — planning engine, UOM, serial control, material status, move/transfer orders, demand history, safety stock, ABC analysis, cycle counting, lot genealogy, item revisions, templates, POS engine, tax/VAT, physical inventory, costing, kanban, ROP with EOQ, intercompany invoicing.
@@ -382,6 +405,7 @@
 | 4 — Reporting & multi-org | ~~47–50~~ ✅ · 51–52 open | ~~Cross-store on-hand, supply/demand netting, movement stats, SIM↔POS sync done~~ · Shipping network/methods, economic zones remain |
 | ~~5 — Blockers~~ | ~~55~~ ✅ | ~~Shortage alert dispatch to notification-svc~~ |
 | **6 — Security** | **56–60** | **✅ All 5 fixed — gateway JWT (JwtAuthFilter), RBAC (AdminAuthorizationFilter), payment over-refund, payment DDL, bulk import error leak** |
+| **7 — Usability & security review** | **61–72 ✅ all fixed** | **JWT path bypass, default secret, server-side pricing (PricingClient → pricing-svc `/prices/resolve`, gated by `shelfj.order.pricing.enforce` — MUST be true in prod), spoofable rate-limit keys, broken brute-force, unguarded sweep, idempotent replay, outbox JSON injection, gateway allowlist + config traversal, envelope on filter errors, Idempotency-Key header convention, cursor pagination + PATCH + CORS** |
 
 ---
 

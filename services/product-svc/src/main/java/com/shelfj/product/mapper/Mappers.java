@@ -46,6 +46,7 @@ import com.shelfj.product.dto.Dtos.VariantAttributeGroupValuesResponse;
 import com.shelfj.product.dto.Dtos.VariantCategorySetAssignmentResponse;
 import com.shelfj.product.dto.Dtos.VariantContainerLinkResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
+import com.shelfj.product.dto.Dtos.VariantScanResponse;
 import java.time.Instant;
 import java.util.List;
 
@@ -87,6 +88,21 @@ public final class Mappers {
     return new VariantResponse(
         v.id().toString(),
         v.productId().toString(),
+        v.sku(),
+        v.barcode(),
+        v.manufacturerPn(),
+        v.attributes(),
+        v.unit(),
+        v.status(),
+        ts(v.createdAt()),
+        ts(v.updatedAt()));
+  }
+
+  public static VariantScanResponse toVariantScan(Variant v, Product p) {
+    return new VariantScanResponse(
+        v.id().toString(),
+        p.id().toString(),
+        p.name(),
         v.sku(),
         v.barcode(),
         v.manufacturerPn(),

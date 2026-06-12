@@ -63,10 +63,16 @@ public class PosSessionResource {
     return Response.ok(ApiResponse.ok(list)).build();
   }
 
-  /** Admin: expire all sessions idle past their timeout and revoke their refresh tokens. */
+  /**
+   * Admin: expire all sessions idle past their timeout and revoke their refresh tokens. This is a
+   * platform-wide maintenance operation (it ignores tenant scope), so it is restricted to platform
+   * administrators — without this guard any authenticated caller could revoke POS sessions across
+   * every tenant.
+   */
   @POST
   @Path("/sweep")
   public Response sweep() {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
     int expired = svc.sweepIdle();
     return Response.ok(ApiResponse.ok(new IdleSweepResult(expired))).build();
   }
