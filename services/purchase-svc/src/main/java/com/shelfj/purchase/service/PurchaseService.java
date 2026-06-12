@@ -40,7 +40,7 @@ public class PurchaseService {
     Supplier s =
         new Supplier(
             UUID.randomUUID(),
-            ctx.tenantId(),
+            ctx.requireTenantId(),
             req.name(),
             req.vatNumber(),
             req.vatRegistered(),
@@ -53,11 +53,11 @@ public class PurchaseService {
   }
 
   public List<Supplier> listSuppliers(TenantContext ctx) {
-    return repo.findSuppliers(ctx.tenantId());
+    return repo.findSuppliers(ctx.requireTenantId());
   }
 
   public Supplier getSupplier(TenantContext ctx, UUID id) {
-    return repo.findSupplier(ctx.tenantId(), id)
+    return repo.findSupplier(ctx.requireTenantId(), id)
         .orElseThrow(
             () ->
                 ApiException.notFound("PURCHASE_SUPPLIER_NOT_FOUND", "Supplier not found: " + id));
@@ -70,7 +70,7 @@ public class PurchaseService {
     PurchaseOrder po =
         new PurchaseOrder(
             UUID.randomUUID(),
-            ctx.tenantId(),
+            ctx.requireTenantId(),
             req.supplierId(),
             req.storeId(),
             Domain.PO_DRAFT,
@@ -81,15 +81,15 @@ public class PurchaseService {
             req.expectedDelivery() != null ? LocalDate.parse(req.expectedDelivery()) : null,
             Instant.now(),
             Instant.now());
-    return repo.createPurchaseOrder(po, Events.purchaseOrderCreated(ctx.tenantId(), po.id()));
+    return repo.createPurchaseOrder(po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
   }
 
   public List<PurchaseOrder> listPurchaseOrders(TenantContext ctx) {
-    return repo.findPurchaseOrders(ctx.tenantId());
+    return repo.findPurchaseOrders(ctx.requireTenantId());
   }
 
   public PurchaseOrder getPurchaseOrder(TenantContext ctx, UUID id) {
-    return repo.findPurchaseOrder(ctx.tenantId(), id)
+    return repo.findPurchaseOrder(ctx.requireTenantId(), id)
         .orElseThrow(
             () ->
                 ApiException.notFound("PURCHASE_PO_NOT_FOUND", "Purchase order not found: " + id));
@@ -104,7 +104,7 @@ public class PurchaseService {
     PurchaseOrderLine line =
         new PurchaseOrderLine(
             UUID.randomUUID(),
-            ctx.tenantId(),
+            ctx.requireTenantId(),
             poId,
             req.variantId(),
             req.qty(),
@@ -116,14 +116,14 @@ public class PurchaseService {
 
   public List<PurchaseOrderLine> listPurchaseOrderLines(TenantContext ctx, UUID poId) {
     getPurchaseOrder(ctx, poId);
-    return repo.findPurchaseOrderLines(ctx.tenantId(), poId);
+    return repo.findPurchaseOrderLines(ctx.requireTenantId(), poId);
   }
 
   public PurchaseOrder submitPurchaseOrder(TenantContext ctx, UUID poId) {
     PurchaseOrder po = getPurchaseOrder(ctx, poId);
     if (!Domain.PO_DRAFT.equals(po.status()))
       throw ApiException.badRequest("PURCHASE_PO_NOT_DRAFT", "Only DRAFT orders can be submitted");
-    repo.updatePurchaseOrderStatus(ctx.tenantId(), poId, Domain.PO_SUBMITTED);
+    repo.updatePurchaseOrderStatus(ctx.requireTenantId(), poId, Domain.PO_SUBMITTED);
     return getPurchaseOrder(ctx, poId);
   }
 
@@ -140,7 +140,7 @@ public class PurchaseService {
     GoodsReceipt gr =
         new GoodsReceipt(
             UUID.randomUUID(),
-            ctx.tenantId(),
+            ctx.requireTenantId(),
             req.poId(),
             req.storeId(),
             Instant.now(),
@@ -151,19 +151,19 @@ public class PurchaseService {
                 l ->
                     new GoodsReceiptLine(
                         UUID.randomUUID(),
-                        ctx.tenantId(),
+                        ctx.requireTenantId(),
                         gr.id(),
                         l.variantId(),
                         l.qtyReceived(),
                         Instant.now()))
             .toList();
     return repo.createGoodsReceipt(
-        gr, lines, Events.goodsReceived(ctx.tenantId(), gr.id(), gr.storeId(), gr.poId(), lines));
+        gr, lines, Events.goodsReceived(ctx.requireTenantId(), gr.id(), gr.storeId(), gr.poId(), lines));
   }
 
   public List<GoodsReceipt> listGoodsReceipts(TenantContext ctx, UUID poId) {
     getPurchaseOrder(ctx, poId);
-    return repo.findGoodsReceiptsByPo(ctx.tenantId(), poId);
+    return repo.findGoodsReceiptsByPo(ctx.requireTenantId(), poId);
   }
 
   // ── Intercompany Invoices (Gap #20) ───────────────────────────────────────────
@@ -182,7 +182,7 @@ public class PurchaseService {
    */
   public List<IntercompanyInvoice> raiseIntercompanyInvoices(
       RaiseIntercompanyInvoiceRequest req, TenantContext ctx) {
-    UUID tenantId = ctx.tenantId();
+    UUID tenantId = ctx.requireTenantId();
     UUID fromStore = UUID.fromString(req.fromStoreId());
     UUID toStore = UUID.fromString(req.toStoreId());
     if (fromStore.equals(toStore))
@@ -366,13 +366,13 @@ public class PurchaseService {
   }
 
   public IntercompanyInvoice getIntercompanyInvoice(TenantContext ctx, UUID id) {
-    return repo.findIntercompanyInvoice(ctx.tenantId(), id)
+    return repo.findIntercompanyInvoice(ctx.requireTenantId(), id)
         .orElseThrow(
             () -> ApiException.notFound("PURCHASE_INVOICE_NOT_FOUND", "Invoice not found: " + id));
   }
 
   public List<IntercompanyInvoice> listIntercompanyInvoices(TenantContext ctx) {
-    return repo.findIntercompanyInvoices(ctx.tenantId());
+    return repo.findIntercompanyInvoices(ctx.requireTenantId());
   }
 
   public void settleIntercompanyInvoice(TenantContext ctx, UUID id) {
@@ -385,7 +385,7 @@ public class PurchaseService {
       // DR 1200 Bank / CR 1100 Debtors
       settlements.add(
           ledgerEntry(
-              ctx.tenantId(),
+              ctx.requireTenantId(),
               today,
               Domain.CODE_BANK,
               Domain.NAME_BANK,
@@ -395,7 +395,7 @@ public class PurchaseService {
               id));
       settlements.add(
           ledgerEntry(
-              ctx.tenantId(),
+              ctx.requireTenantId(),
               today,
               Domain.CODE_DEBTORS,
               Domain.NAME_DEBTORS,
@@ -407,7 +407,7 @@ public class PurchaseService {
       // DR 2100 Creditors / CR 1200 Bank
       settlements.add(
           ledgerEntry(
-              ctx.tenantId(),
+              ctx.requireTenantId(),
               today,
               Domain.CODE_CREDITORS,
               Domain.NAME_CREDITORS,
@@ -417,7 +417,7 @@ public class PurchaseService {
               id));
       settlements.add(
           ledgerEntry(
-              ctx.tenantId(),
+              ctx.requireTenantId(),
               today,
               Domain.CODE_BANK,
               Domain.NAME_BANK,
@@ -426,7 +426,7 @@ public class PurchaseService {
               desc,
               id));
     }
-    repo.settleIntercompanyInvoice(ctx.tenantId(), id, settlements);
+    repo.settleIntercompanyInvoice(ctx.requireTenantId(), id, settlements);
   }
 
   // ── Nominal Ledger ────────────────────────────────────────────────────────────
@@ -435,7 +435,7 @@ public class PurchaseService {
       TenantContext ctx, String nominalCode, String fromStr, String toStr) {
     LocalDate from = fromStr != null ? LocalDate.parse(fromStr) : null;
     LocalDate to = toStr != null ? LocalDate.parse(toStr) : null;
-    return repo.findNominalLedger(ctx.tenantId(), nominalCode, from, to);
+    return repo.findNominalLedger(ctx.requireTenantId(), nominalCode, from, to);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -21,6 +21,9 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
+import org.eclipse.microprofile.faulttolerance.Retry;
+import org.eclipse.microprofile.faulttolerance.exceptions.CircuitBreakerOpenException;
 
 /**
  * Sync client for pricing-svc's {@code POST /prices/resolve} (golden rule #1: foreign data comes
@@ -55,7 +58,15 @@ public class PricingClient {
    * Returns the effective unit price for one order line, as decided by pricing-svc (price list +
    * active promotions). Throws 422 when no price is configured, 503 when pricing-svc cannot be
    * reached.
+   *
+   * <p>{@code @Retry}: up to 2 retries on transient network errors; aborts immediately on
+   * {@link ApiException} (a valid error response from pricing-svc — retrying a 404 is pointless).
+   * {@code @CircuitBreaker}: trips after 60 % failures in a 5-request window; stays open for 5 s
+   * so a dead pricing-svc doesn't cause every checkout to block for 5 s before failing.
+   * {@link CircuitBreakerOpenException} is caught below and mapped to 503.
    */
+  @Retry(maxRetries = 2, delay = 200, abortOn = {ApiException.class})
+  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
   public BigDecimal resolveUnitPrice(
       UUID tenantId, UUID variantId, UUID storeId, String channel, BigDecimal qty) {
     ServiceInstance instance =
@@ -91,6 +102,8 @@ public class PricingClient {
       }
     } catch (ApiException e) {
       throw e;
+    } catch (CircuitBreakerOpenException e) {
+      throw unavailable("pricing-svc circuit open — too many recent failures", e);
     } catch (RuntimeException e) {
       throw unavailable("pricing-svc unreachable", e);
     }

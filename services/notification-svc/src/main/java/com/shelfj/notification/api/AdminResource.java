@@ -28,7 +28,7 @@ public class AdminResource {
       @QueryParam("storeId") String storeId,
       @QueryParam("variantId") String variantId,
       @QueryParam("limit") @DefaultValue("20") int limit) {
-    UUID tenantId = ctx.tenantId();
+    UUID tenantId = ctx.requireTenantId();
     int effectiveLimit = (limit < 1 || limit > 100) ? 20 : limit;
 
     var alerts =

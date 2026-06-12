@@ -6,6 +6,9 @@ import java.util.concurrent.ConcurrentMap;
 
 public class BruteForceProtectionService {
 
+  /** Hard cap matching RateLimitFilter.MAX_BUCKETS — prevents key-churn OOM under login floods. */
+  static final int MAX_ENTRIES = 10_000;
+
   private final ConcurrentMap<String, FailureState> stateByKey = new ConcurrentHashMap<>();
   private final int maxFailures;
   private final long blockDurationMs;
@@ -23,6 +26,13 @@ public class BruteForceProtectionService {
   public void recordFailure(String key) {
     if (key == null) {
       return;
+    }
+    if (stateByKey.size() >= MAX_ENTRIES && !stateByKey.containsKey(key)) {
+      evictStale();
+      if (stateByKey.size() >= MAX_ENTRIES) {
+        var it = stateByKey.keySet().iterator();
+        if (it.hasNext()) { it.next(); it.remove(); }
+      }
     }
     FailureState state = stateByKey.computeIfAbsent(key, k -> new FailureState());
     synchronized (state) {
@@ -67,6 +77,11 @@ public class BruteForceProtectionService {
       }
       return now < state.blockedUntilMs;
     }
+  }
+
+  private void evictStale() {
+    long now = System.currentTimeMillis();
+    stateByKey.values().removeIf(s -> s.isExpired(now, expiryDurationMs));
   }
 
   private static final class FailureState {

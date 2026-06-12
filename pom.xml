@@ -133,6 +133,12 @@
                 <scope>import</scope>
             </dependency>
 
+            <!-- MicroProfile Fault Tolerance — retry, circuit-breaker, timeout on sync clients -->
+            <dependency>
+                <groupId>io.helidon.microprofile.faulttolerance</groupId>
+                <artifactId>helidon-microprofile-faulttolerance</artifactId>
+            </dependency>
+
             <!-- Quality: ArchUnit — architecture rule tests (used in common-test + each service) -->
             <dependency>
                 <groupId>com.tngtech.archunit</groupId>

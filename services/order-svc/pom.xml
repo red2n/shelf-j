@@ -100,6 +100,12 @@
             <artifactId>helidon-microprofile-bean-validation</artifactId>
         </dependency>
 
+        <!-- MicroProfile Fault Tolerance: @Retry + @CircuitBreaker on PricingClient -->
+        <dependency>
+            <groupId>io.helidon.microprofile.faulttolerance</groupId>
+            <artifactId>helidon-microprofile-faulttolerance</artifactId>
+        </dependency>
+
         <!-- Kafka: outbox publisher + payment event consumer -->
         <dependency>
             <groupId>org.apache.kafka</groupId>
