@@ -26,6 +26,10 @@ class GatewayBeans {
   @Produces
   @ApplicationScoped
   WebClient proxyWebClient() {
-    return WebClient.builder().build();
+    // Bounded waits: without timeouts one hung upstream pins gateway requests indefinitely.
+    return WebClient.builder()
+        .connectTimeout(java.time.Duration.ofSeconds(config.upstreamConnectTimeoutSeconds()))
+        .readTimeout(java.time.Duration.ofSeconds(config.upstreamReadTimeoutSeconds()))
+        .build();
   }
 }

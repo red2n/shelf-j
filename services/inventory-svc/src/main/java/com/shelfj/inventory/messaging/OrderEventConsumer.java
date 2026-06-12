@@ -1,5 +1,6 @@
 package com.shelfj.inventory.messaging;
 
+import com.shelfj.service.KafkaEventLoop;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -8,21 +9,14 @@ import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.time.Duration;
 import java.util.List;
-import java.util.Properties;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.common.serialization.StringDeserializer;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Gap #50 — POS→SIM direction. Polls OrderFulfilled and OrderReturned events from order-svc and
- * dispatches each to {@link OrderEventHandler} to apply the stock movement. Consumer lifecycle
- * only; all logic is in the handler (SRP).
+ * dispatches each to {@link OrderEventHandler}. Consumer lifecycle only; all logic is in the
+ * handler (SRP). The shared {@link KafkaEventLoop} provides manual offset commit with seek-back, so
+ * a failed record is redelivered instead of silently lost.
  */
 @ApplicationScoped
 class OrderEventConsumer {
@@ -36,10 +30,6 @@ class OrderEventConsumer {
   boolean kafkaEnabled;
 
   @Inject
-  @ConfigProperty(name = "shelfj.kafka.bootstrap", defaultValue = "localhost:9092")
-  String bootstrap;
-
-  @Inject
   @ConfigProperty(
       name = "shelfj.kafka.topics.order-fulfilled",
       defaultValue = "shelfj.order.order-fulfilled")
@@ -51,12 +41,14 @@ class OrderEventConsumer {
       defaultValue = "shelfj.order.order-returned")
   String orderReturnedTopic;
 
-  private KafkaConsumer<String, String> consumer;
-  private ScheduledExecutorService scheduler;
-  private volatile boolean running;
+  @Inject
+  @ConfigProperty(name = "shelfj.kafka.bootstrap", defaultValue = "localhost:9092")
+  String bootstrap;
+
+  private KafkaEventLoop loop;
 
   void onStart(@Observes @Initialized(ApplicationScoped.class) Object event) {
-    /* eager init */
+    /* eager */
   }
 
   @PostConstruct
@@ -65,54 +57,24 @@ class OrderEventConsumer {
       LOG.log(Level.INFO, "OrderEvent consumer disabled");
       return;
     }
-    Properties props = new Properties();
-    props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
-    props.put(ConsumerConfig.GROUP_ID_CONFIG, "inventory-svc-order-sync");
-    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-    props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-    props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "true");
     try {
-      this.consumer = new KafkaConsumer<>(props);
-      this.consumer.subscribe(List.of(orderFulfilledTopic, orderReturnedTopic));
-      this.running = true;
-      this.scheduler =
-          Executors.newSingleThreadScheduledExecutor(
-              r -> {
-                Thread t = new Thread(r, "inventory-order-sync-consumer");
-                t.setDaemon(true);
-                return t;
-              });
-      scheduler.scheduleWithFixedDelay(this::pollQuietly, 2, 2, TimeUnit.SECONDS);
-      LOG.log(
-          Level.INFO,
-          "OrderEvent consumer started (topics={0},{1})",
-          orderFulfilledTopic,
-          orderReturnedTopic);
+      loop =
+          new KafkaEventLoop(
+              "inventory-order-sync-consumer",
+              bootstrap,
+              "inventory-svc-order-sync",
+              List.of(orderFulfilledTopic, orderReturnedTopic),
+              (topic, value) -> handler.handle(value));
+      loop.start();
     } catch (Exception e) {
       LOG.log(Level.WARNING, "OrderEvent consumer failed to start: " + e.getMessage());
     }
   }
 
-  private void pollQuietly() {
-    if (!running) return;
-    try {
-      var records = consumer.poll(Duration.ofMillis(500));
-      records.forEach(rec -> handler.handle(rec.value()));
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "OrderEvent poll deferred: " + e.getMessage());
-    }
-  }
-
   @PreDestroy
   void stop() {
-    running = false;
-    if (scheduler != null) scheduler.shutdownNow();
-    if (consumer != null) {
-      try {
-        consumer.close(Duration.ofSeconds(2));
-      } catch (Exception ignored) {
-      }
+    if (loop != null) {
+      loop.close();
     }
   }
 }

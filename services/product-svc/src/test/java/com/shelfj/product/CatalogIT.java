@@ -50,6 +50,7 @@ class CatalogIT {
         .path(path)
         .request()
         .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
@@ -81,7 +82,12 @@ class CatalogIT {
     assertThat(get("/catalog/products", TENANT_B), not(containsString("Rice 5kg")));
 
     // delist removes from public list
-    target.path("/admin/products/" + productId).request().header("X-Tenant-Id", TENANT_A).delete();
+    target
+        .path("/admin/products/" + productId)
+        .request()
+        .header("X-Tenant-Id", TENANT_A)
+        .header("X-Roles", "OWNER")
+        .delete();
     assertThat(get("/catalog/products", TENANT_A), not(containsString("Rice 5kg")));
   }
 

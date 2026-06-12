@@ -98,44 +98,132 @@ public class InventoryService {
   // ---- Gap #50: POS→SIM deduction (order fulfilled) ----
   public void deductSaleFromOrder(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
-    var event =
-        new OutboxRow(
-            "StockDeducted",
-            "shelfj.inventory.stock-deducted",
-            tenantId,
-            orderId,
-            Events.stockDeducted(tenantId, storeId, variantId, orderId, qty));
-    repo.deductSale(tenantId, storeId, variantId, qty, orderId, event);
+    repo.deductSale(
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        orderId,
+        stockDeductedEvent(tenantId, storeId, variantId, qty, orderId));
+  }
+
+  /**
+   * {@link #deductSaleFromOrder} deduped on {@code dedupeId} — used by event consumers so the
+   * dedupe mark and the deduction commit atomically (a redelivered event line is skipped, a crashed
+   * one retried).
+   */
+  public boolean deductSaleFromOrderOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId) {
+    return repo.deductSaleOnce(
+        dedupeId,
+        consumerName,
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        orderId,
+        stockDeductedEvent(tenantId, storeId, variantId, qty, orderId));
+  }
+
+  private static OutboxRow stockDeductedEvent(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
+    return new OutboxRow(
+        "StockDeducted",
+        "shelfj.inventory.stock-deducted",
+        tenantId,
+        orderId,
+        Events.stockDeducted(tenantId, storeId, variantId, orderId, qty));
   }
 
   // ---- Gap #50: POS→SIM receipt (order returned) ----
   public void receiveReturnFromOrder(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
-    UUID batchId = UUID.randomUUID();
+    Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
+    repo.receive(batch, "RETURN", orderId, stockReceivedEvent(batch));
+  }
+
+  /** {@link #receiveReturnFromOrder} deduped on {@code dedupeId} (see deductSaleFromOrderOnce). */
+  public boolean receiveReturnFromOrderOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId) {
+    Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
+    return repo.receiveOnce(
+        dedupeId, consumerName, batch, "RETURN", orderId, stockReceivedEvent(batch));
+  }
+
+  /**
+   * {@link #receive} deduped on {@code dedupeId} — used by the GoodsReceived consumer per GRN line.
+   */
+  public boolean receiveOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      String batchNo,
+      BigDecimal costPrice,
+      LocalDate expiry,
+      String refType,
+      UUID refId) {
     var batch =
         new Batch(
-            batchId,
+            UUID.randomUUID(),
             tenantId,
             storeId,
             variantId,
-            "RET-" + orderId.toString().substring(0, 8),
+            batchNo,
             qty,
             qty,
-            null,
-            null,
+            costPrice,
+            expiry,
             Instant.now(),
             Batch.STATUS_ACTIVE,
             Batch.MATERIAL_AVAILABLE,
             null,
             null);
-    var event =
-        new OutboxRow(
-            "StockReceived",
-            "shelfj.inventory.stock-received",
-            tenantId,
-            batchId,
-            Events.stockReceived(tenantId, storeId, variantId, batchId, qty));
-    repo.receive(batch, "RETURN", orderId, event);
+    return repo.receiveOnce(
+        dedupeId, consumerName, batch, refType, refId, stockReceivedEvent(batch));
+  }
+
+  private static Batch returnBatch(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
+    return new Batch(
+        UUID.randomUUID(),
+        tenantId,
+        storeId,
+        variantId,
+        "RET-" + orderId.toString().substring(0, 8),
+        qty,
+        qty,
+        null,
+        null,
+        Instant.now(),
+        Batch.STATUS_ACTIVE,
+        Batch.MATERIAL_AVAILABLE,
+        null,
+        null);
+  }
+
+  private static OutboxRow stockReceivedEvent(Batch batch) {
+    return new OutboxRow(
+        "StockReceived",
+        "shelfj.inventory.stock-received",
+        batch.tenantId(),
+        batch.id(),
+        Events.stockReceived(
+            batch.tenantId(), batch.storeId(), batch.variantId(), batch.id(), batch.receivedQty()));
   }
 
   // ---- adjust ----

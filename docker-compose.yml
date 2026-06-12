@@ -58,7 +58,8 @@ x-svc-depends: &svc-depends
   config:   { condition: service_healthy }
 
 x-svc-healthcheck: &svc-healthcheck
-  test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
+# eclipse-temurin:21-jre ships curl but not wget.
+  test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health/live || exit 1"]
   interval: 10s
   timeout: 5s
   retries: 12
@@ -459,7 +460,7 @@ services:
     depends_on:
       consul: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -479,7 +480,7 @@ services:
       <<: *svc-env
       JAVA_TOOL_OPTIONS: "${IAM_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: iam-svc
-      shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:-local-dev-only-hmac-secret-do-not-use-in-prod}
+      shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
     mem_limit: ${IAM_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     depends_on: *svc-depends
@@ -623,8 +624,10 @@ services:
       JAVA_TOOL_OPTIONS: "${GATEWAY_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       shelfj.consul.host: consul
       shelfj.consul.port: "8500"
-      shelfj.gateway.rate-limit.requests-per-minute: "10000"
-      shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:-local-dev-only-hmac-secret-do-not-use-in-prod}
+      # Per-IP budget. The k6 regression suite drives ~50 VUs from one host IP and peaks
+      # well above 10k/min; 10k caused mid-run 429 cascades. Local-dev/load-test value only.
+      shelfj.gateway.rate-limit.requests-per-minute: "30000"
+      shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
     ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]
@@ -634,7 +637,7 @@ services:
       iam-svc:    { condition: service_healthy }
       tenant-svc: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12

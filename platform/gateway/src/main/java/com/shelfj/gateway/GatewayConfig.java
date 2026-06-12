@@ -85,6 +85,34 @@ public class GatewayConfig {
   @ConfigProperty(name = "shelfj.jwt.issuer", defaultValue = "shelfj")
   String jwtIssuer;
 
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.upstream.connect-timeout-seconds", defaultValue = "2")
+  int upstreamConnectTimeoutSeconds;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.upstream.read-timeout-seconds", defaultValue = "10")
+  int upstreamReadTimeoutSeconds;
+
+  /** Parsed once at startup — these are consulted on every proxied request. */
+  private java.util.Set<String> routableServiceSet;
+
+  private java.util.Set<String> corsAllowedOriginSet;
+
+  @jakarta.annotation.PostConstruct
+  void parseSets() {
+    routableServiceSet = csvToSet(routableServices);
+    corsAllowedOriginSet = csvToSet(corsAllowedOrigins.orElse(""));
+  }
+
+  private static java.util.Set<String> csvToSet(String csv) {
+    var out = new java.util.HashSet<String>();
+    for (String s : csv.split(",")) {
+      String trimmed = s.trim();
+      if (!trimmed.isEmpty()) out.add(trimmed);
+    }
+    return java.util.Set.copyOf(out);
+  }
+
   public String consulHost() {
     return consulHost;
   }
@@ -102,12 +130,7 @@ public class GatewayConfig {
   }
 
   public java.util.Set<String> routableServices() {
-    var out = new java.util.HashSet<String>();
-    for (String s : routableServices.split(",")) {
-      String trimmed = s.trim();
-      if (!trimmed.isEmpty()) out.add(trimmed);
-    }
-    return java.util.Set.copyOf(out);
+    return routableServiceSet;
   }
 
   public boolean trustForwardedHeaders() {
@@ -115,12 +138,15 @@ public class GatewayConfig {
   }
 
   public java.util.Set<String> corsAllowedOrigins() {
-    var out = new java.util.HashSet<String>();
-    for (String s : corsAllowedOrigins.orElse("").split(",")) {
-      String trimmed = s.trim();
-      if (!trimmed.isEmpty()) out.add(trimmed);
-    }
-    return java.util.Set.copyOf(out);
+    return corsAllowedOriginSet;
+  }
+
+  public int upstreamConnectTimeoutSeconds() {
+    return upstreamConnectTimeoutSeconds;
+  }
+
+  public int upstreamReadTimeoutSeconds() {
+    return upstreamReadTimeoutSeconds;
   }
 
   public boolean bruteForceEnabled() {

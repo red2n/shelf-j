@@ -75,7 +75,11 @@ public class AuthService {
         return issueTokens(user);
       }
     }
-    if (!candidates.isEmpty()) {
+    if (candidates.isEmpty()) {
+      // Equalize timing with the verify above so response time doesn't reveal whether the
+      // email exists (account-enumeration oracle).
+      passwords.burn(password);
+    } else {
       User first = candidates.get(0);
       users.audit(first.tenantId(), first.id(), "LOGIN_FAILED", email);
     }
@@ -85,14 +89,30 @@ public class AuthService {
   /** Rotate a refresh token → new access + new refresh token; old one is revoked. */
   public TokenResponse refresh(String refreshToken) {
     String hash = Tokens.hash(refreshToken);
+    // Atomic consume: validate + revoke in one statement, so a token can be rotated exactly once
+    // even under concurrent requests.
     UUID userId =
         refreshTokens
-            .validate(hash)
+            .consume(hash)
             .orElseThrow(
-                () ->
-                    ApiException.unauthorized(
-                        "INVALID_REFRESH", "Refresh token invalid or expired"));
-    refreshTokens.revoke(hash); // rotation: single-use
+                () -> {
+                  // Reuse of an already-revoked token is the classic stolen-token signal: either
+                  // the attacker or the legitimate user holds a now-dead token. Revoke the whole
+                  // session family so the holder of the stolen token is cut off too.
+                  refreshTokens
+                      .ownerOfRevoked(hash)
+                      .ifPresent(
+                          owner -> {
+                            refreshTokens.revokeAllForUser(owner);
+                            users.audit(
+                                null,
+                                owner,
+                                "REFRESH_REUSE_DETECTED",
+                                "revoked token presented - all sessions revoked");
+                          });
+                  return ApiException.unauthorized(
+                      "INVALID_REFRESH", "Refresh token invalid or expired");
+                });
     User user =
         users
             .findById(userId)

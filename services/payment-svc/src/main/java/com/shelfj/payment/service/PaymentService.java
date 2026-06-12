@@ -66,27 +66,11 @@ public class PaymentService {
 
   public RefundTender recordRefund(
       UUID tenantId, UUID orderId, RecordRefundRequest req, String idempotencyKey) {
-    PaymentTender payment =
-        repo.findTender(tenantId, UUID.fromString(req.paymentId()))
-            .orElseThrow(
-                () -> ApiException.notFound("PAYMENT_NOT_FOUND", "payment tender not found"));
-
-    if (!payment.orderId().equals(orderId))
-      throw ApiException.conflict(
-          "PAYMENT_ORDER_MISMATCH", "payment does not belong to this order");
-
     String method = req.method().toUpperCase(Locale.ROOT);
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
           "PAYMENT_INVALID_METHOD",
           "method must be one of CASH, CARD, GIFT_CARD, VOUCHER — got: " + req.method());
-
-    // Cumulative guard: existing refunds + this refund must not exceed original payment.
-    java.math.BigDecimal alreadyRefunded = repo.sumRefunds(tenantId, payment.id());
-    if (alreadyRefunded.add(req.amount()).compareTo(payment.amount()) > 0)
-      throw ApiException.conflict(
-          "REFUND_EXCEEDS_PAYMENT",
-          "total refunds would exceed original payment of " + payment.amount());
 
     UUID refundId = UUID.randomUUID();
     RefundTender refund =
@@ -94,7 +78,7 @@ public class PaymentService {
             refundId,
             tenantId,
             orderId,
-            payment.id(),
+            UUID.fromString(req.paymentId()),
             req.amount(),
             method,
             req.reference(),
@@ -102,7 +86,10 @@ public class PaymentService {
             req.reason(),
             Instant.now());
 
-    return repo.createRefund(refund, Events.paymentRefunded(tenantId, refundId, orderId));
+    // Existence, order-match, and the cumulative refund cap are all enforced inside ONE
+    // transaction with the payment row locked — checking them here first would be a TOCTOU race
+    // letting two concurrent refunds together exceed the original payment.
+    return repo.createRefundGuarded(refund, Events.paymentRefunded(tenantId, refundId, orderId));
   }
 
   public List<RefundTender> listRefundsByOrder(UUID tenantId, UUID orderId) {

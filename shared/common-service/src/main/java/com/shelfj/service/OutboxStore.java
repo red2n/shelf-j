@@ -14,6 +14,9 @@ public interface OutboxStore {
 
   void markPublished(UUID id);
 
+  /** Mark a whole drained batch published in one statement (one DB roundtrip, not N). */
+  void markPublished(List<UUID> ids);
+
   /** A pending outbox row: where to publish ({@code topic}) and what ({@code payload}). */
   record PendingOutbox(UUID id, String topic, String payload) {}
 }

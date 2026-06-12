@@ -1204,22 +1204,39 @@ public class OrderRepository extends BaseOutboxRepository {
   // ── Gap #50: SIM ↔ POS sync — stock position projection ──────────────────
 
   /**
-   * Upsert the local stock-position projection for one (store, variant). Delta is signed: positive
-   * for receipts/returns, negative for deductions.
+   * Upsert the local stock-position projection for one (store, variant), deduped on eventId. Delta
+   * is signed: positive for receipts/returns, negative for deductions. The processed_events mark
+   * and the (non-idempotent, additive) upsert commit in ONE transaction so a redelivered event is
+   * skipped and a crashed write is retried — never applied twice and never lost. Returns false if
+   * the event was already processed.
    */
-  public void upsertStockPosition(
-      UUID tenantId, UUID storeId, UUID variantId, java.math.BigDecimal delta) {
-    exec(
-        "INSERT INTO pos_stock_positions (tenant_id, store_id, variant_id, on_hand_qty, updated_at)"
-            + " VALUES (?,?,?,?,now())"
-            + " ON CONFLICT (tenant_id, store_id, variant_id) DO UPDATE"
-            + " SET on_hand_qty = pos_stock_positions.on_hand_qty + excluded.on_hand_qty,"
-            + "     updated_at = now()",
-        ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, storeId);
-          ps.setObject(3, variantId);
-          ps.setBigDecimal(4, delta);
+  public boolean upsertStockPositionOnce(
+      UUID eventId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      java.math.BigDecimal delta) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumerName)) {
+            return false;
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO pos_stock_positions"
+                      + " (tenant_id, store_id, variant_id, on_hand_qty, updated_at)"
+                      + " VALUES (?,?,?,?,now())"
+                      + " ON CONFLICT (tenant_id, store_id, variant_id) DO UPDATE"
+                      + " SET on_hand_qty = pos_stock_positions.on_hand_qty + excluded.on_hand_qty,"
+                      + "     updated_at = now()")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, storeId);
+            ps.setObject(3, variantId);
+            ps.setBigDecimal(4, delta);
+            ps.executeUpdate();
+          }
+          return true;
         },
         "upsert stock position");
   }

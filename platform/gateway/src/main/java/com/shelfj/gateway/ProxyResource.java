@@ -61,7 +61,7 @@ public class ProxyResource {
                           io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(req.request(), requestId);
+              return relay(req::request, service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
@@ -87,7 +87,7 @@ public class ProxyResource {
                       .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(req.submit(body == null ? "" : body), requestId);
+              return relay(() -> req.submit(body == null ? "" : body), service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
@@ -113,7 +113,7 @@ public class ProxyResource {
                       .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(req.submit(body == null ? "" : body), requestId);
+              return relay(() -> req.submit(body == null ? "" : body), service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
@@ -139,7 +139,7 @@ public class ProxyResource {
                       .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(req.submit(body == null ? "" : body), requestId);
+              return relay(() -> req.submit(body == null ? "" : body), service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
@@ -163,7 +163,7 @@ public class ProxyResource {
                           io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(req.request(), requestId);
+              return relay(req::request, service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
@@ -206,13 +206,44 @@ public class ProxyResource {
     }
   }
 
-  private Response relay(HttpClientResponse upstream, String requestId) {
-    int status = upstream.status().code();
-    Response.ResponseBuilder rb = Response.status(status).header(HttpHeaders.REQUEST_ID, requestId);
-    if (status != 204 && status != 205 && status != 304) {
-      rb.type(MediaType.APPLICATION_JSON).entity(upstream.as(String.class));
+  /**
+   * Executes the upstream call and copies status + body back. The call is passed as a supplier so
+   * connect/read failures (including the WebClient timeouts configured in {@link GatewayBeans})
+   * surface as 504/502 envelopes instead of leaking as container 500s.
+   */
+  private Response relay(
+      java.util.function.Supplier<HttpClientResponse> call, String service, String requestId) {
+    HttpClientResponse upstream;
+    try {
+      upstream = call.get();
+    } catch (RuntimeException e) {
+      boolean timeout = hasCause(e, java.net.SocketTimeoutException.class);
+      return Response.status(timeout ? 504 : 502)
+          .header(HttpHeaders.REQUEST_ID, requestId)
+          .type(MediaType.APPLICATION_JSON)
+          .entity(
+              ApiResponse.error(
+                  ErrorBody.of(
+                      timeout ? "UPSTREAM_TIMEOUT" : "UPSTREAM_ERROR",
+                      "'" + service + "' did not answer" + (timeout ? " in time" : ""))))
+          .build();
     }
-    return rb.build();
+    try (upstream) {
+      int status = upstream.status().code();
+      Response.ResponseBuilder rb =
+          Response.status(status).header(HttpHeaders.REQUEST_ID, requestId);
+      if (status != 204 && status != 205 && status != 304) {
+        rb.type(MediaType.APPLICATION_JSON).entity(upstream.as(String.class));
+      }
+      return rb.build();
+    }
+  }
+
+  private static boolean hasCause(Throwable t, Class<? extends Throwable> type) {
+    for (Throwable c = t; c != null; c = c.getCause()) {
+      if (type.isInstance(c)) return true;
+    }
+    return false;
   }
 
   private Response serviceUnavailable(String service) {

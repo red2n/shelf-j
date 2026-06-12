@@ -1,6 +1,7 @@
 package com.shelfj.order.messaging;
 
 import com.shelfj.order.service.OrderService;
+import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.System.Logger;
@@ -9,7 +10,12 @@ import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Handles PaymentCaptured / PaymentFailed events; delegates to {@link OrderService}. */
+/**
+ * Handles PaymentCaptured / PaymentFailed events; delegates to {@link OrderService}. Naturally
+ * idempotent: the order transition is guarded on PENDING status, so redelivery is a no-op.
+ * Malformed payloads and 4xx business conflicts (already transitioned) are skipped; transient
+ * failures propagate so the consumer loop redelivers instead of losing the event.
+ */
 @ApplicationScoped
 class PaymentEventHandler {
 
@@ -23,21 +29,33 @@ class PaymentEventHandler {
   @Inject OrderService svc;
 
   void handle(String payload) {
+    String eventType;
+    UUID orderId;
+    UUID tenantId;
     try {
-      String eventType = extract(EVENT_TYPE_PAT, payload);
+      eventType = extract(EVENT_TYPE_PAT, payload);
       String orderIdStr = extract(ORDER_ID_PAT, payload);
       String tenantIdStr = extract(TENANT_ID_PAT, payload);
       if (orderIdStr == null || tenantIdStr == null) return;
-      UUID orderId = UUID.fromString(orderIdStr);
-      UUID tenantId = UUID.fromString(tenantIdStr);
+      orderId = UUID.fromString(orderIdStr);
+      tenantId = UUID.fromString(tenantIdStr);
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "Malformed payment event skipped: " + e.getMessage());
+      return;
+    }
 
+    try {
       if ("PaymentCaptured".equals(eventType)) {
         svc.handlePaymentCaptured(tenantId, orderId);
       } else if ("PaymentFailed".equals(eventType)) {
         svc.handlePaymentFailed(tenantId, orderId);
       }
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "PaymentEvent handle error: " + e.getMessage());
+    } catch (ApiException e) {
+      if (e.status() >= 500) {
+        throw e; // transient (DB etc.) — let the consumer loop redeliver
+      }
+      // 4xx = business conflict (e.g. order already transitioned) — redelivery cannot fix it
+      LOG.log(Level.WARNING, "Payment event for order {0} skipped: {1}", orderId, e.getMessage());
     }
   }
 

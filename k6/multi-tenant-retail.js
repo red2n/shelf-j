@@ -38,6 +38,7 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
 import encoding from 'k6/encoding';
+import exec from 'k6/execution';
 
 // ── Custom metrics ─────────────────────────────────────────────────────────────
 const errors              = new Counter('errors');
@@ -164,6 +165,10 @@ export const options = {
     gatewaySecurity: {
       executor: 'constant-vus', vus: 1, duration: '30s',
       exec: 'gatewaySecurity', startTime: '50s',
+    },
+    paymentFlow: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'paymentFlow', startTime: '52s',
     },
   },
   thresholds: {
@@ -1005,8 +1010,11 @@ export function catalogAdmin(d) {
 
   // ── Gap #32: item relationships — positive round-trip ─────────────────────
   if (tenant.variantIds.length >= 2) {
-    // Use VU-specific direction so concurrent VUs don't collide on the unique key
-    const [vidA, vidB] = __VU % 2 === 0
+    // Pick the pair direction from the scenario-wide sequential iteration number so the
+    // scenario's 2 concurrent VUs (whose adjacent iterations get adjacent numbers, hence
+    // distinct parity) don't collide on the unique (variant, related, type) key.
+    // NB: global __VU ids can share parity, and exec.vu.idInScenario does not exist.
+    const [vidA, vidB] = exec.scenario.iterationInTest % 2 === 0
       ? [tenant.variantIds[0], tenant.variantIds[1]]
       : [tenant.variantIds[1], tenant.variantIds[0]];
 
@@ -1069,7 +1077,10 @@ export function catalogAdmin(d) {
 
   // ── Gap #35: catalog groups — positive round-trip ────────────────────────
   if (tenant.variantIds.length > 0) {
-    const cgVid = tenant.variantIds[__ITER % tenant.variantIds.length];
+    // Spread by the scenario-wide sequential iteration number so concurrent VUs never
+    // race on the same variant's single catalog assignment.
+    const cgVid =
+      tenant.variantIds[exec.scenario.iterationInTest % tenant.variantIds.length];
 
     // Create a catalog group
     res = post('/api/product-svc/admin/catalog-groups',
@@ -2162,10 +2173,12 @@ export function costingControl(d) {
     [`${tag} list costing methods 200`]: r => r.status === 200,
   });
 
-  // ── Open accounting period (unique date per iteration to avoid duplicate conflicts) ──
-  const periodDate = new Date(Date.now() - __ITER * 86400000).toISOString().slice(0, 10);
+  // ── Open accounting period (unique per scenario-wide iteration: the scenario's 2
+  //    concurrent VUs reach the same __ITER together, so __ITER alone collides) ──
+  const periodSeq = exec.scenario.iterationInTest;
+  const periodDate = new Date(Date.now() - periodSeq * 86400000).toISOString().slice(0, 10);
   const periodRes = post('/api/inventory-svc/admin/inventory/accounting-periods',
-    { storeId, periodName: `P-${__ITER}-${tenant.label}`, periodDate }, tenant.ownerToken);
+    { storeId, periodName: `P-${periodSeq}-${tenant.label}`, periodDate }, tenant.ownerToken);
   check(periodRes, {
     [`${tag} open accounting period 201`]: r => r.status === 201,
   });
@@ -3498,6 +3511,21 @@ export function paymentFlow(d) {
   ok(cashRes, `${tag} record cash tender 201`);
   const paymentId = (() => { try { return JSON.parse(cashRes.body).data.id; } catch (_) { return null; } })();
 
+  // 2b. Retry with the SAME Idempotency-Key → replays the original tender (no double charge)
+  if (paymentId) {
+    const replayRes = post('/api/payment-svc/payments', {
+      orderId,
+      amount: '20.00',
+      method: 'CASH',
+      idempotencyKey: `cash-${__VU}-${__ITER}`,
+    }, tenant.ownerToken);
+    check(replayRes, {
+      [`${tag} idempotent tender replay returns original id`]: r => {
+        try { return JSON.parse(r.body).data.id === paymentId; } catch (_) { return false; }
+      },
+    });
+  }
+
   // 3. GET tender by ID
   if (paymentId) {
     const getRes = get(`/api/payment-svc/payments/${paymentId}`, tenant.ownerToken);
@@ -3517,6 +3545,15 @@ export function paymentFlow(d) {
       reason: 'partial return',
     }, tenant.ownerToken);
     ok(refundRes, `${tag} record refund 201`);
+
+    // 5b. Cumulative cap: 10.00 already refunded of 20.00 — another 15.00 must be rejected
+    const overRes = post(`/api/payment-svc/payments/by-order/${orderId}/refunds`, {
+      paymentId,
+      amount: '15.00',
+      method: 'CASH',
+      reason: 'over-refund attempt',
+    }, tenant.ownerToken);
+    check(overRes, { [`${tag} over-refund rejected 409`]: r => r.status === 409 });
 
     const listRefRes = get(`/api/payment-svc/payments/by-order/${orderId}/refunds`, tenant.ownerToken);
     check(listRefRes, { [`${tag} list refunds 200`]: r => r.status === 200 });

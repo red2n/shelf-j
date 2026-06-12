@@ -12,8 +12,9 @@ import java.util.regex.Pattern;
 
 /**
  * Gap #50 — SIM→POS direction. Updates the pos_stock_positions projection for each incoming
- * inventory event. Idempotent: deduplicates on eventId via processed_events. Delegates persistence
- * to the repo; no business logic here (SRP).
+ * inventory event. Idempotent: the eventId dedupe and the additive upsert commit in one transaction
+ * (see {@code upsertStockPositionOnce}). Malformed payloads are skipped; write failures propagate
+ * so the consumer loop redelivers instead of losing the event.
  *
  * <p>Delta rules:
  *
@@ -44,6 +45,11 @@ class InventoryEventHandler {
   @Inject OrderRepository repo;
 
   void handle(String json) {
+    UUID eventId;
+    UUID tenantId;
+    UUID storeId;
+    UUID variantId;
+    BigDecimal delta;
     try {
       String eventType = extract(EVENT_TYPE, json);
       String eventIdStr = extract(EVENT_ID, json);
@@ -54,14 +60,11 @@ class InventoryEventHandler {
         return;
       }
 
-      UUID eventId = UUID.fromString(eventIdStr);
-      if (!repo.markProcessedIfNew(eventId, CONSUMER_NAME)) return;
+      eventId = UUID.fromString(eventIdStr);
+      tenantId = UUID.fromString(tenantIdStr);
+      storeId = UUID.fromString(storeIdStr);
+      variantId = UUID.fromString(variantIdStr);
 
-      UUID tenantId = UUID.fromString(tenantIdStr);
-      UUID storeId = UUID.fromString(storeIdStr);
-      UUID variantId = UUID.fromString(variantIdStr);
-
-      BigDecimal delta;
       if ("StockReceived".equals(eventType)) {
         String qtyStr = extract(QTY, json);
         if (qtyStr == null) return;
@@ -77,11 +80,15 @@ class InventoryEventHandler {
       } else {
         return;
       }
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "Malformed inventory event skipped: " + e.getMessage());
+      return;
+    }
 
-      repo.upsertStockPosition(tenantId, storeId, variantId, delta);
+    boolean processed =
+        repo.upsertStockPositionOnce(eventId, CONSUMER_NAME, tenantId, storeId, variantId, delta);
+    if (processed) {
       LOG.log(Level.DEBUG, "StockPosition updated {0}/{1} delta={2}", storeId, variantId, delta);
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "InventoryEvent handle error: " + e.getMessage());
     }
   }
 

@@ -123,21 +123,25 @@ public class UserRepository extends BaseOutboxRepository {
   }
 
   /**
-   * Stamp a tenant onto a user and grant the OWNER role — idempotently. Re-delivering the same
-   * TenantCreated event must not create a second OWNER role or overwrite a differing tenant (golden
-   * rule #7). Returns true if anything changed.
+   * Stamp a tenant onto a user and grant the OWNER role — idempotently. The processed_events mark,
+   * the bind, and the audit row commit in ONE transaction (golden rules #6/#7): marking first in a
+   * separate transaction would swallow the event forever if the bind then failed. Returns false if
+   * the event was already processed.
    */
-  public boolean bindOwner(UUID userId, UUID tenantId, String ownerRole) {
+  public boolean bindOwnerOnce(
+      UUID eventId, String consumerName, UUID userId, UUID tenantId, String ownerRole) {
     return inTx(
         c -> {
-          boolean changed = false;
+          if (!markProcessedIfNewTx(c, eventId, consumerName)) {
+            return false;
+          }
           try (PreparedStatement ps =
               c.prepareStatement(
                   "UPDATE users SET tenant_id = ?, type = 'STAFF'"
                       + " WHERE id = ? AND tenant_id IS NULL")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, userId);
-            changed |= ps.executeUpdate() > 0;
+            ps.executeUpdate();
           }
           UUID roleId = roleIdByName(c, ownerRole);
           try (PreparedStatement ps =
@@ -150,30 +154,38 @@ public class UserRepository extends BaseOutboxRepository {
             ps.setObject(3, roleId);
             ps.setObject(4, userId);
             ps.setObject(5, roleId);
-            changed |= ps.executeUpdate() > 0;
+            ps.executeUpdate();
           }
-          return changed;
+          auditTx(c, tenantId, userId, "OWNER_BOUND", "via TenantCreated");
+          return true;
         },
         "bind owner");
   }
 
   /**
-   * Stamp a tenant onto a staff user and grant a store-scoped role — idempotently. Mirrors {@link
-   * #bindOwner} but the role is bound to a specific store. Re-delivering the same StaffAssigned
-   * event must not duplicate the role or overwrite a differing tenant (golden rule #7). Returns
-   * true if anything changed.
+   * Stamp a tenant onto a staff user and grant a store-scoped role — idempotently, with the
+   * processed_events mark in the same transaction (see {@link #bindOwnerOnce}). Returns false if
+   * the event was already processed.
    */
-  public boolean bindStaff(UUID userId, UUID tenantId, String roleName, UUID storeId) {
+  public boolean bindStaffOnce(
+      UUID eventId,
+      String consumerName,
+      UUID userId,
+      UUID tenantId,
+      String roleName,
+      UUID storeId) {
     return inTx(
         c -> {
-          boolean changed = false;
+          if (!markProcessedIfNewTx(c, eventId, consumerName)) {
+            return false;
+          }
           try (PreparedStatement ps =
               c.prepareStatement(
                   "UPDATE users SET tenant_id = ?, type = 'STAFF'"
                       + " WHERE id = ? AND tenant_id IS NULL")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, userId);
-            changed |= ps.executeUpdate() > 0;
+            ps.executeUpdate();
           }
           UUID roleId = roleIdByName(c, roleName);
           try (PreparedStatement ps =
@@ -188,9 +200,10 @@ public class UserRepository extends BaseOutboxRepository {
             ps.setObject(5, userId);
             ps.setObject(6, roleId);
             ps.setObject(7, storeId);
-            changed |= ps.executeUpdate() > 0;
+            ps.executeUpdate();
           }
-          return changed;
+          auditTx(c, tenantId, userId, "STAFF_BOUND", roleName + " @ store " + storeId);
+          return true;
         },
         "bind staff");
   }
@@ -198,21 +211,28 @@ public class UserRepository extends BaseOutboxRepository {
   // --- audit ---
 
   public void audit(UUID tenantId, UUID userId, String action, String detail) {
-    try (var c = dataSource.getConnection();
-        var ps =
-            c.prepareStatement(
-                "INSERT INTO audit_log (id, tenant_id, user_id, action, detail)"
-                    + " VALUES (?,?,?,?,?)")) {
+    try (var c = dataSource.getConnection()) {
+      auditTx(c, tenantId, userId, action, detail);
+    } catch (SQLException e) {
+      // audit failure must not break the main flow
+      System.getLogger(UserRepository.class.getName())
+          .log(System.Logger.Level.WARNING, "audit insert failed: " + e.getMessage());
+    }
+  }
+
+  private static void auditTx(
+      java.sql.Connection c, UUID tenantId, UUID userId, String action, String detail)
+      throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "INSERT INTO audit_log (id, tenant_id, user_id, action, detail)"
+                + " VALUES (?,?,?,?,?)")) {
       ps.setObject(1, UUID.randomUUID());
       ps.setObject(2, tenantId);
       ps.setObject(3, userId);
       ps.setString(4, action);
       ps.setString(5, detail);
       ps.executeUpdate();
-    } catch (SQLException e) {
-      // audit failure must not break the main flow
-      System.getLogger(UserRepository.class.getName())
-          .log(System.Logger.Level.WARNING, "audit insert failed: " + e.getMessage());
     }
   }
 

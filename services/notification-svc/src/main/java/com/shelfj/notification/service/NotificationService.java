@@ -14,7 +14,9 @@ public class NotificationService {
 
   @Inject NotificationRepository repo;
 
-  public ShortageAlert recordShortageAlert(
+  /** Record a shortage alert, deduped on eventId atomically with the insert. */
+  public boolean recordShortageAlertOnce(
+      String consumerName,
       UUID tenantId,
       UUID storeId,
       UUID variantId,
@@ -31,7 +33,7 @@ public class NotificationService {
             threshold,
             eventId,
             Instant.now());
-    return repo.insertAlert(alert);
+    return repo.insertAlertOnce(consumerName, alert);
   }
 
   public List<ShortageAlert> listAlerts(UUID tenantId, UUID storeId, int limit) {

@@ -83,6 +83,42 @@ public class InventoryRepository extends BaseOutboxRepository {
         "receive stock");
   }
 
+  /**
+   * {@link #receive} deduped on {@code dedupeId}: the processed_events mark and the batch creation
+   * commit in ONE transaction, so a redelivered event is skipped and a crashed write is retried —
+   * never applied twice and never lost. Used by event consumers (a new random batch id per attempt
+   * makes plain {@link #receive} non-idempotent under redelivery). Returns false if already
+   * processed.
+   */
+  public boolean receiveOnce(
+      UUID dedupeId,
+      String consumerName,
+      Batch batch,
+      String refType,
+      UUID refId,
+      OutboxRow event) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
+            return false;
+          }
+          insertBatch(c, batch);
+          insertMovement(
+              c,
+              batch.tenantId(),
+              batch.storeId(),
+              batch.variantId(),
+              batch.id(),
+              MoveType.RECEIVE,
+              batch.receivedQty(),
+              refType,
+              refId);
+          insertOutbox(c, event);
+          return true;
+        },
+        "receive stock (deduped)");
+  }
+
   // ---------------------------------------------------------------- adjust
   /**
    * Adjust on-hand by a signed delta against a chosen batch (or create an adjustment batch if
@@ -236,6 +272,32 @@ public class InventoryRepository extends BaseOutboxRepository {
           return null;
         },
         "deduct sale from order");
+  }
+
+  /**
+   * {@link #deductSale} deduped on {@code dedupeId}: mark + FIFO deduction commit in ONE
+   * transaction (see {@link #receiveOnce}). Returns false if already processed.
+   */
+  public boolean deductSaleOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId,
+      OutboxRow event) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
+            return false;
+          }
+          deductFifo(c, tenantId, storeId, variantId, qty, MoveType.SALE, "ORDER", orderId);
+          checkThresholdTx(c, tenantId, storeId, variantId);
+          insertOutbox(c, event);
+          return true;
+        },
+        "deduct sale from order (deduped)");
   }
 
   // ---------------------------------------------------------------- release

@@ -41,6 +41,15 @@ public class RateLimitFilter implements ContainerRequestFilter {
     String ip = ClientIp.resolve(requestContext, serverRequest, config.trustForwardedHeaders());
     if (buckets.size() >= MAX_BUCKETS && !buckets.containsKey(ip)) {
       evictStale();
+      // Stale eviction freed nothing (all buckets active) — drop an arbitrary entry so the cap
+      // is a real bound, not a suggestion an attacker can blow past with key churn.
+      if (buckets.size() >= MAX_BUCKETS) {
+        var it = buckets.keySet().iterator();
+        if (it.hasNext()) {
+          it.next();
+          it.remove();
+        }
+      }
     }
     TokenBucket bucket =
         buckets.computeIfAbsent(ip, k -> new TokenBucket(config.rateLimitRequestsPerMinute()));

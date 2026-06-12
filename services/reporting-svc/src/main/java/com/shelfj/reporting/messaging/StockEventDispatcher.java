@@ -17,8 +17,9 @@ import java.util.UUID;
  * Routes incoming inventory events to the correct projection update. One dispatcher handles all
  * stock-related topics so each handler concern is a single private method (SRP).
  *
- * <p>Idempotency: every message is deduped via {@code processed_events} before any projection
- * change. The same event processed twice has the same result as once (golden rule #7).
+ * <p>Idempotency: the stock-delta projections dedupe on eventId atomically with their writes
+ * (golden rule #7); transfer events are naturally idempotent. Malformed payloads are skipped; write
+ * failures propagate so the consumer loop redelivers instead of losing the event.
  */
 @ApplicationScoped
 class StockEventDispatcher {
@@ -30,61 +31,77 @@ class StockEventDispatcher {
   @Inject ReportingRepository repo;
 
   void dispatch(String topic, String json) {
+    JsonObject obj;
+    UUID eventId;
     try (var reader = Json.createReader(new StringReader(json))) {
-      JsonObject obj = reader.readObject();
-      UUID eventId = UUID.fromString(obj.getString("eventId"));
+      obj = reader.readObject();
+      eventId = UUID.fromString(obj.getString("eventId"));
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "Malformed stock event on {0} skipped: {1}", topic, e.getMessage());
+      return;
+    }
 
-      if (!repo.markProcessedIfNew(eventId, CONSUMER)) {
-        return;
-      }
-
-      UUID tenantId = UUID.fromString(obj.getString("tenantId"));
-
+    try {
       switch (topic) {
-        case "shelfj.inventory.stock-received" -> handleReceived(tenantId, obj);
-        case "shelfj.inventory.stock-deducted" -> handleDeducted(tenantId, obj);
-        case "shelfj.inventory.stock-adjusted" -> handleAdjusted(tenantId, obj);
-        case "shelfj.inventory.transfer-order-shipped" ->
-            handleTransferShipped(tenantId, eventId, obj);
-        case "shelfj.inventory.transfer-order-received" -> service.applyTransferReceived(eventId);
+        case "shelfj.inventory.stock-received" ->
+            applyDelta(eventId, obj, qty(obj), "StockReceived");
+        case "shelfj.inventory.stock-deducted" -> handleDeducted(eventId, obj);
+        case "shelfj.inventory.stock-adjusted" ->
+            applyDelta(eventId, obj, new BigDecimal(obj.get("delta").toString()), "StockAdjusted");
+        case "shelfj.inventory.transfer-order-shipped" -> handleTransferShipped(eventId, obj);
+        case "shelfj.inventory.transfer-order-received" ->
+            // delete-by-event is naturally idempotent — no dedupe mark needed
+            service.applyTransferReceived(eventId);
         default -> LOG.log(Level.WARNING, "Unknown topic {0} — ignored", topic);
       }
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "Failed to dispatch stock event: " + e.getMessage());
+    } catch (RuntimeException e) {
+      // A field missing from the payload throws the same shapes on every redelivery — skip
+      // those; anything else (DB down etc.) propagates so the record is retried.
+      if (isMalformed(e)) {
+        LOG.log(Level.WARNING, "Malformed stock event on {0} skipped: {1}", topic, e.getMessage());
+        return;
+      }
+      throw e;
     }
   }
 
-  private void handleReceived(UUID tenantId, JsonObject obj) {
+  private void applyDelta(UUID eventId, JsonObject obj, BigDecimal delta, String eventType) {
+    UUID tenantId = UUID.fromString(obj.getString("tenantId"));
     UUID storeId = UUID.fromString(obj.getString("storeId"));
     UUID variantId = UUID.fromString(obj.getString("variantId"));
-    BigDecimal qty = new BigDecimal(obj.get("qty").toString());
-    service.applyStockReceived(tenantId, storeId, variantId, qty);
+    service.applyStockDeltaOnce(eventId, CONSUMER, tenantId, storeId, variantId, delta, eventType);
   }
 
-  private void handleDeducted(UUID tenantId, JsonObject obj) {
+  private void handleDeducted(UUID eventId, JsonObject obj) {
     // StockDeducted now carries storeId/variantId/qty (enriched in inventory-svc)
     if (!obj.containsKey("storeId") || !obj.containsKey("variantId")) {
       LOG.log(Level.WARNING, "StockDeducted missing storeId/variantId — skipped");
       return;
     }
-    UUID storeId = UUID.fromString(obj.getString("storeId"));
-    UUID variantId = UUID.fromString(obj.getString("variantId"));
-    BigDecimal qty = new BigDecimal(obj.get("qty").toString());
-    service.applyStockDeducted(tenantId, storeId, variantId, qty);
+    applyDelta(eventId, obj, qty(obj).negate(), "StockDeducted");
   }
 
-  private void handleAdjusted(UUID tenantId, JsonObject obj) {
-    UUID storeId = UUID.fromString(obj.getString("storeId"));
-    UUID variantId = UUID.fromString(obj.getString("variantId"));
-    BigDecimal delta = new BigDecimal(obj.get("delta").toString());
-    service.applyStockAdjusted(tenantId, storeId, variantId, delta);
-  }
-
-  private void handleTransferShipped(UUID tenantId, UUID eventId, JsonObject obj) {
+  private void handleTransferShipped(UUID eventId, JsonObject obj) {
+    UUID tenantId = UUID.fromString(obj.getString("tenantId"));
     UUID fromStoreId = UUID.fromString(obj.getString("fromStoreId"));
     UUID toStoreId = UUID.fromString(obj.getString("toStoreId"));
-    // TransferOrderShipped event doesn't carry line details — record at order level with qty=0
-    // as a placeholder; full line data would require enriching that event (future work).
+    // Dedupe BEFORE inserting: supply-line ids are random, so a redelivered event would
+    // otherwise add duplicate rows. (Currently the event carries no line details and the
+    // lists are empty placeholders — see applyTransferShipped.)
+    if (!repo.markProcessedIfNew(eventId, CONSUMER)) {
+      return;
+    }
     service.applyTransferShipped(tenantId, eventId, fromStoreId, toStoreId, List.of(), List.of());
+  }
+
+  private static BigDecimal qty(JsonObject obj) {
+    return new BigDecimal(obj.get("qty").toString());
+  }
+
+  private static boolean isMalformed(RuntimeException e) {
+    return e instanceof NullPointerException
+        || e instanceof IllegalArgumentException
+        || e instanceof ClassCastException
+        || e instanceof jakarta.json.JsonException;
   }
 }

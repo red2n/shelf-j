@@ -215,7 +215,7 @@ public class ProductService {
     return repo.searchProducts(tenantId, q, sku, barcode, onlineOnly, limit);
   }
 
-  public com.shelfj.product.repo.ProductRepository.VariantWithProduct findVariantByBarcode(
+  public com.shelfj.product.domain.Domain.VariantWithProduct findVariantByBarcode(
       UUID tenantId, String barcode) {
     return repo.findVariantByBarcode(tenantId, barcode)
         .orElseThrow(

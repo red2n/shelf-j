@@ -1,5 +1,8 @@
 package com.shelfj.test;
 
+import static com.tngtech.archunit.base.DescribedPredicate.not;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.lang.ArchRule;
@@ -74,8 +77,11 @@ public final class ShelfJArchRules {
           .and()
           .haveSimpleNameEndingWith("Consumer")
           .should()
-          .accessClassesThat()
-          .resideInAnyPackage("..repo..", "..service..")
+          .accessClassesThat(
+              // com.shelfj.service is the shared infra module (KafkaEventLoop, ServiceSettings),
+              // not a business service layer — consumers exist to drive that poll loop.
+              resideInAnyPackage("..repo..", "..service..")
+                  .and(not(resideInAPackage("com.shelfj.service.."))))
           .because(
               "Consumer classes own only the Kafka poll loop."
                   + " Business logic belongs in a Handler bean."

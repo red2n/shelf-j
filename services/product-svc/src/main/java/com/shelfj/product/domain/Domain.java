@@ -70,6 +70,9 @@ public final class Domain {
     public static final String STATUS_INACTIVE = "INACTIVE";
   }
 
+  /** Carrier for a variant + its parent product, used by the POS barcode-scan lookup. */
+  public record VariantWithProduct(Variant variant, Product product) {}
+
   // ── Gap #33: Supplier / Customer Cross-References ────────────────────────
 
   public record ItemCrossReference(

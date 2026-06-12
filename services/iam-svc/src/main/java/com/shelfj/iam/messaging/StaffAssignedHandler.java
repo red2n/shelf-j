@@ -16,6 +16,10 @@ import java.util.UUID;
  * tenant-svc never get a tenant on their iam-svc row and their JWTs carry {@code tenant=null}.
  * Separated from {@link StaffAssignedConsumer} so Kafka lifecycle and domain logic each have a
  * single reason to change (SRP).
+ *
+ * <p>The dedupe mark and the bind commit in one transaction (see {@code bindStaffOnce}); a
+ * malformed payload is logged and skipped, while a failed write propagates so the consumer loop
+ * redelivers the record instead of losing it.
  */
 @ApplicationScoped
 class StaffAssignedHandler {
@@ -26,29 +30,33 @@ class StaffAssignedHandler {
   @Inject UserRepository users;
 
   void handle(String json) {
+    UUID eventId;
+    UUID tenantId;
+    UUID userId;
+    UUID storeId;
+    String role;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      UUID eventId = UUID.fromString(obj.getString("eventId"));
-      UUID tenantId = UUID.fromString(obj.getString("tenantId"));
-      UUID userId = UUID.fromString(obj.getString("userId"));
-      UUID storeId = UUID.fromString(obj.getString("storeId"));
-      String role = obj.getString("role");
+      eventId = UUID.fromString(obj.getString("eventId"));
+      tenantId = UUID.fromString(obj.getString("tenantId"));
+      userId = UUID.fromString(obj.getString("userId"));
+      storeId = UUID.fromString(obj.getString("storeId"));
+      role = obj.getString("role");
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "Malformed StaffAssigned payload skipped: " + e.getMessage());
+      return;
+    }
 
-      if (!users.markProcessedIfNew(eventId, CONSUMER_NAME)) {
-        return;
-      }
-      boolean changed = users.bindStaff(userId, tenantId, role, storeId);
-      users.audit(tenantId, userId, "STAFF_BOUND", role + " @ store " + storeId);
+    boolean processed =
+        users.bindStaffOnce(eventId, CONSUMER_NAME, userId, tenantId, role, storeId);
+    if (processed) {
       LOG.log(
           Level.INFO,
-          "Bound user {0} as {1} of tenant {2} store {3} (changed={4})",
+          "Bound user {0} as {1} of tenant {2} store {3}",
           userId,
           role,
           tenantId,
-          storeId,
-          changed);
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "Failed to handle StaffAssigned: " + e.getMessage());
+          storeId);
     }
   }
 }

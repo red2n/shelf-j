@@ -26,6 +26,10 @@ public abstract class BaseServiceConfig implements ServiceSettings {
   String dbPassword;
 
   @Inject
+  @ConfigProperty(name = "shelfj.db.pool-max-size", defaultValue = "10")
+  int dbPoolMaxSize;
+
+  @Inject
   @ConfigProperty(name = "shelfj.consul.host", defaultValue = "localhost")
   String consulHost;
 
@@ -62,6 +66,11 @@ public abstract class BaseServiceConfig implements ServiceSettings {
   @Override
   public String dbPassword() {
     return dbPassword;
+  }
+
+  @Override
+  public int dbPoolMaxSize() {
+    return dbPoolMaxSize;
   }
 
   @Override

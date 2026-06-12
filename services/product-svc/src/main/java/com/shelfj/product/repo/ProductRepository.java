@@ -23,6 +23,7 @@ import com.shelfj.product.domain.Domain.VariantAttributeGroupValues;
 import com.shelfj.product.domain.Domain.VariantCatalogAssignment;
 import com.shelfj.product.domain.Domain.VariantCategorySetAssignment;
 import com.shelfj.product.domain.Domain.VariantContainerLink;
+import com.shelfj.product.domain.Domain.VariantWithProduct;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -367,13 +368,21 @@ public class ProductRepository extends BaseOutboxRepository {
         ps -> {
           int i = 1;
           ps.setObject(i++, tenantId);
-          if (q != null) ps.setString(i++, "%" + q + "%");
+          if (q != null) ps.setString(i++, "%" + escapeLike(q) + "%");
           if (sku != null) ps.setString(i++, sku);
           if (barcode != null) ps.setString(i++, barcode);
           ps.setInt(i, limit);
         },
         ProductRepository::mapProductAlias,
         "search products");
+  }
+
+  /**
+   * Escape LIKE metacharacters in user-supplied search text: a literal {@code %}/{@code _} must
+   * match itself, not act as a wildcard the caller can use to force expensive full scans.
+   */
+  private static String escapeLike(String s) {
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
   }
 
   /** Looks up a variant by barcode and returns it together with its parent product in one query. */
@@ -398,9 +407,6 @@ public class ProductRepository extends BaseOutboxRepository {
         .stream()
         .findFirst();
   }
-
-  /** Carrier for a variant + its parent product, used by the POS barcode-scan query. */
-  public record VariantWithProduct(Variant variant, Product product) {}
 
   private static Product mapProductAlias(ResultSet rs) throws SQLException {
     return new Product(

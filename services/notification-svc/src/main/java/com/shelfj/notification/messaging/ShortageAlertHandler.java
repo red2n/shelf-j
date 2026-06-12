@@ -1,6 +1,5 @@
 package com.shelfj.notification.messaging;
 
-import com.shelfj.notification.repo.NotificationRepository;
 import com.shelfj.notification.service.NotificationService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -13,8 +12,10 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
- * Handles StockBelowThreshold events published by inventory-svc. Deduplicates on eventId then
- * stores a ShortageAlert row. Separated from {@link ShortageAlertConsumer} (SRP).
+ * Handles StockBelowThreshold events published by inventory-svc. The eventId dedupe and the
+ * ShortageAlert insert commit in one transaction (see {@code insertAlertOnce}). Separated from
+ * {@link ShortageAlertConsumer} (SRP). Malformed payloads are skipped; write failures propagate so
+ * the consumer loop redelivers instead of losing the event.
  *
  * <p>Expected payload: {@code {eventId, tenantId, storeId, variantId, available, threshold}}.
  */
@@ -25,25 +26,31 @@ class ShortageAlertHandler {
   static final String CONSUMER_NAME = "notification-svc/shortage-alert";
 
   @Inject NotificationService service;
-  @Inject NotificationRepository repo;
 
   void handle(String json) {
+    UUID eventId;
+    UUID tenantId;
+    UUID storeId;
+    UUID variantId;
+    BigDecimal available;
+    BigDecimal threshold;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      UUID eventId = UUID.fromString(obj.getString("eventId"));
+      eventId = UUID.fromString(obj.getString("eventId"));
+      tenantId = UUID.fromString(obj.getString("tenantId"));
+      storeId = UUID.fromString(obj.getString("storeId"));
+      variantId = UUID.fromString(obj.getString("variantId"));
+      available = new BigDecimal(obj.get("available").toString());
+      threshold = new BigDecimal(obj.get("threshold").toString());
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "Malformed StockBelowThreshold payload skipped: " + e.getMessage());
+      return;
+    }
 
-      if (!repo.markProcessedIfNew(eventId, CONSUMER_NAME)) {
-        LOG.log(Level.DEBUG, "StockBelowThreshold {0} already processed — skipped", eventId);
-        return;
-      }
-
-      UUID tenantId = UUID.fromString(obj.getString("tenantId"));
-      UUID storeId = UUID.fromString(obj.getString("storeId"));
-      UUID variantId = UUID.fromString(obj.getString("variantId"));
-      BigDecimal available = new BigDecimal(obj.get("available").toString());
-      BigDecimal threshold = new BigDecimal(obj.get("threshold").toString());
-
-      service.recordShortageAlert(tenantId, storeId, variantId, available, threshold, eventId);
+    boolean recorded =
+        service.recordShortageAlertOnce(
+            CONSUMER_NAME, tenantId, storeId, variantId, available, threshold, eventId);
+    if (recorded) {
       LOG.log(
           Level.WARNING,
           "SHORTAGE_ALERT tenant={0} store={1} variant={2} available={3} threshold={4}",
@@ -52,8 +59,6 @@ class ShortageAlertHandler {
           variantId,
           available,
           threshold);
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "Failed to handle StockBelowThreshold: " + e.getMessage());
     }
   }
 }

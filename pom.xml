@@ -33,6 +33,7 @@
         <!-- Versions for libraries NOT managed by the Helidon BOM -->
         <flyway.version>10.20.1</flyway.version>
         <postgresql.version>42.7.4</postgresql.version>
+        <hikaricp.version>6.2.1</hikaricp.version>
         <testcontainers.version>1.20.4</testcontainers.version>
         <junit.version>5.11.3</junit.version>
         <shelfj.version>0.1.0-SNAPSHOT</shelfj.version>
@@ -99,6 +100,11 @@
                 <groupId>org.postgresql</groupId>
                 <artifactId>postgresql</artifactId>
                 <version>${postgresql.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zaxxer</groupId>
+                <artifactId>HikariCP</artifactId>
+                <version>${hikaricp.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.flywaydb</groupId>

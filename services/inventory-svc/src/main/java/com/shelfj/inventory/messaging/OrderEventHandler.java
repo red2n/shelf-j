@@ -1,7 +1,7 @@
 package com.shelfj.inventory.messaging;
 
-import com.shelfj.inventory.repo.InventoryRepository;
 import com.shelfj.inventory.service.InventoryService;
+import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -11,6 +11,7 @@ import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 /**
@@ -21,9 +22,10 @@ import java.util.UUID;
  *   <li>OrderReturned → receive stock back for each returned line item (RETURN movement).
  * </ul>
  *
- * <p>Idempotent: deduplicates on eventId via processed_events. Each event may carry multiple line
- * items; each is processed independently — partial-failure logs a warning per line so the remainder
- * still processes.
+ * <p>Each line is deduped on a deterministic per-line id INSIDE the line's transaction, so a
+ * redelivered event skips lines that already committed and retries only the rest. A 4xx business
+ * rejection (e.g. insufficient stock) skips just that line, as before; transient failures propagate
+ * so the consumer loop redelivers the event.
  *
  * <p>Expected payload shape: {@code {eventId, eventType, tenantId, orderId, storeId, items:
  * [{variantId, qty}]}}.
@@ -35,55 +37,68 @@ class OrderEventHandler {
   static final String CONSUMER_NAME = "inventory-svc/order-sync";
 
   @Inject InventoryService service;
-  @Inject InventoryRepository repo;
 
   void handle(String json) {
+    UUID eventId;
+    String eventType;
+    UUID tenantId;
+    UUID orderId;
+    UUID storeId;
+    JsonArray items;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      UUID eventId = UUID.fromString(obj.getString("eventId"));
-
-      if (!repo.markProcessedIfNew(eventId, CONSUMER_NAME)) return;
-
-      String eventType = obj.getString("eventType", "");
-      UUID tenantId = UUID.fromString(obj.getString("tenantId"));
-      UUID orderId = UUID.fromString(obj.getString("orderId"));
-      UUID storeId = UUID.fromString(obj.getString("storeId"));
-      JsonArray items = obj.getJsonArray("items");
-      if (items == null || items.isEmpty()) return;
-
-      if ("OrderFulfilled".equals(eventType)) {
-        for (int i = 0; i < items.size(); i++) {
-          JsonObject line = items.getJsonObject(i);
-          UUID variantId = UUID.fromString(line.getString("variantId"));
-          BigDecimal qty = new BigDecimal(line.get("qty").toString());
-          try {
-            service.deductSaleFromOrder(tenantId, storeId, variantId, qty, orderId);
-          } catch (Exception e) {
-            LOG.log(
-                Level.WARNING, "deductSale failed for variant {0}: {1}", variantId, e.getMessage());
-          }
-        }
-        LOG.log(Level.INFO, "OrderFulfilled {0}: deducted {1} line(s)", orderId, items.size());
-
-      } else if ("OrderReturned".equals(eventType)) {
-        for (int i = 0; i < items.size(); i++) {
-          JsonObject line = items.getJsonObject(i);
-          UUID variantId = UUID.fromString(line.getString("variantId"));
-          BigDecimal qty = new BigDecimal(line.get("qty").toString());
-          try {
-            service.receiveReturnFromOrder(tenantId, storeId, variantId, qty, orderId);
-          } catch (Exception e) {
-            LOG.log(
-                Level.WARNING,
-                "receiveReturn failed for variant {0}: {1}",
-                variantId,
-                e.getMessage());
-          }
-        }
-        LOG.log(Level.INFO, "OrderReturned {0}: restocked {1} line(s)", orderId, items.size());
-      }
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "OrderEvent handle error: " + e.getMessage());
+      eventId = UUID.fromString(obj.getString("eventId"));
+      eventType = obj.getString("eventType", "");
+      tenantId = UUID.fromString(obj.getString("tenantId"));
+      orderId = UUID.fromString(obj.getString("orderId"));
+      storeId = UUID.fromString(obj.getString("storeId"));
+      items = obj.getJsonArray("items");
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "Malformed order event skipped: " + e.getMessage());
+      return;
     }
+    if (items == null || items.isEmpty()) {
+      return;
+    }
+
+    boolean fulfil = "OrderFulfilled".equals(eventType);
+    boolean returned = "OrderReturned".equals(eventType);
+    if (!fulfil && !returned) {
+      return;
+    }
+
+    for (int i = 0; i < items.size(); i++) {
+      JsonObject line = items.getJsonObject(i);
+      UUID variantId = UUID.fromString(line.getString("variantId"));
+      BigDecimal qty = new BigDecimal(line.get("qty").toString());
+      UUID dedupeId = lineDedupeId(eventId, i);
+      try {
+        if (fulfil) {
+          service.deductSaleFromOrderOnce(
+              dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId);
+        } else {
+          service.receiveReturnFromOrderOnce(
+              dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId);
+        }
+      } catch (ApiException e) {
+        if (e.status() >= 500) {
+          throw e; // transient — let the consumer loop redeliver; completed lines are deduped
+        }
+        // business rejection (e.g. insufficient stock) — skip this line, as before
+        LOG.log(
+            Level.WARNING,
+            "{0} line variant {1} skipped: {2}",
+            eventType,
+            variantId,
+            e.getMessage());
+      }
+    }
+    LOG.log(Level.INFO, "{0} {1}: processed {2} line(s)", eventType, orderId, items.size());
+  }
+
+  /** Deterministic per-line dedupe id: stable across redeliveries of the same event. */
+  static UUID lineDedupeId(UUID eventId, int lineIndex) {
+    return UUID.nameUUIDFromBytes(
+        (CONSUMER_NAME + ":" + eventId + ":" + lineIndex).getBytes(StandardCharsets.UTF_8));
   }
 }

@@ -41,19 +41,20 @@ public class ReportingService {
 
   // ── Projection update helpers (called by Kafka handlers) ─────────────────
 
-  public void applyStockReceived(UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty) {
-    repo.upsertProjection(tenantId, storeId, variantId, qty);
-    repo.insertMovementEvent(tenantId, storeId, variantId, "StockReceived", qty);
-  }
-
-  public void applyStockDeducted(UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty) {
-    repo.upsertProjection(tenantId, storeId, variantId, qty.negate());
-    repo.insertMovementEvent(tenantId, storeId, variantId, "StockDeducted", qty.negate());
-  }
-
-  public void applyStockAdjusted(UUID tenantId, UUID storeId, UUID variantId, BigDecimal delta) {
-    repo.upsertProjection(tenantId, storeId, variantId, delta);
-    repo.insertMovementEvent(tenantId, storeId, variantId, "StockAdjusted", delta);
+  /**
+   * Apply one signed stock delta (received/deducted/adjusted), deduped on eventId atomically with
+   * the projection writes. Returns false if the event was already processed.
+   */
+  public boolean applyStockDeltaOnce(
+      UUID eventId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal delta,
+      String eventType) {
+    return repo.applyStockDeltaOnce(
+        eventId, consumerName, tenantId, storeId, variantId, delta, eventType);
   }
 
   public void applyTransferShipped(

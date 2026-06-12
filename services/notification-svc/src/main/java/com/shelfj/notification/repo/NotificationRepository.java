@@ -12,16 +12,22 @@ import java.util.UUID;
 @ApplicationScoped
 public class NotificationRepository extends BaseJdbcRepository {
 
-  public ShortageAlert insertAlert(ShortageAlert alert) {
+  /**
+   * Insert a shortage alert, deduped on its eventId: the processed_events mark and the insert
+   * commit in ONE transaction so a redelivered event is skipped and a crashed write is retried —
+   * never duplicated and never lost. Returns false if the event was already processed.
+   */
+  public boolean insertAlertOnce(String consumerName, ShortageAlert alert) {
     return inTx(
         c -> {
+          if (!markProcessedIfNewTx(c, alert.eventId(), consumerName)) {
+            return false;
+          }
           try (var ps =
               c.prepareStatement(
                   "INSERT INTO shortage_alerts"
                       + " (id, tenant_id, store_id, variant_id, available, threshold, event_id)"
-                      + " VALUES (?,?,?,?,?,?,?)"
-                      + " RETURNING id, tenant_id, store_id, variant_id, available, threshold,"
-                      + " event_id, alerted_at")) {
+                      + " VALUES (?,?,?,?,?,?,?)")) {
             ps.setObject(1, alert.id());
             ps.setObject(2, alert.tenantId());
             ps.setObject(3, alert.storeId());
@@ -29,11 +35,9 @@ public class NotificationRepository extends BaseJdbcRepository {
             ps.setBigDecimal(5, alert.available());
             ps.setBigDecimal(6, alert.threshold());
             ps.setObject(7, alert.eventId());
-            try (var rs = ps.executeQuery()) {
-              rs.next();
-              return mapAlert(rs);
-            }
+            ps.executeUpdate();
           }
+          return true;
         },
         "insert shortage alert");
   }

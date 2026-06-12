@@ -17,36 +17,54 @@ public class ReportingRepository extends BaseJdbcRepository {
 
   // ── Inventory projection upserts ─────────────────────────────────────────
 
-  public void upsertProjection(UUID tenantId, UUID storeId, UUID variantId, BigDecimal delta) {
-    exec(
-        "INSERT INTO inventory_projection (tenant_id, store_id, variant_id, on_hand, updated_at)"
-            + " VALUES (?,?,?,?,now())"
-            + " ON CONFLICT (tenant_id, store_id, variant_id)"
-            + " DO UPDATE SET on_hand = inventory_projection.on_hand + EXCLUDED.on_hand,"
-            + "               updated_at = now()",
-        ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, storeId);
-          ps.setObject(3, variantId);
-          ps.setBigDecimal(4, delta);
+  /**
+   * Apply one signed stock delta to the projection + movement stats, deduped on eventId. The
+   * processed_events mark and both (non-idempotent, additive) writes commit in ONE transaction so a
+   * redelivered event is skipped and a crashed write is retried — never applied twice and never
+   * lost. Returns false if the event was already processed.
+   */
+  public boolean applyStockDeltaOnce(
+      UUID eventId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal delta,
+      String eventType) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumerName)) {
+            return false;
+          }
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO inventory_projection"
+                      + " (tenant_id, store_id, variant_id, on_hand, updated_at)"
+                      + " VALUES (?,?,?,?,now())"
+                      + " ON CONFLICT (tenant_id, store_id, variant_id)"
+                      + " DO UPDATE SET on_hand = inventory_projection.on_hand + EXCLUDED.on_hand,"
+                      + "               updated_at = now()")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, storeId);
+            ps.setObject(3, variantId);
+            ps.setBigDecimal(4, delta);
+            ps.executeUpdate();
+          }
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO movement_events"
+                      + " (tenant_id, store_id, variant_id, event_type, qty_change)"
+                      + " VALUES (?,?,?,?,?)")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, storeId);
+            ps.setObject(3, variantId);
+            ps.setString(4, eventType);
+            ps.setBigDecimal(5, delta);
+            ps.executeUpdate();
+          }
+          return true;
         },
-        "upsert inventory projection");
-  }
-
-  public void insertMovementEvent(
-      UUID tenantId, UUID storeId, UUID variantId, String eventType, BigDecimal qtyChange) {
-    exec(
-        "INSERT INTO movement_events"
-            + " (tenant_id, store_id, variant_id, event_type, qty_change)"
-            + " VALUES (?,?,?,?,?)",
-        ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, storeId);
-          ps.setObject(3, variantId);
-          ps.setString(4, eventType);
-          ps.setBigDecimal(5, qtyChange);
-        },
-        "insert movement event");
+        "apply stock delta");
   }
 
   // ── Open supply lines (intransit transfers) ───────────────────────────────

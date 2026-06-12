@@ -37,6 +37,9 @@ public class BruteForceFilter implements ContainerRequestFilter, ContainerRespon
   private static final String PROP_USER_KEY = "login.userKey";
   private static final String PROP_IP_KEY = "login.ipKey";
 
+  /** One shared (thread-safe) instance — building a Jsonb per login request is expensive. */
+  private static final Jsonb JSONB = JsonbBuilder.create();
+
   /** Login bodies are tiny; anything bigger is not worth buffering for key extraction. */
   private static final int MAX_PARSEABLE_BODY_BYTES = 8 * 1024;
 
@@ -125,8 +128,8 @@ public class BruteForceFilter implements ContainerRequestFilter, ContainerRespon
     if (body.length == 0 || body.length > MAX_PARSEABLE_BODY_BYTES) {
       return null;
     }
-    try (Jsonb jsonb = JsonbBuilder.create()) {
-      Map<String, Object> map = jsonb.fromJson(new String(body, StandardCharsets.UTF_8), Map.class);
+    try {
+      Map<String, Object> map = JSONB.fromJson(new String(body, StandardCharsets.UTF_8), Map.class);
       Object account = map.get("email");
       if (account == null) {
         account = map.get("username");

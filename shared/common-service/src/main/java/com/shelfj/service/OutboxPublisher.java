@@ -56,7 +56,10 @@ public class OutboxPublisher {
       LOG.log(Level.INFO, "Outbox publisher disabled (no OutboxStore — service has no outbox)");
       return;
     }
-    this.store = storeInstance.get();
+    // A service may have several repositories extending BaseOutboxRepository (= several
+    // OutboxStore beans), but they all drain the same schema-level outbox table — any one
+    // suffices. Instance.get() would throw AmbiguousResolutionException here.
+    this.store = storeInstance.iterator().next();
     Properties props = new Properties();
     props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, settings.kafkaBootstrap());
     props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
@@ -81,16 +84,37 @@ public class OutboxPublisher {
 
   private void drainQuietly() {
     try {
-      for (var row : store.pendingOutbox(100)) {
+      var rows = store.pendingOutbox(100);
+      if (rows.isEmpty()) {
+        return;
+      }
+      // Pipeline the whole batch (one flush) instead of awaiting each send, then mark all
+      // delivered rows published in a single UPDATE — N Kafka roundtrips + N DB roundtrips
+      // become ~1 + 1. A row that fails stays pending and retries next tick (at-least-once).
+      var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>(rows.size());
+      for (var row : rows) {
+        futures.add(
+            producer.send(new ProducerRecord<>(row.topic(), row.id().toString(), row.payload())));
+      }
+      producer.flush();
+      var published = new java.util.ArrayList<java.util.UUID>(rows.size());
+      for (int i = 0; i < rows.size(); i++) {
         try {
-          producer
-              .send(new ProducerRecord<>(row.topic(), row.id().toString(), row.payload()))
-              .get();
-          store.markPublished(row.id());
+          futures.get(i).get();
+          published.add(rows.get(i).id());
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          break;
         } catch (Exception e) {
-          LOG.log(Level.WARNING, "Publish failed for outbox {0}: {1}", row.id(), e.getMessage());
-          return; // broker likely down; retry next tick
+          LOG.log(
+              Level.WARNING,
+              "Publish failed for outbox {0}: {1}",
+              rows.get(i).id(),
+              e.getMessage());
         }
+      }
+      if (!published.isEmpty()) {
+        store.markPublished(published);
       }
     } catch (Exception e) {
       LOG.log(Level.WARNING, "Outbox drain deferred: " + e.getMessage());

@@ -47,10 +47,10 @@ class OnboardingIT {
     PG.stop();
   }
 
-  private Response post(String path, String json, String headerName, String headerValue) {
+  private Response post(String path, String json, String... headers) {
     var req = target.path(path).request();
-    if (headerName != null) {
-      req = req.header(headerName, headerValue);
+    for (int i = 0; i < headers.length; i += 2) {
+      req = req.header(headers[i], headers[i + 1]);
     }
     return req.post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
@@ -67,10 +67,15 @@ class OnboardingIT {
     assertThat(tenantResp.getStatus(), is(201));
     String tenantId = field(tenantResp.readEntity(String.class), "id");
 
-    // create first store → default + auto DEFAULT zone
+    // create first store → default + auto DEFAULT zone (caller has OWNER by now — see RBAC filter)
     Response storeResp =
         post(
-            "/onboarding/stores", "{\"name\":\"Main\",\"code\":\"MAIN\"}", "X-Tenant-Id", tenantId);
+            "/onboarding/stores",
+            "{\"name\":\"Main\",\"code\":\"MAIN\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
     assertThat(storeResp.getStatus(), is(201));
     String storeBody = storeResp.readEntity(String.class);
     assertThat(storeBody, containsString("\"isDefault\":true"));
@@ -88,7 +93,13 @@ class OnboardingIT {
 
     // duplicate store code → 409
     Response dup =
-        post("/onboarding/stores", "{\"name\":\"Dup\",\"code\":\"MAIN\"}", "X-Tenant-Id", tenantId);
+        post(
+            "/onboarding/stores",
+            "{\"name\":\"Dup\",\"code\":\"MAIN\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
     assertThat(dup.getStatus(), is(409));
   }
 
@@ -114,7 +125,13 @@ class OnboardingIT {
             "X-User-Id",
             OWNER);
     String tenantA = field(t.readEntity(String.class), "id");
-    post("/onboarding/stores", "{\"name\":\"A-store\",\"code\":\"AST\"}", "X-Tenant-Id", tenantA);
+    post(
+        "/onboarding/stores",
+        "{\"name\":\"A-store\",\"code\":\"AST\"}",
+        "X-Tenant-Id",
+        tenantA,
+        "X-Roles",
+        "OWNER");
 
     // tenant B sees no stores
     String listB =

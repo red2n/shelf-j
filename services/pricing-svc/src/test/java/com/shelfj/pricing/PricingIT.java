@@ -65,6 +65,7 @@ class PricingIT {
         .path(path)
         .request()
         .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
@@ -85,6 +86,7 @@ class PricingIT {
         .path(path)
         .request()
         .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
         .put(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
