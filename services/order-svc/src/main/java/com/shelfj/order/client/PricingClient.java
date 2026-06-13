@@ -59,13 +59,16 @@ public class PricingClient {
    * active promotions). Throws 422 when no price is configured, 503 when pricing-svc cannot be
    * reached.
    *
-   * <p>{@code @Retry}: up to 2 retries on transient network errors; aborts immediately on
-   * {@link ApiException} (a valid error response from pricing-svc — retrying a 404 is pointless).
-   * {@code @CircuitBreaker}: trips after 60 % failures in a 5-request window; stays open for 5 s
-   * so a dead pricing-svc doesn't cause every checkout to block for 5 s before failing.
-   * {@link CircuitBreakerOpenException} is caught below and mapped to 503.
+   * <p>{@code @Retry}: up to 2 retries on transient network errors; aborts immediately on {@link
+   * ApiException} (a valid error response from pricing-svc — retrying a 404 is pointless).
+   * {@code @CircuitBreaker}: trips after 60 % failures in a 5-request window; stays open for 5 s so
+   * a dead pricing-svc doesn't cause every checkout to block for 5 s before failing. {@link
+   * CircuitBreakerOpenException} is caught below and mapped to 503.
    */
-  @Retry(maxRetries = 2, delay = 200, abortOn = {ApiException.class})
+  @Retry(
+      maxRetries = 2,
+      delay = 200,
+      abortOn = {ApiException.class})
   @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
   public BigDecimal resolveUnitPrice(
       UUID tenantId, UUID variantId, UUID storeId, String channel, BigDecimal qty) {

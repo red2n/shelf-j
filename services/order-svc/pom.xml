@@ -102,8 +102,8 @@
 
         <!-- MicroProfile Fault Tolerance: @Retry + @CircuitBreaker on PricingClient -->
         <dependency>
-            <groupId>io.helidon.microprofile.faulttolerance</groupId>
-            <artifactId>helidon-microprofile-faulttolerance</artifactId>
+            <groupId>io.helidon.microprofile</groupId>
+            <artifactId>helidon-microprofile-fault-tolerance</artifactId>
         </dependency>
 
         <!-- Kafka: outbox publisher + payment event consumer -->

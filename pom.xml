@@ -65,6 +65,7 @@
         <module>services/pricing-svc</module>
         <module>services/payment-svc</module>
         <module>services/purchase-svc</module>
+        <module>services/customer-svc</module>
         <module>services/notification-svc</module>
         <module>services/reporting-svc</module>
         <module>platform/config</module>
@@ -135,8 +136,9 @@
 
             <!-- MicroProfile Fault Tolerance — retry, circuit-breaker, timeout on sync clients -->
             <dependency>
-                <groupId>io.helidon.microprofile.faulttolerance</groupId>
-                <artifactId>helidon-microprofile-faulttolerance</artifactId>
+                <groupId>io.helidon.microprofile</groupId>
+                <artifactId>helidon-microprofile-fault-tolerance</artifactId>
+                <version>4.4.1</version>
             </dependency>
 
             <!-- Quality: ArchUnit — architecture rule tests (used in common-test + each service) -->

@@ -33,8 +33,8 @@ public class PaymentRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO payment_tenders"
                       + " (id, tenant_id, order_id, amount, method, reference,"
-                      + "  idempotency_key, status, notes, created_at)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  idempotency_key, status, notes, created_at, store_id)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, t.id());
             ps.setObject(2, t.tenantId());
             ps.setObject(3, t.orderId());
@@ -46,6 +46,7 @@ public class PaymentRepository extends BaseOutboxRepository {
             ps.setString(9, t.notes());
             // pgjdbc cannot infer a SQL type for a raw java.time.Instant.
             ps.setObject(10, t.createdAt().atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(11, t.storeId());
             ps.executeUpdate();
           }
           insertOutbox(c, event);
@@ -135,7 +136,7 @@ public class PaymentRepository extends BaseOutboxRepository {
     try (var ps =
         c.prepareStatement(
             "SELECT id, tenant_id, order_id, amount, method, reference,"
-                + " idempotency_key, status, notes, created_at"
+                + " idempotency_key, status, notes, created_at, store_id"
                 + " FROM payment_tenders WHERE tenant_id=? AND idempotency_key=?")) {
       ps.setObject(1, tenantId);
       ps.setString(2, idempotencyKey);
@@ -165,7 +166,7 @@ public class PaymentRepository extends BaseOutboxRepository {
     try (var ps =
         c.prepareStatement(
             "SELECT id, tenant_id, order_id, amount, method, reference,"
-                + " idempotency_key, status, notes, created_at"
+                + " idempotency_key, status, notes, created_at, store_id"
                 + " FROM payment_tenders WHERE tenant_id=? AND id=? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, tenderId);
@@ -194,7 +195,7 @@ public class PaymentRepository extends BaseOutboxRepository {
     var rows =
         query(
             "SELECT id, tenant_id, order_id, amount, method, reference,"
-                + " idempotency_key, status, notes, created_at"
+                + " idempotency_key, status, notes, created_at, store_id"
                 + " FROM payment_tenders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -208,7 +209,7 @@ public class PaymentRepository extends BaseOutboxRepository {
   public List<PaymentTender> findTendersByOrder(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, amount, method, reference,"
-            + " idempotency_key, status, notes, created_at"
+            + " idempotency_key, status, notes, created_at, store_id"
             + " FROM payment_tenders WHERE tenant_id=? AND order_id=?"
             + " ORDER BY created_at ASC",
         ps -> {
@@ -246,7 +247,8 @@ public class PaymentRepository extends BaseOutboxRepository {
         rs.getString("idempotency_key"),
         rs.getString("status"),
         rs.getString("notes"),
-        rs.getTimestamp("created_at").toInstant());
+        rs.getTimestamp("created_at").toInstant(),
+        rs.getObject("store_id", UUID.class));
   }
 
   private RefundTender mapRefund(ResultSet rs) throws SQLException {

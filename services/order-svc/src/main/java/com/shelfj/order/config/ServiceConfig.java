@@ -22,12 +22,11 @@ public class ServiceConfig extends BaseServiceConfig {
 
   /**
    * When true, placeOrder resolves every line's unit price from pricing-svc and ignores the
-   * client-supplied unitPrice (gap #63 — clients must not set their own prices). Defaults to false
-   * so local dev / test rigs without a seeded price catalogue keep working; production MUST enable
-   * it.
+   * client-supplied unitPrice. Defaults to true (secure). Override to false only in local dev rigs
+   * that have no seeded price catalogue (docker-compose sets SHELFJ_ORDER_PRICING_ENFORCE=false).
    */
   @Inject
-  @ConfigProperty(name = "shelfj.order.pricing.enforce", defaultValue = "false")
+  @ConfigProperty(name = "shelfj.order.pricing.enforce", defaultValue = "true")
   boolean pricingEnforce;
 
   public boolean pricingEnforce() {

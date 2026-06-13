@@ -18,7 +18,8 @@ public final class Domain {
       String idempotencyKey,
       String status,
       String notes,
-      Instant createdAt) {
+      Instant createdAt,
+      UUID storeId) {
 
     public static final String METHOD_CASH = "CASH";
     public static final String METHOD_CARD = "CARD";

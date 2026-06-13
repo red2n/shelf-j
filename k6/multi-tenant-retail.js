@@ -66,6 +66,9 @@ const pricingLatency               = new Trend('pricing_latency_ms',            
 const intercompanyLatency          = new Trend('intercompany_latency_ms',        true);
 // Tier 7 (gaps #61–72): any count here is a security regression at the gateway/order layer.
 const securityViolations           = new Counter('security_violations');
+const customerLatency              = new Trend('customer_latency_ms',      true);
+const posRegisterLatency           = new Trend('pos_register_latency_ms',  true);
+const cashMgmtLatency              = new Trend('cash_mgmt_latency_ms',     true);
 
 // ── Scenario options ───────────────────────────────────────────────────────────
 export const options = {
@@ -170,6 +173,18 @@ export const options = {
       executor: 'constant-vus', vus: 2, duration: '35s',
       exec: 'paymentFlow', startTime: '52s',
     },
+    customerFlow: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'customerFlow', startTime: '55s',
+    },
+    posRegisterFlow: {
+      executor: 'constant-vus', vus: 2, duration: '35s',
+      exec: 'posRegisterFlow', startTime: '58s',
+    },
+    cashMgmtFlow: {
+      executor: 'constant-vus', vus: 1, duration: '30s',
+      exec: 'cashMgmtFlow', startTime: '60s',
+    },
   },
   thresholds: {
     checks:                      ['rate>0.92'],
@@ -197,6 +212,9 @@ export const options = {
     pricing_latency_ms:          ['p(95)<800'],
     intercompany_latency_ms:     ['p(95)<1000'],
     security_violations:         ['count==0'],
+    customer_latency_ms:         ['p(95)<600'],
+    pos_register_latency_ms:     ['p(95)<800'],
+    cash_mgmt_latency_ms:        ['p(95)<800'],
   },
 };
 
@@ -3739,6 +3757,202 @@ export function gatewaySecurity(d) {
 export default function () {}
 
 // ── Summary ────────────────────────────────────────────────────────────────────
+// ── Customer profiles, loyalty, and store credit (customer-svc) ───────────────
+export function customerFlow(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant = tenantCtx(d);
+  const tag    = `customer[${tenant.name}]`;
+  const run    = `${__VU}-${exec.scenario.iterationInTest}`;
+  const email  = `cust-${run}@shelfj.test`;
+
+  // 1. Register a customer
+  const regRes = post('/api/customer-svc/customers', {
+    email,
+    firstName: 'Test',
+    lastName:  'Customer',
+    gdprConsent: true,
+  }, tenant.ownerToken);
+  if (!ok(regRes, `${tag} register customer 201`)) { sleep(1); return; }
+  const customerId = (() => { try { return JSON.parse(regRes.body).data.id; } catch (_) { return null; } })();
+  if (!customerId) { sleep(1); return; }
+
+  // 2. GET customer
+  const getRes = get(`/api/customer-svc/customers/${customerId}`, tenant.ownerToken);
+  check(getRes, { [`${tag} get customer 200`]: r => r.status === 200 });
+
+  // 3. Lookup by email (POS quick-find)
+  const lookupRes = get(`/api/customer-svc/customers/lookup?email=${encodeURIComponent(email)}`, tenant.ownerToken);
+  check(lookupRes, { [`${tag} lookup by email 200`]: r => r.status === 200 });
+
+  // 4. Earn loyalty points → should reach BRONZE (500 pts)
+  const earnRes = post(`/api/customer-svc/customers/${customerId}/loyalty/earn`, {
+    points: 500,
+    reason: 'k6-purchase',
+  }, tenant.ownerToken);
+  if (ok(earnRes, `${tag} earn loyalty 200`)) {
+    const tier = (() => { try { return JSON.parse(earnRes.body).data.tier; } catch (_) { return null; } })();
+    check(earnRes, { [`${tag} loyalty tier is BRONZE`]: () => tier === 'BRONZE' });
+  }
+
+  // 5. Earn 600 more → 1100 lifetime → SILVER
+  const earn2Res = post(`/api/customer-svc/customers/${customerId}/loyalty/earn`, {
+    points: 600,
+    reason: 'k6-purchase-2',
+  }, tenant.ownerToken);
+  if (ok(earn2Res, `${tag} earn loyalty tier-up 200`)) {
+    const tier2 = (() => { try { return JSON.parse(earn2Res.body).data.tier; } catch (_) { return null; } })();
+    check(earn2Res, { [`${tag} loyalty tier is SILVER after tier-up`]: () => tier2 === 'SILVER' });
+  }
+
+  // 6. Redeem 100 pts
+  const redeemRes = post(`/api/customer-svc/customers/${customerId}/loyalty/redeem`, {
+    points: 100,
+    reason: 'k6-discount',
+  }, tenant.ownerToken);
+  ok(redeemRes, `${tag} redeem loyalty 200`);
+
+  // 7. Redeem more than balance → 422
+  const overRes = post(`/api/customer-svc/customers/${customerId}/loyalty/redeem`, {
+    points: 999999,
+    reason: 'k6-over-redeem',
+  }, tenant.ownerToken);
+  check(overRes, { [`${tag} over-redeem rejected 422`]: r => r.status === 422 });
+
+  // 8. Loyalty ledger
+  const ledgerRes = get(`/api/customer-svc/customers/${customerId}/loyalty/ledger?limit=10`, tenant.ownerToken);
+  check(ledgerRes, { [`${tag} loyalty ledger 200`]: r => r.status === 200 });
+
+  // 9. Issue store credit
+  const creditRes = post(`/api/customer-svc/customers/${customerId}/store-credit/issue`, {
+    amount: 50.00,
+    currency: 'GBP',
+    reason: 'k6-return-refund',
+  }, tenant.ownerToken);
+  ok(creditRes, `${tag} issue store credit 200`);
+
+  // 10. Redeem store credit (partial)
+  const scRedeemRes = post(`/api/customer-svc/customers/${customerId}/store-credit/redeem`, {
+    amount: 20.00,
+    currency: 'GBP',
+    reason: 'k6-purchase',
+  }, tenant.ownerToken);
+  ok(scRedeemRes, `${tag} redeem store credit 200`);
+
+  // 11. Cross-tenant isolation
+  const other  = isIN(d) ? d.uk : d.india;
+  const isoRes = get(`/api/customer-svc/customers/${customerId}`, other.ownerToken);
+  check(isoRes, { [`${tag} customer cross-tenant isolation 404`]: r => r.status === 404 });
+
+  customerLatency.add(regRes.timings.duration);
+  sleep(1);
+}
+
+// ── POS register: parked (suspended) sales and no-sale log ────────────────────
+export function posRegisterFlow(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant    = tenantCtx(d);
+  const store     = tenant.stores[0];
+  const variantId = tenant.variantIds[0];
+  if (!store || !variantId) { sleep(1); return; }
+  const tag     = `posRegister[${tenant.name}]`;
+  const storeId = store.storeId;
+
+  // 1. Park a sale
+  const parkRes = post('/api/order-svc/pos/parked-sales', {
+    storeId,
+    cashierId:    store.cashierId || tenant.ownerId,
+    items: [{ variantId, qty: 2, unitPrice: '15.00', notes: 'k6-parked' }],
+    notes: 'customer stepped out',
+  }, tenant.ownerToken);
+  if (!ok(parkRes, `${tag} park sale 201`)) { sleep(1); return; }
+  const saleId = (() => { try { return JSON.parse(parkRes.body).data.id; } catch (_) { return null; } })();
+  if (!saleId) { sleep(1); return; }
+
+  // 2. List open parked sales for the store
+  const listRes = get(`/api/order-svc/pos/parked-sales?storeId=${storeId}`, tenant.ownerToken);
+  check(listRes, { [`${tag} list parked sales 200`]: r => r.status === 200 });
+
+  // 3. Get specific parked sale
+  const getRes = get(`/api/order-svc/pos/parked-sales/${saleId}`, tenant.ownerToken);
+  check(getRes, { [`${tag} get parked sale 200`]: r => r.status === 200 });
+
+  // 4. Cancel it (so we don't accumulate stale state)
+  const cancelRes = http.del(`${BASE}/api/order-svc/pos/parked-sales/${saleId}`, null,
+    { headers: hdrs(tenant.ownerToken) });
+  check(cancelRes, { [`${tag} cancel parked sale 204`]: r => r.status === 204 });
+
+  // 5. No-sale / open-drawer log
+  const noSaleRes = post('/api/order-svc/pos/no-sale', {
+    storeId,
+    cashierId: store.cashierId || tenant.ownerId,
+    reason:    'k6-no-sale-test',
+  }, tenant.ownerToken);
+  ok(noSaleRes, `${tag} no-sale log 201`);
+
+  posRegisterLatency.add(parkRes.timings.duration);
+  sleep(1);
+}
+
+// ── Cash management: pay-in/pay-out and daily Z-report ────────────────────────
+export function cashMgmtFlow(d) {
+  if (!d || !d.india || !d.uk) return;
+  const tenant  = tenantCtx(d);
+  const store   = tenant.stores[0];
+  if (!store) { sleep(1); return; }
+  const tag     = `cashMgmt[${tenant.name}]`;
+  const storeId = store.storeId;
+
+  // Need a till session — open one first
+  const sessRes = post('/api/iam-svc/auth/pos/sessions', {
+    storeId,
+    idleTimeoutSeconds: 3600,
+  }, tenant.ownerToken);
+  if (!ok(sessRes, `${tag} open till session 201`)) { sleep(1); return; }
+  const tillSessionId = (() => { try { return JSON.parse(sessRes.body).data.id; } catch (_) { return null; } })();
+  if (!tillSessionId) { sleep(1); return; }
+
+  // 1. PAY_IN (petty cash received)
+  const payInRes = post('/api/payment-svc/admin/cash/movements', {
+    storeId,
+    tillSessionId,
+    direction: 'PAY_IN',
+    amount:    '50.00',
+    reason:    'k6 petty cash in',
+  }, tenant.ownerToken);
+  ok(payInRes, `${tag} pay-in 201`);
+
+  // 2. PAY_OUT (petty cash paid out)
+  const payOutRes = post('/api/payment-svc/admin/cash/movements', {
+    storeId,
+    tillSessionId,
+    direction: 'PAY_OUT',
+    amount:    '20.00',
+    reason:    'k6 petty cash out',
+  }, tenant.ownerToken);
+  ok(payOutRes, `${tag} pay-out 201`);
+
+  // 3. List movements for this session
+  const listRes = get(`/api/payment-svc/admin/cash/movements?tillSessionId=${tillSessionId}`, tenant.ownerToken);
+  check(listRes, { [`${tag} list cash movements 200`]: r => r.status === 200 });
+
+  // 4. Generate Z-report for today
+  const today = new Date().toISOString().slice(0, 10);
+  const zRes = post('/api/payment-svc/admin/cash/z-report', {
+    storeId,
+    businessDate: today,
+    countedCash:  '230.00',
+    currency:     'GBP',
+  }, tenant.ownerToken);
+  ok(zRes, `${tag} generate Z-report 200`);
+
+  // 5. Retrieve the Z-report
+  const getZRes = get(`/api/payment-svc/admin/cash/z-report?storeId=${storeId}&businessDate=${today}`, tenant.ownerToken);
+  check(getZRes, { [`${tag} get Z-report 200`]: r => r.status === 200 });
+
+  cashMgmtLatency.add(payInRes.timings.duration);
+  sleep(1);
+}
+
 export function handleSummary(data) {
   const checks = data.metrics.checks;
   const passed = checks?.values?.passes || 0;

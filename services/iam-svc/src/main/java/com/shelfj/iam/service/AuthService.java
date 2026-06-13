@@ -12,6 +12,7 @@ import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.json.Json;
 import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
@@ -42,16 +43,17 @@ public class AuthService {
         new User(
             userId, null, User.TYPE_CUSTOMER, email, phone, hash, User.STATUS_ACTIVE, now, now);
 
-    // email is user input — esc() prevents a quoted-local-part address from injecting JSON
     String payload =
-        """
-                {"eventId":"%s","eventType":"UserRegistered","tenantId":null,"aggregateId":"%s",\
-                "occurredAt":"%s","email":"%s","type":"CUSTOMER"}"""
-            .formatted(
-                UUID.randomUUID(),
-                userId,
-                Instant.now(),
-                com.shelfj.events.EventPayload.esc(email));
+        Json.createObjectBuilder()
+            .add("eventId", UUID.randomUUID().toString())
+            .add("eventType", "UserRegistered")
+            .addNull("tenantId")
+            .add("aggregateId", userId.toString())
+            .add("occurredAt", Instant.now().toString())
+            .add("email", email)
+            .add("type", "CUSTOMER")
+            .build()
+            .toString();
     var outbox =
         new OutboxRow("UserRegistered", "shelfj.iam.user-registered", null, userId, payload);
 

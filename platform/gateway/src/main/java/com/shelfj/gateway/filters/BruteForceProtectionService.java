@@ -31,7 +31,10 @@ public class BruteForceProtectionService {
       evictStale();
       if (stateByKey.size() >= MAX_ENTRIES) {
         var it = stateByKey.keySet().iterator();
-        if (it.hasNext()) { it.next(); it.remove(); }
+        if (it.hasNext()) {
+          it.next();
+          it.remove();
+        }
       }
     }
     FailureState state = stateByKey.computeIfAbsent(key, k -> new FailureState());

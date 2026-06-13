@@ -1,0 +1,28 @@
+name: shelf_app
+description: Shelf-J multi-tenant retail platform — unified Flutter frontend for web, iOS, and Android.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # navigation
+  go_router: ^14.6.2
+  # state management
+  flutter_riverpod: ^2.5.1
+  # HTTP
+  dio: ^5.7.0
+  # secure token storage (Keychain / Keystore / web localStorage fallback)
+  flutter_secure_storage: ^9.2.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

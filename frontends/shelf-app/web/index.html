@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Shelf-J — multi-tenant retail platform">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- PWA manifest -->
+  <link rel="manifest" href="manifest.json">
+  <!-- Favicon placeholder -->
+  <link rel="icon" type="image/png" href="icons/Icon-192.png">
+  <title>Shelf-J</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #F5F5F5;
+    }
+    #loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: sans-serif;
+      color: #1A5276;
+      font-size: 1.1rem;
+      gap: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="#1A5276">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
+    </svg>
+    Loading Shelf-J…
+  </div>
+  <script>
+    window.addEventListener('flutter-first-frame', () => {
+      const el = document.getElementById('loading');
+      if (el) el.remove();
+    });
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

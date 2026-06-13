@@ -310,6 +310,34 @@ public class UserRepository extends BaseOutboxRepository {
     }
   }
 
+  // --- bootstrap ---
+
+  public boolean platformAdminExists() {
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "SELECT 1 FROM users u"
+                    + " JOIN user_roles ur ON ur.user_id = u.id"
+                    + " JOIN roles r ON r.id = ur.role_id"
+                    + " WHERE r.name = 'PLATFORM_ADMIN' LIMIT 1")) {
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    } catch (SQLException e) {
+      throw dbError("check platform admin", e);
+    }
+  }
+
+  public void createPlatformAdmin(User user) {
+    inTx(
+        c -> {
+          insertUser(c, user);
+          assignRole(c, user.id(), "PLATFORM_ADMIN");
+          return null;
+        },
+        "create platform admin");
+  }
+
   /** Pending outbox rows for the publisher (oldest first). */
   @Override
   public List<PendingOutbox> pendingOutbox(int limit) {

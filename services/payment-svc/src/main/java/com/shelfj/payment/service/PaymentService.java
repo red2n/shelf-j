@@ -39,6 +39,7 @@ public class PaymentService {
     UUID orderId = UUID.fromString(req.orderId());
     UUID tenderId = UUID.randomUUID();
 
+    UUID storeId = req.storeId() == null ? null : UUID.fromString(req.storeId());
     PaymentTender tender =
         new PaymentTender(
             tenderId,
@@ -50,7 +51,8 @@ public class PaymentService {
             idempotencyKey,
             PaymentTender.STATUS_CAPTURED,
             req.notes(),
-            Instant.now());
+            Instant.now(),
+            storeId);
 
     return repo.createTender(tender, Events.paymentCaptured(tenantId, tenderId, orderId));
   }

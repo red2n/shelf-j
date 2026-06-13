@@ -81,7 +81,8 @@ public class PurchaseService {
             req.expectedDelivery() != null ? LocalDate.parse(req.expectedDelivery()) : null,
             Instant.now(),
             Instant.now());
-    return repo.createPurchaseOrder(po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
+    return repo.createPurchaseOrder(
+        po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
   }
 
   public List<PurchaseOrder> listPurchaseOrders(TenantContext ctx) {
@@ -158,7 +159,9 @@ public class PurchaseService {
                         Instant.now()))
             .toList();
     return repo.createGoodsReceipt(
-        gr, lines, Events.goodsReceived(ctx.requireTenantId(), gr.id(), gr.storeId(), gr.poId(), lines));
+        gr,
+        lines,
+        Events.goodsReceived(ctx.requireTenantId(), gr.id(), gr.storeId(), gr.poId(), lines));
   }
 
   public List<GoodsReceipt> listGoodsReceipts(TenantContext ctx, UUID poId) {

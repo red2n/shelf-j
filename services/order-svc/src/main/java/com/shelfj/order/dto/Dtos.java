@@ -274,4 +274,48 @@ public final class Dtos {
 
   public record PosStockPositionResponse(
       String storeId, String variantId, String onHandQty, String updatedAt) {}
+
+  // ── Parked (suspended) sales ──────────────────────────────────────────────
+
+  public record ParkedSaleItemRequest(
+      @NotBlank String variantId,
+      @NotNull @Positive BigDecimal qty,
+      @NotNull @PositiveOrZero BigDecimal unitPrice,
+      @PositiveOrZero BigDecimal discountAmount,
+      String notes) {}
+
+  public record ParkSaleRequest(
+      @NotBlank String storeId,
+      String customerId,
+      String customerName,
+      List<@NotNull ParkedSaleItemRequest> items,
+      String notes) {}
+
+  public record ResumeParkedSaleRequest(@NotBlank String parkedSaleId) {}
+
+  public record ParkedSaleItemResponse(
+      String variantId,
+      BigDecimal qty,
+      BigDecimal unitPrice,
+      BigDecimal discountAmount,
+      BigDecimal lineTotal,
+      String notes) {}
+
+  public record ParkedSaleResponse(
+      String id,
+      String storeId,
+      String customerId,
+      String customerName,
+      BigDecimal subtotal,
+      BigDecimal discountAmount,
+      List<ParkedSaleItemResponse> items,
+      String notes,
+      String parkedAt,
+      String expiresAt) {}
+
+  // ── No-sale / open-drawer log ─────────────────────────────────────────────
+
+  public record NoSaleRequest(String storeId, String tillSessionId, String reason) {}
+
+  public record NoSaleResponse(String id, String storeId, String reason, String loggedAt) {}
 }

@@ -607,6 +607,23 @@ services:
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
+  customer-svc:
+    image: ghcr.io/red2n/shelf-j-customer-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/customer-svc, SVC_JAR: customer-svc }
+    container_name: shelfj-customer
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${CUSTOMER_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: customer-svc
+    mem_limit: ${CUSTOMER_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
   # ---------------------------------------------------------------- gateway (single public door)
 
   # Gateway waits for iam-svc and tenant-svc: these are the services clients hit first.

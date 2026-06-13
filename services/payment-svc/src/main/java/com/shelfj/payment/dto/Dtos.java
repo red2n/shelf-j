@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
 
@@ -19,7 +20,8 @@ public final class Dtos {
       @NotBlank String method,
       String reference,
       String idempotencyKey,
-      String notes) {}
+      String notes,
+      String storeId) {}
 
   public record RecordRefundRequest(
       @NotBlank String paymentId,
@@ -92,4 +94,54 @@ public final class Dtos {
       BigDecimal grossSales,
       BigDecimal totalRefunds,
       BigDecimal netSales) {}
+
+  // ── Pay-in / Pay-out (petty cash) ─────────────────────────────────────────
+
+  public record CashMovementRequest(
+      @NotBlank String tillSessionId,
+      @NotBlank String storeId,
+      @NotBlank String direction, // PAY_IN | PAY_OUT
+      @NotNull @DecimalMin("0.01") BigDecimal amount,
+      @NotBlank String reason,
+      String authorisedBy) {}
+
+  public record CashMovementResponse(
+      UUID id,
+      UUID storeId,
+      UUID tillSessionId,
+      String direction,
+      BigDecimal amount,
+      String reason,
+      Instant createdAt) {}
+
+  // ── Daily Z-report ─────────────────────────────────────────────────────────
+
+  public record GenerateZReportRequest(
+      @NotBlank String storeId,
+      @NotBlank String businessDate, // ISO-8601 yyyy-MM-dd
+      @NotNull @PositiveOrZero BigDecimal countedCash,
+      String currency) {}
+
+  public record ZReportResponse(
+      UUID id,
+      UUID storeId,
+      LocalDate businessDate,
+      BigDecimal totalSales,
+      BigDecimal totalRefunds,
+      BigDecimal totalDiscounts,
+      BigDecimal totalTax,
+      BigDecimal netSales,
+      BigDecimal cashSales,
+      BigDecimal cardSales,
+      BigDecimal giftCardSales,
+      BigDecimal openingFloat,
+      BigDecimal cashDrops,
+      BigDecimal payIns,
+      BigDecimal payOuts,
+      BigDecimal expectedCash,
+      BigDecimal countedCash,
+      BigDecimal overShort,
+      int transactionCount,
+      String currency,
+      Instant generatedAt) {}
 }
