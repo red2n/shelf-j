@@ -282,7 +282,8 @@ public class ProductRepository extends BaseOutboxRepository {
   }
 
   /** Catalog list — ACTIVE only, optionally online-only, optionally filtered by category. */
-  public List<Product> listProducts(UUID tenantId, UUID categoryId, boolean onlineOnly, int limit) {
+  public List<Product> listProducts(
+      UUID tenantId, UUID categoryId, boolean onlineOnly, UUID storeId, int limit) {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
@@ -290,22 +291,33 @@ public class ProductRepository extends BaseOutboxRepository {
                 + " FROM products WHERE tenant_id = ? AND status = 'ACTIVE'");
     if (categoryId != null) sql.append(" AND category_id = ?");
     if (onlineOnly) sql.append(" AND sellable_online = true");
+    if (storeId != null) sql.append(STORE_ASSORTMENT_FILTER.replace("$P", "products.id"));
     sql.append(" ORDER BY created_at DESC LIMIT ?");
     return query(
         sql.toString(),
         ps -> {
           int i = 1;
-          ps.setObject(i, tenantId);
-          i++;
+          ps.setObject(i++, tenantId);
           if (categoryId != null) {
-            ps.setObject(i, categoryId);
-            i++;
+            ps.setObject(i++, categoryId);
+          }
+          if (storeId != null) {
+            ps.setObject(i++, storeId);
           }
           ps.setInt(i, limit);
         },
         ProductRepository::mapProduct,
         "list products");
   }
+
+  /**
+   * Assortment predicate: keep a product if it has NO store rows (sold everywhere) OR an explicit
+   * row for this store. {@code $P} is the product-id column expression (e.g. {@code products.id} or
+   * {@code p.id}). Binds exactly one {@code store_id} parameter.
+   */
+  private static final String STORE_ASSORTMENT_FILTER =
+      " AND (NOT EXISTS (SELECT 1 FROM product_stores ps WHERE ps.product_id = $P)"
+          + " OR EXISTS (SELECT 1 FROM product_stores ps WHERE ps.product_id = $P AND ps.store_id = ?))";
 
   /** Admin list — all statuses, optionally filtered by category and/or status. */
   public List<Product> listProductsAdmin(UUID tenantId, UUID categoryId, String status, int limit) {
@@ -344,7 +356,13 @@ public class ProductRepository extends BaseOutboxRepository {
    * matching variants.
    */
   public List<Product> searchProducts(
-      UUID tenantId, String q, String sku, String barcode, boolean onlineOnly, int limit) {
+      UUID tenantId,
+      String q,
+      String sku,
+      String barcode,
+      boolean onlineOnly,
+      UUID storeId,
+      int limit) {
     boolean hasVariantFilter = sku != null || barcode != null;
     StringBuilder sql =
         new StringBuilder(
@@ -361,6 +379,7 @@ public class ProductRepository extends BaseOutboxRepository {
     if (sku != null) sql.append(" AND v.sku = ?");
     if (barcode != null) sql.append(" AND v.barcode = ?");
     if (onlineOnly) sql.append(" AND p.sellable_online = true");
+    if (storeId != null) sql.append(STORE_ASSORTMENT_FILTER.replace("$P", "p.id"));
     sql.append(" ORDER BY p.created_at DESC LIMIT ?");
     String finalSql = sql.toString();
     return query(
@@ -371,10 +390,54 @@ public class ProductRepository extends BaseOutboxRepository {
           if (q != null) ps.setString(i++, "%" + escapeLike(q) + "%");
           if (sku != null) ps.setString(i++, sku);
           if (barcode != null) ps.setString(i++, barcode);
+          if (storeId != null) ps.setObject(i++, storeId);
           ps.setInt(i, limit);
         },
         ProductRepository::mapProductAlias,
         "search products");
+  }
+
+  // ── per-store assortment ─────────────────────────────────────────────────
+
+  public List<UUID> storesForProduct(UUID tenantId, UUID productId) {
+    return query(
+        "SELECT store_id FROM product_stores WHERE tenant_id = ? AND product_id = ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, productId);
+        },
+        rs -> rs.getObject("store_id", UUID.class),
+        "stores for product");
+  }
+
+  /** Replace a product's store assortment. Empty list = sold at all stores (no rows). */
+  public void setStoresForProduct(UUID tenantId, UUID productId, List<UUID> storeIds) {
+    inTx(
+        c -> {
+          try (var del =
+              c.prepareStatement(
+                  "DELETE FROM product_stores WHERE tenant_id = ? AND product_id = ?")) {
+            del.setObject(1, tenantId);
+            del.setObject(2, productId);
+            del.executeUpdate();
+          }
+          if (!storeIds.isEmpty()) {
+            try (var ins =
+                c.prepareStatement(
+                    "INSERT INTO product_stores (tenant_id, product_id, store_id)"
+                        + " VALUES (?, ?, ?)")) {
+              for (UUID sid : storeIds) {
+                ins.setObject(1, tenantId);
+                ins.setObject(2, productId);
+                ins.setObject(3, sid);
+                ins.addBatch();
+              }
+              ins.executeBatch();
+            }
+          }
+          return null;
+        },
+        "set product stores");
   }
 
   /**

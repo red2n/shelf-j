@@ -1,0 +1,509 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/constants.dart';
+import '../../core/network/api_client.dart';
+import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/loading_view.dart';
+import 'customer_providers.dart';
+
+class CustomersScreen extends ConsumerWidget {
+  const CustomersScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(customersProvider);
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          child: Row(
+            children: [
+              Text('Customers',
+                  style: Theme.of(context).textTheme.headlineMedium),
+              const Spacer(),
+              FilledButton.icon(
+                onPressed: () => showDialog(
+                    context: context, builder: (_) => const _AddCustomerDialog()),
+                icon: const Icon(Icons.person_add_alt),
+                label: const Text('Add customer'),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () => ref.invalidate(customersProvider),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: async.when(
+            loading: () => const LoadingView(label: 'Loading customers…'),
+            error: (e, _) => ErrorView(
+              message: 'Could not load customers.\n$e',
+              onRetry: () => ref.invalidate(customersProvider),
+            ),
+            data: (customers) {
+              if (customers.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.people_outline,
+                          size: 64, color: cs.outlineVariant),
+                      const SizedBox(height: 12),
+                      const Text('No customers yet'),
+                    ],
+                  ),
+                );
+              }
+              return ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                itemCount: customers.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                itemBuilder: (_, i) {
+                  final c = customers[i];
+                  return Card(
+                    child: ListTile(
+                      onTap: () => showDialog(
+                        context: context,
+                        builder: (_) => _CustomerDetailDialog(customer: c),
+                      ),
+                      leading: CircleAvatar(
+                        backgroundColor: cs.primaryContainer,
+                        child: Text(
+                          (c.firstName.isNotEmpty ? c.firstName[0] : '?')
+                              .toUpperCase(),
+                          style: TextStyle(color: cs.onPrimaryContainer),
+                        ),
+                      ),
+                      title: Text(c.fullName,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text([
+                        c.email,
+                        if (c.phone != null && c.phone!.isNotEmpty) c.phone,
+                      ].whereType<String>().join(' · ')),
+                      trailing: const Icon(Icons.chevron_right),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AddCustomerDialog extends ConsumerStatefulWidget {
+  const _AddCustomerDialog();
+
+  @override
+  ConsumerState<_AddCustomerDialog> createState() => _AddCustomerDialogState();
+}
+
+class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _emailCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _firstCtrl = TextEditingController();
+  final _lastCtrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _phoneCtrl.dispose();
+    _firstCtrl.dispose();
+    _lastCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.customer}/customers',
+        data: {
+          'email': _emailCtrl.text.trim(),
+          'phone': _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
+          'firstName': _firstCtrl.text.trim(),
+          'lastName': _lastCtrl.text.trim(),
+          'gdprConsent': true,
+        },
+      );
+      if (!mounted) return;
+      ref.invalidate(customersProvider);
+      Navigator.pop(context);
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = e.toString().contains('409')
+            ? 'A customer with this email already exists.'
+            : 'Could not add customer: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Add customer'),
+      content: SizedBox(
+        width: 400,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_error != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                      color: cs.errorContainer,
+                      borderRadius: BorderRadius.circular(8)),
+                  child: Text(_error!,
+                      style: TextStyle(color: cs.onErrorContainer)),
+                ),
+                const SizedBox(height: 12),
+              ],
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _firstCtrl,
+                      decoration:
+                          const InputDecoration(labelText: 'First name *'),
+                      validator: (v) =>
+                          v == null || v.trim().isEmpty ? 'Required' : null,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _lastCtrl,
+                      decoration:
+                          const InputDecoration(labelText: 'Last name *'),
+                      validator: (v) =>
+                          v == null || v.trim().isEmpty ? 'Required' : null,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                    labelText: 'Email *', prefixIcon: Icon(Icons.email_outlined)),
+                validator: (v) =>
+                    v == null || !v.contains('@') ? 'Valid email required' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _phoneCtrl,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                    labelText: 'Phone', prefixIcon: Icon(Icons.phone_outlined)),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _loading ? null : _submit,
+          child: _loading
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Text('Add'),
+        ),
+      ],
+    );
+  }
+}
+
+class _CustomerDetailDialog extends ConsumerWidget {
+  final Customer customer;
+  const _CustomerDetailDialog({required this.customer});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final loyaltyAsync = ref.watch(customerLoyaltyProvider(customer.id));
+    final creditAsync = ref.watch(customerStoreCreditProvider(customer.id));
+    final ledgerAsync = ref.watch(customerLoyaltyLedgerProvider(customer.id));
+
+    return AlertDialog(
+      title: Text(customer.fullName),
+      content: SizedBox(
+        width: 480,
+        height: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(customer.email, style: TextStyle(color: cs.outline)),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _StatCard(
+                      icon: Icons.stars_outlined,
+                      label: 'Loyalty points',
+                      value: loyaltyAsync.maybeWhen(
+                        data: (l) => l.pointsBalance.toStringAsFixed(0),
+                        orElse: () => '…',
+                      ),
+                      sub: loyaltyAsync.maybeWhen(
+                        data: (l) => l.tier ?? '',
+                        orElse: () => '',
+                      ),
+                      color: cs.primaryContainer,
+                      fg: cs.onPrimaryContainer,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _StatCard(
+                      icon: Icons.card_giftcard_outlined,
+                      label: 'Store credit',
+                      value: creditAsync.maybeWhen(
+                        data: (c) =>
+                            '${c.currency} ${c.balance.toStringAsFixed(2)}',
+                        orElse: () => '…',
+                      ),
+                      sub: '',
+                      color: cs.tertiaryContainer,
+                      fg: cs.onTertiaryContainer,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _points(context, ref, 'earn'),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Earn points'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _points(context, ref, 'redeem'),
+                    icon: const Icon(Icons.remove, size: 18),
+                    label: const Text('Redeem points'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _storeCredit(context, ref, 'issue'),
+                    icon: const Icon(Icons.add_card, size: 18),
+                    label: const Text('Issue credit'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _storeCredit(context, ref, 'redeem'),
+                    icon: const Icon(Icons.payment, size: 18),
+                    label: const Text('Redeem credit'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text('Loyalty ledger',
+                  style: Theme.of(context).textTheme.labelLarge),
+              const SizedBox(height: 8),
+              ledgerAsync.when(
+                loading: () => const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Center(child: CircularProgressIndicator())),
+                error: (e, _) =>
+                    Text('Could not load ledger: $e', style: TextStyle(color: cs.error)),
+                data: (entries) => entries.isEmpty
+                    ? Text('No loyalty activity yet.',
+                        style: TextStyle(color: cs.outline))
+                    : Column(
+                        children: [
+                          for (final e in entries.take(20))
+                            ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(
+                                e.points >= 0
+                                    ? Icons.arrow_upward
+                                    : Icons.arrow_downward,
+                                size: 16,
+                                color: e.points >= 0
+                                    ? Colors.green
+                                    : Colors.red,
+                              ),
+                              title: Text(e.type),
+                              subtitle:
+                                  e.reason != null ? Text(e.reason!) : null,
+                              trailing: Text(
+                                  '${e.points >= 0 ? '+' : ''}${e.points.toStringAsFixed(0)}'),
+                            ),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context), child: const Text('Close')),
+      ],
+    );
+  }
+
+  void _refresh(WidgetRef ref) {
+    ref.invalidate(customerLoyaltyProvider(customer.id));
+    ref.invalidate(customerLoyaltyLedgerProvider(customer.id));
+    ref.invalidate(customerStoreCreditProvider(customer.id));
+  }
+
+  Future<void> _points(BuildContext context, WidgetRef ref, String action) async {
+    final res = await _amountReason(context,
+        action == 'earn' ? 'Earn points' : 'Redeem points', 'Points');
+    if (res == null) return;
+    try {
+      await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.customer}/customers/${customer.id}/loyalty/$action',
+        data: {'points': res.amount, 'reason': res.reason},
+      );
+      _refresh(ref);
+      if (!context.mounted) return;
+      _toast(context, 'Points updated.');
+    } catch (e) {
+      if (!context.mounted) return;
+      _toast(context, 'Failed: $e', error: true);
+    }
+  }
+
+  Future<void> _storeCredit(
+      BuildContext context, WidgetRef ref, String action) async {
+    final res = await _amountReason(context,
+        action == 'issue' ? 'Issue store credit' : 'Redeem store credit', 'Amount');
+    if (res == null) return;
+    try {
+      await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.customer}/customers/${customer.id}/store-credit/$action',
+        data: {'amount': res.amount, 'reason': res.reason},
+      );
+      _refresh(ref);
+      if (!context.mounted) return;
+      _toast(context, 'Store credit updated.');
+    } catch (e) {
+      if (!context.mounted) return;
+      _toast(context, 'Failed: $e', error: true);
+    }
+  }
+
+  void _toast(BuildContext context, String msg, {bool error = false}) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+    ));
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final String sub;
+  final Color color;
+  final Color fg;
+  const _StatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.sub,
+    required this.color,
+    required this.fg,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration:
+          BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: fg),
+          const SizedBox(height: 8),
+          Text(label, style: TextStyle(color: fg, fontSize: 12)),
+          Text(value,
+              style: TextStyle(
+                  color: fg, fontSize: 20, fontWeight: FontWeight.bold)),
+          if (sub.isNotEmpty) Text(sub, style: TextStyle(color: fg, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
+class _AmountReason {
+  final double amount;
+  final String reason;
+  const _AmountReason(this.amount, this.reason);
+}
+
+Future<_AmountReason?> _amountReason(
+    BuildContext context, String title, String amountLabel) {
+  final amountCtrl = TextEditingController();
+  final reasonCtrl = TextEditingController();
+  return showDialog<_AmountReason>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: amountCtrl,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(labelText: amountLabel),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: reasonCtrl,
+            decoration: const InputDecoration(labelText: 'Reason'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () {
+            final amt = double.tryParse(amountCtrl.text.trim());
+            if (amt == null || amt <= 0) return;
+            Navigator.pop(ctx, _AmountReason(amt, reasonCtrl.text.trim()));
+          },
+          child: const Text('Apply'),
+        ),
+      ],
+    ),
+  );
+}

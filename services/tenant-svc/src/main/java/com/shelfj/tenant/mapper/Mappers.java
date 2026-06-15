@@ -47,6 +47,7 @@ public final class Mappers {
         s.geoLng(),
         s.timezone(),
         s.businessHours(),
+        s.showPrices(),
         ts(s.createdAt()),
         ts(s.updatedAt()));
   }

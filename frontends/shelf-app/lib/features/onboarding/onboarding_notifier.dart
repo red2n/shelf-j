@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/auth_state.dart';
 
 // State for the multi-step wizard
 class OnboardingState {
@@ -61,8 +63,9 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
         },
       );
       final tenantId = resp.data['data']['id'] as String;
-      // Refresh JWT so tenantId is now included
-      await _ref.read(authNotifierProvider.notifier).refresh();
+      // iam-svc binds the OWNER role via a Kafka TenantCreated event — poll
+      // until the new JWT contains tenantId (up to 5 attempts, 600ms apart).
+      await _pollUntilTenantId(maxAttempts: 5, delay: const Duration(milliseconds: 600));
       state = state.copyWith(step: 1, loading: false, tenantId: tenantId);
     } catch (e) {
       state = state.copyWith(loading: false, error: _friendly(e));
@@ -101,6 +104,20 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
       state = state.copyWith(step: 2, loading: false);
     } catch (e) {
       state = state.copyWith(loading: false, error: _friendly(e));
+    }
+  }
+
+  /// Refresh JWT in a loop until `tenantId` is present in the claims.
+  /// Stops early on success; falls through after [maxAttempts] regardless.
+  Future<void> _pollUntilTenantId({
+    required int maxAttempts,
+    required Duration delay,
+  }) async {
+    for (var i = 0; i < maxAttempts; i++) {
+      await _ref.read(authNotifierProvider.notifier).refresh();
+      final auth = _ref.read(authNotifierProvider).valueOrNull;
+      if (auth is AuthAuthenticated && auth.tenantId != null) return;
+      if (i < maxAttempts - 1) await Future.delayed(delay);
     }
   }
 

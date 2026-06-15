@@ -6,11 +6,13 @@ import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.StoreWithZone;
 import com.shelfj.tenant.domain.Domain.Tenant;
 import com.shelfj.tenant.domain.Domain.TenantInventoryConfig;
+import com.shelfj.tenant.domain.Domain.TenantWithStore;
 import com.shelfj.tenant.domain.Domain.Zone;
 import com.shelfj.tenant.dto.Dtos.AssignStaffRequest;
 import com.shelfj.tenant.dto.Dtos.CreateStoreRequest;
 import com.shelfj.tenant.dto.Dtos.CreateTenantRequest;
 import com.shelfj.tenant.dto.Dtos.CreateZoneRequest;
+import com.shelfj.tenant.dto.Dtos.OnboardRequest;
 import com.shelfj.tenant.dto.Dtos.OnboardingStatus;
 import com.shelfj.tenant.dto.Dtos.PatchStatusRequest;
 import com.shelfj.tenant.dto.Dtos.TenantInventoryConfigResponse;
@@ -73,6 +75,37 @@ public class TenantService {
     return repo.createTenantWithOutbox(tenant, event);
   }
 
+  /**
+   * Combined onboarding: create tenant + first store in one shot. The tenantId is generated here so
+   * the store call never needs it from the JWT — avoids the Kafka async race entirely.
+   */
+  public TenantWithStore onboard(UUID ownerUserId, OnboardRequest req) {
+    // 1. create tenant (generates tenantId internally)
+    CreateTenantRequest tenantReq =
+        new CreateTenantRequest(req.businessName(), req.legalName(), req.country(), req.currency());
+    Tenant tenant = createTenant(ownerUserId, tenantReq);
+
+    // 2. create the first store using the freshly generated tenantId — no JWT needed
+    CreateStoreRequest storeReq =
+        new CreateStoreRequest(
+            req.storeName(),
+            req.storeCode(),
+            req.storeType() == null ? Store.TYPE_STORE : req.storeType(),
+            req.storeLine1(),
+            null,
+            req.storeCity(),
+            null,
+            req.storeCountry(),
+            req.storePincode(),
+            null,
+            null,
+            req.storeTimezone() == null ? "UTC" : req.storeTimezone(),
+            null,
+            null);
+    StoreWithZone storeWithZone = createDefaultStore(tenant.id(), storeReq);
+    return new TenantWithStore(tenant, storeWithZone.store());
+  }
+
   /** Create the first/default store + its DEFAULT zone. Publishes StoreCreated + ZoneCreated. */
   public StoreWithZone createDefaultStore(UUID tenantId, CreateStoreRequest req) {
     boolean isDefault = !repo.hasDefaultStore(tenantId);
@@ -108,6 +141,7 @@ public class TenantService {
             req.businessHours(),
             "ACTIVE",
             isDefault,
+            req.showPrices() == null || req.showPrices(),
             nowStore,
             nowStore);
 
@@ -186,6 +220,10 @@ public class TenantService {
 
   // --- reads ---
 
+  public List<Tenant> listAllTenants() {
+    return repo.listAllTenants();
+  }
+
   public Tenant getTenant(UUID tenantId) {
     return repo.findTenant(tenantId)
         .orElseThrow(() -> ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found"));
@@ -212,6 +250,15 @@ public class TenantService {
     return new OnboardingStatus(active, hasStore, next);
   }
 
+  public Tenant patchTenantStatus(UUID tenantId, PatchStatusRequest req) {
+    getTenant(tenantId);
+    String status = req.status().toUpperCase(Locale.ROOT);
+    if (!Tenant.STATUS_ACTIVE.equals(status) && !Tenant.STATUS_INACTIVE.equals(status)) {
+      throw ApiException.badRequest("INVALID_STATUS", "status must be ACTIVE or INACTIVE");
+    }
+    return repo.updateTenantStatus(tenantId, status);
+  }
+
   public Tenant updateTenant(UUID tenantId, UpdateTenantRequest req) {
     getTenant(tenantId);
     return repo.updateTenant(
@@ -226,7 +273,7 @@ public class TenantService {
   }
 
   public Store updateStore(UUID tenantId, UUID storeId, UpdateStoreRequest req) {
-    getStore(tenantId, storeId);
+    Store existing = getStore(tenantId, storeId);
     return repo.updateStore(
         tenantId,
         storeId,
@@ -240,7 +287,9 @@ public class TenantService {
         req.geoLat(),
         req.geoLng(),
         req.timezone() == null ? "UTC" : req.timezone(),
-        req.businessHours());
+        req.businessHours(),
+        // keep current value when the client omits the flag
+        req.showPrices() == null ? existing.showPrices() : req.showPrices());
   }
 
   public Store patchStoreStatus(UUID tenantId, UUID storeId, PatchStatusRequest req) {

@@ -38,7 +38,21 @@ public class JwtAuthFilter implements ContainerRequestFilter {
 
   /** Exact request paths (normalized, no leading/trailing slash) that do NOT require a token. */
   private static final Set<String> PUBLIC_PATHS =
-      Set.of("api/iam-svc/auth/register", "api/iam-svc/auth/login", "api/iam-svc/auth/refresh");
+      Set.of(
+          "api/iam-svc/auth/register",
+          "api/iam-svc/auth/login",
+          "api/iam-svc/auth/refresh",
+          "api/iam-svc/bootstrap/admin");
+
+  /**
+   * Public storefront access (guest shopping). These tenant-scoped paths expose only public data
+   * (active, sellable-online products and their prices) plus guest checkout, so they may be reached
+   * without a token. The tenant is taken from {@code X-Storefront-Tenant}, which in production the
+   * gateway derives from the storefront's domain/subdomain; in dev the storefront sends it directly
+   * to simulate that. (Any client-supplied {@code X-Tenant-Id} is still stripped above, so this is
+   * the only way a guest can name a storefront, and only for these whitelisted paths.)
+   */
+  static final String STOREFRONT_TENANT_HEADER = "X-Storefront-Tenant";
 
   @Inject GatewayConfig config;
 
@@ -70,7 +84,18 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     }
 
     String authHeader = ctx.getHeaderString("Authorization");
-    if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+    boolean hasBearer = authHeader != null && authHeader.startsWith("Bearer ");
+
+    // Guest storefront access: no token needed; tenant comes from the storefront header.
+    if (!hasBearer && isStorefrontPublic(normalize(path), ctx.getMethod())) {
+      String storefrontTenant = ctx.getHeaderString(STOREFRONT_TENANT_HEADER);
+      if (storefrontTenant != null && !storefrontTenant.isBlank()) {
+        ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, storefrontTenant.trim());
+      }
+      return;
+    }
+
+    if (!hasBearer) {
       ctx.abortWith(unauthorized("Missing or malformed Authorization header"));
       return;
     }
@@ -98,6 +123,34 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if (roles != null && !roles.isEmpty()) {
       ctx.getHeaders().putSingle(HttpHeaders.ROLES, String.join(",", roles));
     }
+  }
+
+  /**
+   * Whitelisted guest storefront paths (already normalized): catalog reads, price resolve, guest
+   * checkout.
+   */
+  private static boolean isStorefrontPublic(String path, String method) {
+    if ("GET".equals(method) && path.startsWith("api/product-svc/catalog")) {
+      return true;
+    }
+    // Per-store storefront config (show-prices flag) and stock availability.
+    if ("GET".equals(method) && path.startsWith("api/tenant-svc/storefront")) {
+      return true;
+    }
+    if ("GET".equals(method) && path.startsWith("api/inventory-svc/inventory/availability")) {
+      return true;
+    }
+    if ("POST".equals(method) && path.equals("api/pricing-svc/prices/resolve")) {
+      return true;
+    }
+    if ("POST".equals(method) && path.equals("api/order-svc/orders")) {
+      return true;
+    }
+    // Guest online payment (cashless) for storefront checkout.
+    if ("POST".equals(method) && path.equals("api/payment-svc/payments/online")) {
+      return true;
+    }
+    return false;
   }
 
   private static boolean isPublic(String path) {

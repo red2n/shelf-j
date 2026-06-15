@@ -646,6 +646,7 @@ services:
       shelfj.gateway.rate-limit.requests-per-minute: "30000"
       shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+      shelfj.gateway.cors.allowed-origins: "*"
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
     ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]
     networks: [shelfj_network]
@@ -659,3 +660,24 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+
+  # One-shot: seeds the PLATFORM_ADMIN on a fresh DB. Safe to re-run — the bootstrap
+  # endpoint returns 409 if an admin already exists, which we treat as success.
+  bootstrap:
+    image: curlimages/curl:8.7.1
+    container_name: shelfj-bootstrap
+    restart: "no"
+    networks: [shelfj_network]
+    depends_on:
+      gateway: { condition: service_healthy }
+    environment:
+      ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-admin@shelf-j.dev}
+      ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-Admin1234!}
+    command:
+      - sh
+      - -c
+      - |
+        STATUS=$$(curl -s -o /dev/null -w '%{http_code}' -X POST http://gateway:8080/api/iam-svc/bootstrap/admin -H 'Content-Type: application/json' -d "{\"email\":\"$$ADMIN_EMAIL\",\"password\":\"$$ADMIN_PASSWORD\"}");
+        if [ "$$STATUS" = "201" ]; then echo "[bootstrap] Platform admin created ($$ADMIN_EMAIL)";
+        elif [ "$$STATUS" = "409" ]; then echo "[bootstrap] Platform admin already exists — skipped";
+        else echo "[bootstrap] Unexpected status $$STATUS"; exit 1; fi

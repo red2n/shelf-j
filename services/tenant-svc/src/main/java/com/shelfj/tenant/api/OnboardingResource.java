@@ -2,6 +2,8 @@ package com.shelfj.tenant.api;
 
 import com.shelfj.tenant.dto.Dtos.CreateStoreRequest;
 import com.shelfj.tenant.dto.Dtos.CreateTenantRequest;
+import com.shelfj.tenant.dto.Dtos.OnboardRequest;
+import com.shelfj.tenant.dto.Dtos.OnboardResponse;
 import com.shelfj.tenant.dto.Dtos.OnboardingStatus;
 import com.shelfj.tenant.mapper.Mappers;
 import com.shelfj.tenant.service.TenantService;
@@ -35,6 +37,22 @@ public class OnboardingResource {
 
   @Inject TenantService service;
   @Inject TenantContext ctx;
+
+  /**
+   * Single-call onboarding: creates the tenant AND the first store atomically. No JWT refresh
+   * needed.
+   */
+  @POST
+  public Response onboard(OnboardRequest req) {
+    Validations.validate(req);
+    UUID ownerUserId = requireUserId();
+    var result = service.onboard(ownerUserId, req);
+    var body =
+        new OnboardResponse(Mappers.toTenant(result.tenant()), Mappers.toStore(result.store()));
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(body, ApiResponse.Meta.of(ctx.requestId())))
+        .build();
+  }
 
   @POST
   @Path("/tenants")

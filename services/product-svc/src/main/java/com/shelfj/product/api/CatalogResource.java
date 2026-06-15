@@ -1,5 +1,6 @@
 package com.shelfj.product.api;
 
+import com.shelfj.product.dto.Dtos.CategoryResponse;
 import com.shelfj.product.dto.Dtos.ProductResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
 import com.shelfj.product.dto.Dtos.VariantScanResponse;
@@ -48,9 +49,12 @@ public class CatalogResource {
       @QueryParam("q") String q,
       @QueryParam("sku") String sku,
       @QueryParam("barcode") String barcode,
+      @QueryParam("store") String store,
       @QueryParam("limit") Integer limit) {
     UUID tenantId = requireTenant();
     int clamped = Cursor.clampLimit(limit);
+    // When a store is given, only products assorted for that store (or sold everywhere) show.
+    UUID storeId = parseOptionalUuid(store, "INVALID_STORE", "store must be a UUID");
 
     List<ProductResponse> items;
     if (q != null || sku != null || barcode != null) {
@@ -58,16 +62,26 @@ public class CatalogResource {
       String trimSku = blank(sku) ? null : sku.trim();
       String trimBarcode = blank(barcode) ? null : barcode.trim();
       items =
-          service.searchProducts(tenantId, trimQ, trimSku, trimBarcode, false, clamped).stream()
+          service
+              .searchProducts(tenantId, trimQ, trimSku, trimBarcode, false, storeId, clamped)
+              .stream()
               .map(Mappers::toProduct)
               .toList();
     } else {
       UUID categoryId = parseOptionalUuid(category, "INVALID_CATEGORY", "category must be a UUID");
       items =
-          service.listProducts(tenantId, categoryId, true, clamped).stream()
+          service.listProducts(tenantId, categoryId, true, storeId, clamped).stream()
               .map(Mappers::toProduct)
               .toList();
     }
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  /** Public category list for storefront browse-by-category. Tenant from {@code X-Tenant-Id}. */
+  @GET
+  @Path("/categories")
+  public ApiResponse<List<CategoryResponse>> categories() {
+    var items = service.listCategories(requireTenant()).stream().map(Mappers::toCategory).toList();
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 

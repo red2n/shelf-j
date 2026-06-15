@@ -3,6 +3,27 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/adaptive_nav_shell.dart';
+
+const _destinations = [
+  AdaptiveNavDestination(
+    label: 'Sale',
+    icon: Icons.shopping_cart_outlined,
+    selectedIcon: Icons.shopping_cart,
+  ),
+  AdaptiveNavDestination(
+    label: 'Tender',
+    icon: Icons.payments_outlined,
+    selectedIcon: Icons.payments,
+  ),
+  AdaptiveNavDestination(
+    label: 'Cash',
+    icon: Icons.account_balance_wallet_outlined,
+    selectedIcon: Icons.account_balance_wallet,
+  ),
+];
+
+const _routes = ['/pos/cart', '/pos/tender', '/pos/cash'];
 
 class PosShell extends ConsumerWidget {
   final String currentLocation;
@@ -14,47 +35,30 @@ class PosShell extends ConsumerWidget {
     required this.child,
   });
 
+  int get _selectedIndex => currentLocation.startsWith('/pos/cash')
+      ? 2
+      : currentLocation.startsWith('/pos/tender')
+          ? 1
+          : 0;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final onTender = currentLocation.startsWith('/pos/tender');
-
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppTheme.posAccent,
-        foregroundColor: Colors.white,
-        title: const Row(
-          children: [
-            Icon(Icons.point_of_sale),
-            SizedBox(width: 8),
-            Text('POS Terminal'),
-          ],
+    return AdaptiveNavShell(
+      title: 'POS Terminal',
+      leadingIcon: Icons.point_of_sale,
+      appBarBackgroundColor: AppTheme.posAccent,
+      appBarForegroundColor: Colors.white,
+      destinations: _destinations,
+      selectedIndex: _selectedIndex,
+      onDestinationSelected: (i) => context.go(_routes[i]),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.logout),
+          tooltip: 'Sign out',
+          onPressed: () => ref.read(authNotifierProvider.notifier).logout(),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Sign out',
-            onPressed: () => ref.read(authNotifierProvider.notifier).logout(),
-          ),
-        ],
-      ),
-      body: child,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: onTender ? 1 : 0,
-        onDestinationSelected: (i) =>
-            context.go(i == 0 ? '/pos/cart' : '/pos/tender'),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.shopping_cart_outlined),
-            selectedIcon: Icon(Icons.shopping_cart),
-            label: 'Sale',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.payments_outlined),
-            selectedIcon: Icon(Icons.payments),
-            label: 'Tender',
-          ),
-        ],
-      ),
+      ],
+      child: child,
     );
   }
 }

@@ -602,4 +602,7 @@ public final class Dtos {
       String startedAt,
       String completedAt,
       List<PhysicalInventoryTagResponse> tags) {}
+
+  /** Public storefront stock signal: whether a variant is buyable at a store (no quantities). */
+  public record AvailabilityResponse(String variantId, boolean inStock) {}
 }

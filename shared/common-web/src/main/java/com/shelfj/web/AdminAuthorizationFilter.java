@@ -99,13 +99,26 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
 
   private static boolean isOpenMutation(String path) {
     return IDENTITY_PATHS.contains(path)
-        // Bootstrap carve-out: tenant creation is performed by a freshly registered user who has
-        // no tenant or staff role yet (the OWNER role is granted by the TenantCreated event).
+        // One-shot platform bootstrap: creates the very first PLATFORM_ADMIN before any JWT exists.
+        || "/bootstrap/admin".equals(path)
+        // Bootstrap carve-out: tenant creation AND first-store creation are performed by a freshly
+        // registered user who has no staff role yet (OWNER is granted asynchronously by the
+        // TenantCreated Kafka event — the store step must not block on that race).
+        || "/onboarding".equals(path)
         || "/onboarding/tenants".equals(path)
+        || "/onboarding/stores".equals(path)
         || "/admin/tenant".equals(path)
         // Internal read-only lookup: order-svc resolves prices service-to-service without
         // identity headers (it POSTs a query payload, but mutates nothing).
-        || "/prices/resolve".equals(path);
+        || "/prices/resolve".equals(path)
+        // Guest storefront checkout: an online shopper places an order with no staff role.
+        // Reachable only via the gateway's storefront whitelist (tenant from X-Storefront-Tenant)
+        // or by an authenticated customer. (Hardening TODO: reject channel=POS without a staff
+        // role.)
+        || "/orders".equals(path)
+        // Guest storefront online payment (cashless). The staff cash-tender path is POST /payments,
+        // which stays role-gated; this is the customer-facing online capture only.
+        || "/payments/online".equals(path);
   }
 
   private static boolean requiresManagement(String path, String method) {

@@ -88,7 +88,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
         accessToken: access,
         refreshToken: refresh,
         userId: claims['sub'] as String? ?? '',
-        tenantId: claims['tenantId'] as String?,
+        tenantId: claims['tenant'] as String?,
         roles: (claims['roles'] as List<dynamic>?)
                 ?.map((r) => r.toString())
                 .toList() ??

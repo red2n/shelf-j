@@ -33,6 +33,7 @@ import com.shelfj.product.dto.Dtos.ItemRevisionResponse;
 import com.shelfj.product.dto.Dtos.ItemTemplateApplicationResponse;
 import com.shelfj.product.dto.Dtos.ItemTemplateResponse;
 import com.shelfj.product.dto.Dtos.ProductResponse;
+import com.shelfj.product.dto.Dtos.ProductStoresRequest;
 import com.shelfj.product.dto.Dtos.UomClassResponse;
 import com.shelfj.product.dto.Dtos.UomDefinitionResponse;
 import com.shelfj.product.dto.Dtos.UomItemConversionRequest;
@@ -199,6 +200,29 @@ public class AdminResource {
   @Path("/products/{id}")
   public ApiResponse<ProductResponse> delistProduct(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toProduct(service.delistProduct(ctx.requireTenantId(), id)));
+  }
+
+  // ── per-store assortment ───────────────────────────────────────────────────
+
+  /** Store ids this product is sold at. Empty list = sold at all stores. */
+  @GET
+  @Path("/products/{id}/stores")
+  public ApiResponse<List<String>> getProductStores(@PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        service.getProductStores(ctx.requireTenantId(), id).stream().map(UUID::toString).toList());
+  }
+
+  /** Replace the product's store assortment. Empty/absent list = sold at all stores. */
+  @PUT
+  @Path("/products/{id}/stores")
+  public ApiResponse<List<String>> setProductStores(
+      @PathParam("id") UUID id, ProductStoresRequest req) {
+    List<UUID> ids =
+        (req == null || req.storeIds() == null)
+            ? List.of()
+            : req.storeIds().stream().map(UUID::fromString).toList();
+    service.setProductStores(ctx.requireTenantId(), id, ids);
+    return ApiResponse.ok(ids.stream().map(UUID::toString).toList());
   }
 
   // ── variants ─────────────────────────────────────────────────────────────

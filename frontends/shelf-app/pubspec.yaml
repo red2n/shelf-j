@@ -18,6 +18,8 @@ dependencies:
   dio: ^5.7.0
   # secure token storage (Keychain / Keystore / web localStorage fallback)
   flutter_secure_storage: ^9.2.4
+  # file picking (web + mobile + desktop)
+  file_picker: ^8.1.0
 
 dev_dependencies:
   flutter_test:

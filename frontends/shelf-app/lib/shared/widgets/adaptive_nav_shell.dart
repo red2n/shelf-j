@@ -12,16 +12,23 @@ class AdaptiveNavDestination {
   });
 }
 
-/// Renders a NavigationRail on wide screens (≥640 px) and a
-/// BottomNavigationBar on narrow screens. Keeps a single widget tree for
-/// both mobile and web/desktop.
-class AdaptiveNavShell extends StatelessWidget {
+/// Navigation that stays hidden in every view. The app/product icon in the app
+/// bar toggles a left-docked [NavigationDrawer] open and closed — click it to
+/// dock the menu, click again (or tap outside / pick an item) to undock it.
+class AdaptiveNavShell extends StatefulWidget {
   final String title;
   final List<AdaptiveNavDestination> destinations;
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
   final Widget child;
   final List<Widget> actions;
+
+  /// Icon shown at the start of the app bar; tapping it toggles the menu.
+  final IconData leadingIcon;
+
+  /// Optional app-bar theming (used e.g. by the POS shell's accent colour).
+  final Color? appBarBackgroundColor;
+  final Color? appBarForegroundColor;
 
   const AdaptiveNavShell({
     super.key,
@@ -31,64 +38,80 @@ class AdaptiveNavShell extends StatelessWidget {
     required this.onDestinationSelected,
     required this.child,
     this.actions = const [],
+    this.leadingIcon = Icons.storefront_rounded,
+    this.appBarBackgroundColor,
+    this.appBarForegroundColor,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    final useRail = width >= 640;
-    final extendRail = width >= 1100;
+  State<AdaptiveNavShell> createState() => _AdaptiveNavShellState();
+}
 
-    if (useRail) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Row(
+class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  void _toggleDrawer() {
+    final state = _scaffoldKey.currentState;
+    if (state == null) return;
+    if (state.isDrawerOpen) {
+      Navigator.of(context).pop();
+    } else {
+      state.openDrawer();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: _scaffoldKey,
+      appBar: AppBar(
+        backgroundColor: widget.appBarBackgroundColor,
+        foregroundColor: widget.appBarForegroundColor,
+        // Replace the automatic hamburger with the product icon as the toggle.
+        automaticallyImplyLeading: false,
+        leading: IconButton(
+          icon: Icon(widget.leadingIcon),
+          tooltip: 'Toggle menu',
+          onPressed: _toggleDrawer,
+        ),
+        title: Text(widget.title, overflow: TextOverflow.ellipsis),
+        actions: widget.actions,
+      ),
+      drawer: _buildDrawer(context),
+      body: widget.child,
+    );
+  }
+
+  Widget _buildDrawer(BuildContext context) {
+    return NavigationDrawer(
+      selectedIndex: widget.selectedIndex,
+      onDestinationSelected: (i) {
+        Navigator.of(context).pop(); // undock after picking
+        widget.onDestinationSelected(i);
+      },
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(28, 24, 16, 16),
+          child: Row(
             children: [
-              const Icon(Icons.storefront_rounded),
-              const SizedBox(width: 8),
-              Text(title),
+              Icon(widget.leadingIcon),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  widget.title,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
             ],
           ),
-          actions: actions,
         ),
-        body: Row(
-          children: [
-            NavigationRail(
-              extended: extendRail,
-              selectedIndex: selectedIndex,
-              onDestinationSelected: onDestinationSelected,
-              destinations: destinations
-                  .map((d) => NavigationRailDestination(
-                        icon: Icon(d.icon),
-                        selectedIcon: Icon(d.selectedIcon),
-                        label: Text(d.label),
-                      ))
-                  .toList(),
-            ),
-            const VerticalDivider(width: 1),
-            Expanded(child: child),
-          ],
-        ),
-      );
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(title),
-        actions: actions,
-      ),
-      body: child,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: selectedIndex,
-        onDestinationSelected: onDestinationSelected,
-        destinations: destinations
-            .map((d) => NavigationDestination(
-                  icon: Icon(d.icon),
-                  selectedIcon: Icon(d.selectedIcon),
-                  label: d.label,
-                ))
-            .toList(),
-      ),
+        ...widget.destinations.map((d) => NavigationDrawerDestination(
+              icon: Icon(d.icon),
+              selectedIcon: Icon(d.selectedIcon),
+              label: Text(d.label),
+            )),
+      ],
     );
   }
 }

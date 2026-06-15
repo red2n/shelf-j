@@ -6,14 +6,24 @@ import 'auth/auth_state.dart';
 import '../features/auth/login_screen.dart';
 import '../features/onboarding/onboarding_wizard.dart';
 import '../features/admin/admin_shell.dart';
+import '../features/admin/catalog_screen.dart';
 import '../features/admin/dashboard_screen.dart';
 import '../features/admin/inventory_screen.dart';
 import '../features/admin/orders_screen.dart';
+import '../features/admin/customers_screen.dart';
+import '../features/admin/pricing_screen.dart';
+import '../features/admin/procurement_screen.dart';
 import '../features/admin/reports_screen.dart';
+import '../features/admin/sales_screen.dart';
 import '../features/admin/staff_screen.dart';
+import '../features/admin/stores_screen.dart';
+import '../features/platform/platform_shell.dart';
+import '../features/platform/platform_dashboard_screen.dart';
+import '../features/platform/tenants_screen.dart';
 import '../features/pos/pos_shell.dart';
 import '../features/pos/cart_screen.dart';
 import '../features/pos/tender_screen.dart';
+import '../features/pos/cash_screen.dart';
 import '../features/storefront/storefront_shell.dart';
 import '../features/storefront/product_list_screen.dart';
 import '../features/storefront/product_detail_screen.dart';
@@ -33,6 +43,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       final loc = state.matchedLocation;
 
       if (auth is AuthUnauthenticated) {
+        // Public storefront — guests shop without logging in.
+        if (loc.startsWith('/store')) return null;
         return loc == '/login' ? null : '/login';
       }
 
@@ -43,6 +55,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         if (auth.needsOnboarding && loc != '/onboarding') return '/onboarding';
         // once onboarded, keep them out of the wizard
         if (!auth.needsOnboarding && loc == '/onboarding') return auth.homeRoute;
+        // PLATFORM_ADMIN: only allowed in /platform/*
+        if (auth.isPlatformAdmin && !loc.startsWith('/platform')) {
+          return auth.homeRoute;
+        }
+        // Tenant admins/cashiers: blocked from the platform area
+        if (!auth.isPlatformAdmin && loc.startsWith('/platform')) {
+          return auth.homeRoute;
+        }
         // block cashier-only users from the admin area
         if (loc.startsWith('/admin') && !auth.isAdmin) return auth.homeRoute;
         // block pure customers from pos and admin
@@ -56,6 +76,21 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
       GoRoute(path: '/onboarding', builder: (_, __) => const OnboardingWizard()),
 
+      // ── Platform admin shell (PLATFORM_ADMIN only) ─────────────────────────
+      ShellRoute(
+        builder: (context, state, child) =>
+            PlatformShell(currentLocation: state.matchedLocation, child: child),
+        routes: [
+          GoRoute(path: '/platform', redirect: (_, __) => '/platform/overview'),
+          GoRoute(
+              path: '/platform/overview',
+              builder: (_, __) => const PlatformDashboardScreen()),
+          GoRoute(
+              path: '/platform/tenants',
+              builder: (_, __) => const TenantsScreen()),
+        ],
+      ),
+
       // ── Admin shell ────────────────────────────────────────────────────────
       ShellRoute(
         builder: (context, state, child) =>
@@ -63,9 +98,22 @@ final routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(path: '/admin', redirect: (_, __) => '/admin/dashboard'),
           GoRoute(path: '/admin/dashboard', builder: (_, __) => const DashboardScreen()),
+          GoRoute(path: '/admin/catalog', builder: (_, __) => const CatalogScreen()),
           GoRoute(path: '/admin/inventory', builder: (_, __) => const InventoryScreen()),
+          GoRoute(path: '/admin/stores', builder: (_, __) => const StoresScreen()),
           GoRoute(path: '/admin/orders', builder: (_, __) => const AdminOrdersScreen()),
+          GoRoute(
+              path: '/admin/procurement',
+              builder: (_, __) => const ProcurementScreen()),
+          GoRoute(
+              path: '/admin/pricing',
+              builder: (_, __) => const PricingScreen()),
           GoRoute(path: '/admin/reports', builder: (_, __) => const ReportsScreen()),
+          GoRoute(
+              path: '/admin/customers',
+              builder: (_, __) => const CustomersScreen()),
+          GoRoute(
+              path: '/admin/sales', builder: (_, __) => const SalesScreen()),
           GoRoute(path: '/admin/staff', builder: (_, __) => const StaffScreen()),
         ],
       ),
@@ -78,6 +126,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/pos', redirect: (_, __) => '/pos/cart'),
           GoRoute(path: '/pos/cart', builder: (_, __) => const PosCartScreen()),
           GoRoute(path: '/pos/tender', builder: (_, __) => const TenderScreen()),
+          GoRoute(path: '/pos/cash', builder: (_, __) => const CashScreen()),
         ],
       ),
 

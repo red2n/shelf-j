@@ -1,0 +1,20 @@
+# Flutter/Dart generated artifacts
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+.packages
+.pub-cache/
+.pub/
+*.dart.js
+*.info.json
+*.js_
+*.js.deps
+*.js.map
+
+# IDE
+.idea/
+*.iml
+
+# Coverage
+coverage/

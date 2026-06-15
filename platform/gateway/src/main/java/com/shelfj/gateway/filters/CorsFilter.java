@@ -36,7 +36,7 @@ public class CorsFilter implements ContainerRequestFilter, ContainerResponseFilt
 
   private static final String ALLOWED_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS";
   private static final String ALLOWED_HEADERS =
-      "Authorization, Content-Type, Idempotency-Key, X-Request-Id";
+      "Authorization, Content-Type, Idempotency-Key, X-Request-Id, X-Storefront-Tenant";
   private static final String EXPOSED_HEADERS = "X-Request-Id, Retry-After";
   private static final String MAX_AGE_SECONDS = "3600";
 

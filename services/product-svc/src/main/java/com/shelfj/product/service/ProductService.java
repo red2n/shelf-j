@@ -202,8 +202,9 @@ public class ProductService {
         .orElseThrow(() -> ApiException.notFound("PRODUCT_NOT_FOUND", "No such product"));
   }
 
-  public List<Product> listProducts(UUID tenantId, UUID categoryId, boolean onlineOnly, int limit) {
-    return repo.listProducts(tenantId, categoryId, onlineOnly, limit);
+  public List<Product> listProducts(
+      UUID tenantId, UUID categoryId, boolean onlineOnly, UUID storeId, int limit) {
+    return repo.listProducts(tenantId, categoryId, onlineOnly, storeId, limit);
   }
 
   public List<Product> listProductsAdmin(UUID tenantId, UUID categoryId, String status, int limit) {
@@ -211,8 +212,26 @@ public class ProductService {
   }
 
   public List<Product> searchProducts(
-      UUID tenantId, String q, String sku, String barcode, boolean onlineOnly, int limit) {
-    return repo.searchProducts(tenantId, q, sku, barcode, onlineOnly, limit);
+      UUID tenantId,
+      String q,
+      String sku,
+      String barcode,
+      boolean onlineOnly,
+      UUID storeId,
+      int limit) {
+    return repo.searchProducts(tenantId, q, sku, barcode, onlineOnly, storeId, limit);
+  }
+
+  /** Store ids a product is restricted to (empty = sold at all stores). */
+  public List<UUID> getProductStores(UUID tenantId, UUID productId) {
+    getProduct(tenantId, productId); // 404 if not in tenant
+    return repo.storesForProduct(tenantId, productId);
+  }
+
+  /** Replace a product's store assortment. Empty list = sold at all stores. */
+  public void setProductStores(UUID tenantId, UUID productId, List<UUID> storeIds) {
+    getProduct(tenantId, productId); // 404 if not in tenant
+    repo.setStoresForProduct(tenantId, productId, storeIds);
   }
 
   public com.shelfj.product.domain.Domain.VariantWithProduct findVariantByBarcode(

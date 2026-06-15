@@ -29,6 +29,9 @@ public final class Dtos {
       Boolean sellableOnline,
       Boolean sellablePos) {}
 
+  /** Replace a product's store assortment. Empty/null = sold at all stores. */
+  public record ProductStoresRequest(java.util.List<String> storeIds) {}
+
   public record UpdateProductRequest(
       @NotBlank String name,
       String description,

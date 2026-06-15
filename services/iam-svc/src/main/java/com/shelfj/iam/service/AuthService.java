@@ -5,6 +5,7 @@ import com.shelfj.iam.auth.Passwords;
 import com.shelfj.iam.auth.Tokens;
 import com.shelfj.iam.config.ServiceConfig;
 import com.shelfj.iam.domain.User;
+import com.shelfj.iam.dto.Dtos.ProvisionStaffResponse;
 import com.shelfj.iam.dto.Dtos.TokenResponse;
 import com.shelfj.iam.repo.RefreshTokenRepository;
 import com.shelfj.iam.repo.UserRepository;
@@ -61,6 +62,70 @@ public class AuthService {
     users.audit(null, userId, "USER_REGISTERED", email);
 
     return issueTokens(user);
+  }
+
+  /**
+   * Admin-driven staff provisioning: find an existing account by email or create one, returning the
+   * userId the caller (tenant-svc) then assigns a store role to. The actual tenant + role binding
+   * happens asynchronously when tenant-svc publishes {@code StaffAssigned}; here we only ensure an
+   * account exists so the admin never has to know a UUID.
+   *
+   * <ul>
+   *   <li>Email already in this tenant (or still global / unbound) → reuse that account.
+   *   <li>Email bound to a different tenant → 409 (can't poach another business's user).
+   *   <li>No such email → create an ACTIVE account with the given or a generated temp password.
+   * </ul>
+   */
+  public ProvisionStaffResponse provisionStaff(UUID tenantId, String email, String rawPassword) {
+    var candidates = users.findAllByEmail(email);
+    for (User u : candidates) {
+      if (u.tenantId() == null || u.tenantId().equals(tenantId)) {
+        return new ProvisionStaffResponse(u.id().toString(), email, false, null);
+      }
+    }
+    if (!candidates.isEmpty()) {
+      throw new ApiException(
+          409,
+          "EMAIL_IN_OTHER_TENANT",
+          "That email already belongs to another business",
+          java.util.List.of());
+    }
+
+    String pwd =
+        (rawPassword == null || rawPassword.isBlank()) ? generateTempPassword() : rawPassword;
+    UUID userId = UUID.randomUUID();
+    Instant now = Instant.now();
+    var user =
+        new User(
+            userId,
+            null,
+            User.TYPE_CUSTOMER,
+            email,
+            null,
+            passwords.hash(pwd),
+            User.STATUS_ACTIVE,
+            now,
+            now);
+    String payload =
+        Json.createObjectBuilder()
+            .add("eventId", UUID.randomUUID().toString())
+            .add("eventType", "UserRegistered")
+            .addNull("tenantId")
+            .add("aggregateId", userId.toString())
+            .add("occurredAt", now.toString())
+            .add("email", email)
+            .add("type", "CUSTOMER")
+            .build()
+            .toString();
+    var outbox =
+        new OutboxRow("UserRegistered", "shelfj.iam.user-registered", null, userId, payload);
+    users.createUserWithOutbox(user, "CUSTOMER", outbox);
+    users.audit(tenantId, userId, "STAFF_PROVISIONED", email);
+    return new ProvisionStaffResponse(userId.toString(), email, true, pwd);
+  }
+
+  private static String generateTempPassword() {
+    return "Sj" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
   }
 
   /**

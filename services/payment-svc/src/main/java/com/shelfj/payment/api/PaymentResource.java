@@ -40,6 +40,27 @@ public class PaymentResource {
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(tender))).build();
   }
 
+  /**
+   * Online customer payment for the guest storefront. No staff role required — reachable via the
+   * gateway's storefront whitelist (tenant from {@code X-Storefront-Tenant}) or by an authenticated
+   * customer. Cashless only; cash tenders are POS-staff territory via {@link #record}. Captures
+   * immediately, emitting {@code PaymentCaptured} so order-svc confirms the order. (Hardening TODO:
+   * verify amount against the order total via order-svc; integrate a real payment provider.)
+   */
+  @POST
+  @Path("/online")
+  public Response payOnline(
+      @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      RecordTenderRequest req) {
+    Validations.validate(req);
+    if (req.method() != null && "CASH".equalsIgnoreCase(req.method())) {
+      throw com.shelfj.web.ApiException.badRequest(
+          "PAYMENT_ONLINE_CASHLESS", "Online payments must be cashless (card/wallet)");
+    }
+    var tender = svc.recordTender(req, ctx, effectiveKey(idempotencyKey, req.idempotencyKey()));
+    return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(tender))).build();
+  }
+
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") UUID id) {

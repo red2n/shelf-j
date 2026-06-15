@@ -18,6 +18,21 @@ public final class Dtos {
       @NotBlank @Size(min = 8, max = 100) String password,
       String phone) {}
 
+  /**
+   * Admin provisions a staff account by email (find-or-create), so admins never handle raw user
+   * UUIDs. {@code password} is optional — when blank, iam-svc generates a temporary one and returns
+   * it so the admin can share it with the new staff member.
+   */
+  public record ProvisionStaffRequest(
+      @Email @NotBlank String email, @Size(min = 8, max = 100) String password) {}
+
+  /**
+   * Result of staff provisioning: the user id to assign, and (only when newly created) the temp
+   * password.
+   */
+  public record ProvisionStaffResponse(
+      String userId, String email, boolean created, String tempPassword) {}
+
   /** Login with email + password. */
   public record LoginRequest(@Email @NotBlank String email, @NotBlank String password) {}
 
