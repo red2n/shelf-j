@@ -75,6 +75,11 @@ class OfferPriceAdd extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Catalog mode (store hides prices): never resolve a price — show stock only.
+    if (!ref.watch(storefrontShowPricesProvider)) {
+      return _CatalogAdd(product: product);
+    }
+
     final cs = Theme.of(context).colorScheme;
     final offerAsync = ref.watch(productCardOfferProvider(product.id));
 
@@ -95,14 +100,6 @@ class OfferPriceAdd extends ConsumerWidget {
         if (offer == null) {
           return Text('Unpriced', style: TextStyle(color: cs.outline));
         }
-        final showPrices =
-            ref.watch(storefrontConfigProvider).valueOrNull?.showPrices ?? true;
-        final availMap = ref.watch(storefrontAvailabilityProvider).valueOrNull;
-        // No availability data yet → don't block buying; once loaded, a missing
-        // row means the variant was never stocked → out of stock.
-        final inStock =
-            availMap == null ? true : (availMap[offer.variant.id] ?? false);
-
         final cart = ref.watch(cartProvider);
         final notifier = ref.read(cartProvider.notifier);
         int qty = 0;
@@ -113,22 +110,16 @@ class OfferPriceAdd extends ConsumerWidget {
           }
         }
 
-        // Left: price (priced shop) or stock badge (catalog mode).
-        final Widget info = showPrices
-            ? Text(
-                '${offer.price.currency} ${offer.price.totalWithVat.toStringAsFixed(2)}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    color: cs.primary, fontWeight: FontWeight.bold, fontSize: 15),
-              )
-            : StockBadge(inStock: inStock);
+        final Widget info = Text(
+          '${offer.price.currency} ${offer.price.totalWithVat.toStringAsFixed(2)}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+              color: cs.primary, fontWeight: FontWeight.bold, fontSize: 15),
+        );
 
-        // Right: add / stepper. In catalog mode an out-of-stock item can't be added.
         Widget control;
-        if (!showPrices && !inStock) {
-          control = const SizedBox.shrink();
-        } else if (qty == 0) {
+        if (qty == 0) {
           control = IconButton.filledTonal(
             visualDensity: VisualDensity.compact,
             tooltip: 'Add to cart',
@@ -158,6 +149,74 @@ class OfferPriceAdd extends ConsumerWidget {
         }
 
         return Row(children: [Expanded(child: info), control]);
+      },
+    );
+  }
+}
+
+/// Catalog-mode add control: shows only stock status (no price, no price call).
+class _CatalogAdd extends ConsumerWidget {
+  final StoreProduct product;
+  const _CatalogAdd({required this.product});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final variantAsync = ref.watch(productFirstVariantProvider(product.id));
+    return variantAsync.when(
+      loading: () => Text('…', style: TextStyle(color: cs.outline)),
+      error: (_, __) => Text('—', style: TextStyle(color: cs.outline)),
+      data: (variant) {
+        if (variant == null) {
+          return Text('Unavailable', style: TextStyle(color: cs.outline));
+        }
+        final availMap = ref.watch(storefrontAvailabilityProvider).valueOrNull;
+        final inStock = availMap == null ? true : (availMap[variant.id] ?? false);
+        final cart = ref.watch(cartProvider);
+        final notifier = ref.read(cartProvider.notifier);
+        int qty = 0;
+        for (final l in cart) {
+          if (l.variantId == variant.id) {
+            qty = l.qty;
+            break;
+          }
+        }
+
+        Widget control;
+        if (!inStock) {
+          control = const SizedBox.shrink();
+        } else if (qty == 0) {
+          control = IconButton.filledTonal(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Add to cart',
+            icon: const Icon(Icons.add_shopping_cart, size: 18),
+            onPressed: () {
+              // Catalog mode: no price — the server prices the order (when
+              // pricing enforcement is on) or it's a quote.
+              notifier.add(CartLine(
+                variantId: variant.id,
+                productName: product.name,
+                sku: variant.sku,
+                unitPrice: 0,
+                currency: '',
+              ));
+              ScaffoldMessenger.of(context)
+                ..clearSnackBars()
+                ..showSnackBar(SnackBar(
+                  content: Text('Added ${product.name}'),
+                  duration: const Duration(milliseconds: 900),
+                ));
+            },
+          );
+        } else {
+          control = _Stepper(
+            qty: qty,
+            onDec: () => notifier.setQty(variant.id, qty - 1),
+            onInc: () => notifier.setQty(variant.id, qty + 1),
+          );
+        }
+        return Row(
+            children: [Expanded(child: StockBadge(inStock: inStock)), control]);
       },
     );
   }

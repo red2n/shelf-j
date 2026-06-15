@@ -1,0 +1,33 @@
+# Keep the Docker build context lean. NOTE: do NOT ignore `target/` (Dockerfile.svc
+# copies the built jars + libs) or `frontends/shelf-app/build/web` (Dockerfile.web
+# copies the compiled web bundle).
+
+.git
+.gitignore
+.github
+*.md
+docs/
+k6/
+tools/
+confy.sh
+
+# IDE / OS cruft
+**/.idea
+**/.vscode
+**/.DS_Store
+
+# Java build noise (jars in target/ are still included)
+**/surefire-reports
+**/maven-status
+**/generated-sources
+**/generated-test-sources
+
+# Flutter: keep build/web (needed); drop dev caches + non-web platforms + sources
+# not used by the static image.
+frontends/shelf-app/.dart_tool
+frontends/shelf-app/test
+frontends/shelf-app/android
+frontends/shelf-app/ios
+frontends/shelf-app/linux
+frontends/shelf-app/macos
+frontends/shelf-app/windows

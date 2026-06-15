@@ -1,0 +1,22 @@
+# Production runtime image for the Shelf-J Flutter web app (admin + storefront + POS).
+#
+# Like Dockerfile.svc, the artifact is built by the reactor/CI step and copied into
+# a minimal runtime image — here a NON-ROOT nginx (nginx-unprivileged, uid 101,
+# listens on 8080). Build the bundle first (redeploy.sh does this):
+#
+#   (cd frontends/shelf-app && flutter build web --release \
+#       --dart-define=SHELFJ_API_BASE=http://localhost:8090/api)
+#   docker build -f Dockerfile.web -t shelfj/web .
+FROM nginxinc/nginx-unprivileged:1.27-alpine
+
+LABEL org.opencontainers.image.title="shelf-j-web" \
+      org.opencontainers.image.description="Shelf-J Flutter web app (admin/storefront/POS)" \
+      org.opencontainers.image.source="https://github.com/red2n/home"
+
+# Static, content-hashed Flutter bundle (dart2js release → refresh-safe).
+COPY --chown=nginx:nginx frontends/shelf-app/build/web /usr/share/nginx/html
+COPY infra/nginx-spa.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 8080
+HEALTHCHECK --interval=15s --timeout=4s --start-period=5s --retries=4 \
+  CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1

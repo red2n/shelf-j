@@ -1,5 +1,11 @@
 class ApiConstants {
-  static const String baseUrl = 'http://localhost:8090/api';
+  /// Gateway base URL. Overridable at build time for a dockerized/remote deploy:
+  ///   flutter build web --dart-define=SHELFJ_API_BASE=https://api.example.com/api
+  /// Defaults to the local docker gateway (host port 8090).
+  static const String baseUrl = String.fromEnvironment(
+    'SHELFJ_API_BASE',
+    defaultValue: 'http://localhost:8090/api',
+  );
 
   // service-name segments (must match gateway's routable-services list)
   static const String iam = 'iam-svc';

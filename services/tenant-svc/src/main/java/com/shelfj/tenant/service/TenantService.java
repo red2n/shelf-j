@@ -256,7 +256,16 @@ public class TenantService {
     if (!Tenant.STATUS_ACTIVE.equals(status) && !Tenant.STATUS_INACTIVE.equals(status)) {
       throw ApiException.badRequest("INVALID_STATUS", "status must be ACTIVE or INACTIVE");
     }
-    return repo.updateTenantStatus(tenantId, status);
+    // Publish the change so iam-svc (and anyone else) can react — deactivating a tenant must lock
+    // its staff out, not just flip a row no other service can see.
+    var event =
+        new OutboxRow(
+            "TenantStatusChanged",
+            "shelfj.tenant.tenant-status-changed",
+            tenantId,
+            tenantId,
+            Events.tenantStatusChanged(tenantId, status));
+    return repo.updateTenantStatusWithOutbox(tenantId, status, event);
   }
 
   public Tenant updateTenant(UUID tenantId, UpdateTenantRequest req) {

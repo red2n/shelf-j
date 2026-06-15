@@ -162,13 +162,13 @@ class _StoreSwitcher extends ConsumerWidget {
   }
 }
 
-/// Auto-rotating promotional banners. Content is placeholder for now — wire it to
-/// a real promotions/offers source when one exists.
-class _OffersCarousel extends StatefulWidget {
+/// Auto-rotating promotional banners. Driven by the tenant's active promotions
+/// (pricing-svc); falls back to evergreen content when there are no live offers.
+class _OffersCarousel extends ConsumerStatefulWidget {
   const _OffersCarousel();
 
   @override
-  State<_OffersCarousel> createState() => _OffersCarouselState();
+  ConsumerState<_OffersCarousel> createState() => _OffersCarouselState();
 }
 
 class _Offer {
@@ -179,8 +179,9 @@ class _Offer {
   const _Offer(this.title, this.subtitle, this.icon, this.colors);
 }
 
-class _OffersCarouselState extends State<_OffersCarousel> {
-  static const _offers = [
+class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
+  // Evergreen content shown when the tenant has no live promotions configured.
+  static const _fallbackOffers = [
     _Offer('Everyday Low Prices', 'Stock up and save on the essentials',
         Icons.local_offer_outlined, [Color(0xFF1A5276), Color(0xFF2E86C1)]),
     _Offer('Free Delivery over £25', 'On all online orders, no code needed',
@@ -188,6 +189,18 @@ class _OffersCarouselState extends State<_OffersCarousel> {
     _Offer('Fresh New Arrivals', 'Just landed in store — shop the latest',
         Icons.auto_awesome_outlined, [Color(0xFF7D3C98), Color(0xFFAF7AC5)]),
   ];
+
+  // Rotating palette for live promotions so each banner reads distinctly.
+  static const _palette = [
+    [Color(0xFFB9770E), Color(0xFFE67E22)],
+    [Color(0xFF1A5276), Color(0xFF2E86C1)],
+    [Color(0xFF117A65), Color(0xFF45B39D)],
+    [Color(0xFF7D3C98), Color(0xFFAF7AC5)],
+  ];
+
+  // Current offers shown; updated each build from the promotions provider so the
+  // rotation timer always reads a valid length.
+  List<_Offer> _offers = _fallbackOffers;
 
   final _controller = PageController(viewportFraction: 0.92);
   int _page = 0;
@@ -197,7 +210,7 @@ class _OffersCarouselState extends State<_OffersCarousel> {
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (!_controller.hasClients) return;
+      if (!_controller.hasClients || _offers.length < 2) return;
       final next = (_page + 1) % _offers.length;
       _controller.animateToPage(next,
           duration: const Duration(milliseconds: 450), curve: Curves.easeInOut);
@@ -211,8 +224,26 @@ class _OffersCarouselState extends State<_OffersCarousel> {
     super.dispose();
   }
 
+  List<_Offer> _offersFrom(List<StorePromotion> promos) {
+    if (promos.isEmpty) return _fallbackOffers;
+    return [
+      for (var i = 0; i < promos.length; i++)
+        _Offer(
+          promos[i].headline,
+          promos[i].minOrderAmount != null && promos[i].minOrderAmount! > 0
+              ? '${promos[i].name} · spend ${promos[i].minOrderAmount!.toStringAsFixed(2)}+'
+              : promos[i].name,
+          Icons.local_offer_outlined,
+          _palette[i % _palette.length],
+        ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
+    final promos = ref.watch(storefrontPromotionsProvider).valueOrNull ?? const [];
+    _offers = _offersFrom(promos);
+    if (_page >= _offers.length) _page = 0;
     return Column(
       children: [
         const SizedBox(height: 12),

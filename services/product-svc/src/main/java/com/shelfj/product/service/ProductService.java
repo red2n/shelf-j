@@ -203,8 +203,13 @@ public class ProductService {
   }
 
   public List<Product> listProducts(
-      UUID tenantId, UUID categoryId, boolean onlineOnly, UUID storeId, int limit) {
-    return repo.listProducts(tenantId, categoryId, onlineOnly, storeId, limit);
+      UUID tenantId,
+      UUID categoryId,
+      boolean onlineOnly,
+      boolean posOnly,
+      UUID storeId,
+      int limit) {
+    return repo.listProducts(tenantId, categoryId, onlineOnly, posOnly, storeId, limit);
   }
 
   public List<Product> listProductsAdmin(UUID tenantId, UUID categoryId, String status, int limit) {
@@ -217,9 +222,10 @@ public class ProductService {
       String sku,
       String barcode,
       boolean onlineOnly,
+      boolean posOnly,
       UUID storeId,
       int limit) {
-    return repo.searchProducts(tenantId, q, sku, barcode, onlineOnly, storeId, limit);
+    return repo.searchProducts(tenantId, q, sku, barcode, onlineOnly, posOnly, storeId, limit);
   }
 
   /** Store ids a product is restricted to (empty = sold at all stores). */
@@ -515,6 +521,9 @@ public class ProductService {
     int prodCreated = 0;
     int varCreated = 0;
     var errors = new java.util.ArrayList<BulkImportError>();
+    // REPLACE = upsert by SKU (reuse product by name+category, replace existing variants);
+    // ADD (default) = create new (duplicate SKUs error).
+    final boolean replace = req.mode() != null && "REPLACE".equalsIgnoreCase(req.mode());
 
     // ── 1. categories ────────────────────────────────────────────────────────
     if (req.categories() != null) {
@@ -569,33 +578,46 @@ public class ProductService {
                     .orElseGet(() -> repo.createBrand(tenantId, p.brandName().trim()).id());
           }
 
-          UUID productId = UUID.randomUUID();
           Instant now = Instant.now();
-          var product =
-              new com.shelfj.product.domain.Domain.Product(
-                  productId,
-                  tenantId,
-                  p.name().trim(),
-                  p.description(),
-                  brandId,
-                  categoryId,
-                  com.shelfj.product.domain.Domain.Product.STATUS_ACTIVE,
-                  p.sellableOnline() == null || p.sellableOnline(),
-                  p.sellablePos() == null || p.sellablePos(),
-                  now,
-                  now);
-          var productEvent =
-              new OutboxRow(
-                  "ProductCreated",
-                  "shelfj.catalog.product-created",
-                  tenantId,
-                  productId,
-                  Events.productCreated(tenantId, productId, product.name()));
-          repo.createProductWithOutbox(product, productEvent);
-          prodCreated++;
+          // REPLACE reuses an existing product (by name + category) instead of duplicating it;
+          // ADD always creates a fresh product.
+          UUID productId;
+          var existing =
+              replace
+                  ? repo.findProductByNameAndCategory(tenantId, p.name().trim(), categoryId)
+                  : java.util.Optional.<com.shelfj.product.domain.Domain.Product>empty();
+          if (existing.isPresent()) {
+            productId = existing.get().id();
+          } else {
+            productId = UUID.randomUUID();
+            var product =
+                new com.shelfj.product.domain.Domain.Product(
+                    productId,
+                    tenantId,
+                    p.name().trim(),
+                    p.description(),
+                    brandId,
+                    categoryId,
+                    com.shelfj.product.domain.Domain.Product.STATUS_ACTIVE,
+                    p.sellableOnline() == null || p.sellableOnline(),
+                    p.sellablePos() == null || p.sellablePos(),
+                    now,
+                    now);
+            var productEvent =
+                new OutboxRow(
+                    "ProductCreated",
+                    "shelfj.catalog.product-created",
+                    tenantId,
+                    productId,
+                    Events.productCreated(tenantId, productId, product.name()));
+            repo.createProductWithOutbox(product, productEvent);
+            prodCreated++;
+          }
 
           for (var v : p.variants()) {
             try {
+              // REPLACE: drop any existing variant with this SKU first, so the sheet wins.
+              if (replace) repo.deleteVariantBySku(tenantId, v.sku().trim());
               UUID variantId = UUID.randomUUID();
               var variant =
                   new com.shelfj.product.domain.Domain.Variant(

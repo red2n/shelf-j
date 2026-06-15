@@ -68,4 +68,16 @@ public class RefreshTokenRepository extends BaseJdbcRepository {
         ps -> ps.setObject(1, userId),
         "revoke user tokens");
   }
+
+  /**
+   * Revoke every refresh token belonging to a tenant's users — used when a tenant is deactivated so
+   * existing sessions can't mint new access tokens (login + refresh are blocked separately too).
+   */
+  public void revokeAllForTenant(UUID tenantId) {
+    exec(
+        "UPDATE refresh_tokens SET revoked = true"
+            + " WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ?)",
+        ps -> ps.setObject(1, tenantId),
+        "revoke tenant tokens");
+  }
 }

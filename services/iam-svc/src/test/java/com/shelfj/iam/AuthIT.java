@@ -173,6 +173,64 @@ class AuthIT {
     assertThat(dup.getStatus(), is(409));
   }
 
+  @Test
+  void suspendedTenantBlocksLoginAndRefresh() throws Exception {
+    // Register a user, then bind it to a tenant and mark that tenant INACTIVE in iam's projection
+    // (simulating the TenantStatusChanged event the consumer would apply).
+    Response reg =
+        post("/auth/register", "{\"email\":\"susp@example.com\",\"password\":\"strongpass1\"}");
+    assertThat(reg.getStatus(), is(201));
+    String refresh = extract(reg.readEntity(String.class), "refreshToken");
+
+    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    try (var c = iamConnection()) {
+      try (var ps =
+          c.prepareStatement(
+              "UPDATE users SET tenant_id=?, type='STAFF' WHERE lower(email)=lower(?)")) {
+        ps.setObject(1, tenantId);
+        ps.setString(2, "susp@example.com");
+        ps.executeUpdate();
+      }
+      try (var ps =
+          c.prepareStatement(
+              "INSERT INTO tenant_status (tenant_id, status, status_changed_at)"
+                  + " VALUES (?, 'INACTIVE', now())")) {
+        ps.setObject(1, tenantId);
+        ps.executeUpdate();
+      }
+    }
+
+    // Login is now forbidden for this tenant's staff, even with the correct password.
+    Response blocked =
+        post("/auth/login", "{\"email\":\"susp@example.com\",\"password\":\"strongpass1\"}");
+    assertThat(blocked.getStatus(), is(403));
+    assertThat(blocked.readEntity(String.class), containsString("TENANT_INACTIVE"));
+
+    // An existing refresh token can't mint new access tokens either.
+    Response refreshBlocked = post("/auth/refresh", "{\"refreshToken\":\"" + refresh + "\"}");
+    assertThat(refreshBlocked.getStatus(), is(403));
+
+    // Reactivating the tenant restores login.
+    try (var c = iamConnection();
+        var ps =
+            c.prepareStatement(
+                "UPDATE tenant_status SET status='ACTIVE', status_changed_at=now()"
+                    + " WHERE tenant_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.executeUpdate();
+    }
+    Response ok =
+        post("/auth/login", "{\"email\":\"susp@example.com\",\"password\":\"strongpass1\"}");
+    assertThat(ok.getStatus(), is(200));
+  }
+
+  /** A JDBC connection scoped to iam-svc's schema (the app uses shelfj.db.schema=iam). */
+  private static java.sql.Connection iamConnection() throws java.sql.SQLException {
+    var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+    c.setSchema("iam");
+    return c;
+  }
+
   /** Tiny JSON field extractor (avoids pulling a JSON lib into the test). */
   private static String extract(String json, String field) {
     String key = "\"" + field + "\":\"";

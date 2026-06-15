@@ -36,7 +36,8 @@ public class StorefrontResource {
       try {
         storeId = UUID.fromString(store.trim());
       } catch (IllegalArgumentException e) {
-        throw ApiException.badRequest("INVALID_STORE", "store must be a UUID");
+        throw new ApiException(
+            400, "INVALID_STORE", "store must be a UUID", java.util.List.of(), e);
       }
     }
     List<AvailabilityResponse> items =

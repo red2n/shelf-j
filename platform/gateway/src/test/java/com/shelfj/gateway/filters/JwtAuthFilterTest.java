@@ -24,6 +24,7 @@ class JwtAuthFilterTest {
   @Mock GatewayConfig config;
   @Mock ContainerRequestContext requestContext;
   @Mock UriInfo uriInfo;
+  @Mock TenantStatusGate tenantStatusGate;
 
   private JwtAuthFilter filter;
   private final MultivaluedMap<String, String> headers = new MultivaluedHashMap<>();
@@ -32,8 +33,10 @@ class JwtAuthFilterTest {
   void setUp() {
     lenient().when(config.jwtSecret()).thenReturn("unit-test-secret-of-at-least-32-chars!!");
     lenient().when(config.jwtIssuer()).thenReturn("shelfj");
+    lenient().when(tenantStatusGate.isActive(any())).thenReturn(true);
     filter = new JwtAuthFilter();
     filter.config = config;
+    filter.tenantStatusGate = tenantStatusGate;
     filter.init();
     lenient().when(requestContext.getUriInfo()).thenReturn(uriInfo);
     lenient().when(requestContext.getHeaders()).thenReturn(headers);
@@ -76,6 +79,87 @@ class JwtAuthFilterTest {
     filter.filter(requestContext);
 
     verify(requestContext).abortWith(any());
+  }
+
+  @Test
+  void signedInCustomerGetsTenantFromStorefrontHeaderOnMyOrders() throws IOException {
+    // A customer token carries identity but no tenant claim.
+    String token =
+        com.auth0
+            .jwt
+            .JWT
+            .create()
+            .withIssuer("shelfj")
+            .withSubject("11111111-1111-1111-1111-111111111111")
+            .withClaim("type", "CUSTOMER")
+            .withArrayClaim("roles", new String[] {"CUSTOMER"})
+            .sign(
+                com.auth0.jwt.algorithms.Algorithm.HMAC256(
+                    "unit-test-secret-of-at-least-32-chars!!"));
+    when(uriInfo.getPath()).thenReturn("api/order-svc/orders/mine");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + token);
+    when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-abc", headers.getFirst("X-Tenant-Id"));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "11111111-1111-1111-1111-111111111111", headers.getFirst("X-User-Id"));
+  }
+
+  @Test
+  void customerTokenCannotNameTenantForAdminOrderList() throws IOException {
+    // The storefront-tenant fallback must be scoped to whitelisted customer paths — a customer
+    // token hitting the admin order list must NOT get a tenant stamped from the storefront header,
+    // or it could read another business's full order book.
+    String token =
+        com.auth0
+            .jwt
+            .JWT
+            .create()
+            .withIssuer("shelfj")
+            .withSubject("11111111-1111-1111-1111-111111111111")
+            .withArrayClaim("roles", new String[] {"CUSTOMER"})
+            .sign(
+                com.auth0.jwt.algorithms.Algorithm.HMAC256(
+                    "unit-test-secret-of-at-least-32-chars!!"));
+    when(uriInfo.getPath()).thenReturn("api/order-svc/orders");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + token);
+    lenient().when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Tenant-Id"));
+  }
+
+  @Test
+  void guestCanReadActivePromotionsWithStorefrontTenant() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/pricing-svc/promotions");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization")).thenReturn(null);
+    when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-abc", headers.getFirst("X-Tenant-Id"));
+  }
+
+  @Test
+  void suspendedTenantStorefrontRequestIsBlocked() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/product-svc/catalog/products");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization")).thenReturn(null);
+    when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("dead-tenant");
+    when(tenantStatusGate.isActive("dead-tenant")).thenReturn(false);
+
+    filter.filter(requestContext);
+
+    verify(requestContext).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Tenant-Id"));
   }
 
   @Test

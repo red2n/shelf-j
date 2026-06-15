@@ -20,7 +20,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 2, vsync: this);
+    _tabs = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -38,6 +38,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen>
           tabAlignment: TabAlignment.start,
           isScrollable: true,
           tabs: const [
+            Tab(icon: Icon(Icons.table_chart_outlined), text: 'Catalog Sheet'),
             Tab(icon: Icon(Icons.inventory_2_outlined), text: 'Catalog Import'),
             Tab(icon: Icon(Icons.move_to_inbox_outlined), text: 'Stock Receive'),
           ],
@@ -46,12 +47,634 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen>
           child: TabBarView(
             controller: _tabs,
             children: const [
+              _CatalogSheetTab(),
               _CatalogImportTab(),
               _StockReceiveTab(),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── Tab: Catalog Sheet (Category / Product / Pack Size / SKU) ─────────────────
+//
+// Imports a flat retail sheet where each row is a sellable unit. Rows are grouped
+// into products (by Category + Product Name) with one variant per Pack Size. SKU
+// is required per row (UK/USA retail standard). The sheet is parsed into an
+// editable, validated preview so the user fixes issues in place (or re-uploads)
+// before committing.
+
+const _sheetCsvSample = 'Category,Product Name,Pack Size,SKU,Barcode\n'
+    'Rice,Sona Masoori Rice,1kg,RICE-SONA-1KG,8901234500011\n'
+    'Rice,Sona Masoori Rice,5kg,RICE-SONA-5KG,8901234500028\n'
+    'Oils,Gingelly Oil,1L,OIL-GING-1L,\n';
+
+/// One editable sheet row, each cell backed by a controller for inline correction.
+class _SheetRow {
+  final TextEditingController category;
+  final TextEditingController product;
+  final TextEditingController packSize;
+  final TextEditingController sku;
+  final TextEditingController barcode;
+
+  _SheetRow({
+    String category = '',
+    String product = '',
+    String packSize = '',
+    String sku = '',
+    String barcode = '',
+  })  : category = TextEditingController(text: category),
+        product = TextEditingController(text: product),
+        packSize = TextEditingController(text: packSize),
+        sku = TextEditingController(text: sku),
+        barcode = TextEditingController(text: barcode);
+
+  String get cat => category.text.trim();
+  String get prod => product.text.trim();
+  String get pack => packSize.text.trim();
+  String get sk => sku.text.trim();
+  String get bar => barcode.text.trim();
+
+  /// Per-row missing-field errors (SKU uniqueness is checked globally).
+  List<String> get missing => [
+        if (cat.isEmpty) 'Category',
+        if (prod.isEmpty) 'Product Name',
+        if (pack.isEmpty) 'Pack Size',
+        if (sk.isEmpty) 'SKU',
+      ];
+
+  void dispose() {
+    category.dispose();
+    product.dispose();
+    packSize.dispose();
+    sku.dispose();
+    barcode.dispose();
+  }
+}
+
+class _CatalogSheetTab extends ConsumerStatefulWidget {
+  const _CatalogSheetTab();
+
+  @override
+  ConsumerState<_CatalogSheetTab> createState() => _CatalogSheetTabState();
+}
+
+class _CatalogSheetTabState extends ConsumerState<_CatalogSheetTab> {
+  final List<_SheetRow> _rows = [];
+  String _mode = 'ADD'; // ADD = new import · REPLACE = override existing (by SKU)
+  String? _fileName;
+  bool _loading = false;
+  String? _parseError;
+  Map<String, dynamic>? _result;
+
+  @override
+  void dispose() {
+    for (final r in _rows) {
+      r.dispose();
+    }
+    super.dispose();
+  }
+
+  // ── parsing ────────────────────────────────────────────────────────────────
+
+  /// Quote-aware split of one CSV line (handles "a,b" and "" escapes).
+  List<String> _splitCsvLine(String line) {
+    final out = <String>[];
+    final sb = StringBuffer();
+    bool inQuotes = false;
+    for (int i = 0; i < line.length; i++) {
+      final ch = line[i];
+      if (ch == '"') {
+        if (inQuotes && i + 1 < line.length && line[i + 1] == '"') {
+          sb.write('"');
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch == ',' && !inQuotes) {
+        out.add(sb.toString());
+        sb.clear();
+      } else {
+        sb.write(ch);
+      }
+    }
+    out.add(sb.toString());
+    return out.map((c) => c.trim()).toList();
+  }
+
+  void _parse(String csv) {
+    final lines = csv
+        .split(RegExp(r'\r?\n'))
+        .where((l) => l.trim().isNotEmpty)
+        .toList();
+    if (lines.length < 2) {
+      setState(() => _parseError =
+          'The sheet needs a header row and at least one product row.');
+      return;
+    }
+    final headers =
+        _splitCsvLine(lines[0]).map((h) => h.toLowerCase()).toList();
+    int idx(List<String> names) {
+      for (final n in names) {
+        final i = headers.indexOf(n);
+        if (i >= 0) return i;
+      }
+      return -1;
+    }
+
+    final catIdx = idx(['category']);
+    final prodIdx = idx(['product name', 'product', 'name']);
+    final packIdx = idx(['pack size', 'packsize', 'size', 'unit', 'quantity']);
+    final skuIdx = idx(['sku']);
+    final barIdx = idx(['barcode', 'ean', 'upc']);
+
+    if (catIdx < 0 || prodIdx < 0 || packIdx < 0) {
+      setState(() => _parseError =
+          'Could not find the required columns. Expected: Category, Product Name, '
+          'Pack Size, SKU (Barcode optional).');
+      return;
+    }
+
+    final newRows = <_SheetRow>[];
+    for (var i = 1; i < lines.length; i++) {
+      final cols = _splitCsvLine(lines[i]);
+      String col(int j) => (j >= 0 && j < cols.length) ? cols[j] : '';
+      // Skip fully-blank rows.
+      if (col(catIdx).isEmpty && col(prodIdx).isEmpty && col(packIdx).isEmpty) {
+        continue;
+      }
+      newRows.add(_SheetRow(
+        category: col(catIdx),
+        product: col(prodIdx),
+        packSize: col(packIdx),
+        sku: skuIdx >= 0 ? col(skuIdx) : '',
+        barcode: col(barIdx),
+      ));
+    }
+    for (final r in _rows) {
+      r.dispose();
+    }
+    setState(() {
+      _parseError = skuIdx < 0
+          ? 'No SKU column found — add one, or use "Auto-fill SKUs" to generate '
+              'them, then review before importing.'
+          : null;
+      _rows
+        ..clear()
+        ..addAll(newRows);
+      _result = null;
+    });
+  }
+
+  Future<void> _pickCsv() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    final bytes = file.bytes;
+    if (bytes == null) return;
+    setState(() => _fileName = file.name);
+    _parse(utf8.decode(bytes));
+  }
+
+  // ── validation ───────────────────────────────────────────────────────────
+
+  Map<String, int> _skuCounts() {
+    final counts = <String, int>{};
+    for (final r in _rows) {
+      if (r.sk.isNotEmpty) counts[r.sk] = (counts[r.sk] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  bool _isDuplicateSku(_SheetRow r, Map<String, int> counts) =>
+      r.sk.isNotEmpty && (counts[r.sk] ?? 0) > 1;
+
+  bool get _allValid {
+    if (_rows.isEmpty) return false;
+    final counts = _skuCounts();
+    for (final r in _rows) {
+      if (r.missing.isNotEmpty || _isDuplicateSku(r, counts)) return false;
+    }
+    return true;
+  }
+
+  String _slug(String s) => s
+      .toUpperCase()
+      .replaceAll(RegExp(r'[^A-Z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+
+  void _autoFillSkus() {
+    setState(() {
+      for (final r in _rows) {
+        if (r.sk.isEmpty) {
+          r.sku.text = [_slug(r.cat), _slug(r.prod), _slug(r.pack)]
+              .where((p) => p.isNotEmpty)
+              .join('-');
+        }
+      }
+    });
+  }
+
+  // ── import ─────────────────────────────────────────────────────────────────
+
+  Future<void> _import() async {
+    final cats = <String>{};
+    final products = <String, Map<String, dynamic>>{};
+    for (final r in _rows) {
+      cats.add(r.cat);
+      final key = '${r.cat} ${r.prod}';
+      final prod = products.putIfAbsent(
+          key,
+          () => {
+                'name': r.prod,
+                'categoryName': r.cat,
+                'sellableOnline': true,
+                'sellablePos': true,
+                'variants': <Map<String, dynamic>>[],
+              });
+      (prod['variants'] as List).add({
+        'sku': r.sk,
+        'unit': r.pack,
+        if (r.bar.isNotEmpty) 'barcode': r.bar,
+      });
+    }
+    final payload = {
+      'categories': [for (final c in cats) {'name': c}],
+      'products': products.values.toList(),
+      'mode': _mode,
+    };
+    setState(() {
+      _loading = true;
+      _result = null;
+    });
+    try {
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .post('/${ApiConstants.product}/admin/import', data: payload);
+      ref.invalidate(productsProvider);
+      ref.invalidate(categoriesProvider);
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _result = resp.data['data'] as Map<String, dynamic>?;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _parseError = 'Import failed: $e';
+      });
+    }
+  }
+
+  // ── UI ───────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final counts = _skuCounts();
+    final invalidCount = _rows
+        .where((r) => r.missing.isNotEmpty || _isDuplicateSku(r, counts))
+        .length;
+    final productCount =
+        _rows.map((r) => '${r.cat} ${r.prod}').toSet().length;
+
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Mode + upload controls.
+          Wrap(
+            spacing: 16,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                      value: 'ADD',
+                      icon: Icon(Icons.add),
+                      label: Text('New import')),
+                  ButtonSegment(
+                      value: 'REPLACE',
+                      icon: Icon(Icons.sync),
+                      label: Text('Override existing')),
+                ],
+                selected: {_mode},
+                onSelectionChanged: (s) => setState(() => _mode = s.first),
+              ),
+              FilledButton.icon(
+                onPressed: _pickCsv,
+                icon: const Icon(Icons.upload_file),
+                label: Text(_fileName == null ? 'Upload CSV' : 'Replace file'),
+              ),
+              TextButton.icon(
+                onPressed: () => _showSample(context),
+                icon: const Icon(Icons.help_outline, size: 18),
+                label: const Text('Expected format'),
+              ),
+              if (_fileName != null)
+                Text(_fileName!, style: TextStyle(color: cs.outline)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _mode == 'REPLACE'
+                ? 'Override: rows with an existing SKU replace it; products are reused by name, new ones are added.'
+                : 'New import: creates products and variants. A SKU that already exists will be reported as an error.',
+            style: TextStyle(color: cs.outline, fontSize: 12),
+          ),
+          if (_parseError != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: cs.errorContainer,
+                  borderRadius: BorderRadius.circular(8)),
+              child: Text(_parseError!,
+                  style: TextStyle(color: cs.onErrorContainer)),
+            ),
+          ],
+          if (_result != null) ...[
+            const SizedBox(height: 12),
+            _ImportResultCard(result: _result!),
+          ],
+          const SizedBox(height: 12),
+
+          if (_rows.isEmpty)
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.table_view_outlined,
+                        size: 64, color: cs.outlineVariant),
+                    const SizedBox(height: 12),
+                    const Text('Upload a catalog sheet to begin'),
+                    const SizedBox(height: 4),
+                    Text('Columns: Category · Product Name · Pack Size · SKU · Barcode',
+                        style: TextStyle(color: cs.outline, fontSize: 12)),
+                  ],
+                ),
+              ),
+            )
+          else ...[
+            // Summary + actions for the loaded sheet.
+            Row(
+              children: [
+                Text(
+                  '${_rows.length} rows · $productCount products'
+                  '${invalidCount > 0 ? ' · $invalidCount need attention' : ' · all valid'}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: invalidCount > 0 ? cs.error : Colors.green.shade700,
+                  ),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _autoFillSkus,
+                  icon: const Icon(Icons.auto_fix_high, size: 18),
+                  label: const Text('Auto-fill SKUs'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: (!_allValid || _loading) ? null : _import,
+                  icon: _loading
+                      ? const SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.cloud_upload_outlined),
+                  label: Text(_loading
+                      ? 'Importing…'
+                      : (_mode == 'REPLACE' ? 'Override $productCount products' : 'Import $productCount products')),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const _SheetHeaderRow(),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                itemCount: _rows.length,
+                itemBuilder: (_, i) {
+                  final r = _rows[i];
+                  final dup = _isDuplicateSku(r, counts);
+                  return _SheetRowEditor(
+                    row: r,
+                    duplicateSku: dup,
+                    onChanged: () => setState(() {}),
+                    onRemove: () => setState(() {
+                      _rows.removeAt(i).dispose();
+                    }),
+                  );
+                },
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _showSample(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Expected sheet format'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                  'One row per sellable unit. Rows are grouped into products by '
+                  'Category + Product Name; each Pack Size becomes a variant. '
+                  'SKU is required (one per pack size).'),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
+                child: const SelectableText(_sheetCsvSample,
+                    style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetHeaderRow extends StatelessWidget {
+  const _SheetHeaderRow();
+  @override
+  Widget build(BuildContext context) {
+    final st = TextStyle(
+        fontWeight: FontWeight.bold,
+        color: Theme.of(context).colorScheme.outline,
+        fontSize: 12);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+      child: Row(
+        children: [
+          const SizedBox(width: 28),
+          Expanded(flex: 3, child: Text('CATEGORY', style: st)),
+          Expanded(flex: 4, child: Text('PRODUCT NAME', style: st)),
+          Expanded(flex: 2, child: Text('PACK SIZE', style: st)),
+          Expanded(flex: 3, child: Text('SKU', style: st)),
+          Expanded(flex: 3, child: Text('BARCODE', style: st)),
+          const SizedBox(width: 40),
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetRowEditor extends StatelessWidget {
+  final _SheetRow row;
+  final bool duplicateSku;
+  final VoidCallback onChanged;
+  final VoidCallback onRemove;
+  const _SheetRowEditor({
+    required this.row,
+    required this.duplicateSku,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final missing = row.missing;
+    final hasError = missing.isNotEmpty || duplicateSku;
+    final tip = [
+      if (missing.isNotEmpty) 'Missing: ${missing.join(', ')}',
+      if (duplicateSku) 'Duplicate SKU',
+    ].join(' · ');
+
+    Widget cell(TextEditingController c, int flex, {bool flagged = false}) =>
+        Expanded(
+          flex: flex,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: TextField(
+              controller: c,
+              onChanged: (_) => onChanged(),
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                border: const OutlineInputBorder(),
+                errorText: null,
+                enabledBorder: flagged
+                    ? OutlineInputBorder(
+                        borderSide: BorderSide(color: cs.error))
+                    : null,
+              ),
+            ),
+          ),
+        );
+
+    return Container(
+      color: hasError ? cs.errorContainer.withValues(alpha: 0.25) : null,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 28,
+            child: hasError
+                ? Tooltip(
+                    message: tip,
+                    child: Icon(Icons.error_outline, color: cs.error, size: 20))
+                : Icon(Icons.check_circle_outline,
+                    color: Colors.green.shade600, size: 20),
+          ),
+          cell(row.category, 3, flagged: row.cat.isEmpty),
+          cell(row.product, 4, flagged: row.prod.isEmpty),
+          cell(row.packSize, 2, flagged: row.pack.isEmpty),
+          cell(row.sku, 3, flagged: row.sk.isEmpty || duplicateSku),
+          cell(row.barcode, 3),
+          SizedBox(
+            width: 40,
+            child: IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              tooltip: 'Remove row',
+              onPressed: onRemove,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ImportResultCard extends StatelessWidget {
+  final Map<String, dynamic> result;
+  const _ImportResultCard({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final errors = (result['errors'] as List?) ?? [];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: errors.isEmpty ? cs.tertiaryContainer : cs.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(errors.isEmpty ? Icons.check_circle : Icons.warning_amber,
+                  color: errors.isEmpty
+                      ? cs.onTertiaryContainer
+                      : cs.onErrorContainer),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Imported: ${result['productsCreated']} products, '
+                  '${result['variantsCreated']} variants, '
+                  '${result['categoriesCreated']} categories'
+                  '${result['categoriesSkipped'] != null && (result['categoriesSkipped'] as int) > 0 ? ' (${result['categoriesSkipped']} existing categories kept)' : ''}.',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: errors.isEmpty
+                        ? cs.onTertiaryContainer
+                        : cs.onErrorContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (errors.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            for (final e in errors.take(15))
+              Text('• ${(e as Map)['item']}: ${e['reason']}',
+                  style: TextStyle(color: cs.onErrorContainer, fontSize: 12)),
+            if (errors.length > 15)
+              Text('…and ${errors.length - 15} more',
+                  style: TextStyle(color: cs.onErrorContainer, fontSize: 12)),
+          ],
+        ],
+      ),
     );
   }
 }

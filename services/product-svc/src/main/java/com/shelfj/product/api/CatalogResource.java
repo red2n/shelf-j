@@ -50,27 +50,33 @@ public class CatalogResource {
       @QueryParam("sku") String sku,
       @QueryParam("barcode") String barcode,
       @QueryParam("store") String store,
+      @QueryParam("channel") String channel,
       @QueryParam("limit") Integer limit) {
     UUID tenantId = requireTenant();
     int clamped = Cursor.clampLimit(limit);
     // When a store is given, only products assorted for that store (or sold everywhere) show.
     UUID storeId = parseOptionalUuid(store, "INVALID_STORE", "store must be a UUID");
+    // channel=POS serves the in-store till (sellable_pos); default/ONLINE serves the storefront
+    // (sellable_online). Catalog is cashier-reachable, so POS staff use this instead of /admin.
+    boolean pos = "POS".equalsIgnoreCase(channel == null ? null : channel.trim());
+    boolean onlineOnly = !pos;
 
     List<ProductResponse> items;
     if (q != null || sku != null || barcode != null) {
       String trimQ = blank(q) ? null : q.trim();
       String trimSku = blank(sku) ? null : sku.trim();
       String trimBarcode = blank(barcode) ? null : barcode.trim();
+      // Search already returns all channels; narrow to POS only when the till asks.
       items =
           service
-              .searchProducts(tenantId, trimQ, trimSku, trimBarcode, false, storeId, clamped)
+              .searchProducts(tenantId, trimQ, trimSku, trimBarcode, false, pos, storeId, clamped)
               .stream()
               .map(Mappers::toProduct)
               .toList();
     } else {
       UUID categoryId = parseOptionalUuid(category, "INVALID_CATEGORY", "category must be a UUID");
       items =
-          service.listProducts(tenantId, categoryId, true, storeId, clamped).stream()
+          service.listProducts(tenantId, categoryId, onlineOnly, pos, storeId, clamped).stream()
               .map(Mappers::toProduct)
               .toList();
     }

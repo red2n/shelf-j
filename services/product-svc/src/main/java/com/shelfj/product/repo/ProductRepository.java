@@ -281,9 +281,49 @@ public class ProductRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Find an ACTIVE product by name within a category scope — used by bulk-import REPLACE to reuse
+   * (rather than duplicate) an existing product. {@code categoryId} null matches uncategorised.
+   */
+  public Optional<Product> findProductByNameAndCategory(
+      UUID tenantId, String name, UUID categoryId) {
+    String sql =
+        "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
+            + " sellable_online, sellable_pos, created_at, updated_at"
+            + " FROM products WHERE tenant_id = ? AND name = ? AND status = 'ACTIVE' AND "
+            + (categoryId == null ? "category_id IS NULL" : "category_id = ?");
+    return query(
+            sql,
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, name);
+              if (categoryId != null) ps.setObject(3, categoryId);
+            },
+            ProductRepository::mapProduct,
+            "find product by name")
+        .stream()
+        .findFirst();
+  }
+
+  /** Delete a variant by its (tenant, SKU) — used by bulk-import REPLACE to upsert by SKU. */
+  public void deleteVariantBySku(UUID tenantId, String sku) {
+    exec(
+        "DELETE FROM product_variants WHERE tenant_id = ? AND sku = ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setString(2, sku);
+        },
+        "delete variant by sku");
+  }
+
   /** Catalog list — ACTIVE only, optionally online-only, optionally filtered by category. */
   public List<Product> listProducts(
-      UUID tenantId, UUID categoryId, boolean onlineOnly, UUID storeId, int limit) {
+      UUID tenantId,
+      UUID categoryId,
+      boolean onlineOnly,
+      boolean posOnly,
+      UUID storeId,
+      int limit) {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
@@ -291,6 +331,7 @@ public class ProductRepository extends BaseOutboxRepository {
                 + " FROM products WHERE tenant_id = ? AND status = 'ACTIVE'");
     if (categoryId != null) sql.append(" AND category_id = ?");
     if (onlineOnly) sql.append(" AND sellable_online = true");
+    if (posOnly) sql.append(" AND sellable_pos = true");
     if (storeId != null) sql.append(STORE_ASSORTMENT_FILTER.replace("$P", "products.id"));
     sql.append(" ORDER BY created_at DESC LIMIT ?");
     return query(
@@ -361,6 +402,7 @@ public class ProductRepository extends BaseOutboxRepository {
       String sku,
       String barcode,
       boolean onlineOnly,
+      boolean posOnly,
       UUID storeId,
       int limit) {
     boolean hasVariantFilter = sku != null || barcode != null;
@@ -379,6 +421,7 @@ public class ProductRepository extends BaseOutboxRepository {
     if (sku != null) sql.append(" AND v.sku = ?");
     if (barcode != null) sql.append(" AND v.barcode = ?");
     if (onlineOnly) sql.append(" AND p.sellable_online = true");
+    if (posOnly) sql.append(" AND p.sellable_pos = true");
     if (storeId != null) sql.append(STORE_ASSORTMENT_FILTER.replace("$P", "p.id"));
     sql.append(" ORDER BY p.created_at DESC LIMIT ?");
     String finalSql = sql.toString();

@@ -99,6 +99,7 @@ public class OrderRepository extends BaseOutboxRepository {
   public List<Order> listOrders(
       UUID tenantId,
       UUID storeId,
+      UUID customerId,
       String channel,
       String status,
       Instant from,
@@ -108,6 +109,7 @@ public class OrderRepository extends BaseOutboxRepository {
       int limit) {
     StringBuilder sql = new StringBuilder("SELECT * FROM orders WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
+    if (customerId != null) sql.append(" AND customer_id=?");
     if (channel != null) sql.append(" AND channel=?");
     if (status != null) sql.append(" AND status=?");
     if (from != null) sql.append(" AND created_at >= ?");
@@ -121,6 +123,7 @@ public class OrderRepository extends BaseOutboxRepository {
           int i = 1;
           ps.setObject(i++, tenantId);
           if (storeId != null) ps.setObject(i++, storeId);
+          if (customerId != null) ps.setObject(i++, customerId);
           if (channel != null) ps.setString(i++, channel.toUpperCase(java.util.Locale.ROOT));
           if (status != null) ps.setString(i++, status.toUpperCase(java.util.Locale.ROOT));
           if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));

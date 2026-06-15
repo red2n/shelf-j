@@ -55,6 +55,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   static final String STOREFRONT_TENANT_HEADER = "X-Storefront-Tenant";
 
   @Inject GatewayConfig config;
+  @Inject TenantStatusGate tenantStatusGate;
 
   private JWTVerifier verifier;
 
@@ -90,7 +91,12 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if (!hasBearer && isStorefrontPublic(normalize(path), ctx.getMethod())) {
       String storefrontTenant = ctx.getHeaderString(STOREFRONT_TENANT_HEADER);
       if (storefrontTenant != null && !storefrontTenant.isBlank()) {
-        ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, storefrontTenant.trim());
+        String tenant = storefrontTenant.trim();
+        if (!tenantStatusGate.isActive(tenant)) {
+          ctx.abortWith(tenantSuspended());
+          return;
+        }
+        ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, tenant);
       }
       return;
     }
@@ -119,10 +125,45 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     }
     if (tenantId != null) {
       ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, tenantId);
+    } else if (isStorefrontCustomer(normalize(path), ctx.getMethod())) {
+      // A signed-in customer carries identity (userId) but no tenant — a customer account is global
+      // and shops across storefronts. For the whitelisted storefront-customer paths only, the
+      // tenant is taken from the storefront header (same trusted source as guest browsing), so the
+      // order is recorded against the right business while still being tied to the authenticated
+      // customerId. This fallback is deliberately scoped to those paths: it must never let a
+      // customer token name a tenant for admin endpoints.
+      String storefrontTenant = ctx.getHeaderString(STOREFRONT_TENANT_HEADER);
+      if (storefrontTenant != null && !storefrontTenant.isBlank()) {
+        String tenant = storefrontTenant.trim();
+        if (!tenantStatusGate.isActive(tenant)) {
+          ctx.abortWith(tenantSuspended());
+          return;
+        }
+        ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, tenant);
+      }
     }
     if (roles != null && !roles.isEmpty()) {
       ctx.getHeaders().putSingle(HttpHeaders.ROLES, String.join(",", roles));
     }
+  }
+
+  /**
+   * Whitelisted authenticated-customer storefront paths (already normalized). These require a valid
+   * customer token AND derive the tenant from the storefront header: guest checkout that a
+   * signed-in customer makes (so the order links to their customerId) and the customer's own order
+   * history.
+   */
+  private static boolean isStorefrontCustomer(String path, String method) {
+    if ("POST".equals(method) && "api/order-svc/orders".equals(path)) {
+      return true;
+    }
+    if ("GET".equals(method) && "api/order-svc/orders/mine".equals(path)) {
+      return true;
+    }
+    if ("POST".equals(method) && "api/payment-svc/payments/online".equals(path)) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -140,14 +181,18 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if ("GET".equals(method) && path.startsWith("api/inventory-svc/inventory/availability")) {
       return true;
     }
-    if ("POST".equals(method) && path.equals("api/pricing-svc/prices/resolve")) {
+    if ("POST".equals(method) && "api/pricing-svc/prices/resolve".equals(path)) {
       return true;
     }
-    if ("POST".equals(method) && path.equals("api/order-svc/orders")) {
+    // Active promotions powering the storefront offers banner (advertised, public offers).
+    if ("GET".equals(method) && "api/pricing-svc/promotions".equals(path)) {
+      return true;
+    }
+    if ("POST".equals(method) && "api/order-svc/orders".equals(path)) {
       return true;
     }
     // Guest online payment (cashless) for storefront checkout.
-    if ("POST".equals(method) && path.equals("api/payment-svc/payments/online")) {
+    if ("POST".equals(method) && "api/payment-svc/payments/online".equals(path)) {
       return true;
     }
     return false;
@@ -164,6 +209,16 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     while (p.startsWith("/")) p = p.substring(1);
     while (p.endsWith("/")) p = p.substring(0, p.length() - 1);
     return p;
+  }
+
+  private static Response tenantSuspended() {
+    return Response.status(Response.Status.FORBIDDEN)
+        .type(MediaType.APPLICATION_JSON)
+        .entity(
+            com.shelfj.web.ApiResponse.error(
+                com.shelfj.web.ErrorBody.of(
+                    "TENANT_INACTIVE", "This store is currently unavailable.")))
+        .build();
   }
 
   private static Response unauthorized(String message) {

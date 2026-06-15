@@ -108,6 +108,31 @@ public class TenantRepository extends BaseOutboxRepository {
         .orElseThrow(() -> ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found"));
   }
 
+  /**
+   * Flip the tenant status AND publish the change event in one transaction (golden rule #6), so a
+   * suspension can never be applied locally without other services (iam-svc) hearing about it.
+   */
+  public Tenant updateTenantStatusWithOutbox(UUID tenantId, String status, OutboxRow event) {
+    Instant now = Instant.now();
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement("UPDATE tenants SET status = ?, updated_at = ? WHERE id = ?")) {
+            ps.setString(1, status);
+            ps.setObject(2, now.atOffset(ZoneOffset.UTC));
+            ps.setObject(3, tenantId);
+            if (ps.executeUpdate() == 0) {
+              throw ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found");
+            }
+          }
+          insertOutbox(c, event);
+          return null;
+        },
+        "update tenant status");
+    return findTenant(tenantId)
+        .orElseThrow(() -> ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found"));
+  }
+
   public Tenant updateTenant(UUID tenantId, String businessName, String legalName) {
     Instant now = Instant.now();
     exec(

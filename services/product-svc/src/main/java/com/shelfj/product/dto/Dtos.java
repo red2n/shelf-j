@@ -202,8 +202,13 @@ public final class Dtos {
       Boolean sellablePos,
       @NotNull List<ImportVariantRequest> variants) {}
 
+  /**
+   * {@code mode}: "ADD" (default) creates new products/variants (duplicate SKUs error); "REPLACE"
+   * upserts by SKU — reuses the product by (name, category) and replaces any existing variant with
+   * the same SKU, so re-importing a sheet overrides rather than duplicates.
+   */
   public record BulkImportRequest(
-      List<ImportCategoryRequest> categories, List<ImportProductRequest> products) {}
+      List<ImportCategoryRequest> categories, List<ImportProductRequest> products, String mode) {}
 
   public record BulkImportError(String item, String reason) {}
 

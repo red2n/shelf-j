@@ -107,23 +107,32 @@ class StoresScreen extends ConsumerWidget {
                             label: const Text('Zones'),
                           ),
                           const SizedBox(width: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: active
-                                  ? Colors.green.shade100
-                                  : cs.errorContainer,
+                          Tooltip(
+                            message:
+                                active ? 'Tap to deactivate' : 'Tap to activate',
+                            child: InkWell(
                               borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              s.status,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: active
-                                    ? Colors.green.shade800
-                                    : cs.onErrorContainer,
+                              onTap: () =>
+                                  _toggleStoreStatus(context, ref, s, active),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: active
+                                      ? Colors.green.shade100
+                                      : cs.errorContainer,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  s.status,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: active
+                                        ? Colors.green.shade800
+                                        : cs.onErrorContainer,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
@@ -166,6 +175,49 @@ class StoresScreen extends ConsumerWidget {
       context: context,
       builder: (_) => _ZonesDialog(store: store),
     );
+  }
+
+  /// Activate / deactivate a store. Deactivating is consequential (it hides the
+  /// store from the storefront and POS), so we confirm first.
+  Future<void> _toggleStoreStatus(
+      BuildContext context, WidgetRef ref, StoreInfo store, bool active) async {
+    final next = active ? 'INACTIVE' : 'ACTIVE';
+    if (active) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Deactivate ${store.name}?'),
+          content: const Text(
+              'The store will stop accepting online orders and POS sales until '
+              'reactivated. Existing data is kept.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Deactivate')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    try {
+      await ref.read(apiClientProvider).dio.patch(
+        '/${ApiConstants.tenant}/admin/stores/${store.id}/status',
+        data: {'status': next},
+      );
+      ref.invalidate(storesProvider);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Store ${next == 'ACTIVE' ? 'activated' : 'deactivated'}.')),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update store status: $e')),
+      );
+    }
   }
 }
 

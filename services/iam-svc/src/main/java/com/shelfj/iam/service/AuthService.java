@@ -138,6 +138,14 @@ public class AuthService {
     for (User user : candidates) {
       if (User.STATUS_ACTIVE.equals(user.status())
           && passwords.verify(user.passwordHash(), password)) {
+        // A staff user whose tenant has been deactivated must not be able to log in, even with the
+        // right password and an ACTIVE user row. (Customers carry tenantId=null and are
+        // unaffected.)
+        if (user.tenantId() != null && !users.isTenantActive(user.tenantId())) {
+          users.audit(user.tenantId(), user.id(), "LOGIN_BLOCKED_TENANT_INACTIVE", email);
+          throw ApiException.forbidden(
+              "TENANT_INACTIVE", "This business account is suspended. Contact support.");
+        }
         users.audit(user.tenantId(), user.id(), "LOGIN_OK", email);
         return issueTokens(user);
       }
@@ -185,6 +193,12 @@ public class AuthService {
             .findById(userId)
             .orElseThrow(
                 () -> ApiException.unauthorized("INVALID_REFRESH", "User no longer exists"));
+    // Block token refresh for a suspended tenant too — otherwise a staff member with a live refresh
+    // token could keep minting access tokens after their business was deactivated.
+    if (user.tenantId() != null && !users.isTenantActive(user.tenantId())) {
+      throw ApiException.forbidden(
+          "TENANT_INACTIVE", "This business account is suspended. Contact support.");
+    }
     return issueTokens(user);
   }
 

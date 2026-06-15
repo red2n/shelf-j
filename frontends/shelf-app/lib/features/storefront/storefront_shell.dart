@@ -34,34 +34,70 @@ class StorefrontShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final count = ref.watch(cartProvider).fold<int>(0, (s, l) => s + l.qty);
+    // A deactivated tenant's shop is closed — show a friendly notice instead of
+    // letting every product/price call fail with a raw 403.
+    final suspended = ref.watch(storefrontSuspendedProvider).valueOrNull ?? false;
 
     return AdaptiveNavShell(
       title: 'Shop',
       destinations: _destinations,
       selectedIndex: _selectedIndex,
       onDestinationSelected: (i) => context.go(_routes[i]),
-      actions: [
-        const _AccountAction(),
-        Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: Badge(
-            isLabelVisible: count > 0,
-            label: Text('$count'),
-            child: IconButton(
-              icon: const Icon(Icons.shopping_cart_outlined),
-              tooltip: 'Cart',
-              onPressed: () => context.go('/store/cart'),
+      actions: suspended
+          ? const []
+          : [
+              const _AccountAction(),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Badge(
+                  isLabelVisible: count > 0,
+                  label: Text('$count'),
+                  child: IconButton(
+                    icon: const Icon(Icons.shopping_cart_outlined),
+                    tooltip: 'Cart',
+                    onPressed: () => context.go('/store/cart'),
+                  ),
+                ),
+              ),
+            ],
+      child: suspended
+          ? const _StoreUnavailable()
+          : Column(
+              children: [
+                Expanded(child: child),
+                // Sticky cart bar — a constant, low-friction path to checkout
+                // while browsing. Hidden on the cart screen (it has its own CTA).
+                if (!currentLocation.startsWith('/store/cart')) const _CartBar(),
+              ],
             ),
-          ),
+    );
+  }
+}
+
+/// Shown when the tenant is deactivated (gateway 403). The shop is closed.
+class _StoreUnavailable extends StatelessWidget {
+  const _StoreUnavailable();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.storefront_outlined, size: 72, color: cs.outlineVariant),
+            const SizedBox(height: 20),
+            Text('This store is currently unavailable',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text('Please check back later or contact the store directly.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: cs.outline)),
+          ],
         ),
-      ],
-      child: Column(
-        children: [
-          Expanded(child: child),
-          // Sticky cart bar — a constant, low-friction path to checkout while
-          // browsing. Hidden on the cart screen itself (it has its own CTA).
-          if (!currentLocation.startsWith('/store/cart')) const _CartBar(),
-        ],
       ),
     );
   }
@@ -76,6 +112,7 @@ class _CartBar extends ConsumerWidget {
     if (cart.isEmpty) return const SizedBox.shrink();
 
     final cs = Theme.of(context).colorScheme;
+    final showPrices = ref.watch(storefrontShowPricesProvider);
     final count = cart.fold<int>(0, (s, l) => s + l.qty);
     final total = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final currency = cart.first.currency;
@@ -97,7 +134,9 @@ class _CartBar extends ConsumerWidget {
                 ),
                 const SizedBox(width: 16),
                 Text(
-                  '$currency ${total.toStringAsFixed(2)}',
+                  showPrices
+                      ? '$currency ${total.toStringAsFixed(2)}'
+                      : '$count item${count == 1 ? '' : 's'}',
                   style: TextStyle(
                       color: cs.onPrimary,
                       fontSize: 16,

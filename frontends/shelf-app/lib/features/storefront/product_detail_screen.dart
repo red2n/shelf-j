@@ -92,56 +92,77 @@ class _VariantRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
-    final priceAsync = ref.watch(variantPriceProvider(variant.id));
-    final showPrices =
-        ref.watch(storefrontConfigProvider).valueOrNull?.showPrices ?? true;
+    final showPrices = ref.watch(storefrontShowPricesProvider);
     final availMap = ref.watch(storefrontAvailabilityProvider).valueOrNull;
     final inStock = availMap == null ? true : (availMap[variant.id] ?? false);
 
+    void addLine(double unitPrice, String currency) {
+      ref.read(cartProvider.notifier).add(CartLine(
+            variantId: variant.id,
+            productName: product.name,
+            sku: variant.sku,
+            unitPrice: unitPrice,
+            currency: currency,
+          ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Added ${product.name} to cart'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
+
+    final subtitle = Text([
+      if (variant.unit != null) variant.unit!,
+      if (variant.barcode != null) 'EAN: ${variant.barcode}',
+    ].join('  ·  '));
+    final title =
+        Text(variant.sku, style: const TextStyle(fontFamily: 'monospace'));
+
+    // Catalog mode: no price, no price-resolve call — stock + add only.
+    if (!showPrices) {
+      return Card(
+        child: ListTile(
+          title: title,
+          subtitle: subtitle,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              StockBadge(inStock: inStock),
+              const SizedBox(width: 8),
+              if (inStock)
+                FilledButton(
+                  onPressed: () => addLine(0, ''),
+                  child: const Text('Add'),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final priceAsync = ref.watch(variantPriceProvider(variant.id));
     return Card(
       child: ListTile(
-        title: Text(variant.sku,
-            style: const TextStyle(fontFamily: 'monospace')),
-        subtitle: Text([
-          if (variant.unit != null) variant.unit!,
-          if (variant.barcode != null) 'EAN: ${variant.barcode}',
-        ].join('  ·  ')),
+        title: title,
+        subtitle: subtitle,
         trailing: priceAsync.when(
           loading: () => const SizedBox(
               height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)),
           error: (_, __) => Text('Unavailable',
               style: TextStyle(color: cs.outline, fontSize: 12)),
           data: (p) {
-            final canAdd = showPrices || inStock;
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (showPrices)
-                  Text('${p.currency} ${p.totalWithVat.toStringAsFixed(2)}',
-                      style: TextStyle(
-                          color: cs.primary, fontWeight: FontWeight.bold))
-                else
-                  StockBadge(inStock: inStock),
+                Text('${p.currency} ${p.totalWithVat.toStringAsFixed(2)}',
+                    style:
+                        TextStyle(color: cs.primary, fontWeight: FontWeight.bold)),
                 const SizedBox(width: 8),
-                if (canAdd)
-                  FilledButton(
-                    onPressed: () {
-                      ref.read(cartProvider.notifier).add(CartLine(
-                            variantId: variant.id,
-                            productName: product.name,
-                            sku: variant.sku,
-                            unitPrice: p.totalWithVat,
-                            currency: p.currency,
-                          ));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Added ${product.name} to cart'),
-                          duration: const Duration(seconds: 1),
-                        ),
-                      );
-                    },
-                    child: const Text('Add'),
-                  ),
+                FilledButton(
+                  onPressed: () => addLine(p.totalWithVat, p.currency),
+                  child: const Text('Add'),
+                ),
               ],
             );
           },

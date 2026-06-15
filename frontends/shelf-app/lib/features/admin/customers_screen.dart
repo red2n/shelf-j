@@ -247,20 +247,39 @@ class _CustomerDetailDialog extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
+    // Watch the detail provider so an in-place edit refreshes name/phone/etc.
+    final c = ref.watch(customerDetailProvider(customer.id)).valueOrNull ?? customer;
     final loyaltyAsync = ref.watch(customerLoyaltyProvider(customer.id));
     final creditAsync = ref.watch(customerStoreCreditProvider(customer.id));
     final ledgerAsync = ref.watch(customerLoyaltyLedgerProvider(customer.id));
 
     return AlertDialog(
-      title: Text(customer.fullName),
+      title: Row(
+        children: [
+          Expanded(child: Text(c.fullName)),
+          IconButton(
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Edit details',
+            onPressed: () => showDialog(
+              context: context,
+              builder: (_) => _EditCustomerDialog(customer: c),
+            ),
+          ),
+        ],
+      ),
       content: SizedBox(
         width: 480,
-        height: 460,
+        height: 480,
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(customer.email, style: TextStyle(color: cs.outline)),
+              Text([
+                c.email,
+                if (c.phone != null && c.phone!.isNotEmpty) c.phone,
+                if (c.gender != null && c.gender!.isNotEmpty) c.gender,
+                if (c.dob != null && c.dob!.isNotEmpty) 'DOB ${c.dob}',
+              ].whereType<String>().join(' · '), style: TextStyle(color: cs.outline)),
               const SizedBox(height: 16),
               Row(
                 children: [
@@ -325,6 +344,8 @@ class _CustomerDetailDialog extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 16),
+              _AddressesSection(customerId: customer.id),
+              const SizedBox(height: 16),
               Text('Loyalty ledger',
                   style: Theme.of(context).textTheme.labelLarge),
               const SizedBox(height: 8),
@@ -367,8 +388,15 @@ class _CustomerDetailDialog extends ConsumerWidget {
       ),
       actions: [
         TextButton(
+          onPressed: () => _anonymize(context, ref),
+          style: TextButton.styleFrom(foregroundColor: cs.error),
+          child: const Text('Anonymize'),
+        ),
+        const Spacer(),
+        TextButton(
             onPressed: () => Navigator.pop(context), child: const Text('Close')),
       ],
+      actionsAlignment: MainAxisAlignment.spaceBetween,
     );
   }
 
@@ -376,6 +404,48 @@ class _CustomerDetailDialog extends ConsumerWidget {
     ref.invalidate(customerLoyaltyProvider(customer.id));
     ref.invalidate(customerLoyaltyLedgerProvider(customer.id));
     ref.invalidate(customerStoreCreditProvider(customer.id));
+  }
+
+  /// GDPR erase (DELETE /customers/{id}) — irreversible, so confirm first.
+  Future<void> _anonymize(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Anonymize customer?'),
+        content: const Text(
+            'This permanently erases the customer\'s personal details (GDPR). '
+            'Order history is kept but de-identified. This cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Anonymize'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .delete('/${ApiConstants.customer}/customers/${customer.id}');
+      ref.invalidate(customersProvider);
+      if (!context.mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Customer anonymized.')),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not anonymize: $e')),
+      );
+    }
   }
 
   Future<void> _points(BuildContext context, WidgetRef ref, String action) async {
@@ -506,4 +576,405 @@ Future<_AmountReason?> _amountReason(
       ],
     ),
   );
+}
+
+// ── Addresses ────────────────────────────────────────────────────────────────
+
+class _AddressesSection extends ConsumerWidget {
+  final String customerId;
+  const _AddressesSection({required this.customerId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final async = ref.watch(customerAddressesProvider(customerId));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text('Addresses', style: Theme.of(context).textTheme.labelLarge),
+            const Spacer(),
+            TextButton.icon(
+              icon: const Icon(Icons.add_location_alt_outlined, size: 18),
+              label: const Text('Add'),
+              onPressed: () => showDialog(
+                context: context,
+                builder: (_) => _AddressFormDialog(customerId: customerId),
+              ),
+            ),
+          ],
+        ),
+        async.when(
+          loading: () => const Padding(
+              padding: EdgeInsets.all(12),
+              child: Center(child: CircularProgressIndicator())),
+          error: (e, _) =>
+              Text('Could not load addresses: $e', style: TextStyle(color: cs.error)),
+          data: (addresses) => addresses.isEmpty
+              ? Text('No addresses saved.', style: TextStyle(color: cs.outline))
+              : Column(
+                  children: [
+                    for (final a in addresses)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                            a.type.toUpperCase() == 'WORK'
+                                ? Icons.work_outline
+                                : Icons.home_outlined,
+                            size: 20),
+                        title: Row(
+                          children: [
+                            Flexible(child: Text(a.type)),
+                            if (a.isDefault) ...[
+                              const SizedBox(width: 6),
+                              _DefaultChip(),
+                            ],
+                          ],
+                        ),
+                        subtitle: Text(a.oneLine),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.edit_outlined, size: 18),
+                              onPressed: () => showDialog(
+                                context: context,
+                                builder: (_) => _AddressFormDialog(
+                                    customerId: customerId, address: a),
+                              ),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.delete_outline, size: 18),
+                              onPressed: () => _delete(context, ref, a.id),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _delete(BuildContext context, WidgetRef ref, String addressId) async {
+    try {
+      await ref.read(apiClientProvider).dio.delete(
+          '/${ApiConstants.customer}/customers/$customerId/addresses/$addressId');
+      ref.invalidate(customerAddressesProvider(customerId));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not delete address: $e')),
+      );
+    }
+  }
+}
+
+class _DefaultChip extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+          color: cs.secondaryContainer, borderRadius: BorderRadius.circular(8)),
+      child: Text('Default',
+          style: TextStyle(fontSize: 10, color: cs.onSecondaryContainer)),
+    );
+  }
+}
+
+/// Edit a customer's profile (email is immutable — registered identity).
+class _EditCustomerDialog extends ConsumerStatefulWidget {
+  final Customer customer;
+  const _EditCustomerDialog({required this.customer});
+
+  @override
+  ConsumerState<_EditCustomerDialog> createState() =>
+      _EditCustomerDialogState();
+}
+
+class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final _firstCtrl = TextEditingController(text: widget.customer.firstName);
+  late final _lastCtrl = TextEditingController(text: widget.customer.lastName);
+  late final _phoneCtrl = TextEditingController(text: widget.customer.phone ?? '');
+  late final _dobCtrl = TextEditingController(text: widget.customer.dob ?? '');
+  late String? _gender = widget.customer.gender;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _firstCtrl.dispose();
+    _lastCtrl.dispose();
+    _phoneCtrl.dispose();
+    _dobCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.put(
+        '/${ApiConstants.customer}/customers/${widget.customer.id}',
+        data: {
+          'firstName': _firstCtrl.text.trim(),
+          'lastName': _lastCtrl.text.trim(),
+          'phone': _phoneCtrl.text.trim(),
+          if (_dobCtrl.text.trim().isNotEmpty) 'dob': _dobCtrl.text.trim(),
+          if (_gender != null) 'gender': _gender,
+        },
+      );
+      ref.invalidate(customerDetailProvider(widget.customer.id));
+      ref.invalidate(customersProvider);
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Customer updated.')),
+      );
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = 'Could not save: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit customer'),
+      content: SizedBox(
+        width: 380,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_error != null) ...[
+                Text(_error!,
+                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                const SizedBox(height: 8),
+              ],
+              TextFormField(
+                controller: _firstCtrl,
+                decoration: const InputDecoration(labelText: 'First name'),
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Required' : null,
+              ),
+              TextFormField(
+                controller: _lastCtrl,
+                decoration: const InputDecoration(labelText: 'Last name'),
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Required' : null,
+              ),
+              TextFormField(
+                controller: _phoneCtrl,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'Phone'),
+              ),
+              TextFormField(
+                controller: _dobCtrl,
+                decoration: const InputDecoration(
+                    labelText: 'Date of birth (YYYY-MM-DD)'),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: _gender,
+                decoration: const InputDecoration(labelText: 'Gender'),
+                items: const [
+                  DropdownMenuItem(value: 'MALE', child: Text('Male')),
+                  DropdownMenuItem(value: 'FEMALE', child: Text('Female')),
+                  DropdownMenuItem(value: 'OTHER', child: Text('Other')),
+                ],
+                onChanged: (v) => setState(() => _gender = v),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _loading ? null : () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+          onPressed: _loading ? null : _save,
+          child: _loading
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Add or edit a customer address.
+class _AddressFormDialog extends ConsumerStatefulWidget {
+  final String customerId;
+  final CustomerAddress? address;
+  const _AddressFormDialog({required this.customerId, this.address});
+
+  @override
+  ConsumerState<_AddressFormDialog> createState() => _AddressFormDialogState();
+}
+
+class _AddressFormDialogState extends ConsumerState<_AddressFormDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late String _type = widget.address?.type ?? 'HOME';
+  late final _line1 = TextEditingController(text: widget.address?.line1 ?? '');
+  late final _line2 = TextEditingController(text: widget.address?.line2 ?? '');
+  late final _city = TextEditingController(text: widget.address?.city ?? '');
+  late final _state = TextEditingController(text: widget.address?.state ?? '');
+  late final _country = TextEditingController(text: widget.address?.country ?? '');
+  late final _pincode = TextEditingController(text: widget.address?.pincode ?? '');
+  late bool _isDefault = widget.address?.isDefault ?? false;
+  bool _loading = false;
+  String? _error;
+
+  bool get _isEdit => widget.address != null;
+
+  @override
+  void dispose() {
+    _line1.dispose();
+    _line2.dispose();
+    _city.dispose();
+    _state.dispose();
+    _country.dispose();
+    _pincode.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final data = {
+      'type': _type,
+      'line1': _line1.text.trim(),
+      'line2': _line2.text.trim(),
+      'city': _city.text.trim(),
+      'state': _state.text.trim(),
+      'country': _country.text.trim(),
+      'pincode': _pincode.text.trim(),
+      'isDefault': _isDefault,
+    };
+    final base = '/${ApiConstants.customer}/customers/${widget.customerId}/addresses';
+    try {
+      final dio = ref.read(apiClientProvider).dio;
+      if (_isEdit) {
+        await dio.put('$base/${widget.address!.id}', data: data);
+      } else {
+        await dio.post(base, data: data);
+      }
+      ref.invalidate(customerAddressesProvider(widget.customerId));
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = 'Could not save: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(_isEdit ? 'Edit address' : 'Add address'),
+      content: SizedBox(
+        width: 380,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_error != null) ...[
+                  Text(_error!,
+                      style:
+                          TextStyle(color: Theme.of(context).colorScheme.error)),
+                  const SizedBox(height: 8),
+                ],
+                DropdownButtonFormField<String>(
+                  initialValue: _type,
+                  decoration: const InputDecoration(labelText: 'Type'),
+                  items: const [
+                    DropdownMenuItem(value: 'HOME', child: Text('Home')),
+                    DropdownMenuItem(value: 'WORK', child: Text('Work')),
+                    DropdownMenuItem(value: 'BILLING', child: Text('Billing')),
+                    DropdownMenuItem(value: 'SHIPPING', child: Text('Shipping')),
+                  ],
+                  onChanged: (v) => setState(() => _type = v ?? 'HOME'),
+                ),
+                TextFormField(
+                  controller: _line1,
+                  decoration: const InputDecoration(labelText: 'Address line 1'),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Required' : null,
+                ),
+                TextFormField(
+                  controller: _line2,
+                  decoration:
+                      const InputDecoration(labelText: 'Address line 2'),
+                ),
+                TextFormField(
+                  controller: _city,
+                  decoration: const InputDecoration(labelText: 'City'),
+                ),
+                TextFormField(
+                  controller: _state,
+                  decoration: const InputDecoration(labelText: 'State / region'),
+                ),
+                TextFormField(
+                  controller: _country,
+                  decoration: const InputDecoration(labelText: 'Country'),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Required' : null,
+                ),
+                TextFormField(
+                  controller: _pincode,
+                  decoration: const InputDecoration(labelText: 'Postcode / PIN'),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Default address'),
+                  value: _isDefault,
+                  onChanged: (v) => setState(() => _isDefault = v),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _loading ? null : () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+          onPressed: _loading ? null : _save,
+          child: _loading
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : Text(_isEdit ? 'Save' : 'Add'),
+        ),
+      ],
+    );
+  }
 }

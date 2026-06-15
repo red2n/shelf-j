@@ -212,6 +212,22 @@ class StoreSummary {
       );
 }
 
+/// True when the storefront's tenant has been deactivated (gateway returns 403
+/// TENANT_INACTIVE for every storefront path). Fails open to "available" on any
+/// other error so a transient blip doesn't hide a working shop.
+final storefrontSuspendedProvider =
+    FutureProvider.autoDispose<bool>((ref) async {
+  final dio = ref.watch(storefrontDioProvider);
+  try {
+    await dio.get('/${ApiConstants.tenant}/storefront/stores');
+    return false;
+  } on DioException catch (e) {
+    return e.response?.statusCode == 403;
+  } catch (_) {
+    return false;
+  }
+});
+
 /// Active stores for the tenant — powers the store switcher.
 final storefrontStoresProvider =
     FutureProvider.autoDispose<List<StoreSummary>>((ref) async {
@@ -251,6 +267,51 @@ final storefrontAvailabilityProvider =
     for (final e in data)
       (e['variantId'] as String): (e['inStock'] as bool? ?? false)
   };
+});
+
+// ── Promotions (storefront offers banner) ────────────────────────────────────
+
+/// An active, advertised promotion for the offers carousel.
+class StorePromotion {
+  final String name;
+  final String type; // PERCENT | FLAT
+  final double value;
+  final double? minOrderAmount;
+
+  const StorePromotion({
+    required this.name,
+    required this.type,
+    required this.value,
+    this.minOrderAmount,
+  });
+
+  factory StorePromotion.fromJson(Map<String, dynamic> j) => StorePromotion(
+        name: j['name'] as String? ?? 'Offer',
+        type: (j['type'] as String? ?? 'PERCENT').toUpperCase(),
+        value: (j['value'] as num?)?.toDouble() ?? 0,
+        minOrderAmount: (j['minOrderAmount'] as num?)?.toDouble(),
+      );
+
+  /// Short headline, e.g. "20% off" or "£5 off".
+  String get headline => type == 'PERCENT'
+      ? '${value.toStringAsFixed(value % 1 == 0 ? 0 : 2)}% off'
+      : '${value.toStringAsFixed(2)} off';
+}
+
+/// Active promotions for the current tenant (advertised offers). Fails soft to an
+/// empty list so the banner can fall back to evergreen content.
+final storefrontPromotionsProvider =
+    FutureProvider.autoDispose<List<StorePromotion>>((ref) async {
+  final dio = ref.watch(storefrontDioProvider);
+  try {
+    final resp = await dio.get('/${ApiConstants.pricing}/promotions');
+    final data = (resp.data['data'] as List?) ?? [];
+    return data
+        .map((e) => StorePromotion.fromJson(e as Map<String, dynamic>))
+        .toList();
+  } catch (_) {
+    return const [];
+  }
 });
 
 // ── Catalog providers ────────────────────────────────────────────────────────
@@ -314,6 +375,20 @@ final storefrontVariantsProvider =
       await dio.get('/${ApiConstants.product}/catalog/products/$productId/variants');
   final data = (resp.data['data'] as List?) ?? [];
   return data.map((e) => StoreVariant.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+/// Whether the current store shows prices. When false (catalog mode) the whole
+/// storefront hides prices AND skips price-resolve calls; checkout is order-only.
+/// Defaults to true until the store config resolves.
+final storefrontShowPricesProvider = Provider.autoDispose<bool>(
+    (ref) => ref.watch(storefrontConfigProvider).valueOrNull?.showPrices ?? true);
+
+/// First sellable variant of a product (no price) — used to add to cart in
+/// catalog mode without ever resolving a price.
+final productFirstVariantProvider =
+    FutureProvider.autoDispose.family<StoreVariant?, String>((ref, productId) async {
+  final variants = await ref.watch(storefrontVariantsProvider(productId).future);
+  return variants.isEmpty ? null : variants.first;
 });
 
 /// Resolved ONLINE price for one variant.
@@ -497,3 +572,52 @@ class StorefrontOrdersNotifier
 
 final storefrontOrdersProvider = StateNotifierProvider<StorefrontOrdersNotifier,
     List<StorefrontOrderRecord>>((ref) => StorefrontOrdersNotifier());
+
+// ── Order history (server-backed, signed-in customers) ───────────────────────
+//
+// When the shopper is signed in, their real order history comes from order-svc
+// `GET /orders/mine`: the gateway stamps the tenant from the storefront header
+// and the customer identity from the bearer token, and the service filters to
+// orders whose customer_id is the authenticated customer. Guests (no token) fall
+// back to the device-local history above.
+
+class ServerOrderSummary {
+  final String id;
+  final String status;
+  final double total;
+  final String currency;
+  final DateTime placedAt;
+
+  const ServerOrderSummary({
+    required this.id,
+    required this.status,
+    required this.total,
+    required this.currency,
+    required this.placedAt,
+  });
+
+  factory ServerOrderSummary.fromJson(Map<String, dynamic> j) =>
+      ServerOrderSummary(
+        id: j['id'] as String? ?? '',
+        status: j['status'] as String? ?? '-',
+        total: (j['total'] as num?)?.toDouble() ?? 0,
+        currency: j['currency'] as String? ?? '',
+        placedAt: DateTime.tryParse(j['createdAt'] as String? ?? '')?.toLocal() ??
+            DateTime.now(),
+      );
+}
+
+/// The signed-in customer's real order history. Returns null when not signed in
+/// (the UI then shows the device-local list / a sign-in prompt).
+final serverOrdersProvider =
+    FutureProvider.autoDispose<List<ServerOrderSummary>?>((ref) async {
+  final auth = ref.watch(storefrontAuthProvider);
+  if (!auth.isSignedIn) return null;
+  final dio = ref.watch(storefrontDioProvider);
+  final resp = await dio.get('/${ApiConstants.order}/orders/mine',
+      queryParameters: {'limit': 50});
+  final data = (resp.data['data'] as List?) ?? [];
+  return data
+      .map((e) => ServerOrderSummary.fromJson(e as Map<String, dynamic>))
+      .toList();
+});

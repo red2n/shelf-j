@@ -12,6 +12,7 @@
 #   docker compose up -d --build        # build images + start everything
 #
 # Ports exposed to the host (developers need these):
+#   8088  shelf-app (web UI: admin/storefront/POS)
 #   8090  gateway (public entry point)    3100  grafana
 #   5555  pgadmin                         8500  consul UI
 #   8081  kafka-ui                        9411  zipkin
@@ -624,6 +625,40 @@ services:
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
+  notification-svc:
+    image: ghcr.io/red2n/shelf-j-notification-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/notification-svc, SVC_JAR: notification-svc }
+    container_name: shelfj-notification
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${NOTIFICATION_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: notification-svc
+    mem_limit: ${NOTIFICATION_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
+  reporting-svc:
+    image: ghcr.io/red2n/shelf-j-reporting-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/reporting-svc, SVC_JAR: reporting-svc }
+    container_name: shelfj-reporting
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${REPORTING_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: reporting-svc
+    mem_limit: ${REPORTING_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
   # ---------------------------------------------------------------- gateway (single public door)
 
   # Gateway waits for iam-svc and tenant-svc: these are the services clients hit first.
@@ -681,3 +716,28 @@ services:
         if [ "$$STATUS" = "201" ]; then echo "[bootstrap] Platform admin created ($$ADMIN_EMAIL)";
         elif [ "$$STATUS" = "409" ]; then echo "[bootstrap] Platform admin already exists — skipped";
         else echo "[bootstrap] Unexpected status $$STATUS"; exit 1; fi
+
+  # ---------------------------------------------------------------- web UI (Flutter)
+
+  # Single-page app (admin console + storefront + in-store POS), served by a
+  # non-root nginx. The browser calls the gateway directly at the host URL baked
+  # in at build time (SHELFJ_API_BASE, default http://localhost:8090/api), so the
+  # UI container itself never needs to reach the gateway over the compose network.
+  shelf-app:
+    image: ghcr.io/red2n/shelf-j-web:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: shelfj-web
+    restart: unless-stopped
+    # Default 8088 to avoid clashing with the dev `flutter run` server (40015).
+    ports: ["${UI_HOST_PORT:-8088}:8080"]
+    networks: [shelfj_network]
+    depends_on:
+      gateway: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 5s

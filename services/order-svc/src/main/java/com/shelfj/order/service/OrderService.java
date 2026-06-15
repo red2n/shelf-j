@@ -53,7 +53,16 @@ public class OrderService {
 
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = UUID.fromString(req.storeId());
-    UUID customerId = req.customerId() != null ? UUID.fromString(req.customerId()) : null;
+    // A signed-in storefront customer is bound to their own order from the authenticated identity —
+    // never from the (untrusted) request body. Staff placing a POS order may still attach a
+    // customer
+    // explicitly via the body.
+    UUID customerId;
+    if (ctx.hasRole("CUSTOMER") && ctx.userId() != null) {
+      customerId = ctx.userId();
+    } else {
+      customerId = req.customerId() != null ? UUID.fromString(req.customerId()) : null;
+    }
     String currency = req.currency() != null ? req.currency() : "USD";
     String fulfilment =
         req.fulfilmentType() != null ? req.fulfilmentType() : Order.FULFILMENT_INSTORE;
@@ -138,6 +147,7 @@ public class OrderService {
   public OrderPage listOrders(
       UUID tenantId,
       UUID storeId,
+      UUID customerId,
       String channel,
       String status,
       Instant from,
@@ -161,7 +171,16 @@ public class OrderService {
     // Fetch one extra row to learn whether a further page exists without a second query.
     List<Order> rows =
         repo.listOrders(
-            tenantId, storeId, channel, status, from, to, afterCreatedAt, afterId, limit + 1);
+            tenantId,
+            storeId,
+            customerId,
+            channel,
+            status,
+            from,
+            to,
+            afterCreatedAt,
+            afterId,
+            limit + 1);
     if (rows.size() <= limit) {
       return new OrderPage(rows, null);
     }

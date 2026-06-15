@@ -58,7 +58,31 @@ public class OrderResource {
     Instant fromInst = parseInstant(from, "from");
     Instant toInst = parseInstant(to, "to");
     int clamped = Cursor.clampLimit(limit);
-    var page = svc.listOrders(tenantId, storeId, channel, status, fromInst, toInst, after, clamped);
+    var page =
+        svc.listOrders(tenantId, storeId, null, channel, status, fromInst, toInst, after, clamped);
+    return ApiResponse.ok(
+        page.orders().stream().map(Mappers::toSummary).toList(),
+        new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
+  }
+
+  /**
+   * The signed-in customer's own order history (storefront). The tenant comes from the storefront
+   * header (a customer account is global) and results are filtered to the authenticated customerId,
+   * so a customer can only ever see their own orders — never another customer's or the tenant's
+   * full order book.
+   */
+  @GET
+  @Path("/mine")
+  public ApiResponse<List<OrderSummaryResponse>> mine(
+      @QueryParam("after") String after, @QueryParam("limit") Integer limit) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID customerId = ctx.userId();
+    if (customerId == null) {
+      throw com.shelfj.web.ApiException.unauthorized(
+          "NO_CUSTOMER", "a customer token is required for order history");
+    }
+    int clamped = Cursor.clampLimit(limit);
+    var page = svc.listOrders(tenantId, null, customerId, null, null, null, null, after, clamped);
     return ApiResponse.ok(
         page.orders().stream().map(Mappers::toSummary).toList(),
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));

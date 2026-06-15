@@ -41,12 +41,28 @@ public class StorefrontResource {
     try {
       storeId = UUID.fromString(store.trim());
     } catch (IllegalArgumentException e) {
-      throw ApiException.badRequest("INVALID_STORE", "store must be a UUID");
+      throw new ApiException(400, "INVALID_STORE", "store must be a UUID", java.util.List.of(), e);
     }
     Store s = service.getStore(tenantId, storeId);
     return ApiResponse.ok(
         new StorefrontConfigResponse(s.id().toString(), s.name(), s.status(), s.showPrices()));
   }
+
+  /**
+   * Whether this tenant may currently transact — the gateway calls this (cached) to gate storefront
+   * browsing and checkout, so a deactivated business's online shop stops serving. Tenant comes from
+   * {@code X-Tenant-Id} (gateway sets it from the storefront domain/header).
+   */
+  @GET
+  @Path("/active")
+  public ApiResponse<TenantActiveResponse> active() {
+    UUID tenantId = ctx.requireTenantId();
+    var t = service.getTenant(tenantId);
+    return ApiResponse.ok(new TenantActiveResponse("ACTIVE".equalsIgnoreCase(t.status())));
+  }
+
+  /** Minimal active-flag projection for the gateway's storefront suspension gate. */
+  public record TenantActiveResponse(boolean active) {}
 
   /** Active stores for the tenant — powers the storefront's store switcher. */
   @GET

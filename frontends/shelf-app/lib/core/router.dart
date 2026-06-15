@@ -42,9 +42,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       final auth = authAsync.valueOrNull ?? const AuthUnauthenticated();
       final loc = state.matchedLocation;
 
+      // Public storefront — accessible to EVERYONE (guests and any signed-in
+      // user), so a storefront deep-link is never hijacked by the login /
+      // onboarding / platform-admin redirects below. The storefront has its own
+      // (separate) customer session and tenant-from-URL context.
+      if (loc.startsWith('/store')) return null;
+
       if (auth is AuthUnauthenticated) {
-        // Public storefront — guests shop without logging in.
-        if (loc.startsWith('/store')) return null;
         return loc == '/login' ? null : '/login';
       }
 
