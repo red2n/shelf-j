@@ -54,8 +54,11 @@ public class TenantStatusGate {
             .get(instance.get().baseUri() + "/storefront/active")
             .header(io.helidon.http.HeaderNames.create(HttpHeaders.TENANT_ID), tenantId)
             .request()) {
+      if (resp.status().code() == 404) {
+        return false; // tenant does not exist → reject, not fail-open
+      }
       if (resp.status().code() != 200) {
-        return true; // unexpected status → fail open
+        return true; // server error / unavailability → fail open (keep storefronts up)
       }
       String body = resp.as(String.class);
       // Inactive only on an explicit, successfully-read negative — otherwise fail open.

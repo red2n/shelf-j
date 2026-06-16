@@ -207,6 +207,37 @@ public class AuthService {
     refreshTokens.revoke(Tokens.hash(refreshToken));
   }
 
+  /**
+   * One-shot bootstrap: creates the first PLATFORM_ADMIN. Rejects if one already exists so the
+   * endpoint is safe to leave enabled after first use.
+   */
+  public UUID bootstrapAdmin(String email, String rawPassword) {
+    if (users.platformAdminExists()) {
+      throw new ApiException(
+          409,
+          "BOOTSTRAP_ALREADY_DONE",
+          "A PLATFORM_ADMIN already exists. Use the login endpoint.",
+          java.util.List.of(),
+          null);
+    }
+    UUID userId = UUID.randomUUID();
+    Instant now = Instant.now();
+    var user =
+        new User(
+            userId,
+            null,
+            User.TYPE_STAFF,
+            email,
+            null,
+            passwords.hash(rawPassword),
+            User.STATUS_ACTIVE,
+            now,
+            now);
+    users.createPlatformAdmin(user);
+    users.audit(null, userId, "PLATFORM_ADMIN_BOOTSTRAPPED", email);
+    return userId;
+  }
+
   /** Fetch a user by id — used by MeResource to resolve the current principal. */
   public User lookupUser(UUID userId) {
     return users

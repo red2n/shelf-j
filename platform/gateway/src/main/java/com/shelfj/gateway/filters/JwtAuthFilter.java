@@ -188,13 +188,10 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if ("GET".equals(method) && "api/pricing-svc/promotions".equals(path)) {
       return true;
     }
-    if ("POST".equals(method) && "api/order-svc/orders".equals(path)) {
-      return true;
-    }
-    // Guest online payment (cashless) for storefront checkout.
-    if ("POST".equals(method) && "api/payment-svc/payments/online".equals(path)) {
-      return true;
-    }
+    // NOTE: order placement and payment are NOT listed here — they require a signed-in customer
+    // token and are handled by isStorefrontCustomer(). Allowing unauthenticated callers to
+    // supply X-Storefront-Tenant on mutating endpoints would let any party inject orders or
+    // payment records into any tenant's namespace without authentication.
     return false;
   }
 
