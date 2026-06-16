@@ -191,7 +191,7 @@ class _ClockInViewState extends ConsumerState<_ClockInView> {
                     }
                     _storeId ??= stores.first.id;
                     return DropdownButtonFormField<String>(
-                      initialValue: _storeId,
+                      value: _storeId,
                       decoration: const InputDecoration(
                         labelText: 'Store / terminal',
                         prefixIcon: Icon(Icons.store_outlined),

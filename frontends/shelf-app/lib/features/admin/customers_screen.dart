@@ -790,7 +790,7 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                initialValue: _gender,
+                value: _gender,
                 decoration: const InputDecoration(labelText: 'Gender'),
                 items: const [
                   DropdownMenuItem(value: 'MALE', child: Text('Male')),
@@ -911,7 +911,7 @@ class _AddressFormDialogState extends ConsumerState<_AddressFormDialog> {
                   const SizedBox(height: 8),
                 ],
                 DropdownButtonFormField<String>(
-                  initialValue: _type,
+                  value: _type,
                   decoration: const InputDecoration(labelText: 'Type'),
                   items: const [
                     DropdownMenuItem(value: 'HOME', child: Text('Home')),

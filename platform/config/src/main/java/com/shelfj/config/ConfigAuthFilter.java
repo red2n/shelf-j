@@ -1,5 +1,6 @@
 package com.shelfj.config;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -24,7 +25,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @Provider
 @ApplicationScoped
 @Priority(Priorities.AUTHENTICATION)
-public final class ConfigAuthFilter implements ContainerRequestFilter {
+public class ConfigAuthFilter implements ContainerRequestFilter {
 
   static final String TOKEN_HEADER = "X-Config-Token";
   private static final int MIN_TOKEN_LENGTH = 32;
@@ -33,18 +34,22 @@ public final class ConfigAuthFilter implements ContainerRequestFilter {
 
   @Inject
   public ConfigAuthFilter(@ConfigProperty(name = "shelfj.config.token") String token) {
-    if (token == null || token.isBlank()) {
+    this.expectedToken = token;
+  }
+
+  @PostConstruct
+  void validate() {
+    if (expectedToken == null || expectedToken.isBlank()) {
       throw new IllegalStateException(
           "shelfj.config.token (SHELFJ_CONFIG_TOKEN) is not set. "
               + "The config service must not run without an internal auth token.");
     }
-    if (token.length() < MIN_TOKEN_LENGTH) {
+    if (expectedToken.length() < MIN_TOKEN_LENGTH) {
       throw new IllegalStateException(
           "shelfj.config.token must be at least "
               + MIN_TOKEN_LENGTH
               + " characters. Generate one with: openssl rand -base64 48");
     }
-    this.expectedToken = token;
   }
 
   @Override

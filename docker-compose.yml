@@ -456,6 +456,7 @@ services:
     environment:
       server.port: "8080"
       JAVA_TOOL_OPTIONS: "${CONFIG_JAVA_OPTS:--Xms64m -Xmx256m -XX:+UseG1GC}"
+      SHELFJ_CONFIG_TOKEN: ${SHELFJ_CONFIG_TOKEN:?SHELFJ_CONFIG_TOKEN must be set (>= 32 chars) - see .env.example}
     mem_limit: ${CONFIG_MEM_LIMIT:-384m}
     networks: [shelfj_network]
     depends_on:
