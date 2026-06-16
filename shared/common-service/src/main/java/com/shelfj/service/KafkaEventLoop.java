@@ -11,10 +11,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 
 /**
  * Reliable Kafka poll loop shared by every consumer. Offsets are committed manually: with
@@ -37,15 +42,33 @@ public final class KafkaEventLoop implements AutoCloseable {
 
   private static final Logger LOG = System.getLogger(KafkaEventLoop.class.getName());
 
+  /**
+   * A record still failing after this many deliveries is dead-lettered instead of retried forever.
+   */
+  private static final int MAX_ATTEMPTS = 5;
+
   private final String name;
+  private final String bootstrap;
   private final Handler handler;
   private final KafkaConsumer<String, String> consumer;
   private final ScheduledExecutorService scheduler;
   private volatile boolean running;
 
+  /** Tracks retry count for the offset currently stuck at the head of each partition. */
+  private final Map<TopicPartition, Attempt> attempts = new HashMap<>();
+
+  /** Created lazily — most consumers never produce a dead letter in their lifetime. */
+  private KafkaProducer<String, String> dlqProducer;
+
+  private static final class Attempt {
+    long offset = -1;
+    int count;
+  }
+
   public KafkaEventLoop(
       String name, String bootstrap, String groupId, List<String> topics, Handler handler) {
     this.name = name;
+    this.bootstrap = bootstrap;
     this.handler = handler;
     Properties props = new Properties();
     props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
@@ -82,7 +105,8 @@ public final class KafkaEventLoop implements AutoCloseable {
         return;
       }
       // First failed offset per partition; later records of that partition are left unprocessed
-      // to preserve per-partition ordering.
+      // to preserve per-partition ordering — unless that offset has exhausted its retries and was
+      // dead-lettered, in which case processing of the partition resumes with the next record.
       Map<TopicPartition, Long> rewind = new HashMap<>();
       for (var rec : records) {
         var tp = new TopicPartition(rec.topic(), rec.partition());
@@ -91,15 +115,32 @@ public final class KafkaEventLoop implements AutoCloseable {
         }
         try {
           handler.handle(rec.topic(), rec.value());
+          attempts.remove(tp);
         } catch (RuntimeException e) {
-          rewind.put(tp, rec.offset());
-          LOG.log(
-              Level.WARNING,
-              "{0}: record {1}@{2} failed, will retry: {3}",
-              name,
-              tp,
-              rec.offset(),
-              e.getMessage());
+          int count = recordAttempt(tp, rec.offset());
+          if (count >= MAX_ATTEMPTS) {
+            LOG.log(
+                Level.ERROR,
+                "{0}: record {1}@{2} failed {3} times, dead-lettering and skipping: {4}",
+                name,
+                tp,
+                rec.offset(),
+                count,
+                e.getMessage());
+            deadLetter(rec, e);
+            attempts.remove(tp);
+          } else {
+            rewind.put(tp, rec.offset());
+            LOG.log(
+                Level.WARNING,
+                "{0}: record {1}@{2} failed (attempt {3}/{4}), will retry: {5}",
+                name,
+                tp,
+                rec.offset(),
+                count,
+                MAX_ATTEMPTS,
+                e.getMessage());
+          }
         }
       }
       // Seek resets the position, so commitSync() acks exactly up to (not including) failures.
@@ -109,6 +150,41 @@ public final class KafkaEventLoop implements AutoCloseable {
       LOG.log(Level.DEBUG, "{0} woken for shutdown", name);
     } catch (Exception e) {
       LOG.log(Level.WARNING, "{0} poll deferred: {1}", name, e.getMessage());
+    }
+  }
+
+  /**
+   * Returns the attempt count for this (partition, offset), resetting it if the offset moved on.
+   */
+  private int recordAttempt(TopicPartition tp, long offset) {
+    Attempt a = attempts.computeIfAbsent(tp, k -> new Attempt());
+    if (a.offset != offset) {
+      a.offset = offset;
+      a.count = 0;
+    }
+    a.count++;
+    return a.count;
+  }
+
+  private void deadLetter(ConsumerRecord<String, String> rec, RuntimeException cause) {
+    if (dlqProducer == null) {
+      Properties props = new Properties();
+      props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
+      props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+      props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+      dlqProducer = new KafkaProducer<>(props);
+    }
+    try {
+      dlqProducer.send(new ProducerRecord<>(rec.topic() + ".DLT", rec.key(), rec.value()));
+    } catch (RuntimeException e) {
+      LOG.log(
+          Level.ERROR,
+          "{0}: failed to publish dead letter for {1}@{2} (original cause: {3}): {4}",
+          name,
+          rec.topic(),
+          rec.offset(),
+          cause.getMessage(),
+          e.getMessage());
     }
   }
 
@@ -123,6 +199,9 @@ public final class KafkaEventLoop implements AutoCloseable {
       }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+    }
+    if (dlqProducer != null) {
+      dlqProducer.close(Duration.ofSeconds(2));
     }
   }
 }

@@ -18,6 +18,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -146,7 +147,7 @@ class CartServiceTest {
     var ctx = ctx(TENANT, CUSTOMER);
     var req =
         new AddItemRequest(
-            insertedCart.id().toString(), UUID.randomUUID().toString(), BigDecimal.ONE, null);
+            insertedCart.id().toString(), UUID.randomUUID().toString(), BigDecimal.ONE, null, null);
 
     ApiException ex = assertThrows(ApiException.class, () -> service.addItem(ctx, req));
     assertThat(ex.code(), is("TENANT_NOT_OPERATIONAL"));
@@ -165,9 +166,92 @@ class CartServiceTest {
     assertThat(response.storeId(), is(STORE.toString()));
   }
 
+  // ── IDOR guard (finding #4) ──────────────────────────────────────────────
+
+  @Test
+  void addItem_blockedForCustomerWhoDoesNotOwnTheCart() {
+    insertedCart =
+        new Cart(
+            UUID.randomUUID(),
+            TENANT,
+            CUSTOMER,
+            null,
+            STORE,
+            Cart.STATUS_ACTIVE,
+            Instant.now(),
+            Instant.now());
+    UUID otherCustomer = UUID.randomUUID();
+    var ctx = ctx(TENANT, otherCustomer);
+    var req =
+        new AddItemRequest(
+            insertedCart.id().toString(), UUID.randomUUID().toString(), BigDecimal.ONE, null, null);
+
+    ApiException ex = assertThrows(ApiException.class, () -> service.addItem(ctx, req));
+    assertThat(ex.code(), is("CART_NOT_FOUND"));
+  }
+
+  @Test
+  void addItem_allowedForStaffOnAnyCustomersCart() {
+    insertedCart =
+        new Cart(
+            UUID.randomUUID(),
+            TENANT,
+            CUSTOMER,
+            null,
+            STORE,
+            Cart.STATUS_ACTIVE,
+            Instant.now(),
+            Instant.now());
+    var ctx = ctx(TENANT, UUID.randomUUID(), Set.of("CASHIER"));
+    var req =
+        new AddItemRequest(
+            insertedCart.id().toString(), UUID.randomUUID().toString(), BigDecimal.ONE, null, null);
+
+    // must not throw — staff may operate on any cart in the tenant
+    service.addItem(ctx, req);
+  }
+
+  @Test
+  void addItem_guestCartRequiresMatchingSessionId() {
+    insertedCart =
+        new Cart(
+            UUID.randomUUID(),
+            TENANT,
+            null,
+            "guest-session-abc",
+            STORE,
+            Cart.STATUS_ACTIVE,
+            Instant.now(),
+            Instant.now());
+    var ctx = ctx(TENANT, null);
+    var wrongSession =
+        new AddItemRequest(
+            insertedCart.id().toString(),
+            UUID.randomUUID().toString(),
+            BigDecimal.ONE,
+            null,
+            "not-the-right-session");
+
+    ApiException ex = assertThrows(ApiException.class, () -> service.addItem(ctx, wrongSession));
+    assertThat(ex.code(), is("CART_NOT_FOUND"));
+
+    var rightSession =
+        new AddItemRequest(
+            insertedCart.id().toString(),
+            UUID.randomUUID().toString(),
+            BigDecimal.ONE,
+            null,
+            "guest-session-abc");
+    service.addItem(ctx, rightSession); // must not throw
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   private static TenantContext ctx(UUID tenantId, UUID userId) {
+    return ctx(tenantId, userId, Set.of());
+  }
+
+  private static TenantContext ctx(UUID tenantId, UUID userId, Set<String> roles) {
     return new TenantContext() {
       @Override
       public UUID requireTenantId() {
@@ -186,7 +270,7 @@ class CartServiceTest {
 
       @Override
       public boolean hasRole(String role) {
-        return false;
+        return roles.contains(role);
       }
     };
   }

@@ -108,36 +108,27 @@ When `pricingEnforce=false`, [OrderService.placeOrder](services/order-svc/src/ma
 
 ---
 
-## 🟠 4. Cart access has no object-level authorization (IDOR)
+## ✅ 4. FIXED — Cart access has no object-level authorization (IDOR)
 
 **Where:** [CartService](services/cart-svc/src/main/java/com/shelfj/cart/service/CartService.java#L82-L204) — `addItem`, `updateItemQty`, `removeItem`, `viewCart`/`resolveCart`.
 
-Carts are located purely by `cartId` (or `sessionId`) scoped to tenant:
+Carts were located purely by `cartId` (or `sessionId`) scoped to tenant:
 
 ```java
 Cart cart = repo.findById(tenantId, cartId)
     .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", ...));
-// never checks cart.customerId() == ctx.userId()  (or that the session belongs to the caller)
+// never checked cart.customerId() == ctx.userId()  (or that the session belongs to the caller)
 ```
 
-The cart's `customerId`/`sessionId` is **never compared to the authenticated caller**. Any authenticated user who knows/guesses another user's `cartId` (or guest `sessionId`) in the same tenant can read, add to, change quantities in, and delete items from that cart.
+The cart's `customerId`/`sessionId` was **never compared to the authenticated caller**. Any authenticated user who knew/guessed another user's `cartId` (or guest `sessionId`) in the same tenant could read, add to, change quantities in, and delete items from that cart.
 
-> Exposure today is limited because the gateway whitelist (`JwtAuthFilter`) does not yet route guest/customer storefront traffic to `cart-svc` — so this is currently reachable mainly by staff tokens. But the moment cart paths are added to the storefront whitelist (required for the online cart to function), this becomes directly exploitable. Treat it as a latent authZ gap to fix now.
+> Exposure was limited because the gateway whitelist (`JwtAuthFilter`) does not yet route guest/customer storefront traffic to `cart-svc` — so this was reachable mainly by staff tokens. The moment cart paths are added to the storefront whitelist (required for the online cart to function), this would have become directly exploitable.
 
-**Fix:** Enforce ownership on every cart operation:
-
-```java
-if (cart.customerId() != null) {
-    if (!cart.customerId().equals(ctx.userId()))
-        throw ApiException.notFound("CART_NOT_FOUND", "cart not found"); // 404, don't confirm existence
-} else if (!cart.sessionId().equals(req.sessionId())) {
-    throw ApiException.notFound("CART_NOT_FOUND", "cart not found");
-}
-```
+**Fix applied:** Added `CartService.requireOwnership(cart, ctx, suppliedSessionId)`, called from `addItem`, `updateItemQty`, `removeItem`, and the explicit-`cartId` branch of `resolveCart` (used by `viewCart`). Staff roles (`CASHIER`/`STOREKEEPER`/`MANAGER`/`OWNER`/`PLATFORM_ADMIN`) bypass the check (assisted shopping on any cart in their tenant); an authenticated customer's cart must have `cart.customerId().equals(ctx.userId())`; a guest cart additionally requires the caller to supply the `sessionId` the cart was created with — `cartId` alone is no longer sufficient. `AddItemRequest`/`UpdateItemQtyRequest` gained an optional `sessionId` field, and `DELETE /cart/items/{itemId}` gained a `session` query param, to carry that proof through. All mismatches return `404 CART_NOT_FOUND` (not `403`) so existence of another tenant's/customer's cart is never confirmed. Covered by new unit tests in `CartServiceTest` (`addItem_blockedForCustomerWhoDoesNotOwnTheCart`, `addItem_allowedForStaffOnAnyCustomersCart`, `addItem_guestCartRequiresMatchingSessionId`).
 
 ---
 
-## 🟠 5. `TenantStatusGate` cache is unbounded (memory leak + amplification)
+## ✅ 5. FIXED — `TenantStatusGate` cache is unbounded (memory leak + amplification)
 
 **Where:** [platform/gateway/.../filters/TenantStatusGate.java](platform/gateway/src/main/java/com/shelfj/gateway/filters/TenantStatusGate.java#L33-L45)
 
@@ -147,48 +138,31 @@ private final Map<String, Cached> cache = new ConcurrentHashMap<>();
 cache.put(tenantId, new Cached(active, now + TTL_MILLIS));   // no size cap, no eviction
 ```
 
-Unlike `RateLimitFilter` and `BruteForceProtectionService` (which both cap at `MAX_BUCKETS = 10_000` and evict stale entries), this cache has **no bound and no expired-entry eviction** — expired entries linger until overwritten by the same key. The key is `X-Storefront-Tenant`, which on guest paths is **client-controlled**. A caller (or botnet) rotating that header across many distinct values grows the map without limit (gateway OOM) and each new value also triggers a `GET /storefront/active` to tenant-svc (request amplification against tenant-svc).
+Unlike `RateLimitFilter` and `BruteForceProtectionService` (which both cap at `MAX_BUCKETS = 10_000` and evict stale entries), this cache had **no bound and no expired-entry eviction** — expired entries lingered until overwritten by the same key. The key is `X-Storefront-Tenant`, which on guest paths is **client-controlled**. A caller (or botnet) rotating that header across many distinct values could grow the map without limit (gateway OOM), and each new value also triggers a `GET /storefront/active` to tenant-svc (request amplification against tenant-svc).
 
-**Fix:** Mirror the bounded pattern already used by the sibling filters — cap the map size, evict expired entries on insert, and drop an entry when at cap:
-
-```java
-if (cache.size() >= MAX_ENTRIES && !cache.containsKey(tenantId)) {
-    cache.values().removeIf(c -> c.expiresAt() <= now);
-    if (cache.size() >= MAX_ENTRIES) cache.keySet().iterator().remove();
-}
-```
-
-(`RateLimitFilter` already throttles per-IP ahead of this, which bounds a single IP — but distributed callers and the unbounded growth remain.)
+**Fix applied:** `TenantStatusGate` now mirrors the bounded pattern already used by `RateLimitFilter`: a `MAX_ENTRIES = 10_000` hard cap, eviction of expired entries first on a cap hit, and an arbitrary-entry drop as the last resort if eviction frees nothing (so the cap is a real bound under sustained churn, not just a best-effort hint). Covered by new `TenantStatusGateTest` (`cacheNeverGrowsPastTheHardCapUnderTenantIdChurn`, plus existing-behavior regression tests for TTL caching and fail-open).
 
 ---
 
-## 🟠 6. Weak default platform-admin password in auto-bootstrap
+## ✅ 6. FIXED — Weak default platform-admin password in auto-bootstrap
 
 **Where:** [docker-compose.yml](docker-compose.yml#L728-L733) — `ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-Admin1234!}`, which the bootstrap job POSTs to `/api/iam-svc/bootstrap/admin`.
 
-The first `PLATFORM_ADMIN` is auto-created with a **known default password** (`Admin1234!`) unless `PLATFORM_ADMIN_PASSWORD` is set. The bootstrap endpoint is one-shot (rejects if an admin exists), so the account — full platform superuser — is created with a publicly-known credential on any deploy that forgets to override it.
+The first `PLATFORM_ADMIN` was auto-created with a **known default password** (`Admin1234!`) unless `PLATFORM_ADMIN_PASSWORD` was set. The bootstrap endpoint is one-shot (rejects if an admin exists), so the account — full platform superuser — was created with a publicly-known credential on any deploy that forgot to override it.
 
-**Fix:** Make the variable required (no default), the same way the JWT secret is handled:
-
-```yaml
-ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:?set PLATFORM_ADMIN_PASSWORD - see .env.example}
-```
-
-Optionally force a password change on first login.
+**Fix applied:** `docker-compose.yml` now uses the same required-variable syntax as `SHELFJ_JWT_SECRET`/`SHELFJ_CONFIG_TOKEN` — `ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD must be set - see .env.example}` — so the stack refuses to boot the bootstrap job without an explicit password. `.env.example` documents `PLATFORM_ADMIN_EMAIL`/`PLATFORM_ADMIN_PASSWORD` with a generation hint (`openssl rand -base64 24`) and no default value; `.env` was given a freshly generated random password. Verified with `docker compose config`.
 
 ---
 
-## 🟠 7. Kafka poison-pill blocks its partition indefinitely
+## ✅ 7. FIXED — Kafka poison-pill blocks its partition indefinitely
 
-**Where:** [shared/common-service/.../KafkaEventLoop.java](shared/common-service/src/main/java/com/shelfj/service/KafkaEventLoop.java#L75-L113)
+**Where:** [shared/common-service/.../KafkaEventLoop.java](shared/common-service/src/main/java/com/shelfj/service/KafkaEventLoop.java)
 
-The retry model is "throw = redeliver, seek back to the failed offset." A record whose handler **always** throws (genuinely malformed payload that isn't caught, a referenced row that never appears, a persistent bug) is re-polled every 2s **forever**, and because the loop rewinds to the first failure per partition, **all later records on that partition are blocked** behind it.
+The retry model was "throw = redeliver, seek back to the failed offset." A record whose handler **always** threw (genuinely malformed payload that isn't caught, a referenced row that never appears, a persistent bug) was re-polled every 2s **forever**, and because the loop rewinds to the first failure per partition, **all later records on that partition were blocked** behind it.
 
-**Impact:** One bad event can silently stall an entire partition's event processing (stock updates, order confirmations) with no alert and no escape.
+**Impact:** One bad event could silently stall an entire partition's event processing (stock updates, order confirmations) with no alert and no escape.
 
-**Fix:** Add a bounded retry with a dead-letter / park step:
-- Track attempt count per `(topic, partition, offset)`; after N attempts, log at `ERROR`, publish the record to a `<topic>.DLT` dead-letter topic (or a `failed_events` table), commit past it, and continue.
-- Emit a metric so a stuck partition is observable.
+**Fix applied:** `KafkaEventLoop` now tracks the retry count per `(partition, offset)` in a small `attempts` map (resetting when the stuck offset moves on). A record is still rewound and retried as before while `count < MAX_ATTEMPTS` (5). Once exhausted, the loop logs at `ERROR`, publishes the record to a `<topic>.DLT` topic via a lazily-created `KafkaProducer` (most loops never need one), clears the attempt entry, and — critically — does **not** add the offset to the `rewind` map, so `commitSync()` advances the partition past the poison record instead of re-blocking it. `close()` also closes the dead-letter producer if one was created. Covered by new unit tests in `KafkaEventLoopTest` (attempt counting, per-offset reset, per-partition independence) exercising the retry-tracking logic directly via reflection, since the class has no DI seam and constructing it doesn't touch the network.
 
 ---
 

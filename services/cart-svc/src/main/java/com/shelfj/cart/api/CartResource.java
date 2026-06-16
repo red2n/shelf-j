@@ -72,8 +72,10 @@ public class CartResource {
   @DELETE
   @Path("/items/{itemId}")
   public Response removeItem(
-      @PathParam("itemId") UUID itemId, @QueryParam("cartId") String cartId) {
-    service.removeItem(ctx, itemId, cartId);
+      @PathParam("itemId") UUID itemId,
+      @QueryParam("cartId") String cartId,
+      @QueryParam("session") String session) {
+    service.removeItem(ctx, itemId, cartId, session);
     return Response.noContent().build();
   }
 

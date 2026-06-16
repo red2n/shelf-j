@@ -725,7 +725,7 @@ services:
       gateway: { condition: service_healthy }
     environment:
       ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-admin@shelf-j.dev}
-      ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-Admin1234!}
+      ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD must be set - see .env.example}
     command:
       - sh
       - -c

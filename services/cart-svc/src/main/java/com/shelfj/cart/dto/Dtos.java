@@ -24,11 +24,15 @@ public final class Dtos {
       @NotBlank String cartId,
       @NotBlank String variantId,
       @NotNull @DecimalMin("0.0001") BigDecimal qty,
-      BigDecimal unitPrice // optional; stored as-is; definitive price enforced at checkout
+      BigDecimal unitPrice, // optional; stored as-is; definitive price enforced at checkout
+      String sessionId // required to operate on a guest cart; ignored for authenticated carts
       ) {}
 
   public record UpdateItemQtyRequest(
-      @NotBlank String cartId, @NotNull @DecimalMin("0.0001") BigDecimal qty) {}
+      @NotBlank String cartId,
+      @NotNull @DecimalMin("0.0001") BigDecimal qty,
+      String sessionId // required to operate on a guest cart; ignored for authenticated carts
+      ) {}
 
   public record MergeCartRequest(
       @NotBlank String sessionId // guest session to merge into the authenticated customer's cart

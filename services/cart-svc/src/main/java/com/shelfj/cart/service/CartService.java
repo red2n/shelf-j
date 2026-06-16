@@ -86,6 +86,7 @@ public class CartService {
     Cart cart =
         repo.findById(tenantId, cartId)
             .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "cart not found"));
+    requireOwnership(cart, ctx, req.sessionId());
     if (!Cart.STATUS_ACTIVE.equals(cart.status()))
       throw ApiException.conflict("CART_NOT_ACTIVE", "cart is not active");
 
@@ -107,6 +108,11 @@ public class CartService {
     UUID tenantId = ctx.requireTenantId();
     UUID cartId = parseUuid(req.cartId(), "cartId");
 
+    Cart cart =
+        repo.findById(tenantId, cartId)
+            .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "cart not found"));
+    requireOwnership(cart, ctx, req.sessionId());
+
     CartItem item =
         repo.findItemById(tenantId, itemId)
             .orElseThrow(() -> ApiException.notFound("CART_ITEM_NOT_FOUND", "item not found"));
@@ -117,9 +123,14 @@ public class CartService {
     return toItemResponse(repo.findItemById(tenantId, itemId).orElseThrow());
   }
 
-  public void removeItem(TenantContext ctx, UUID itemId, String cartIdStr) {
+  public void removeItem(TenantContext ctx, UUID itemId, String cartIdStr, String sessionId) {
     UUID tenantId = ctx.requireTenantId();
     UUID cartId = parseUuid(cartIdStr, "cartId");
+
+    Cart cart =
+        repo.findById(tenantId, cartId)
+            .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "cart not found"));
+    requireOwnership(cart, ctx, sessionId);
 
     repo.findItemById(tenantId, itemId)
         .filter(i -> i.cartId().equals(cartId))
@@ -189,8 +200,11 @@ public class CartService {
 
   private Cart resolveCart(UUID tenantId, String cartId, String sessionId, TenantContext ctx) {
     if (cartId != null && !cartId.isBlank()) {
-      return repo.findById(tenantId, parseUuid(cartId, "cartId"))
-          .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "cart not found"));
+      Cart cart =
+          repo.findById(tenantId, parseUuid(cartId, "cartId"))
+              .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "cart not found"));
+      requireOwnership(cart, ctx, sessionId);
+      return cart;
     }
     if (sessionId != null && !sessionId.isBlank()) {
       return repo.findActiveBySession(tenantId, sessionId)
@@ -201,6 +215,31 @@ public class CartService {
           .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "no active cart"));
     }
     throw ApiException.badRequest("CART_NO_IDENTITY", "cartId, session, or auth required");
+  }
+
+  /**
+   * Object-level authZ for cart-by-cartId lookups: a {@code cartId} alone is not proof of
+   * ownership. Staff may operate on any cart in the tenant (assisted shopping); an authenticated
+   * customer's cart must belong to them; a guest cart requires knowledge of the session token it
+   * was created with (the cartId is returned to any caller who can view it, the sessionId is not).
+   */
+  private void requireOwnership(Cart cart, TenantContext ctx, String suppliedSessionId) {
+    if (isStaff(ctx)) return;
+    if (cart.customerId() != null) {
+      if (!cart.customerId().equals(ctx.userId()))
+        throw ApiException.notFound("CART_NOT_FOUND", "cart not found");
+      return;
+    }
+    if (cart.sessionId() == null || !cart.sessionId().equals(suppliedSessionId))
+      throw ApiException.notFound("CART_NOT_FOUND", "cart not found");
+  }
+
+  private boolean isStaff(TenantContext ctx) {
+    return ctx.hasRole("CASHIER")
+        || ctx.hasRole("STOREKEEPER")
+        || ctx.hasRole("MANAGER")
+        || ctx.hasRole("OWNER")
+        || ctx.hasRole("PLATFORM_ADMIN");
   }
 
   private UUID parseUuid(String val, String field) {
