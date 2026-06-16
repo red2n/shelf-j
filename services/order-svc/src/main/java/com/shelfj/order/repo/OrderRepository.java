@@ -224,6 +224,19 @@ public class OrderRepository extends BaseOutboxRepository {
   public Return createReturn(Return ret, List<ReturnItem> items, OutboxRow event) {
     return inTx(
         c -> {
+          // Lock each purchased line and re-check the cumulative returned quantity inside this
+          // transaction so two concurrent returns on the same order can't jointly over-refund.
+          for (ReturnItem item : items) {
+            BigDecimal purchasedQty =
+                lockOrderItemQty(c, ret.tenantId(), ret.orderId(), item.variantId());
+            BigDecimal alreadyReturned =
+                sumReturnedQty(c, ret.tenantId(), ret.orderId(), item.variantId());
+            if (item.qty().add(alreadyReturned).compareTo(purchasedQty) > 0)
+              throw ApiException.conflict(
+                  "RETURN_QTY_EXCEEDS_PURCHASED",
+                  "cannot return more than was purchased (and not yet returned) for variant "
+                      + item.variantId());
+          }
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO returns"
@@ -757,6 +770,42 @@ public class OrderRepository extends BaseOutboxRepository {
       ResultSet rs = ps.executeQuery();
       if (!rs.next()) return null;
       return mapGiftCard(rs);
+    }
+  }
+
+  /** Locks the purchased line so a concurrent return on the same variant serializes behind it. */
+  private BigDecimal lockOrderItemQty(Connection c, UUID tenantId, UUID orderId, UUID variantId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT qty FROM order_items"
+                + " WHERE tenant_id=? AND order_id=? AND variant_id=? FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next())
+          throw ApiException.notFound(
+              "ITEM_NOT_IN_ORDER", "variant " + variantId + " not in order");
+        return rs.getBigDecimal("qty");
+      }
+    }
+  }
+
+  private BigDecimal sumReturnedQty(Connection c, UUID tenantId, UUID orderId, UUID variantId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT COALESCE(SUM(ri.qty), 0) AS total FROM return_items ri"
+                + " JOIN returns r ON r.id = ri.return_id"
+                + " WHERE r.tenant_id=? AND r.order_id=? AND ri.variant_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        rs.next();
+        return rs.getBigDecimal("total");
+      }
     }
   }
 

@@ -84,6 +84,7 @@ public class OrderService {
     boolean enforcePricing = config.pricingEnforce();
 
     BigDecimal subtotal = BigDecimal.ZERO;
+    BigDecimal serverTax = BigDecimal.ZERO;
     List<OrderItem> items = new ArrayList<>();
     UUID orderId = UUID.randomUUID();
 
@@ -93,7 +94,9 @@ public class OrderService {
       // unitPrice is ignored. When off (local dev / unseeded rigs), the client price is trusted.
       BigDecimal unitPrice;
       if (enforcePricing) {
-        unitPrice = pricing.resolveUnitPrice(tenantId, variantId, storeId, req.channel(), ir.qty());
+        var resolved = pricing.resolveLine(tenantId, variantId, storeId, req.channel(), ir.qty());
+        unitPrice = resolved.unitPrice();
+        serverTax = serverTax.add(resolved.vatAmount().multiply(ir.qty()));
       } else {
         if (ir.unitPrice() == null)
           throw ApiException.badRequest(
@@ -114,8 +117,29 @@ public class OrderService {
               ir.notes()));
     }
 
-    BigDecimal tax = req.taxAmount() != null ? req.taxAmount() : BigDecimal.ZERO;
-    BigDecimal disc = req.discountAmount() != null ? req.discountAmount() : BigDecimal.ZERO;
+    boolean staff =
+        ctx.hasRole("CASHIER")
+            || ctx.hasRole("MANAGER")
+            || ctx.hasRole("OWNER")
+            || ctx.hasRole("PLATFORM_ADMIN");
+
+    BigDecimal tax;
+    BigDecimal disc;
+    if (enforcePricing) {
+      // Tax is derived server-side from pricing-svc's per-line VAT; any promotion discount is
+      // already baked into the resolved unitPrice above, so there is no separate discount left to
+      // apply. Client-supplied taxAmount/discountAmount are never trusted here.
+      tax = serverTax.setScale(2, java.math.RoundingMode.HALF_UP);
+      disc = BigDecimal.ZERO;
+    } else {
+      tax = req.taxAmount() != null ? req.taxAmount() : BigDecimal.ZERO;
+      disc = req.discountAmount() != null ? req.discountAmount() : BigDecimal.ZERO;
+      // Manual discounts are a staff privilege (POS). A non-staff caller (online/guest checkout)
+      // self-applying a discount would let them name their own price.
+      if (!staff && disc.signum() != 0)
+        throw ApiException.forbidden(
+            "ORDER_DISCOUNT_NOT_ALLOWED", "discounts can only be applied by staff");
+    }
     if (disc.compareTo(subtotal) > 0)
       throw ApiException.badRequest(
           "ORDER_DISCOUNT_EXCEEDS_SUBTOTAL",

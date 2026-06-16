@@ -219,6 +219,51 @@ class OrderIT {
   }
 
   @Test
+  void returnQuantityCannotExceedPurchased() {
+    Response r1 =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\","
+                + "\"channel\":\"POS\","
+                + "\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":2,\"unitPrice\":10.00}],"
+                + "\"currency\":\"USD\"}",
+            T);
+    assertThat(r1.getStatus(), is(201));
+    String orderId = extractId(r1.readEntity(String.class));
+
+    // returning 3 when only 2 were purchased must be rejected outright
+    Response tooMany =
+        post(
+            "/orders/" + orderId + "/returns",
+            "{\"reason\":\"too many\",\"items\":[{\"variantId\":\"" + V + "\",\"qty\":3}]}",
+            T);
+    assertThat(tooMany.getStatus(), is(409));
+    assertThat(tooMany.readEntity(String.class), containsString("RETURN_QTY_EXCEEDS_PURCHASED"));
+
+    // returning 1 (of 2) succeeds...
+    Response first =
+        post(
+            "/orders/" + orderId + "/returns",
+            "{\"reason\":\"first\",\"items\":[{\"variantId\":\"" + V + "\",\"qty\":1}]}",
+            T);
+    assertThat(first.getStatus(), is(201));
+
+    // ...but a second return of 2 more (1 already returned + 2 > 2 purchased) must be rejected
+    Response second =
+        post(
+            "/orders/" + orderId + "/returns",
+            "{\"reason\":\"second\",\"items\":[{\"variantId\":\"" + V + "\",\"qty\":2}]}",
+            T);
+    assertThat(second.getStatus(), is(409));
+    assertThat(second.readEntity(String.class), containsString("RETURN_QTY_EXCEEDS_PURCHASED"));
+  }
+
+  @Test
   void posVoidOrder() {
     Response r1 =
         post(
