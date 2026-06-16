@@ -40,7 +40,7 @@ export default function () {
   const tenantId = ctx && ctx.tenantId;
   const uid = ctx && ctx.uid;
   const hdrs = tenantId
-    ? { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-User-Id': uid }
+    ? { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-User-Id': uid, 'X-Roles': 'OWNER' }
     : { ...JSON_CT };
 
   // Create tenant (already done in setup — check it passed)
@@ -65,4 +65,42 @@ export default function () {
   // Onboarding status
   const statusRes = http.get(`${baseUrl}/api/tenant-svc/onboarding/status`, { headers: hdrs });
   check(statusRes, { 'onboarding status returned': (r) => r.status < 500 });
+
+  // ── Gap #53: Inventory org parameters ────────────────────────────────────
+
+  // [+] Upsert inventory config (PUT is create-or-update)
+  const cfgRes = http.put(
+    `${baseUrl}/api/tenant-svc/admin/inventory-config`,
+    JSON.stringify({
+      lotControlEnabled: true,
+      serialControlEnabled: false,
+      gradeControlEnabled: true,
+      expiryTrackingEnabled: true,
+      costingMethod: 'FIFO',
+      defaultUom: 'EA',
+      reorderAlertEnabled: true,
+      autoReserveOnOrder: false
+    }),
+    { headers: hdrs }
+  );
+  check(cfgRes, { '[+] upsert inventory config 200': (r) => r.status === 200 });
+
+  // [+] GET returns the saved config
+  const getCfgRes = http.get(`${baseUrl}/api/tenant-svc/admin/inventory-config`, { headers: hdrs });
+  check(getCfgRes, { '[+] get inventory config 200': (r) => r.status === 200 });
+  check(getCfgRes, { '[+] config has costingMethod': (r) => r.json('data.costingMethod') === 'FIFO' });
+
+  // [+] Update a single field (partial — other fields keep previous value)
+  const patchRes = http.put(
+    `${baseUrl}/api/tenant-svc/admin/inventory-config`,
+    JSON.stringify({ costingMethod: 'AVERAGE' }),
+    { headers: hdrs }
+  );
+  check(patchRes, { '[+] update costingMethod 200': (r) => r.status === 200 });
+
+  // [-] GET without any auth headers → 403 (RBAC blocks before tenant check)
+  check(
+    http.get(`${baseUrl}/api/tenant-svc/admin/inventory-config`, { headers: { 'Content-Type': 'application/json' } }),
+    { '[-] get config no auth 403': (r) => r.status === 403 }
+  );
 }

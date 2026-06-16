@@ -1,10 +1,13 @@
 package com.shelfj.pricing.api;
 
+import com.shelfj.pricing.dto.Dtos.BatchUpsertPriceListItemsRequest;
+import com.shelfj.pricing.dto.Dtos.BatchUpsertResult;
 import com.shelfj.pricing.dto.Dtos.CreatePriceListRequest;
 import com.shelfj.pricing.dto.Dtos.UpsertPriceListItemRequest;
 import com.shelfj.pricing.mapper.Mappers;
 import com.shelfj.pricing.service.PricingService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.ErrorBody;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.RequestScoped;
@@ -17,6 +20,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.util.List;
 import java.util.UUID;
 
 /** Price list management: create price lists and populate per-variant prices. */
@@ -57,6 +61,26 @@ public class PriceListResource {
     return Response.status(200)
         .entity(ApiResponse.ok(Mappers.toDto(svc.upsertPriceListItem(ctx, id, req))))
         .build();
+  }
+
+  /**
+   * Batch upsert prices for multiple variants at once. Body: { "items": [{ "variantId": "...",
+   * "price": 9.99, "minQty": 1 }, ...] } Returns 200 with { "upserted": N, "errors": [...] }. Never
+   * 4xx on partial failure.
+   */
+  @POST
+  @Path("/{id}/items/batch")
+  public Response batchUpsertItems(@PathParam("id") UUID id, BatchUpsertPriceListItemsRequest req) {
+    if (req == null || req.items() == null || req.items().isEmpty()) {
+      return Response.status(400)
+          .entity(
+              ApiResponse.<Void>error(
+                  new ErrorBody(
+                      "INVALID_BODY", "items array required and must not be empty", List.of())))
+          .build();
+    }
+    BatchUpsertResult result = svc.batchUpsertPriceListItems(ctx, id, req);
+    return Response.ok(com.shelfj.web.ApiResponse.ok(result)).build();
   }
 
   @GET

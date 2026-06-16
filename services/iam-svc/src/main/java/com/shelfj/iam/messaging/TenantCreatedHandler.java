@@ -14,6 +14,10 @@ import java.util.UUID;
  * Business handler for {@code shelfj.tenant.tenant-created} events. Stamps {@code tenant_id} +
  * OWNER role on the registering user, idempotently. Separated from {@link TenantCreatedConsumer} so
  * Kafka lifecycle and domain logic each have a single reason to change (SRP).
+ *
+ * <p>The dedupe mark and the bind commit in one transaction (see {@code bindOwnerOnce}); a
+ * malformed payload is logged and skipped, while a failed write propagates so the consumer loop
+ * redelivers the record instead of losing it.
  */
 @ApplicationScoped
 class TenantCreatedHandler {
@@ -24,25 +28,23 @@ class TenantCreatedHandler {
   @Inject UserRepository users;
 
   void handle(String json) {
+    UUID eventId;
+    UUID tenantId;
+    UUID ownerUserId;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
-      UUID eventId = UUID.fromString(obj.getString("eventId"));
-      UUID tenantId = UUID.fromString(obj.getString("tenantId"));
-      UUID ownerUserId = UUID.fromString(obj.getString("ownerUserId"));
+      eventId = UUID.fromString(obj.getString("eventId"));
+      tenantId = UUID.fromString(obj.getString("tenantId"));
+      ownerUserId = UUID.fromString(obj.getString("ownerUserId"));
+    } catch (RuntimeException e) {
+      // Malformed payload will never parse on redelivery either — log and skip.
+      LOG.log(Level.WARNING, "Malformed TenantCreated payload skipped: " + e.getMessage());
+      return;
+    }
 
-      if (!users.markProcessedIfNew(eventId, CONSUMER_NAME)) {
-        return;
-      }
-      boolean changed = users.bindOwner(ownerUserId, tenantId, "OWNER");
-      users.audit(tenantId, ownerUserId, "OWNER_BOUND", "via TenantCreated");
-      LOG.log(
-          Level.INFO,
-          "Bound user {0} as OWNER of tenant {1} (changed={2})",
-          ownerUserId,
-          tenantId,
-          changed);
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "Failed to handle TenantCreated: " + e.getMessage());
+    boolean processed = users.bindOwnerOnce(eventId, CONSUMER_NAME, ownerUserId, tenantId, "OWNER");
+    if (processed) {
+      LOG.log(Level.INFO, "Bound user {0} as OWNER of tenant {1}", ownerUserId, tenantId);
     }
   }
 }

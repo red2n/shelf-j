@@ -1,0 +1,343 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../shared/widgets/adaptive_nav_shell.dart';
+import 'storefront_providers.dart';
+
+const _destinations = [
+  AdaptiveNavDestination(
+    label: 'Shop',
+    icon: Icons.store_outlined,
+    selectedIcon: Icons.store,
+  ),
+  AdaptiveNavDestination(
+    label: 'Cart',
+    icon: Icons.shopping_bag_outlined,
+    selectedIcon: Icons.shopping_bag,
+  ),
+];
+
+const _routes = ['/store/products', '/store/cart'];
+
+class StorefrontShell extends ConsumerWidget {
+  final String currentLocation;
+  final Widget child;
+
+  const StorefrontShell({
+    super.key,
+    required this.currentLocation,
+    required this.child,
+  });
+
+  int get _selectedIndex => currentLocation.startsWith('/store/cart') ? 1 : 0;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = ref.watch(cartProvider).fold<int>(0, (s, l) => s + l.qty);
+    // A deactivated tenant's shop is closed — show a friendly notice instead of
+    // letting every product/price call fail with a raw 403.
+    final suspended = ref.watch(storefrontSuspendedProvider).valueOrNull ?? false;
+
+    return AdaptiveNavShell(
+      title: 'Shop',
+      destinations: _destinations,
+      selectedIndex: _selectedIndex,
+      onDestinationSelected: (i) => context.go(_routes[i]),
+      actions: suspended
+          ? const []
+          : [
+              const _AccountAction(),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Badge(
+                  isLabelVisible: count > 0,
+                  label: Text('$count'),
+                  child: IconButton(
+                    icon: const Icon(Icons.shopping_cart_outlined),
+                    tooltip: 'Cart',
+                    onPressed: () => context.go('/store/cart'),
+                  ),
+                ),
+              ),
+            ],
+      child: suspended
+          ? const _StoreUnavailable()
+          : Column(
+              children: [
+                Expanded(child: child),
+                // Sticky cart bar — a constant, low-friction path to checkout
+                // while browsing. Hidden on the cart screen (it has its own CTA).
+                if (!currentLocation.startsWith('/store/cart')) const _CartBar(),
+              ],
+            ),
+    );
+  }
+}
+
+/// Shown when the tenant is deactivated (gateway 403). The shop is closed.
+class _StoreUnavailable extends StatelessWidget {
+  const _StoreUnavailable();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.storefront_outlined, size: 72, color: cs.outlineVariant),
+            const SizedBox(height: 20),
+            Text('This store is currently unavailable',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text('Please check back later or contact the store directly.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: cs.outline)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CartBar extends ConsumerWidget {
+  const _CartBar();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cart = ref.watch(cartProvider);
+    if (cart.isEmpty) return const SizedBox.shrink();
+
+    final cs = Theme.of(context).colorScheme;
+    final showPrices = ref.watch(storefrontShowPricesProvider);
+    final count = cart.fold<int>(0, (s, l) => s + l.qty);
+    final total = cart.fold<double>(0, (s, l) => s + l.lineTotal);
+    final currency = cart.first.currency;
+
+    return Material(
+      color: cs.primary,
+      elevation: 8,
+      child: SafeArea(
+        top: false,
+        child: InkWell(
+          onTap: () => context.go('/store/cart'),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Badge(
+                  label: Text('$count'),
+                  child: Icon(Icons.shopping_bag, color: cs.onPrimary),
+                ),
+                const SizedBox(width: 16),
+                Text(
+                  showPrices
+                      ? '$currency ${total.toStringAsFixed(2)}'
+                      : '$count item${count == 1 ? '' : 's'}',
+                  style: TextStyle(
+                      color: cs.onPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                Text('View cart',
+                    style: TextStyle(
+                        color: cs.onPrimary, fontWeight: FontWeight.w600)),
+                Icon(Icons.chevron_right, color: cs.onPrimary),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// App-bar account button: shows the signed-in email (with sign-out) or a
+/// "Sign in" entry point to the customer auth dialog.
+class _AccountAction extends ConsumerWidget {
+  const _AccountAction();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.watch(storefrontAuthProvider);
+    if (!auth.isSignedIn) {
+      return TextButton.icon(
+        onPressed: () => showDialog(
+            context: context, builder: (_) => const StorefrontAuthDialog()),
+        icon: const Icon(Icons.person_outline),
+        label: const Text('Sign in'),
+      );
+    }
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.account_circle),
+      tooltip: auth.email ?? 'Account',
+      onSelected: (v) {
+        if (v == 'orders') {
+          context.go('/store/orders');
+        } else if (v == 'logout') {
+          ref.read(storefrontAuthProvider.notifier).logout();
+        }
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          enabled: false,
+          child: Text(auth.email ?? 'Signed in',
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+        ),
+        const PopupMenuItem(value: 'orders', child: Text('My orders')),
+        const PopupMenuItem(value: 'logout', child: Text('Sign out')),
+      ],
+    );
+  }
+}
+
+/// Customer sign-in / sign-up dialog (iam self-service).
+class StorefrontAuthDialog extends ConsumerStatefulWidget {
+  const StorefrontAuthDialog({super.key});
+
+  @override
+  ConsumerState<StorefrontAuthDialog> createState() =>
+      _StorefrontAuthDialogState();
+}
+
+class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  bool _register = false;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    _phoneCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final notifier = ref.read(storefrontAuthProvider.notifier);
+    try {
+      if (_register) {
+        await notifier.register(
+            _emailCtrl.text.trim(), _passwordCtrl.text, _phoneCtrl.text.trim());
+      } else {
+        await notifier.login(_emailCtrl.text.trim(), _passwordCtrl.text);
+      }
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_register ? 'Account created.' : 'Signed in.')),
+      );
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = e.toString().contains('401')
+            ? 'Incorrect email or password.'
+            : e.toString().contains('409')
+                ? 'An account with this email already exists.'
+                : 'Could not ${_register ? 'register' : 'sign in'}: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: Text(_register ? 'Create account' : 'Sign in'),
+      content: SizedBox(
+        width: 360,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_error != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                      color: cs.errorContainer,
+                      borderRadius: BorderRadius.circular(8)),
+                  child: Text(_error!,
+                      style: TextStyle(color: cs.onErrorContainer)),
+                ),
+                const SizedBox(height: 12),
+              ],
+              TextFormField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                    labelText: 'Email', prefixIcon: Icon(Icons.email_outlined)),
+                validator: (v) =>
+                    v == null || !v.contains('@') ? 'Valid email required' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _passwordCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                    labelText: 'Password', prefixIcon: Icon(Icons.lock_outline)),
+                validator: (v) =>
+                    v == null || v.length < 8 ? 'At least 8 characters' : null,
+              ),
+              if (_register) ...[
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                      labelText: 'Phone (optional)',
+                      prefixIcon: Icon(Icons.phone_outlined)),
+                ),
+              ],
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: _loading
+                      ? null
+                      : () => setState(() {
+                            _register = !_register;
+                            _error = null;
+                          }),
+                  child: Text(_register
+                      ? 'Have an account? Sign in'
+                      : 'New here? Create an account'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _loading ? null : _submit,
+          child: _loading
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : Text(_register ? 'Create account' : 'Sign in'),
+        ),
+      ],
+    );
+  }
+}

@@ -1,0 +1,128 @@
+package com.shelfj.service;
+
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.WakeupException;
+import org.apache.kafka.common.serialization.StringDeserializer;
+
+/**
+ * Reliable Kafka poll loop shared by every consumer. Offsets are committed manually: with
+ * auto-commit (the previous per-service pattern) a record whose handler failed was still acked, so
+ * the event was lost forever (at-least-once silently became at-most-once).
+ *
+ * <p>Handler contract: return normally when the record is done (processed or deliberately skipped,
+ * e.g. malformed payload); throw to mean "retry me". On a throw the partition is rewound to the
+ * failed offset before committing, so earlier successes are acked and the failed record is
+ * re-polled on the next tick. Combined with the processed_events dedupe inside each handler's
+ * transaction this yields effectively-once processing.
+ */
+public final class KafkaEventLoop implements AutoCloseable {
+
+  /** Processes one record; THROW to have the record redelivered, return normally to ack it. */
+  @FunctionalInterface
+  public interface Handler {
+    void handle(String topic, String value);
+  }
+
+  private static final Logger LOG = System.getLogger(KafkaEventLoop.class.getName());
+
+  private final String name;
+  private final Handler handler;
+  private final KafkaConsumer<String, String> consumer;
+  private final ScheduledExecutorService scheduler;
+  private volatile boolean running;
+
+  public KafkaEventLoop(
+      String name, String bootstrap, String groupId, List<String> topics, Handler handler) {
+    this.name = name;
+    this.handler = handler;
+    Properties props = new Properties();
+    props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
+    props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+    props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+    // Manual commit: auto-commit would ack records whose handler failed (lost events).
+    props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+    this.consumer = new KafkaConsumer<>(props);
+    this.consumer.subscribe(topics);
+    this.scheduler =
+        Executors.newSingleThreadScheduledExecutor(
+            r -> {
+              Thread t = new Thread(r, name);
+              t.setDaemon(true);
+              return t;
+            });
+  }
+
+  public void start() {
+    running = true;
+    scheduler.scheduleWithFixedDelay(this::pollQuietly, 2, 2, TimeUnit.SECONDS);
+    LOG.log(Level.INFO, "{0} started", name);
+  }
+
+  private void pollQuietly() {
+    if (!running) {
+      return;
+    }
+    try {
+      var records = consumer.poll(Duration.ofMillis(500));
+      if (records.isEmpty()) {
+        return;
+      }
+      // First failed offset per partition; later records of that partition are left unprocessed
+      // to preserve per-partition ordering.
+      Map<TopicPartition, Long> rewind = new HashMap<>();
+      for (var rec : records) {
+        var tp = new TopicPartition(rec.topic(), rec.partition());
+        if (rewind.containsKey(tp)) {
+          continue;
+        }
+        try {
+          handler.handle(rec.topic(), rec.value());
+        } catch (RuntimeException e) {
+          rewind.put(tp, rec.offset());
+          LOG.log(
+              Level.WARNING,
+              "{0}: record {1}@{2} failed, will retry: {3}",
+              name,
+              tp,
+              rec.offset(),
+              e.getMessage());
+        }
+      }
+      // Seek resets the position, so commitSync() acks exactly up to (not including) failures.
+      rewind.forEach(consumer::seek);
+      consumer.commitSync();
+    } catch (WakeupException e) {
+      LOG.log(Level.DEBUG, "{0} woken for shutdown", name);
+    } catch (Exception e) {
+      LOG.log(Level.WARNING, "{0} poll deferred: {1}", name, e.getMessage());
+    }
+  }
+
+  @Override
+  public void close() {
+    running = false;
+    consumer.wakeup();
+    scheduler.shutdownNow();
+    try {
+      if (scheduler.awaitTermination(3, TimeUnit.SECONDS)) {
+        consumer.close(Duration.ofSeconds(2));
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+  }
+}

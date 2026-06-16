@@ -11,12 +11,19 @@ import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
+import com.shelfj.inventory.domain.Domain.LotUomConversion;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
+import com.shelfj.inventory.domain.Domain.ParLevelConfig;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
+import com.shelfj.inventory.domain.Domain.PickingRule;
+import com.shelfj.inventory.domain.Domain.PickingRuleAssignment;
+import com.shelfj.inventory.domain.Domain.PickingRuleZonePriority;
+import com.shelfj.inventory.domain.Domain.ReasonCode;
 import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
@@ -24,9 +31,12 @@ import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
+import com.shelfj.inventory.domain.Domain.TransactionSourceType;
 import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
 import com.shelfj.inventory.repo.InventoryRepository;
+import com.shelfj.inventory.repo.SerialRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -38,6 +48,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** Stock business logic. All mutations emit a stock event via the outbox (golden rule #6). */
@@ -46,6 +57,7 @@ public class InventoryService {
 
   @Inject ServiceConfig config;
   @Inject InventoryRepository repo;
+  @Inject SerialRepository serialRepo;
 
   // ---- receive (also the path the GoodsReceived consumer uses) ----
   public Batch receive(
@@ -73,6 +85,7 @@ public class InventoryService {
             Instant.now(),
             Batch.STATUS_ACTIVE,
             Batch.MATERIAL_AVAILABLE,
+            null,
             null);
     var event =
         new OutboxRow(
@@ -82,6 +95,137 @@ public class InventoryService {
             batchId,
             Events.stockReceived(tenantId, storeId, variantId, batchId, qty));
     return repo.receive(batch, refType, refId, event);
+  }
+
+  // ---- Gap #50: POS→SIM deduction (order fulfilled) ----
+  public void deductSaleFromOrder(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
+    repo.deductSale(
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        orderId,
+        stockDeductedEvent(tenantId, storeId, variantId, qty, orderId));
+  }
+
+  /**
+   * {@link #deductSaleFromOrder} deduped on {@code dedupeId} — used by event consumers so the
+   * dedupe mark and the deduction commit atomically (a redelivered event line is skipped, a crashed
+   * one retried).
+   */
+  public boolean deductSaleFromOrderOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId) {
+    return repo.deductSaleOnce(
+        dedupeId,
+        consumerName,
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        orderId,
+        stockDeductedEvent(tenantId, storeId, variantId, qty, orderId));
+  }
+
+  private static OutboxRow stockDeductedEvent(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
+    return new OutboxRow(
+        "StockDeducted",
+        "shelfj.inventory.stock-deducted",
+        tenantId,
+        orderId,
+        Events.stockDeducted(tenantId, storeId, variantId, orderId, qty));
+  }
+
+  // ---- Gap #50: POS→SIM receipt (order returned) ----
+  public void receiveReturnFromOrder(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
+    Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
+    repo.receive(batch, "RETURN", orderId, stockReceivedEvent(batch));
+  }
+
+  /** {@link #receiveReturnFromOrder} deduped on {@code dedupeId} (see deductSaleFromOrderOnce). */
+  public boolean receiveReturnFromOrderOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId) {
+    Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
+    return repo.receiveOnce(
+        dedupeId, consumerName, batch, "RETURN", orderId, stockReceivedEvent(batch));
+  }
+
+  /**
+   * {@link #receive} deduped on {@code dedupeId} — used by the GoodsReceived consumer per GRN line.
+   */
+  public boolean receiveOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      String batchNo,
+      BigDecimal costPrice,
+      LocalDate expiry,
+      String refType,
+      UUID refId) {
+    var batch =
+        new Batch(
+            UUID.randomUUID(),
+            tenantId,
+            storeId,
+            variantId,
+            batchNo,
+            qty,
+            qty,
+            costPrice,
+            expiry,
+            Instant.now(),
+            Batch.STATUS_ACTIVE,
+            Batch.MATERIAL_AVAILABLE,
+            null,
+            null);
+    return repo.receiveOnce(
+        dedupeId, consumerName, batch, refType, refId, stockReceivedEvent(batch));
+  }
+
+  private static Batch returnBatch(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
+    return new Batch(
+        UUID.randomUUID(),
+        tenantId,
+        storeId,
+        variantId,
+        "RET-" + orderId.toString().substring(0, 8),
+        qty,
+        qty,
+        null,
+        null,
+        Instant.now(),
+        Batch.STATUS_ACTIVE,
+        Batch.MATERIAL_AVAILABLE,
+        null,
+        null);
+  }
+
+  private static OutboxRow stockReceivedEvent(Batch batch) {
+    return new OutboxRow(
+        "StockReceived",
+        "shelfj.inventory.stock-received",
+        batch.tenantId(),
+        batch.id(),
+        Events.stockReceived(
+            batch.tenantId(), batch.storeId(), batch.variantId(), batch.id(), batch.receivedQty()));
   }
 
   // ---- adjust ----
@@ -124,14 +268,7 @@ public class InventoryService {
 
   // ---- consume (FIFO deduct) ----
   public void consume(UUID tenantId, UUID reservationId) {
-    var event =
-        new OutboxRow(
-            "StockDeducted",
-            "shelfj.inventory.stock-deducted",
-            tenantId,
-            reservationId,
-            Events.reservationEvent("StockDeducted", tenantId, reservationId));
-    repo.consume(tenantId, reservationId, event);
+    repo.consume(tenantId, reservationId);
   }
 
   // ---- release ----
@@ -333,21 +470,23 @@ public class InventoryService {
             tenantId,
             batchId,
             Events.serialsRegistered(tenantId, batchId, domainSerials.size()));
-    return repo.registerSerials(domainSerials, event);
+    return serialRepo.registerSerials(domainSerials, event);
   }
 
   public List<SerialNumber> listSerials(
       UUID tenantId, UUID storeId, UUID variantId, String status, int limit) {
-    return repo.listSerials(tenantId, storeId, variantId, status, limit);
+    return serialRepo.listSerials(tenantId, storeId, variantId, status, limit);
   }
 
   public SerialNumber getSerial(UUID tenantId, UUID serialId) {
-    return repo.findSerial(tenantId, serialId)
+    return serialRepo
+        .findSerial(tenantId, serialId)
         .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
   }
 
   public SerialNumber lookupSerialByNo(UUID tenantId, String serialNo) {
-    return repo.findSerialByNo(tenantId, serialNo)
+    return serialRepo
+        .findSerialByNo(tenantId, serialNo)
         .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
   }
 
@@ -374,12 +513,13 @@ public class InventoryService {
             tenantId,
             serialId,
             Events.serialStatusChanged(tenantId, serialId, newStatus));
-    return repo.updateSerialStatus(tenantId, serialId, newStatus, event)
+    return serialRepo
+        .updateSerialStatus(tenantId, serialId, newStatus, event)
         .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
   }
 
   public List<SerialMovement> listSerialHistory(UUID tenantId, UUID serialId) {
-    return repo.listSerialHistory(tenantId, serialId);
+    return serialRepo.listSerialHistory(tenantId, serialId);
   }
 
   private static String generateSerialNo(String prefix, int index) {
@@ -651,10 +791,17 @@ public class InventoryService {
     // Generate lines from ABC assignments that match requested classes
     List<String> requestedClasses = List.of(classes.split(","));
     List<AbcAssignment> assignments = repo.listAbcAssignments(tenantId, storeId, null, 1000);
+    // Fetch all on-hand quantities in one query instead of one per variant (avoids N+1).
+    List<UUID> matchingVariantIds =
+        assignments.stream()
+            .filter(a -> requestedClasses.contains(a.abcClass()))
+            .map(AbcAssignment::variantId)
+            .toList();
+    Map<UUID, BigDecimal> onHandMap = repo.onHandQtyBatch(tenantId, storeId, matchingVariantIds);
     List<CycleCountLine> lines = new ArrayList<>();
     for (AbcAssignment a : assignments) {
       if (!requestedClasses.contains(a.abcClass())) continue;
-      BigDecimal onHand = repo.onHandQty(tenantId, storeId, a.variantId());
+      BigDecimal onHand = onHandMap.getOrDefault(a.variantId(), BigDecimal.ZERO);
       lines.add(
           new CycleCountLine(
               UUID.randomUUID(),
@@ -676,8 +823,11 @@ public class InventoryService {
 
   public List<CycleCountWithLines> listCycleCounts(
       UUID tenantId, UUID storeId, String status, int limit) {
-    return repo.listCycleCountHeaders(tenantId, storeId, status, limit).stream()
-        .map(h -> new CycleCountWithLines(h, repo.listCycleCountLines(h.id())))
+    List<CycleCountHeader> headers = repo.listCycleCountHeaders(tenantId, storeId, status, limit);
+    List<UUID> headerIds = headers.stream().map(CycleCountHeader::id).toList();
+    Map<UUID, List<CycleCountLine>> linesByHeader = repo.listCycleCountLinesByHeaders(headerIds);
+    return headers.stream()
+        .map(h -> new CycleCountWithLines(h, linesByHeader.getOrDefault(h.id(), List.of())))
         .toList();
   }
 
@@ -782,9 +932,7 @@ public class InventoryService {
             tenantId,
             headerId,
             Events.cycleCountAdjusted(tenantId, headerId));
-    int adjusted = repo.applyAdjustments(tenantId, headerId, event);
-    repo.updateHeaderStatus(tenantId, headerId, CycleCountHeader.ADJUSTED);
-    return adjusted;
+    return repo.applyAdjustments(tenantId, headerId, event);
   }
 
   // ---- Lot Genealogy (Gap #11) ----
@@ -1076,12 +1224,9 @@ public class InventoryService {
   }
 
   // ---- sweeper support ----
-  public List<UUID> expiredReservations(int limit) {
-    return repo.expiredHeldReservations(limit);
-  }
-
-  public UUID tenantOfReservation(UUID reservationId) {
-    return repo.tenantOfReservation(reservationId);
+  public List<com.shelfj.inventory.repo.InventoryRepository.ReservationRef>
+      expiredReservationsWithTenant(int limit) {
+    return repo.expiredHeldReservationsWithTenant(limit);
   }
 
   static UUID parseUuid(String s, String field) {
@@ -1182,6 +1327,9 @@ public class InventoryService {
             null,
             null,
             null,
+            null,
+            null,
+            null,
             null);
     var event =
         new OutboxRow(
@@ -1238,6 +1386,9 @@ public class InventoryService {
             supplierRef,
             notes,
             null,
+            null,
+            null,
+            Instant.now(),
             null,
             null);
     var event =
@@ -1346,5 +1497,364 @@ public class InventoryService {
 
   public List<AccountingPeriod> listPeriods(UUID tenantId, UUID storeId) {
     return repo.listPeriods(tenantId, storeId);
+  }
+
+  // ── Tier-1 Gap #21: Transaction reason codes ─────────────────────────────
+
+  public ReasonCode createReasonCode(UUID tenantId, String code, String description) {
+    return repo.insertReasonCode(tenantId, code.toUpperCase(Locale.ROOT), description);
+  }
+
+  public List<ReasonCode> listReasonCodes(UUID tenantId) {
+    return repo.listReasonCodes(tenantId);
+  }
+
+  public ReasonCode setReasonCodeActive(UUID tenantId, UUID id, boolean active) {
+    return repo.setReasonCodeActive(tenantId, id, active);
+  }
+
+  // ── Tier-1 Gap #22: Transaction source types ──────────────────────────────
+
+  public TransactionSourceType createSourceType(UUID tenantId, String code, String description) {
+    return repo.insertSourceType(tenantId, code.toUpperCase(Locale.ROOT), description);
+  }
+
+  public List<TransactionSourceType> listSourceTypes(UUID tenantId) {
+    return repo.listSourceTypes(tenantId);
+  }
+
+  public TransactionSourceType setSourceTypeActive(UUID tenantId, UUID id, boolean active) {
+    return repo.setSourceTypeActive(tenantId, id, active);
+  }
+
+  // ── Tier-1 Gap #23: Lot actions (split / merge) ───────────────────────────
+
+  public record LotSplitResult(Batch newBatch, LotAction action) {}
+
+  public LotSplitResult splitLot(
+      UUID tenantId, UUID sourceBatchId, BigDecimal qty, String batchNo, String notes) {
+    Batch source =
+        repo.getBatch(tenantId, sourceBatchId)
+            .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Source batch not found"));
+    if (source.remainingQty().compareTo(qty) < 0) {
+      throw ApiException.unprocessable(
+          "INSUFFICIENT_QTY", "Split qty exceeds remaining qty on source batch");
+    }
+    String newBatchNo =
+        batchNo != null
+            ? batchNo
+            : source.batchNo() + "-SPLIT-" + UUID.randomUUID().toString().substring(0, 8);
+    UUID newBatchId = UUID.randomUUID();
+    Batch splitBatch =
+        new Batch(
+            newBatchId,
+            tenantId,
+            source.storeId(),
+            source.variantId(),
+            newBatchNo,
+            qty,
+            qty,
+            source.costPrice(),
+            source.expiryDate(),
+            Instant.now(),
+            Batch.STATUS_ACTIVE,
+            Batch.MATERIAL_AVAILABLE,
+            null,
+            source.grade());
+    OutboxRow splitEvent =
+        new OutboxRow(
+            "LotSplit",
+            "shelfj.inventory.lot-split",
+            tenantId,
+            sourceBatchId,
+            Events.lotSplit(tenantId, sourceBatchId, newBatchId, qty));
+    Batch newBatch = repo.receive(splitBatch, "LOT_SPLIT", sourceBatchId, splitEvent);
+    LotAction action =
+        repo.insertLotAction(tenantId, LotAction.SPLIT, sourceBatchId, newBatch.id(), qty, notes);
+    return new LotSplitResult(newBatch, action);
+  }
+
+  public record LotMergeResult(Batch targetBatch, LotAction action) {}
+
+  public LotMergeResult mergeLot(
+      UUID tenantId, UUID sourceBatchId, UUID targetBatchId, BigDecimal qty, String notes) {
+    Batch source =
+        repo.getBatch(tenantId, sourceBatchId)
+            .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Source batch not found"));
+    Batch target =
+        repo.getBatch(tenantId, targetBatchId)
+            .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));
+    if (source.remainingQty().compareTo(qty) < 0) {
+      throw ApiException.unprocessable(
+          "INSUFFICIENT_QTY", "Merge qty exceeds remaining qty on source batch");
+    }
+    OutboxRow mergeEvent =
+        new OutboxRow(
+            "LotMerge",
+            "shelfj.inventory.lot-merge",
+            tenantId,
+            sourceBatchId,
+            Events.lotMerge(tenantId, sourceBatchId, targetBatchId, qty));
+    // Deduct from source, add to target
+    repo.adjust(
+        tenantId, source.storeId(), source.variantId(), qty.negate(), "LOT_MERGE_OUT", mergeEvent);
+    OutboxRow addEvent =
+        new OutboxRow(
+            "LotMergeIn",
+            "shelfj.inventory.lot-merge-in",
+            tenantId,
+            targetBatchId,
+            Events.lotMerge(tenantId, sourceBatchId, targetBatchId, qty));
+    repo.adjust(tenantId, target.storeId(), target.variantId(), qty, "LOT_MERGE_IN", addEvent);
+    Batch updated =
+        repo.getBatch(tenantId, targetBatchId)
+            .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));
+    LotAction action =
+        repo.insertLotAction(tenantId, LotAction.MERGE, sourceBatchId, targetBatchId, qty, notes);
+    return new LotMergeResult(updated, action);
+  }
+
+  public List<LotAction> listLotActions(UUID tenantId, UUID batchId) {
+    return repo.listLotActions(tenantId, batchId);
+  }
+
+  // ── Tier-1 Gap #24: Expiry alert query ────────────────────────────────────
+
+  public List<Batch> listExpiringBatches(UUID tenantId, UUID storeId, int withinDays) {
+    if (withinDays < 1 || withinDays > 3650) {
+      throw ApiException.badRequest("INVALID_DAYS", "withinDays must be 1–3650");
+    }
+    return repo.listExpiringBatches(tenantId, storeId, withinDays);
+  }
+
+  // ── Tier-1 Gap #25: Grade control ─────────────────────────────────────────
+
+  public Batch updateBatchGrade(UUID tenantId, UUID batchId, String grade) {
+    if (grade == null || grade.isBlank()) {
+      throw ApiException.badRequest("INVALID_GRADE", "grade must not be blank");
+    }
+    return repo.updateBatchGrade(tenantId, batchId, grade.toUpperCase(Locale.ROOT));
+  }
+
+  // ── Tier-1 Gap #26: Lot UOM conversions ──────────────────────────────────
+
+  public LotUomConversion upsertLotUomConversion(
+      UUID tenantId, UUID batchId, String fromUom, String toUom, BigDecimal factor, String notes) {
+    if (factor.compareTo(BigDecimal.ZERO) <= 0) {
+      throw ApiException.badRequest("INVALID_FACTOR", "UOM conversion factor must be positive");
+    }
+    return repo.upsertLotUomConversion(tenantId, batchId, fromUom, toUom, factor, notes);
+  }
+
+  public List<LotUomConversion> listLotUomConversions(UUID tenantId, UUID batchId) {
+    return repo.listLotUomConversions(tenantId, batchId);
+  }
+
+  // ── Tier-1 Gap #27: PAR levels ────────────────────────────────────────────
+
+  public ParLevelConfig upsertParLevel(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal parQty,
+      String uom,
+      String reviewCycle) {
+    if (parQty.compareTo(BigDecimal.ZERO) <= 0) {
+      throw ApiException.badRequest("INVALID_PAR_QTY", "parQty must be positive");
+    }
+    String cycle =
+        reviewCycle == null ? ParLevelConfig.DAILY : reviewCycle.toUpperCase(Locale.ROOT);
+    if (!Set.of(ParLevelConfig.DAILY, ParLevelConfig.WEEKLY, ParLevelConfig.MONTHLY)
+        .contains(cycle)) {
+      throw ApiException.badRequest(
+          "INVALID_REVIEW_CYCLE", "reviewCycle must be DAILY, WEEKLY, or MONTHLY");
+    }
+    return repo.upsertParLevel(tenantId, storeId, variantId, parQty, uom, cycle);
+  }
+
+  public List<ParLevelConfig> listParLevels(UUID tenantId, UUID storeId) {
+    return repo.listParLevels(tenantId, storeId);
+  }
+
+  public ParLevelConfig getParLevel(UUID tenantId, UUID storeId, UUID variantId) {
+    return repo.findParLevel(tenantId, storeId, variantId)
+        .orElseThrow(() -> ApiException.notFound("PAR_LEVEL_NOT_FOUND", "No PAR level configured"));
+  }
+
+  // ── Tier-1 Gap #28: Order modifiers ──────────────────────────────────────
+
+  public ReorderPointPlan updateRopOrderModifiers(
+      UUID tenantId, UUID ropId, BigDecimal min, BigDecimal max, BigDecimal lotMult) {
+    return repo.updateRopOrderModifiers(tenantId, ropId, min, max, lotMult);
+  }
+
+  public KanbanCard updateKanbanOrderModifiers(
+      UUID tenantId, UUID cardId, BigDecimal min, BigDecimal max, BigDecimal lotMult) {
+    return repo.updateKanbanOrderModifiers(tenantId, cardId, min, max, lotMult);
+  }
+
+  // ── Tier-1 Gap #29: Batch (bulk) reservations ─────────────────────────────
+
+  public record BulkReserveResult(int succeeded, int failed, List<Reservation> results) {}
+
+  public BulkReserveResult bulkReserve(
+      UUID tenantId, List<com.shelfj.inventory.dto.Dtos.ReserveRequest> requests) {
+    List<Reservation> succeeded = new ArrayList<>();
+    int failed = 0;
+    for (var req : requests) {
+      try {
+        UUID storeId = UUID.fromString(req.storeId());
+        UUID variantId = UUID.fromString(req.variantId());
+        UUID orderId = req.orderId() != null ? UUID.fromString(req.orderId()) : null;
+        succeeded.add(reserve(tenantId, storeId, variantId, req.qty(), orderId, req.ttlSeconds()));
+      } catch (Exception ignored) {
+        failed++;
+      }
+    }
+    return new BulkReserveResult(succeeded.size(), failed, succeeded);
+  }
+
+  // ── Tier-1 Gap #30: Purge transaction history ─────────────────────────────
+
+  public int purgeMovementsBefore(UUID tenantId, Instant before) {
+    Instant cutoff = Instant.now().minusSeconds(90L * 24 * 3600);
+    if (before.isAfter(cutoff)) {
+      throw ApiException.badRequest(
+          "PURGE_TOO_RECENT", "Cannot purge movements less than 90 days old");
+    }
+    return repo.purgeMovementsBefore(tenantId, before);
+  }
+
+  // ── Tier-1 Gap #31: Zone GL mappings ─────────────────────────────────────
+
+  public ZoneGlMapping upsertZoneGlMapping(
+      UUID tenantId, UUID storeId, UUID zoneId, String nominalCode, String description) {
+    return repo.upsertZoneGlMapping(tenantId, storeId, zoneId, nominalCode, description);
+  }
+
+  public List<ZoneGlMapping> listZoneGlMappings(UUID tenantId, UUID storeId) {
+    return repo.listZoneGlMappings(tenantId, storeId);
+  }
+
+  // ── Picking Rules (Gap #38) ──────────────────────────────────────────────
+
+  public PickingRule createPickingRule(
+      UUID tenantId, com.shelfj.inventory.dto.Dtos.CreatePickingRuleRequest req) {
+    String strategy = req.strategy().toUpperCase(java.util.Locale.ROOT);
+    if (!java.util.Set.of("FIFO", "FEFO", "LIFO", "FEFO_GRADE", "ZONE_PRIORITY")
+        .contains(strategy)) {
+      throw new ApiException(
+          400,
+          "INVALID_STRATEGY",
+          "strategy must be FIFO, FEFO, LIFO, FEFO_GRADE, or ZONE_PRIORITY",
+          List.of(),
+          null);
+    }
+    return repo.createPickingRule(tenantId, req.name().trim(), strategy, req.gradePreference());
+  }
+
+  public PickingRule getPickingRule(UUID tenantId, UUID id) {
+    return repo.findPickingRule(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
+  }
+
+  public List<PickingRule> listPickingRules(UUID tenantId) {
+    return repo.listPickingRules(tenantId);
+  }
+
+  public PickingRule deactivatePickingRule(UUID tenantId, UUID id) {
+    getPickingRule(tenantId, id);
+    return repo.deactivatePickingRule(tenantId, id);
+  }
+
+  public List<PickingRuleZonePriority> setZonePriorities(
+      UUID tenantId, UUID ruleId, com.shelfj.inventory.dto.Dtos.SetZonePrioritiesRequest req) {
+    getPickingRule(tenantId, ruleId);
+    List<PickingRuleZonePriority> items =
+        req.zonePriorities().stream()
+            .map(
+                e ->
+                    new PickingRuleZonePriority(
+                        null, tenantId, ruleId, UUID.fromString(e.zoneId()), e.priority()))
+            .toList();
+    repo.replaceZonePriorities(tenantId, ruleId, items);
+    return repo.listZonePriorities(tenantId, ruleId);
+  }
+
+  public List<PickingRuleZonePriority> listZonePriorities(UUID tenantId, UUID ruleId) {
+    getPickingRule(tenantId, ruleId);
+    return repo.listZonePriorities(tenantId, ruleId);
+  }
+
+  public PickingRuleAssignment createPickingRuleAssignment(
+      UUID tenantId, com.shelfj.inventory.dto.Dtos.CreatePickingRuleAssignmentRequest req) {
+    UUID ruleId = UUID.fromString(req.ruleId());
+    getPickingRule(tenantId, ruleId);
+    String scopeType = req.scopeType().toUpperCase(java.util.Locale.ROOT);
+    if (!java.util.Set.of("GLOBAL", "STORE", "PRODUCT").contains(scopeType)) {
+      throw new ApiException(
+          400,
+          "INVALID_SCOPE_TYPE",
+          "scopeType must be GLOBAL, STORE, or PRODUCT",
+          List.of(),
+          null);
+    }
+    UUID scopeId =
+        (req.scopeId() != null && !req.scopeId().isBlank()) ? UUID.fromString(req.scopeId()) : null;
+    if (!"GLOBAL".equals(scopeType) && scopeId == null) {
+      throw new ApiException(
+          400,
+          "SCOPE_ID_REQUIRED",
+          "scopeId is required for scope type " + scopeType,
+          List.of(),
+          null);
+    }
+    return repo.createPickingRuleAssignment(tenantId, ruleId, scopeType, scopeId);
+  }
+
+  public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId) {
+    return repo.listPickingRuleAssignments(tenantId);
+  }
+
+  public void deletePickingRuleAssignment(UUID tenantId, UUID id) {
+    if (!repo.deletePickingRuleAssignment(tenantId, id)) {
+      throw ApiException.notFound("ASSIGNMENT_NOT_FOUND", "Picking rule assignment not found");
+    }
+  }
+
+  public com.shelfj.inventory.dto.Dtos.PickingRuleResolveResponse resolvePickingRule(
+      UUID tenantId, UUID storeId, UUID variantId) {
+    var rule = repo.resolvePickingRule(tenantId, storeId, variantId).orElse(null);
+    String strategy = rule != null ? rule.strategy() : PickingRule.FEFO;
+    String gradePreference = rule != null ? rule.gradePreference() : null;
+    List<UUID> zonePriorityOrder =
+        (rule != null && PickingRule.ZONE_PRIORITY.equals(strategy))
+            ? repo.listZonePriorities(tenantId, rule.id()).stream()
+                .map(PickingRuleZonePriority::zoneId)
+                .toList()
+            : null;
+    var batches =
+        repo.previewPickOrder(
+            tenantId, storeId, variantId, strategy, gradePreference, zonePriorityOrder);
+    var pickOrder =
+        batches.stream()
+            .map(
+                b ->
+                    new com.shelfj.inventory.dto.Dtos.PickingRuleResolveResponse.PickBatchPreview(
+                        b.id().toString(),
+                        b.batchNo(),
+                        null,
+                        b.remainingQty(),
+                        b.expiryDate() != null ? b.expiryDate().toString() : null,
+                        b.grade(),
+                        b.createdAt().toString()))
+            .toList();
+    return new com.shelfj.inventory.dto.Dtos.PickingRuleResolveResponse(
+        rule != null ? rule.id().toString() : null,
+        rule != null ? rule.name() : null,
+        strategy,
+        gradePreference,
+        pickOrder);
   }
 }

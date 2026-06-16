@@ -73,6 +73,22 @@
     </Match>
 
     <!--
+      GatewayConfig pre-parses its CSV config properties into Sets once at startup
+      (@PostConstruct) and returns the cached field from its accessors. The fields are
+      assigned exclusively via Set.copyOf(...), i.e. they hold immutable sets, so
+      returning the reference cannot expose mutable internal state. SpotBugs cannot
+      prove runtime immutability of a java.util.Set-typed field.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP"/>
+        <Class name="com.shelfj.gateway.GatewayConfig"/>
+        <Or>
+            <Method name="routableServices"/>
+            <Method name="corsAllowedOrigins"/>
+        </Or>
+    </Match>
+
+    <!--
       Java text blocks (multi-line string literals) are stored with LF (\n) in the
       bytecode constant pool. When the text block is used with String.formatted(),
       SpotBugs 4.8.x fires VA_FORMAT_STRING_USES_NEWLINE, incorrectly treating the

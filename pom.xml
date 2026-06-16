@@ -33,6 +33,7 @@
         <!-- Versions for libraries NOT managed by the Helidon BOM -->
         <flyway.version>10.20.1</flyway.version>
         <postgresql.version>42.7.4</postgresql.version>
+        <hikaricp.version>6.2.1</hikaricp.version>
         <testcontainers.version>1.20.4</testcontainers.version>
         <junit.version>5.11.3</junit.version>
         <shelfj.version>0.1.0-SNAPSHOT</shelfj.version>
@@ -62,7 +63,11 @@
         <module>services/inventory-svc</module>
         <module>services/order-svc</module>
         <module>services/pricing-svc</module>
+        <module>services/payment-svc</module>
         <module>services/purchase-svc</module>
+        <module>services/customer-svc</module>
+        <module>services/notification-svc</module>
+        <module>services/reporting-svc</module>
         <module>platform/config</module>
         <module>platform/gateway</module>
     </modules>
@@ -98,6 +103,11 @@
                 <version>${postgresql.version}</version>
             </dependency>
             <dependency>
+                <groupId>com.zaxxer</groupId>
+                <artifactId>HikariCP</artifactId>
+                <version>${hikaricp.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.flywaydb</groupId>
                 <artifactId>flyway-core</artifactId>
                 <version>${flyway.version}</version>
@@ -122,6 +132,13 @@
                 <version>${junit.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <!-- MicroProfile Fault Tolerance — retry, circuit-breaker, timeout on sync clients -->
+            <dependency>
+                <groupId>io.helidon.microprofile</groupId>
+                <artifactId>helidon-microprofile-fault-tolerance</artifactId>
+                <version>4.4.1</version>
             </dependency>
 
             <!-- Quality: ArchUnit — architecture rule tests (used in common-test + each service) -->

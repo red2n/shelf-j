@@ -18,6 +18,17 @@ public final class Dtos {
       @NotBlank @Size(min = 8, max = 100) String password,
       String phone) {}
 
+  /**
+   * Admin provisions a staff account by email (find-or-create). The admin supplies the initial
+   * password and shares it with the new staff member out-of-band; it is never echoed back in the
+   * response.
+   */
+  public record ProvisionStaffRequest(
+      @Email @NotBlank String email, @NotBlank @Size(min = 8, max = 100) String password) {}
+
+  /** Result of staff provisioning: the userId to assign a store role to. */
+  public record ProvisionStaffResponse(String userId, String email, boolean created) {}
+
   /** Login with email + password. */
   public record LoginRequest(@Email @NotBlank String email, @NotBlank String password) {}
 
@@ -49,4 +60,21 @@ public final class Dtos {
       String phone,
       String status,
       String createdAt) {}
+
+  // ── Gap #45: POS session idle timeout ─────────────────────────────────────
+
+  public record StartPosSessionRequest(@NotBlank String storeId, Integer idleTimeoutSeconds) {}
+
+  public record PosSessionResponse(
+      String id,
+      String tenantId,
+      String userId,
+      String storeId,
+      String startedAt,
+      String lastActivityAt,
+      String endedAt,
+      int idleTimeoutSeconds,
+      String status) {}
+
+  public record IdleSweepResult(int sessionsExpired) {}
 }

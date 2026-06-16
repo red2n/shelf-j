@@ -263,6 +263,8 @@ Every JSON response uses one shape (defined once in `common-web`):
 
 ### 7.7 Idempotency
 - Mutating endpoints that can be retried (checkout, payment capture, stock receipt) accept an `Idempotency-Key` header; the service stores processed keys and returns the prior result on replay.
+- The gateway forwards the `Idempotency-Key` header to upstream services as-is (it is client-owned, not identity, so it is never stripped or rewritten).
+- The header is authoritative. A body-level `idempotencyKey` field is accepted as a legacy fallback only where it already existed (order-svc, payment-svc); new endpoints must use the header only.
 
 ### 7.8 Health, metrics, tracing (every service)
 - **Three health probes** (MicroProfile Health) — these are what let services start in **any order** in production (see §13):

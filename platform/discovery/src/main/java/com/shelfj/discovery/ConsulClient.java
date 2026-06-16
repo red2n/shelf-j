@@ -83,6 +83,17 @@ public class ConsulClient implements ServiceRegistry {
 
   /** All currently-healthy ("passing") instances of a service. */
   public List<ServiceInstance> healthyInstances(String serviceName) {
+    CachedInstances cached = instanceCache.get(serviceName);
+    long now = System.nanoTime();
+    if (cached != null && now < cached.expiresAtNanos) {
+      return cached.instances;
+    }
+    List<ServiceInstance> fresh = fetchHealthyInstances(serviceName);
+    instanceCache.put(serviceName, new CachedInstances(fresh, now + CACHE_TTL_NANOS));
+    return fresh;
+  }
+
+  private List<ServiceInstance> fetchHealthyInstances(String serviceName) {
     List<ServiceInstance> out = new ArrayList<>();
     try {
       // NOTE: pass the filter via queryParam — embedding "?passing=true" in the path makes
@@ -123,4 +134,17 @@ public class ConsulClient implements ServiceRegistry {
     }
     return Optional.of(instances.get(ThreadLocalRandom.current().nextInt(instances.size())));
   }
+
+  /**
+   * Short-TTL lookup cache: resolution runs on EVERY proxied request, so without it each request
+   * pays an extra HTTP roundtrip to Consul (latency + Consul load). 3s staleness is within Consul's
+   * own 10s health-check interval, so it adds no meaningful failover delay. Empty results are
+   * cached too — a down service must not turn into a Consul hammering loop.
+   */
+  private static final long CACHE_TTL_NANOS = java.time.Duration.ofSeconds(3).toNanos();
+
+  private final java.util.concurrent.ConcurrentMap<String, CachedInstances> instanceCache =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  private record CachedInstances(List<ServiceInstance> instances, long expiresAtNanos) {}
 }

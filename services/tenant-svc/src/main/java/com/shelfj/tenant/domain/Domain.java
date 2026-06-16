@@ -21,6 +21,7 @@ public final class Domain {
       Instant updatedAt) {
     public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_ACTIVE = "ACTIVE";
+    public static final String STATUS_INACTIVE = "INACTIVE";
   }
 
   public record Store(
@@ -41,6 +42,7 @@ public final class Domain {
       String businessHours,
       String status,
       boolean isDefault,
+      boolean showPrices,
       Instant createdAt,
       Instant updatedAt) {
     public static final String TYPE_STORE = "STORE";
@@ -65,4 +67,26 @@ public final class Domain {
 
   /** Paired result of creating a store and its default zone atomically. */
   public record StoreWithZone(Store store, Zone defaultZone) {}
+
+  // ── Gap #53: Inventory org parameters ────────────────────────────────────
+
+  public record TenantInventoryConfig(
+      UUID id,
+      UUID tenantId,
+      boolean lotControlEnabled,
+      boolean serialControlEnabled,
+      boolean gradeControlEnabled,
+      boolean expiryTrackingEnabled,
+      String costingMethod,
+      String defaultUom,
+      boolean reorderAlertEnabled,
+      boolean autoReserveOnOrder,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String COSTING_FIFO = "FIFO";
+    public static final String COSTING_AVERAGE = "AVERAGE";
+    public static final String COSTING_STANDARD = "STANDARD";
+  }
+
+  public record TenantWithStore(Tenant tenant, Store store) {}
 }

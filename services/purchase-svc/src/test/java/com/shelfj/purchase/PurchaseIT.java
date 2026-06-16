@@ -65,6 +65,7 @@ class PurchaseIT {
         .path(path)
         .request()
         .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 

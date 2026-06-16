@@ -40,6 +40,7 @@ public class ProxyResource {
 
   @Inject ServiceRegistry registry;
   @Inject WebClient webClient;
+  @Inject GatewayConfig config;
 
   @GET
   @Path("/{service}/{path: .*}")
@@ -60,7 +61,7 @@ public class ProxyResource {
                           io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(req.request(), requestId);
+              return relay(req::request, service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
@@ -86,7 +87,7 @@ public class ProxyResource {
                       .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(req.submit(body == null ? "" : body), requestId);
+              return relay(() -> req.submit(body == null ? "" : body), service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
@@ -112,7 +113,33 @@ public class ProxyResource {
                       .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(req.submit(body == null ? "" : body), requestId);
+              return relay(() -> req.submit(body == null ? "" : body), service, requestId);
+            })
+        .orElseGet(() -> serviceUnavailable(service));
+  }
+
+  @jakarta.ws.rs.PATCH
+  @Path("/{service}/{path: .*}")
+  @Consumes(MediaType.APPLICATION_JSON)
+  @Produces(MediaType.APPLICATION_JSON)
+  public Response proxyPatch(
+      @PathParam("service") String service,
+      @PathParam("path") String path,
+      @Context UriInfo uriInfo,
+      @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders,
+      String body) {
+    return resolve(service)
+        .map(
+            instance -> {
+              String requestId = newRequestId();
+              var req =
+                  webClient
+                      .patch(instance.baseUri() + "/" + path)
+                      .header(io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId)
+                      .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
+              addQueryParams(req, uriInfo);
+              stampIdentity(req, inboundHeaders);
+              return relay(() -> req.submit(body == null ? "" : body), service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
@@ -136,7 +163,7 @@ public class ProxyResource {
                           io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(req.request(), requestId);
+              return relay(req::request, service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
@@ -144,21 +171,29 @@ public class ProxyResource {
   // --- helpers ---
 
   private Optional<ServiceInstance> resolve(String service) {
+    // Allowlist gate: only declared business services are routable. An internal service that
+    // happens to register in Consul (config, discovery, observability) must not be reachable
+    // from the internet just because the proxy can resolve it (golden rule #2).
+    if (!config.routableServices().contains(service)) {
+      return Optional.empty();
+    }
     return registry.resolve(service);
   }
 
   /**
-   * The security boundary. <strong>Phase 0:</strong> forwards the caller-supplied identity headers
-   * as-is so the flow is demonstrable without an auth service. <strong>Phase 2+:</strong> this MUST
-   * instead validate the inbound JWT and set X-Tenant-Id / X-User-Id / X-Roles from the verified
-   * claims, ignoring/stripping any client-supplied copies. Downstream services trust these headers
-   * because only the gateway can reach them.
+   * Forwards the verified identity headers to the upstream service. By the time this runs, {@link
+   * JwtAuthFilter} has already stripped any client-supplied copies and replaced them with values
+   * extracted from the validated JWT. Downstream services trust these headers because only the
+   * gateway can reach them (golden rule #2).
    */
   private void stampIdentity(
       io.helidon.webclient.api.HttpClientRequest req, jakarta.ws.rs.core.HttpHeaders inbound) {
     forward(req, inbound, HttpHeaders.TENANT_ID);
     forward(req, inbound, HttpHeaders.USER_ID);
     forward(req, inbound, HttpHeaders.ROLES);
+    // Client-controlled, not identity — forwarded so downstream writes can dedupe retries
+    // (golden rule #11). Not stripped/overwritten: the client owns this value.
+    forward(req, inbound, HttpHeaders.IDEMPOTENCY_KEY);
   }
 
   private void forward(
@@ -171,13 +206,44 @@ public class ProxyResource {
     }
   }
 
-  private Response relay(HttpClientResponse upstream, String requestId) {
-    int status = upstream.status().code();
-    Response.ResponseBuilder rb = Response.status(status).header(HttpHeaders.REQUEST_ID, requestId);
-    if (status != 204 && status != 205 && status != 304) {
-      rb.type(MediaType.APPLICATION_JSON).entity(upstream.as(String.class));
+  /**
+   * Executes the upstream call and copies status + body back. The call is passed as a supplier so
+   * connect/read failures (including the WebClient timeouts configured in {@link GatewayBeans})
+   * surface as 504/502 envelopes instead of leaking as container 500s.
+   */
+  private Response relay(
+      java.util.function.Supplier<HttpClientResponse> call, String service, String requestId) {
+    HttpClientResponse upstream;
+    try {
+      upstream = call.get();
+    } catch (RuntimeException e) {
+      boolean timeout = hasCause(e, java.net.SocketTimeoutException.class);
+      return Response.status(timeout ? 504 : 502)
+          .header(HttpHeaders.REQUEST_ID, requestId)
+          .type(MediaType.APPLICATION_JSON)
+          .entity(
+              ApiResponse.error(
+                  ErrorBody.of(
+                      timeout ? "UPSTREAM_TIMEOUT" : "UPSTREAM_ERROR",
+                      "'" + service + "' did not answer" + (timeout ? " in time" : ""))))
+          .build();
     }
-    return rb.build();
+    try (upstream) {
+      int status = upstream.status().code();
+      Response.ResponseBuilder rb =
+          Response.status(status).header(HttpHeaders.REQUEST_ID, requestId);
+      if (status != 204 && status != 205 && status != 304) {
+        rb.type(MediaType.APPLICATION_JSON).entity(upstream.as(String.class));
+      }
+      return rb.build();
+    }
+  }
+
+  private static boolean hasCause(Throwable t, Class<? extends Throwable> type) {
+    for (Throwable c = t; c != null; c = c.getCause()) {
+      if (type.isInstance(c)) return true;
+    }
+    return false;
   }
 
   private Response serviceUnavailable(String service) {

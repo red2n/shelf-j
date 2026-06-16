@@ -93,6 +93,11 @@ public final class Dtos {
       @NotNull @Positive BigDecimal price,
       @NotNull @Positive BigDecimal minQty) {}
 
+  public record BatchUpsertPriceListItemsRequest(
+      @NotNull java.util.List<UpsertPriceListItemRequest> items) {}
+
+  public record BatchUpsertResult(int upserted, java.util.List<String> errors) {}
+
   public record PriceListItemResponse(
       UUID id,
       UUID tenantId,
@@ -201,4 +206,26 @@ public final class Dtos {
       BigDecimal box9,
       String periodFrom,
       String periodTo) {}
+
+  // ── Gap #41: Price overrides ──────────────────────────────────────────────
+
+  public record CreatePriceOverrideRequest(
+      String orderId,
+      @NotBlank String variantId,
+      @NotBlank String storeId,
+      BigDecimal originalPrice,
+      @NotNull @PositiveOrZero BigDecimal overridePrice,
+      String overrideReason,
+      String overriddenBy) {}
+
+  public record PriceOverrideResponse(
+      String id,
+      String orderId,
+      String variantId,
+      String storeId,
+      BigDecimal originalPrice,
+      BigDecimal overridePrice,
+      String overrideReason,
+      String overriddenBy,
+      String createdAt) {}
 }

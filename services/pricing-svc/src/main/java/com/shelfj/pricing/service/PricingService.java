@@ -3,6 +3,7 @@ package com.shelfj.pricing.service;
 import com.shelfj.pricing.domain.Domain.CustomerVatStatus;
 import com.shelfj.pricing.domain.Domain.PriceList;
 import com.shelfj.pricing.domain.Domain.PriceListItem;
+import com.shelfj.pricing.domain.Domain.PriceOverride;
 import com.shelfj.pricing.domain.Domain.ProductVatCategory;
 import com.shelfj.pricing.domain.Domain.Promotion;
 import com.shelfj.pricing.domain.Domain.PromotionItem;
@@ -11,7 +12,10 @@ import com.shelfj.pricing.domain.Domain.TaxTransaction;
 import com.shelfj.pricing.domain.Domain.VatRate;
 import com.shelfj.pricing.domain.Domain.VatReturn;
 import com.shelfj.pricing.dto.Dtos.AddPromotionItemRequest;
+import com.shelfj.pricing.dto.Dtos.BatchUpsertPriceListItemsRequest;
+import com.shelfj.pricing.dto.Dtos.BatchUpsertResult;
 import com.shelfj.pricing.dto.Dtos.CreatePriceListRequest;
+import com.shelfj.pricing.dto.Dtos.CreatePriceOverrideRequest;
 import com.shelfj.pricing.dto.Dtos.CreatePromotionRequest;
 import com.shelfj.pricing.dto.Dtos.CreateVatRateRequest;
 import com.shelfj.pricing.dto.Dtos.RecordTaxTransactionRequest;
@@ -71,7 +75,7 @@ public class PricingService {
     VatRate existing = getVatRate(ctx, code);
     if (req.rate().compareTo(BigDecimal.ONE) > 0)
       throw ApiException.badRequest("PRICING_INVALID_RATE", "VAT rate must be between 0 and 1");
-    Instant effectiveTo =
+    Instant newEffectiveFrom =
         req.effectiveFrom() != null ? Instant.parse(req.effectiveFrom()) : existing.effectiveFrom();
     VatRate updated =
         new VatRate(
@@ -82,8 +86,8 @@ public class PricingService {
             req.rate(),
             req.exempt(),
             req.description(),
-            effectiveTo,
-            null,
+            newEffectiveFrom,
+            existing.effectiveTo(),
             existing.createdAt());
     return repo.updateVatRate(updated);
   }
@@ -190,6 +194,22 @@ public class PricingService {
     return repo.upsertPriceListItem(item, Events.priceChanged(ctx.tenantId(), priceListId));
   }
 
+  public BatchUpsertResult batchUpsertPriceListItems(
+      TenantContext ctx, UUID priceListId, BatchUpsertPriceListItemsRequest req) {
+    getPriceList(ctx, priceListId);
+    int upserted = 0;
+    var errors = new java.util.ArrayList<String>();
+    for (var r : req.items()) {
+      try {
+        upsertPriceListItem(ctx, priceListId, r);
+        upserted++;
+      } catch (Exception e) {
+        errors.add("variantId=" + r.variantId() + ": " + e.getMessage());
+      }
+    }
+    return new BatchUpsertResult(upserted, errors);
+  }
+
   public List<PriceListItem> listPriceListItems(TenantContext ctx, UUID priceListId) {
     getPriceList(ctx, priceListId);
     return repo.findPriceListItems(ctx.tenantId(), priceListId);
@@ -285,7 +305,7 @@ public class PricingService {
             req.minOrderAmount(),
             req.channel() != null
                 ? req.channel().toUpperCase(java.util.Locale.ROOT)
-                : Promotion.TYPE_FLAT,
+                : PriceList.CHANNEL_ALL,
             true,
             Instant.parse(req.startsAt()),
             req.endsAt() != null ? Instant.parse(req.endsAt()) : null,
@@ -340,6 +360,33 @@ public class PricingService {
    * Compute HMRC MTD VAT return boxes 1-9. Box 4 (input VAT on purchases) and boxes 7-9 remain zero
    * until purchase-svc is built (Gap #20).
    */
+  // ── Gap #41: Price overrides ──────────────────────────────────────────────
+
+  public PriceOverride createPriceOverride(TenantContext ctx, CreatePriceOverrideRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    var override =
+        new PriceOverride(
+            UUID.randomUUID(),
+            tenantId,
+            req.orderId() != null ? UUID.fromString(req.orderId()) : null,
+            UUID.fromString(req.variantId()),
+            UUID.fromString(req.storeId()),
+            req.originalPrice(),
+            req.overridePrice(),
+            req.overrideReason(),
+            req.overriddenBy() != null ? UUID.fromString(req.overriddenBy()) : null,
+            java.time.Instant.now());
+    return repo.insertPriceOverride(override);
+  }
+
+  public java.util.List<PriceOverride> listPriceOverrides(
+      TenantContext ctx, String storeIdStr, String variantIdStr) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
+    UUID variantId = variantIdStr != null ? UUID.fromString(variantIdStr) : null;
+    return repo.listPriceOverrides(tenantId, storeId, variantId);
+  }
+
   public VatReturn computeVatReturn(TenantContext ctx, String fromStr, String toStr) {
     UUID tenantId = ctx.tenantId();
     Instant from = Instant.parse(fromStr);

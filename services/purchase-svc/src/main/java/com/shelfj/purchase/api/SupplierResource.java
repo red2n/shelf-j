@@ -36,8 +36,10 @@ public class SupplierResource {
   }
 
   @GET
-  public Response list() {
-    return Response.ok(ApiResponse.ok(svc.listSuppliers(ctx).stream().map(Mappers::toDto).toList()))
+  public Response list(@jakarta.ws.rs.QueryParam("limit") Integer limit) {
+    int clamped = com.shelfj.web.Cursor.clampLimit(limit);
+    return Response.ok(
+            ApiResponse.ok(svc.listSuppliers(ctx, clamped).stream().map(Mappers::toDto).toList()))
         .build();
   }
 

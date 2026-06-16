@@ -47,10 +47,10 @@ class OnboardingIT {
     PG.stop();
   }
 
-  private Response post(String path, String json, String headerName, String headerValue) {
+  private Response post(String path, String json, String... headers) {
     var req = target.path(path).request();
-    if (headerName != null) {
-      req = req.header(headerName, headerValue);
+    for (int i = 0; i < headers.length; i += 2) {
+      req = req.header(headers[i], headers[i + 1]);
     }
     return req.post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
@@ -67,10 +67,15 @@ class OnboardingIT {
     assertThat(tenantResp.getStatus(), is(201));
     String tenantId = field(tenantResp.readEntity(String.class), "id");
 
-    // create first store → default + auto DEFAULT zone
+    // create first store → default + auto DEFAULT zone (caller has OWNER by now — see RBAC filter)
     Response storeResp =
         post(
-            "/onboarding/stores", "{\"name\":\"Main\",\"code\":\"MAIN\"}", "X-Tenant-Id", tenantId);
+            "/onboarding/stores",
+            "{\"name\":\"Main\",\"code\":\"MAIN\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
     assertThat(storeResp.getStatus(), is(201));
     String storeBody = storeResp.readEntity(String.class);
     assertThat(storeBody, containsString("\"isDefault\":true"));
@@ -82,12 +87,19 @@ class OnboardingIT {
             .path("/admin/stores/" + storeId + "/zones")
             .request()
             .header("X-Tenant-Id", tenantId)
+            .header("X-Roles", "OWNER")
             .get(String.class);
     assertThat(zones, containsString("DEFAULT"));
 
     // duplicate store code → 409
     Response dup =
-        post("/onboarding/stores", "{\"name\":\"Dup\",\"code\":\"MAIN\"}", "X-Tenant-Id", tenantId);
+        post(
+            "/onboarding/stores",
+            "{\"name\":\"Dup\",\"code\":\"MAIN\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
     assertThat(dup.getStatus(), is(409));
   }
 
@@ -113,12 +125,101 @@ class OnboardingIT {
             "X-User-Id",
             OWNER);
     String tenantA = field(t.readEntity(String.class), "id");
-    post("/onboarding/stores", "{\"name\":\"A-store\",\"code\":\"AST\"}", "X-Tenant-Id", tenantA);
+    post(
+        "/onboarding/stores",
+        "{\"name\":\"A-store\",\"code\":\"AST\"}",
+        "X-Tenant-Id",
+        tenantA,
+        "X-Roles",
+        "OWNER");
 
     // tenant B sees no stores
     String listB =
-        target.path("/admin/stores").request().header("X-Tenant-Id", TENANT_B).get(String.class);
+        target
+            .path("/admin/stores")
+            .request()
+            .header("X-Tenant-Id", TENANT_B)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
     assertThat(listB, not(containsString("A-store")));
+  }
+
+  @Test
+  void combinedOnboardCreatesTenatAndStore() {
+    // single POST /onboarding creates tenant + first store atomically — no JWT refresh needed
+    Response resp =
+        post(
+            "/onboarding",
+            """
+            {"businessName":"OneShot Co","country":"gb","currency":"gbp",\
+            "storeName":"London HQ","storeCode":"LDN","storeCity":"London","storeCountry":"gb"}""",
+            "X-User-Id",
+            OWNER);
+    assertThat(resp.getStatus(), is(201));
+    String body = resp.readEntity(String.class);
+    assertThat(body, containsString("\"name\":\"OneShot Co\""));
+    assertThat(body, containsString("\"isDefault\":true"));
+    assertThat(body, containsString("LDN"));
+  }
+
+  @Test
+  void staffAssignment() {
+    // create tenant + store
+    Response tr =
+        post(
+            "/onboarding/tenants",
+            "{\"businessName\":\"StaffCo\",\"country\":\"in\",\"currency\":\"inr\"}",
+            "X-User-Id",
+            OWNER);
+    String tenantId = field(tr.readEntity(String.class), "id");
+
+    Response sr =
+        post(
+            "/onboarding/stores",
+            "{\"name\":\"StaffStore\",\"code\":\"SS1\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
+    String storeId = field(sr.readEntity(String.class), "id");
+
+    // assign a staff user
+    String staffUserId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    Response assign =
+        post(
+            "/admin/staff",
+            String.format(
+                "{\"userId\":\"%s\",\"storeId\":\"%s\",\"role\":\"CASHIER\"}",
+                staffUserId, storeId),
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
+    assertThat(assign.getStatus(), is(201));
+
+    // list staff — the assignment is visible
+    String staffList =
+        target
+            .path("/admin/staff")
+            .request()
+            .header("X-Tenant-Id", tenantId)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    assertThat(staffList, containsString(staffUserId));
+    assertThat(staffList, containsString("CASHIER"));
+
+    // idempotency: posting the same assignment again → 409 (UNIQUE constraint)
+    Response dup =
+        post(
+            "/admin/staff",
+            String.format(
+                "{\"userId\":\"%s\",\"storeId\":\"%s\",\"role\":\"CASHIER\"}",
+                staffUserId, storeId),
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
+    assertThat(dup.getStatus(), is(409));
   }
 
   private static String field(String json, String name) {

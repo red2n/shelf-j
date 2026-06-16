@@ -67,6 +67,12 @@
             <artifactId>postgresql</artifactId>
             <scope>provided</scope>
         </dependency>
+        <!-- Connection pool — compile scope on purpose: flows transitively to every service so the
+             pool is always present (version pinned in the parent). -->
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>

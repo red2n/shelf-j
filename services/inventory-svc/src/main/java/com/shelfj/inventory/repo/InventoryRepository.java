@@ -10,22 +10,29 @@ import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
+import com.shelfj.inventory.domain.Domain.LotUomConversion;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.MoveType;
 import com.shelfj.inventory.domain.Domain.Movement;
+import com.shelfj.inventory.domain.Domain.ParLevelConfig;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
+import com.shelfj.inventory.domain.Domain.PickingRule;
+import com.shelfj.inventory.domain.Domain.PickingRuleAssignment;
+import com.shelfj.inventory.domain.Domain.PickingRuleZonePriority;
+import com.shelfj.inventory.domain.Domain.ReasonCode;
 import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
-import com.shelfj.inventory.domain.Domain.SerialMovement;
-import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
+import com.shelfj.inventory.domain.Domain.TransactionSourceType;
 import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -74,6 +81,42 @@ public class InventoryRepository extends BaseOutboxRepository {
         "receive stock");
   }
 
+  /**
+   * {@link #receive} deduped on {@code dedupeId}: the processed_events mark and the batch creation
+   * commit in ONE transaction, so a redelivered event is skipped and a crashed write is retried —
+   * never applied twice and never lost. Used by event consumers (a new random batch id per attempt
+   * makes plain {@link #receive} non-idempotent under redelivery). Returns false if already
+   * processed.
+   */
+  public boolean receiveOnce(
+      UUID dedupeId,
+      String consumerName,
+      Batch batch,
+      String refType,
+      UUID refId,
+      OutboxRow event) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
+            return false;
+          }
+          insertBatch(c, batch);
+          insertMovement(
+              c,
+              batch.tenantId(),
+              batch.storeId(),
+              batch.variantId(),
+              batch.id(),
+              MoveType.RECEIVE,
+              batch.receivedQty(),
+              refType,
+              refId);
+          insertOutbox(c, event);
+          return true;
+        },
+        "receive stock (deduped)");
+  }
+
   // ---------------------------------------------------------------- adjust
   /**
    * Adjust on-hand by a signed delta against a chosen batch (or create an adjustment batch if
@@ -103,6 +146,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                     Instant.now(),
                     Batch.STATUS_ACTIVE,
                     Batch.MATERIAL_AVAILABLE,
+                    null,
                     null);
             insertBatch(c, b);
           } else {
@@ -115,6 +159,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                 MoveType.ADJUST,
                 "ADJUSTMENT",
                 null);
+            checkThresholdTx(c, tenantId, storeId, variantId);
           }
           insertMovement(
               c, tenantId, storeId, variantId, null, MoveType.ADJUST, delta, "ADJUSTMENT", null);
@@ -162,7 +207,7 @@ public class InventoryRepository extends BaseOutboxRepository {
   /**
    * Consume a HELD reservation: FIFO-deduct from batches, mark CONSUMED, SALE movements + outbox.
    */
-  public void consume(UUID tenantId, UUID reservationId, OutboxRow event) {
+  public void consume(UUID tenantId, UUID reservationId) {
     inTx(
         c -> {
           Reservation r = loadReservationForUpdate(c, tenantId, reservationId);
@@ -170,7 +215,16 @@ public class InventoryRepository extends BaseOutboxRepository {
             throw ApiException.unprocessable(
                 "RESERVATION_NOT_HELD", "Reservation is " + r.status());
           }
-          deductFifo(
+          Optional<PickingRule> rule = resolvePickingRule(tenantId, r.storeId(), r.variantId());
+          List<UUID> zonePriorities =
+              rule.filter(rr -> PickingRule.ZONE_PRIORITY.equals(rr.strategy()))
+                  .map(
+                      rr ->
+                          listZonePriorities(tenantId, rr.id()).stream()
+                              .map(PickingRuleZonePriority::zoneId)
+                              .toList())
+                  .orElse(null);
+          deductBatches(
               c,
               tenantId,
               r.storeId(),
@@ -178,12 +232,70 @@ public class InventoryRepository extends BaseOutboxRepository {
               r.qty(),
               MoveType.SALE,
               "ORDER",
-              r.orderId());
+              r.orderId(),
+              rule.map(PickingRule::strategy).orElse(null),
+              rule.map(PickingRule::gradePreference).orElse(null),
+              zonePriorities);
+          checkThresholdTx(c, tenantId, r.storeId(), r.variantId());
           setReservationStatus(c, reservationId, Reservation.CONSUMED);
-          insertOutbox(c, event);
+          // Event built here (not in service layer) because storeId/variantId/qty are only
+          // known after loading the reservation inside this transaction.
+          insertOutbox(
+              c,
+              new OutboxRow(
+                  "StockDeducted",
+                  "shelfj.inventory.stock-deducted",
+                  tenantId,
+                  reservationId,
+                  com.shelfj.inventory.service.Events.stockDeducted(
+                      tenantId, r.storeId(), r.variantId(), reservationId, r.qty())));
           return null;
         },
         "consume reservation");
+  }
+
+  // ---------------------------------------------------------------- deductSale (Gap #50 POS→SIM)
+  /**
+   * FIFO-deduct for a POS sale driven by an OrderFulfilled event (no prior reservation). Creates
+   * SALE movements, checks thresholds, and publishes the StockDeducted outbox event — all in one
+   * transaction.
+   */
+  public void deductSale(
+      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId, OutboxRow event) {
+    inTx(
+        c -> {
+          deductFifo(c, tenantId, storeId, variantId, qty, MoveType.SALE, "ORDER", orderId);
+          checkThresholdTx(c, tenantId, storeId, variantId);
+          insertOutbox(c, event);
+          return null;
+        },
+        "deduct sale from order");
+  }
+
+  /**
+   * {@link #deductSale} deduped on {@code dedupeId}: mark + FIFO deduction commit in ONE
+   * transaction (see {@link #receiveOnce}). Returns false if already processed.
+   */
+  public boolean deductSaleOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId,
+      OutboxRow event) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
+            return false;
+          }
+          deductFifo(c, tenantId, storeId, variantId, qty, MoveType.SALE, "ORDER", orderId);
+          checkThresholdTx(c, tenantId, storeId, variantId);
+          insertOutbox(c, event);
+          return true;
+        },
+        "deduct sale from order (deduped)");
   }
 
   // ---------------------------------------------------------------- release
@@ -222,6 +334,20 @@ public class InventoryRepository extends BaseOutboxRepository {
         ps -> ps.setInt(1, limit),
         rs -> rs.getObject("id", UUID.class),
         "find expired reservations");
+  }
+
+  public record ReservationRef(UUID id, UUID tenantId) {}
+
+  /** Fetch expired reservations with their tenant in one query — avoids N+1 in the sweeper. */
+  public List<ReservationRef> expiredHeldReservationsWithTenant(int limit) {
+    return query(
+        "SELECT id, tenant_id FROM reservations WHERE status = 'HELD'"
+            + " AND expires_at IS NOT NULL AND expires_at < now() LIMIT ?",
+        ps -> ps.setInt(1, limit),
+        rs ->
+            new ReservationRef(
+                rs.getObject("id", UUID.class), rs.getObject("tenant_id", UUID.class)),
+        "find expired reservations with tenant");
   }
 
   public UUID tenantOfReservation(UUID reservationId) {
@@ -285,7 +411,7 @@ public class InventoryRepository extends BaseOutboxRepository {
         new StringBuilder(
             "SELECT id, tenant_id, store_id, variant_id, batch_no, received_qty,"
                 + " remaining_qty, cost_price, expiry_date, created_at, status,"
-                + " material_status, material_status_reason"
+                + " material_status, material_status_reason, grade"
                 + " FROM inventory_batches WHERE tenant_id = ?");
     if (storeId != null) sb.append(" AND store_id = ?");
     if (variantId != null) sb.append(" AND variant_id = ?");
@@ -321,7 +447,7 @@ public class InventoryRepository extends BaseOutboxRepository {
         query(
             "SELECT id, tenant_id, store_id, variant_id, batch_no, received_qty,"
                 + " remaining_qty, cost_price, expiry_date, created_at, status,"
-                + " material_status, material_status_reason"
+                + " material_status, material_status_reason, grade"
                 + " FROM inventory_batches WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -339,7 +465,7 @@ public class InventoryRepository extends BaseOutboxRepository {
     StringBuilder sb =
         new StringBuilder(
             "SELECT id, tenant_id, store_id, variant_id, batch_id, type, qty, ref_type, ref_id,"
-                + " created_at FROM stock_movements WHERE tenant_id = ?");
+                + " reason_code, created_at FROM stock_movements WHERE tenant_id = ?");
     if (storeId != null) sb.append(" AND store_id = ?");
     if (variantId != null) sb.append(" AND variant_id = ?");
     if (type != null) sb.append(" AND type = ?");
@@ -476,7 +602,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                       + " WHERE tenant_id=? AND id=?"
                       + " RETURNING id, tenant_id, store_id, variant_id, batch_no, received_qty,"
                       + " remaining_qty, cost_price, expiry_date, created_at, status,"
-                      + " material_status, material_status_reason")) {
+                      + " material_status, material_status_reason, grade")) {
             ps.setString(1, materialStatus);
             ps.setString(2, reason);
             ps.setObject(3, tenantId);
@@ -492,22 +618,6 @@ public class InventoryRepository extends BaseOutboxRepository {
           return updated;
         },
         "update material status");
-  }
-
-  // ---------------------------------------------------------------- processed events
-
-  public boolean markProcessedIfNew(UUID eventId, String consumer) {
-    try (var c = dataSource.getConnection();
-        var ps =
-            c.prepareStatement(
-                "INSERT INTO processed_events (event_id, consumer) VALUES (?,?)"
-                    + " ON CONFLICT (event_id) DO NOTHING")) {
-      ps.setObject(1, eventId);
-      ps.setString(2, consumer);
-      return ps.executeUpdate() > 0;
-    } catch (SQLException e) {
-      throw dbError("mark processed event", e);
-    }
   }
 
   // ---------------------------------------------------------------- suggestions
@@ -593,170 +703,6 @@ public class InventoryRepository extends BaseOutboxRepository {
           return Optional.of(updated);
         },
         "resolve suggestion");
-  }
-
-  // ---------------------------------------------------------------- serial numbers
-
-  /** Bulk-insert serial numbers + initial genealogy movement + outbox, atomically. */
-  public List<SerialNumber> registerSerials(List<SerialNumber> serials, OutboxRow event) {
-    return inTx(
-        c -> {
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "INSERT INTO serial_numbers"
-                      + " (id, tenant_id, store_id, variant_id, batch_id, serial_no, status, received_at)"
-                      + " VALUES (?,?,?,?,?,?,?,?)"
-                      + " ON CONFLICT (tenant_id, serial_no) DO NOTHING")) {
-            for (SerialNumber s : serials) {
-              ps.setObject(1, s.id());
-              ps.setObject(2, s.tenantId());
-              ps.setObject(3, s.storeId());
-              ps.setObject(4, s.variantId());
-              ps.setObject(5, s.batchId());
-              ps.setString(6, s.serialNo());
-              ps.setString(7, s.status());
-              ps.setObject(8, s.receivedAt().atOffset(ZoneOffset.UTC));
-              ps.addBatch();
-            }
-            ps.executeBatch();
-          }
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "INSERT INTO serial_movements"
-                      + " (id, tenant_id, serial_id, from_status, to_status, ref_type)"
-                      + " VALUES (?,?,?,NULL,?,?)")) {
-            for (SerialNumber s : serials) {
-              ps.setObject(1, UUID.randomUUID());
-              ps.setObject(2, s.tenantId());
-              ps.setObject(3, s.id());
-              ps.setString(4, SerialNumber.IN_STOCK);
-              ps.setString(5, "RECEIVE");
-              ps.addBatch();
-            }
-            ps.executeBatch();
-          }
-          insertOutbox(c, event);
-          return serials;
-        },
-        "register serials");
-  }
-
-  public List<SerialNumber> listSerials(
-      UUID tenantId, UUID storeId, UUID variantId, String status, int limit) {
-    StringBuilder sb =
-        new StringBuilder(
-            "SELECT id, tenant_id, store_id, variant_id, batch_id, serial_no, status,"
-                + " received_at, sold_at FROM serial_numbers WHERE tenant_id = ?");
-    if (storeId != null) sb.append(" AND store_id = ?");
-    if (variantId != null) sb.append(" AND variant_id = ?");
-    if (status != null) sb.append(" AND status = ?");
-    sb.append(" ORDER BY received_at DESC LIMIT ?");
-    return query(
-        sb.toString(),
-        ps -> {
-          int i = 1;
-          ps.setObject(i++, tenantId);
-          if (storeId != null) ps.setObject(i++, storeId);
-          if (variantId != null) ps.setObject(i++, variantId);
-          if (status != null) ps.setString(i++, status);
-          ps.setInt(i, limit);
-        },
-        InventoryRepository::mapSerial,
-        "list serials");
-  }
-
-  public Optional<SerialNumber> findSerial(UUID tenantId, UUID serialId) {
-    var list =
-        query(
-            "SELECT id, tenant_id, store_id, variant_id, batch_id, serial_no, status,"
-                + " received_at, sold_at FROM serial_numbers WHERE tenant_id = ? AND id = ?",
-            ps -> {
-              ps.setObject(1, tenantId);
-              ps.setObject(2, serialId);
-            },
-            InventoryRepository::mapSerial,
-            "get serial");
-    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
-  }
-
-  public Optional<SerialNumber> findSerialByNo(UUID tenantId, String serialNo) {
-    var list =
-        query(
-            "SELECT id, tenant_id, store_id, variant_id, batch_id, serial_no, status,"
-                + " received_at, sold_at FROM serial_numbers WHERE tenant_id = ? AND serial_no = ?",
-            ps -> {
-              ps.setObject(1, tenantId);
-              ps.setString(2, serialNo);
-            },
-            InventoryRepository::mapSerial,
-            "lookup serial by no");
-    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
-  }
-
-  /** Transition serial to a new status; records genealogy movement + outbox, atomically. */
-  public Optional<SerialNumber> updateSerialStatus(
-      UUID tenantId, UUID serialId, String newStatus, OutboxRow event) {
-    return inTx(
-        c -> {
-          String oldStatus;
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "SELECT status FROM serial_numbers"
-                      + " WHERE tenant_id = ? AND id = ? FOR UPDATE")) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, serialId);
-            try (ResultSet rs = ps.executeQuery()) {
-              if (!rs.next()) return Optional.<SerialNumber>empty();
-              oldStatus = rs.getString("status");
-            }
-          }
-          SerialNumber updated;
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "UPDATE serial_numbers"
-                      + " SET status = ?,"
-                      + " sold_at = CASE WHEN ? = 'SOLD' THEN now() ELSE sold_at END"
-                      + " WHERE tenant_id = ? AND id = ?"
-                      + " RETURNING id, tenant_id, store_id, variant_id, batch_id,"
-                      + " serial_no, status, received_at, sold_at")) {
-            ps.setString(1, newStatus);
-            ps.setString(2, newStatus);
-            ps.setObject(3, tenantId);
-            ps.setObject(4, serialId);
-            try (ResultSet rs = ps.executeQuery()) {
-              if (!rs.next()) return Optional.<SerialNumber>empty();
-              updated = mapSerial(rs);
-            }
-          }
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "INSERT INTO serial_movements"
-                      + " (id, tenant_id, serial_id, from_status, to_status)"
-                      + " VALUES (?,?,?,?,?)")) {
-            ps.setObject(1, UUID.randomUUID());
-            ps.setObject(2, tenantId);
-            ps.setObject(3, serialId);
-            ps.setString(4, oldStatus);
-            ps.setString(5, newStatus);
-            ps.executeUpdate();
-          }
-          insertOutbox(c, event);
-          return Optional.of(updated);
-        },
-        "update serial status");
-  }
-
-  public List<SerialMovement> listSerialHistory(UUID tenantId, UUID serialId) {
-    return query(
-        "SELECT id, tenant_id, serial_id, from_status, to_status, ref_type, ref_id, created_at"
-            + " FROM serial_movements WHERE tenant_id = ? AND serial_id = ?"
-            + " ORDER BY created_at ASC",
-        ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, serialId);
-        },
-        InventoryRepository::mapSerialMovement,
-        "list serial history");
   }
 
   // ---------------------------------------------------------------- demand history
@@ -1047,6 +993,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                       Instant.now(),
                       Batch.STATUS_ACTIVE,
                       Batch.MATERIAL_AVAILABLE,
+                      null,
                       null);
               insertBatch(c, adj);
               insertMovement(
@@ -1084,6 +1031,16 @@ public class InventoryRepository extends BaseOutboxRepository {
             }
           }
           insertOutbox(c, event);
+          // Mark header ADJUSTED in the same transaction so a crash cannot leave stock adjusted
+          // with an open header (which would allow a second adjustment on re-run).
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE cycle_count_headers SET status='ADJUSTED', completed_at=now()"
+                      + " WHERE tenant_id=? AND id=?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, headerId);
+            ps.executeUpdate();
+          }
           return approved.size();
         },
         "apply cycle count adjustments");
@@ -1106,6 +1063,60 @@ public class InventoryRepository extends BaseOutboxRepository {
       }
     } catch (SQLException e) {
       throw dbError("on-hand qty", e);
+    }
+  }
+
+  /**
+   * Bulk on-hand query for a set of variants in one store — avoids N+1 when building cycle count
+   * lines.
+   */
+  public java.util.Map<UUID, BigDecimal> onHandQtyBatch(
+      UUID tenantId, UUID storeId, java.util.Collection<UUID> variantIds) {
+    if (variantIds.isEmpty()) return java.util.Map.of();
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "SELECT variant_id, COALESCE(SUM(remaining_qty),0) AS q"
+                    + " FROM inventory_batches"
+                    + " WHERE tenant_id=? AND store_id=? AND variant_id=ANY(?)"
+                    + " AND material_status='AVAILABLE'"
+                    + " GROUP BY variant_id")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setArray(3, c.createArrayOf("uuid", variantIds.toArray()));
+      try (ResultSet rs = ps.executeQuery()) {
+        java.util.Map<UUID, BigDecimal> result = new java.util.HashMap<>();
+        while (rs.next()) {
+          result.put(rs.getObject("variant_id", UUID.class), rs.getBigDecimal("q"));
+        }
+        return result;
+      }
+    } catch (SQLException e) {
+      throw dbError("on-hand qty batch", e);
+    }
+  }
+
+  /** Bulk fetch of cycle count lines for multiple headers — avoids N+1 in listCycleCounts. */
+  public java.util.Map<UUID, List<CycleCountLine>> listCycleCountLinesByHeaders(
+      java.util.Collection<UUID> headerIds) {
+    if (headerIds.isEmpty()) return java.util.Map.of();
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "SELECT id, tenant_id, header_id, store_id, variant_id, system_qty,"
+                    + " counted_qty, variance, variance_pct, status, counted_at"
+                    + " FROM cycle_count_lines WHERE header_id=ANY(?) ORDER BY variant_id")) {
+      ps.setArray(1, c.createArrayOf("uuid", headerIds.toArray()));
+      try (ResultSet rs = ps.executeQuery()) {
+        java.util.Map<UUID, List<CycleCountLine>> result = new java.util.HashMap<>();
+        while (rs.next()) {
+          CycleCountLine line = mapCycleCountLine(rs);
+          result.computeIfAbsent(line.headerId(), k -> new java.util.ArrayList<>()).add(line);
+        }
+        return result;
+      }
+    } catch (SQLException e) {
+      throw dbError("list cycle count lines by headers", e);
     }
   }
 
@@ -1471,7 +1482,8 @@ public class InventoryRepository extends BaseOutboxRepository {
     String sql =
         "WITH RECURSIVE anc(id, tenant_id, parent_batch_id, child_batch_id, qty,"
             + " relation_type, notes, created_at) AS ("
-            + "  SELECT * FROM lot_genealogy WHERE tenant_id=? AND child_batch_id=?"
+            + "  SELECT id, tenant_id, parent_batch_id, child_batch_id, qty, relation_type, notes, created_at"
+            + "  FROM lot_genealogy WHERE tenant_id=? AND child_batch_id=?"
             + "  UNION ALL"
             + "  SELECT g.* FROM lot_genealogy g JOIN anc ON g.tenant_id=anc.tenant_id"
             + "   AND g.child_batch_id=anc.parent_batch_id"
@@ -1492,7 +1504,8 @@ public class InventoryRepository extends BaseOutboxRepository {
     String sql =
         "WITH RECURSIVE des(id, tenant_id, parent_batch_id, child_batch_id, qty,"
             + " relation_type, notes, created_at) AS ("
-            + "  SELECT * FROM lot_genealogy WHERE tenant_id=? AND parent_batch_id=?"
+            + "  SELECT id, tenant_id, parent_batch_id, child_batch_id, qty, relation_type, notes, created_at"
+            + "  FROM lot_genealogy WHERE tenant_id=? AND parent_batch_id=?"
             + "  UNION ALL"
             + "  SELECT g.* FROM lot_genealogy g JOIN des ON g.tenant_id=des.tenant_id"
             + "   AND g.parent_batch_id=des.child_batch_id"
@@ -1511,7 +1524,8 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   public List<LotGenealogyLink> findDirectLinks(UUID tenantId, UUID batchId) {
     String sql =
-        "SELECT * FROM lot_genealogy"
+        "SELECT id, tenant_id, parent_batch_id, child_batch_id, qty, relation_type, notes, created_at"
+            + " FROM lot_genealogy"
             + " WHERE tenant_id=? AND (parent_batch_id=? OR child_batch_id=?)"
             + " ORDER BY created_at";
     return query(
@@ -1571,8 +1585,8 @@ public class InventoryRepository extends BaseOutboxRepository {
   }
 
   /**
-   * FIFO deduction: walk batches soonest-expiry/oldest-first WITH FOR UPDATE, decrement remaining,
-   * log SALE per batch.
+   * Batch deduction: walk batches in strategy-defined order WITH FOR UPDATE, decrement remaining,
+   * log movement per batch. Strategy defaults to FEFO when null.
    */
   private void deductFifo(
       Connection c,
@@ -1584,6 +1598,23 @@ public class InventoryRepository extends BaseOutboxRepository {
       String refType,
       UUID refId)
       throws SQLException {
+    deductBatches(c, tenantId, storeId, variantId, qty, moveType, refType, refId, null, null, null);
+  }
+
+  void deductBatches(
+      Connection c,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      String moveType,
+      String refType,
+      UUID refId,
+      String strategy,
+      String gradePreference,
+      List<UUID> zonePriorityOrder)
+      throws SQLException {
+    String orderBy = pickOrderClause(strategy, gradePreference, zonePriorityOrder);
     BigDecimal toDeduct = qty;
     List<Object[]> batches = new ArrayList<>();
     try (PreparedStatement ps =
@@ -1591,7 +1622,9 @@ public class InventoryRepository extends BaseOutboxRepository {
             "SELECT id, remaining_qty FROM inventory_batches"
                 + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty > 0"
                 + " AND material_status='AVAILABLE'"
-                + " ORDER BY expiry_date ASC NULLS LAST, created_at ASC FOR UPDATE")) {
+                + " ORDER BY "
+                + orderBy
+                + " FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, storeId);
       ps.setObject(3, variantId);
@@ -1651,8 +1684,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO inventory_batches"
                 + " (id, tenant_id, store_id, variant_id, batch_no, received_qty,"
-                + " remaining_qty, cost_price, expiry_date, created_at, status, material_status)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " remaining_qty, cost_price, expiry_date, created_at, status, material_status, grade)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, b.id());
       ps.setObject(2, b.tenantId());
       ps.setObject(3, b.storeId());
@@ -1665,6 +1698,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setObject(10, b.createdAt().atOffset(ZoneOffset.UTC));
       ps.setString(11, b.status() == null ? Batch.STATUS_ACTIVE : b.status());
       ps.setString(12, b.materialStatus() == null ? Batch.MATERIAL_AVAILABLE : b.materialStatus());
+      ps.setString(13, b.grade());
       ps.executeUpdate();
     }
   }
@@ -1731,7 +1765,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getString("status"),
         rs.getString("material_status"),
-        rs.getString("material_status_reason"));
+        rs.getString("material_status_reason"),
+        rs.getString("grade"));
   }
 
   private static Movement mapMovement(ResultSet rs) throws SQLException {
@@ -1745,6 +1780,7 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getBigDecimal("qty"),
         rs.getString("ref_type"),
         rs.getObject("ref_id", UUID.class),
+        rs.getString("reason_code"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
@@ -1787,32 +1823,6 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getString("status"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         resolvedOdt == null ? null : resolvedOdt.toInstant());
-  }
-
-  private static SerialNumber mapSerial(ResultSet rs) throws SQLException {
-    OffsetDateTime soldOdt = rs.getObject("sold_at", OffsetDateTime.class);
-    return new SerialNumber(
-        rs.getObject("id", UUID.class),
-        rs.getObject("tenant_id", UUID.class),
-        rs.getObject("store_id", UUID.class),
-        rs.getObject("variant_id", UUID.class),
-        rs.getObject("batch_id", UUID.class),
-        rs.getString("serial_no"),
-        rs.getString("status"),
-        rs.getObject("received_at", OffsetDateTime.class).toInstant(),
-        soldOdt == null ? null : soldOdt.toInstant());
-  }
-
-  private static SerialMovement mapSerialMovement(ResultSet rs) throws SQLException {
-    return new SerialMovement(
-        rs.getObject("id", UUID.class),
-        rs.getObject("tenant_id", UUID.class),
-        rs.getObject("serial_id", UUID.class),
-        rs.getString("from_status"),
-        rs.getString("to_status"),
-        rs.getString("ref_type"),
-        rs.getObject("ref_id", UUID.class),
-        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
   // ---------------------------------------------------------------- move orders
@@ -1930,6 +1940,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                     Instant.now(),
                     Batch.STATUS_ACTIVE,
                     Batch.MATERIAL_AVAILABLE,
+                    null,
                     null);
             insertBatch(c, dest);
             insertMovement(
@@ -2176,6 +2187,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                       Instant.now(),
                       Batch.STATUS_ACTIVE,
                       Batch.MATERIAL_AVAILABLE,
+                      null,
                       null);
               insertBatch(c, dest);
               insertMovement(
@@ -2264,6 +2276,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                     Instant.now(),
                     Batch.STATUS_ACTIVE,
                     Batch.MATERIAL_AVAILABLE,
+                    null,
                     null);
             insertBatch(c, dest);
             insertMovement(
@@ -2436,7 +2449,8 @@ public class InventoryRepository extends BaseOutboxRepository {
   public Optional<PhysicalInventory> findPhysicalInventory(UUID tenantId, UUID id) {
     var rows =
         query(
-            "SELECT * FROM physical_inventories WHERE tenant_id=? AND id=?",
+            "SELECT id, tenant_id, store_id, status, notes, started_at, completed_at"
+                + " FROM physical_inventories WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
@@ -2448,7 +2462,8 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   public List<PhysicalInventory> listPhysicalInventories(UUID tenantId, UUID storeId) {
     return query(
-        "SELECT * FROM physical_inventories WHERE tenant_id=?"
+        "SELECT id, tenant_id, store_id, status, notes, started_at, completed_at"
+            + " FROM physical_inventories WHERE tenant_id=?"
             + (storeId != null ? " AND store_id=?" : "")
             + " ORDER BY started_at DESC",
         ps -> {
@@ -2461,7 +2476,9 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   public List<PhysicalInventoryTag> listTags(UUID tenantId, UUID physicalInventoryId) {
     return query(
-        "SELECT * FROM physical_inventory_tags WHERE tenant_id=? AND physical_inventory_id=?",
+        "SELECT id, tenant_id, physical_inventory_id, variant_id, zone_id, system_qty,"
+            + " counted_qty, adjustment_qty, status, counted_at"
+            + " FROM physical_inventory_tags WHERE tenant_id=? AND physical_inventory_id=?",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, physicalInventoryId);
@@ -2520,7 +2537,9 @@ public class InventoryRepository extends BaseOutboxRepository {
         c -> {
           // Create stock_movement for each COUNTED tag where adjustment != 0
           String tagSql =
-              "SELECT * FROM physical_inventory_tags"
+              "SELECT id, tenant_id, physical_inventory_id, variant_id, zone_id, system_qty,"
+                  + " counted_qty, adjustment_qty, status, counted_at"
+                  + " FROM physical_inventory_tags"
                   + " WHERE tenant_id=? AND physical_inventory_id=?"
                   + " AND status='COUNTED' AND counted_qty IS NOT NULL"
                   + " AND counted_qty <> system_qty";
@@ -2629,7 +2648,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                   + "  unit_cost=EXCLUDED.unit_cost"
                   + " RETURNING id, tenant_id, store_id, variant_id, lead_time_days,"
                   + "  ordering_cost, holding_cost_pct, unit_cost,"
-                  + "  avg_daily_demand, rop, eoq, computed_at, created_at";
+                  + "  avg_daily_demand, rop, eoq, min_order_qty, max_order_qty,"
+                  + "  lot_multiplier, computed_at, created_at";
           try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, plan.tenantId());
             ps.setObject(2, plan.storeId());
@@ -2696,7 +2716,8 @@ public class InventoryRepository extends BaseOutboxRepository {
   public Optional<ReorderPointPlan> findRopPlan(UUID tenantId, UUID storeId, UUID variantId) {
     return query(
             "SELECT id, tenant_id, store_id, variant_id, lead_time_days, ordering_cost,"
-                + " holding_cost_pct, unit_cost, avg_daily_demand, rop, eoq, computed_at, created_at"
+                + " holding_cost_pct, unit_cost, avg_daily_demand, rop, eoq, min_order_qty,"
+                + " max_order_qty, lot_multiplier, computed_at, created_at"
                 + " FROM reorder_point_plans WHERE tenant_id=? AND store_id=? AND variant_id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -2712,7 +2733,8 @@ public class InventoryRepository extends BaseOutboxRepository {
   public List<ReorderPointPlan> listRopPlans(UUID tenantId, UUID storeId) {
     return query(
         "SELECT id, tenant_id, store_id, variant_id, lead_time_days, ordering_cost,"
-            + " holding_cost_pct, unit_cost, avg_daily_demand, rop, eoq, computed_at, created_at"
+            + " holding_cost_pct, unit_cost, avg_daily_demand, rop, eoq, min_order_qty,"
+            + " max_order_qty, lot_multiplier, computed_at, created_at"
             + " FROM reorder_point_plans WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
         ps -> {
           ps.setObject(1, tenantId);
@@ -2736,6 +2758,9 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getBigDecimal("avg_daily_demand"),
         rs.getBigDecimal("rop"),
         rs.getBigDecimal("eoq"),
+        rs.getBigDecimal("min_order_qty"),
+        rs.getBigDecimal("max_order_qty"),
+        rs.getBigDecimal("lot_multiplier"),
         computedAt == null ? null : computedAt.toInstant(),
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
@@ -2750,8 +2775,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                   + " status, reorder_qty, source_store_id, supplier_ref, notes)"
                   + " VALUES (?,?,?,?,?,?,?,?,?,?)"
                   + " RETURNING id, tenant_id, store_id, variant_id, kanban_type, status,"
-                  + "   reorder_qty, source_store_id, supplier_ref, notes,"
-                  + "   created_at, triggered_at, replenished_at";
+                  + "   reorder_qty, source_store_id, supplier_ref, notes, min_order_qty, max_order_qty,"
+                  + "   lot_multiplier, created_at, triggered_at, replenished_at";
           try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, card.id());
             ps.setObject(2, card.tenantId());
@@ -2784,8 +2809,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                   + " notes=COALESCE(?,notes)"
                   + " WHERE tenant_id=? AND id=? AND status='EMPTY'"
                   + " RETURNING id, tenant_id, store_id, variant_id, kanban_type, status,"
-                  + "   reorder_qty, source_store_id, supplier_ref, notes,"
-                  + "   created_at, triggered_at, replenished_at";
+                  + "   reorder_qty, source_store_id, supplier_ref, notes, min_order_qty, max_order_qty,"
+                  + "   lot_multiplier, created_at, triggered_at, replenished_at";
           try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, notes);
             ps.setObject(2, tenantId);
@@ -2810,8 +2835,8 @@ public class InventoryRepository extends BaseOutboxRepository {
               "UPDATE kanban_cards SET status='REPLENISHED', replenished_at=now()"
                   + " WHERE tenant_id=? AND id=? AND status IN ('TRIGGERED','IN_PROGRESS')"
                   + " RETURNING id, tenant_id, store_id, variant_id, kanban_type, status,"
-                  + "   reorder_qty, source_store_id, supplier_ref, notes,"
-                  + "   created_at, triggered_at, replenished_at";
+                  + "   reorder_qty, source_store_id, supplier_ref, notes, min_order_qty, max_order_qty,"
+                  + "   lot_multiplier, created_at, triggered_at, replenished_at";
           try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, tenantId);
             ps.setObject(2, cardId);
@@ -2831,7 +2856,8 @@ public class InventoryRepository extends BaseOutboxRepository {
   public Optional<KanbanCard> findKanbanCard(UUID tenantId, UUID cardId) {
     return query(
             "SELECT id, tenant_id, store_id, variant_id, kanban_type, status, reorder_qty,"
-                + " source_store_id, supplier_ref, notes, created_at, triggered_at, replenished_at"
+                + " source_store_id, supplier_ref, notes, min_order_qty, max_order_qty,"
+                + " lot_multiplier, created_at, triggered_at, replenished_at"
                 + " FROM kanban_cards WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -2847,7 +2873,8 @@ public class InventoryRepository extends BaseOutboxRepository {
     if (status != null && !status.isBlank()) {
       return query(
           "SELECT id, tenant_id, store_id, variant_id, kanban_type, status, reorder_qty,"
-              + " source_store_id, supplier_ref, notes, created_at, triggered_at, replenished_at"
+              + " source_store_id, supplier_ref, notes, min_order_qty, max_order_qty,"
+              + " lot_multiplier, created_at, triggered_at, replenished_at"
               + " FROM kanban_cards WHERE tenant_id=? AND store_id=? AND status=?"
               + " ORDER BY created_at DESC",
           ps -> {
@@ -2860,7 +2887,8 @@ public class InventoryRepository extends BaseOutboxRepository {
     }
     return query(
         "SELECT id, tenant_id, store_id, variant_id, kanban_type, status, reorder_qty,"
-            + " source_store_id, supplier_ref, notes, created_at, triggered_at, replenished_at"
+            + " source_store_id, supplier_ref, notes, min_order_qty, max_order_qty,"
+            + " lot_multiplier, created_at, triggered_at, replenished_at"
             + " FROM kanban_cards WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
         ps -> {
           ps.setObject(1, tenantId);
@@ -2886,6 +2914,9 @@ public class InventoryRepository extends BaseOutboxRepository {
         sourceStoreId,
         rs.getString("supplier_ref"),
         rs.getString("notes"),
+        rs.getBigDecimal("min_order_qty"),
+        rs.getBigDecimal("max_order_qty"),
+        rs.getBigDecimal("lot_multiplier"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         triggeredAt == null ? null : triggeredAt.toInstant(),
         replenishedAt == null ? null : replenishedAt.toInstant());
@@ -3054,5 +3085,844 @@ public class InventoryRepository extends BaseOutboxRepository {
         rs.getString("status"),
         rs.getObject("opened_at", OffsetDateTime.class).toInstant(),
         closedAt == null ? null : closedAt.toInstant());
+  }
+
+  // ── Tier-1 Gap #21: Transaction reason codes ─────────────────────────────
+
+  public ReasonCode insertReasonCode(UUID tenantId, String code, String description) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO transaction_reason_codes (tenant_id,code,description)"
+                      + " VALUES (?,?,?)"
+                      + " RETURNING id,tenant_id,code,description,active,created_at")) {
+            ps.setObject(1, tenantId);
+            ps.setString(2, code);
+            ps.setString(3, description);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return mapReasonCode(rs);
+            }
+          }
+        },
+        "insert reason code");
+  }
+
+  public List<ReasonCode> listReasonCodes(UUID tenantId) {
+    return query(
+        "SELECT id,tenant_id,code,description,active,created_at"
+            + " FROM transaction_reason_codes"
+            + " WHERE tenant_id=? OR tenant_id='00000000-0000-0000-0000-000000000000'"
+            + " ORDER BY code",
+        ps -> ps.setObject(1, tenantId),
+        InventoryRepository::mapReasonCode,
+        "list reason codes");
+  }
+
+  public ReasonCode setReasonCodeActive(UUID tenantId, UUID id, boolean active) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE transaction_reason_codes SET active=? WHERE tenant_id=? AND id=?"
+                      + " RETURNING id,tenant_id,code,description,active,created_at")) {
+            ps.setBoolean(1, active);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, id);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next())
+                throw ApiException.notFound("REASON_CODE_NOT_FOUND", "No such reason code");
+              return mapReasonCode(rs);
+            }
+          }
+        },
+        "toggle reason code");
+  }
+
+  private static ReasonCode mapReasonCode(ResultSet rs) throws SQLException {
+    return new ReasonCode(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getString("code"),
+        rs.getString("description"),
+        rs.getBoolean("active"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Tier-1 Gap #22: Transaction source types ──────────────────────────────
+
+  public TransactionSourceType insertSourceType(UUID tenantId, String code, String description) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO transaction_source_types (tenant_id,code,description)"
+                      + " VALUES (?,?,?)"
+                      + " RETURNING id,tenant_id,code,description,active,created_at")) {
+            ps.setObject(1, tenantId);
+            ps.setString(2, code);
+            ps.setString(3, description);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return mapSourceType(rs);
+            }
+          }
+        },
+        "insert source type");
+  }
+
+  public List<TransactionSourceType> listSourceTypes(UUID tenantId) {
+    return query(
+        "SELECT id,tenant_id,code,description,active,created_at"
+            + " FROM transaction_source_types"
+            + " WHERE tenant_id=? OR tenant_id='00000000-0000-0000-0000-000000000000'"
+            + " ORDER BY code",
+        ps -> ps.setObject(1, tenantId),
+        InventoryRepository::mapSourceType,
+        "list source types");
+  }
+
+  public TransactionSourceType setSourceTypeActive(UUID tenantId, UUID id, boolean active) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE transaction_source_types SET active=? WHERE tenant_id=? AND id=?"
+                      + " RETURNING id,tenant_id,code,description,active,created_at")) {
+            ps.setBoolean(1, active);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, id);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next())
+                throw ApiException.notFound("SOURCE_TYPE_NOT_FOUND", "No such source type");
+              return mapSourceType(rs);
+            }
+          }
+        },
+        "toggle source type");
+  }
+
+  private static TransactionSourceType mapSourceType(ResultSet rs) throws SQLException {
+    return new TransactionSourceType(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getString("code"),
+        rs.getString("description"),
+        rs.getBoolean("active"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Tier-1 Gap #23: Lot actions (split / merge) ───────────────────────────
+
+  public LotAction insertLotAction(
+      UUID tenantId,
+      String actionType,
+      UUID sourceBatchId,
+      UUID resultBatchId,
+      java.math.BigDecimal qty,
+      String notes) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO lot_actions"
+                      + " (tenant_id,action_type,source_batch_id,result_batch_id,qty,notes)"
+                      + " VALUES (?,?,?,?,?,?)"
+                      + " RETURNING id,tenant_id,action_type,source_batch_id,"
+                      + "result_batch_id,qty,notes,created_at")) {
+            ps.setObject(1, tenantId);
+            ps.setString(2, actionType);
+            ps.setObject(3, sourceBatchId);
+            ps.setObject(4, resultBatchId);
+            ps.setBigDecimal(5, qty);
+            ps.setString(6, notes);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return mapLotAction(rs);
+            }
+          }
+        },
+        "insert lot action");
+  }
+
+  public List<LotAction> listLotActions(UUID tenantId, UUID batchId) {
+    return query(
+        "SELECT id,tenant_id,action_type,source_batch_id,result_batch_id,qty,notes,created_at"
+            + " FROM lot_actions WHERE tenant_id=?"
+            + " AND (source_batch_id=? OR result_batch_id=?)"
+            + " ORDER BY created_at DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, batchId);
+          ps.setObject(3, batchId);
+        },
+        InventoryRepository::mapLotAction,
+        "list lot actions");
+  }
+
+  private static LotAction mapLotAction(ResultSet rs) throws SQLException {
+    return new LotAction(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getString("action_type"),
+        rs.getObject("source_batch_id", UUID.class),
+        rs.getObject("result_batch_id", UUID.class),
+        rs.getBigDecimal("qty"),
+        rs.getString("notes"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Tier-1 Gap #24: Expiry alert query ────────────────────────────────────
+
+  public List<Batch> listExpiringBatches(UUID tenantId, UUID storeId, int withinDays) {
+    return query(
+        "SELECT id,tenant_id,store_id,variant_id,batch_no,received_qty,remaining_qty,"
+            + "cost_price,expiry_date,created_at,status,material_status,material_status_reason,grade"
+            + " FROM inventory_batches"
+            + " WHERE tenant_id=? AND store_id=? AND status='ACTIVE'"
+            + " AND expiry_date IS NOT NULL"
+            + " AND expiry_date <= CURRENT_DATE + make_interval(days => ?)"
+            + " ORDER BY expiry_date ASC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setInt(3, withinDays);
+        },
+        InventoryRepository::mapBatch,
+        "list expiring batches");
+  }
+
+  // ── Tier-1 Gap #25: Grade update on batch ────────────────────────────────
+
+  public Batch updateBatchGrade(UUID tenantId, UUID batchId, String grade) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE inventory_batches SET grade=? WHERE tenant_id=? AND id=?"
+                      + " RETURNING id,tenant_id,store_id,variant_id,batch_no,received_qty,"
+                      + "remaining_qty,cost_price,expiry_date,created_at,status,"
+                      + "material_status,material_status_reason,grade")) {
+            ps.setString(1, grade);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, batchId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next()) throw ApiException.notFound("BATCH_NOT_FOUND", "No such batch");
+              return mapBatch(rs);
+            }
+          }
+        },
+        "update batch grade");
+  }
+
+  // ── Tier-1 Gap #26: Lot UOM conversions ──────────────────────────────────
+
+  public LotUomConversion upsertLotUomConversion(
+      UUID tenantId,
+      UUID batchId,
+      String fromUom,
+      String toUom,
+      java.math.BigDecimal factor,
+      String notes) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO lot_uom_conversions"
+                      + " (tenant_id,batch_id,from_uom,to_uom,factor,notes)"
+                      + " VALUES (?,?,?,?,?,?)"
+                      + " ON CONFLICT (tenant_id,batch_id,from_uom,to_uom)"
+                      + " DO UPDATE SET factor=EXCLUDED.factor, notes=EXCLUDED.notes"
+                      + " RETURNING id,tenant_id,batch_id,from_uom,to_uom,factor,notes,created_at")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, batchId);
+            ps.setString(3, fromUom);
+            ps.setString(4, toUom);
+            ps.setBigDecimal(5, factor);
+            ps.setString(6, notes);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return mapLotUomConversion(rs);
+            }
+          }
+        },
+        "upsert lot uom conversion");
+  }
+
+  public List<LotUomConversion> listLotUomConversions(UUID tenantId, UUID batchId) {
+    return query(
+        "SELECT id,tenant_id,batch_id,from_uom,to_uom,factor,notes,created_at"
+            + " FROM lot_uom_conversions WHERE tenant_id=? AND batch_id=?"
+            + " ORDER BY from_uom,to_uom",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, batchId);
+        },
+        InventoryRepository::mapLotUomConversion,
+        "list lot uom conversions");
+  }
+
+  private static LotUomConversion mapLotUomConversion(ResultSet rs) throws SQLException {
+    return new LotUomConversion(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("batch_id", UUID.class),
+        rs.getString("from_uom"),
+        rs.getString("to_uom"),
+        rs.getBigDecimal("factor"),
+        rs.getString("notes"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Tier-1 Gap #27: PAR level configs ────────────────────────────────────
+
+  public ParLevelConfig upsertParLevel(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      java.math.BigDecimal parQty,
+      String uom,
+      String reviewCycle) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO par_level_configs"
+                      + " (tenant_id,store_id,variant_id,par_qty,uom,review_cycle)"
+                      + " VALUES (?,?,?,?,?,?)"
+                      + " ON CONFLICT (tenant_id,store_id,variant_id)"
+                      + " DO UPDATE SET par_qty=EXCLUDED.par_qty, uom=EXCLUDED.uom,"
+                      + " review_cycle=EXCLUDED.review_cycle, updated_at=now()"
+                      + " RETURNING id,tenant_id,store_id,variant_id,par_qty,uom,"
+                      + "review_cycle,created_at,updated_at")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, storeId);
+            ps.setObject(3, variantId);
+            ps.setBigDecimal(4, parQty);
+            ps.setString(5, uom);
+            ps.setString(6, reviewCycle == null ? ParLevelConfig.DAILY : reviewCycle);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return mapParLevel(rs);
+            }
+          }
+        },
+        "upsert par level");
+  }
+
+  public List<ParLevelConfig> listParLevels(UUID tenantId, UUID storeId) {
+    return query(
+        "SELECT id,tenant_id,store_id,variant_id,par_qty,uom,review_cycle,created_at,updated_at"
+            + " FROM par_level_configs WHERE tenant_id=? AND store_id=? ORDER BY variant_id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+        },
+        InventoryRepository::mapParLevel,
+        "list par levels");
+  }
+
+  public Optional<ParLevelConfig> findParLevel(UUID tenantId, UUID storeId, UUID variantId) {
+    return query(
+            "SELECT id,tenant_id,store_id,variant_id,par_qty,uom,review_cycle,created_at,updated_at"
+                + " FROM par_level_configs WHERE tenant_id=? AND store_id=? AND variant_id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, storeId);
+              ps.setObject(3, variantId);
+            },
+            InventoryRepository::mapParLevel,
+            "find par level")
+        .stream()
+        .findFirst();
+  }
+
+  private static ParLevelConfig mapParLevel(ResultSet rs) throws SQLException {
+    return new ParLevelConfig(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getBigDecimal("par_qty"),
+        rs.getString("uom"),
+        rs.getString("review_cycle"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Tier-1 Gap #28: Order modifier updates ───────────────────────────────
+
+  public ReorderPointPlan updateRopOrderModifiers(
+      UUID tenantId,
+      UUID id,
+      java.math.BigDecimal minOrderQty,
+      java.math.BigDecimal maxOrderQty,
+      java.math.BigDecimal lotMultiplier) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE reorder_point_plans SET min_order_qty=?,max_order_qty=?,lot_multiplier=?"
+                      + " WHERE tenant_id=? AND id=?"
+                      + " RETURNING id,tenant_id,store_id,variant_id,lead_time_days,ordering_cost,"
+                      + "holding_cost_pct,unit_cost,avg_daily_demand,rop,eoq,"
+                      + "min_order_qty,max_order_qty,lot_multiplier,computed_at,created_at")) {
+            ps.setBigDecimal(1, minOrderQty);
+            ps.setBigDecimal(2, maxOrderQty);
+            ps.setBigDecimal(3, lotMultiplier);
+            ps.setObject(4, tenantId);
+            ps.setObject(5, id);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next()) throw ApiException.notFound("ROP_PLAN_NOT_FOUND", "No such ROP plan");
+              return mapRopPlan(rs);
+            }
+          }
+        },
+        "update rop order modifiers");
+  }
+
+  public KanbanCard updateKanbanOrderModifiers(
+      UUID tenantId,
+      UUID id,
+      java.math.BigDecimal minOrderQty,
+      java.math.BigDecimal maxOrderQty,
+      java.math.BigDecimal lotMultiplier) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE kanban_cards SET min_order_qty=?,max_order_qty=?,lot_multiplier=?"
+                      + " WHERE tenant_id=? AND id=?"
+                      + " RETURNING id,tenant_id,store_id,variant_id,kanban_type,status,reorder_qty,"
+                      + "source_store_id,supplier_ref,notes,min_order_qty,max_order_qty,lot_multiplier,"
+                      + "created_at,triggered_at,replenished_at")) {
+            ps.setBigDecimal(1, minOrderQty);
+            ps.setBigDecimal(2, maxOrderQty);
+            ps.setBigDecimal(3, lotMultiplier);
+            ps.setObject(4, tenantId);
+            ps.setObject(5, id);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next())
+                throw ApiException.notFound("KANBAN_NOT_FOUND", "No such kanban card");
+              return mapKanbanCard(rs);
+            }
+          }
+        },
+        "update kanban order modifiers");
+  }
+
+  // ── Tier-1 Gap #30: Purge transaction history ────────────────────────────
+
+  public int purgeMovementsBefore(UUID tenantId, java.time.Instant before) {
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "DELETE FROM stock_movements WHERE tenant_id=? AND created_at < ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, OffsetDateTime.ofInstant(before, java.time.ZoneOffset.UTC));
+      return ps.executeUpdate();
+    } catch (SQLException e) {
+      throw dbError("purge movements", e);
+    }
+  }
+
+  // ── Tier-1 Gap #31: Zone GL mappings ─────────────────────────────────────
+
+  public ZoneGlMapping upsertZoneGlMapping(
+      UUID tenantId, UUID storeId, UUID zoneId, String nominalCode, String description) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO zone_gl_mappings"
+                      + " (tenant_id,store_id,zone_id,nominal_code,description)"
+                      + " VALUES (?,?,?,?,?)"
+                      + " ON CONFLICT (tenant_id,store_id,zone_id)"
+                      + " DO UPDATE SET nominal_code=EXCLUDED.nominal_code,"
+                      + " description=EXCLUDED.description, updated_at=now()"
+                      + " RETURNING id,tenant_id,store_id,zone_id,nominal_code,"
+                      + "description,created_at,updated_at")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, storeId);
+            ps.setObject(3, zoneId);
+            ps.setString(4, nominalCode);
+            ps.setString(5, description);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return mapZoneGlMapping(rs);
+            }
+          }
+        },
+        "upsert zone gl mapping");
+  }
+
+  public List<ZoneGlMapping> listZoneGlMappings(UUID tenantId, UUID storeId) {
+    return query(
+        "SELECT id,tenant_id,store_id,zone_id,nominal_code,description,created_at,updated_at"
+            + " FROM zone_gl_mappings WHERE tenant_id=? AND store_id=?"
+            + " ORDER BY zone_id NULLS FIRST",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+        },
+        InventoryRepository::mapZoneGlMapping,
+        "list zone gl mappings");
+  }
+
+  // ─────────────────────────────────────────────────── picking rules (Gap #38)
+
+  public PickingRule createPickingRule(
+      UUID tenantId, String name, String strategy, String gradePreference) {
+    Instant now = Instant.now();
+    UUID id = UUID.randomUUID();
+    exec(
+        "INSERT INTO picking_rules (id,tenant_id,name,strategy,grade_preference,status,created_at,updated_at)"
+            + " VALUES (?,?,?,?,?,?,?,?)",
+        ps -> {
+          ps.setObject(1, id);
+          ps.setObject(2, tenantId);
+          ps.setString(3, name);
+          ps.setString(4, strategy);
+          ps.setString(5, gradePreference);
+          ps.setString(6, PickingRule.ACTIVE);
+          ps.setObject(7, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(8, now.atOffset(ZoneOffset.UTC));
+        },
+        "create picking rule");
+    return findPickingRule(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
+  }
+
+  public Optional<PickingRule> findPickingRule(UUID tenantId, UUID id) {
+    return query(
+            "SELECT id,tenant_id,name,strategy,grade_preference,status,created_at,updated_at"
+                + " FROM picking_rules WHERE tenant_id=? AND id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            InventoryRepository::mapPickingRule,
+            "find picking rule")
+        .stream()
+        .findFirst();
+  }
+
+  public List<PickingRule> listPickingRules(UUID tenantId) {
+    return query(
+        "SELECT id,tenant_id,name,strategy,grade_preference,status,created_at,updated_at"
+            + " FROM picking_rules WHERE tenant_id=? AND status='ACTIVE' ORDER BY name",
+        ps -> ps.setObject(1, tenantId),
+        InventoryRepository::mapPickingRule,
+        "list picking rules");
+  }
+
+  public PickingRule deactivatePickingRule(UUID tenantId, UUID id) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE picking_rules SET status='INACTIVE', updated_at=? WHERE tenant_id=? AND id=?",
+        ps -> {
+          ps.setObject(1, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(2, tenantId);
+          ps.setObject(3, id);
+        },
+        "deactivate picking rule");
+    return findPickingRule(tenantId, id)
+        .orElseThrow(
+            () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
+  }
+
+  public void replaceZonePriorities(
+      UUID tenantId, UUID ruleId, List<PickingRuleZonePriority> items) {
+    exec(
+        "DELETE FROM picking_rule_zone_priorities WHERE tenant_id=? AND rule_id=?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, ruleId);
+        },
+        "delete zone priorities");
+    for (PickingRuleZonePriority p : items) {
+      exec(
+          "INSERT INTO picking_rule_zone_priorities (id,tenant_id,rule_id,zone_id,priority)"
+              + " VALUES (?,?,?,?,?)",
+          ps -> {
+            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, ruleId);
+            ps.setObject(4, p.zoneId());
+            ps.setInt(5, p.priority());
+          },
+          "insert zone priority");
+    }
+  }
+
+  public List<PickingRuleZonePriority> listZonePriorities(UUID tenantId, UUID ruleId) {
+    return query(
+        "SELECT id,tenant_id,rule_id,zone_id,priority FROM picking_rule_zone_priorities"
+            + " WHERE tenant_id=? AND rule_id=? ORDER BY priority ASC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, ruleId);
+        },
+        InventoryRepository::mapZonePriority,
+        "list zone priorities");
+  }
+
+  public PickingRuleAssignment createPickingRuleAssignment(
+      UUID tenantId, UUID ruleId, String scopeType, UUID scopeId) {
+    Instant now = Instant.now();
+    UUID id = UUID.randomUUID();
+    exec(
+        "INSERT INTO picking_rule_assignments (id,tenant_id,rule_id,scope_type,scope_id,created_at)"
+            + " VALUES (?,?,?,?,?,?)"
+            + " ON CONFLICT (tenant_id,scope_type,scope_id) DO UPDATE"
+            + " SET rule_id=EXCLUDED.rule_id",
+        ps -> {
+          ps.setObject(1, id);
+          ps.setObject(2, tenantId);
+          ps.setObject(3, ruleId);
+          ps.setString(4, scopeType);
+          if (scopeId != null) ps.setObject(5, scopeId);
+          else ps.setNull(5, java.sql.Types.OTHER);
+          ps.setObject(6, now.atOffset(ZoneOffset.UTC));
+        },
+        "create picking rule assignment");
+    return findPickingRuleAssignment(tenantId, scopeType, scopeId)
+        .orElseThrow(
+            () ->
+                ApiException.notFound("ASSIGNMENT_NOT_FOUND", "Picking rule assignment not found"));
+  }
+
+  public Optional<PickingRuleAssignment> findPickingRuleAssignment(
+      UUID tenantId, String scopeType, UUID scopeId) {
+    return query(
+            "SELECT id,tenant_id,rule_id,scope_type,scope_id,created_at"
+                + " FROM picking_rule_assignments WHERE tenant_id=? AND scope_type=?"
+                + " AND (scope_id=? OR (scope_id IS NULL AND ?::uuid IS NULL))",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, scopeType);
+              if (scopeId != null) ps.setObject(3, scopeId);
+              else ps.setNull(3, java.sql.Types.OTHER);
+              if (scopeId != null) ps.setObject(4, scopeId);
+              else ps.setNull(4, java.sql.Types.OTHER);
+            },
+            InventoryRepository::mapPickingRuleAssignment,
+            "find picking rule assignment")
+        .stream()
+        .findFirst();
+  }
+
+  public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId) {
+    return query(
+        "SELECT id,tenant_id,rule_id,scope_type,scope_id,created_at"
+            + " FROM picking_rule_assignments WHERE tenant_id=? ORDER BY scope_type, scope_id",
+        ps -> ps.setObject(1, tenantId),
+        InventoryRepository::mapPickingRuleAssignment,
+        "list picking rule assignments");
+  }
+
+  public boolean deletePickingRuleAssignment(UUID tenantId, UUID id) {
+    Instant[] found = {null};
+    query(
+        "DELETE FROM picking_rule_assignments WHERE tenant_id=? AND id=? RETURNING id",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, id);
+        },
+        rs -> {
+          found[0] = Instant.now();
+          return found[0];
+        },
+        "delete picking rule assignment");
+    return found[0] != null;
+  }
+
+  /** Resolve the most-specific applicable picking rule for a (tenant, store, variant) triple. */
+  public Optional<PickingRule> resolvePickingRule(UUID tenantId, UUID storeId, UUID variantId) {
+    return query(
+            "SELECT pr.id,pr.tenant_id,pr.name,pr.strategy,pr.grade_preference,pr.status,"
+                + "pr.created_at,pr.updated_at"
+                + " FROM picking_rule_assignments pra"
+                + " JOIN picking_rules pr ON pr.id=pra.rule_id AND pr.status='ACTIVE'"
+                + " WHERE pra.tenant_id=?"
+                + " AND ((pra.scope_type='PRODUCT' AND pra.scope_id=?)"
+                + "   OR (pra.scope_type='STORE' AND pra.scope_id=?)"
+                + "   OR (pra.scope_type='GLOBAL'))"
+                + " ORDER BY CASE pra.scope_type WHEN 'PRODUCT' THEN 1"
+                + "           WHEN 'STORE' THEN 2 ELSE 3 END LIMIT 1",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, variantId);
+              ps.setObject(3, storeId);
+            },
+            InventoryRepository::mapPickingRule,
+            "resolve picking rule")
+        .stream()
+        .findFirst();
+  }
+
+  /**
+   * Preview pick order for a (tenant, store, variant) — returns available batches in rule order.
+   */
+  public List<Batch> previewPickOrder(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      String strategy,
+      String gradePreference,
+      List<UUID> zonePriorityOrder) {
+    String orderBy = pickOrderClause(strategy, gradePreference, zonePriorityOrder);
+    return query(
+        "SELECT id,tenant_id,store_id,variant_id,batch_no,received_qty,remaining_qty,"
+            + "cost_price,expiry_date,created_at,status,material_status,material_status_reason,grade"
+            + " FROM inventory_batches"
+            + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND remaining_qty>0"
+            + " AND material_status='AVAILABLE'"
+            + " ORDER BY "
+            + orderBy,
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setObject(3, variantId);
+        },
+        InventoryRepository::mapBatch,
+        "preview pick order");
+  }
+
+  /** Returns the ORDER BY clause for the given picking strategy. */
+  private static String pickOrderClause(
+      String strategy, String gradePreference, List<UUID> zonePriorityOrder) {
+    String effectiveStrategy = strategy == null ? PickingRule.FEFO : strategy;
+    return switch (effectiveStrategy) {
+      case PickingRule.FIFO -> "created_at ASC";
+      case PickingRule.LIFO -> "created_at DESC";
+      case PickingRule.FEFO_GRADE ->
+          gradePreference != null
+              ? "CASE WHEN grade='"
+                  + gradePreference.replace("'", "''")
+                  + "' THEN 0 ELSE 1 END ASC,"
+                  + " expiry_date ASC NULLS LAST, created_at ASC"
+              : "expiry_date ASC NULLS LAST, created_at ASC";
+      case PickingRule.ZONE_PRIORITY ->
+          zonePriorityOrder != null && !zonePriorityOrder.isEmpty()
+              ? buildZoneCaseClause(zonePriorityOrder)
+                  + ", expiry_date ASC NULLS LAST, created_at ASC"
+              : "expiry_date ASC NULLS LAST, created_at ASC";
+      default -> "expiry_date ASC NULLS LAST, created_at ASC"; // FEFO
+    };
+  }
+
+  private static String buildZoneCaseClause(List<UUID> zoneOrder) {
+    StringBuilder sb = new StringBuilder("CASE zone_id");
+    for (int i = 0; i < zoneOrder.size(); i++) {
+      sb.append(" WHEN '").append(zoneOrder.get(i)).append("' THEN ").append(i);
+    }
+    sb.append(" ELSE ").append(zoneOrder.size()).append(" END ASC");
+    return sb.toString();
+  }
+
+  private static PickingRule mapPickingRule(ResultSet rs) throws SQLException {
+    return new PickingRule(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getString("name"),
+        rs.getString("strategy"),
+        rs.getString("grade_preference"),
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static PickingRuleZonePriority mapZonePriority(ResultSet rs) throws SQLException {
+    return new PickingRuleZonePriority(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("rule_id", UUID.class),
+        rs.getObject("zone_id", UUID.class),
+        rs.getInt("priority"));
+  }
+
+  private static PickingRuleAssignment mapPickingRuleAssignment(ResultSet rs) throws SQLException {
+    return new PickingRuleAssignment(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("rule_id", UUID.class),
+        rs.getString("scope_type"),
+        rs.getObject("scope_id", UUID.class),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static ZoneGlMapping mapZoneGlMapping(ResultSet rs) throws SQLException {
+    return new ZoneGlMapping(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("zone_id", UUID.class),
+        rs.getString("nominal_code"),
+        rs.getString("description"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  /**
+   * Within an open transaction: if a reorder threshold exists for (tenant, store, variant) and the
+   * current available qty is below it, inserts a StockBelowThreshold outbox event. Called after any
+   * stock-reducing operation so the alert and the deduction are atomic (golden rule #6).
+   */
+  private void checkThresholdTx(Connection c, UUID tenantId, UUID storeId, UUID variantId)
+      throws SQLException {
+    BigDecimal threshold = null;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT threshold FROM reorder_thresholds"
+                + " WHERE tenant_id=? AND store_id=? AND variant_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) threshold = rs.getBigDecimal("threshold");
+      }
+    }
+    if (threshold == null) return;
+
+    BigDecimal onHand = BigDecimal.ZERO;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT COALESCE(SUM(remaining_qty),0) AS q FROM inventory_batches"
+                + " WHERE tenant_id=? AND store_id=? AND variant_id=?"
+                + " AND material_status='AVAILABLE'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) onHand = rs.getBigDecimal("q");
+      }
+    }
+    BigDecimal reserved = BigDecimal.ZERO;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT COALESCE(SUM(qty),0) AS q FROM reservations"
+                + " WHERE tenant_id=? AND store_id=? AND variant_id=? AND status='HELD'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) reserved = rs.getBigDecimal("q");
+      }
+    }
+    BigDecimal available = onHand.subtract(reserved);
+    if (available.compareTo(threshold) < 0) {
+      insertOutbox(
+          c,
+          new OutboxRow(
+              "StockBelowThreshold",
+              "shelfj.inventory.stock-below-threshold",
+              tenantId,
+              variantId,
+              com.shelfj.inventory.service.Events.stockBelowThreshold(
+                  tenantId, storeId, variantId, available, threshold)));
+    }
   }
 }

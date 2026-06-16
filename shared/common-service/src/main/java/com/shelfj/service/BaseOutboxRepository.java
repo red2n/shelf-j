@@ -51,4 +51,13 @@ public abstract class BaseOutboxRepository extends BaseJdbcRepository implements
         ps -> ps.setObject(1, id),
         "mark outbox published");
   }
+
+  @Override
+  public void markPublished(List<UUID> ids) {
+    if (ids.isEmpty()) return;
+    exec(
+        "UPDATE outbox SET published_at = now() WHERE id = ANY(?)",
+        ps -> ps.setArray(1, ps.getConnection().createArrayOf("uuid", ids.toArray())),
+        "mark outbox batch published");
+  }
 }

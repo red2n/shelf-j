@@ -32,7 +32,7 @@ function setupTenant() {
     const storeRes = http.post(
       `${baseUrl}/api/tenant-svc/admin/stores`,
       JSON.stringify({ name: 'k6 Warehouse', code: `K6W-${Date.now()}`, line1: '1 Dock Rd', city: 'LA', country: 'US', pincode: '90001', timezone: 'UTC' }),
-      { headers: { ...JSON_CT, 'X-Tenant-Id': tenantId } }
+      { headers: { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-Roles': 'OWNER' } }
     );
     storeId = storeRes.status < 300 ? storeRes.json('data.id') : null;
   }
@@ -44,7 +44,7 @@ export default function () {
   const tenantId = ctx && ctx.tenantId;
   const storeId = ctx && ctx.storeId;
   const variantId = '00000000-0000-0000-0000-000000000099';
-  const hdrs = tenantId ? { ...JSON_CT, 'X-Tenant-Id': tenantId } : { ...JSON_CT };
+  const hdrs = tenantId ? { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-Roles': 'OWNER' } : { ...JSON_CT };
 
   // ── Gap #1-#7: core inventory positive checks ─────────────────────────────
 
@@ -818,7 +818,7 @@ export default function () {
       JSON.stringify({ storeId: storeId }),
       { headers: JSON_CT }
     ),
-    { '[-] create PI no tenant 401': (r) => r.status === 401 }
+    { '[-] create PI no auth 403': (r) => r.status === 403 }
   );
 
   // ── Gap #17: Costing Methods ────────────────────────────────────────────────
@@ -1125,5 +1125,154 @@ export default function () {
       { headers: hdrs }
     ),
     { '[-] get unknown ROP plan 404': (r) => r.status === 404 }
+  );
+
+  // ── Picking Rules (Gap #38) ───────────────────────────────────────────────
+
+  // [+] Create FEFO picking rule
+  const prRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules`,
+    JSON.stringify({ name: `fefo-rule-${Date.now()}`, strategy: 'FEFO' }),
+    { headers: hdrs }
+  );
+  check(prRes, { '[+] create picking rule FEFO 201': (r) => r.status === 201 });
+  const pickingRuleId = prRes.status === 201 ? prRes.json('data.id') : null;
+
+  // [+] Create ZONE_PRIORITY rule
+  const zpRuleRes = http.post(
+    `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules`,
+    JSON.stringify({ name: `zone-rule-${Date.now()}`, strategy: 'ZONE_PRIORITY' }),
+    { headers: hdrs }
+  );
+  const zpRuleId = zpRuleRes.status === 201 ? zpRuleRes.json('data.id') : null;
+
+  // [+] List picking rules
+  check(
+    http.get(`${baseUrl}/api/inventory-svc/admin/inventory/picking-rules`, { headers: hdrs }),
+    { '[+] list picking rules 200': (r) => r.status === 200 }
+  );
+
+  if (pickingRuleId) {
+    // [+] Get picking rule by id
+    check(
+      http.get(`${baseUrl}/api/inventory-svc/admin/inventory/picking-rules/${pickingRuleId}`, { headers: hdrs }),
+      { '[+] get picking rule 200': (r) => r.status === 200 }
+    );
+
+    // [+] Assign rule to GLOBAL scope
+    const assignRes = http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/picking-rule-assignments`,
+      JSON.stringify({ ruleId: pickingRuleId, scopeType: 'GLOBAL' }),
+      { headers: hdrs }
+    );
+    check(assignRes, { '[+] assign picking rule GLOBAL 201': (r) => r.status === 201 });
+    const assignId = assignRes.status === 201 ? assignRes.json('data.id') : null;
+
+    // [+] List assignments
+    check(
+      http.get(`${baseUrl}/api/inventory-svc/admin/inventory/picking-rule-assignments`, { headers: hdrs }),
+      { '[+] list picking rule assignments 200': (r) => r.status === 200 }
+    );
+
+    // [+] Resolve rule for store+variant
+    if (storeId && variantId) {
+      const resolveRes = http.get(
+        `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules/resolve?store=${storeId}&variant=${variantId}`,
+        { headers: hdrs }
+      );
+      check(resolveRes, {
+        '[+] resolve picking rule 200': (r) => r.status === 200,
+        '[+] resolve returns strategy': (r) => {
+          try { return r.json('data.strategy') !== null; } catch (_) { return false; }
+        },
+      });
+    }
+
+    if (assignId) {
+      check(
+        http.del(`${baseUrl}/api/inventory-svc/admin/inventory/picking-rule-assignments/${assignId}`, null, { headers: hdrs }),
+        { '[+] delete picking rule assignment 204': (r) => r.status === 204 }
+      );
+    }
+
+    // [+] Deactivate picking rule
+    check(
+      http.del(`${baseUrl}/api/inventory-svc/admin/inventory/picking-rules/${pickingRuleId}`, null, { headers: hdrs }),
+      { '[+] deactivate picking rule 200': (r) => r.status === 200 }
+    );
+  }
+
+  if (zpRuleId) {
+    // [+] Set zone priorities on ZONE_PRIORITY rule
+    check(
+      http.put(
+        `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules/${zpRuleId}/zone-priorities`,
+        JSON.stringify({ zonePriorities: [{ zoneId: '00000000-0000-0000-0000-000000000001', priority: 1 }] }),
+        { headers: hdrs }
+      ),
+      { '[+] set zone priorities 200': (r) => r.status === 200 }
+    );
+
+    check(
+      http.get(`${baseUrl}/api/inventory-svc/admin/inventory/picking-rules/${zpRuleId}/zone-priorities`, { headers: hdrs }),
+      { '[+] list zone priorities 200': (r) => r.status === 200 }
+    );
+  }
+
+  // [-] Create picking rule invalid strategy → 400
+  check(
+    http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules`,
+      JSON.stringify({ name: 'bad', strategy: 'RANDOM' }),
+      { headers: hdrs }
+    ),
+    { '[-] create picking rule invalid strategy 400': (r) => r.status === 400 }
+  );
+
+  // [-] Create picking rule missing name → 400
+  check(
+    http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules`,
+      JSON.stringify({ strategy: 'FIFO' }),
+      { headers: hdrs }
+    ),
+    { '[-] create picking rule missing name 400': (r) => r.status === 400 }
+  );
+
+  // [-] Assign STORE scope without scopeId → 400
+  if (pickingRuleId) {
+    check(
+      http.post(
+        `${baseUrl}/api/inventory-svc/admin/inventory/picking-rule-assignments`,
+        JSON.stringify({ ruleId: pickingRuleId, scopeType: 'STORE' }),
+        { headers: hdrs }
+      ),
+      { '[-] assign picking rule STORE no scopeId 400': (r) => r.status === 400 }
+    );
+  }
+
+  // [-] Get unknown picking rule → 404
+  check(
+    http.get(
+      `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules/00000000-0000-0000-0000-000000000000`,
+      { headers: hdrs }
+    ),
+    { '[-] get unknown picking rule 404': (r) => r.status === 404 }
+  );
+
+  // [-] Resolve without required params → 400
+  check(
+    http.get(`${baseUrl}/api/inventory-svc/admin/inventory/picking-rules/resolve`, { headers: hdrs }),
+    { '[-] resolve picking rule missing params 400': (r) => r.status === 400 }
+  );
+
+  // [-] No tenant → 401
+  check(
+    http.post(
+      `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules`,
+      JSON.stringify({ name: 'x', strategy: 'FIFO' }),
+      { headers: { 'Content-Type': 'application/json' } }
+    ),
+    { '[-] create picking rule no auth 403': (r) => r.status === 403 }
   );
 }

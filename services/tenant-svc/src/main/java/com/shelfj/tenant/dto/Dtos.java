@@ -35,7 +35,9 @@ public final class Dtos {
       BigDecimal geoLat,
       BigDecimal geoLng,
       String timezone,
-      String businessHours) {}
+      String businessHours,
+      // null → defaults to true (show prices). false = availability-only storefront.
+      Boolean showPrices) {}
 
   public record UpdateStoreRequest(
       @NotBlank String name,
@@ -48,7 +50,8 @@ public final class Dtos {
       BigDecimal geoLat,
       BigDecimal geoLng,
       String timezone,
-      String businessHours) {}
+      String businessHours,
+      Boolean showPrices) {}
 
   public record PatchStatusRequest(@NotBlank String status) {}
 
@@ -88,8 +91,13 @@ public final class Dtos {
       BigDecimal geoLng,
       String timezone,
       String businessHours,
+      boolean showPrices,
       String createdAt,
       String updatedAt) {}
+
+  /** Public storefront config for a store (what the guest shop needs to render). */
+  public record StorefrontConfigResponse(
+      String storeId, String storeName, String status, boolean showPrices) {}
 
   public record ZoneResponse(
       String id,
@@ -106,4 +114,50 @@ public final class Dtos {
 
   public record OnboardingStatus(
       boolean tenantActive, boolean hasDefaultStore, List<String> nextSteps) {}
+
+  // ── Combined onboarding (tenant + first store in one call) ───────────────
+
+  public record OnboardRequest(
+      // tenant
+      @NotBlank String businessName,
+      String legalName,
+      @NotBlank @Size(min = 2, max = 2) String country,
+      @NotBlank @Size(min = 3, max = 3) String currency,
+      // first store
+      @NotBlank String storeName,
+      @NotBlank String storeCode,
+      String storeType,
+      String storeLine1,
+      String storeCity,
+      String storeCountry,
+      String storePincode,
+      String storeTimezone) {}
+
+  public record OnboardResponse(TenantResponse tenant, StoreResponse store) {}
+
+  // ── Gap #53: Inventory org parameters ────────────────────────────────────
+
+  public record UpsertInventoryConfigRequest(
+      Boolean lotControlEnabled,
+      Boolean serialControlEnabled,
+      Boolean gradeControlEnabled,
+      Boolean expiryTrackingEnabled,
+      String costingMethod,
+      String defaultUom,
+      Boolean reorderAlertEnabled,
+      Boolean autoReserveOnOrder) {}
+
+  public record TenantInventoryConfigResponse(
+      String id,
+      String tenantId,
+      boolean lotControlEnabled,
+      boolean serialControlEnabled,
+      boolean gradeControlEnabled,
+      boolean expiryTrackingEnabled,
+      String costingMethod,
+      String defaultUom,
+      boolean reorderAlertEnabled,
+      boolean autoReserveOnOrder,
+      String createdAt,
+      String updatedAt) {}
 }

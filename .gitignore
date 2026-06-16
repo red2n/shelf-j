@@ -40,3 +40,6 @@ logs/
 hs_err_pid*
 .attach_pid*
 tools/duplo
+
+# Local scratch / sample import data (not part of the app)
+/cat.csv

@@ -29,10 +29,12 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.jwt.issuer", defaultValue = "shelfj")
   String jwtIssuer;
 
+  /**
+   * No default on purpose: a missing secret must fail deployment, never silently fall back to a
+   * publicly known value. Local dev supplies it via docker-compose / .env (golden rule #5).
+   */
   @Inject
-  @ConfigProperty(
-      name = "shelfj.jwt.secret",
-      defaultValue = "dev-only-hmac-secret-change-me-please-32+chars")
+  @ConfigProperty(name = "shelfj.jwt.secret")
   String jwtSecret;
 
   @Inject

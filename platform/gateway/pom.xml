@@ -66,6 +66,13 @@
             <version>${shelfj.version}</version>
         </dependency>
 
+        <!-- JWT validation — same library as iam-svc so claim shapes match -->
+        <dependency>
+            <groupId>com.auth0</groupId>
+            <artifactId>java-jwt</artifactId>
+            <version>4.5.0</version>
+        </dependency>
+
         <!-- JSON-B for any JSON responses the gateway itself emits (errors) -->
         <dependency>
             <groupId>org.glassfish.jersey.media</groupId>

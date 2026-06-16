@@ -19,6 +19,10 @@ import com.shelfj.inventory.dto.Dtos.CreateKanbanCardRequest;
 import com.shelfj.inventory.dto.Dtos.CreateLotLinkRequest;
 import com.shelfj.inventory.dto.Dtos.CreateMoveOrderRequest;
 import com.shelfj.inventory.dto.Dtos.CreatePhysicalInventoryRequest;
+import com.shelfj.inventory.dto.Dtos.CreatePickingRuleAssignmentRequest;
+import com.shelfj.inventory.dto.Dtos.CreatePickingRuleRequest;
+import com.shelfj.inventory.dto.Dtos.CreateReasonCodeRequest;
+import com.shelfj.inventory.dto.Dtos.CreateSourceTypeRequest;
 import com.shelfj.inventory.dto.Dtos.CreateTransferOrderRequest;
 import com.shelfj.inventory.dto.Dtos.CycleCountAdjustResult;
 import com.shelfj.inventory.dto.Dtos.CycleCountApproveResult;
@@ -26,16 +30,29 @@ import com.shelfj.inventory.dto.Dtos.CycleCountHeaderResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.EnterCountRequest;
+import com.shelfj.inventory.dto.Dtos.ExpiringBatchResponse;
 import com.shelfj.inventory.dto.Dtos.KanbanCardResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
+import com.shelfj.inventory.dto.Dtos.LotActionResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyTreeResponse;
+import com.shelfj.inventory.dto.Dtos.LotMergeRequest;
+import com.shelfj.inventory.dto.Dtos.LotSplitRequest;
+import com.shelfj.inventory.dto.Dtos.LotUomConversionResponse;
 import com.shelfj.inventory.dto.Dtos.MaterialStatusRequest;
 import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
 import com.shelfj.inventory.dto.Dtos.OpenPeriodRequest;
+import com.shelfj.inventory.dto.Dtos.ParLevelResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryTagResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleAssignmentResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleResolveResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleZonePriorityResponse;
+import com.shelfj.inventory.dto.Dtos.PurgeMovementsRequest;
+import com.shelfj.inventory.dto.Dtos.PurgeResult;
+import com.shelfj.inventory.dto.Dtos.ReasonCodeResponse;
 import com.shelfj.inventory.dto.Dtos.ReceiveRequest;
 import com.shelfj.inventory.dto.Dtos.RegisterSerialsRequest;
 import com.shelfj.inventory.dto.Dtos.ResolveSuggestionRequest;
@@ -46,13 +63,21 @@ import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
 import com.shelfj.inventory.dto.Dtos.SerialStatusRequest;
 import com.shelfj.inventory.dto.Dtos.SetSafetyStockRequest;
+import com.shelfj.inventory.dto.Dtos.SetZonePrioritiesRequest;
+import com.shelfj.inventory.dto.Dtos.SourceTypeResponse;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdRequest;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderResponse;
 import com.shelfj.inventory.dto.Dtos.TriggerKanbanRequest;
+import com.shelfj.inventory.dto.Dtos.UpdateGradeRequest;
+import com.shelfj.inventory.dto.Dtos.UpdateOrderModifiersRequest;
 import com.shelfj.inventory.dto.Dtos.UpsertCostingMethodRequest;
+import com.shelfj.inventory.dto.Dtos.UpsertLotUomConversionRequest;
+import com.shelfj.inventory.dto.Dtos.UpsertParLevelRequest;
 import com.shelfj.inventory.dto.Dtos.UpsertRopPlanRequest;
+import com.shelfj.inventory.dto.Dtos.UpsertZoneGlMappingRequest;
+import com.shelfj.inventory.dto.Dtos.ZoneGlMappingResponse;
 import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
 import com.shelfj.web.ApiException;
@@ -62,6 +87,7 @@ import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PUT;
@@ -1015,5 +1041,345 @@ public class AdminResource {
     UUID storeId = uuid(store, "store");
     int count = service.computeRopPlans(tenantId, storeId);
     return ApiResponse.ok(new ComputeRopResult(count));
+  }
+
+  // ── Gap #21: Transaction reason codes ────────────────────────────────────
+
+  @POST
+  @Path("/reason-codes")
+  public ApiResponse<ReasonCodeResponse> createReasonCode(CreateReasonCodeRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toReasonCode(service.createReasonCode(tenantId, req.code(), req.description())));
+  }
+
+  @GET
+  @Path("/reason-codes")
+  public ApiResponse<List<ReasonCodeResponse>> listReasonCodes() {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listReasonCodes(tenantId).stream().map(Mappers::toReasonCode).toList());
+  }
+
+  @POST
+  @Path("/reason-codes/{id}/activate")
+  public ApiResponse<ReasonCodeResponse> activateReasonCode(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toReasonCode(service.setReasonCodeActive(tenantId, id, true)));
+  }
+
+  @POST
+  @Path("/reason-codes/{id}/deactivate")
+  public ApiResponse<ReasonCodeResponse> deactivateReasonCode(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toReasonCode(service.setReasonCodeActive(tenantId, id, false)));
+  }
+
+  // ── Gap #22: Transaction source types ────────────────────────────────────
+
+  @POST
+  @Path("/source-types")
+  public ApiResponse<SourceTypeResponse> createSourceType(CreateSourceTypeRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toSourceType(service.createSourceType(tenantId, req.code(), req.description())));
+  }
+
+  @GET
+  @Path("/source-types")
+  public ApiResponse<List<SourceTypeResponse>> listSourceTypes() {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listSourceTypes(tenantId).stream().map(Mappers::toSourceType).toList());
+  }
+
+  @POST
+  @Path("/source-types/{id}/activate")
+  public ApiResponse<SourceTypeResponse> activateSourceType(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toSourceType(service.setSourceTypeActive(tenantId, id, true)));
+  }
+
+  @POST
+  @Path("/source-types/{id}/deactivate")
+  public ApiResponse<SourceTypeResponse> deactivateSourceType(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toSourceType(service.setSourceTypeActive(tenantId, id, false)));
+  }
+
+  // ── Gap #23: Lot split / merge ────────────────────────────────────────────
+
+  @POST
+  @Path("/lots/split")
+  public ApiResponse<LotActionResponse> splitLot(LotSplitRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var result =
+        service.splitLot(
+            tenantId, UUID.fromString(req.sourceBatchId()), req.qty(), req.batchNo(), req.notes());
+    return ApiResponse.ok(Mappers.toLotAction(result.action()));
+  }
+
+  @POST
+  @Path("/lots/merge")
+  public ApiResponse<LotActionResponse> mergeLot(LotMergeRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var result =
+        service.mergeLot(
+            tenantId,
+            UUID.fromString(req.sourceBatchId()),
+            UUID.fromString(req.targetBatchId()),
+            req.qty(),
+            req.notes());
+    return ApiResponse.ok(Mappers.toLotAction(result.action()));
+  }
+
+  @GET
+  @Path("/lots/{batchId}/actions")
+  public ApiResponse<List<LotActionResponse>> listLotActions(@PathParam("batchId") UUID batchId) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listLotActions(tenantId, batchId).stream().map(Mappers::toLotAction).toList());
+  }
+
+  // ── Gap #24: Expiry alert query ───────────────────────────────────────────
+
+  @GET
+  @Path("/batches/expiring")
+  public ApiResponse<List<ExpiringBatchResponse>> listExpiringBatches(
+      @QueryParam("store") String store, @QueryParam("withinDays") Integer withinDays) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(store, "store");
+    int days = withinDays == null ? 30 : withinDays;
+    return ApiResponse.ok(
+        service.listExpiringBatches(tenantId, storeId, days).stream()
+            .map(Mappers::toExpiringBatch)
+            .toList());
+  }
+
+  // ── Gap #25: Grade control ────────────────────────────────────────────────
+
+  @PUT
+  @Path("/batches/{id}/grade")
+  public ApiResponse<BatchResponse> updateBatchGrade(
+      @PathParam("id") UUID id, UpdateGradeRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(Mappers.toBatch(service.updateBatchGrade(tenantId, id, req.grade())));
+  }
+
+  // ── Gap #26: Lot UOM conversions ──────────────────────────────────────────
+
+  @PUT
+  @Path("/lots/{batchId}/uom-conversions")
+  public ApiResponse<LotUomConversionResponse> upsertLotUomConversion(
+      @PathParam("batchId") UUID batchId, UpsertLotUomConversionRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var c =
+        service.upsertLotUomConversion(
+            tenantId, batchId, req.fromUom(), req.toUom(), req.factor(), req.notes());
+    return ApiResponse.ok(Mappers.toLotUomConversion(c));
+  }
+
+  @GET
+  @Path("/lots/{batchId}/uom-conversions")
+  public ApiResponse<List<LotUomConversionResponse>> listLotUomConversions(
+      @PathParam("batchId") UUID batchId) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        service.listLotUomConversions(tenantId, batchId).stream()
+            .map(Mappers::toLotUomConversion)
+            .toList());
+  }
+
+  // ── Gap #27: PAR levels ───────────────────────────────────────────────────
+
+  @PUT
+  @Path("/par-levels")
+  public ApiResponse<ParLevelResponse> upsertParLevel(UpsertParLevelRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var p =
+        service.upsertParLevel(
+            tenantId,
+            uuid(req.storeId(), "storeId"),
+            uuid(req.variantId(), "variantId"),
+            req.parQty(),
+            req.uom(),
+            req.reviewCycle());
+    return ApiResponse.ok(Mappers.toParLevel(p));
+  }
+
+  @GET
+  @Path("/par-levels")
+  public ApiResponse<List<ParLevelResponse>> listParLevels(@QueryParam("store") String store) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(store, "store");
+    return ApiResponse.ok(
+        service.listParLevels(tenantId, storeId).stream().map(Mappers::toParLevel).toList());
+  }
+
+  // ── Gap #28: Order modifiers ──────────────────────────────────────────────
+
+  @PUT
+  @Path("/rop-plans/{id}/order-modifiers")
+  public ApiResponse<RopPlanResponse> updateRopModifiers(
+      @PathParam("id") UUID id, UpdateOrderModifiersRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toRopPlan(
+            service.updateRopOrderModifiers(
+                tenantId, id, req.minOrderQty(), req.maxOrderQty(), req.lotMultiplier())));
+  }
+
+  @PUT
+  @Path("/kanban-cards/{id}/order-modifiers")
+  public ApiResponse<KanbanCardResponse> updateKanbanModifiers(
+      @PathParam("id") UUID id, UpdateOrderModifiersRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    return ApiResponse.ok(
+        Mappers.toKanbanCard(
+            service.updateKanbanOrderModifiers(
+                tenantId, id, req.minOrderQty(), req.maxOrderQty(), req.lotMultiplier())));
+  }
+
+  // ── Gap #30: Purge movements ──────────────────────────────────────────────
+
+  @POST
+  @Path("/movements/purge")
+  public ApiResponse<PurgeResult> purgeMovements(PurgeMovementsRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    java.time.Instant before = java.time.Instant.parse(req.before());
+    int purged = service.purgeMovementsBefore(tenantId, before);
+    return ApiResponse.ok(new PurgeResult(purged));
+  }
+
+  // ── Gap #31: Zone GL mappings ─────────────────────────────────────────────
+
+  @PUT
+  @Path("/zone-gl-mappings")
+  public ApiResponse<ZoneGlMappingResponse> upsertZoneGlMapping(UpsertZoneGlMappingRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    UUID zoneId =
+        req.zoneId() == null || req.zoneId().isBlank() ? null : UUID.fromString(req.zoneId());
+    var m =
+        service.upsertZoneGlMapping(
+            tenantId, uuid(req.storeId(), "storeId"), zoneId, req.nominalCode(), req.description());
+    return ApiResponse.ok(Mappers.toZoneGlMapping(m));
+  }
+
+  @GET
+  @Path("/zone-gl-mappings")
+  public ApiResponse<List<ZoneGlMappingResponse>> listZoneGlMappings(
+      @QueryParam("store") String store) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = uuid(store, "store");
+    return ApiResponse.ok(
+        service.listZoneGlMappings(tenantId, storeId).stream()
+            .map(Mappers::toZoneGlMapping)
+            .toList());
+  }
+
+  // ── Picking Rules (Gap #38) ──────────────────────────────────────────────
+
+  @POST
+  @Path("/picking-rules")
+  public Response createPickingRule(CreatePickingRuleRequest req) {
+    Validations.validate(req);
+    return Response.status(Response.Status.CREATED)
+        .entity(
+            ApiResponse.ok(
+                Mappers.toPickingRule(service.createPickingRule(ctx.requireTenantId(), req))))
+        .build();
+  }
+
+  @GET
+  @Path("/picking-rules")
+  public ApiResponse<List<PickingRuleResponse>> listPickingRules() {
+    return ApiResponse.ok(
+        service.listPickingRules(ctx.requireTenantId()).stream()
+            .map(Mappers::toPickingRule)
+            .toList());
+  }
+
+  @GET
+  @Path("/picking-rules/{id}")
+  public ApiResponse<PickingRuleResponse> getPickingRule(@PathParam("id") UUID id) {
+    return ApiResponse.ok(Mappers.toPickingRule(service.getPickingRule(ctx.requireTenantId(), id)));
+  }
+
+  @DELETE
+  @Path("/picking-rules/{id}")
+  public ApiResponse<PickingRuleResponse> deactivatePickingRule(@PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        Mappers.toPickingRule(service.deactivatePickingRule(ctx.requireTenantId(), id)));
+  }
+
+  @PUT
+  @Path("/picking-rules/{id}/zone-priorities")
+  public ApiResponse<List<PickingRuleZonePriorityResponse>> setZonePriorities(
+      @PathParam("id") UUID id, SetZonePrioritiesRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(
+        service.setZonePriorities(ctx.requireTenantId(), id, req).stream()
+            .map(Mappers::toZonePriority)
+            .toList());
+  }
+
+  @GET
+  @Path("/picking-rules/{id}/zone-priorities")
+  public ApiResponse<List<PickingRuleZonePriorityResponse>> listZonePriorities(
+      @PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        service.listZonePriorities(ctx.requireTenantId(), id).stream()
+            .map(Mappers::toZonePriority)
+            .toList());
+  }
+
+  @POST
+  @Path("/picking-rule-assignments")
+  public Response createPickingRuleAssignment(CreatePickingRuleAssignmentRequest req) {
+    Validations.validate(req);
+    return Response.status(Response.Status.CREATED)
+        .entity(
+            ApiResponse.ok(
+                Mappers.toPickingRuleAssignment(
+                    service.createPickingRuleAssignment(ctx.requireTenantId(), req))))
+        .build();
+  }
+
+  @GET
+  @Path("/picking-rule-assignments")
+  public ApiResponse<List<PickingRuleAssignmentResponse>> listPickingRuleAssignments() {
+    return ApiResponse.ok(
+        service.listPickingRuleAssignments(ctx.requireTenantId()).stream()
+            .map(Mappers::toPickingRuleAssignment)
+            .toList());
+  }
+
+  @DELETE
+  @Path("/picking-rule-assignments/{id}")
+  public Response deletePickingRuleAssignment(@PathParam("id") UUID id) {
+    service.deletePickingRuleAssignment(ctx.requireTenantId(), id);
+    return Response.noContent().build();
+  }
+
+  @GET
+  @Path("/picking-rules/resolve")
+  public ApiResponse<PickingRuleResolveResponse> resolvePickingRule(
+      @QueryParam("store") String store, @QueryParam("variant") String variant) {
+    UUID tenantId = ctx.requireTenantId();
+    if (store == null || variant == null) {
+      throw new com.shelfj.web.ApiException(
+          400, "MISSING_PARAM", "store and variant are required", List.of(), null);
+    }
+    return ApiResponse.ok(
+        service.resolvePickingRule(tenantId, uuid(store, "store"), uuid(variant, "variant")));
   }
 }

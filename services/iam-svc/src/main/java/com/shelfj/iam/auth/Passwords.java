@@ -40,4 +40,17 @@ public class Passwords {
       argon2.wipeArray(chars);
     }
   }
+
+  /** Hash of a random throwaway password, used only to equalize timing (see {@link #burn}). */
+  private final String dummyHash =
+      hash(java.util.UUID.randomUUID().toString() + java.util.UUID.randomUUID());
+
+  /**
+   * Burn one verification's worth of CPU/memory against a dummy hash. Called when login finds no
+   * account for the email: without it, a non-existent email answers in microseconds while a real
+   * one costs a full Argon2 verify — a timing oracle that lets attackers enumerate accounts.
+   */
+  public void burn(String candidate) {
+    verify(dummyHash, candidate);
+  }
 }

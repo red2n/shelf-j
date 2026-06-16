@@ -3,12 +3,15 @@ package com.shelfj.iam.api;
 import com.shelfj.iam.dto.Dtos.ChangePasswordRequest;
 import com.shelfj.iam.dto.Dtos.LoginRequest;
 import com.shelfj.iam.dto.Dtos.LogoutRequest;
+import com.shelfj.iam.dto.Dtos.ProvisionStaffRequest;
+import com.shelfj.iam.dto.Dtos.ProvisionStaffResponse;
 import com.shelfj.iam.dto.Dtos.RefreshRequest;
 import com.shelfj.iam.dto.Dtos.RegisterRequest;
 import com.shelfj.iam.dto.Dtos.TokenResponse;
 import com.shelfj.iam.service.AuthService;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -34,6 +37,19 @@ import java.util.UUID;
 public class AuthResource {
 
   @Inject AuthService auth;
+  @Inject TenantContext ctx;
+
+  /**
+   * Admin endpoint (requires a management role — enforced by AdminAuthorizationFilter on the {@code
+   * /admin/} path). Find-or-create a staff account by email and return the userId the caller
+   * assigns a store role to via tenant-svc. Tenant comes from the JWT, never the body.
+   */
+  @POST
+  @Path("/admin/staff-users")
+  public ApiResponse<ProvisionStaffResponse> provisionStaff(ProvisionStaffRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(auth.provisionStaff(ctx.requireTenantId(), req.email(), req.password()));
+  }
 
   @POST
   @Path("/register")

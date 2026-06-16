@@ -57,6 +57,19 @@ public class UserRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * All users with this email across every tenant scope. Email is unique only per scope
+   * (uq_users_tenant_email), so after a user is bound to a tenant their row leaves the NULL scope —
+   * login must search all scopes and disambiguate by password.
+   */
+  public List<User> findAllByEmail(String email) {
+    return query(
+        "SELECT " + SELECT_COLS + " FROM users WHERE lower(email) = lower(?)",
+        ps -> ps.setString(1, email),
+        UserRepository::map,
+        "find users by email");
+  }
+
   public Optional<User> findById(UUID id) {
     return query(
             "SELECT " + SELECT_COLS + " FROM users WHERE id = ?",
@@ -110,21 +123,25 @@ public class UserRepository extends BaseOutboxRepository {
   }
 
   /**
-   * Stamp a tenant onto a user and grant the OWNER role — idempotently. Re-delivering the same
-   * TenantCreated event must not create a second OWNER role or overwrite a differing tenant (golden
-   * rule #7). Returns true if anything changed.
+   * Stamp a tenant onto a user and grant the OWNER role — idempotently. The processed_events mark,
+   * the bind, and the audit row commit in ONE transaction (golden rules #6/#7): marking first in a
+   * separate transaction would swallow the event forever if the bind then failed. Returns false if
+   * the event was already processed.
    */
-  public boolean bindOwner(UUID userId, UUID tenantId, String ownerRole) {
+  public boolean bindOwnerOnce(
+      UUID eventId, String consumerName, UUID userId, UUID tenantId, String ownerRole) {
     return inTx(
         c -> {
-          boolean changed = false;
+          if (!markProcessedIfNewTx(c, eventId, consumerName)) {
+            return false;
+          }
           try (PreparedStatement ps =
               c.prepareStatement(
                   "UPDATE users SET tenant_id = ?, type = 'STAFF'"
                       + " WHERE id = ? AND tenant_id IS NULL")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, userId);
-            changed |= ps.executeUpdate() > 0;
+            ps.executeUpdate();
           }
           UUID roleId = roleIdByName(c, ownerRole);
           try (PreparedStatement ps =
@@ -137,49 +154,85 @@ public class UserRepository extends BaseOutboxRepository {
             ps.setObject(3, roleId);
             ps.setObject(4, userId);
             ps.setObject(5, roleId);
-            changed |= ps.executeUpdate() > 0;
+            ps.executeUpdate();
           }
-          return changed;
+          auditTx(c, tenantId, userId, "OWNER_BOUND", "via TenantCreated");
+          return true;
         },
         "bind owner");
   }
 
   /**
-   * Record that an event was processed; returns false if it was already processed (dedupe). Used by
-   * consumers to stay idempotent.
+   * Stamp a tenant onto a staff user and grant a store-scoped role — idempotently, with the
+   * processed_events mark in the same transaction (see {@link #bindOwnerOnce}). Returns false if
+   * the event was already processed.
    */
-  public boolean markProcessedIfNew(UUID eventId, String consumer) {
-    try (var c = dataSource.getConnection();
-        var ps =
-            c.prepareStatement(
-                "INSERT INTO processed_events (event_id, consumer) VALUES (?, ?)"
-                    + " ON CONFLICT (event_id) DO NOTHING")) {
-      ps.setObject(1, eventId);
-      ps.setString(2, consumer);
-      return ps.executeUpdate() > 0;
-    } catch (SQLException e) {
-      throw dbError("mark processed event", e);
-    }
+  public boolean bindStaffOnce(
+      UUID eventId,
+      String consumerName,
+      UUID userId,
+      UUID tenantId,
+      String roleName,
+      UUID storeId) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumerName)) {
+            return false;
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE users SET tenant_id = ?, type = 'STAFF'"
+                      + " WHERE id = ? AND tenant_id IS NULL")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, userId);
+            ps.executeUpdate();
+          }
+          UUID roleId = roleIdByName(c, roleName);
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO user_roles (id, user_id, role_id, store_id)"
+                      + " SELECT ?, ?, ?, ? WHERE NOT EXISTS"
+                      + " (SELECT 1 FROM user_roles WHERE user_id = ? AND role_id = ? AND store_id = ?)")) {
+            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(2, userId);
+            ps.setObject(3, roleId);
+            ps.setObject(4, storeId);
+            ps.setObject(5, userId);
+            ps.setObject(6, roleId);
+            ps.setObject(7, storeId);
+            ps.executeUpdate();
+          }
+          auditTx(c, tenantId, userId, "STAFF_BOUND", roleName + " @ store " + storeId);
+          return true;
+        },
+        "bind staff");
   }
 
   // --- audit ---
 
   public void audit(UUID tenantId, UUID userId, String action, String detail) {
-    try (var c = dataSource.getConnection();
-        var ps =
-            c.prepareStatement(
-                "INSERT INTO audit_log (id, tenant_id, user_id, action, detail)"
-                    + " VALUES (?,?,?,?,?)")) {
+    try (var c = dataSource.getConnection()) {
+      auditTx(c, tenantId, userId, action, detail);
+    } catch (SQLException e) {
+      // audit failure must not break the main flow
+      System.getLogger(UserRepository.class.getName())
+          .log(System.Logger.Level.WARNING, "audit insert failed: " + e.getMessage());
+    }
+  }
+
+  private static void auditTx(
+      java.sql.Connection c, UUID tenantId, UUID userId, String action, String detail)
+      throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "INSERT INTO audit_log (id, tenant_id, user_id, action, detail)"
+                + " VALUES (?,?,?,?,?)")) {
       ps.setObject(1, UUID.randomUUID());
       ps.setObject(2, tenantId);
       ps.setObject(3, userId);
       ps.setString(4, action);
       ps.setString(5, detail);
       ps.executeUpdate();
-    } catch (SQLException e) {
-      // audit failure must not break the main flow
-      System.getLogger(UserRepository.class.getName())
-          .log(System.Logger.Level.WARNING, "audit insert failed: " + e.getMessage());
     }
   }
 
@@ -195,6 +248,48 @@ public class UserRepository extends BaseOutboxRepository {
       ps.executeUpdate();
     } catch (SQLException e) {
       throw dbError("update password", e);
+    }
+  }
+
+  // --- tenant status projection (fed by tenant-status-changed events) ---
+
+  /**
+   * Upsert the local tenant-status projection. Guarded by {@code status_changed_at} so an
+   * out-of-order (stale) event can never overwrite a newer status.
+   */
+  public void upsertTenantStatus(UUID tenantId, String status, java.time.Instant changedAt) {
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "INSERT INTO tenant_status (tenant_id, status, status_changed_at)"
+                    + " VALUES (?,?,?)"
+                    + " ON CONFLICT (tenant_id) DO UPDATE SET"
+                    + "   status = EXCLUDED.status,"
+                    + "   status_changed_at = EXCLUDED.status_changed_at"
+                    + " WHERE EXCLUDED.status_changed_at >= tenant_status.status_changed_at")) {
+      ps.setObject(1, tenantId);
+      ps.setString(2, status);
+      ps.setObject(3, changedAt.atOffset(ZoneOffset.UTC));
+      ps.executeUpdate();
+    } catch (SQLException e) {
+      throw dbError("upsert tenant status", e);
+    }
+  }
+
+  /**
+   * Whether a tenant may authenticate. A missing row means ACTIVE (back-compat for tenants that
+   * existed before this projection); only an explicit non-ACTIVE status blocks login.
+   */
+  public boolean isTenantActive(UUID tenantId) {
+    try (var c = dataSource.getConnection();
+        var ps = c.prepareStatement("SELECT status FROM tenant_status WHERE tenant_id = ?")) {
+      ps.setObject(1, tenantId);
+      try (var rs = ps.executeQuery()) {
+        if (!rs.next()) return true; // no projection row → treat as active
+        return "ACTIVE".equalsIgnoreCase(rs.getString("status"));
+      }
+    } catch (SQLException e) {
+      throw dbError("check tenant status", e);
     }
   }
 
@@ -255,6 +350,34 @@ public class UserRepository extends BaseOutboxRepository {
         throw new SQLException("role not found: " + roleName);
       }
     }
+  }
+
+  // --- bootstrap ---
+
+  public boolean platformAdminExists() {
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "SELECT 1 FROM users u"
+                    + " JOIN user_roles ur ON ur.user_id = u.id"
+                    + " JOIN roles r ON r.id = ur.role_id"
+                    + " WHERE r.name = 'PLATFORM_ADMIN' LIMIT 1")) {
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    } catch (SQLException e) {
+      throw dbError("check platform admin", e);
+    }
+  }
+
+  public void createPlatformAdmin(User user) {
+    inTx(
+        c -> {
+          insertUser(c, user);
+          assignRole(c, user.id(), "PLATFORM_ADMIN");
+          return null;
+        },
+        "create platform admin");
   }
 
   /** Pending outbox rows for the publisher (oldest first). */

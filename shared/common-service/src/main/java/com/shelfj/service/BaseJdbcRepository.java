@@ -8,6 +8,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import javax.sql.DataSource;
 
 /**
@@ -104,6 +105,39 @@ public abstract class BaseJdbcRepository {
       }
     } catch (SQLException e) {
       throw dbError(what, e);
+    }
+  }
+
+  // ── Idempotency ───────────────────────────────────────────────────────────
+
+  /**
+   * Insert an event-id + consumer pair into {@code processed_events}. Returns {@code true} if the
+   * row was inserted (first time seen); {@code false} if it was already present (duplicate). Common
+   * to every service that consumes Kafka events — defined once here so it doesn't need to be copied
+   * into each repo.
+   */
+  public boolean markProcessedIfNew(UUID eventId, String consumer) {
+    try (Connection c = dataSource.getConnection()) {
+      return markProcessedIfNewTx(c, eventId, consumer);
+    } catch (SQLException e) {
+      throw dbError("mark processed event", e);
+    }
+  }
+
+  /**
+   * Transaction-scoped variant of {@link #markProcessedIfNew}: runs on the caller's connection so
+   * the dedupe mark commits (or rolls back) atomically WITH the business write. Marking in a
+   * separate transaction first would permanently swallow the event if the write then failed.
+   */
+  protected static boolean markProcessedIfNewTx(Connection c, UUID eventId, String consumer)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO processed_events (event_id, consumer) VALUES (?,?)"
+                + " ON CONFLICT (event_id) DO NOTHING")) {
+      ps.setObject(1, eventId);
+      ps.setString(2, consumer);
+      return ps.executeUpdate() > 0;
     }
   }
 

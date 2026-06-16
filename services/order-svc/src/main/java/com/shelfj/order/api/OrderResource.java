@@ -1,11 +1,13 @@
 package com.shelfj.order.api;
 
 import com.shelfj.order.dto.Dtos.CreateReturnRequest;
+import com.shelfj.order.dto.Dtos.OrderSummaryResponse;
 import com.shelfj.order.dto.Dtos.PlaceOrderRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
 import com.shelfj.order.mapper.Mappers;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -16,8 +18,12 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.UUID;
 
 /** Order lifecycle: place, confirm, cancel, fulfil, void (POS), returns. */
@@ -30,10 +36,70 @@ public class OrderResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * List orders for this tenant. All filters are optional.
+   *
+   * <p>?store= UUID — filter by store ?channel= ONLINE|POS — filter by channel ?status=
+   * PENDING|CONFIRMED|FULFILLED|CANCELLED|VOIDED — filter by status ?from= ISO-8601 datetime —
+   * created_at >= from ?to= ISO-8601 datetime — created_at <= to ?after= opaque cursor from the
+   * previous page's meta.nextCursor ?limit= 1-100 (default 20)
+   */
+  @GET
+  public ApiResponse<List<OrderSummaryResponse>> list(
+      @QueryParam("store") String store,
+      @QueryParam("channel") String channel,
+      @QueryParam("status") String status,
+      @QueryParam("from") String from,
+      @QueryParam("to") String to,
+      @QueryParam("after") String after,
+      @QueryParam("limit") Integer limit) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store != null && !store.isBlank() ? UUID.fromString(store) : null;
+    Instant fromInst = parseInstant(from, "from");
+    Instant toInst = parseInstant(to, "to");
+    int clamped = Cursor.clampLimit(limit);
+    var page =
+        svc.listOrders(tenantId, storeId, null, channel, status, fromInst, toInst, after, clamped);
+    return ApiResponse.ok(
+        page.orders().stream().map(Mappers::toSummary).toList(),
+        new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
+  }
+
+  /**
+   * The signed-in customer's own order history (storefront). The tenant comes from the storefront
+   * header (a customer account is global) and results are filtered to the authenticated customerId,
+   * so a customer can only ever see their own orders — never another customer's or the tenant's
+   * full order book.
+   */
+  @GET
+  @Path("/mine")
+  public ApiResponse<List<OrderSummaryResponse>> mine(
+      @QueryParam("after") String after, @QueryParam("limit") Integer limit) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID customerId = ctx.userId();
+    if (customerId == null) {
+      throw com.shelfj.web.ApiException.unauthorized(
+          "NO_CUSTOMER", "a customer token is required for order history");
+    }
+    int clamped = Cursor.clampLimit(limit);
+    var page = svc.listOrders(tenantId, null, customerId, null, null, null, null, after, clamped);
+    return ApiResponse.ok(
+        page.orders().stream().map(Mappers::toSummary).toList(),
+        new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
+  }
+
   @POST
-  public Response place(PlaceOrderRequest req) {
+  public Response place(
+      @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      PlaceOrderRequest req) {
     Validations.validate(req);
-    var order = svc.placeOrder(req, ctx);
+    if ("POS".equalsIgnoreCase(req.channel())) {
+      ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
+    }
+    // The standard Idempotency-Key header is authoritative; the body field is a legacy fallback.
+    String effectiveKey =
+        idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : req.idempotencyKey();
+    var order = svc.placeOrder(req, ctx, effectiveKey);
     var items = svc.getOrderItems(order.tenantId(), order.id());
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
@@ -98,6 +164,22 @@ public class OrderResource {
     var ret = svc.createReturn(ctx.tenantId(), UUID.fromString(id), req, ctx);
     var retItems = svc.getReturnItems(ctx.tenantId(), ret.id());
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(ret, retItems))).build();
+  }
+
+  // ─────────────────────────────────────────────────────────────────── utils
+
+  private static Instant parseInstant(String s, String field) {
+    if (s == null || s.isBlank()) return null;
+    try {
+      return Instant.parse(s);
+    } catch (DateTimeParseException e) {
+      throw new com.shelfj.web.ApiException(
+          400,
+          "INVALID_DATE",
+          field + " must be ISO-8601 (e.g. 2025-01-01T00:00:00Z)",
+          List.of(),
+          e);
+    }
   }
 
   @GET

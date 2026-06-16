@@ -12,6 +12,7 @@
 #   docker compose up -d --build        # build images + start everything
 #
 # Ports exposed to the host (developers need these):
+#   8088  shelf-app (web UI: admin/storefront/POS)
 #   8090  gateway (public entry point)    3100  grafana
 #   5555  pgadmin                         8500  consul UI
 #   8081  kafka-ui                        9411  zipkin
@@ -58,7 +59,8 @@ x-svc-depends: &svc-depends
   config:   { condition: service_healthy }
 
 x-svc-healthcheck: &svc-healthcheck
-  test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/live || exit 1"]
+# eclipse-temurin:21-jre ships curl but not wget.
+  test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health/live || exit 1"]
   interval: 10s
   timeout: 5s
   retries: 12
@@ -117,7 +119,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-shelfj}
       POSTGRES_USER: ${POSTGRES_USER:-shelfj}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     networks: [shelfj_network]
     healthcheck:
@@ -172,7 +174,7 @@ services:
     container_name: shelfj-consul
     restart: always
     command: agent -dev -client=0.0.0.0
-    ports: ["8500:8500"]
+    ports: ["127.0.0.1:8500:8500"]
     networks: [shelfj_network]
     healthcheck:
       test: ["CMD", "consul", "members"]
@@ -185,7 +187,7 @@ services:
     image: confluentinc/cp-kafka:7.6.1
     container_name: shelfj-kafka
     restart: always
-    ports: ["9092:9092"]
+    ports: ["127.0.0.1:9092:9092"]
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -219,7 +221,7 @@ services:
     image: provectuslabs/kafka-ui:v0.7.2
     container_name: shelfj-kafka-ui
     restart: unless-stopped
-    ports: ["8081:8080"]
+    ports: ["127.0.0.1:8081:8080"]
     environment:
       KAFKA_CLUSTERS_0_NAME: shelfj-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
@@ -238,7 +240,7 @@ services:
       --requirepass ${REDIS_PASSWORD:-redis_dev_change_me}
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:6379:6379"]
     volumes: ["redis_data:/data"]
     networks: [shelfj_network]
     healthcheck:
@@ -251,7 +253,7 @@ services:
     image: openzipkin/zipkin:3.6.1
     container_name: shelfj-zipkin
     restart: unless-stopped
-    ports: ["9411:9411"]
+    ports: ["127.0.0.1:9411:9411"]
     environment:
       JAVA_OPTS: "${ZIPKIN_JAVA_OPTS:--Xms128m -Xmx512m}"
     mem_limit: ${ZIPKIN_MEM_LIMIT:-700m}
@@ -333,7 +335,7 @@ services:
       - --web.enable-lifecycle
       - --web.enable-remote-write-receiver
     mem_limit: ${PROMETHEUS_MEM_LIMIT:-512m}
-    ports: ["9090:9090"]
+    ports: ["127.0.0.1:9090:9090"]
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/prometheus/rules:/etc/prometheus/rules:ro
@@ -354,7 +356,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin_dev_change_me}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-    ports: ["3100:3000"]
+    ports: ["127.0.0.1:3100:3000"]
     volumes:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -375,7 +377,7 @@ services:
     image: dpage/pgadmin4:9.15.0
     container_name: shelfj-pgadmin
     restart: unless-stopped
-    ports: ["${PGADMIN_PORT:-5555}:80"]
+    ports: ["127.0.0.1:${PGADMIN_PORT:-5555}:80"]
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@shelfj.dev}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin_dev_change_me}
@@ -454,12 +456,13 @@ services:
     environment:
       server.port: "8080"
       JAVA_TOOL_OPTIONS: "${CONFIG_JAVA_OPTS:--Xms64m -Xmx256m -XX:+UseG1GC}"
+      SHELFJ_CONFIG_TOKEN: ${SHELFJ_CONFIG_TOKEN:?SHELFJ_CONFIG_TOKEN must be set (>= 32 chars) - see .env.example}
     mem_limit: ${CONFIG_MEM_LIMIT:-384m}
     networks: [shelfj_network]
     depends_on:
       consul: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -479,6 +482,7 @@ services:
       <<: *svc-env
       JAVA_TOOL_OPTIONS: "${IAM_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: iam-svc
+      shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
     mem_limit: ${IAM_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     depends_on: *svc-depends
@@ -530,6 +534,8 @@ services:
       <<: *svc-env
       JAVA_TOOL_OPTIONS: "${ORDER_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: order-svc
+      # Gap #63 — set to true to make order-svc resolve prices from pricing-svc (ignore client prices)
+      shelfj.order.pricing.enforce: ${SHELFJ_ORDER_PRICING_ENFORCE:-false}
     mem_limit: ${ORDER_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     depends_on: *svc-depends
@@ -569,6 +575,23 @@ services:
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
+  payment-svc:
+    image: ghcr.io/red2n/shelf-j-payment-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/payment-svc, SVC_JAR: payment-svc }
+    container_name: shelfj-payment
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${PAYMENT_JAVA_OPTS:--Xms128m -Xmx256m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: payment-svc
+    mem_limit: ${PAYMENT_MEM_LIMIT:-384m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
   product-svc:
     image: ghcr.io/red2n/shelf-j-product-svc:${SHELFJ_TAG:-latest}
     build:
@@ -582,6 +605,57 @@ services:
       JAVA_TOOL_OPTIONS: "${PRODUCT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: product-svc
     mem_limit: ${PRODUCT_MEM_LIMIT:-700m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
+  customer-svc:
+    image: ghcr.io/red2n/shelf-j-customer-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/customer-svc, SVC_JAR: customer-svc }
+    container_name: shelfj-customer
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${CUSTOMER_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: customer-svc
+    mem_limit: ${CUSTOMER_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
+  notification-svc:
+    image: ghcr.io/red2n/shelf-j-notification-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/notification-svc, SVC_JAR: notification-svc }
+    container_name: shelfj-notification
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${NOTIFICATION_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: notification-svc
+    mem_limit: ${NOTIFICATION_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
+  reporting-svc:
+    image: ghcr.io/red2n/shelf-j-reporting-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/reporting-svc, SVC_JAR: reporting-svc }
+    container_name: shelfj-reporting
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${REPORTING_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: reporting-svc
+    mem_limit: ${REPORTING_MEM_LIMIT:-512m}
     networks: [shelfj_network]
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
@@ -603,8 +677,12 @@ services:
       JAVA_TOOL_OPTIONS: "${GATEWAY_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       shelfj.consul.host: consul
       shelfj.consul.port: "8500"
-      shelfj.gateway.rate-limit.requests-per-minute: "10000"
+      # Per-IP budget. The k6 regression suite drives ~50 VUs from one host IP and peaks
+      # well above 10k/min; 10k caused mid-run 429 cascades. Local-dev/load-test value only.
+      shelfj.gateway.rate-limit.requests-per-minute: "30000"
+      shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+      shelfj.gateway.cors.allowed-origins: "*"
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
     ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]
     networks: [shelfj_network]
@@ -613,8 +691,54 @@ services:
       iam-svc:    { condition: service_healthy }
       tenant-svc: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 30s
+
+  # One-shot: seeds the PLATFORM_ADMIN on a fresh DB. Safe to re-run — the bootstrap
+  # endpoint returns 409 if an admin already exists, which we treat as success.
+  bootstrap:
+    image: curlimages/curl:8.7.1
+    container_name: shelfj-bootstrap
+    restart: "no"
+    networks: [shelfj_network]
+    depends_on:
+      gateway: { condition: service_healthy }
+    environment:
+      ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-admin@shelf-j.dev}
+      ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-Admin1234!}
+    command:
+      - sh
+      - -c
+      - |
+        STATUS=$$(curl -s -o /dev/null -w '%{http_code}' -X POST http://gateway:8080/api/iam-svc/bootstrap/admin -H 'Content-Type: application/json' -d "{\"email\":\"$$ADMIN_EMAIL\",\"password\":\"$$ADMIN_PASSWORD\"}");
+        if [ "$$STATUS" = "201" ]; then echo "[bootstrap] Platform admin created ($$ADMIN_EMAIL)";
+        elif [ "$$STATUS" = "409" ]; then echo "[bootstrap] Platform admin already exists — skipped";
+        else echo "[bootstrap] Unexpected status $$STATUS"; exit 1; fi
+
+  # ---------------------------------------------------------------- web UI (Flutter)
+
+  # Single-page app (admin console + storefront + in-store POS), served by a
+  # non-root nginx. The browser calls the gateway directly at the host URL baked
+  # in at build time (SHELFJ_API_BASE, default http://localhost:8090/api), so the
+  # UI container itself never needs to reach the gateway over the compose network.
+  shelf-app:
+    image: ghcr.io/red2n/shelf-j-web:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: shelfj-web
+    restart: unless-stopped
+    # Default 8088 to avoid clashing with the dev `flutter run` server (40015).
+    ports: ["${UI_HOST_PORT:-8088}:8080"]
+    networks: [shelfj_network]
+    depends_on:
+      gateway: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 5s

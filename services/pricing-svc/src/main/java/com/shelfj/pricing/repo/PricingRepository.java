@@ -3,6 +3,7 @@ package com.shelfj.pricing.repo;
 import com.shelfj.pricing.domain.Domain.CustomerVatStatus;
 import com.shelfj.pricing.domain.Domain.PriceList;
 import com.shelfj.pricing.domain.Domain.PriceListItem;
+import com.shelfj.pricing.domain.Domain.PriceOverride;
 import com.shelfj.pricing.domain.Domain.ProductVatCategory;
 import com.shelfj.pricing.domain.Domain.Promotion;
 import com.shelfj.pricing.domain.Domain.PromotionItem;
@@ -558,6 +559,82 @@ public class PricingRepository extends BaseOutboxRepository {
             rs -> rs.getBigDecimal("total"),
             "sum net sales");
     return rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
+  }
+
+  // ── Gap #41: Price overrides ──────────────────────────────────────────────
+
+  public PriceOverride insertPriceOverride(PriceOverride p) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO price_overrides"
+                      + " (id,tenant_id,order_id,variant_id,store_id,original_price,override_price,override_reason,overridden_by)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, p.id());
+            ps.setObject(2, p.tenantId());
+            ps.setObject(3, p.orderId());
+            ps.setObject(4, p.variantId());
+            ps.setObject(5, p.storeId());
+            ps.setBigDecimal(6, p.originalPrice());
+            ps.setBigDecimal(7, p.overridePrice());
+            ps.setString(8, p.overrideReason());
+            ps.setObject(9, p.overriddenBy());
+            ps.executeUpdate();
+          }
+          return p;
+        },
+        "insert price override");
+  }
+
+  public List<PriceOverride> listPriceOverrides(UUID tenantId, UUID storeId, UUID variantId) {
+    if (storeId != null) {
+      return query(
+          "SELECT id, tenant_id, order_id, variant_id, store_id, original_price,"
+              + " override_price, override_reason, overridden_by, created_at"
+              + " FROM price_overrides WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
+          ps -> {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, storeId);
+          },
+          this::mapPriceOverride,
+          "list price overrides by store");
+    }
+    if (variantId != null) {
+      return query(
+          "SELECT id, tenant_id, order_id, variant_id, store_id, original_price,"
+              + " override_price, override_reason, overridden_by, created_at"
+              + " FROM price_overrides WHERE tenant_id=? AND variant_id=? ORDER BY created_at DESC",
+          ps -> {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, variantId);
+          },
+          this::mapPriceOverride,
+          "list price overrides by variant");
+    }
+    return query(
+        "SELECT id, tenant_id, order_id, variant_id, store_id, original_price,"
+            + " override_price, override_reason, overridden_by, created_at"
+            + " FROM price_overrides WHERE tenant_id=? ORDER BY created_at DESC LIMIT 200",
+        ps -> ps.setObject(1, tenantId),
+        this::mapPriceOverride,
+        "list price overrides");
+  }
+
+  private PriceOverride mapPriceOverride(java.sql.ResultSet rs) throws java.sql.SQLException {
+    var orderId = rs.getObject("order_id", UUID.class);
+    var overriddenBy = rs.getObject("overridden_by", UUID.class);
+    return new PriceOverride(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        orderId,
+        rs.getObject("variant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getBigDecimal("original_price"),
+        rs.getBigDecimal("override_price"),
+        rs.getString("override_reason"),
+        overriddenBy,
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
   private static OffsetDateTime toOdt(Instant instant) {

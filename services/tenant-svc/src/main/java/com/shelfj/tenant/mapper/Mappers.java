@@ -3,9 +3,11 @@ package com.shelfj.tenant.mapper;
 import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.Tenant;
+import com.shelfj.tenant.domain.Domain.TenantInventoryConfig;
 import com.shelfj.tenant.domain.Domain.Zone;
 import com.shelfj.tenant.dto.Dtos.StaffResponse;
 import com.shelfj.tenant.dto.Dtos.StoreResponse;
+import com.shelfj.tenant.dto.Dtos.TenantInventoryConfigResponse;
 import com.shelfj.tenant.dto.Dtos.TenantResponse;
 import com.shelfj.tenant.dto.Dtos.ZoneResponse;
 import java.time.Instant;
@@ -45,6 +47,7 @@ public final class Mappers {
         s.geoLng(),
         s.timezone(),
         s.businessHours(),
+        s.showPrices(),
         ts(s.createdAt()),
         ts(s.updatedAt()));
   }
@@ -68,6 +71,22 @@ public final class Mappers {
         s.storeId().toString(),
         s.role(),
         ts(s.createdAt()));
+  }
+
+  public static TenantInventoryConfigResponse toDto(TenantInventoryConfig c) {
+    return new TenantInventoryConfigResponse(
+        c.id().toString(),
+        c.tenantId().toString(),
+        c.lotControlEnabled(),
+        c.serialControlEnabled(),
+        c.gradeControlEnabled(),
+        c.expiryTrackingEnabled(),
+        c.costingMethod(),
+        c.defaultUom(),
+        c.reorderAlertEnabled(),
+        c.autoReserveOnOrder(),
+        ts(c.createdAt()),
+        ts(c.updatedAt()));
   }
 
   private static String ts(Instant i) {

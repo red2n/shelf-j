@@ -1,9 +1,17 @@
 package com.shelfj.order.service;
 
+import static com.shelfj.events.EventPayload.esc;
+
+import com.shelfj.order.domain.Domain.OrderItem;
+import com.shelfj.order.domain.Domain.ReturnItem;
 import com.shelfj.service.OutboxRow;
+import java.util.List;
 import java.util.UUID;
 
-/** Builds {@link OutboxRow} instances for all events published by order-svc. */
+/**
+ * Builds {@link OutboxRow} instances for all events published by order-svc. Request-supplied
+ * strings (channel, cancel reason) are escaped — they must not be able to corrupt event JSON.
+ */
 final class Events {
 
   private Events() {}
@@ -16,7 +24,7 @@ final class Events {
         orderId,
         String.format(
             "{\"eventType\":\"OrderPlaced\",\"tenantId\":\"%s\",\"orderId\":\"%s\",\"channel\":\"%s\"}",
-            tenantId, orderId, channel));
+            tenantId, orderId, esc(channel)));
   }
 
   static OutboxRow orderConfirmed(UUID tenantId, UUID orderId) {
@@ -38,29 +46,55 @@ final class Events {
         orderId,
         String.format(
             "{\"eventType\":\"OrderCancelled\",\"tenantId\":\"%s\",\"orderId\":\"%s\",\"reason\":\"%s\"}",
-            tenantId, orderId, reason == null ? "" : reason));
+            tenantId, orderId, esc(reason)));
   }
 
-  static OutboxRow orderFulfilled(UUID tenantId, UUID orderId) {
+  static OutboxRow orderFulfilled(
+      UUID tenantId, UUID orderId, UUID storeId, List<OrderItem> items) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("{\"eventType\":\"OrderFulfilled\",\"tenantId\":\"")
+        .append(tenantId)
+        .append("\",\"orderId\":\"")
+        .append(orderId)
+        .append("\",\"storeId\":\"")
+        .append(storeId)
+        .append("\",\"items\":[");
+    for (int i = 0; i < items.size(); i++) {
+      if (i > 0) sb.append(',');
+      sb.append("{\"variantId\":\"")
+          .append(items.get(i).variantId())
+          .append("\",\"qty\":")
+          .append(items.get(i).qty().toPlainString())
+          .append('}');
+    }
+    sb.append("]}");
     return new OutboxRow(
-        "OrderFulfilled",
-        "shelfj.order.order-fulfilled",
-        tenantId,
-        orderId,
-        String.format(
-            "{\"eventType\":\"OrderFulfilled\",\"tenantId\":\"%s\",\"orderId\":\"%s\"}",
-            tenantId, orderId));
+        "OrderFulfilled", "shelfj.order.order-fulfilled", tenantId, orderId, sb.toString());
   }
 
-  static OutboxRow orderReturned(UUID tenantId, UUID orderId, UUID returnId) {
+  static OutboxRow orderReturned(
+      UUID tenantId, UUID orderId, UUID returnId, UUID storeId, List<ReturnItem> items) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("{\"eventType\":\"OrderReturned\",\"tenantId\":\"")
+        .append(tenantId)
+        .append("\",\"orderId\":\"")
+        .append(orderId)
+        .append("\",\"returnId\":\"")
+        .append(returnId)
+        .append("\",\"storeId\":\"")
+        .append(storeId)
+        .append("\",\"items\":[");
+    for (int i = 0; i < items.size(); i++) {
+      if (i > 0) sb.append(',');
+      sb.append("{\"variantId\":\"")
+          .append(items.get(i).variantId())
+          .append("\",\"qty\":")
+          .append(items.get(i).qty().toPlainString())
+          .append('}');
+    }
+    sb.append("]}");
     return new OutboxRow(
-        "OrderReturned",
-        "shelfj.order.order-returned",
-        tenantId,
-        orderId,
-        String.format(
-            "{\"eventType\":\"OrderReturned\",\"tenantId\":\"%s\",\"orderId\":\"%s\",\"returnId\":\"%s\"}",
-            tenantId, orderId, returnId));
+        "OrderReturned", "shelfj.order.order-returned", tenantId, orderId, sb.toString());
   }
 
   static OutboxRow orderVoided(UUID tenantId, UUID orderId) {

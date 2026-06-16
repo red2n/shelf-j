@@ -21,6 +21,11 @@ public interface ServiceSettings {
   /** Per-service Postgres schema (database-per-service on a shared instance). */
   String dbSchema();
 
+  /** Max pooled DB connections for this service instance. */
+  default int dbPoolMaxSize() {
+    return 10;
+  }
+
   boolean consulEnabled();
 
   String consulHost();

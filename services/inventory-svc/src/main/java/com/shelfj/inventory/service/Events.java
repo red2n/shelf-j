@@ -5,7 +5,7 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 /** JSON event payloads for the outbox. Past-tense; topic shelfj.inventory.<event>. */
-final class Events {
+public final class Events {
 
   private Events() {}
 
@@ -30,8 +30,19 @@ final class Events {
   /**
    * For consume/release the store/variant aren't known at the service layer (resolved in the repo).
    */
-  static String reservationEvent(String type, UUID tenantId, UUID reservationId) {
+  public static String reservationEvent(String type, UUID tenantId, UUID reservationId) {
     return EventPayload.base(type, tenantId, reservationId)
+        + ",\"reservationId\":\""
+        + reservationId
+        + "\"}";
+  }
+
+  public static String stockDeducted(
+      UUID tenantId, UUID storeId, UUID variantId, UUID reservationId, BigDecimal qty) {
+    return EventPayload.base("StockDeducted", tenantId, reservationId)
+        + storeVariant(storeId, variantId)
+        + ",\"qty\":"
+        + qty.toPlainString()
         + ",\"reservationId\":\""
         + reservationId
         + "\"}";
@@ -45,9 +56,9 @@ final class Events {
         + "}";
   }
 
-  static String lowStock(
+  public static String stockBelowThreshold(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal available, BigDecimal threshold) {
-    return EventPayload.base("LowStock", tenantId, variantId)
+    return EventPayload.base("StockBelowThreshold", tenantId, variantId)
         + storeVariant(storeId, variantId)
         + ",\"available\":"
         + available.toPlainString()
@@ -85,7 +96,7 @@ final class Events {
 
   static String materialStatusChanged(
       UUID tenantId, UUID batchId, String materialStatus, String reason) {
-    String r = reason == null ? "null" : "\"" + reason.replace("\"", "\\\"") + "\"";
+    String r = reason == null ? "null" : "\"" + EventPayload.esc(reason) + "\"";
     return EventPayload.base("MaterialStatusChanged", tenantId, batchId)
         + ",\"materialStatus\":\""
         + materialStatus
@@ -201,6 +212,24 @@ final class Events {
         + ",\"kanbanType\":\""
         + kanbanType
         + "\"}";
+  }
+
+  static String lotSplit(UUID tenantId, UUID sourceBatchId, UUID newBatchId, BigDecimal qty) {
+    return EventPayload.base("LotSplit", tenantId, sourceBatchId)
+        + ",\"newBatchId\":\""
+        + newBatchId
+        + "\",\"qty\":"
+        + qty.toPlainString()
+        + "}";
+  }
+
+  static String lotMerge(UUID tenantId, UUID sourceBatchId, UUID targetBatchId, BigDecimal qty) {
+    return EventPayload.base("LotMerge", tenantId, sourceBatchId)
+        + ",\"targetBatchId\":\""
+        + targetBatchId
+        + "\",\"qty\":"
+        + qty.toPlainString()
+        + "}";
   }
 
   private static String storeVariant(UUID storeId, UUID variantId) {

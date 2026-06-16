@@ -42,5 +42,14 @@
             <artifactId>jakarta.validation-api</artifactId>
             <scope>provided</scope>
         </dependency>
+        <!-- Jersey SPI for ExtendedExceptionMapper (GenericExceptionMapper must decline
+             WebApplicationException or it shadows Helidon's /health and /metrics routes).
+             Provided by the Helidon MP runtime; 3.1.11 matches Helidon 4.4.1's Jersey. -->
+        <dependency>
+            <groupId>org.glassfish.jersey.core</groupId>
+            <artifactId>jersey-server</artifactId>
+            <version>3.1.11</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 </project>

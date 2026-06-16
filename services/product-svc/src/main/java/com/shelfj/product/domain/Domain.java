@@ -60,6 +60,7 @@ public final class Domain {
       UUID productId,
       String sku,
       String barcode,
+      String manufacturerPn,
       String attributes,
       String unit,
       String status,
@@ -67,6 +68,37 @@ public final class Domain {
       Instant updatedAt) {
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_INACTIVE = "INACTIVE";
+  }
+
+  /** Carrier for a variant + its parent product, used by the POS barcode-scan lookup. */
+  public record VariantWithProduct(Variant variant, Product product) {}
+
+  // ── Gap #33: Supplier / Customer Cross-References ────────────────────────
+
+  public record ItemCrossReference(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      String partyType,
+      UUID partyId,
+      String partyName,
+      String crossRefNumber,
+      Instant createdAt) {
+    public static final String SUPPLIER = "SUPPLIER";
+    public static final String CUSTOMER = "CUSTOMER";
+  }
+
+  // ── Gap #32: Item Relationships ─────────────────────────────────────────
+
+  public record ItemRelationship(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      UUID relatedVariantId,
+      String relationshipType,
+      Instant createdAt) {
+    public static final String SUBSTITUTE = "SUBSTITUTE";
+    public static final String COMPLEMENTARY = "COMPLEMENTARY";
   }
 
   // ── Gap #13: Item Templates ──────────────────────────────────────────────
@@ -100,4 +132,127 @@ public final class Domain {
     public static final String ACTIVE = "ACTIVE";
     public static final String SUPERSEDED = "SUPERSEDED";
   }
+
+  // ── Gap #37: Container Types / Cartonization ────────────────────────────
+
+  public record ContainerType(
+      UUID id,
+      UUID tenantId,
+      String code,
+      String name,
+      String description,
+      java.math.BigDecimal lengthMm,
+      java.math.BigDecimal widthMm,
+      java.math.BigDecimal heightMm,
+      java.math.BigDecimal maxWeightKg,
+      java.math.BigDecimal tareWeightKg,
+      Integer maxUnits,
+      String status,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String ACTIVE = "ACTIVE";
+    public static final String INACTIVE = "INACTIVE";
+  }
+
+  public record VariantContainerLink(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      UUID containerTypeId,
+      int qtyPerContainer,
+      boolean isPrimary,
+      Instant createdAt) {}
+
+  // ── Gap #36: 18 Oracle Item Attribute Groups ─────────────────────────────
+
+  public record ItemAttributeGroup(String groupCode, String name, String description) {}
+
+  public record ItemAttributeGroupField(
+      String groupCode,
+      String fieldCode,
+      String label,
+      String dataType,
+      boolean required,
+      int sortOrder) {}
+
+  public record VariantAttributeGroupValues(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      String groupCode,
+      String values,
+      Instant createdAt,
+      Instant updatedAt) {}
+
+  // ── Gap #35: Item Catalog Groups & Descriptive Elements ──────────────────
+
+  public record CatalogGroup(
+      UUID id,
+      UUID tenantId,
+      String name,
+      String description,
+      String status,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String ACTIVE = "ACTIVE";
+    public static final String INACTIVE = "INACTIVE";
+  }
+
+  public record CatalogGroupElement(
+      UUID id,
+      UUID tenantId,
+      UUID groupId,
+      String elementName,
+      String dataType,
+      boolean required,
+      String defaultVal,
+      int sortOrder,
+      Instant createdAt) {
+    public static final String TYPE_TEXT = "TEXT";
+    public static final String TYPE_NUMBER = "NUMBER";
+    public static final String TYPE_BOOLEAN = "BOOLEAN";
+    public static final String TYPE_DATE = "DATE";
+  }
+
+  public record VariantCatalogAssignment(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      UUID groupId,
+      String elementVals,
+      Instant createdAt,
+      Instant updatedAt) {}
+
+  // ── Gap #39: Category sets (multi-set / flexfield model) ──────────────────
+  public record CategorySet(
+      UUID id,
+      UUID tenantId,
+      String name,
+      String description,
+      String purpose,
+      UUID defaultCatId,
+      boolean controlled,
+      String status,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String ACTIVE = "ACTIVE";
+    public static final String INACTIVE = "INACTIVE";
+    public static final String PURPOSE_GENERAL = "GENERAL";
+    public static final String PURPOSE_INVENTORY = "INVENTORY";
+    public static final String PURPOSE_PURCHASING = "PURCHASING";
+    public static final String PURPOSE_COSTING = "COSTING";
+    public static final String PURPOSE_SALES = "SALES";
+  }
+
+  public record CategorySetMember(
+      UUID id, UUID tenantId, UUID setId, UUID categoryId, Instant createdAt) {}
+
+  public record VariantCategorySetAssignment(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      UUID setId,
+      UUID categoryId,
+      Instant createdAt,
+      Instant updatedAt) {}
 }

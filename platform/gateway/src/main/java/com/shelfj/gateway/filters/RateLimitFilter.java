@@ -1,12 +1,13 @@
 package com.shelfj.gateway.filters;
 
 import com.shelfj.gateway.GatewayConfig;
+import io.helidon.webserver.http.ServerRequest;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.Priorities;
 import jakarta.ws.rs.container.ContainerRequestContext;
 import jakarta.ws.rs.container.ContainerRequestFilter;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.Provider;
 import java.io.IOException;
@@ -15,10 +16,19 @@ import java.util.concurrent.ConcurrentMap;
 
 @Provider
 @ApplicationScoped
-@Priority(Priorities.USER)
+// Must run BEFORE authentication (JwtAuthFilter at 999): rate limiting exists precisely to
+// shed unauthenticated floods cheaply, so it cannot sit behind the auth check.
+@Priority(100)
 public class RateLimitFilter implements ContainerRequestFilter {
 
+  /** Hard cap on tracked buckets so key churn cannot exhaust gateway memory. */
+  static final int MAX_BUCKETS = 10_000;
+
   @Inject GatewayConfig config;
+
+  /** Helidon binds the underlying server request per-request; gives the socket remote address. */
+  @Context ServerRequest serverRequest;
+
   private final ConcurrentMap<String, TokenBucket> buckets = new ConcurrentHashMap<>();
 
   @SuppressWarnings("PMD.CloseResource")
@@ -28,29 +38,38 @@ public class RateLimitFilter implements ContainerRequestFilter {
       return;
     }
 
-    String ip = extractClientIp(requestContext);
+    String ip = ClientIp.resolve(requestContext, serverRequest, config.trustForwardedHeaders());
+    if (buckets.size() >= MAX_BUCKETS && !buckets.containsKey(ip)) {
+      evictStale();
+      // Stale eviction freed nothing (all buckets active) — drop an arbitrary entry so the cap
+      // is a real bound, not a suggestion an attacker can blow past with key churn.
+      if (buckets.size() >= MAX_BUCKETS) {
+        var it = buckets.keySet().iterator();
+        if (it.hasNext()) {
+          it.next();
+          it.remove();
+        }
+      }
+    }
     TokenBucket bucket =
         buckets.computeIfAbsent(ip, k -> new TokenBucket(config.rateLimitRequestsPerMinute()));
     if (!bucket.tryConsume()) {
       Response resp =
           Response.status(429)
               .header("Retry-After", "60")
-              .entity("Too many requests - rate limit exceeded")
+              .type(jakarta.ws.rs.core.MediaType.APPLICATION_JSON)
+              .entity(
+                  com.shelfj.web.ApiResponse.error(
+                      com.shelfj.web.ErrorBody.of(
+                          "RATE_LIMITED", "Too many requests - rate limit exceeded")))
               .build();
       requestContext.abortWith(resp);
     }
   }
 
-  private String extractClientIp(ContainerRequestContext ctx) {
-    String xf = ctx.getHeaderString("X-Forwarded-For");
-    if (xf != null && !xf.isBlank()) {
-      return xf.split(",")[0].trim();
-    }
-    String xr = ctx.getHeaderString("X-Real-IP");
-    if (xr != null && !xr.isBlank()) {
-      return xr;
-    }
-    return "unknown";
+  private void evictStale() {
+    long now = System.currentTimeMillis();
+    buckets.values().removeIf(b -> b.isStale(now));
   }
 
   private static final class TokenBucket {
@@ -77,6 +96,11 @@ public class RateLimitFilter implements ContainerRequestFilter {
       }
       tokens--;
       return true;
+    }
+
+    /** A bucket untouched for two refill windows is dead weight and safe to evict. */
+    synchronized boolean isStale(long now) {
+      return now - lastRefillMs >= 2 * refillIntervalMs;
     }
   }
 }

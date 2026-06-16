@@ -1,4 +1,4 @@
-# Generic runtime image for a Shelf-J Helidon service.
+# Production runtime image for a Shelf-J Helidon service.
 # Build the whole reactor first (mvn clean install), then build this image per-service:
 #   docker build -f Dockerfile.svc --build-arg SVC_PATH=services/sample-svc --build-arg SVC_JAR=sample-svc -t shelfj/sample-svc .
 FROM eclipse-temurin:21-jre
@@ -6,6 +6,13 @@ FROM eclipse-temurin:21-jre
 ARG SVC_PATH
 ARG SVC_JAR
 
+LABEL org.opencontainers.image.title="${SVC_JAR}" \
+      org.opencontainers.image.description="Shelf-J Helidon MP microservice" \
+      org.opencontainers.image.source="https://github.com/red2n/home"
+
+# Run as a non-root user (production hardening). The app writes nothing to disk —
+# it logs to stdout — so a read-only app dir owned by root is fine.
+RUN groupadd -r app && useradd -r -g app -d /app app
 WORKDIR /app
 
 # The Helidon jar references libs/ via its manifest Class-Path; copy both.
@@ -15,5 +22,7 @@ COPY ${SVC_PATH}/target/libs /app/libs
 # In containers, advertise the container hostname to Consul so its health check is reachable on the compose network.
 ENV SHELFJ_ADVERTISE_HOST=""
 
+USER app
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+# Container-aware JVM defaults; per-service heap is tuned via JAVA_TOOL_OPTIONS in compose.
+ENTRYPOINT ["java", "-XX:+UseContainerSupport", "-XX:MaxRAMPercentage=75.0", "-jar", "/app/app.jar"]

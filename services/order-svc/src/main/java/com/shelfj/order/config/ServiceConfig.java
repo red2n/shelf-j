@@ -20,6 +20,19 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.db.schema", defaultValue = "order")
   String dbSchema;
 
+  /**
+   * When true, placeOrder resolves every line's unit price from pricing-svc and ignores the
+   * client-supplied unitPrice. Defaults to true (secure). Override to false only in local dev rigs
+   * that have no seeded price catalogue (docker-compose sets SHELFJ_ORDER_PRICING_ENFORCE=false).
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.order.pricing.enforce", defaultValue = "true")
+  boolean pricingEnforce;
+
+  public boolean pricingEnforce() {
+    return pricingEnforce;
+  }
+
   @Override
   public String serviceName() {
     return serviceName;

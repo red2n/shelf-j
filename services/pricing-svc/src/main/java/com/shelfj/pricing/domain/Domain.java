@@ -136,6 +136,21 @@ public final class Domain {
       String invoiceRef,
       Instant createdAt) {}
 
+  // ── Gap #41: POS price overrides ─────────────────────────────────────────
+
+  /** Append-only record of a staff-approved ad-hoc POS price change. */
+  public record PriceOverride(
+      UUID id,
+      UUID tenantId,
+      UUID orderId,
+      UUID variantId,
+      UUID storeId,
+      BigDecimal originalPrice,
+      BigDecimal overridePrice,
+      String overrideReason,
+      UUID overriddenBy,
+      Instant createdAt) {}
+
   /** Result of price resolution: base price + promotion + VAT breakdown. */
   public record ResolvedPrice(
       UUID variantId,

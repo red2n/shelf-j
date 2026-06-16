@@ -10,12 +10,19 @@ import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
+import com.shelfj.inventory.domain.Domain.LotUomConversion;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
+import com.shelfj.inventory.domain.Domain.ParLevelConfig;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
+import com.shelfj.inventory.domain.Domain.PickingRule;
+import com.shelfj.inventory.domain.Domain.PickingRuleAssignment;
+import com.shelfj.inventory.domain.Domain.PickingRuleZonePriority;
+import com.shelfj.inventory.domain.Domain.ReasonCode;
 import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
@@ -23,8 +30,10 @@ import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
+import com.shelfj.inventory.domain.Domain.TransactionSourceType;
 import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
 import com.shelfj.inventory.dto.Dtos.AbcAssignmentResponse;
 import com.shelfj.inventory.dto.Dtos.AbcCompileRunResponse;
 import com.shelfj.inventory.dto.Dtos.AccountingPeriodResponse;
@@ -33,24 +42,36 @@ import com.shelfj.inventory.dto.Dtos.CostingMethodResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountHeaderResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
+import com.shelfj.inventory.dto.Dtos.ExpiringBatchResponse;
 import com.shelfj.inventory.dto.Dtos.KanbanCardResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
+import com.shelfj.inventory.dto.Dtos.LotActionResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
+import com.shelfj.inventory.dto.Dtos.LotUomConversionResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderLineResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
+import com.shelfj.inventory.dto.Dtos.ParLevelResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryResponse;
 import com.shelfj.inventory.dto.Dtos.PhysicalInventoryTagResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleAssignmentResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleResponse;
+import com.shelfj.inventory.dto.Dtos.PickingRuleZonePriorityResponse;
+import com.shelfj.inventory.dto.Dtos.ReasonCodeResponse;
 import com.shelfj.inventory.dto.Dtos.ReservationResponse;
 import com.shelfj.inventory.dto.Dtos.RopPlanResponse;
 import com.shelfj.inventory.dto.Dtos.SafetyStockParamsResponse;
 import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
+import com.shelfj.inventory.dto.Dtos.SourceTypeResponse;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderLineResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderResponse;
+import com.shelfj.inventory.dto.Dtos.ZoneGlMappingResponse;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 public final class Mappers {
@@ -75,7 +96,8 @@ public final class Mappers {
         ts(b.createdAt()),
         b.status(),
         b.materialStatus(),
-        b.materialStatusReason());
+        b.materialStatusReason(),
+        b.grade());
   }
 
   public static ReservationResponse toReservation(Reservation r) {
@@ -100,6 +122,7 @@ public final class Mappers {
         m.qty(),
         m.refType(),
         m.refId() == null ? null : m.refId().toString(),
+        m.reasonCode(),
         ts(m.createdAt()));
   }
 
@@ -324,6 +347,9 @@ public final class Mappers {
         p.avgDailyDemand(),
         p.rop(),
         p.eoq(),
+        p.minOrderQty(),
+        p.maxOrderQty(),
+        p.lotMultiplier(),
         ts(p.computedAt()),
         ts(p.createdAt()));
   }
@@ -339,6 +365,9 @@ public final class Mappers {
         k.sourceStoreId() == null ? null : k.sourceStoreId().toString(),
         k.supplierRef(),
         k.notes(),
+        k.minOrderQty(),
+        k.maxOrderQty(),
+        k.lotMultiplier(),
         ts(k.createdAt()),
         ts(k.triggeredAt()),
         ts(k.replenishedAt()));
@@ -363,6 +392,113 @@ public final class Mappers {
         ap.status(),
         ts(ap.openedAt()),
         ts(ap.closedAt()));
+  }
+
+  // ── Tier-1 mappers ────────────────────────────────────────────────────────
+
+  public static ReasonCodeResponse toReasonCode(ReasonCode r) {
+    return new ReasonCodeResponse(
+        r.id().toString(),
+        r.tenantId().toString(),
+        r.code(),
+        r.description(),
+        r.active(),
+        ts(r.createdAt()));
+  }
+
+  public static SourceTypeResponse toSourceType(TransactionSourceType t) {
+    return new SourceTypeResponse(
+        t.id().toString(),
+        t.tenantId().toString(),
+        t.code(),
+        t.description(),
+        t.active(),
+        ts(t.createdAt()));
+  }
+
+  public static LotActionResponse toLotAction(LotAction a) {
+    return new LotActionResponse(
+        a.id().toString(),
+        a.actionType(),
+        a.sourceBatchId().toString(),
+        a.resultBatchId().toString(),
+        a.qty(),
+        a.notes(),
+        ts(a.createdAt()));
+  }
+
+  public static ExpiringBatchResponse toExpiringBatch(Batch b) {
+    long daysUntil =
+        b.expiryDate() == null
+            ? Long.MAX_VALUE
+            : ChronoUnit.DAYS.between(LocalDate.now(), b.expiryDate());
+    return new ExpiringBatchResponse(
+        b.id().toString(),
+        b.storeId().toString(),
+        b.variantId().toString(),
+        b.batchNo(),
+        b.remainingQty(),
+        b.expiryDate() == null ? null : b.expiryDate().toString(),
+        daysUntil);
+  }
+
+  public static LotUomConversionResponse toLotUomConversion(LotUomConversion c) {
+    return new LotUomConversionResponse(
+        c.id().toString(),
+        c.batchId().toString(),
+        c.fromUom(),
+        c.toUom(),
+        c.factor(),
+        c.notes(),
+        ts(c.createdAt()));
+  }
+
+  public static ParLevelResponse toParLevel(ParLevelConfig p) {
+    return new ParLevelResponse(
+        p.id().toString(),
+        p.storeId().toString(),
+        p.variantId().toString(),
+        p.parQty(),
+        p.uom(),
+        p.reviewCycle(),
+        ts(p.createdAt()),
+        ts(p.updatedAt()));
+  }
+
+  public static ZoneGlMappingResponse toZoneGlMapping(ZoneGlMapping z) {
+    return new ZoneGlMappingResponse(
+        z.id().toString(),
+        z.storeId().toString(),
+        z.zoneId() == null ? null : z.zoneId().toString(),
+        z.nominalCode(),
+        z.description(),
+        ts(z.createdAt()),
+        ts(z.updatedAt()));
+  }
+
+  public static PickingRuleResponse toPickingRule(PickingRule r) {
+    return new PickingRuleResponse(
+        r.id().toString(),
+        r.name(),
+        r.strategy(),
+        r.gradePreference(),
+        r.status(),
+        ts(r.createdAt()),
+        ts(r.updatedAt()));
+  }
+
+  public static PickingRuleZonePriorityResponse toZonePriority(PickingRuleZonePriority p) {
+    return new PickingRuleZonePriorityResponse(
+        p.id().toString(), p.zoneId().toString(), p.priority());
+  }
+
+  public static PickingRuleAssignmentResponse toPickingRuleAssignment(PickingRuleAssignment a) {
+    return new PickingRuleAssignmentResponse(
+        a.id().toString(),
+        a.ruleId().toString(),
+        a.scopeType(),
+        a.scopeId() == null ? null : a.scopeId().toString(),
+        ts(a.createdAt()));
   }
 
   private static String ts(Instant i) {

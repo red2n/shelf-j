@@ -6,6 +6,7 @@ import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.StoreWithZone;
 import com.shelfj.tenant.domain.Domain.Tenant;
+import com.shelfj.tenant.domain.Domain.TenantInventoryConfig;
 import com.shelfj.tenant.domain.Domain.Zone;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -93,6 +94,45 @@ public class TenantRepository extends BaseOutboxRepository {
         TenantRepository::mapTenant);
   }
 
+  public Tenant updateTenantStatus(UUID tenantId, String status) {
+    Instant now = Instant.now();
+    exec(
+        "UPDATE tenants SET status = ?, updated_at = ? WHERE id = ?",
+        ps -> {
+          ps.setString(1, status);
+          ps.setObject(2, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(3, tenantId);
+        },
+        "update tenant status");
+    return findTenant(tenantId)
+        .orElseThrow(() -> ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found"));
+  }
+
+  /**
+   * Flip the tenant status AND publish the change event in one transaction (golden rule #6), so a
+   * suspension can never be applied locally without other services (iam-svc) hearing about it.
+   */
+  public Tenant updateTenantStatusWithOutbox(UUID tenantId, String status, OutboxRow event) {
+    Instant now = Instant.now();
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement("UPDATE tenants SET status = ?, updated_at = ? WHERE id = ?")) {
+            ps.setString(1, status);
+            ps.setObject(2, now.atOffset(ZoneOffset.UTC));
+            ps.setObject(3, tenantId);
+            if (ps.executeUpdate() == 0) {
+              throw ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found");
+            }
+          }
+          insertOutbox(c, event);
+          return null;
+        },
+        "update tenant status");
+    return findTenant(tenantId)
+        .orElseThrow(() -> ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found"));
+  }
+
   public Tenant updateTenant(UUID tenantId, String businessName, String legalName) {
     Instant now = Instant.now();
     exec(
@@ -113,7 +153,7 @@ public class TenantRepository extends BaseOutboxRepository {
   public List<Store> listStores(UUID tenantId) {
     return many(
         "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
-            + " geo_lat, geo_lng, timezone, business_hours, status, is_default, created_at, updated_at"
+            + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices, created_at, updated_at"
             + " FROM stores WHERE tenant_id = ? ORDER BY created_at",
         tenantId,
         TenantRepository::mapStore);
@@ -122,7 +162,7 @@ public class TenantRepository extends BaseOutboxRepository {
   public Optional<Store> findStore(UUID tenantId, UUID storeId) {
     return query(
             "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
-                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, created_at, updated_at"
+                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices, created_at, updated_at"
                 + " FROM stores WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -147,11 +187,12 @@ public class TenantRepository extends BaseOutboxRepository {
       BigDecimal geoLat,
       BigDecimal geoLng,
       String timezone,
-      String businessHours) {
+      String businessHours,
+      boolean showPrices) {
     Instant now = Instant.now();
     exec(
         "UPDATE stores SET name=?, line1=?, line2=?, city=?, state=?, country=?, pincode=?,"
-            + " geo_lat=?, geo_lng=?, timezone=?, business_hours=?, updated_at=?"
+            + " geo_lat=?, geo_lng=?, timezone=?, business_hours=?, show_prices=?, updated_at=?"
             + " WHERE tenant_id=? AND id=?",
         ps -> {
           ps.setString(1, name);
@@ -165,9 +206,10 @@ public class TenantRepository extends BaseOutboxRepository {
           ps.setBigDecimal(9, geoLng);
           ps.setString(10, timezone);
           ps.setString(11, businessHours);
-          ps.setObject(12, now.atOffset(ZoneOffset.UTC));
-          ps.setObject(13, tenantId);
-          ps.setObject(14, storeId);
+          ps.setBoolean(12, showPrices);
+          ps.setObject(13, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(14, tenantId);
+          ps.setObject(15, storeId);
         },
         "update store");
     return findStore(tenantId, storeId)
@@ -307,8 +349,8 @@ public class TenantRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO stores"
                 + " (id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
-                + " geo_lat, geo_lng, timezone, business_hours, status, is_default,"
-                + " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices,"
+                + " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, s.id());
       ps.setObject(2, s.tenantId());
       ps.setString(3, s.name());
@@ -326,8 +368,9 @@ public class TenantRepository extends BaseOutboxRepository {
       ps.setString(15, s.businessHours());
       ps.setString(16, s.status());
       ps.setBoolean(17, s.isDefault());
-      ps.setObject(18, s.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setBoolean(18, s.showPrices());
       ps.setObject(19, s.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(20, s.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -423,6 +466,7 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getString("business_hours"),
         rs.getString("status"),
         rs.getBoolean("is_default"),
+        rs.getBoolean("show_prices"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
@@ -448,5 +492,104 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getObject("store_id", UUID.class),
         rs.getString("role"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Gap #53: Inventory org config ────────────────────────────────────────
+
+  public TenantInventoryConfig upsertInventoryConfig(TenantInventoryConfig cfg) {
+    return inTx(
+        c -> {
+          String sql =
+              """
+              INSERT INTO tenant_inventory_config
+                (id, tenant_id, lot_control_enabled, serial_control_enabled,
+                 grade_control_enabled, expiry_tracking_enabled, costing_method,
+                 default_uom, reorder_alert_enabled, auto_reserve_on_order,
+                 created_at, updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+              ON CONFLICT (tenant_id) DO UPDATE SET
+                lot_control_enabled     = EXCLUDED.lot_control_enabled,
+                serial_control_enabled  = EXCLUDED.serial_control_enabled,
+                grade_control_enabled   = EXCLUDED.grade_control_enabled,
+                expiry_tracking_enabled = EXCLUDED.expiry_tracking_enabled,
+                costing_method          = EXCLUDED.costing_method,
+                default_uom             = EXCLUDED.default_uom,
+                reorder_alert_enabled   = EXCLUDED.reorder_alert_enabled,
+                auto_reserve_on_order   = EXCLUDED.auto_reserve_on_order,
+                updated_at              = now()
+              RETURNING *
+              """;
+          try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setObject(1, cfg.id());
+            ps.setObject(2, cfg.tenantId());
+            ps.setBoolean(3, cfg.lotControlEnabled());
+            ps.setBoolean(4, cfg.serialControlEnabled());
+            ps.setBoolean(5, cfg.gradeControlEnabled());
+            ps.setBoolean(6, cfg.expiryTrackingEnabled());
+            ps.setString(7, cfg.costingMethod());
+            ps.setString(8, cfg.defaultUom());
+            ps.setBoolean(9, cfg.reorderAlertEnabled());
+            ps.setBoolean(10, cfg.autoReserveOnOrder());
+            ps.setObject(11, OffsetDateTime.ofInstant(cfg.createdAt(), ZoneOffset.UTC));
+            ps.setObject(12, OffsetDateTime.ofInstant(cfg.updatedAt(), ZoneOffset.UTC));
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return mapInventoryConfig(rs);
+            }
+          }
+        },
+        "upsert inventory config");
+  }
+
+  public List<Tenant> listAllTenants() {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
+                      + " created_at, updated_at FROM tenants ORDER BY created_at DESC")) {
+            try (ResultSet rs = ps.executeQuery()) {
+              List<Tenant> result = new java.util.ArrayList<>();
+              while (rs.next()) result.add(mapTenant(rs));
+              return result;
+            }
+          }
+        },
+        "list all tenants");
+  }
+
+  public Optional<TenantInventoryConfig> findInventoryConfig(UUID tenantId) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT id, tenant_id, lot_control_enabled, serial_control_enabled,"
+                      + " grade_control_enabled, expiry_tracking_enabled, costing_method,"
+                      + " default_uom, reorder_alert_enabled, auto_reserve_on_order,"
+                      + " created_at, updated_at"
+                      + " FROM tenant_inventory_config WHERE tenant_id = ?")) {
+            ps.setObject(1, tenantId);
+            try (ResultSet rs = ps.executeQuery()) {
+              return rs.next() ? Optional.of(mapInventoryConfig(rs)) : Optional.empty();
+            }
+          }
+        },
+        "find inventory config");
+  }
+
+  private static TenantInventoryConfig mapInventoryConfig(ResultSet rs) throws SQLException {
+    return new TenantInventoryConfig(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getBoolean("lot_control_enabled"),
+        rs.getBoolean("serial_control_enabled"),
+        rs.getBoolean("grade_control_enabled"),
+        rs.getBoolean("expiry_tracking_enabled"),
+        rs.getString("costing_method"),
+        rs.getString("default_uom"),
+        rs.getBoolean("reorder_alert_enabled"),
+        rs.getBoolean("auto_reserve_on_order"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
 }

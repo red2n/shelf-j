@@ -58,6 +58,18 @@ public class TenantContext {
     return roles.contains(role);
   }
 
+  /**
+   * Throw 403 unless the caller has at least one of the supplied roles.
+   *
+   * <pre>{@code ctx.requireAnyRole("ADMIN", "STAFF"); }</pre>
+   */
+  public void requireAnyRole(String... required) {
+    for (String r : required) {
+      if (roles.contains(r)) return;
+    }
+    throw ApiException.forbidden("FORBIDDEN", "Insufficient role for this operation");
+  }
+
   // --- populated by the filter ---
   void set(UUID tenantId, UUID userId, Set<String> roles, String requestId) {
     this.tenantId = tenantId;
