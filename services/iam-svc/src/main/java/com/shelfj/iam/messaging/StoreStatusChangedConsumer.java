@@ -7,19 +7,19 @@ import java.util.List;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Kafka infrastructure for {@code shelfj.tenant.tenant-status-changed}. Polls the topic and
- * dispatches each record to {@link TenantStatusChangedHandler}. Consumer lifecycle is inherited
- * from {@link BaseKafkaConsumer}; all business logic lives in the handler (SRP).
+ * Kafka infrastructure for {@code shelfj.tenant.store-status-changed}. Polls the topic and
+ * dispatches each record to {@link StoreStatusChangedHandler}. Consumer lifecycle is inherited from
+ * {@link BaseKafkaConsumer}; all business logic lives in the handler (SRP).
  */
 @ApplicationScoped
-class TenantStatusChangedConsumer extends BaseKafkaConsumer {
+class StoreStatusChangedConsumer extends BaseKafkaConsumer {
 
-  @Inject TenantStatusChangedHandler handler;
+  @Inject StoreStatusChangedHandler handler;
 
   @Inject
   @ConfigProperty(
-      name = "shelfj.kafka.topics.tenant-status-changed",
-      defaultValue = "shelfj.tenant.tenant-status-changed")
+      name = "shelfj.kafka.topics.store-status-changed",
+      defaultValue = "shelfj.tenant.store-status-changed")
   String topicCfg;
 
   @Override
@@ -29,12 +29,12 @@ class TenantStatusChangedConsumer extends BaseKafkaConsumer {
 
   @Override
   protected String consumerName() {
-    return "iam-tenant-status-changed-consumer";
+    return "iam-store-status-changed-consumer";
   }
 
   @Override
   protected String groupId() {
-    return "iam-svc-tenant-status";
+    return "iam-svc-store-status";
   }
 
   @Override

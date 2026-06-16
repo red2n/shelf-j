@@ -1,5 +1,6 @@
 package com.shelfj.iam.messaging;
 
+import com.shelfj.iam.repo.PosSessionRepository;
 import com.shelfj.iam.repo.RefreshTokenRepository;
 import com.shelfj.iam.repo.UserRepository;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -29,6 +30,7 @@ class TenantStatusChangedHandler {
 
   @Inject UserRepository users;
   @Inject RefreshTokenRepository refreshTokens;
+  @Inject PosSessionRepository posSessions;
 
   void handle(String json) {
     UUID tenantId;
@@ -47,7 +49,18 @@ class TenantStatusChangedHandler {
     users.upsertTenantStatus(tenantId, status, occurredAt);
     if (!"ACTIVE".equals(status)) {
       refreshTokens.revokeAllForTenant(tenantId);
-      LOG.log(Level.INFO, "Tenant {0} set {1} — sessions revoked", tenantId, status);
+      int terminated = posSessions.endAllForTenant(tenantId);
+      users.audit(
+          tenantId,
+          null,
+          "POS_SESSIONS_TERMINATED",
+          terminated + " POS session(s) ended — tenant " + status);
+      LOG.log(
+          Level.INFO,
+          "Tenant {0} set {1} — refresh tokens revoked, {2} POS session(s) terminated",
+          tenantId,
+          status,
+          terminated);
     } else {
       LOG.log(Level.INFO, "Tenant {0} set ACTIVE", tenantId);
     }

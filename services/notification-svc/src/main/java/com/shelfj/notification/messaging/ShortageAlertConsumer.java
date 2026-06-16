@@ -1,74 +1,44 @@
 package com.shelfj.notification.messaging;
 
-import com.shelfj.service.KafkaEventLoop;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
+import com.shelfj.service.BaseKafkaConsumer;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.enterprise.context.Initialized;
-import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
-import java.lang.System.Logger;
-import java.lang.System.Logger.Level;
 import java.util.List;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Kafka infrastructure for {@code shelfj.inventory.stock-below-threshold}. Polls the topic and
- * dispatches each record to {@link ShortageAlertHandler}. Consumer lifecycle only; all logic is in
- * the handler (SRP). The shared {@link KafkaEventLoop} provides manual offset commit with
- * seek-back, so a failed record is redelivered instead of silently lost.
+ * Polls stock-below-threshold events and dispatches each to {@link ShortageAlertHandler}. Consumer
+ * lifecycle is inherited from {@link BaseKafkaConsumer}; all business logic lives in the handler
+ * (SRP).
  */
 @ApplicationScoped
-class ShortageAlertConsumer {
-
-  private static final Logger LOG = System.getLogger(ShortageAlertConsumer.class.getName());
+class ShortageAlertConsumer extends BaseKafkaConsumer {
 
   @Inject ShortageAlertHandler handler;
-
-  @Inject
-  @ConfigProperty(name = "shelfj.kafka.enabled", defaultValue = "true")
-  boolean kafkaEnabled;
-
-  @Inject
-  @ConfigProperty(name = "shelfj.kafka.bootstrap", defaultValue = "localhost:9092")
-  String bootstrap;
 
   @Inject
   @ConfigProperty(
       name = "shelfj.kafka.topics.stock-below-threshold",
       defaultValue = "shelfj.inventory.stock-below-threshold")
-  String topic;
+  String topicCfg;
 
-  private KafkaEventLoop loop;
-
-  void onStart(@Observes @Initialized(ApplicationScoped.class) Object event) {
-    /* eager */
+  @Override
+  protected List<String> topics() {
+    return List.of(topicCfg);
   }
 
-  @PostConstruct
-  void start() {
-    if (!kafkaEnabled) {
-      LOG.log(Level.INFO, "ShortageAlert consumer disabled");
-      return;
-    }
-    try {
-      loop =
-          new KafkaEventLoop(
-              "notification-shortage-alert-consumer",
-              bootstrap,
-              "notification-svc",
-              List.of(topic),
-              (t, value) -> handler.handle(value));
-      loop.start();
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "ShortageAlert consumer failed to start: " + e.getMessage());
-    }
+  @Override
+  protected String consumerName() {
+    return "notification-shortage-alert-consumer";
   }
 
-  @PreDestroy
-  void stop() {
-    if (loop != null) {
-      loop.close();
-    }
+  @Override
+  protected String groupId() {
+    return "notification-svc";
+  }
+
+  @Override
+  protected void handle(String topic, String value) {
+    handler.handle(value);
   }
 }

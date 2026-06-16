@@ -62,4 +62,11 @@ final class Events {
                 "status":"%s"}"""
         .formatted(UUID.randomUUID(), tenantId, tenantId, Instant.now(), esc(status));
   }
+
+  static String storeStatusChanged(UUID tenantId, UUID storeId, String status) {
+    return """
+                {"eventId":"%s","eventType":"StoreStatusChanged","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
+                "storeId":"%s","status":"%s"}"""
+        .formatted(UUID.randomUUID(), tenantId, storeId, Instant.now(), storeId, esc(status));
+  }
 }

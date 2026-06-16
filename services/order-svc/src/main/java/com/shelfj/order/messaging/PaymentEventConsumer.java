@@ -1,36 +1,20 @@
 package com.shelfj.order.messaging;
 
-import com.shelfj.service.KafkaEventLoop;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
+import com.shelfj.service.BaseKafkaConsumer;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.enterprise.context.Initialized;
-import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
-import java.lang.System.Logger;
-import java.lang.System.Logger.Level;
 import java.util.List;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Polls payment events and dispatches each record to {@link PaymentEventHandler}. Consumer
- * lifecycle only; all logic is in the handler (SRP). The shared {@link KafkaEventLoop} provides
- * manual offset commit with seek-back, so a failed record is redelivered instead of silently lost.
+ * Polls payment-captured and payment-failed events and dispatches each to {@link
+ * PaymentEventHandler}. Consumer lifecycle is inherited from {@link BaseKafkaConsumer}; all
+ * business logic lives in the handler (SRP).
  */
 @ApplicationScoped
-class PaymentEventConsumer {
-
-  private static final Logger LOG = System.getLogger(PaymentEventConsumer.class.getName());
+class PaymentEventConsumer extends BaseKafkaConsumer {
 
   @Inject PaymentEventHandler handler;
-
-  @Inject
-  @ConfigProperty(name = "shelfj.kafka.enabled", defaultValue = "true")
-  boolean kafkaEnabled;
-
-  @Inject
-  @ConfigProperty(name = "shelfj.kafka.bootstrap", defaultValue = "localhost:9092")
-  String bootstrap;
 
   @Inject
   @ConfigProperty(
@@ -44,36 +28,23 @@ class PaymentEventConsumer {
       defaultValue = "shelfj.payment.payment-failed")
   String failedTopic;
 
-  private KafkaEventLoop loop;
-
-  void onStart(@Observes @Initialized(ApplicationScoped.class) Object event) {
-    /* eager init — CDI beans are lazy */
+  @Override
+  protected List<String> topics() {
+    return List.of(capturedTopic, failedTopic);
   }
 
-  @PostConstruct
-  void start() {
-    if (!kafkaEnabled) {
-      LOG.log(Level.INFO, "PaymentEvent consumer disabled");
-      return;
-    }
-    try {
-      loop =
-          new KafkaEventLoop(
-              "order-payment-consumer",
-              bootstrap,
-              "order-svc",
-              List.of(capturedTopic, failedTopic),
-              (topic, value) -> handler.handle(value));
-      loop.start();
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "PaymentEvent consumer failed to start: " + e.getMessage());
-    }
+  @Override
+  protected String consumerName() {
+    return "order-payment-consumer";
   }
 
-  @PreDestroy
-  void stop() {
-    if (loop != null) {
-      loop.close();
-    }
+  @Override
+  protected String groupId() {
+    return "order-svc";
+  }
+
+  @Override
+  protected void handle(String topic, String value) {
+    handler.handle(value);
   }
 }
