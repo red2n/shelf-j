@@ -614,6 +614,16 @@ public class ProductService {
             prodCreated++;
           }
 
+          // Assign to specific stores if requested (additive — never removes existing rows).
+          if (p.storeIds() != null && !p.storeIds().isEmpty()) {
+            var uuids =
+                p.storeIds().stream()
+                    .filter(s -> s != null && !s.isBlank())
+                    .map(UUID::fromString)
+                    .toList();
+            repo.addStoreAssignments(tenantId, productId, uuids);
+          }
+
           for (var v : p.variants()) {
             try {
               // REPLACE: drop any existing variant with this SKU first, so the sheet wins.
@@ -990,5 +1000,194 @@ public class ProductService {
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, "INVALID_UUID", field + " must be a UUID", List.of(), e);
     }
+  }
+
+  // ── Supplier CSV import ────────────────────────────────────────────────────
+
+  /**
+   * Lenient supplier catalogue import. Recognises these column headers (in any order,
+   * case-insensitive):
+   *
+   * <ul>
+   *   <li>{@code Product ID / product_id / id} → SKU; auto-generated from description if absent
+   *   <li>{@code Category} → category (created if new; may be quoted)
+   *   <li>{@code Product Description / description / name} → product name (required — row skipped
+   *       if blank)
+   *   <li>{@code Store / Store Name / store_name / outlet} → store assignment (resolved via
+   *       storeNameToId)
+   *   <li>{@code Quantity / Case Size / qty / packsize} → stored in attributes as caseSize
+   *   <li>{@code Price / cost / trade price} → stored in attributes as tradePrice
+   * </ul>
+   *
+   * <p>Rows that are entirely blank are skipped. No other validation is applied — whatever values
+   * are present get imported as-is so the customer can correct data inside the system rather than
+   * outside it.
+   */
+  public BulkImportResult importSupplierCsv(
+      UUID tenantId, com.shelfj.product.dto.Dtos.SupplierCsvImportRequest req) {
+    var bulkReq =
+        parseSupplierCsvToRequest(
+            req.csv(),
+            req.mode(),
+            req.storeNameToId() != null ? req.storeNameToId() : java.util.Map.of());
+    return bulkImport(tenantId, bulkReq);
+  }
+
+  private record ProductEntry(
+      String categoryName,
+      java.util.List<com.shelfj.product.dto.Dtos.ImportVariantRequest> variants,
+      java.util.Set<String> storeIds) {}
+
+  private BulkImportRequest parseSupplierCsvToRequest(
+      String csv, String mode, java.util.Map<String, String> storeNameToId) {
+    var lines =
+        java.util.Arrays.asList(csv.split("\\r?\\n")).stream().filter(l -> !l.isBlank()).toList();
+    if (lines.size() < 2) {
+      throw new ApiException(
+          400, "CSV_EMPTY", "CSV must have a header and at least one data row", List.of(), null);
+    }
+
+    // findHeader returns the FIRST matching column index — duplicate headers use the first one.
+    var headers = splitCsvRow(lines.get(0));
+    int idxId = findHeader(headers, "product id", "product_id", "sku", "item no");
+    int idxDesc = findHeader(headers, "product description", "description", "product name", "name");
+    int idxCat = findHeader(headers, "category");
+    int idxQty = findHeader(headers, "quantity", "qty");
+    int idxPrice = findHeader(headers, "price");
+    int idxStore = findHeader(headers, "store", "store name", "store_name");
+
+    if (idxDesc < 0) {
+      throw new ApiException(
+          400,
+          "CSV_MISSING_COLUMNS",
+          "CSV must have a 'Product Description' column",
+          List.of(),
+          null);
+    }
+
+    var categoryNames = new java.util.LinkedHashSet<String>();
+    var productMap = new java.util.LinkedHashMap<String, ProductEntry>();
+    int skuCounter = 0;
+
+    for (int i = 1; i < lines.size(); i++) {
+      var cols = splitCsvRow(lines.get(i));
+      String desc = col(cols, idxDesc).trim();
+      if (desc.isEmpty()) continue; // only skip genuinely blank name rows
+
+      String sku = idxId >= 0 ? col(cols, idxId).trim() : "";
+      if (sku.isEmpty()) {
+        // Auto-generate a stable SKU from the description so duplicate rows collapse correctly.
+        skuCounter++;
+        sku = "IMP-" + skuCounter;
+      }
+
+      String category = idxCat >= 0 ? col(cols, idxCat).trim() : "";
+      // Build attributes from whatever is present — no parsing/validation.
+      String attributes =
+          buildAttributes(
+              idxQty >= 0 ? col(cols, idxQty).trim() : "",
+              idxPrice >= 0 ? col(cols, idxPrice).trim() : "");
+
+      var variant =
+          new com.shelfj.product.dto.Dtos.ImportVariantRequest(sku, null, null, "CS", attributes);
+
+      String storeName = idxStore >= 0 ? col(cols, idxStore).trim() : "";
+      String storeId = storeName.isEmpty() ? null : storeNameToId.get(storeName);
+
+      String key = desc + "|" + category;
+      var entry = productMap.get(key);
+      if (entry == null) {
+        var storeIds = new java.util.LinkedHashSet<String>();
+        if (storeId != null) storeIds.add(storeId);
+        productMap.put(
+            key, new ProductEntry(category, new java.util.ArrayList<>(List.of(variant)), storeIds));
+      } else {
+        entry.variants().add(variant);
+        if (storeId != null) entry.storeIds().add(storeId);
+      }
+
+      if (!category.isEmpty()) categoryNames.add(category);
+    }
+
+    var categories =
+        categoryNames.stream()
+            .map(n -> new com.shelfj.product.dto.Dtos.ImportCategoryRequest(n, null))
+            .toList();
+
+    var products =
+        productMap.entrySet().stream()
+            .map(
+                e -> {
+                  var name = e.getKey().split("\\|", 2)[0];
+                  var pe = e.getValue();
+                  var storeIdList =
+                      pe.storeIds().isEmpty() ? null : java.util.List.copyOf(pe.storeIds());
+                  return new com.shelfj.product.dto.Dtos.ImportProductRequest(
+                      name,
+                      null,
+                      pe.categoryName().isEmpty() ? null : pe.categoryName(),
+                      null,
+                      true,
+                      true,
+                      storeIdList,
+                      pe.variants());
+                })
+            .toList();
+
+    return new com.shelfj.product.dto.Dtos.BulkImportRequest(categories, products, mode);
+  }
+
+  private static String col(java.util.List<String> cols, int idx) {
+    return (idx >= 0 && idx < cols.size()) ? cols.get(idx) : "";
+  }
+
+  private static int findHeader(java.util.List<String> headers, String... names) {
+    for (String name : names) {
+      for (int i = 0; i < headers.size(); i++) {
+        if (headers.get(i).equalsIgnoreCase(name)) return i;
+      }
+    }
+    return -1;
+  }
+
+  private static java.util.List<String> splitCsvRow(String line) {
+    var result = new java.util.ArrayList<String>();
+    var sb = new StringBuilder();
+    boolean inQuotes = false;
+    int pos = 0;
+    while (pos < line.length()) {
+      char ch = line.charAt(pos);
+      if (ch == '"') {
+        if (inQuotes && pos + 1 < line.length() && line.charAt(pos + 1) == '"') {
+          sb.append('"');
+          pos += 2;
+        } else {
+          inQuotes = !inQuotes;
+          pos++;
+        }
+      } else if (ch == ',' && !inQuotes) {
+        result.add(sb.toString());
+        sb.setLength(0);
+        pos++;
+      } else {
+        sb.append(ch);
+        pos++;
+      }
+    }
+    result.add(sb.toString());
+    return result;
+  }
+
+  private static String buildAttributes(String caseSizeStr, String priceStr) {
+    var sb = new StringBuilder("{");
+    if (!caseSizeStr.isEmpty()) {
+      sb.append("\"caseSize\":").append(caseSizeStr.replaceAll("[^0-9.]", ""));
+    }
+    if (!priceStr.isEmpty()) {
+      if (sb.length() > 1) sb.append(",");
+      sb.append("\"tradePrice\":\"").append(priceStr.replace("\"", "")).append("\"");
+    }
+    sb.append("}");
+    return sb.length() > 2 ? sb.toString() : null;
   }
 }

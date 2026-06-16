@@ -200,6 +200,7 @@ public final class Dtos {
       String brandName,
       Boolean sellableOnline,
       Boolean sellablePos,
+      List<String> storeIds,
       @NotNull List<ImportVariantRequest> variants) {}
 
   /**
@@ -209,6 +210,14 @@ public final class Dtos {
    */
   public record BulkImportRequest(
       List<ImportCategoryRequest> categories, List<ImportProductRequest> products, String mode) {}
+
+  /**
+   * Wraps a raw supplier CSV with optional store-name-to-UUID mapping and import mode. The server
+   * parses the CSV; the client resolves store names to UUIDs before sending (since tenant-svc owns
+   * store data and product-svc must not call it synchronously during a bulk import).
+   */
+  public record SupplierCsvImportRequest(
+      @NotBlank String csv, String mode, java.util.Map<String, String> storeNameToId) {}
 
   public record BulkImportError(String item, String reason) {}
 

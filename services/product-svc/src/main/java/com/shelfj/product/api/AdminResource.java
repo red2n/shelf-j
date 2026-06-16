@@ -520,6 +520,22 @@ public class AdminResource {
     return ApiResponse.ok(service.bulkImport(ctx.requireTenantId(), req));
   }
 
+  /**
+   * Import a supplier catalogue CSV (GTBJ format). Body: JSON with {@code csv} (raw CSV text),
+   * optional {@code mode} (ADD|REPLACE), optional {@code storeNameToId} map (store name → UUID
+   * string, resolved client-side so this service never calls tenant-svc synchronously).
+   */
+  @POST
+  @Path("/import/supplier-csv")
+  public ApiResponse<BulkImportResult> importSupplierCsv(
+      com.shelfj.product.dto.Dtos.SupplierCsvImportRequest req) {
+    if (req == null || req.csv() == null || req.csv().isBlank()) {
+      throw new com.shelfj.web.ApiException(
+          400, "INVALID_BODY", "csv field is required", List.of(), null);
+    }
+    return ApiResponse.ok(service.importSupplierCsv(ctx.requireTenantId(), req));
+  }
+
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
 
   @POST

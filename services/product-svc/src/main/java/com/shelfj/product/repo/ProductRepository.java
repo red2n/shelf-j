@@ -483,6 +483,28 @@ public class ProductRepository extends BaseOutboxRepository {
         "set product stores");
   }
 
+  /** Adds store assignments without removing existing ones (idempotent — skips duplicates). */
+  public void addStoreAssignments(UUID tenantId, UUID productId, java.util.List<UUID> storeIds) {
+    if (storeIds == null || storeIds.isEmpty()) return;
+    inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO product_stores (tenant_id, product_id, store_id)"
+                      + " VALUES (?, ?, ?) ON CONFLICT (tenant_id, product_id, store_id) DO NOTHING")) {
+            for (UUID sid : storeIds) {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, productId);
+              ps.setObject(3, sid);
+              ps.addBatch();
+            }
+            ps.executeBatch();
+          }
+          return null;
+        },
+        "add store assignments");
+  }
+
   /**
    * Escape LIKE metacharacters in user-supplied search text: a literal {@code %}/{@code _} must
    * match itself, not act as a wildcard the caller can use to force expensive full scans.
