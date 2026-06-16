@@ -315,30 +315,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
       IntercompanyInvoice inv, List<NominalLedgerEntry> ledgerEntries, OutboxRow event) {
     return inTx(
         c -> {
-          try (var ps =
-              c.prepareStatement(
-                  "INSERT INTO intercompany_invoices"
-                      + " (id,tenant_id,invoice_type,from_store_id,to_store_id,transfer_ref,"
-                      + "  net_amount,vat_amount,gross_amount,vat_code,vat_disregarded,"
-                      + "  status,invoice_date,payment_due_date,currency)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
-            ps.setObject(1, inv.id());
-            ps.setObject(2, inv.tenantId());
-            ps.setString(3, inv.invoiceType());
-            ps.setObject(4, inv.fromStoreId());
-            ps.setObject(5, inv.toStoreId());
-            ps.setObject(6, inv.transferRef());
-            ps.setBigDecimal(7, inv.netAmount());
-            ps.setBigDecimal(8, inv.vatAmount());
-            ps.setBigDecimal(9, inv.grossAmount());
-            ps.setString(10, inv.vatCode());
-            ps.setBoolean(11, inv.vatDisregarded());
-            ps.setString(12, inv.status());
-            ps.setObject(13, inv.invoiceDate());
-            ps.setObject(14, inv.paymentDueDate());
-            ps.setString(15, inv.currency());
-            ps.executeUpdate();
-          }
+          insertIntercompanyInvoice(c, inv);
           for (NominalLedgerEntry e : ledgerEntries) {
             insertNominalEntry(c, e);
           }
@@ -359,30 +336,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
     return inTx(
         c -> {
           for (IntercompanyInvoice inv : new IntercompanyInvoice[] {ar, ap}) {
-            try (var ps =
-                c.prepareStatement(
-                    "INSERT INTO intercompany_invoices"
-                        + " (id,tenant_id,invoice_type,from_store_id,to_store_id,transfer_ref,"
-                        + "  net_amount,vat_amount,gross_amount,vat_code,vat_disregarded,"
-                        + "  status,invoice_date,payment_due_date,currency)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
-              ps.setObject(1, inv.id());
-              ps.setObject(2, inv.tenantId());
-              ps.setString(3, inv.invoiceType());
-              ps.setObject(4, inv.fromStoreId());
-              ps.setObject(5, inv.toStoreId());
-              ps.setObject(6, inv.transferRef());
-              ps.setBigDecimal(7, inv.netAmount());
-              ps.setBigDecimal(8, inv.vatAmount());
-              ps.setBigDecimal(9, inv.grossAmount());
-              ps.setString(10, inv.vatCode());
-              ps.setBoolean(11, inv.vatDisregarded());
-              ps.setString(12, inv.status());
-              ps.setObject(13, inv.invoiceDate());
-              ps.setObject(14, inv.paymentDueDate());
-              ps.setString(15, inv.currency());
-              ps.executeUpdate();
-            }
+            insertIntercompanyInvoice(c, inv);
           }
           for (NominalLedgerEntry e : arEntries) insertNominalEntry(c, e);
           for (NominalLedgerEntry e : apEntries) insertNominalEntry(c, e);
@@ -418,6 +372,34 @@ public class PurchaseRepository extends BaseOutboxRepository {
           return null;
         },
         "settle intercompany invoice");
+  }
+
+  private void insertIntercompanyInvoice(java.sql.Connection c, IntercompanyInvoice inv)
+      throws java.sql.SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "INSERT INTO intercompany_invoices"
+                + " (id,tenant_id,invoice_type,from_store_id,to_store_id,transfer_ref,"
+                + "  net_amount,vat_amount,gross_amount,vat_code,vat_disregarded,"
+                + "  status,invoice_date,payment_due_date,currency)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, inv.id());
+      ps.setObject(2, inv.tenantId());
+      ps.setString(3, inv.invoiceType());
+      ps.setObject(4, inv.fromStoreId());
+      ps.setObject(5, inv.toStoreId());
+      ps.setObject(6, inv.transferRef());
+      ps.setBigDecimal(7, inv.netAmount());
+      ps.setBigDecimal(8, inv.vatAmount());
+      ps.setBigDecimal(9, inv.grossAmount());
+      ps.setString(10, inv.vatCode());
+      ps.setBoolean(11, inv.vatDisregarded());
+      ps.setString(12, inv.status());
+      ps.setObject(13, inv.invoiceDate());
+      ps.setObject(14, inv.paymentDueDate());
+      ps.setString(15, inv.currency());
+      ps.executeUpdate();
+    }
   }
 
   private void insertNominalEntry(java.sql.Connection c, NominalLedgerEntry e)

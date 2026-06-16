@@ -80,7 +80,8 @@ public class AuthService {
     var candidates = users.findAllByEmail(email);
     for (User u : candidates) {
       if (u.tenantId() == null || u.tenantId().equals(tenantId)) {
-        return new ProvisionStaffResponse(u.id().toString(), email, false, null);
+        users.audit(tenantId, u.id(), "STAFF_PROVISIONED_REUSE", email);
+        return new ProvisionStaffResponse(u.id().toString(), email, false);
       }
     }
     if (!candidates.isEmpty()) {
@@ -91,18 +92,16 @@ public class AuthService {
           java.util.List.of());
     }
 
-    String pwd =
-        (rawPassword == null || rawPassword.isBlank()) ? generateTempPassword() : rawPassword;
     UUID userId = UUID.randomUUID();
     Instant now = Instant.now();
     var user =
         new User(
             userId,
             null,
-            User.TYPE_CUSTOMER,
+            User.TYPE_STAFF,
             email,
             null,
-            passwords.hash(pwd),
+            passwords.hash(rawPassword),
             User.STATUS_ACTIVE,
             now,
             now);
@@ -114,18 +113,14 @@ public class AuthService {
             .add("aggregateId", userId.toString())
             .add("occurredAt", now.toString())
             .add("email", email)
-            .add("type", "CUSTOMER")
+            .add("type", "STAFF")
             .build()
             .toString();
     var outbox =
         new OutboxRow("UserRegistered", "shelfj.iam.user-registered", null, userId, payload);
-    users.createUserWithOutbox(user, "CUSTOMER", outbox);
+    users.createUserWithOutbox(user, "STAFF", outbox);
     users.audit(tenantId, userId, "STAFF_PROVISIONED", email);
-    return new ProvisionStaffResponse(userId.toString(), email, true, pwd);
-  }
-
-  private static String generateTempPassword() {
-    return "Sj" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+    return new ProvisionStaffResponse(userId.toString(), email, true);
   }
 
   /**

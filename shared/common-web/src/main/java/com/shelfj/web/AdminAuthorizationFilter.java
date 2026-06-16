@@ -124,7 +124,7 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   private static boolean requiresManagement(String path, String method) {
     // Bootstrap carve-out — see isOpenMutation.
     if (path.endsWith("/admin/tenant") && "POST".equalsIgnoreCase(method)) return false;
-    if (path.contains("/admin/")) return true;
+    if (path.startsWith("/admin/")) return true;
     if (path.endsWith("/refunds") && "POST".equalsIgnoreCase(method)) return true;
     if (path.endsWith("/void") && "POST".equalsIgnoreCase(method)) return true;
     return false;

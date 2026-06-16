@@ -36,6 +36,7 @@ import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
 import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
 import com.shelfj.inventory.repo.InventoryRepository;
+import com.shelfj.inventory.repo.SerialRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -56,6 +57,7 @@ public class InventoryService {
 
   @Inject ServiceConfig config;
   @Inject InventoryRepository repo;
+  @Inject SerialRepository serialRepo;
 
   // ---- receive (also the path the GoodsReceived consumer uses) ----
   public Batch receive(
@@ -468,21 +470,23 @@ public class InventoryService {
             tenantId,
             batchId,
             Events.serialsRegistered(tenantId, batchId, domainSerials.size()));
-    return repo.registerSerials(domainSerials, event);
+    return serialRepo.registerSerials(domainSerials, event);
   }
 
   public List<SerialNumber> listSerials(
       UUID tenantId, UUID storeId, UUID variantId, String status, int limit) {
-    return repo.listSerials(tenantId, storeId, variantId, status, limit);
+    return serialRepo.listSerials(tenantId, storeId, variantId, status, limit);
   }
 
   public SerialNumber getSerial(UUID tenantId, UUID serialId) {
-    return repo.findSerial(tenantId, serialId)
+    return serialRepo
+        .findSerial(tenantId, serialId)
         .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
   }
 
   public SerialNumber lookupSerialByNo(UUID tenantId, String serialNo) {
-    return repo.findSerialByNo(tenantId, serialNo)
+    return serialRepo
+        .findSerialByNo(tenantId, serialNo)
         .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
   }
 
@@ -509,12 +513,13 @@ public class InventoryService {
             tenantId,
             serialId,
             Events.serialStatusChanged(tenantId, serialId, newStatus));
-    return repo.updateSerialStatus(tenantId, serialId, newStatus, event)
+    return serialRepo
+        .updateSerialStatus(tenantId, serialId, newStatus, event)
         .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
   }
 
   public List<SerialMovement> listSerialHistory(UUID tenantId, UUID serialId) {
-    return repo.listSerialHistory(tenantId, serialId);
+    return serialRepo.listSerialHistory(tenantId, serialId);
   }
 
   private static String generateSerialNo(String prefix, int index) {
