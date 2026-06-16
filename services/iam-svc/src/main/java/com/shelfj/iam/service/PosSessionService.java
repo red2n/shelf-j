@@ -3,6 +3,7 @@ package com.shelfj.iam.service;
 import com.shelfj.iam.domain.PosSession;
 import com.shelfj.iam.dto.Dtos.StartPosSessionRequest;
 import com.shelfj.iam.repo.PosSessionRepository;
+import com.shelfj.iam.repo.StoreStatusRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -16,18 +17,24 @@ import java.util.UUID;
 public class PosSessionService {
 
   @Inject PosSessionRepository repo;
+  @Inject StoreStatusRepository storeStatusRepo;
 
   public PosSession start(TenantContext ctx, StartPosSessionRequest req) {
     int timeout = req.idleTimeoutSeconds() != null ? req.idleTimeoutSeconds() : 900;
     if (timeout < 60 || timeout > 86400)
       throw ApiException.badRequest(
           "POS_SESSION_INVALID_TIMEOUT", "idleTimeoutSeconds must be 60–86400");
+    UUID storeId = UUID.fromString(req.storeId());
+    if (!storeStatusRepo.isActive(storeId))
+      throw ApiException.conflict(
+          "STORE_NOT_OPERATIONAL",
+          "Store is not accepting new sessions — it is closed or suspended");
     var session =
         new PosSession(
             UUID.randomUUID(),
             ctx.requireTenantId(),
             ctx.userId(),
-            UUID.fromString(req.storeId()),
+            storeId,
             Instant.now(),
             Instant.now(),
             null,

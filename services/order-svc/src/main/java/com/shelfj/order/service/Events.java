@@ -16,15 +16,26 @@ final class Events {
 
   private Events() {}
 
-  static OutboxRow orderPlaced(UUID tenantId, UUID orderId, String channel) {
+  static OutboxRow orderPlaced(
+      UUID tenantId, UUID orderId, String channel, UUID customerId, UUID storeId) {
+    String customerPart =
+        customerId != null ? ",\"customerId\":\"" + customerId + "\"" : ",\"customerId\":null";
     return new OutboxRow(
         "OrderPlaced",
         "shelfj.order.order-placed",
         tenantId,
         orderId,
-        String.format(
-            "{\"eventType\":\"OrderPlaced\",\"tenantId\":\"%s\",\"orderId\":\"%s\",\"channel\":\"%s\"}",
-            tenantId, orderId, esc(channel)));
+        "{\"eventType\":\"OrderPlaced\",\"tenantId\":\""
+            + tenantId
+            + "\",\"orderId\":\""
+            + orderId
+            + "\",\"channel\":\""
+            + esc(channel)
+            + "\",\"storeId\":\""
+            + storeId
+            + "\""
+            + customerPart
+            + "}");
   }
 
   static OutboxRow orderConfirmed(UUID tenantId, UUID orderId) {

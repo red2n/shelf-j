@@ -558,6 +558,23 @@ services:
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
+  cart-svc:
+    image: ghcr.io/red2n/shelf-j-cart-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/cart-svc, SVC_JAR: cart-svc }
+    container_name: shelfj-cart
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${CART_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: cart-svc
+    mem_limit: ${CART_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
   pricing-svc:
     image: ghcr.io/red2n/shelf-j-pricing-svc:${SHELFJ_TAG:-latest}
     build:

@@ -26,6 +26,8 @@ import com.shelfj.order.dto.Dtos.RedeemGiftCardRequest;
 import com.shelfj.order.dto.Dtos.ReloadGiftCardRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
 import com.shelfj.order.repo.OrderRepository;
+import com.shelfj.order.repo.StoreStatusRepository;
+import com.shelfj.order.repo.TenantStatusRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -44,6 +46,8 @@ public class OrderService {
   private static final System.Logger LOG = System.getLogger(OrderService.class.getName());
 
   @Inject OrderRepository repo;
+  @Inject TenantStatusRepository tenantStatusRepo;
+  @Inject StoreStatusRepository storeStatusRepo;
   @Inject com.shelfj.order.config.ServiceConfig config;
   @Inject com.shelfj.order.client.PricingClient pricing;
 
@@ -55,6 +59,15 @@ public class OrderService {
 
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = UUID.fromString(req.storeId());
+
+    if (!tenantStatusRepo.isActive(tenantId))
+      throw ApiException.conflict(
+          "TENANT_NOT_OPERATIONAL",
+          "Tenant is suspended or blocked — orders cannot be placed at this time");
+    if (!storeStatusRepo.isActive(storeId))
+      throw ApiException.conflict(
+          "STORE_NOT_OPERATIONAL",
+          "Store is closed or suspended — orders cannot be placed at this location");
     // A signed-in storefront customer is bound to their own order from the authenticated identity —
     // never from the (untrusted) request body. Staff placing a POS order may still attach a
     // customer
@@ -132,7 +145,8 @@ public class OrderService {
             req.exemptReason());
 
     try {
-      return repo.createOrder(order, items, Events.orderPlaced(tenantId, orderId, req.channel()));
+      return repo.createOrder(
+          order, items, Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId));
     } catch (ApiException e) {
       // Idempotent replay: a retried checkout with the same key gets the original order back
       // instead of an error (golden rule #11).

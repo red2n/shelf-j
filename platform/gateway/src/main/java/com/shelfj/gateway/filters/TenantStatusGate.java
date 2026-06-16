@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class TenantStatusGate {
 
   private static final Logger LOG = System.getLogger(TenantStatusGate.class.getName());
-  private static final long TTL_MILLIS = 60_000;
+  private static final long TTL_MILLIS = 15_000;
 
   @Inject ServiceRegistry registry;
   @Inject WebClient webClient;
