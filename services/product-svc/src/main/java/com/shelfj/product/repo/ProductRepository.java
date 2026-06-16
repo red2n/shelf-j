@@ -910,7 +910,7 @@ public class ProductRepository extends BaseOutboxRepository {
     var rows =
         query(
             "SELECT id, tenant_id, variant_id, revision, description, effective_date, status, created_at"
-            + " FROM item_revisions WHERE tenant_id=? AND variant_id=?"
+                + " FROM item_revisions WHERE tenant_id=? AND variant_id=?"
                 + " AND effective_date <= CURRENT_DATE"
                 + " ORDER BY effective_date DESC LIMIT 1",
             ps -> {

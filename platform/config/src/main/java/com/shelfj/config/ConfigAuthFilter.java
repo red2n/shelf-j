@@ -24,7 +24,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @Provider
 @ApplicationScoped
 @Priority(Priorities.AUTHENTICATION)
-public class ConfigAuthFilter implements ContainerRequestFilter {
+public final class ConfigAuthFilter implements ContainerRequestFilter {
 
   static final String TOKEN_HEADER = "X-Config-Token";
   private static final int MIN_TOKEN_LENGTH = 32;
@@ -32,8 +32,7 @@ public class ConfigAuthFilter implements ContainerRequestFilter {
   private final String expectedToken;
 
   @Inject
-  public ConfigAuthFilter(
-      @ConfigProperty(name = "shelfj.config.token") String token) {
+  public ConfigAuthFilter(@ConfigProperty(name = "shelfj.config.token") String token) {
     if (token == null || token.isBlank()) {
       throw new IllegalStateException(
           "shelfj.config.token (SHELFJ_CONFIG_TOKEN) is not set. "
@@ -60,7 +59,8 @@ public class ConfigAuthFilter implements ContainerRequestFilter {
     if (!expectedToken.equals(supplied)) {
       ctx.abortWith(
           Response.status(Response.Status.UNAUTHORIZED)
-              .entity("{\"error\":\"CONFIG_UNAUTHORIZED\",\"message\":\"Missing or invalid X-Config-Token\"}")
+              .entity(
+                  "{\"error\":\"CONFIG_UNAUTHORIZED\",\"message\":\"Missing or invalid X-Config-Token\"}")
               .type("application/json")
               .build());
     }
