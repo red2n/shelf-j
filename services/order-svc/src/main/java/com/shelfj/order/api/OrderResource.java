@@ -93,6 +93,9 @@ public class OrderResource {
       @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
       PlaceOrderRequest req) {
     Validations.validate(req);
+    if ("POS".equalsIgnoreCase(req.channel())) {
+      ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
+    }
     // The standard Idempotency-Key header is authoritative; the body field is a legacy fallback.
     String effectiveKey =
         idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : req.idempotencyKey();

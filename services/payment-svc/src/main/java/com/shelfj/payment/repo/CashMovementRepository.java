@@ -54,7 +54,9 @@ public class CashMovementRepository extends BaseOutboxRepository {
 
   public List<CashMovementResponse> listMovements(UUID tenantId, UUID tillSessionId) {
     return query(
-        "SELECT * FROM cash_movements WHERE tenant_id=? AND till_session_id=? ORDER BY created_at DESC",
+        "SELECT id, tenant_id, store_id, till_session_id, direction, amount, reason,"
+            + " authorised_by, recorded_by, created_at"
+            + " FROM cash_movements WHERE tenant_id=? AND till_session_id=? ORDER BY created_at DESC",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, tillSessionId);
@@ -174,7 +176,12 @@ public class CashMovementRepository extends BaseOutboxRepository {
         c -> {
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "SELECT * FROM z_reports WHERE tenant_id=? AND store_id=? AND business_date=?")) {
+                  "SELECT id, tenant_id, store_id, business_date, total_sales, total_refunds,"
+                      + " total_discounts, total_tax, net_sales, cash_sales, card_sales,"
+                      + " gift_card_sales, other_sales, opening_float, cash_drops, pay_ins,"
+                      + " pay_outs, expected_cash, counted_cash, over_short, transaction_count,"
+                      + " currency, generated_by, generated_at"
+                      + " FROM z_reports WHERE tenant_id=? AND store_id=? AND business_date=?")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, storeId);
             ps.setObject(3, java.sql.Date.valueOf(businessDate));

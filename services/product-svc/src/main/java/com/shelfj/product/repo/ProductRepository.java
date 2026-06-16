@@ -895,7 +895,8 @@ public class ProductRepository extends BaseOutboxRepository {
 
   public List<ItemRevision> listRevisions(UUID tenantId, UUID variantId) {
     return query(
-        "SELECT * FROM item_revisions WHERE tenant_id=? AND variant_id=?"
+        "SELECT id, tenant_id, variant_id, revision, description, effective_date, status, created_at"
+            + " FROM item_revisions WHERE tenant_id=? AND variant_id=?"
             + " ORDER BY effective_date DESC",
         ps -> {
           ps.setObject(1, tenantId);
@@ -908,7 +909,8 @@ public class ProductRepository extends BaseOutboxRepository {
   public Optional<ItemRevision> currentRevision(UUID tenantId, UUID variantId) {
     var rows =
         query(
-            "SELECT * FROM item_revisions WHERE tenant_id=? AND variant_id=?"
+            "SELECT id, tenant_id, variant_id, revision, description, effective_date, status, created_at"
+            + " FROM item_revisions WHERE tenant_id=? AND variant_id=?"
                 + " AND effective_date <= CURRENT_DATE"
                 + " ORDER BY effective_date DESC LIMIT 1",
             ps -> {
@@ -923,7 +925,8 @@ public class ProductRepository extends BaseOutboxRepository {
   public Optional<ItemRevision> findRevision(UUID tenantId, UUID revisionId) {
     var rows =
         query(
-            "SELECT * FROM item_revisions WHERE tenant_id=? AND id=?",
+            "SELECT id, tenant_id, variant_id, revision, description, effective_date, status, created_at"
+                + " FROM item_revisions WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, revisionId);
@@ -1143,7 +1146,8 @@ public class ProductRepository extends BaseOutboxRepository {
   public Optional<ItemTemplate> findTemplate(UUID tenantId, UUID id) {
     var rows =
         query(
-            "SELECT * FROM item_templates WHERE tenant_id=? AND id=?",
+            "SELECT id, tenant_id, name, description, attributes, status, created_at"
+                + " FROM item_templates WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
@@ -1155,7 +1159,8 @@ public class ProductRepository extends BaseOutboxRepository {
 
   public List<ItemTemplate> listTemplates(UUID tenantId) {
     return query(
-        "SELECT * FROM item_templates WHERE tenant_id=? AND status='ACTIVE' ORDER BY name",
+        "SELECT id, tenant_id, name, description, attributes, status, created_at"
+            + " FROM item_templates WHERE tenant_id=? AND status='ACTIVE' ORDER BY name",
         ps -> ps.setObject(1, tenantId),
         ProductRepository::mapTemplate,
         "list item templates");
@@ -1821,7 +1826,9 @@ public class ProductRepository extends BaseOutboxRepository {
 
   public Optional<CategorySet> findCategorySet(UUID tenantId, UUID id) {
     return query(
-            "SELECT * FROM category_sets WHERE tenant_id = ? AND id = ?",
+            "SELECT id, tenant_id, name, description, purpose, default_cat_id, controlled,"
+                + " status, created_at, updated_at"
+                + " FROM category_sets WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
@@ -1834,7 +1841,9 @@ public class ProductRepository extends BaseOutboxRepository {
 
   public List<CategorySet> listCategorySets(UUID tenantId) {
     return query(
-        "SELECT * FROM category_sets WHERE tenant_id = ? ORDER BY name",
+        "SELECT id, tenant_id, name, description, purpose, default_cat_id, controlled,"
+            + " status, created_at, updated_at"
+            + " FROM category_sets WHERE tenant_id = ? ORDER BY name",
         ps -> ps.setObject(1, tenantId),
         ProductRepository::mapCategorySet,
         "list category sets");
@@ -1895,7 +1904,8 @@ public class ProductRepository extends BaseOutboxRepository {
         },
         "add category set member");
     return query(
-            "SELECT * FROM category_set_members"
+            "SELECT id, tenant_id, set_id, category_id, created_at"
+                + " FROM category_set_members"
                 + " WHERE tenant_id = ? AND set_id = ? AND category_id = ?",
             ps -> {
               ps.setObject(1, m.tenantId());
@@ -1911,7 +1921,8 @@ public class ProductRepository extends BaseOutboxRepository {
 
   public List<CategorySetMember> listCategorySetMembers(UUID tenantId, UUID setId) {
     return query(
-        "SELECT * FROM category_set_members WHERE tenant_id = ? AND set_id = ? ORDER BY created_at",
+        "SELECT id, tenant_id, set_id, category_id, created_at"
+            + " FROM category_set_members WHERE tenant_id = ? AND set_id = ? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, setId);
@@ -1952,7 +1963,8 @@ public class ProductRepository extends BaseOutboxRepository {
         },
         "upsert variant category set assignment");
     return query(
-            "SELECT * FROM variant_category_set_assignments"
+            "SELECT id, tenant_id, variant_id, set_id, category_id, created_at, updated_at"
+                + " FROM variant_category_set_assignments"
                 + " WHERE tenant_id = ? AND variant_id = ? AND set_id = ?",
             ps -> {
               ps.setObject(1, a.tenantId());
@@ -1969,7 +1981,8 @@ public class ProductRepository extends BaseOutboxRepository {
   public List<VariantCategorySetAssignment> listVariantCategorySetAssignments(
       UUID tenantId, UUID variantId) {
     return query(
-        "SELECT * FROM variant_category_set_assignments"
+        "SELECT id, tenant_id, variant_id, set_id, category_id, created_at, updated_at"
+            + " FROM variant_category_set_assignments"
             + " WHERE tenant_id = ? AND variant_id = ? ORDER BY set_id",
         ps -> {
           ps.setObject(1, tenantId);

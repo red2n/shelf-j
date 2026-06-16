@@ -177,7 +177,10 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
   private ParkedSaleResponse buildResponse(UUID tenantId, UUID saleId, Connection c)
       throws SQLException {
     try (PreparedStatement ps =
-        c.prepareStatement("SELECT * FROM parked_sales WHERE tenant_id=? AND id=?")) {
+        c.prepareStatement(
+            "SELECT id, tenant_id, store_id, cashier_id, customer_id, customer_name,"
+                + " subtotal, discount_amount, notes, parked_at, expires_at, resumed_at, order_id"
+                + " FROM parked_sales WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, saleId);
       try (ResultSet rs = ps.executeQuery()) {
@@ -207,7 +210,10 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
   private List<ParkedSaleItemResponse> fetchItems(Connection c, UUID tenantId, UUID saleId)
       throws SQLException {
     try (PreparedStatement ps =
-        c.prepareStatement("SELECT * FROM parked_sale_items WHERE tenant_id=? AND sale_id=?")) {
+        c.prepareStatement(
+            "SELECT id, tenant_id, sale_id, variant_id, qty, unit_price, line_total,"
+                + " discount_amount, notes"
+                + " FROM parked_sale_items WHERE tenant_id=? AND sale_id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, saleId);
       List<ParkedSaleItemResponse> list = new ArrayList<>();

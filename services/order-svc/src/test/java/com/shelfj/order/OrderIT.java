@@ -31,6 +31,8 @@ class OrderIT {
     System.setProperty("shelfj.db.schema", "order");
     System.setProperty("shelfj.consul.enabled", "false");
     System.setProperty("shelfj.kafka.enabled", "false");
+    // Disable server-side pricing enforcement so tests don't need a live pricing-svc.
+    System.setProperty("shelfj.order.pricing.enforce", "false");
   }
 
   private static final String T = "11111111-1111-1111-1111-111111111111";

@@ -31,15 +31,17 @@ import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
+import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
 import java.util.UUID;
 
 /** Business logic for order-svc. Thin resource → this service → repository. */
 @ApplicationScoped
 public class OrderService {
+
+  private static final System.Logger LOG = System.getLogger(OrderService.class.getName());
 
   @Inject OrderRepository repo;
   @Inject com.shelfj.order.config.ServiceConfig config;
@@ -488,20 +490,32 @@ public class OrderService {
 
   // ── Payment event handlers (called by PaymentEventHandler) ───────────────
 
-  public void handlePaymentCaptured(java.util.UUID tenantId, java.util.UUID orderId) {
+  public void handlePaymentCaptured(
+      java.util.UUID tenantId, java.util.UUID orderId, java.math.BigDecimal amount) {
     repo.findOrder(tenantId, orderId)
         .ifPresent(
             o -> {
-              if (Order.STATUS_PENDING.equals(o.status())) {
-                repo.transitionOrderStatus(
-                    tenantId,
+              if (!Order.STATUS_PENDING.equals(o.status())) return;
+              // Reject if the tendered amount is less than the order total.
+              // Split-payment support (accumulating paid_amount) is a separate feature; until
+              // then a single tender must cover the full balance.
+              if (amount == null || amount.compareTo(o.total()) < 0) {
+                LOG.log(
+                    java.lang.System.Logger.Level.WARNING,
+                    "PaymentCaptured for order {0} ignored: tendered {1} < order total {2}",
                     orderId,
-                    Order.STATUS_PENDING,
-                    Order.STATUS_CONFIRMED,
-                    "payment captured",
-                    null,
-                    Events.orderConfirmed(tenantId, orderId));
+                    amount,
+                    o.total());
+                return;
               }
+              repo.transitionOrderStatus(
+                  tenantId,
+                  orderId,
+                  Order.STATUS_PENDING,
+                  Order.STATUS_CONFIRMED,
+                  "payment captured",
+                  null,
+                  Events.orderConfirmed(tenantId, orderId));
             });
   }
 
@@ -692,7 +706,7 @@ public class OrderService {
   // ── helpers ───────────────────────────────────────────────────────────────
 
   private static final String CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  private static final Random RNG = new Random();
+  private static final SecureRandom RNG = new SecureRandom();
 
   private String generateGiftCardCode() {
     StringBuilder sb = new StringBuilder(16);

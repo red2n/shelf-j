@@ -9,7 +9,6 @@ import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -53,12 +52,9 @@ public class ReservationSweeper {
 
   private void sweepQuietly() {
     try {
-      for (UUID reservationId : service.expiredReservations(200)) {
-        UUID tenantId = service.tenantOfReservation(reservationId);
-        if (tenantId != null) {
-          service.release(tenantId, reservationId);
-          LOG.log(Level.DEBUG, "Swept expired reservation {0}", reservationId);
-        }
+      for (var ref : service.expiredReservationsWithTenant(200)) {
+        service.release(ref.tenantId(), ref.id());
+        LOG.log(Level.DEBUG, "Swept expired reservation {0}", ref.id());
       }
     } catch (Exception e) {
       LOG.log(Level.WARNING, "Reservation sweep deferred: " + e.getMessage());

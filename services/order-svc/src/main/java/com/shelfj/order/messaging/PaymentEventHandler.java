@@ -6,6 +6,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.math.BigDecimal;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -25,6 +26,8 @@ class PaymentEventHandler {
       Pattern.compile("\"orderId\"\\s*:\\s*\"([0-9a-fA-F-]{36})\"");
   private static final Pattern TENANT_ID_PAT =
       Pattern.compile("\"tenantId\"\\s*:\\s*\"([0-9a-fA-F-]{36})\"");
+  private static final Pattern AMOUNT_PAT =
+      Pattern.compile("\"amount\"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)");
 
   @Inject OrderService svc;
 
@@ -32,13 +35,16 @@ class PaymentEventHandler {
     String eventType;
     UUID orderId;
     UUID tenantId;
+    BigDecimal amount;
     try {
       eventType = extract(EVENT_TYPE_PAT, payload);
       String orderIdStr = extract(ORDER_ID_PAT, payload);
       String tenantIdStr = extract(TENANT_ID_PAT, payload);
+      String amountStr = extract(AMOUNT_PAT, payload);
       if (orderIdStr == null || tenantIdStr == null) return;
       orderId = UUID.fromString(orderIdStr);
       tenantId = UUID.fromString(tenantIdStr);
+      amount = amountStr != null ? new BigDecimal(amountStr) : null;
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed payment event skipped: " + e.getMessage());
       return;
@@ -46,7 +52,7 @@ class PaymentEventHandler {
 
     try {
       if ("PaymentCaptured".equals(eventType)) {
-        svc.handlePaymentCaptured(tenantId, orderId);
+        svc.handlePaymentCaptured(tenantId, orderId, amount);
       } else if ("PaymentFailed".equals(eventType)) {
         svc.handlePaymentFailed(tenantId, orderId);
       }

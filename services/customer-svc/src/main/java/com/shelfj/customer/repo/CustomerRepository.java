@@ -45,7 +45,9 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   public Optional<Customer> findById(UUID tenantId, UUID customerId) {
     return query(
-            "SELECT * FROM customers WHERE tenant_id = ? AND id = ?",
+            "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
+                + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " FROM customers WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, customerId);
@@ -58,7 +60,9 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   public Optional<Customer> findByEmail(UUID tenantId, String email) {
     return query(
-            "SELECT * FROM customers WHERE tenant_id = ? AND email = ?",
+            "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
+                + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " FROM customers WHERE tenant_id = ? AND email = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setString(2, email);
@@ -71,7 +75,9 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   public Optional<Customer> findByPhone(UUID tenantId, String phone) {
     return query(
-            "SELECT * FROM customers WHERE tenant_id = ? AND phone = ?",
+            "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
+                + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " FROM customers WHERE tenant_id = ? AND phone = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setString(2, phone);
@@ -86,7 +92,9 @@ public class CustomerRepository extends BaseOutboxRepository {
   public List<Customer> listCustomers(UUID tenantId, String afterId, int limit) {
     if (afterId == null) {
       return query(
-          "SELECT * FROM customers WHERE tenant_id = ? AND status != 'ANONYMIZED'"
+          "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
+              + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+              + " FROM customers WHERE tenant_id = ? AND status != 'ANONYMIZED'"
               + " ORDER BY created_at DESC, id LIMIT ?",
           ps -> {
             ps.setObject(1, tenantId);
@@ -96,7 +104,9 @@ public class CustomerRepository extends BaseOutboxRepository {
           "list customers");
     }
     return query(
-        "SELECT * FROM customers WHERE tenant_id = ? AND status != 'ANONYMIZED'"
+        "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
+            + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+            + " FROM customers WHERE tenant_id = ? AND status != 'ANONYMIZED'"
             + " AND id < ? ORDER BY created_at DESC, id LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
@@ -162,7 +172,9 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   public List<CustomerAddress> listAddresses(UUID tenantId, UUID customerId) {
     return query(
-        "SELECT * FROM customer_addresses WHERE tenant_id = ? AND customer_id = ? ORDER BY created_at",
+        "SELECT id, tenant_id, customer_id, type, line1, line2, city, state, country,"
+            + " pincode, is_default, created_at"
+            + " FROM customer_addresses WHERE tenant_id = ? AND customer_id = ? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, customerId);
@@ -210,7 +222,9 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   public Optional<CustomerAddress> findAddress(UUID tenantId, UUID addressId) {
     return query(
-            "SELECT * FROM customer_addresses WHERE tenant_id = ? AND id = ?",
+            "SELECT id, tenant_id, customer_id, type, line1, line2, city, state, country,"
+                + " pincode, is_default, created_at"
+                + " FROM customer_addresses WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, addressId);
@@ -328,7 +342,9 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   public Optional<LoyaltyAccount> findLoyaltyAccount(UUID tenantId, UUID customerId) {
     return query(
-            "SELECT * FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ?",
+            "SELECT id, tenant_id, customer_id, points_balance, lifetime_points, tier,"
+                + " created_at, updated_at"
+                + " FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, customerId);
@@ -341,7 +357,9 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   public List<LoyaltyLedgerEntry> listLedger(UUID tenantId, UUID customerId, int limit) {
     return query(
-        "SELECT * FROM loyalty_ledger WHERE tenant_id = ? AND customer_id = ?"
+        "SELECT id, tenant_id, customer_id, type, points, balance_after, order_id,"
+            + " reason, created_at"
+            + " FROM loyalty_ledger WHERE tenant_id = ? AND customer_id = ?"
             + " ORDER BY created_at DESC LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
@@ -425,7 +443,8 @@ public class CustomerRepository extends BaseOutboxRepository {
   public Optional<StoreCreditAccount> findStoreCreditAccount(
       UUID tenantId, UUID customerId, String currency) {
     return query(
-            "SELECT * FROM store_credit_accounts WHERE tenant_id = ? AND customer_id = ? AND currency = ?",
+            "SELECT id, tenant_id, customer_id, balance, currency, created_at, updated_at"
+                + " FROM store_credit_accounts WHERE tenant_id = ? AND customer_id = ? AND currency = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, customerId);
@@ -513,7 +532,10 @@ public class CustomerRepository extends BaseOutboxRepository {
   private CustomerAddress findAddress(Connection c, UUID tenantId, UUID addressId)
       throws SQLException {
     try (PreparedStatement ps =
-        c.prepareStatement("SELECT * FROM customer_addresses WHERE tenant_id = ? AND id = ?")) {
+        c.prepareStatement(
+            "SELECT id, tenant_id, customer_id, type, line1, line2, city, state, country,"
+                + " pincode, is_default, created_at"
+                + " FROM customer_addresses WHERE tenant_id = ? AND id = ?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, addressId);
       try (ResultSet rs = ps.executeQuery()) {
@@ -538,22 +560,13 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   private LoyaltyAccount getOrCreateLoyaltyAccount(Connection c, UUID tenantId, UUID customerId)
       throws SQLException {
-    try (PreparedStatement ps =
-        c.prepareStatement(
-            "SELECT * FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ?")) {
-      ps.setObject(1, tenantId);
-      ps.setObject(2, customerId);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (rs.next()) return mapLoyaltyAccount(rs);
-      }
-    }
-    UUID id = UUID.randomUUID();
     Instant now = Instant.now();
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO loyalty_accounts (id, tenant_id, customer_id, points_balance,"
-                + " lifetime_points, tier, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)")) {
-      ps.setObject(1, id);
+                + " lifetime_points, tier, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+                + " ON CONFLICT (tenant_id, customer_id) DO NOTHING")) {
+      ps.setObject(1, UUID.randomUUID());
       ps.setObject(2, tenantId);
       ps.setObject(3, customerId);
       ps.setBigDecimal(4, BigDecimal.ZERO);
@@ -563,15 +576,19 @@ public class CustomerRepository extends BaseOutboxRepository {
       ps.setObject(8, now.atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
-    return new LoyaltyAccount(
-        id,
-        tenantId,
-        customerId,
-        BigDecimal.ZERO,
-        BigDecimal.ZERO,
-        LoyaltyAccount.TIER_BRONZE,
-        now,
-        now);
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, customer_id, points_balance, lifetime_points, tier,"
+                + " created_at, updated_at"
+                + " FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) return mapLoyaltyAccount(rs);
+      }
+    }
+    throw new IllegalStateException(
+        "loyalty account missing after upsert for customer " + customerId);
   }
 
   private LoyaltyAccount updateLoyaltyAccount(
@@ -597,7 +614,9 @@ public class CustomerRepository extends BaseOutboxRepository {
     }
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT * FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ?")) {
+            "SELECT id, tenant_id, customer_id, points_balance, lifetime_points, tier,"
+                + " created_at, updated_at"
+                + " FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
       try (ResultSet rs = ps.executeQuery()) {
@@ -629,23 +648,13 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   private StoreCreditAccount getOrCreateStoreCreditAccount(
       Connection c, UUID tenantId, UUID customerId, String currency) throws SQLException {
-    try (PreparedStatement ps =
-        c.prepareStatement(
-            "SELECT * FROM store_credit_accounts WHERE tenant_id = ? AND customer_id = ? AND currency = ?")) {
-      ps.setObject(1, tenantId);
-      ps.setObject(2, customerId);
-      ps.setString(3, currency);
-      try (ResultSet rs = ps.executeQuery()) {
-        if (rs.next()) return mapStoreCreditAccount(rs);
-      }
-    }
-    UUID id = UUID.randomUUID();
     Instant now = Instant.now();
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO store_credit_accounts (id, tenant_id, customer_id, balance, currency,"
-                + " created_at, updated_at) VALUES (?,?,?,?,?,?,?)")) {
-      ps.setObject(1, id);
+                + " created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
+                + " ON CONFLICT (tenant_id, customer_id, currency) DO NOTHING")) {
+      ps.setObject(1, UUID.randomUUID());
       ps.setObject(2, tenantId);
       ps.setObject(3, customerId);
       ps.setBigDecimal(4, BigDecimal.ZERO);
@@ -654,7 +663,20 @@ public class CustomerRepository extends BaseOutboxRepository {
       ps.setObject(7, now.atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
-    return new StoreCreditAccount(id, tenantId, customerId, BigDecimal.ZERO, currency, now, now);
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, customer_id, balance, currency, created_at, updated_at"
+                + " FROM store_credit_accounts"
+                + " WHERE tenant_id = ? AND customer_id = ? AND currency = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.setString(3, currency);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) return mapStoreCreditAccount(rs);
+      }
+    }
+    throw new IllegalStateException(
+        "store_credit_account missing after upsert for customer " + customerId);
   }
 
   private StoreCreditAccount updateStoreCreditAccount(
@@ -674,7 +696,8 @@ public class CustomerRepository extends BaseOutboxRepository {
     }
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT * FROM store_credit_accounts WHERE tenant_id=? AND customer_id=? AND currency=?")) {
+            "SELECT id, tenant_id, customer_id, balance, currency, created_at, updated_at"
+                + " FROM store_credit_accounts WHERE tenant_id=? AND customer_id=? AND currency=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
       ps.setString(3, currency);

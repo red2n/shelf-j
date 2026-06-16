@@ -786,10 +786,17 @@ public class InventoryService {
     // Generate lines from ABC assignments that match requested classes
     List<String> requestedClasses = List.of(classes.split(","));
     List<AbcAssignment> assignments = repo.listAbcAssignments(tenantId, storeId, null, 1000);
+    // Fetch all on-hand quantities in one query instead of one per variant (avoids N+1).
+    List<UUID> matchingVariantIds =
+        assignments.stream()
+            .filter(a -> requestedClasses.contains(a.abcClass()))
+            .map(AbcAssignment::variantId)
+            .toList();
+    Map<UUID, BigDecimal> onHandMap = repo.onHandQtyBatch(tenantId, storeId, matchingVariantIds);
     List<CycleCountLine> lines = new ArrayList<>();
     for (AbcAssignment a : assignments) {
       if (!requestedClasses.contains(a.abcClass())) continue;
-      BigDecimal onHand = repo.onHandQty(tenantId, storeId, a.variantId());
+      BigDecimal onHand = onHandMap.getOrDefault(a.variantId(), BigDecimal.ZERO);
       lines.add(
           new CycleCountLine(
               UUID.randomUUID(),
@@ -811,8 +818,11 @@ public class InventoryService {
 
   public List<CycleCountWithLines> listCycleCounts(
       UUID tenantId, UUID storeId, String status, int limit) {
-    return repo.listCycleCountHeaders(tenantId, storeId, status, limit).stream()
-        .map(h -> new CycleCountWithLines(h, repo.listCycleCountLines(h.id())))
+    List<CycleCountHeader> headers = repo.listCycleCountHeaders(tenantId, storeId, status, limit);
+    List<UUID> headerIds = headers.stream().map(CycleCountHeader::id).toList();
+    Map<UUID, List<CycleCountLine>> linesByHeader = repo.listCycleCountLinesByHeaders(headerIds);
+    return headers.stream()
+        .map(h -> new CycleCountWithLines(h, linesByHeader.getOrDefault(h.id(), List.of())))
         .toList();
   }
 
@@ -917,9 +927,7 @@ public class InventoryService {
             tenantId,
             headerId,
             Events.cycleCountAdjusted(tenantId, headerId));
-    int adjusted = repo.applyAdjustments(tenantId, headerId, event);
-    repo.updateHeaderStatus(tenantId, headerId, CycleCountHeader.ADJUSTED);
-    return adjusted;
+    return repo.applyAdjustments(tenantId, headerId, event);
   }
 
   // ---- Lot Genealogy (Gap #11) ----
@@ -1211,12 +1219,9 @@ public class InventoryService {
   }
 
   // ---- sweeper support ----
-  public List<UUID> expiredReservations(int limit) {
-    return repo.expiredHeldReservations(limit);
-  }
-
-  public UUID tenantOfReservation(UUID reservationId) {
-    return repo.tenantOfReservation(reservationId);
+  public List<com.shelfj.inventory.repo.InventoryRepository.ReservationRef>
+      expiredReservationsWithTenant(int limit) {
+    return repo.expiredHeldReservationsWithTenant(limit);
   }
 
   static UUID parseUuid(String s, String field) {
@@ -1571,8 +1576,9 @@ public class InventoryService {
     Batch source =
         repo.getBatch(tenantId, sourceBatchId)
             .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Source batch not found"));
-    repo.getBatch(tenantId, targetBatchId)
-        .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));
+    Batch target =
+        repo.getBatch(tenantId, targetBatchId)
+            .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));
     if (source.remainingQty().compareTo(qty) < 0) {
       throw ApiException.unprocessable(
           "INSUFFICIENT_QTY", "Merge qty exceeds remaining qty on source batch");
@@ -1594,7 +1600,7 @@ public class InventoryService {
             tenantId,
             targetBatchId,
             Events.lotMerge(tenantId, sourceBatchId, targetBatchId, qty));
-    repo.adjust(tenantId, source.storeId(), source.variantId(), qty, "LOT_MERGE_IN", addEvent);
+    repo.adjust(tenantId, target.storeId(), target.variantId(), qty, "LOT_MERGE_IN", addEvent);
     Batch updated =
         repo.getBatch(tenantId, targetBatchId)
             .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));

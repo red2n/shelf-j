@@ -7,15 +7,17 @@ final class Events {
 
   private Events() {}
 
-  static OutboxRow paymentCaptured(UUID tenantId, UUID paymentId, UUID orderId) {
+  static OutboxRow paymentCaptured(
+      UUID tenantId, UUID paymentId, UUID orderId, java.math.BigDecimal amount) {
     return new OutboxRow(
         "PaymentCaptured",
         "shelfj.payment.payment-captured",
         tenantId,
         paymentId,
         String.format(
-            "{\"eventType\":\"PaymentCaptured\",\"tenantId\":\"%s\",\"paymentId\":\"%s\",\"orderId\":\"%s\"}",
-            tenantId, paymentId, orderId));
+            "{\"eventType\":\"PaymentCaptured\",\"tenantId\":\"%s\",\"paymentId\":\"%s\","
+                + "\"orderId\":\"%s\",\"amount\":%s}",
+            tenantId, paymentId, orderId, amount.toPlainString()));
   }
 
   static OutboxRow paymentFailed(UUID tenantId, UUID paymentId, UUID orderId) {

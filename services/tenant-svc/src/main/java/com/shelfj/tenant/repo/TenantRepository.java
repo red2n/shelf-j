@@ -562,7 +562,12 @@ public class TenantRepository extends BaseOutboxRepository {
     return inTx(
         c -> {
           try (PreparedStatement ps =
-              c.prepareStatement("SELECT * FROM tenant_inventory_config WHERE tenant_id = ?")) {
+              c.prepareStatement(
+                  "SELECT id, tenant_id, lot_control_enabled, serial_control_enabled,"
+                      + " grade_control_enabled, expiry_tracking_enabled, costing_method,"
+                      + " default_uom, reorder_alert_enabled, auto_reserve_on_order,"
+                      + " created_at, updated_at"
+                      + " FROM tenant_inventory_config WHERE tenant_id = ?")) {
             ps.setObject(1, tenantId);
             try (ResultSet rs = ps.executeQuery()) {
               return rs.next() ? Optional.of(mapInventoryConfig(rs)) : Optional.empty();

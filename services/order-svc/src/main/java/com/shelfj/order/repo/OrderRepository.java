@@ -85,7 +85,10 @@ public class OrderRepository extends BaseOutboxRepository {
   /** Look up an order by its idempotency key — used to replay a retried checkout. */
   public Optional<Order> findOrderByIdempotencyKey(UUID tenantId, String idempotencyKey) {
     return query(
-            "SELECT * FROM orders WHERE tenant_id=? AND idempotency_key=?",
+            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason"
+                + " FROM orders WHERE tenant_id=? AND idempotency_key=?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setString(2, idempotencyKey);
@@ -107,7 +110,12 @@ public class OrderRepository extends BaseOutboxRepository {
       Instant afterCreatedAt,
       UUID afterId,
       int limit) {
-    StringBuilder sql = new StringBuilder("SELECT * FROM orders WHERE tenant_id=?");
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason"
+                + " FROM orders WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
     if (channel != null) sql.append(" AND channel=?");
@@ -141,7 +149,10 @@ public class OrderRepository extends BaseOutboxRepository {
   public Optional<Order> findOrder(UUID tenantId, UUID orderId) {
     var list =
         query(
-            "SELECT * FROM orders WHERE tenant_id=? AND id=?",
+            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason"
+                + " FROM orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, orderId);
@@ -185,7 +196,9 @@ public class OrderRepository extends BaseOutboxRepository {
 
   public List<OrderItem> findOrderItems(UUID tenantId, UUID orderId) {
     return query(
-        "SELECT * FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY created_at",
+        "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total,"
+            + " notes, created_at, discount_amount, discount_reason"
+            + " FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, orderId);
@@ -196,7 +209,8 @@ public class OrderRepository extends BaseOutboxRepository {
 
   public List<OrderStatusHistory> findOrderHistory(UUID tenantId, UUID orderId) {
     return query(
-        "SELECT * FROM order_status_history WHERE tenant_id=? AND order_id=? ORDER BY changed_at",
+        "SELECT id, tenant_id, order_id, from_status, to_status, reason, changed_by, changed_at"
+            + " FROM order_status_history WHERE tenant_id=? AND order_id=? ORDER BY changed_at",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, orderId);
@@ -249,7 +263,9 @@ public class OrderRepository extends BaseOutboxRepository {
 
   public List<Return> findReturns(UUID tenantId, UUID orderId) {
     return query(
-        "SELECT * FROM returns WHERE tenant_id=? AND order_id=? ORDER BY created_at",
+        "SELECT id, tenant_id, order_id, store_id, reason, refund_amount, refund_method,"
+            + " status, created_at, completed_at"
+            + " FROM returns WHERE tenant_id=? AND order_id=? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, orderId);
@@ -260,7 +276,8 @@ public class OrderRepository extends BaseOutboxRepository {
 
   public List<ReturnItem> findReturnItems(UUID tenantId, UUID returnId) {
     return query(
-        "SELECT * FROM return_items WHERE tenant_id=? AND return_id=?",
+        "SELECT id, tenant_id, return_id, variant_id, qty, refund_amount, condition"
+            + " FROM return_items WHERE tenant_id=? AND return_id=?",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, returnId);
@@ -346,7 +363,10 @@ public class OrderRepository extends BaseOutboxRepository {
   public Optional<Layaway> findLayaway(UUID tenantId, UUID layawayId) {
     var list =
         query(
-            "SELECT * FROM layaways WHERE tenant_id=? AND id=?",
+            "SELECT id, tenant_id, store_id, customer_id, total_amount, deposit_paid,"
+                + " balance, status, notes, due_date, created_at, updated_at,"
+                + " completed_at, cancelled_at"
+                + " FROM layaways WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, layawayId);
@@ -427,7 +447,8 @@ public class OrderRepository extends BaseOutboxRepository {
 
   public List<LayawayItem> findLayawayItems(UUID tenantId, UUID layawayId) {
     return query(
-        "SELECT * FROM layaway_items WHERE tenant_id=? AND layaway_id=?",
+        "SELECT id, tenant_id, layaway_id, variant_id, qty, unit_price, line_total"
+            + " FROM layaway_items WHERE tenant_id=? AND layaway_id=?",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, layawayId);
@@ -438,7 +459,8 @@ public class OrderRepository extends BaseOutboxRepository {
 
   public List<LayawayDeposit> findLayawayDeposits(UUID tenantId, UUID layawayId) {
     return query(
-        "SELECT * FROM layaway_deposits WHERE tenant_id=? AND layaway_id=? ORDER BY paid_at",
+        "SELECT id, tenant_id, layaway_id, amount, payment_method, reference, paid_at"
+            + " FROM layaway_deposits WHERE tenant_id=? AND layaway_id=? ORDER BY paid_at",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, layawayId);
@@ -488,7 +510,9 @@ public class OrderRepository extends BaseOutboxRepository {
   public Optional<GiftCard> findGiftCardByCode(UUID tenantId, String code) {
     var list =
         query(
-            "SELECT * FROM gift_cards WHERE tenant_id=? AND code=?",
+            "SELECT id, tenant_id, store_id, code, initial_balance, current_balance,"
+                + " status, currency, issued_at, updated_at, expires_at"
+                + " FROM gift_cards WHERE tenant_id=? AND code=?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setString(2, code);
@@ -581,7 +605,9 @@ public class OrderRepository extends BaseOutboxRepository {
 
   public List<GiftCardTransaction> findGiftCardTransactions(UUID tenantId, UUID giftCardId) {
     return query(
-        "SELECT * FROM gift_card_transactions WHERE tenant_id=? AND gift_card_id=?"
+        "SELECT id, tenant_id, gift_card_id, tx_type, amount, balance_before,"
+            + " balance_after, order_id, reference, created_at"
+            + " FROM gift_card_transactions WHERE tenant_id=? AND gift_card_id=?"
             + " ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
@@ -638,7 +664,11 @@ public class OrderRepository extends BaseOutboxRepository {
 
   private Order findOrderInTx(Connection c, UUID tenantId, UUID orderId) throws SQLException {
     try (PreparedStatement ps =
-        c.prepareStatement("SELECT * FROM orders WHERE tenant_id=? AND id=?")) {
+        c.prepareStatement(
+            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason"
+                + " FROM orders WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
       ResultSet rs = ps.executeQuery();
@@ -682,7 +712,11 @@ public class OrderRepository extends BaseOutboxRepository {
 
   private Layaway findLayawayInTx(Connection c, UUID tenantId, UUID layawayId) throws SQLException {
     try (PreparedStatement ps =
-        c.prepareStatement("SELECT * FROM layaways WHERE tenant_id=? AND id=?")) {
+        c.prepareStatement(
+            "SELECT id, tenant_id, store_id, customer_id, total_amount, deposit_paid,"
+                + " balance, status, notes, due_date, created_at, updated_at,"
+                + " completed_at, cancelled_at"
+                + " FROM layaways WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, layawayId);
       ResultSet rs = ps.executeQuery();
@@ -714,7 +748,10 @@ public class OrderRepository extends BaseOutboxRepository {
   private GiftCard findGiftCardByCodeInTx(Connection c, UUID tenantId, String code)
       throws SQLException {
     try (PreparedStatement ps =
-        c.prepareStatement("SELECT * FROM gift_cards WHERE tenant_id=? AND code=? FOR UPDATE")) {
+        c.prepareStatement(
+            "SELECT id, tenant_id, store_id, code, initial_balance, current_balance,"
+                + " status, currency, issued_at, updated_at, expires_at"
+                + " FROM gift_cards WHERE tenant_id=? AND code=? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setString(2, code);
       ResultSet rs = ps.executeQuery();
@@ -922,7 +959,10 @@ public class OrderRepository extends BaseOutboxRepository {
   public List<SpecialOrder> listSpecialOrders(UUID tenantId, UUID storeId, UUID customerId) {
     if (storeId != null) {
       return query(
-          "SELECT * FROM special_orders WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
+          "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
+              + " customer_email, delivery_address, requested_delivery_date, notes, status,"
+              + " subtotal, total, currency, idempotency_key, created_at, updated_at"
+              + " FROM special_orders WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
           ps -> {
             ps.setObject(1, tenantId);
             ps.setObject(2, storeId);
@@ -932,7 +972,10 @@ public class OrderRepository extends BaseOutboxRepository {
     }
     if (customerId != null) {
       return query(
-          "SELECT * FROM special_orders WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC",
+          "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
+              + " customer_email, delivery_address, requested_delivery_date, notes, status,"
+              + " subtotal, total, currency, idempotency_key, created_at, updated_at"
+              + " FROM special_orders WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC",
           ps -> {
             ps.setObject(1, tenantId);
             ps.setObject(2, customerId);
@@ -941,7 +984,10 @@ public class OrderRepository extends BaseOutboxRepository {
           "list special orders by customer");
     }
     return query(
-        "SELECT * FROM special_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100",
+        "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
+            + " customer_email, delivery_address, requested_delivery_date, notes, status,"
+            + " subtotal, total, currency, idempotency_key, created_at, updated_at"
+            + " FROM special_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100",
         ps -> ps.setObject(1, tenantId),
         this::mapSpecialOrder,
         "list special orders");
@@ -950,7 +996,10 @@ public class OrderRepository extends BaseOutboxRepository {
   public Optional<SpecialOrder> findSpecialOrder(UUID tenantId, UUID id) {
     var list =
         query(
-            "SELECT * FROM special_orders WHERE tenant_id=? AND id=?",
+            "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
+                + " customer_email, delivery_address, requested_delivery_date, notes, status,"
+                + " subtotal, total, currency, idempotency_key, created_at, updated_at"
+                + " FROM special_orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
@@ -962,7 +1011,8 @@ public class OrderRepository extends BaseOutboxRepository {
 
   public List<SpecialOrderItem> findSpecialOrderItems(UUID tenantId, UUID soId) {
     return query(
-        "SELECT * FROM special_order_items WHERE tenant_id=? AND so_id=?",
+        "SELECT id, tenant_id, so_id, variant_id, qty, unit_price, line_total, notes"
+            + " FROM special_order_items WHERE tenant_id=? AND so_id=?",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, soId);
@@ -1004,7 +1054,12 @@ public class OrderRepository extends BaseOutboxRepository {
 
   private SpecialOrder findSpecialOrderInTx(Connection c, UUID tenantId, UUID soId)
       throws SQLException {
-    try (var ps = c.prepareStatement("SELECT * FROM special_orders WHERE tenant_id=? AND id=?")) {
+    try (var ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
+                + " customer_email, delivery_address, requested_delivery_date, notes, status,"
+                + " subtotal, total, currency, idempotency_key, created_at, updated_at"
+                + " FROM special_orders WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, soId);
       try (var rs = ps.executeQuery()) {
@@ -1111,7 +1166,10 @@ public class OrderRepository extends BaseOutboxRepository {
 
   public List<PosLogEntry> findPosLogByOrder(UUID tenantId, UUID orderId) {
     return query(
-        "SELECT * FROM pos_log_entries WHERE tenant_id=? AND order_id=?",
+        "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
+            + " discount_amount, total, currency, tax_exempt, exempt_reason,"
+            + " transaction_ts, created_at"
+            + " FROM pos_log_entries WHERE tenant_id=? AND order_id=?",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, orderId);
@@ -1123,7 +1181,10 @@ public class OrderRepository extends BaseOutboxRepository {
   public List<PosLogEntry> listPosLog(UUID tenantId, UUID storeId) {
     if (storeId != null) {
       return query(
-          "SELECT * FROM pos_log_entries WHERE tenant_id=? AND store_id=? ORDER BY transaction_ts DESC LIMIT 200",
+          "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
+              + " discount_amount, total, currency, tax_exempt, exempt_reason,"
+              + " transaction_ts, created_at"
+              + " FROM pos_log_entries WHERE tenant_id=? AND store_id=? ORDER BY transaction_ts DESC LIMIT 200",
           ps -> {
             ps.setObject(1, tenantId);
             ps.setObject(2, storeId);
@@ -1132,7 +1193,10 @@ public class OrderRepository extends BaseOutboxRepository {
           "list pos log by store");
     }
     return query(
-        "SELECT * FROM pos_log_entries WHERE tenant_id=? ORDER BY transaction_ts DESC LIMIT 200",
+        "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
+            + " discount_amount, total, currency, tax_exempt, exempt_reason,"
+            + " transaction_ts, created_at"
+            + " FROM pos_log_entries WHERE tenant_id=? ORDER BY transaction_ts DESC LIMIT 200",
         ps -> ps.setObject(1, tenantId),
         this::mapPosLogEntry,
         "list pos log");
@@ -1180,7 +1244,8 @@ public class OrderRepository extends BaseOutboxRepository {
 
   public List<OrderReceipt> findOrderReceipts(UUID tenantId, UUID orderId) {
     return query(
-        "SELECT * FROM order_receipts WHERE tenant_id=? AND order_id=? ORDER BY generated_at DESC",
+        "SELECT id, tenant_id, order_id, receipt_type, emailed_to, print_count, generated_at"
+            + " FROM order_receipts WHERE tenant_id=? AND order_id=? ORDER BY generated_at DESC",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, orderId);

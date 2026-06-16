@@ -113,8 +113,8 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || "/prices/resolve".equals(path)
         // Guest storefront checkout: an online shopper places an order with no staff role.
         // Reachable only via the gateway's storefront whitelist (tenant from X-Storefront-Tenant)
-        // or by an authenticated customer. (Hardening TODO: reject channel=POS without a staff
-        // role.)
+        // or by an authenticated customer. POS channel orders require a staff role — enforced
+        // inside OrderResource.place() after payload deserialisation.
         || "/orders".equals(path)
         // Guest storefront online payment (cashless). The staff cash-tender path is POST /payments,
         // which stays role-gated; this is the customer-facing online capture only.

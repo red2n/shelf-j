@@ -8,6 +8,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -247,7 +248,7 @@ public class PaymentRepository extends BaseOutboxRepository {
         rs.getString("idempotency_key"),
         rs.getString("status"),
         rs.getString("notes"),
-        rs.getTimestamp("created_at").toInstant(),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("store_id", UUID.class));
   }
 
@@ -262,6 +263,6 @@ public class PaymentRepository extends BaseOutboxRepository {
         rs.getString("reference"),
         rs.getString("idempotency_key"),
         rs.getString("reason"),
-        rs.getTimestamp("created_at").toInstant());
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 }

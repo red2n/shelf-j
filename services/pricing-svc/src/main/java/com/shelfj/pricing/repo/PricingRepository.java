@@ -590,7 +590,9 @@ public class PricingRepository extends BaseOutboxRepository {
   public List<PriceOverride> listPriceOverrides(UUID tenantId, UUID storeId, UUID variantId) {
     if (storeId != null) {
       return query(
-          "SELECT * FROM price_overrides WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
+          "SELECT id, tenant_id, order_id, variant_id, store_id, original_price,"
+              + " override_price, override_reason, overridden_by, created_at"
+              + " FROM price_overrides WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
           ps -> {
             ps.setObject(1, tenantId);
             ps.setObject(2, storeId);
@@ -600,7 +602,9 @@ public class PricingRepository extends BaseOutboxRepository {
     }
     if (variantId != null) {
       return query(
-          "SELECT * FROM price_overrides WHERE tenant_id=? AND variant_id=? ORDER BY created_at DESC",
+          "SELECT id, tenant_id, order_id, variant_id, store_id, original_price,"
+              + " override_price, override_reason, overridden_by, created_at"
+              + " FROM price_overrides WHERE tenant_id=? AND variant_id=? ORDER BY created_at DESC",
           ps -> {
             ps.setObject(1, tenantId);
             ps.setObject(2, variantId);
@@ -609,7 +613,9 @@ public class PricingRepository extends BaseOutboxRepository {
           "list price overrides by variant");
     }
     return query(
-        "SELECT * FROM price_overrides WHERE tenant_id=? ORDER BY created_at DESC LIMIT 200",
+        "SELECT id, tenant_id, order_id, variant_id, store_id, original_price,"
+            + " override_price, override_reason, overridden_by, created_at"
+            + " FROM price_overrides WHERE tenant_id=? ORDER BY created_at DESC LIMIT 200",
         ps -> ps.setObject(1, tenantId),
         this::mapPriceOverride,
         "list price overrides");

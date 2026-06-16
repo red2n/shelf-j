@@ -59,12 +59,15 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "create supplier");
   }
 
-  public List<Supplier> findSuppliers(UUID tenantId) {
+  public List<Supplier> findSuppliers(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,name,vat_number,vat_registered,country_code,currency,"
             + "payment_terms_days,created_at,updated_at"
-            + " FROM suppliers WHERE tenant_id=? ORDER BY name",
-        ps -> ps.setObject(1, tenantId),
+            + " FROM suppliers WHERE tenant_id=? ORDER BY name LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setInt(2, limit);
+        },
         this::mapSupplier,
         "find suppliers");
   }
@@ -127,12 +130,15 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "create purchase order");
   }
 
-  public List<PurchaseOrder> findPurchaseOrders(UUID tenantId) {
+  public List<PurchaseOrder> findPurchaseOrders(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
             + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at"
-            + " FROM purchase_orders WHERE tenant_id=? ORDER BY created_at DESC",
-        ps -> ps.setObject(1, tenantId),
+            + " FROM purchase_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setInt(2, limit);
+        },
         this::mapPurchaseOrder,
         "find purchase orders");
   }
@@ -342,6 +348,51 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "create intercompany invoice");
   }
 
+  /** Creates an AR invoice and its matching AP invoice atomically (double-entry integrity). */
+  public List<IntercompanyInvoice> createIntercompanyInvoicePair(
+      IntercompanyInvoice ar,
+      List<NominalLedgerEntry> arEntries,
+      OutboxRow arEvent,
+      IntercompanyInvoice ap,
+      List<NominalLedgerEntry> apEntries,
+      OutboxRow apEvent) {
+    return inTx(
+        c -> {
+          for (IntercompanyInvoice inv : new IntercompanyInvoice[] {ar, ap}) {
+            try (var ps =
+                c.prepareStatement(
+                    "INSERT INTO intercompany_invoices"
+                        + " (id,tenant_id,invoice_type,from_store_id,to_store_id,transfer_ref,"
+                        + "  net_amount,vat_amount,gross_amount,vat_code,vat_disregarded,"
+                        + "  status,invoice_date,payment_due_date,currency)"
+                        + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+              ps.setObject(1, inv.id());
+              ps.setObject(2, inv.tenantId());
+              ps.setString(3, inv.invoiceType());
+              ps.setObject(4, inv.fromStoreId());
+              ps.setObject(5, inv.toStoreId());
+              ps.setObject(6, inv.transferRef());
+              ps.setBigDecimal(7, inv.netAmount());
+              ps.setBigDecimal(8, inv.vatAmount());
+              ps.setBigDecimal(9, inv.grossAmount());
+              ps.setString(10, inv.vatCode());
+              ps.setBoolean(11, inv.vatDisregarded());
+              ps.setString(12, inv.status());
+              ps.setObject(13, inv.invoiceDate());
+              ps.setObject(14, inv.paymentDueDate());
+              ps.setString(15, inv.currency());
+              ps.executeUpdate();
+            }
+          }
+          for (NominalLedgerEntry e : arEntries) insertNominalEntry(c, e);
+          for (NominalLedgerEntry e : apEntries) insertNominalEntry(c, e);
+          insertOutbox(c, arEvent);
+          insertOutbox(c, apEvent);
+          return List.of(ar, ap);
+        },
+        "create intercompany invoice pair");
+  }
+
   public void settleIntercompanyInvoice(
       UUID tenantId, UUID id, List<NominalLedgerEntry> settlementEntries) {
     inTx(
@@ -389,13 +440,16 @@ public class PurchaseRepository extends BaseOutboxRepository {
     }
   }
 
-  public List<IntercompanyInvoice> findIntercompanyInvoices(UUID tenantId) {
+  public List<IntercompanyInvoice> findIntercompanyInvoices(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,invoice_type,from_store_id,to_store_id,transfer_ref,"
             + "net_amount,vat_amount,gross_amount,vat_code,vat_disregarded,"
             + "status,invoice_date,payment_due_date,currency,created_at"
-            + " FROM intercompany_invoices WHERE tenant_id=? ORDER BY created_at DESC",
-        ps -> ps.setObject(1, tenantId),
+            + " FROM intercompany_invoices WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setInt(2, limit);
+        },
         this::mapInvoice,
         "find intercompany invoices");
   }

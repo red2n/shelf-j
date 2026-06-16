@@ -46,7 +46,9 @@ public class PosSessionRepository extends BaseJdbcRepository {
 
   public Optional<PosSession> find(UUID id) {
     return query(
-            "SELECT * FROM pos_sessions WHERE id = ?",
+            "SELECT id, tenant_id, user_id, store_id, started_at, last_activity_at,"
+                + " ended_at, idle_timeout_seconds, status"
+                + " FROM pos_sessions WHERE id = ?",
             ps -> ps.setObject(1, id),
             this::map,
             "find pos session")
@@ -56,7 +58,9 @@ public class PosSessionRepository extends BaseJdbcRepository {
 
   public List<PosSession> listActive(UUID tenantId) {
     return query(
-        "SELECT * FROM pos_sessions WHERE tenant_id = ? AND status = 'ACTIVE' ORDER BY started_at DESC",
+        "SELECT id, tenant_id, user_id, store_id, started_at, last_activity_at,"
+            + " ended_at, idle_timeout_seconds, status"
+            + " FROM pos_sessions WHERE tenant_id = ? AND status = 'ACTIVE' ORDER BY started_at DESC",
         ps -> ps.setObject(1, tenantId),
         this::map,
         "list active pos sessions");

@@ -38,6 +38,12 @@ class PaymentEventConsumer {
       defaultValue = "shelfj.payment.payment-captured")
   String capturedTopic;
 
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.kafka.topics.payment-failed",
+      defaultValue = "shelfj.payment.payment-failed")
+  String failedTopic;
+
   private KafkaEventLoop loop;
 
   void onStart(@Observes @Initialized(ApplicationScoped.class) Object event) {
@@ -56,7 +62,7 @@ class PaymentEventConsumer {
               "order-payment-consumer",
               bootstrap,
               "order-svc",
-              List.of(capturedTopic),
+              List.of(capturedTopic, failedTopic),
               (topic, value) -> handler.handle(value));
       loop.start();
     } catch (Exception e) {

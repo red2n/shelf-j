@@ -75,7 +75,7 @@ public class PricingService {
     VatRate existing = getVatRate(ctx, code);
     if (req.rate().compareTo(BigDecimal.ONE) > 0)
       throw ApiException.badRequest("PRICING_INVALID_RATE", "VAT rate must be between 0 and 1");
-    Instant effectiveTo =
+    Instant newEffectiveFrom =
         req.effectiveFrom() != null ? Instant.parse(req.effectiveFrom()) : existing.effectiveFrom();
     VatRate updated =
         new VatRate(
@@ -86,8 +86,8 @@ public class PricingService {
             req.rate(),
             req.exempt(),
             req.description(),
-            effectiveTo,
-            null,
+            newEffectiveFrom,
+            existing.effectiveTo(),
             existing.createdAt());
     return repo.updateVatRate(updated);
   }
@@ -305,7 +305,7 @@ public class PricingService {
             req.minOrderAmount(),
             req.channel() != null
                 ? req.channel().toUpperCase(java.util.Locale.ROOT)
-                : Promotion.TYPE_FLAT,
+                : PriceList.CHANNEL_ALL,
             true,
             Instant.parse(req.startsAt()),
             req.endsAt() != null ? Instant.parse(req.endsAt()) : null,

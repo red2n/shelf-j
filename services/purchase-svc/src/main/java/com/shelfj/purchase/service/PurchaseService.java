@@ -52,8 +52,8 @@ public class PurchaseService {
     return repo.createSupplier(s);
   }
 
-  public List<Supplier> listSuppliers(TenantContext ctx) {
-    return repo.findSuppliers(ctx.requireTenantId());
+  public List<Supplier> listSuppliers(TenantContext ctx, int limit) {
+    return repo.findSuppliers(ctx.requireTenantId(), limit);
   }
 
   public Supplier getSupplier(TenantContext ctx, UUID id) {
@@ -85,8 +85,8 @@ public class PurchaseService {
         po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
   }
 
-  public List<PurchaseOrder> listPurchaseOrders(TenantContext ctx) {
-    return repo.findPurchaseOrders(ctx.requireTenantId());
+  public List<PurchaseOrder> listPurchaseOrders(TenantContext ctx, int limit) {
+    return repo.findPurchaseOrders(ctx.requireTenantId(), limit);
   }
 
   public PurchaseOrder getPurchaseOrder(TenantContext ctx, UUID id) {
@@ -241,15 +241,16 @@ public class PurchaseService {
             currency,
             Instant.now());
 
-    // FRS 102 double-entry for AR invoice
     List<NominalLedgerEntry> arEntries = buildArEntries(tenantId, arId, req, today);
-    // FRS 102 double-entry for AP invoice
     List<NominalLedgerEntry> apEntries = buildApEntries(tenantId, apId, req, today);
 
-    repo.createIntercompanyInvoice(ar, arEntries, Events.intercompanyInvoiceRaised(tenantId, arId));
-    repo.createIntercompanyInvoice(ap, apEntries, Events.intercompanyInvoiceRaised(tenantId, apId));
-
-    return List.of(ar, ap);
+    return repo.createIntercompanyInvoicePair(
+        ar,
+        arEntries,
+        Events.intercompanyInvoiceRaised(tenantId, arId),
+        ap,
+        apEntries,
+        Events.intercompanyInvoiceRaised(tenantId, apId));
   }
 
   private List<NominalLedgerEntry> buildArEntries(
@@ -374,8 +375,8 @@ public class PurchaseService {
             () -> ApiException.notFound("PURCHASE_INVOICE_NOT_FOUND", "Invoice not found: " + id));
   }
 
-  public List<IntercompanyInvoice> listIntercompanyInvoices(TenantContext ctx) {
-    return repo.findIntercompanyInvoices(ctx.requireTenantId());
+  public List<IntercompanyInvoice> listIntercompanyInvoices(TenantContext ctx, int limit) {
+    return repo.findIntercompanyInvoices(ctx.requireTenantId(), limit);
   }
 
   public void settleIntercompanyInvoice(TenantContext ctx, UUID id) {

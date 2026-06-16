@@ -338,6 +338,20 @@ public class InventoryRepository extends BaseOutboxRepository {
         "find expired reservations");
   }
 
+  public record ReservationRef(UUID id, UUID tenantId) {}
+
+  /** Fetch expired reservations with their tenant in one query — avoids N+1 in the sweeper. */
+  public List<ReservationRef> expiredHeldReservationsWithTenant(int limit) {
+    return query(
+        "SELECT id, tenant_id FROM reservations WHERE status = 'HELD'"
+            + " AND expires_at IS NOT NULL AND expires_at < now() LIMIT ?",
+        ps -> ps.setInt(1, limit),
+        rs ->
+            new ReservationRef(
+                rs.getObject("id", UUID.class), rs.getObject("tenant_id", UUID.class)),
+        "find expired reservations with tenant");
+  }
+
   public UUID tenantOfReservation(UUID reservationId) {
     var list =
         query(
@@ -1183,6 +1197,16 @@ public class InventoryRepository extends BaseOutboxRepository {
             }
           }
           insertOutbox(c, event);
+          // Mark header ADJUSTED in the same transaction so a crash cannot leave stock adjusted
+          // with an open header (which would allow a second adjustment on re-run).
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE cycle_count_headers SET status='ADJUSTED', completed_at=now()"
+                      + " WHERE tenant_id=? AND id=?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, headerId);
+            ps.executeUpdate();
+          }
           return approved.size();
         },
         "apply cycle count adjustments");
@@ -1205,6 +1229,60 @@ public class InventoryRepository extends BaseOutboxRepository {
       }
     } catch (SQLException e) {
       throw dbError("on-hand qty", e);
+    }
+  }
+
+  /**
+   * Bulk on-hand query for a set of variants in one store — avoids N+1 when building cycle count
+   * lines.
+   */
+  public java.util.Map<UUID, BigDecimal> onHandQtyBatch(
+      UUID tenantId, UUID storeId, java.util.Collection<UUID> variantIds) {
+    if (variantIds.isEmpty()) return java.util.Map.of();
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "SELECT variant_id, COALESCE(SUM(remaining_qty),0) AS q"
+                    + " FROM inventory_batches"
+                    + " WHERE tenant_id=? AND store_id=? AND variant_id=ANY(?)"
+                    + " AND material_status='AVAILABLE'"
+                    + " GROUP BY variant_id")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, storeId);
+      ps.setArray(3, c.createArrayOf("uuid", variantIds.toArray()));
+      try (ResultSet rs = ps.executeQuery()) {
+        java.util.Map<UUID, BigDecimal> result = new java.util.HashMap<>();
+        while (rs.next()) {
+          result.put(rs.getObject("variant_id", UUID.class), rs.getBigDecimal("q"));
+        }
+        return result;
+      }
+    } catch (SQLException e) {
+      throw dbError("on-hand qty batch", e);
+    }
+  }
+
+  /** Bulk fetch of cycle count lines for multiple headers — avoids N+1 in listCycleCounts. */
+  public java.util.Map<UUID, List<CycleCountLine>> listCycleCountLinesByHeaders(
+      java.util.Collection<UUID> headerIds) {
+    if (headerIds.isEmpty()) return java.util.Map.of();
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "SELECT id, tenant_id, header_id, store_id, variant_id, system_qty,"
+                    + " counted_qty, variance, variance_pct, status, counted_at"
+                    + " FROM cycle_count_lines WHERE header_id=ANY(?) ORDER BY variant_id")) {
+      ps.setArray(1, c.createArrayOf("uuid", headerIds.toArray()));
+      try (ResultSet rs = ps.executeQuery()) {
+        java.util.Map<UUID, List<CycleCountLine>> result = new java.util.HashMap<>();
+        while (rs.next()) {
+          CycleCountLine line = mapCycleCountLine(rs);
+          result.computeIfAbsent(line.headerId(), k -> new java.util.ArrayList<>()).add(line);
+        }
+        return result;
+      }
+    } catch (SQLException e) {
+      throw dbError("list cycle count lines by headers", e);
     }
   }
 
@@ -1570,7 +1648,8 @@ public class InventoryRepository extends BaseOutboxRepository {
     String sql =
         "WITH RECURSIVE anc(id, tenant_id, parent_batch_id, child_batch_id, qty,"
             + " relation_type, notes, created_at) AS ("
-            + "  SELECT * FROM lot_genealogy WHERE tenant_id=? AND child_batch_id=?"
+            + "  SELECT id, tenant_id, parent_batch_id, child_batch_id, qty, relation_type, notes, created_at"
+            + "  FROM lot_genealogy WHERE tenant_id=? AND child_batch_id=?"
             + "  UNION ALL"
             + "  SELECT g.* FROM lot_genealogy g JOIN anc ON g.tenant_id=anc.tenant_id"
             + "   AND g.child_batch_id=anc.parent_batch_id"
@@ -1591,7 +1670,8 @@ public class InventoryRepository extends BaseOutboxRepository {
     String sql =
         "WITH RECURSIVE des(id, tenant_id, parent_batch_id, child_batch_id, qty,"
             + " relation_type, notes, created_at) AS ("
-            + "  SELECT * FROM lot_genealogy WHERE tenant_id=? AND parent_batch_id=?"
+            + "  SELECT id, tenant_id, parent_batch_id, child_batch_id, qty, relation_type, notes, created_at"
+            + "  FROM lot_genealogy WHERE tenant_id=? AND parent_batch_id=?"
             + "  UNION ALL"
             + "  SELECT g.* FROM lot_genealogy g JOIN des ON g.tenant_id=des.tenant_id"
             + "   AND g.parent_batch_id=des.child_batch_id"
@@ -1610,7 +1690,8 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   public List<LotGenealogyLink> findDirectLinks(UUID tenantId, UUID batchId) {
     String sql =
-        "SELECT * FROM lot_genealogy"
+        "SELECT id, tenant_id, parent_batch_id, child_batch_id, qty, relation_type, notes, created_at"
+            + " FROM lot_genealogy"
             + " WHERE tenant_id=? AND (parent_batch_id=? OR child_batch_id=?)"
             + " ORDER BY created_at";
     return query(
@@ -2560,7 +2641,8 @@ public class InventoryRepository extends BaseOutboxRepository {
   public Optional<PhysicalInventory> findPhysicalInventory(UUID tenantId, UUID id) {
     var rows =
         query(
-            "SELECT * FROM physical_inventories WHERE tenant_id=? AND id=?",
+            "SELECT id, tenant_id, store_id, status, notes, started_at, completed_at"
+                + " FROM physical_inventories WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
@@ -2572,7 +2654,8 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   public List<PhysicalInventory> listPhysicalInventories(UUID tenantId, UUID storeId) {
     return query(
-        "SELECT * FROM physical_inventories WHERE tenant_id=?"
+        "SELECT id, tenant_id, store_id, status, notes, started_at, completed_at"
+            + " FROM physical_inventories WHERE tenant_id=?"
             + (storeId != null ? " AND store_id=?" : "")
             + " ORDER BY started_at DESC",
         ps -> {
@@ -2585,7 +2668,9 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   public List<PhysicalInventoryTag> listTags(UUID tenantId, UUID physicalInventoryId) {
     return query(
-        "SELECT * FROM physical_inventory_tags WHERE tenant_id=? AND physical_inventory_id=?",
+        "SELECT id, tenant_id, physical_inventory_id, variant_id, zone_id, system_qty,"
+            + " counted_qty, adjustment_qty, status, counted_at"
+            + " FROM physical_inventory_tags WHERE tenant_id=? AND physical_inventory_id=?",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, physicalInventoryId);
@@ -2644,7 +2729,9 @@ public class InventoryRepository extends BaseOutboxRepository {
         c -> {
           // Create stock_movement for each COUNTED tag where adjustment != 0
           String tagSql =
-              "SELECT * FROM physical_inventory_tags"
+              "SELECT id, tenant_id, physical_inventory_id, variant_id, zone_id, system_qty,"
+                  + " counted_qty, adjustment_qty, status, counted_at"
+                  + " FROM physical_inventory_tags"
                   + " WHERE tenant_id=? AND physical_inventory_id=?"
                   + " AND status='COUNTED' AND counted_qty IS NOT NULL"
                   + " AND counted_qty <> system_qty";

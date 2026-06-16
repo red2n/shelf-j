@@ -54,7 +54,8 @@ public class PaymentService {
             Instant.now(),
             storeId);
 
-    return repo.createTender(tender, Events.paymentCaptured(tenantId, tenderId, orderId));
+    return repo.createTender(
+        tender, Events.paymentCaptured(tenantId, tenderId, orderId, req.amount()));
   }
 
   public PaymentTender getTender(UUID tenantId, UUID tenderId) {
