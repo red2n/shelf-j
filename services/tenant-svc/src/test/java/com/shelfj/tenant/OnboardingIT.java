@@ -144,6 +144,84 @@ class OnboardingIT {
     assertThat(listB, not(containsString("A-store")));
   }
 
+  @Test
+  void combinedOnboardCreatesTenatAndStore() {
+    // single POST /onboarding creates tenant + first store atomically — no JWT refresh needed
+    Response resp =
+        post(
+            "/onboarding",
+            """
+            {"businessName":"OneShot Co","country":"gb","currency":"gbp",\
+            "storeName":"London HQ","storeCode":"LDN","storeCity":"London","storeCountry":"gb"}""",
+            "X-User-Id",
+            OWNER);
+    assertThat(resp.getStatus(), is(201));
+    String body = resp.readEntity(String.class);
+    assertThat(body, containsString("\"name\":\"OneShot Co\""));
+    assertThat(body, containsString("\"isDefault\":true"));
+    assertThat(body, containsString("LDN"));
+  }
+
+  @Test
+  void staffAssignment() {
+    // create tenant + store
+    Response tr =
+        post(
+            "/onboarding/tenants",
+            "{\"businessName\":\"StaffCo\",\"country\":\"in\",\"currency\":\"inr\"}",
+            "X-User-Id",
+            OWNER);
+    String tenantId = field(tr.readEntity(String.class), "id");
+
+    Response sr =
+        post(
+            "/onboarding/stores",
+            "{\"name\":\"StaffStore\",\"code\":\"SS1\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
+    String storeId = field(sr.readEntity(String.class), "id");
+
+    // assign a staff user
+    String staffUserId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    Response assign =
+        post(
+            "/admin/staff",
+            String.format(
+                "{\"userId\":\"%s\",\"storeId\":\"%s\",\"role\":\"CASHIER\"}",
+                staffUserId, storeId),
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
+    assertThat(assign.getStatus(), is(201));
+
+    // list staff — the assignment is visible
+    String staffList =
+        target
+            .path("/admin/staff")
+            .request()
+            .header("X-Tenant-Id", tenantId)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    assertThat(staffList, containsString(staffUserId));
+    assertThat(staffList, containsString("CASHIER"));
+
+    // idempotency: posting the same assignment again → 409 (UNIQUE constraint)
+    Response dup =
+        post(
+            "/admin/staff",
+            String.format(
+                "{\"userId\":\"%s\",\"storeId\":\"%s\",\"role\":\"CASHIER\"}",
+                staffUserId, storeId),
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
+    assertThat(dup.getStatus(), is(409));
+  }
+
   private static String field(String json, String name) {
     String key = "\"" + name + "\":\"";
     int i = json.indexOf(key);
