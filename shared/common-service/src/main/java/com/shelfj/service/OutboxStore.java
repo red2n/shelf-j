@@ -9,6 +9,7 @@ import java.util.function.Function;
  * batch of unpublished rows and mark delivered. The service's repo implements this (it already has
  * the outbox table). Keeps the publisher generic.
  */
+@FunctionalInterface
 public interface OutboxStore {
 
   /**

@@ -18,6 +18,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /** Business logic for cart-svc. Thin resource → this service → repository. */
@@ -246,7 +247,12 @@ public class CartService {
     try {
       return UUID.fromString(val);
     } catch (IllegalArgumentException e) {
-      throw ApiException.badRequest("INVALID_" + field.toUpperCase(), field + " must be a UUID");
+      throw new ApiException(
+          400,
+          "INVALID_" + field.toUpperCase(Locale.ROOT),
+          field + " must be a UUID",
+          List.of(),
+          e);
     }
   }
 

@@ -116,11 +116,11 @@ public class BruteForceProtectionService {
     private long lastActivityMs;
     private long lastTouchSeq;
 
-    boolean isExpired(long now, long expiryDurationMs) {
+    synchronized boolean isExpired(long now, long expiryDurationMs) {
       return lastActivityMs > 0 && now - lastActivityMs >= expiryDurationMs;
     }
 
-    void reset() {
+    synchronized void reset() {
       failures = 0;
       blockedUntilMs = 0;
       lastActivityMs = 0;

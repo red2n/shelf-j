@@ -803,7 +803,7 @@ public class OrderRepository extends BaseOutboxRepository {
       ps.setObject(2, orderId);
       ps.setObject(3, variantId);
       try (ResultSet rs = ps.executeQuery()) {
-        rs.next();
+        if (!rs.next()) return BigDecimal.ZERO;
         return rs.getBigDecimal("total");
       }
     }
