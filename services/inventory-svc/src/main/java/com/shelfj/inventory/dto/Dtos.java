@@ -20,7 +20,8 @@ public final class Dtos {
       String batchNo,
       BigDecimal costPrice,
       String expiryDate,
-      String grade) {}
+      String grade,
+      String zoneId) {}
 
   public record AdjustRequest(
       @NotBlank String storeId,
@@ -66,7 +67,8 @@ public final class Dtos {
       String status,
       String materialStatus,
       String materialStatusReason,
-      String grade) {}
+      String grade,
+      String zoneId) {}
 
   public record ReservationResponse(
       String id,

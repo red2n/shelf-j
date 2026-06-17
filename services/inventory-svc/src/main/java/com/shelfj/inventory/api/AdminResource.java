@@ -120,6 +120,8 @@ public class AdminResource {
     UUID tenantId = ctx.requireTenantId();
     LocalDate expiry =
         req.expiryDate() == null || req.expiryDate().isBlank() ? null : parseDate(req.expiryDate());
+    UUID zoneId =
+        req.zoneId() == null || req.zoneId().isBlank() ? null : uuid(req.zoneId(), "zoneId");
     var batch =
         service.receive(
             tenantId,
@@ -130,7 +132,8 @@ public class AdminResource {
             req.costPrice(),
             expiry,
             "MANUAL",
-            null);
+            null,
+            zoneId);
     return Response.status(Response.Status.CREATED)
         .entity(ApiResponse.ok(Mappers.toBatch(batch)))
         .build();

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -906,9 +907,20 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                     Expanded(
                       child: TextField(
                         controller: _barcodeCtrl,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Barcode',
                           isDense: true,
+                          suffixIcon: IconButton(
+                            icon: const Icon(Icons.camera_alt_outlined,
+                                size: 18),
+                            tooltip: 'Scan barcode',
+                            onPressed: () async {
+                              final code = await scanBarcodeWithCamera(context);
+                              if (code != null && code.isNotEmpty) {
+                                _barcodeCtrl.text = code;
+                              }
+                            },
+                          ),
                         ),
                       ),
                     ),

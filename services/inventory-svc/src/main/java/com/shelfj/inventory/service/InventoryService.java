@@ -69,7 +69,8 @@ public class InventoryService {
       BigDecimal costPrice,
       LocalDate expiry,
       String refType,
-      UUID refId) {
+      UUID refId,
+      UUID zoneId) {
     UUID batchId = UUID.randomUUID();
     var batch =
         new Batch(
@@ -86,7 +87,8 @@ public class InventoryService {
             Batch.STATUS_ACTIVE,
             Batch.MATERIAL_AVAILABLE,
             null,
-            null);
+            null,
+            zoneId);
     var event =
         new OutboxRow(
             "StockReceived",
@@ -194,6 +196,7 @@ public class InventoryService {
             Batch.STATUS_ACTIVE,
             Batch.MATERIAL_AVAILABLE,
             null,
+            null,
             null);
     return repo.receiveOnce(
         dedupeId, consumerName, batch, refType, refId, stockReceivedEvent(batch));
@@ -214,6 +217,7 @@ public class InventoryService {
         Instant.now(),
         Batch.STATUS_ACTIVE,
         Batch.MATERIAL_AVAILABLE,
+        null,
         null,
         null);
   }
@@ -1560,7 +1564,8 @@ public class InventoryService {
             Batch.STATUS_ACTIVE,
             Batch.MATERIAL_AVAILABLE,
             null,
-            source.grade());
+            source.grade(),
+            source.zoneId());
     OutboxRow splitEvent =
         new OutboxRow(
             "LotSplit",

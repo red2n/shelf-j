@@ -24,7 +24,8 @@ public final class Domain {
       String status,
       String materialStatus,
       String materialStatusReason,
-      String grade) {
+      String grade,
+      UUID zoneId) {
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_DEPLETED = "DEPLETED";
     public static final String STATUS_EXPIRED = "EXPIRED";

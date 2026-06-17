@@ -15,6 +15,10 @@ class StorefrontOrdersScreen extends ConsumerWidget {
     // server. Guests see only orders placed on this device.
     if (auth.isSignedIn) {
       final async = ref.watch(serverOrdersProvider);
+      final storeNames = {
+        for (final s in ref.watch(storefrontStoresProvider).value ?? const <StoreSummary>[])
+          s.id: s.name,
+      };
       return RefreshIndicator(
         onRefresh: () async => ref.invalidate(serverOrdersProvider),
         child: async.when(
@@ -30,7 +34,9 @@ class StorefrontOrdersScreen extends ConsumerWidget {
               padding: const EdgeInsets.all(16),
               itemCount: list.length,
               separatorBuilder: (_, __) => const SizedBox(height: 4),
-              itemBuilder: (_, i) => _ServerOrderTile(order: list[i]),
+              itemBuilder: (_, i) => _ServerOrderTile(
+                  order: list[i],
+                  storeName: storeNames[list[i].storeId] ?? list[i].storeId),
             );
           },
         ),
@@ -59,7 +65,8 @@ class StorefrontOrdersScreen extends ConsumerWidget {
 
 class _ServerOrderTile extends StatelessWidget {
   final ServerOrderSummary order;
-  const _ServerOrderTile({required this.order});
+  final String storeName;
+  const _ServerOrderTile({required this.order, required this.storeName});
 
   @override
   Widget build(BuildContext context) {
@@ -73,7 +80,9 @@ class _ServerOrderTile extends StatelessWidget {
         ),
         title: Text('Order #$shortId',
             style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text(_fmtDate(order.placedAt)),
+        subtitle: Text(
+            '${order.fulfilmentType == 'PICKUP' ? 'Collect from $storeName' : storeName}\n${_fmtDate(order.placedAt)}'),
+        isThreeLine: true,
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -107,7 +116,8 @@ class _LocalOrderTile extends StatelessWidget {
         title: Text('Order #$shortId',
             style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(
-            '${order.itemCount} item${order.itemCount == 1 ? '' : 's'} · ${_fmtDate(order.placedAt)}'),
+            'Collect from ${order.storeName}\n${order.itemCount} item${order.itemCount == 1 ? '' : 's'} · ${_fmtDate(order.placedAt)}'),
+        isThreeLine: true,
         trailing: Text('${order.currency} ${order.total.toStringAsFixed(2)}',
             style: const TextStyle(fontWeight: FontWeight.bold)),
       ),

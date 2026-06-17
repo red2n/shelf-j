@@ -22,6 +22,8 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     final notifier = ref.read(cartProvider.notifier);
     final cs = Theme.of(context).colorScheme;
     final showPrices = ref.watch(storefrontShowPricesProvider);
+    final configAsync = ref.watch(storefrontConfigProvider);
+    final storeName = configAsync.value?.storeName ?? '-';
     final currency = cart.isNotEmpty ? cart.first.currency : 'GBP';
     final total = cart.fold<double>(0, (s, l) => s + l.lineTotal);
 
@@ -109,6 +111,31 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                     ],
                   ),
                 if (showPrices) const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: cs.secondaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.storefront_outlined,
+                          size: 18, color: cs.onSecondaryContainer),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          showPrices
+                              ? 'Collect from $storeName'
+                              : 'Collect from $storeName · price & payment confirmed in store',
+                          style: TextStyle(
+                              color: cs.onSecondaryContainer, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
@@ -141,6 +168,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     // Catalog mode (store hides prices): no price is known client-side, so this is
     // an order request only — place the order, take no online payment.
     final showPrices = ref.read(storefrontShowPricesProvider);
+    final storeName = ref.read(storefrontConfigProvider).value?.storeName ?? '-';
     setState(() => _placing = true);
     final dio = ref.read(storefrontDioProvider);
     final storeId = ref.read(storefrontStoreProvider);
@@ -149,12 +177,15 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     final idemBase = 'sf-${DateTime.now().millisecondsSinceEpoch}';
     try {
       // 1. Place the order (created PENDING). In catalog mode we send no client
-      // price — the server resolves it (when pricing enforcement is on).
+      // price — the server resolves it (when pricing enforcement is on). The
+      // storefront has no delivery flow yet, so every online order is collected
+      // from the store the cart was built against.
       final resp = await dio.post(
         '/${ApiConstants.order}/orders',
         data: {
           'storeId': storeId,
           'channel': 'ONLINE',
+          'fulfilmentType': 'PICKUP',
           'currency': currency,
           'items': [
             for (final l in cart)
@@ -193,6 +224,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
               currency: showPrices ? currency : '',
               itemCount: cart.fold<int>(0, (s, l) => s + l.qty),
               placedAt: DateTime.now(),
+              storeName: storeName,
             ),
           );
       // Signed-in customers get a server-backed list — refresh it so the new
@@ -223,6 +255,13 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                       ? 'Your order is confirmed.'
                       : 'Your order request has been received.',
                   style: TextStyle(color: Theme.of(ctx).colorScheme.outline)),
+              const SizedBox(height: 6),
+              Text('Collect from $storeName',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              if (!showPrices)
+                Text('Price & payment will be confirmed in store.',
+                    style: TextStyle(
+                        color: Theme.of(ctx).colorScheme.outline, fontSize: 12)),
             ],
           ),
           actions: [

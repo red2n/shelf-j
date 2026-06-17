@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -14,6 +15,65 @@ class InventoryScreen extends ConsumerStatefulWidget {
 }
 
 class _InventoryScreenState extends ConsumerState<InventoryScreen> {
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            child: Row(
+              children: [
+                Text('Inventory', style: Theme.of(context).textTheme.headlineMedium),
+                const Spacer(),
+                FilledButton.icon(
+                  onPressed: () => _showReceiveDialog(context, ref),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Receive Stock'),
+                ),
+              ],
+            ),
+          ),
+          const TabBar(
+            isScrollable: true,
+            tabs: [
+              Tab(text: 'Levels'),
+              Tab(text: 'Batches'),
+            ],
+          ),
+          const Expanded(
+            child: TabBarView(
+              children: [
+                _LevelsTab(),
+                _BatchesTab(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showReceiveDialog(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (_) => _ReceiveStockDialog(
+        onReceived: () => ref.invalidate(inventoryLevelsProvider),
+      ),
+    );
+  }
+}
+
+class _LevelsTab extends ConsumerStatefulWidget {
+  const _LevelsTab();
+
+  @override
+  ConsumerState<_LevelsTab> createState() => _LevelsTabState();
+}
+
+class _LevelsTabState extends ConsumerState<_LevelsTab> {
   String _search = '';
   bool _lowOnly = false;
 
@@ -25,27 +85,6 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Header
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-          child: Row(
-            children: [
-              Text('Inventory', style: Theme.of(context).textTheme.headlineMedium),
-              const Spacer(),
-              FilledButton.icon(
-                onPressed: () => _showReceiveDialog(context, ref),
-                icon: const Icon(Icons.add),
-                label: const Text('Receive Stock'),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: () => ref.invalidate(inventoryLevelsProvider),
-              ),
-            ],
-          ),
-        ),
-
         // Search + filter bar
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
@@ -69,6 +108,11 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                 selected: _lowOnly,
                 selectedColor: cs.errorContainer,
                 onSelected: (v) => setState(() => _lowOnly = v),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () => ref.invalidate(inventoryLevelsProvider),
               ),
             ],
           ),
@@ -154,13 +198,205 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
       ],
     );
   }
+}
 
-  void _showReceiveDialog(BuildContext context, WidgetRef ref) {
-    showDialog(
-      context: context,
-      builder: (_) => _ReceiveStockDialog(
-        onReceived: () => ref.invalidate(inventoryLevelsProvider),
-      ),
+class _BatchesTab extends ConsumerStatefulWidget {
+  const _BatchesTab();
+
+  @override
+  ConsumerState<_BatchesTab> createState() => _BatchesTabState();
+}
+
+class _BatchesTabState extends ConsumerState<_BatchesTab> {
+  String? _storeId;
+  String? _zoneId;
+  String? _materialStatus;
+  String _search = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final storesAsync = ref.watch(storesProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              SizedBox(
+                width: 220,
+                child: storesAsync.when(
+                  loading: () => const LinearProgressIndicator(),
+                  error: (e, _) => Text('Could not load stores',
+                      style: TextStyle(color: cs.error)),
+                  data: (stores) => DropdownButtonFormField<String>(
+                    value: _storeId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Store',
+                      isDense: true,
+                      prefixIcon: Icon(Icons.store_outlined),
+                    ),
+                    items: stores
+                        .map((s) => DropdownMenuItem(
+                              value: s.id,
+                              child: Text('${s.name} (${s.code})',
+                                  overflow: TextOverflow.ellipsis),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setState(() {
+                      _storeId = v;
+                      _zoneId = null;
+                    }),
+                  ),
+                ),
+              ),
+              if (_storeId != null)
+                SizedBox(
+                  width: 200,
+                  child: Consumer(
+                    builder: (context, ref, _) {
+                      final zonesAsync = ref.watch(zonesProvider(_storeId!));
+                      return zonesAsync.when(
+                        loading: () => const LinearProgressIndicator(),
+                        error: (_, __) => const SizedBox.shrink(),
+                        data: (zones) => DropdownButtonFormField<String?>(
+                          value: _zoneId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Zone',
+                            isDense: true,
+                            prefixIcon: Icon(Icons.grid_view_outlined),
+                          ),
+                          items: [
+                            const DropdownMenuItem(
+                                value: null, child: Text('All zones')),
+                            ...zones.map((z) => DropdownMenuItem(
+                                  value: z.id,
+                                  child: Text('${z.name} (${z.code})',
+                                      overflow: TextOverflow.ellipsis),
+                                )),
+                          ],
+                          onChanged: (v) => setState(() => _zoneId = v),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              SizedBox(
+                width: 190,
+                child: DropdownButtonFormField<String?>(
+                  value: _materialStatus,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Material status',
+                    isDense: true,
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: null, child: Text('Any status')),
+                    DropdownMenuItem(value: 'AVAILABLE', child: Text('Available')),
+                    DropdownMenuItem(value: 'QUARANTINE', child: Text('Quarantine')),
+                    DropdownMenuItem(value: 'REJECTED', child: Text('Rejected')),
+                    DropdownMenuItem(value: 'HOLD', child: Text('Hold')),
+                  ],
+                  onChanged: (v) => setState(() => _materialStatus = v),
+                ),
+              ),
+              SizedBox(
+                width: 240,
+                child: TextField(
+                  decoration: const InputDecoration(
+                    hintText: 'Search batch no. / variant…',
+                    prefixIcon: Icon(Icons.search),
+                    isDense: true,
+                  ),
+                  onChanged: (v) => setState(() => _search = v.trim()),
+                ),
+              ),
+              if (_storeId != null)
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () => ref.invalidate(batchesProvider(_storeId!)),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: _storeId == null
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.inventory_outlined,
+                          size: 64, color: cs.outlineVariant),
+                      const SizedBox(height: 16),
+                      Text('Select a store to view its batches',
+                          style: Theme.of(context).textTheme.titleMedium),
+                    ],
+                  ),
+                )
+              : Consumer(
+                  builder: (context, ref, _) {
+                    final batchesAsync = ref.watch(batchesProvider(_storeId!));
+                    final zonesAsync = ref.watch(zonesProvider(_storeId!));
+                    final zoneNames = <String, String>{
+                      for (final z in zonesAsync.value ?? const <ZoneInfo>[])
+                        z.id: '${z.name} (${z.code})',
+                    };
+                    return batchesAsync.when(
+                      loading: () => const LoadingView(label: 'Loading batches…'),
+                      error: (e, _) => ErrorView(
+                        message: 'Could not load batches.',
+                        onRetry: () => ref.invalidate(batchesProvider(_storeId!)),
+                      ),
+                      data: (batches) {
+                        var filtered = batches.where((b) {
+                          if (_zoneId != null && b.zoneId != _zoneId) return false;
+                          if (_materialStatus != null &&
+                              b.materialStatus != _materialStatus) return false;
+                          if (_search.isNotEmpty &&
+                              !b.batchNo.toLowerCase().contains(_search.toLowerCase()) &&
+                              !b.variantId.toLowerCase().contains(_search.toLowerCase())) {
+                            return false;
+                          }
+                          return true;
+                        }).toList();
+
+                        if (filtered.isEmpty) {
+                          return Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.inventory_outlined,
+                                    size: 64, color: cs.outlineVariant),
+                                const SizedBox(height: 16),
+                                Text('No batches found',
+                                    style: Theme.of(context).textTheme.titleMedium),
+                              ],
+                            ),
+                          );
+                        }
+
+                        return LayoutBuilder(builder: (context, bc) {
+                          final wide = bc.maxWidth >= 700;
+                          if (wide) {
+                            return _BatchWideTable(
+                                batches: filtered, zoneNames: zoneNames);
+                          }
+                          return _BatchNarrowList(
+                              batches: filtered, zoneNames: zoneNames);
+                        });
+                      },
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 }
@@ -181,8 +417,11 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   final _batchCtrl = TextEditingController();
   final _expiryCtrl = TextEditingController();
   String? _storeId;
+  String? _zoneId;
   bool _loading = false;
+  bool _resolving = false;
   String? _error;
+  String? _resolvedLabel;
 
   @override
   void dispose() {
@@ -192,6 +431,32 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
     _batchCtrl.dispose();
     _expiryCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _scanVariant() async {
+    final code = await scanBarcodeWithCamera(context);
+    if (code == null || code.isEmpty || !mounted) return;
+    setState(() {
+      _resolving = true;
+      _resolvedLabel = null;
+      _error = null;
+    });
+    try {
+      final resp = await ref.read(apiClientProvider).dio.get(
+          '/${ApiConstants.product}/catalog/variants/by-barcode/$code');
+      final v = resp.data['data'] as Map<String, dynamic>;
+      final variantId = v['variantId'] as String? ?? '';
+      if (variantId.isEmpty) throw Exception('No product found for "$code"');
+      setState(() {
+        _variantCtrl.text = variantId;
+        _resolvedLabel =
+            '${v['productName'] ?? v['sku'] ?? variantId} (${v['sku'] ?? code})';
+      });
+    } catch (e) {
+      setState(() => _error = 'No product found for barcode "$code".');
+    } finally {
+      if (mounted) setState(() => _resolving = false);
+    }
   }
 
   Future<void> _submit() async {
@@ -216,6 +481,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
             'costPrice': double.parse(_costCtrl.text.trim()),
           if (_expiryCtrl.text.trim().isNotEmpty)
             'expiryDate': _expiryCtrl.text.trim(),
+          if (_zoneId != null) 'zoneId': _zoneId,
         },
       );
       if (!mounted) return;
@@ -284,19 +550,77 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                                   overflow: TextOverflow.ellipsis),
                             ))
                         .toList(),
-                    onChanged: (v) => setState(() => _storeId = v),
+                    onChanged: (v) => setState(() {
+                      _storeId = v;
+                      _zoneId = null;
+                    }),
                     validator: (v) => v == null ? 'Required' : null,
                   ),
                 ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _variantCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Variant ID (UUID) *',
-                    prefixIcon: Icon(Icons.qr_code_2_outlined),
+                if (_storeId != null) ...[
+                  const SizedBox(height: 12),
+                  Consumer(
+                    builder: (context, ref, _) {
+                      final zonesAsync = ref.watch(zonesProvider(_storeId!));
+                      return zonesAsync.when(
+                        loading: () => const LinearProgressIndicator(),
+                        error: (e, _) => const SizedBox.shrink(),
+                        data: (zones) => zones.isEmpty
+                            ? const SizedBox.shrink()
+                            : DropdownButtonFormField<String>(
+                                value: _zoneId,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Zone / aisle',
+                                  prefixIcon: Icon(Icons.grid_view_outlined),
+                                ),
+                                items: zones
+                                    .map((z) => DropdownMenuItem(
+                                          value: z.id,
+                                          child: Text(
+                                              '${z.name} (${z.code})',
+                                              overflow: TextOverflow.ellipsis),
+                                        ))
+                                    .toList(),
+                                onChanged: (v) =>
+                                    setState(() => _zoneId = v),
+                              ),
+                      );
+                    },
                   ),
-                  validator: (v) =>
-                      v == null || v.trim().isEmpty ? 'Required' : null,
+                ],
+                const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _variantCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'Variant ID (UUID) *',
+                          prefixIcon: const Icon(Icons.qr_code_2_outlined),
+                          helperText: _resolvedLabel != null
+                              ? 'Resolved: $_resolvedLabel'
+                              : 'Scan a barcode or paste the variant UUID',
+                        ),
+                        onChanged: (_) =>
+                            setState(() => _resolvedLabel = null),
+                        validator: (v) =>
+                            v == null || v.trim().isEmpty ? 'Required' : null,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filledTonal(
+                      tooltip: 'Scan barcode',
+                      onPressed: _resolving ? null : _scanVariant,
+                      icon: _resolving
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.camera_alt_outlined),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -484,6 +808,134 @@ class _NarrowList extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _BatchWideTable extends StatelessWidget {
+  final List<BatchInfo> batches;
+  final Map<String, String> zoneNames;
+  const _BatchWideTable({required this.batches, required this.zoneNames});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Card(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            headingRowColor: WidgetStatePropertyAll(cs.surfaceContainerHigh),
+            columnSpacing: 24,
+            columns: const [
+              DataColumn(label: Text('Batch No.')),
+              DataColumn(label: Text('Variant ID')),
+              DataColumn(label: Text('Remaining'), numeric: true),
+              DataColumn(label: Text('Zone')),
+              DataColumn(label: Text('Expiry')),
+              DataColumn(label: Text('Grade')),
+              DataColumn(label: Text('Material status')),
+            ],
+            rows: batches.map((b) {
+              return DataRow(
+                cells: [
+                  DataCell(Text(b.batchNo,
+                      style: const TextStyle(fontSize: 12))),
+                  DataCell(Text(
+                    b.variantId.length > 16
+                        ? '${b.variantId.substring(0, 8)}…'
+                        : b.variantId,
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                  )),
+                  DataCell(Text(
+                      '${b.remainingQty.toStringAsFixed(0)} / ${b.receivedQty.toStringAsFixed(0)}')),
+                  DataCell(Text(b.zoneId == null
+                      ? '—'
+                      : zoneNames[b.zoneId] ?? 'Unassigned')),
+                  DataCell(Text(b.expiryDate ?? '—')),
+                  DataCell(Text(b.grade ?? '—')),
+                  DataCell(_MaterialStatusChip(status: b.materialStatus)),
+                ],
+              );
+            }).toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BatchNarrowList extends StatelessWidget {
+  final List<BatchInfo> batches;
+  final Map<String, String> zoneNames;
+  const _BatchNarrowList({required this.batches, required this.zoneNames});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: batches.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 4),
+      itemBuilder: (context, i) {
+        final b = batches[i];
+        return Card(
+          child: ListTile(
+            leading: const Icon(Icons.inventory_outlined),
+            title: Text(b.batchNo, style: const TextStyle(fontSize: 13)),
+            subtitle: Text(
+              '${b.variantId.length > 20 ? '${b.variantId.substring(0, 20)}…' : b.variantId}\n'
+              'Zone: ${b.zoneId == null ? '—' : zoneNames[b.zoneId] ?? 'Unassigned'}'
+              '${b.expiryDate != null ? '  ·  Exp: ${b.expiryDate}' : ''}',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+            isThreeLine: true,
+            trailing: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text('${b.remainingQty.toStringAsFixed(0)} / ${b.receivedQty.toStringAsFixed(0)}'),
+                const SizedBox(height: 4),
+                _MaterialStatusChip(status: b.materialStatus),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MaterialStatusChip extends StatelessWidget {
+  final String status;
+  const _MaterialStatusChip({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    Color color;
+    switch (status) {
+      case 'AVAILABLE':
+        color = Colors.green;
+        break;
+      case 'QUARANTINE':
+      case 'HOLD':
+        color = Colors.orange;
+        break;
+      case 'REJECTED':
+        color = cs.error;
+        break;
+      default:
+        color = cs.outline;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withAlpha(30),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(status,
+          style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
     );
   }
 }
