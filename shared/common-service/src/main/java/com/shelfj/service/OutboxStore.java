@@ -2,20 +2,23 @@ package com.shelfj.service;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
 
 /**
- * What the shared {@link OutboxPublisher} needs from a service's repository: read unpublished rows
- * and mark them published. The service's repo implements this (it already has these queries). Keeps
- * the publisher generic.
+ * What the shared {@link OutboxPublisher} needs from a service's repository: atomically claim a
+ * batch of unpublished rows and mark delivered. The service's repo implements this (it already has
+ * the outbox table). Keeps the publisher generic.
  */
 public interface OutboxStore {
 
-  List<PendingOutbox> pendingOutbox(int limit);
-
-  void markPublished(UUID id);
-
-  /** Mark a whole drained batch published in one statement (one DB roundtrip, not N). */
-  void markPublished(List<UUID> ids);
+  /**
+   * Locks up to {@code limit} unpublished rows ({@code FOR UPDATE SKIP LOCKED} — production runs
+   * multiple replicas of every service, so without this every replica's drain would claim and
+   * re-publish the same rows), hands them to {@code publish}, and — inside that same transaction —
+   * marks published exactly the ids it returns. Rows {@code publish} doesn't report back stay
+   * unpublished and are claimable again (by any replica) on the next drain.
+   */
+  List<UUID> drainAndPublish(int limit, Function<List<PendingOutbox>, List<UUID>> publish);
 
   /** A pending outbox row: where to publish ({@code topic}) and what ({@code payload}). */
   record PendingOutbox(UUID id, String topic, String payload) {}

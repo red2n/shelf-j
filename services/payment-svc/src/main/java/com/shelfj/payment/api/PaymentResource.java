@@ -43,9 +43,11 @@ public class PaymentResource {
   /**
    * Online customer payment for the guest storefront. No staff role required — reachable via the
    * gateway's storefront whitelist (tenant from {@code X-Storefront-Tenant}) or by an authenticated
-   * customer. Cashless only; cash tenders are POS-staff territory via {@link #record}. Captures
-   * immediately, emitting {@code PaymentCaptured} so order-svc confirms the order. (Hardening TODO:
-   * verify amount against the order total via order-svc; integrate a real payment provider.)
+   * customer. Cashless only; cash tenders are POS-staff territory via {@link #record}. The claim is
+   * verified against order-svc (exists, is an ONLINE order, belongs to the caller when
+   * authenticated, amount matches the order total) before it's captured and {@code PaymentCaptured}
+   * is emitted so order-svc confirms the order. (Hardening TODO: integrate a real payment provider
+   * — this still self-attests that money actually moved.)
    */
   @POST
   @Path("/online")
@@ -57,7 +59,8 @@ public class PaymentResource {
       throw com.shelfj.web.ApiException.badRequest(
           "PAYMENT_ONLINE_CASHLESS", "Online payments must be cashless (card/wallet)");
     }
-    var tender = svc.recordTender(req, ctx, effectiveKey(idempotencyKey, req.idempotencyKey()));
+    var tender =
+        svc.recordOnlinePayment(req, ctx, effectiveKey(idempotencyKey, req.idempotencyKey()));
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(tender))).build();
   }
 

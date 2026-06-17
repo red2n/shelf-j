@@ -1,5 +1,6 @@
 package com.shelfj.gateway.filters;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,5 +35,22 @@ class BruteForceProtectionServiceTest {
     protection.recordSuccess(key);
 
     assertFalse(protection.isBlocked(key));
+  }
+
+  @Test
+  void capEvictsTheLeastRecentlyActiveEntryNotAnArbitraryOne() {
+    BruteForceProtectionService protection =
+        new BruteForceProtectionService(3, Duration.ofMinutes(10));
+
+    String firstKey = "user:0";
+    for (int i = 0; i <= BruteForceProtectionService.MAX_ENTRIES; i++) {
+      protection.recordFailure("user:" + i);
+    }
+    String lastKey = "user:" + BruteForceProtectionService.MAX_ENTRIES;
+
+    assertEquals(BruteForceProtectionService.MAX_ENTRIES, protection.stateByKey.size());
+    assertFalse(
+        protection.stateByKey.containsKey(firstKey), "oldest entry should have been evicted");
+    assertTrue(protection.stateByKey.containsKey(lastKey), "newest entry should be kept");
   }
 }

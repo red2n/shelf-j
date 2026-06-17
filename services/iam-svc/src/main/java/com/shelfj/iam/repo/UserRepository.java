@@ -11,7 +11,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -378,27 +377,5 @@ public class UserRepository extends BaseOutboxRepository {
           return null;
         },
         "create platform admin");
-  }
-
-  /** Pending outbox rows for the publisher (oldest first). */
-  @Override
-  public List<PendingOutbox> pendingOutbox(int limit) {
-    String sql =
-        "SELECT id, topic, payload FROM outbox"
-            + " WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?";
-    List<PendingOutbox> out = new ArrayList<>();
-    try (var c = dataSource.getConnection();
-        var ps = c.prepareStatement(sql)) {
-      ps.setInt(1, limit);
-      try (ResultSet rs = ps.executeQuery()) {
-        while (rs.next())
-          out.add(
-              new PendingOutbox(
-                  rs.getObject("id", UUID.class), rs.getString("topic"), rs.getString("payload")));
-      }
-      return out;
-    } catch (SQLException e) {
-      throw dbError("read outbox", e);
-    }
   }
 }

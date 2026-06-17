@@ -166,62 +166,53 @@ The retry model was "throw = redeliver, seek back to the failed offset." A recor
 
 ---
 
-## 🟡 8. Online payment capture is trust-based; amount not validated at capture
+## ✅ 8. FIXED — Online payment capture is trust-based; amount not validated at capture
 
-**Where:** [services/payment-svc/.../service/PaymentService.java](services/payment-svc/src/main/java/com/shelfj/payment/service/PaymentService.java#L30-L59)
+**Where:** [services/payment-svc/.../service/PaymentService.java](services/payment-svc/src/main/java/com/shelfj/payment/service/PaymentService.java)
 
-`recordTender` accepts `req.amount()` and `req.orderId()` with no verification that the order exists, belongs to the caller, or that the amount matches the order total — it just records a `CAPTURED` tender and emits `PaymentCaptured`. There is no payment-service-provider (PSP) integration, so an online payment is effectively self-attested. The only downstream guard is `OrderService.handlePaymentCaptured` requiring `amount ≥ total`.
+`recordTender` accepted `req.amount()` and `req.orderId()` with no verification that the order existed, belonged to the caller, or that the amount matched the order total — it just recorded a `CAPTURED` tender and emitted `PaymentCaptured`. There is no payment-service-provider (PSP) integration, so an online payment was effectively self-attested. The only downstream guard was `OrderService.handlePaymentCaptured` requiring `amount ≥ total`.
 
-**Impact:** On the `/payments/online` path (reachable by a customer token), a caller can self-confirm an order without a real charge. This is partly inherent to "no PSP yet," but the missing order-existence / ownership / amount checks make it worse and pair badly with #1.
+**Impact:** On the `/payments/online` path (reachable by a customer token, no staff role required), a caller could self-confirm an order without a real charge. This is partly inherent to "no PSP yet," but the missing order-existence / ownership / amount checks made it worse and paired badly with #1.
 
-**Fix:** Until a real PSP is integrated: validate `orderId` exists in-tenant, that (for online) it belongs to `ctx.userId()`, and that `amount == order.total()` (call order-svc or carry the total through the capture intent). Long-term: capture against a PSP authorization token, never a client-asserted amount.
+**Fix applied:** Added `OrderClient` (`services/payment-svc/.../client/OrderClient.java`), a Consul-discovered sync client for order-svc's `GET /orders/{id}` (mirrors `order-svc`'s existing `PricingClient`: `@Retry` + `@CircuitBreaker`, 503 on unreachable). `PaymentService` now has two entry points instead of one: `recordTender` (unchanged — the staff/POS path, trust boundary is the caller's role) and a new `recordOnlinePayment` used only by `/payments/online`, which calls order-svc first and rejects (404 `PAYMENT_ORDER_NOT_FOUND`, not leaking which check failed) unless the order is an `ONLINE`-channel order in-tenant and, when the caller is an authenticated customer, `order.customerId()` matches `ctx.userId()` — guest orders (`customerId == null`) are left payable by anyone holding the order id, consistent with the rest of the guest-checkout model. A separate `PAYMENT_AMOUNT_MISMATCH` (400) guards `amount == order.total()`. Both entry points share a private `capture(...)` that does the actual persist + outbox emit. Covered by `PaymentServiceTest` (POS-order rejection, ownership mismatch, amount mismatch, guest-order happy path, owned-order happy path, and that the staff path never touches `OrderClient`).
 
 ---
 
-## 🟡 9. Outbox drain is not concurrency-safe across service instances
+## ✅ 9. FIXED — Outbox drain is not concurrency-safe across service instances
 
-**Where:** [shared/common-service/.../BaseOutboxRepository.java](shared/common-service/src/main/java/com/shelfj/service/BaseOutboxRepository.java#L35-L45)
+**Where:** [shared/common-service/.../BaseOutboxRepository.java](shared/common-service/src/main/java/com/shelfj/service/BaseOutboxRepository.java), [OutboxStore.java](shared/common-service/src/main/java/com/shelfj/service/OutboxStore.java), [OutboxPublisher.java](shared/common-service/src/main/java/com/shelfj/service/OutboxPublisher.java)
 
 ```sql
 SELECT id, topic, payload FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?
 ```
 
-The production model explicitly runs **multiple replicas** of each service. With no row locking, every replica's `OutboxPublisher` reads and publishes the **same** pending rows → duplicate Kafka messages. Consumers are idempotent so correctness holds, but it is wasted Kafka throughput and DB churn that scales with replica count.
+The production model explicitly runs **multiple replicas** of each service. With no row locking, every replica's `OutboxPublisher` read and published the **same** pending rows → duplicate Kafka messages. Consumers are idempotent so correctness held, but it was wasted Kafka throughput and DB churn that scaled with replica count.
 
-**Fix:** Claim rows exclusively per drain:
-
-```sql
-SELECT id, topic, payload FROM outbox
-WHERE published_at IS NULL
-ORDER BY created_at ASC
-LIMIT ? FOR UPDATE SKIP LOCKED
-```
-
-(keep the `markPublished` UPDATE inside the same transaction as the claim).
+**Fix applied:** Replaced the two-step `pendingOutbox(limit)` + (later, unrelated transaction) `markPublished(ids)` contract with a single `OutboxStore.drainAndPublish(limit, publish)`. `BaseOutboxRepository` now runs the claim and the publish-mark in **one** `inTx` transaction: `SELECT ... FOR UPDATE SKIP LOCKED` claims the batch (a concurrent replica's drain simply skips locked rows and gets whatever's left, instead of blocking or double-claiming), the caller-supplied `publish` function is invoked with the claimed rows while the lock is held, and `UPDATE outbox SET published_at = now() WHERE id = ANY(?)` runs against exactly the ids it reports back — all before commit. `OutboxPublisher.drainQuietly` now just calls `store.drainAndPublish(100, this::publishBatch)`, where `publishBatch` is the same pipelined Kafka-send-then-await logic as before, just relocated into the callback. Rows the callback doesn't confirm stay unpublished (lock released at commit) and are claimable again next tick by any replica — at-least-once semantics are unchanged. While auditing implementers, found `iam-svc`'s `UserRepository` had its own dead-code duplicate `pendingOutbox` override identical to the base class's old logic; removed it now that it doesn't override anything in the new interface — `UserRepository` inherits `drainAndPublish` like every other repo. Verified with a full `mvn clean compile` across the reactor (catches exactly this kind of stale-override break) plus `mvn test` on the affected modules.
 
 ---
 
-## 🟡 10. `changePassword` reads the raw `X-User-Id` header instead of `TenantContext`
+## ✅ 10. FIXED — `changePassword` reads the raw `X-User-Id` header instead of `TenantContext`
 
-**Where:** [services/iam-svc/.../api/AuthResource.java](services/iam-svc/src/main/java/com/shelfj/iam/api/AuthResource.java#L84-L101)
+**Where:** [services/iam-svc/.../api/AuthResource.java](services/iam-svc/src/main/java/com/shelfj/iam/api/AuthResource.java)
 
 ```java
 public ApiResponse<String> changePassword(@HeaderParam("X-User-Id") String userIdHeader, ...) {
 ```
 
-Every other endpoint sources identity from the gateway-validated `TenantContext`. This one re-parses the raw header. It is safe today only because the gateway strips/sets that header — but it's an inconsistent trust path that's easy to break later (e.g., if a service is ever exposed without the gateway in front). Code smell, not a live vuln.
+Every other endpoint sourced identity from the gateway-validated `TenantContext`. This one re-parsed the raw header. It was safe only because the gateway strips/sets that header — but it was an inconsistent trust path that's easy to break later (e.g., if a service is ever exposed without the gateway in front). Code smell, not a live vuln.
 
-**Fix:** Use `ctx.userId()` (with `requireTenantId()`-style fail-closed) like the rest of the codebase, and drop the `@HeaderParam`.
+**Fix applied:** Added `TenantContext.requireUserId()` (`shared/common-web/.../TenantContext.java`) — same fail-closed shape as the existing `requireTenantId()`, throwing 401 `NO_USER` when the context carries no authenticated principal. `AuthResource.changePassword` now takes just the request body and calls `ctx.requireUserId()`, dropping the `@HeaderParam`/manual UUID parsing entirely. While adding this, found `tenant-svc`'s `OnboardingResource` already had a private `requireUserId()` doing the exact same check by hand; replaced its two call sites with `ctx.requireUserId()` and deleted the now-dead private method, so there's one canonical fail-closed accessor instead of two copies. Verified with a full `mvn clean test` across the reactor (`AuthIT` covers `changePassword` end-to-end via the gateway-stamped-header simulation it already used).
 
 ---
 
-## 🟡 11. Throttle-cap eviction can drop a live (legitimate) limiter entry
+## ✅ 11. FIXED — Throttle-cap eviction can drop a live (legitimate) limiter entry
 
-**Where:** [RateLimitFilter](platform/gateway/src/main/java/com/shelfj/gateway/filters/RateLimitFilter.java#L42-L53) and [BruteForceProtectionService](platform/gateway/src/main/java/com/shelfj/gateway/filters/BruteForceProtectionService.java#L30-L39)
+**Where:** [RateLimitFilter](platform/gateway/src/main/java/com/shelfj/gateway/filters/RateLimitFilter.java) and [BruteForceProtectionService](platform/gateway/src/main/java/com/shelfj/gateway/filters/BruteForceProtectionService.java)
 
-When the map is at `MAX_BUCKETS` and stale eviction frees nothing, the code removes an **arbitrary** entry (`keySet().iterator().next()`), which may be an active attacker's bucket — resetting their counter — or a legitimate user's. Under a high-cardinality flood this slightly weakens both protections.
+When the map was at `MAX_BUCKETS` and stale eviction freed nothing, the code removed an **arbitrary** entry (`keySet().iterator().next()`), which could be an active attacker's bucket — resetting their counter — or a legitimate user's. Under a high-cardinality flood this slightly weakened both protections.
 
-**Fix:** Low priority. If hardened: evict the least-recently-used / soonest-to-refill entry rather than an arbitrary one, or size the cap to the expected legitimate-client population so eviction only happens under genuine attack.
+**Fix applied:** Both classes now evict the least-recently-active entry instead of an arbitrary one. First attempt used the existing wall-clock timestamp (`lastRefillMs` / `lastActivityMs`) for the comparison, but a unit test driving a fast fill-to-cap loop caught a real flaw: `System.currentTimeMillis()` is too coarse under a tight burst — the exact scenario that fills the map to the cap — so many entries tie on the same millisecond, making the "oldest timestamp" pick effectively arbitrary again among the tied group. Fixed by adding a strictly-increasing `AtomicLong` touch-sequence stamped on every bucket/entry touch (`TokenBucket.lastTouchSeq`, `FailureState.lastTouchSeq`); eviction now picks the lowest sequence number, which has no ties regardless of timing. `buckets` / `stateByKey` were relaxed from `private` to package-private (matching this class's existing testability pattern for `config`/`serverRequest`) so tests can assert on cap behavior directly. Covered by `RateLimitFilterTest#capEvictsTheLeastRecentlyActiveBucketNotAnArbitraryOne` and `BruteForceProtectionServiceTest#capEvictsTheLeastRecentlyActiveEntryNotAnArbitraryOne`, each filling to `MAX_BUCKETS`/`MAX_ENTRIES` + 1 distinct keys and asserting the oldest key was evicted while the newest survived.
 
 ---
 

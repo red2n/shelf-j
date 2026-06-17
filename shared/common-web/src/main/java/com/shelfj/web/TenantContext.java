@@ -54,6 +54,17 @@ public class TenantContext {
     return tenantId;
   }
 
+  /**
+   * User id, or throw 401 if the request carried no authenticated user (e.g. a route that requires
+   * a principal reached without one).
+   */
+  public UUID requireUserId() {
+    if (userId == null) {
+      throw ApiException.unauthorized("NO_USER", "No authenticated user in request context");
+    }
+    return userId;
+  }
+
   public boolean hasRole(String role) {
     return roles.contains(role);
   }
