@@ -84,11 +84,12 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       return;
     }
 
-    String authHeader = ctx.getHeaderString("Authorization");
-    boolean hasBearer = authHeader != null && authHeader.startsWith("Bearer ");
-
-    // Guest storefront access: no token needed; tenant comes from the storefront header.
-    if (!hasBearer && isStorefrontPublic(normalize(path), ctx.getMethod())) {
+    // Storefront public reads: tenant comes from the storefront header, regardless of whether
+    // the caller also happens to carry a customer Bearer token (e.g. a signed-in customer still
+    // browsing the catalog after checkout). These paths expose nothing sensitive — anyone can
+    // already reach them with no token at all — so a present-but-irrelevant Bearer must not force
+    // JWT verification and reject the request for lacking a tenant claim.
+    if (isStorefrontPublic(normalize(path), ctx.getMethod())) {
       String storefrontTenant = ctx.getHeaderString(STOREFRONT_TENANT_HEADER);
       if (storefrontTenant != null && !storefrontTenant.isBlank()) {
         String tenant = storefrontTenant.trim();
@@ -101,6 +102,8 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       return;
     }
 
+    String authHeader = ctx.getHeaderString("Authorization");
+    boolean hasBearer = authHeader != null && authHeader.startsWith("Bearer ");
     if (!hasBearer) {
       ctx.abortWith(unauthorized("Missing or malformed Authorization header"));
       return;
@@ -167,8 +170,10 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   }
 
   /**
-   * Whitelisted guest storefront paths (already normalized): catalog reads, price resolve, guest
-   * checkout.
+   * Whitelisted public storefront paths (already normalized): catalog reads, price resolve. Public
+   * regardless of caller identity — reachable by guests, and equally by signed-in customers who
+   * happen to carry a Bearer token while browsing (see the call site: this check runs before JWT
+   * verification, so an irrelevant token never turns these into authenticated-only paths).
    */
   private static boolean isStorefrontPublic(String path, String method) {
     if ("GET".equals(method) && path.startsWith("api/product-svc/catalog")) {

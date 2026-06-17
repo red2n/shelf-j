@@ -53,6 +53,10 @@ public class OrderService {
 
   // ── Orders ────────────────────────────────────────────────────────────────
 
+  private static boolean isBlank(String s) {
+    return s == null || s.isBlank();
+  }
+
   public Order placeOrder(PlaceOrderRequest req, TenantContext ctx, String idempotencyKey) {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest("ORDER_NO_ITEMS", "order must have at least one item");
@@ -81,6 +85,18 @@ public class OrderService {
     String currency = req.currency() != null ? req.currency() : "USD";
     String fulfilment =
         req.fulfilmentType() != null ? req.fulfilmentType() : Order.FULFILMENT_INSTORE;
+    boolean delivery = Order.FULFILMENT_DELIVERY.equals(fulfilment);
+    if (delivery) {
+      if (isBlank(req.deliveryLine1())
+          || isBlank(req.deliveryCity())
+          || isBlank(req.deliveryPostalCode())
+          || isBlank(req.deliveryRecipientName())
+          || isBlank(req.deliveryRecipientPhone()))
+        throw ApiException.badRequest(
+            "ORDER_DELIVERY_ADDRESS_REQUIRED",
+            "deliveryLine1, deliveryCity, deliveryPostalCode, deliveryRecipientName and"
+                + " deliveryRecipientPhone are required when fulfilmentType is DELIVERY");
+    }
     boolean enforcePricing = config.pricingEnforce();
 
     BigDecimal subtotal = BigDecimal.ZERO;
@@ -166,7 +182,13 @@ public class OrderService {
             Instant.now(),
             Instant.now(),
             taxExempt,
-            req.exemptReason());
+            req.exemptReason(),
+            delivery ? req.deliveryLine1() : null,
+            delivery ? req.deliveryLine2() : null,
+            delivery ? req.deliveryCity() : null,
+            delivery ? req.deliveryPostalCode() : null,
+            delivery ? req.deliveryRecipientName() : null,
+            delivery ? req.deliveryRecipientPhone() : null);
 
     try {
       return repo.createOrder(

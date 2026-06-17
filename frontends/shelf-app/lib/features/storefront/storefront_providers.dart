@@ -513,6 +513,7 @@ class StorefrontOrderRecord {
   final int itemCount;
   final DateTime placedAt;
   final String storeName;
+  final String fulfilmentType;
 
   const StorefrontOrderRecord({
     required this.orderId,
@@ -521,6 +522,7 @@ class StorefrontOrderRecord {
     required this.itemCount,
     required this.placedAt,
     this.storeName = '-',
+    this.fulfilmentType = 'PICKUP',
   });
 
   Map<String, dynamic> toJson() => {
@@ -530,6 +532,7 @@ class StorefrontOrderRecord {
         'itemCount': itemCount,
         'placedAt': placedAt.toIso8601String(),
         'storeName': storeName,
+        'fulfilmentType': fulfilmentType,
       };
 
   factory StorefrontOrderRecord.fromJson(Map<String, dynamic> j) =>
@@ -541,6 +544,7 @@ class StorefrontOrderRecord {
         placedAt:
             DateTime.tryParse(j['placedAt'] as String? ?? '') ?? DateTime.now(),
         storeName: j['storeName'] as String? ?? '-',
+        fulfilmentType: j['fulfilmentType'] as String? ?? 'PICKUP',
       );
 }
 

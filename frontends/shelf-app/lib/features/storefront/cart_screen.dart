@@ -15,6 +15,29 @@ class StorefrontCartScreen extends ConsumerStatefulWidget {
 
 class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   bool _placing = false;
+  String _fulfilment = 'PICKUP'; // PICKUP | DELIVERY
+  bool _payNow = true; // only consulted when showPrices — catalog mode has no price to charge.
+  final _addressFormKey = GlobalKey<FormState>();
+  final _line1Ctrl = TextEditingController();
+  final _line2Ctrl = TextEditingController();
+  final _cityCtrl = TextEditingController();
+  final _postalCtrl = TextEditingController();
+  final _recipientNameCtrl = TextEditingController();
+  final _recipientPhoneCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _line1Ctrl.dispose();
+    _line2Ctrl.dispose();
+    _cityCtrl.dispose();
+    _postalCtrl.dispose();
+    _recipientNameCtrl.dispose();
+    _recipientPhoneCtrl.dispose();
+    super.dispose();
+  }
+
+  static String? _requiredField(String? v) =>
+      v == null || v.trim().isEmpty ? 'Required' : null;
 
   @override
   Widget build(BuildContext context) {
@@ -93,68 +116,175 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           ),
         ),
         SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                if (showPrices)
-                  Row(
-                    children: [
-                      Text('Total (incl. VAT)',
-                          style: Theme.of(context).textTheme.titleMedium),
-                      const Spacer(),
-                      Text('$currency ${total.toStringAsFixed(2)}',
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleLarge
-                              ?.copyWith(fontWeight: FontWeight.bold)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.7),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  if (showPrices)
+                    Row(
+                      children: [
+                        Text('Total (incl. VAT)',
+                            style: Theme.of(context).textTheme.titleMedium),
+                        const Spacer(),
+                        Text('$currency ${total.toStringAsFixed(2)}',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  if (showPrices) const SizedBox(height: 12),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(
+                          value: 'PICKUP',
+                          label: Text('Collect from store'),
+                          icon: Icon(Icons.storefront_outlined)),
+                      ButtonSegment(
+                          value: 'DELIVERY',
+                          label: Text('Deliver to home'),
+                          icon: Icon(Icons.local_shipping_outlined)),
                     ],
+                    selected: {_fulfilment},
+                    onSelectionChanged: (s) =>
+                        setState(() => _fulfilment = s.first),
                   ),
-                if (showPrices) const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: cs.secondaryContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.storefront_outlined,
-                          size: 18, color: cs.onSecondaryContainer),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          showPrices
-                              ? 'Collect from $storeName'
-                              : 'Collect from $storeName · price & payment confirmed in store',
-                          style: TextStyle(
-                              color: cs.onSecondaryContainer, fontSize: 12),
-                        ),
+                  if (_fulfilment == 'DELIVERY') ...[
+                    const SizedBox(height: 12),
+                    Form(
+                      key: _addressFormKey,
+                      child: Column(
+                        children: [
+                          TextFormField(
+                            controller: _line1Ctrl,
+                            decoration: const InputDecoration(
+                                labelText: 'Address line 1',
+                                isDense: true),
+                            validator: _requiredField,
+                          ),
+                          const SizedBox(height: 8),
+                          TextFormField(
+                            controller: _line2Ctrl,
+                            decoration: const InputDecoration(
+                                labelText: 'Address line 2 (optional)',
+                                isDense: true),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _cityCtrl,
+                                  decoration: const InputDecoration(
+                                      labelText: 'City', isDense: true),
+                                  validator: _requiredField,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _postalCtrl,
+                                  decoration: const InputDecoration(
+                                      labelText: 'Postal code', isDense: true),
+                                  validator: _requiredField,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          TextFormField(
+                            controller: _recipientNameCtrl,
+                            decoration: const InputDecoration(
+                                labelText: 'Recipient name', isDense: true),
+                            validator: _requiredField,
+                          ),
+                          const SizedBox(height: 8),
+                          TextFormField(
+                            controller: _recipientPhoneCtrl,
+                            decoration: const InputDecoration(
+                                labelText: 'Recipient phone', isDense: true),
+                            keyboardType: TextInputType.phone,
+                            validator: _requiredField,
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
+                  ],
+                  if (showPrices) ...[
+                    const SizedBox(height: 12),
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(
+                            value: true,
+                            label: Text('Pay now'),
+                            icon: Icon(Icons.lock_outline)),
+                        ButtonSegment(
+                            value: false,
+                            label: Text('Pay later'),
+                            icon: Icon(Icons.schedule_outlined)),
+                      ],
+                      selected: {_payNow},
+                      onSelectionChanged: (s) =>
+                          setState(() => _payNow = s.first),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: cs.secondaryContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                            _fulfilment == 'DELIVERY'
+                                ? Icons.local_shipping_outlined
+                                : Icons.storefront_outlined,
+                            size: 18,
+                            color: cs.onSecondaryContainer),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _fulfilmentBannerText(showPrices, storeName, currency, total),
+                            style: TextStyle(
+                                color: cs.onSecondaryContainer, fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: _placing ? null : _checkout,
-                    icon: _placing
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
-                        : Icon(showPrices ? Icons.lock_outline : Icons.receipt_long),
-                    label: Text(_placing
-                        ? (showPrices ? 'Processing payment…' : 'Placing order…')
-                        : (showPrices
-                            ? 'Pay $currency ${total.toStringAsFixed(2)}'
-                            : 'Place order')),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _placing ? null : _checkout,
+                      icon: _placing
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
+                          : Icon((showPrices && _payNow)
+                              ? Icons.lock_outline
+                              : Icons.receipt_long),
+                      label: Text(_placing
+                          ? ((showPrices && _payNow)
+                              ? 'Processing payment…'
+                              : 'Placing order…')
+                          : ((showPrices && _payNow)
+                              ? 'Pay $currency ${total.toStringAsFixed(2)}'
+                              : 'Place order')),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -162,13 +292,39 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     );
   }
 
+  /// The bottom panel's fulfilment/payment summary line. Three independent axes: fulfilment
+  /// (pickup/delivery), whether a price is known (showPrices), and whether payment happens now
+  /// or later — catalog-mode stores have no known price, so "pay now" is never offered there.
+  String _fulfilmentBannerText(
+      bool showPrices, String storeName, String currency, double total) {
+    final payNow = showPrices && _payNow;
+    final where =
+        _fulfilment == 'DELIVERY' ? 'Deliver to your address' : 'Collect from $storeName';
+    if (payNow) return where;
+    if (!showPrices) {
+      return _fulfilment == 'DELIVERY'
+          ? '$where · price & payment confirmed on delivery'
+          : '$where · price & payment confirmed in store';
+    }
+    final amount = '$currency ${total.toStringAsFixed(2)}';
+    return _fulfilment == 'DELIVERY'
+        ? '$where · pay $amount on delivery'
+        : '$where · pay $amount at pickup';
+  }
+
   Future<void> _checkout() async {
     final cart = ref.read(cartProvider);
     if (cart.isEmpty) return;
-    // Catalog mode (store hides prices): no price is known client-side, so this is
-    // an order request only — place the order, take no online payment.
+    final delivery = _fulfilment == 'DELIVERY';
+    if (delivery && !(_addressFormKey.currentState?.validate() ?? false)) {
+      return;
+    }
     final showPrices = ref.read(storefrontShowPricesProvider);
     final storeName = ref.read(storefrontConfigProvider).value?.storeName ?? '-';
+    // Catalog mode (store hides prices) has no known price to charge online, so payment is
+    // always deferred there regardless of the on-screen toggle; priced shops let the customer
+    // choose to pay now or defer to pickup/delivery.
+    final payNow = showPrices && _payNow;
     setState(() => _placing = true);
     final dio = ref.read(storefrontDioProvider);
     final storeId = ref.read(storefrontStoreProvider);
@@ -176,16 +332,14 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     final cartTotal = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final idemBase = 'sf-${DateTime.now().millisecondsSinceEpoch}';
     try {
-      // 1. Place the order (created PENDING). In catalog mode we send no client
-      // price — the server resolves it (when pricing enforcement is on). The
-      // storefront has no delivery flow yet, so every online order is collected
-      // from the store the cart was built against.
+      // 1. Place the order (created PENDING). In catalog mode we send no client price — the
+      // server resolves it (when pricing enforcement is on).
       final resp = await dio.post(
         '/${ApiConstants.order}/orders',
         data: {
           'storeId': storeId,
           'channel': 'ONLINE',
-          'fulfilmentType': 'PICKUP',
+          'fulfilmentType': _fulfilment,
           'currency': currency,
           'items': [
             for (final l in cart)
@@ -194,6 +348,15 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
               // it's recorded as a 0-value request to be priced/fulfilled later.
               {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
           ],
+          if (delivery) ...{
+            'deliveryLine1': _line1Ctrl.text.trim(),
+            if (_line2Ctrl.text.trim().isNotEmpty)
+              'deliveryLine2': _line2Ctrl.text.trim(),
+            'deliveryCity': _cityCtrl.text.trim(),
+            'deliveryPostalCode': _postalCtrl.text.trim(),
+            'deliveryRecipientName': _recipientNameCtrl.text.trim(),
+            'deliveryRecipientPhone': _recipientPhoneCtrl.text.trim(),
+          },
         },
         options: Options(headers: {'Idempotency-Key': '$idemBase-order'}),
       );
@@ -201,9 +364,10 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       final orderId = data['id'] as String? ?? '';
       final total = (data['total'] as num?)?.toDouble() ?? cartTotal;
 
-      // 2. Priced shops pay online (capture → PaymentCaptured → order confirms).
-      // Catalog shops skip payment — the order is a request, priced/fulfilled later.
-      if (showPrices) {
+      // 2. "Pay now" captures payment online immediately (capture → PaymentCaptured → order
+      // confirms). "Pay later" — catalog mode, or a priced shop's customer choosing to defer —
+      // skips payment-svc entirely; the order is a request, priced/paid at pickup or delivery.
+      if (payNow) {
         await dio.post(
           '/${ApiConstants.payment}/payments/online',
           data: {
@@ -225,6 +389,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
               itemCount: cart.fold<int>(0, (s, l) => s + l.qty),
               placedAt: DateTime.now(),
               storeName: storeName,
+              fulfilmentType: _fulfilment,
             ),
           );
       // Signed-in customers get a server-backed list — refresh it so the new
@@ -239,27 +404,36 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
         builder: (ctx) => AlertDialog(
           icon: Icon(Icons.check_circle_outline,
               color: Theme.of(ctx).colorScheme.primary, size: 40),
-          title: Text(showPrices ? 'Payment successful' : 'Order placed'),
+          title: Text(payNow ? 'Payment successful' : 'Order placed'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text('Order #${orderId.length >= 8 ? orderId.substring(0, 8) : orderId}'),
-              if (showPrices) ...[
+              if (payNow) ...[
                 const SizedBox(height: 6),
                 Text('$currency ${total.toStringAsFixed(2)} paid',
                     style: const TextStyle(fontWeight: FontWeight.bold)),
               ],
               const SizedBox(height: 6),
               Text(
-                  showPrices
+                  payNow
                       ? 'Your order is confirmed.'
                       : 'Your order request has been received.',
                   style: TextStyle(color: Theme.of(ctx).colorScheme.outline)),
               const SizedBox(height: 6),
-              Text('Collect from $storeName',
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              if (!showPrices)
-                Text('Price & payment will be confirmed in store.',
+              Text(
+                  delivery ? 'Deliver to your address' : 'Collect from $storeName',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center),
+              if (!payNow)
+                Text(
+                    showPrices
+                        ? (delivery
+                            ? 'Pay $currency ${total.toStringAsFixed(2)} on delivery.'
+                            : 'Pay $currency ${total.toStringAsFixed(2)} at pickup.')
+                        : (delivery
+                            ? 'Price & payment will be confirmed on delivery.'
+                            : 'Price & payment will be confirmed in store.'),
                     style: TextStyle(
                         color: Theme.of(ctx).colorScheme.outline, fontSize: 12)),
             ],
@@ -275,6 +449,16 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           ],
         ),
       );
+      _line1Ctrl.clear();
+      _line2Ctrl.clear();
+      _cityCtrl.clear();
+      _postalCtrl.clear();
+      _recipientNameCtrl.clear();
+      _recipientPhoneCtrl.clear();
+      setState(() {
+        _fulfilment = 'PICKUP';
+        _payNow = true;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => _placing = false);

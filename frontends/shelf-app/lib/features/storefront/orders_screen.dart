@@ -81,7 +81,7 @@ class _ServerOrderTile extends StatelessWidget {
         title: Text('Order #$shortId',
             style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(
-            '${order.fulfilmentType == 'PICKUP' ? 'Collect from $storeName' : storeName}\n${_fmtDate(order.placedAt)}'),
+            '${order.fulfilmentType == 'DELIVERY' ? 'Deliver to home' : 'Collect from $storeName'}\n${_fmtDate(order.placedAt)}'),
         isThreeLine: true,
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -116,7 +116,7 @@ class _LocalOrderTile extends StatelessWidget {
         title: Text('Order #$shortId',
             style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(
-            'Collect from ${order.storeName}\n${order.itemCount} item${order.itemCount == 1 ? '' : 's'} · ${_fmtDate(order.placedAt)}'),
+            '${order.fulfilmentType == 'DELIVERY' ? 'Deliver to home' : 'Collect from ${order.storeName}'}\n${order.itemCount} item${order.itemCount == 1 ? '' : 's'} · ${_fmtDate(order.placedAt)}'),
         isThreeLine: true,
         trailing: Text('${order.currency} ${order.total.toStringAsFixed(2)}',
             style: const TextStyle(fontWeight: FontWeight.bold)),

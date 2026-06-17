@@ -34,7 +34,15 @@ public final class Dtos {
       String notes,
       String idempotencyKey,
       Boolean taxExempt,
-      String exemptReason) {}
+      String exemptReason,
+      // Required when fulfilmentType=DELIVERY (enforced in OrderService, not here — the column set
+      // differs by fulfilment type rather than being unconditionally required).
+      String deliveryLine1,
+      String deliveryLine2,
+      String deliveryCity,
+      String deliveryPostalCode,
+      String deliveryRecipientName,
+      String deliveryRecipientPhone) {}
 
   public record OrderItemResponse(
       String id,
@@ -61,7 +69,13 @@ public final class Dtos {
       String updatedAt,
       List<OrderItemResponse> items,
       boolean taxExempt,
-      String exemptReason) {}
+      String exemptReason,
+      String deliveryLine1,
+      String deliveryLine2,
+      String deliveryCity,
+      String deliveryPostalCode,
+      String deliveryRecipientName,
+      String deliveryRecipientPhone) {}
 
   public record OrderStatusHistoryResponse(
       String id,

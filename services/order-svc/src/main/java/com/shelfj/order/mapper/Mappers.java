@@ -62,7 +62,13 @@ public final class Mappers {
         ts(o.updatedAt()),
         items.stream().map(Mappers::toDto).toList(),
         o.taxExempt(),
-        o.exemptReason());
+        o.exemptReason(),
+        o.deliveryLine1(),
+        o.deliveryLine2(),
+        o.deliveryCity(),
+        o.deliveryPostalCode(),
+        o.deliveryRecipientName(),
+        o.deliveryRecipientPhone());
   }
 
   public static OrderSummaryResponse toSummary(Order o) {
