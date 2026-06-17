@@ -221,12 +221,19 @@ public final class Dtos {
 
   public record BulkImportError(String item, String reason) {}
 
+  /**
+   * One successfully created/replaced variant — lets the caller follow up per row (e.g. set initial
+   * stock or price) without having to re-look-up variants by SKU afterward.
+   */
+  public record ImportedVariant(String sku, String variantId, String productId) {}
+
   public record BulkImportResult(
       int categoriesCreated,
       int categoriesSkipped,
       int productsCreated,
       int variantsCreated,
-      List<BulkImportError> errors) {}
+      List<BulkImportError> errors,
+      List<ImportedVariant> importedVariants) {}
 
   // ── Container Types (Gap #37) ───────────────────────────────────────────
 

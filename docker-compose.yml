@@ -700,6 +700,10 @@ services:
       shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
       shelfj.gateway.cors.allowed-origins: "*"
+      # Bulk admin operations (e.g. CSV catalog import) process thousands of rows
+      # synchronously upstream; the 10s code default is tuned for normal request/response
+      # calls and times out well before a large import finishes server-side.
+      shelfj.gateway.upstream.read-timeout-seconds: "${GATEWAY_UPSTREAM_READ_TIMEOUT_SECONDS:-120}"
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
     ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]
     networks: [shelfj_network]
