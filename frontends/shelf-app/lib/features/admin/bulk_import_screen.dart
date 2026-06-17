@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -279,7 +280,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
           final outcomes = await Future.wait(chunk.map((t) async {
             final (variantId, qty, sku) = t;
             try {
-              await dio.post('/${ApiConstants.inventory}/admin/receive', data: {
+              await dio.post('/${ApiConstants.inventory}/admin/inventory/receive', data: {
                 'storeId': _destinationStoreId,
                 'variantId': variantId,
                 'qty': qty,
