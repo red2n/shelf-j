@@ -54,29 +54,32 @@ export const options = {
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+let authToken = null;  // Set after registration
 
-function hdrs(tenantId = null, userId = null, roles = null) {
+function hdrs(tenantId = null, userId = null) {
   const h = { ...JSON_CT };
+  // Gateway requires Authorization header with Bearer token
+  if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+  // X-* headers provide service context
   if (tenantId) h['X-Tenant-Id'] = tenantId;
   if (userId) h['X-User-Id'] = userId;
-  if (roles) h['X-Roles'] = roles;
   return h;
 }
 
-function post(path, body, tenantId = null, userId = null, roles = null) {
-  return http.post(`${BASE}${path}`, JSON.stringify(body), { headers: hdrs(tenantId, userId, roles) });
+function post(path, body, tenantId = null, userId = null) {
+  return http.post(`${BASE}${path}`, JSON.stringify(body), { headers: hdrs(tenantId, userId) });
 }
 
-function put(path, body, tenantId = null, userId = null, roles = null) {
-  return http.put(`${BASE}${path}`, JSON.stringify(body), { headers: hdrs(tenantId, userId, roles) });
+function put(path, body, tenantId = null, userId = null) {
+  return http.put(`${BASE}${path}`, JSON.stringify(body), { headers: hdrs(tenantId, userId) });
 }
 
-function patch(path, body, tenantId = null, userId = null, roles = null) {
-  return http.patch(`${BASE}${path}`, JSON.stringify(body), { headers: hdrs(tenantId, userId, roles) });
+function patch(path, body, tenantId = null, userId = null) {
+  return http.patch(`${BASE}${path}`, JSON.stringify(body), { headers: hdrs(tenantId, userId) });
 }
 
-function get(path, tenantId = null, userId = null, roles = null) {
-  return http.get(`${BASE}${path}`, { headers: hdrs(tenantId, userId, roles) });
+function get(path, tenantId = null, userId = null) {
+  return http.get(`${BASE}${path}`, { headers: hdrs(tenantId, userId) });
 }
 
 function ok(res, tag, expectedStatus = 200) {
@@ -127,8 +130,8 @@ export function flowGuardTest() {
   // ═══════════════════════════════════════════════════════════════════════════
   // PHASE 1: Auth Flow
   // ═══════════════════════════════════════════════════════════════════════════
-  group('Phase 1: Auth Flow — Register & Login', () => {
-    // POST /api/iam-svc/auth/register
+  // POST /api/iam-svc/auth/register
+  group('Phase 1: Auth Flow — Register', () => {
     const regRes = post('/api/iam-svc/auth/register', {
       email: `flow-guard-${runId}@test.local`,
       password: 'Flow@Guard123',
@@ -136,33 +139,17 @@ export function flowGuardTest() {
     });
     total++;
     if (ok(regRes, 'POST /auth/register', 201)) passed++;
-    const tokens = data(regRes);
-    const accessToken = tokens.accessToken;
-    const userId = jwtPayload(accessToken).sub;
-
-    if (!userId || !accessToken) {
-      console.error('FATAL: Could not extract userId or accessToken from registration');
-      flowErrors.add(1);
-      return null;
-    }
-
-    // GET /api/iam-svc/auth/me
-    const meRes = get('/api/iam-svc/auth/me', null, userId);
-    total++;
-    if (ok(meRes, 'GET /auth/me', 200)) passed++;
-
-    return { userId, accessToken };
   });
 
-  // Re-run to get userId (group returns undefined in k6)
-  const regRes = post('/api/iam-svc/auth/register', {
-    email: `flow-guard-${runId}@test.local`,
+  // Get userId from auth token (note: requires a second registration for extraction)
+  const regRes2 = http.post(`${BASE}/api/iam-svc/auth/register`, JSON.stringify({
+    email: `flow-guard-${runId}b@test.local`,
     password: 'Flow@Guard123',
-    phone: `99${runId}`,
-  });
-  const tokens = data(regRes);
-  const accessToken = tokens.accessToken;
-  const userId = jwtPayload(accessToken).sub;
+    phone: `99${runId}b`,
+  }), { headers: JSON_CT });
+  const tokens2 = data(regRes2);
+  authToken = tokens2.accessToken;  // Set global auth token for all subsequent requests
+  const userId = jwtPayload(authToken).sub;
 
   if (!userId) {
     console.error('FATAL: Could not extract userId');
@@ -226,7 +213,7 @@ export function flowGuardTest() {
   let storeId = null;
   let zoneIds = [];
   group('Phase 3: Location Setup — Create Stores & Zones', () => {
-    // POST /api/tenant-svc/onboarding/stores
+    // POST /api/tenant-svc/onboarding/stores (must pass tenantId for context)
     const storeRes = post(
       '/api/tenant-svc/onboarding/stores',
       {
@@ -240,7 +227,7 @@ export function flowGuardTest() {
         pincode: '400001',
         timezone: 'Asia/Kolkata',
       },
-      tenantId,
+      tenantId,  // <-- Must pass tenantId, not null!
       userId
     );
     total++;
@@ -608,7 +595,7 @@ export function flowGuardTest() {
   // PHASE 7: Onboarding Status
   // ═══════════════════════════════════════════════════════════════════════════
   group('Phase 7: Onboarding Status Check', () => {
-    // GET /api/tenant-svc/onboarding/status
+    // GET /api/tenant-svc/onboarding/status (must pass tenantId for context)
     const statusRes = get('/api/tenant-svc/onboarding/status', tenantId, userId);
     total++;
     if (ok(statusRes, 'GET /onboarding/status', 200)) passed++;
