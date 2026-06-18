@@ -311,7 +311,7 @@ public class CustomerRepository extends BaseOutboxRepository {
   }
 
   public LoyaltyAccount adjustPoints(
-      UUID tenantId, UUID customerId, BigDecimal points, String reason) {
+      UUID tenantId, UUID customerId, BigDecimal points, String reason, OutboxRow event) {
     return inTx(
         conn -> {
           LoyaltyAccount account = getOrCreateLoyaltyAccount(conn, tenantId, customerId);
@@ -335,6 +335,7 @@ public class CustomerRepository extends BaseOutboxRepository {
                   null,
                   reason,
                   Instant.now()));
+          insertOutbox(conn, event);
           return updated;
         },
         "adjust loyalty points");
@@ -378,7 +379,8 @@ public class CustomerRepository extends BaseOutboxRepository {
       BigDecimal amount,
       String currency,
       UUID orderId,
-      String reason) {
+      String reason,
+      OutboxRow event) {
     return inTx(
         conn -> {
           StoreCreditAccount account =
@@ -399,6 +401,7 @@ public class CustomerRepository extends BaseOutboxRepository {
                   orderId,
                   reason,
                   Instant.now()));
+          insertOutbox(conn, event);
           return updated;
         },
         "issue store credit");
@@ -410,7 +413,8 @@ public class CustomerRepository extends BaseOutboxRepository {
       BigDecimal amount,
       String currency,
       UUID orderId,
-      String reason) {
+      String reason,
+      OutboxRow event) {
     return inTx(
         conn -> {
           StoreCreditAccount account =
@@ -435,6 +439,7 @@ public class CustomerRepository extends BaseOutboxRepository {
                   orderId,
                   reason,
                   Instant.now()));
+          insertOutbox(conn, event);
           return updated;
         },
         "redeem store credit");
@@ -576,11 +581,15 @@ public class CustomerRepository extends BaseOutboxRepository {
       ps.setObject(8, now.atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
+    // FOR UPDATE: this row is read-modify-written by earn/redeem/adjust. Locking it for the
+    // duration of the transaction serializes concurrent point mutations on the same account, so two
+    // simultaneous redeems can't both pass the balance check and double-spend (golden rule:
+    // money/balance mutations take a row lock — same pattern as gift-card/inventory/payment).
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT id, tenant_id, customer_id, points_balance, lifetime_points, tier,"
                 + " created_at, updated_at"
-                + " FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ?")) {
+                + " FROM loyalty_accounts WHERE tenant_id = ? AND customer_id = ? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
       try (ResultSet rs = ps.executeQuery()) {
@@ -663,11 +672,15 @@ public class CustomerRepository extends BaseOutboxRepository {
       ps.setObject(7, now.atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
+    // FOR UPDATE: store credit is real money. Lock the account row so concurrent issue/redeem on
+    // the same account serialize — otherwise two simultaneous redeems both read the same balance,
+    // both pass the guard, and both write, over-spending the balance (there is no DB CHECK
+    // backstop).
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT id, tenant_id, customer_id, balance, currency, created_at, updated_at"
                 + " FROM store_credit_accounts"
-                + " WHERE tenant_id = ? AND customer_id = ? AND currency = ?")) {
+                + " WHERE tenant_id = ? AND customer_id = ? AND currency = ? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
       ps.setString(3, currency);

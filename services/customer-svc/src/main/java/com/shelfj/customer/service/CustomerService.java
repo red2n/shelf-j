@@ -18,6 +18,7 @@ import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.json.Json;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -58,20 +59,16 @@ public class CustomerService {
             null,
             now,
             now);
+    String payload =
+        Json.createObjectBuilder()
+            .add("customerId", id.toString())
+            .add("tenantId", tenantId.toString())
+            .add("email", req.email())
+            .build()
+            .toString();
     var event =
         new OutboxRow(
-            "CustomerRegistered",
-            "shelfj.customer.customer-registered",
-            tenantId,
-            id,
-            "{\"customerId\":\""
-                + id
-                + "\",\"tenantId\":\""
-                + tenantId
-                + "\","
-                + "\"email\":\""
-                + req.email()
-                + "\"}");
+            "CustomerRegistered", "shelfj.customer.customer-registered", tenantId, id, payload);
     return repo.createCustomer(customer, event);
   }
 
@@ -204,46 +201,48 @@ public class CustomerService {
   public LoyaltyAccount earnPoints(UUID tenantId, UUID customerId, EarnPointsRequest req) {
     get(tenantId, customerId);
     UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
+    String payload =
+        Json.createObjectBuilder()
+            .add("customerId", customerId.toString())
+            .add("tenantId", tenantId.toString())
+            .add("points", req.points())
+            .build()
+            .toString();
     var event =
         new OutboxRow(
-            "LoyaltyEarned",
-            "shelfj.customer.loyalty-earned",
-            tenantId,
-            customerId,
-            "{\"customerId\":\""
-                + customerId
-                + "\",\"tenantId\":\""
-                + tenantId
-                + "\","
-                + "\"points\":"
-                + req.points()
-                + "}");
+            "LoyaltyEarned", "shelfj.customer.loyalty-earned", tenantId, customerId, payload);
     return repo.earnPoints(tenantId, customerId, req.points(), orderId, req.reason(), event);
   }
 
   public LoyaltyAccount redeemPoints(UUID tenantId, UUID customerId, RedeemPointsRequest req) {
     get(tenantId, customerId);
     UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
+    String payload =
+        Json.createObjectBuilder()
+            .add("customerId", customerId.toString())
+            .add("tenantId", tenantId.toString())
+            .add("points", req.points())
+            .build()
+            .toString();
     var event =
         new OutboxRow(
-            "LoyaltyRedeemed",
-            "shelfj.customer.loyalty-redeemed",
-            tenantId,
-            customerId,
-            "{\"customerId\":\""
-                + customerId
-                + "\",\"tenantId\":\""
-                + tenantId
-                + "\","
-                + "\"points\":"
-                + req.points()
-                + "}");
+            "LoyaltyRedeemed", "shelfj.customer.loyalty-redeemed", tenantId, customerId, payload);
     return repo.redeemPoints(tenantId, customerId, req.points(), orderId, req.reason(), event);
   }
 
   public LoyaltyAccount adjustPoints(UUID tenantId, UUID customerId, AdjustPointsRequest req) {
     get(tenantId, customerId);
-    return repo.adjustPoints(tenantId, customerId, req.points(), req.reason());
+    String payload =
+        Json.createObjectBuilder()
+            .add("customerId", customerId.toString())
+            .add("tenantId", tenantId.toString())
+            .add("points", req.points())
+            .build()
+            .toString();
+    var event =
+        new OutboxRow(
+            "LoyaltyAdjusted", "shelfj.customer.loyalty-adjusted", tenantId, customerId, payload);
+    return repo.adjustPoints(tenantId, customerId, req.points(), req.reason(), event);
   }
 
   public List<LoyaltyLedgerEntry> getLedger(UUID tenantId, UUID customerId, int limit) {
@@ -277,7 +276,23 @@ public class CustomerService {
             ? "GBP"
             : req.currency().toUpperCase(Locale.ROOT);
     UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
-    return repo.issueStoreCredit(tenantId, customerId, req.amount(), cur, orderId, req.reason());
+    String payload =
+        Json.createObjectBuilder()
+            .add("customerId", customerId.toString())
+            .add("tenantId", tenantId.toString())
+            .add("amount", req.amount())
+            .add("currency", cur)
+            .build()
+            .toString();
+    var event =
+        new OutboxRow(
+            "StoreCreditIssued",
+            "shelfj.customer.store-credit-issued",
+            tenantId,
+            customerId,
+            payload);
+    return repo.issueStoreCredit(
+        tenantId, customerId, req.amount(), cur, orderId, req.reason(), event);
   }
 
   public StoreCreditAccount redeemStoreCredit(
@@ -288,7 +303,23 @@ public class CustomerService {
             ? "GBP"
             : req.currency().toUpperCase(Locale.ROOT);
     UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
-    return repo.redeemStoreCredit(tenantId, customerId, req.amount(), cur, orderId, req.reason());
+    String payload =
+        Json.createObjectBuilder()
+            .add("customerId", customerId.toString())
+            .add("tenantId", tenantId.toString())
+            .add("amount", req.amount())
+            .add("currency", cur)
+            .build()
+            .toString();
+    var event =
+        new OutboxRow(
+            "StoreCreditRedeemed",
+            "shelfj.customer.store-credit-redeemed",
+            tenantId,
+            customerId,
+            payload);
+    return repo.redeemStoreCredit(
+        tenantId, customerId, req.amount(), cur, orderId, req.reason(), event);
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
