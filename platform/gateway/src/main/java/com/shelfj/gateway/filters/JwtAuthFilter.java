@@ -73,12 +73,14 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   @Override
   public void filter(ContainerRequestContext ctx) throws IOException {
     // Always strip any client-supplied identity headers to prevent spoofing.
-    // Exception: onboarding paths may provide X-Tenant-Id for tenant context when JWT has no tenant claim yet.
+    // Exception: onboarding paths may provide X-Tenant-Id for tenant context when JWT has no tenant
+    // claim yet.
     String path = ctx.getUriInfo().getPath();
     String normalizedPath = normalize(path);
     boolean isOnboarding = isOnboarding(normalizedPath, ctx.getMethod());
 
-    // Preserve X-Tenant-Id for onboarding paths (user may have just created tenant and is setting up stores)
+    // Preserve X-Tenant-Id for onboarding paths (user may have just created tenant and is setting
+    // up stores)
     String preservedTenantId = null;
     if (isOnboarding) {
       preservedTenantId = ctx.getHeaderString(HttpHeaders.TENANT_ID);
@@ -165,8 +167,8 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   }
 
   /**
-   * Onboarding paths where user may provide tenant context before it's in the JWT.
-   * These paths are part of the tenant creation flow and need X-Tenant-Id for the newly created tenant.
+   * Onboarding paths where user may provide tenant context before it's in the JWT. These paths are
+   * part of the tenant creation flow and need X-Tenant-Id for the newly created tenant.
    */
   private static boolean isOnboarding(String path, String method) {
     // POST /onboarding/stores — create store for newly created tenant
