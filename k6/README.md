@@ -36,14 +36,34 @@ Notes
 -----
 - The validation scripts are intentionally tolerant: they attempt queries in the service schema and will continue if a schema/table is not present. Adjust queries to fit your local schema names if you changed `shelfj.db.schema` values.
 - For CI, you can wire the validation scripts as shell steps after `k6` runs; for robust assertions integrate a test-harness that runs SQL checks programmatically.
-## Run tests
+## Quick Start: Flow Guard Test
+
+**New:** Flow guard comprehensive test validates all endpoints in proper business sequence:
+
+```bash
+# Run the complete flow guard test (tests 47 endpoints in happy-path sequence)
+k6 run k6/flow-guard-comprehensive.js --env BASE_URL=http://localhost:8090
+```
+
+See [FLOW_GUARD_TEST_GUIDE.md](./FLOW_GUARD_TEST_GUIDE.md) for detailed coverage, [ENDPOINT_COVERAGE_AUDIT.md](./ENDPOINT_COVERAGE_AUDIT.md) for what's tested/deferred.
+
+## Run other tests
 
 Install `k6` first, then run one of the scripts:
 
 ```bash
+# Gateway security tests
 k6 run k6/gateway-smoke-it.js
 k6 run k6/gateway-login-protection.js
 k6 run k6/gateway-rate-limit-stress.js
+
+# Full-stack concurrent workload simulation
+k6 run k6/full-stack-simulation.js
+
+# Service-specific CRUD tests
+k6 run k6/tenant-crud.js
+k6 run k6/product-crud.js
+k6 run k6/inventory-crud.js
 ```
 
 ## Environment variables
