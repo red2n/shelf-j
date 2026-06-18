@@ -69,4 +69,11 @@ final class Events {
                 "storeId":"%s","status":"%s"}"""
         .formatted(UUID.randomUUID(), tenantId, storeId, Instant.now(), storeId, esc(status));
   }
+
+  static String userRoleGranted(UUID tenantId, UUID userId, String role) {
+    return """
+                {"eventId":"%s","eventType":"UserRoleGranted","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
+                "userId":"%s","role":"%s"}"""
+        .formatted(UUID.randomUUID(), tenantId, userId, Instant.now(), userId, esc(role));
+  }
 }

@@ -47,7 +47,9 @@ public class TenantService {
 
   /**
    * Create the business and bind the authenticated owner. Publishes TenantCreated (carries
-   * ownerUserId).
+   * ownerUserId). Also publishes UserRoleGranted to ensure the creator has OWNER role (flow guard:
+   * user has no tenant claim in JWT yet, so they need role update before they can access admin
+   * endpoints).
    */
   public Tenant createTenant(UUID ownerUserId, CreateTenantRequest req) {
     UUID tenantId = UUID.randomUUID();
@@ -72,7 +74,20 @@ public class TenantService {
             tenantId,
             Events.tenantCreated(
                 tenantId, ownerUserId, req.businessName(), tenant.country(), tenant.currency()));
-    return repo.createTenantWithOutbox(tenant, event);
+    var createdTenant = repo.createTenantWithOutbox(tenant, event);
+
+    // Flow guard: grant OWNER role to tenant creator so they can access admin endpoints
+    // before their JWT is refreshed with the new tenant claim
+    var roleEvent =
+        new OutboxRow(
+            "UserRoleGranted",
+            "shelfj.iam.user-role-granted",
+            tenantId,
+            ownerUserId,
+            Events.userRoleGranted(tenantId, ownerUserId, "OWNER"));
+    repo.publishEvent(roleEvent);
+
+    return createdTenant;
   }
 
   /**

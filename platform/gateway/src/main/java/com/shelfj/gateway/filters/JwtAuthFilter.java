@@ -73,11 +73,20 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   @Override
   public void filter(ContainerRequestContext ctx) throws IOException {
     // Always strip any client-supplied identity headers to prevent spoofing.
+    // Exception: onboarding paths may provide X-Tenant-Id for tenant context when JWT has no tenant claim yet.
+    String path = ctx.getUriInfo().getPath();
+    String normalizedPath = normalize(path);
+    boolean isOnboarding = isOnboarding(normalizedPath, ctx.getMethod());
+
+    // Preserve X-Tenant-Id for onboarding paths (user may have just created tenant and is setting up stores)
+    String preservedTenantId = null;
+    if (isOnboarding) {
+      preservedTenantId = ctx.getHeaderString(HttpHeaders.TENANT_ID);
+    }
+
     ctx.getHeaders().remove(HttpHeaders.TENANT_ID);
     ctx.getHeaders().remove(HttpHeaders.USER_ID);
     ctx.getHeaders().remove(HttpHeaders.ROLES);
-
-    String path = ctx.getUriInfo().getPath();
 
     // Allow public auth paths without a token.
     if (isPublic(path)) {
@@ -148,6 +157,27 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if (roles != null && !roles.isEmpty()) {
       ctx.getHeaders().putSingle(HttpHeaders.ROLES, String.join(",", roles));
     }
+
+    // Restore preserved tenant ID for onboarding paths (flow guard: user provides tenant context)
+    if (preservedTenantId != null && !preservedTenantId.isBlank() && tenantId == null) {
+      ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, preservedTenantId.trim());
+    }
+  }
+
+  /**
+   * Onboarding paths where user may provide tenant context before it's in the JWT.
+   * These paths are part of the tenant creation flow and need X-Tenant-Id for the newly created tenant.
+   */
+  private static boolean isOnboarding(String path, String method) {
+    // POST /onboarding/stores — create store for newly created tenant
+    if ("POST".equals(method) && "api/tenant-svc/onboarding/stores".equals(path)) {
+      return true;
+    }
+    // GET /onboarding/status — check onboarding progress for tenant
+    if ("GET".equals(method) && "api/tenant-svc/onboarding/status".equals(path)) {
+      return true;
+    }
+    return false;
   }
 
   /**
