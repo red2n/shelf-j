@@ -139,7 +139,35 @@ class JwtAuthFilterTest {
   void guestCanReadActivePromotionsWithStorefrontTenant() throws IOException {
     when(uriInfo.getPath()).thenReturn("api/pricing-svc/promotions");
     when(requestContext.getMethod()).thenReturn("GET");
-    when(requestContext.getHeaderString("Authorization")).thenReturn(null);
+    when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-abc", headers.getFirst("X-Tenant-Id"));
+  }
+
+  @Test
+  void signedInCustomerCanStillBrowseCatalogAfterCheckout() throws IOException {
+    // Regression: a signed-in customer's Dio client attaches its Bearer token to every request,
+    // including plain catalog browsing. That irrelevant token must not force JWT verification and
+    // reject the request for lacking a tenant claim — these paths stay public regardless of caller.
+    String token =
+        com.auth0
+            .jwt
+            .JWT
+            .create()
+            .withIssuer("shelfj")
+            .withSubject("11111111-1111-1111-1111-111111111111")
+            .withClaim("type", "CUSTOMER")
+            .withArrayClaim("roles", new String[] {"CUSTOMER"})
+            .sign(
+                com.auth0.jwt.algorithms.Algorithm.HMAC256(
+                    "unit-test-secret-of-at-least-32-chars!!"));
+    when(uriInfo.getPath()).thenReturn("api/product-svc/catalog/products");
+    when(requestContext.getMethod()).thenReturn("GET");
+    // Present but must never be consulted: this path stays public regardless of caller identity.
+    lenient().when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + token);
     when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
 
     filter.filter(requestContext);
@@ -152,7 +180,6 @@ class JwtAuthFilterTest {
   void suspendedTenantStorefrontRequestIsBlocked() throws IOException {
     when(uriInfo.getPath()).thenReturn("api/product-svc/catalog/products");
     when(requestContext.getMethod()).thenReturn("GET");
-    when(requestContext.getHeaderString("Authorization")).thenReturn(null);
     when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("dead-tenant");
     when(tenantStatusGate.isActive("dead-tenant")).thenReturn(false);
 

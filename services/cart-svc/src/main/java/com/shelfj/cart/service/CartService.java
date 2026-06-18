@@ -1,0 +1,280 @@
+package com.shelfj.cart.service;
+
+import com.shelfj.cart.domain.Domain.Cart;
+import com.shelfj.cart.domain.Domain.CartItem;
+import com.shelfj.cart.dto.Dtos.AddItemRequest;
+import com.shelfj.cart.dto.Dtos.CartItemResponse;
+import com.shelfj.cart.dto.Dtos.CartResponse;
+import com.shelfj.cart.dto.Dtos.CartViewResponse;
+import com.shelfj.cart.dto.Dtos.CreateCartRequest;
+import com.shelfj.cart.dto.Dtos.MergeCartRequest;
+import com.shelfj.cart.dto.Dtos.UpdateItemQtyRequest;
+import com.shelfj.cart.repo.CartRepository;
+import com.shelfj.cart.repo.StoreStatusRepository;
+import com.shelfj.cart.repo.TenantStatusRepository;
+import com.shelfj.web.ApiException;
+import com.shelfj.web.TenantContext;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import java.time.Instant;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+
+/** Business logic for cart-svc. Thin resource → this service → repository. */
+@ApplicationScoped
+public class CartService {
+
+  @Inject CartRepository repo;
+  @Inject TenantStatusRepository tenantStatusRepo;
+  @Inject StoreStatusRepository storeStatusRepo;
+
+  // ── Cart lifecycle ────────────────────────────────────────────────────────
+
+  /**
+   * Returns the caller's existing ACTIVE cart, or creates a new one. Guest carts are identified by
+   * sessionId; authenticated carts by customerId from the JWT.
+   */
+  public CartResponse createOrGetCart(TenantContext ctx, CreateCartRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = parseUuid(req.storeId(), "storeId");
+
+    guardTenantAndStore(tenantId, storeId);
+
+    // Prefer customerId (authenticated) over sessionId (guest).
+    UUID customerId = ctx.userId() != null && !ctx.hasRole("GUEST") ? ctx.userId() : null;
+    String sessionId = customerId == null ? req.sessionId() : null;
+
+    if (customerId == null && (sessionId == null || sessionId.isBlank()))
+      throw ApiException.badRequest(
+          "CART_NO_IDENTITY", "sessionId required for unauthenticated cart access");
+
+    Cart existing =
+        customerId != null
+            ? repo.findActiveByCustomer(tenantId, customerId).orElse(null)
+            : repo.findActiveBySession(tenantId, sessionId).orElse(null);
+
+    if (existing != null) return toResponse(existing);
+
+    Cart cart =
+        new Cart(
+            UUID.randomUUID(),
+            tenantId,
+            customerId,
+            sessionId,
+            storeId,
+            Cart.STATUS_ACTIVE,
+            Instant.now(),
+            Instant.now());
+    return toResponse(repo.insert(cart));
+  }
+
+  public CartViewResponse viewCart(TenantContext ctx, String cartId, String sessionId) {
+    UUID tenantId = ctx.requireTenantId();
+
+    Cart cart = resolveCart(tenantId, cartId, sessionId, ctx);
+    List<CartItem> items = repo.findItemsByCart(tenantId, cart.id());
+    return new CartViewResponse(
+        toResponse(cart), items.stream().map(this::toItemResponse).toList());
+  }
+
+  // ── Item operations ───────────────────────────────────────────────────────
+
+  public CartItemResponse addItem(TenantContext ctx, AddItemRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID cartId = parseUuid(req.cartId(), "cartId");
+
+    Cart cart =
+        repo.findById(tenantId, cartId)
+            .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "cart not found"));
+    requireOwnership(cart, ctx, req.sessionId());
+    if (!Cart.STATUS_ACTIVE.equals(cart.status()))
+      throw ApiException.conflict("CART_NOT_ACTIVE", "cart is not active");
+
+    guardTenantAndStore(tenantId, cart.storeId());
+
+    CartItem item =
+        new CartItem(
+            UUID.randomUUID(),
+            cartId,
+            tenantId,
+            parseUuid(req.variantId(), "variantId"),
+            req.qty(),
+            req.unitPrice(),
+            Instant.now());
+    return toItemResponse(repo.upsertItem(item));
+  }
+
+  public CartItemResponse updateItemQty(TenantContext ctx, UUID itemId, UpdateItemQtyRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID cartId = parseUuid(req.cartId(), "cartId");
+
+    Cart cart =
+        repo.findById(tenantId, cartId)
+            .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "cart not found"));
+    requireOwnership(cart, ctx, req.sessionId());
+
+    CartItem item =
+        repo.findItemById(tenantId, itemId)
+            .orElseThrow(() -> ApiException.notFound("CART_ITEM_NOT_FOUND", "item not found"));
+    if (!item.cartId().equals(cartId))
+      throw ApiException.notFound("CART_ITEM_NOT_FOUND", "item not found in this cart");
+
+    repo.updateItemQty(tenantId, cartId, itemId, req.qty());
+    return toItemResponse(repo.findItemById(tenantId, itemId).orElseThrow());
+  }
+
+  public void removeItem(TenantContext ctx, UUID itemId, String cartIdStr, String sessionId) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID cartId = parseUuid(cartIdStr, "cartId");
+
+    Cart cart =
+        repo.findById(tenantId, cartId)
+            .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "cart not found"));
+    requireOwnership(cart, ctx, sessionId);
+
+    repo.findItemById(tenantId, itemId)
+        .filter(i -> i.cartId().equals(cartId))
+        .orElseThrow(() -> ApiException.notFound("CART_ITEM_NOT_FOUND", "item not found"));
+    repo.deleteItem(tenantId, cartId, itemId);
+  }
+
+  // ── Merge guest cart ──────────────────────────────────────────────────────
+
+  /**
+   * Merges a guest cart (by sessionId) into the authenticated customer's cart. Creates the customer
+   * cart if it does not exist. The guest cart is abandoned after the merge.
+   */
+  public CartResponse mergeCart(TenantContext ctx, MergeCartRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID customerId = ctx.userId();
+    if (customerId == null)
+      throw ApiException.badRequest("CART_MERGE_NO_AUTH", "merge requires an authenticated user");
+
+    Cart guestCart =
+        repo.findActiveBySession(tenantId, req.sessionId())
+            .orElseThrow(
+                () -> ApiException.notFound("CART_NOT_FOUND", "guest cart not found or inactive"));
+
+    guardTenantAndStore(tenantId, guestCart.storeId());
+
+    Cart customerCart =
+        repo.findActiveByCustomer(tenantId, customerId)
+            .orElseGet(
+                () -> {
+                  Cart c =
+                      new Cart(
+                          UUID.randomUUID(),
+                          tenantId,
+                          customerId,
+                          null,
+                          guestCart.storeId(),
+                          Cart.STATUS_ACTIVE,
+                          Instant.now(),
+                          Instant.now());
+                  return repo.insert(c);
+                });
+
+    repo.mergeItems(tenantId, guestCart.id(), customerCart.id());
+    return toResponse(repo.findById(tenantId, customerCart.id()).orElseThrow());
+  }
+
+  // ── Called by OrderPlacedHandler ─────────────────────────────────────────
+
+  public void onOrderPlaced(UUID tenantId, UUID customerId, UUID storeId) {
+    if (customerId == null) return; // guest or POS order — no cart to mark
+    repo.markCheckedOutByCustomerAndStore(tenantId, customerId, storeId);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  private void guardTenantAndStore(UUID tenantId, UUID storeId) {
+    if (!tenantStatusRepo.isActive(tenantId))
+      throw ApiException.conflict(
+          "TENANT_NOT_OPERATIONAL",
+          "Tenant is suspended or blocked — cart operations are unavailable");
+    if (!storeStatusRepo.isActive(storeId))
+      throw ApiException.conflict(
+          "STORE_NOT_OPERATIONAL",
+          "Store is closed or suspended — cart operations are unavailable for this location");
+  }
+
+  private Cart resolveCart(UUID tenantId, String cartId, String sessionId, TenantContext ctx) {
+    if (cartId != null && !cartId.isBlank()) {
+      Cart cart =
+          repo.findById(tenantId, parseUuid(cartId, "cartId"))
+              .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "cart not found"));
+      requireOwnership(cart, ctx, sessionId);
+      return cart;
+    }
+    if (sessionId != null && !sessionId.isBlank()) {
+      return repo.findActiveBySession(tenantId, sessionId)
+          .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "cart not found"));
+    }
+    if (ctx.userId() != null) {
+      return repo.findActiveByCustomer(tenantId, ctx.userId())
+          .orElseThrow(() -> ApiException.notFound("CART_NOT_FOUND", "no active cart"));
+    }
+    throw ApiException.badRequest("CART_NO_IDENTITY", "cartId, session, or auth required");
+  }
+
+  /**
+   * Object-level authZ for cart-by-cartId lookups: a {@code cartId} alone is not proof of
+   * ownership. Staff may operate on any cart in the tenant (assisted shopping); an authenticated
+   * customer's cart must belong to them; a guest cart requires knowledge of the session token it
+   * was created with (the cartId is returned to any caller who can view it, the sessionId is not).
+   */
+  private void requireOwnership(Cart cart, TenantContext ctx, String suppliedSessionId) {
+    if (isStaff(ctx)) return;
+    if (cart.customerId() != null) {
+      if (!cart.customerId().equals(ctx.userId()))
+        throw ApiException.notFound("CART_NOT_FOUND", "cart not found");
+      return;
+    }
+    if (cart.sessionId() == null || !cart.sessionId().equals(suppliedSessionId))
+      throw ApiException.notFound("CART_NOT_FOUND", "cart not found");
+  }
+
+  private boolean isStaff(TenantContext ctx) {
+    return ctx.hasRole("CASHIER")
+        || ctx.hasRole("STOREKEEPER")
+        || ctx.hasRole("MANAGER")
+        || ctx.hasRole("OWNER")
+        || ctx.hasRole("PLATFORM_ADMIN");
+  }
+
+  private UUID parseUuid(String val, String field) {
+    try {
+      return UUID.fromString(val);
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(
+          400,
+          "INVALID_" + field.toUpperCase(Locale.ROOT),
+          field + " must be a UUID",
+          List.of(),
+          e);
+    }
+  }
+
+  private CartResponse toResponse(Cart c) {
+    return new CartResponse(
+        c.id().toString(),
+        c.tenantId().toString(),
+        c.customerId() != null ? c.customerId().toString() : null,
+        c.sessionId(),
+        c.storeId().toString(),
+        c.status(),
+        c.createdAt().toString(),
+        c.updatedAt().toString());
+  }
+
+  private CartItemResponse toItemResponse(CartItem i) {
+    return new CartItemResponse(
+        i.id().toString(),
+        i.cartId().toString(),
+        i.variantId().toString(),
+        i.qty(),
+        i.unitPrice(),
+        i.addedAt().toString());
+  }
+}

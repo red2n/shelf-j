@@ -7,7 +7,6 @@ import com.shelfj.tenant.dto.Dtos.OnboardResponse;
 import com.shelfj.tenant.dto.Dtos.OnboardingStatus;
 import com.shelfj.tenant.mapper.Mappers;
 import com.shelfj.tenant.service.TenantService;
-import com.shelfj.web.ApiException;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
@@ -45,7 +44,7 @@ public class OnboardingResource {
   @POST
   public Response onboard(OnboardRequest req) {
     Validations.validate(req);
-    UUID ownerUserId = requireUserId();
+    UUID ownerUserId = ctx.requireUserId();
     var result = service.onboard(ownerUserId, req);
     var body =
         new OnboardResponse(Mappers.toTenant(result.tenant()), Mappers.toStore(result.store()));
@@ -58,7 +57,7 @@ public class OnboardingResource {
   @Path("/tenants")
   public Response createTenant(CreateTenantRequest req) {
     Validations.validate(req);
-    UUID ownerUserId = requireUserId();
+    UUID ownerUserId = ctx.requireUserId();
     var tenant = service.createTenant(ownerUserId, req);
     return Response.status(Response.Status.CREATED)
         .entity(ApiResponse.ok(Mappers.toTenant(tenant), ApiResponse.Meta.of(ctx.requestId())))
@@ -81,12 +80,5 @@ public class OnboardingResource {
   @Path("/status")
   public ApiResponse<OnboardingStatus> status() {
     return ApiResponse.ok(service.onboardingStatus(ctx.requireTenantId()));
-  }
-
-  private UUID requireUserId() {
-    if (ctx.userId() == null) {
-      throw ApiException.unauthorized("NO_USER", "Authenticated user required to create a tenant");
-    }
-    return ctx.userId();
   }
 }

@@ -24,6 +24,203 @@
 
 ---
 
+## 0. Implementation Status & Architecture Overview
+
+### 0.1 Build Status (2026-06-18)
+
+**Phase 0 — Foundation (COMPLETE)** ✅
+- Gateway (JWT auth, rate-limiting, brute-force protection, routing)
+- Discovery (Consul registration + lookup)
+- Centralized Config service
+- Docker Compose stack (Postgres, Kafka, Redis, Consul, Zipkin, Prometheus, Grafana)
+
+**Phase 1 — Back Office (COMPLETE)** ✅
+- `iam-svc` — staff & customer auth, JWT, OTP, session management
+- `tenant-svc` — tenants, stores, zones, staff assignments, feature flags
+- `product-svc` — product master, variants, categories, brands, attributes, bulk import, catalog groups
+- `inventory-svc` — stock, batches, movements, reservations, planning engine (min-max, ROP, Kanban), ABC analysis, cycle counting, physical inventory
+- `purchase-svc` — suppliers, purchase orders, goods receipt (GRN), intercompany invoicing
+
+**Phase 2 — Commerce Core (COMPLETE)** ✅
+- `pricing-svc` — price lists, promotions, UK VAT (T1/T5/T0/TX), MTD VAT return
+- `cart-svc` — storefront shopping cart, guest + registered customer
+- `order-svc` — online + POS orders, checkout saga, returns, special orders, parked sales, layaways, gift cards, receipts, POSLog
+- `payment-svc` — cash/card/gift-card tender, refunds, till management, X-report/Z-report, cash movements
+
+**Phase 3 — Experience & Ops (COMPLETE)** ✅
+- `customer-svc` — customer profiles, addresses, loyalty points, store-credit
+- `notification-svc` — email/SMS/push templates, shortage alerts, order notifications
+- `reporting-svc` — sales facts, inventory valuation, movement stats, multi-org reports
+- **Frontends:** Flutter app (Admin + Storefront + POS), web UI (nginx, Docker service on port 8088)
+
+**Phase 4 — Hardening (IN PROGRESS)** 🟡
+- K8s manifests for production deployment
+- Load & security testing
+- CI/CD pipeline (GitHub Actions)
+- Native image builds (GraalVM)
+
+### 0.2 System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        INTERNET / USERS                          │
+├──────────────────────┬──────────────────────┬────────────────────┤
+│  Storefront (web)    │  Admin Console (web) │  POS Terminal (web)│
+│  Flutter app         │  Flutter app         │  Flutter app       │
+└──────────────┬───────┴──────────────┬───────┴────────────────────┘
+               │                      │
+               └──────────────────────┼──────────────────────────────┐
+                                      │                              │
+                        ┌─────────────▼──────────────┐               │
+                        │   API GATEWAY (8090)       │               │
+                        │ ├─ JWT validation          │               │
+                        │ ├─ Rate limiting           │               │
+                        │ ├─ Brute-force protection  │               │
+                        │ ├─ Service routing         │               │
+                        │ ├─ Tenant context stamping │               │
+                        │ └─ CORS / TLS              │               │
+                        └─────────────┬──────────────┘               │
+                                      │                              │
+                 ┌────────────────────┼────────────────────┐         │
+                 │                    │                    │         │
+          ┌──────▼─────┐       ┌──────▼─────┐       ┌─────▼──────┐ │
+          │ DISCOVERY  │       │   CONFIG   │       │ POSTGRES   │ │
+          │ (Consul)   │       │  SERVICE   │       │ (Shared)   │ │
+          │ :8500      │       │   :8888    │       │  :5432     │ │
+          └────────────┘       └────────────┘       └────────────┘ │
+                                      │                    │        │
+       ┌──────────────────────────────┼────────────────────┼────────┘
+       │                              │                    │
+       │  ┌─────────────────────────────────────────────────────────┐
+       │  │           BUSINESS SERVICES (Helidon MP)                │
+       │  │                                                          │
+       │  │  iam-svc        tenant-svc      product-svc             │
+       │  │  (auth)         (business)      (catalog)               │
+       │  │                                                          │
+       │  │  inventory-svc  pricing-svc     cart-svc                │
+       │  │  (stock)        (prices/VAT)    (cart)                  │
+       │  │                                                          │
+       │  │  order-svc      payment-svc     purchase-svc            │
+       │  │  (checkout)     (payments)      (procurement)           │
+       │  │                                                          │
+       │  │  customer-svc   notification-svc reporting-svc          │
+       │  │  (loyalty)      (email/SMS)     (analytics)             │
+       │  │                                                          │
+       │  │  Each service:                                          │
+       │  │  ├─ Own Postgres schema (database-per-service)         │
+       │  │  ├─ REST API (JAX-RS)                                  │
+       │  │  ├─ Discovery registration                             │
+       │  │  ├─ Health probes (/started, /live, /ready)           │
+       │  │  ├─ Metrics (Prometheus)                              │
+       │  │  ├─ Trace context (X-Request-Id)                      │
+       │  │  └─ Outbox + idempotent Kafka consumers              │
+       │  │                                                          │
+       │  └─────────────────────────────────────────────────────────┘
+       │
+       └──────────────────────┬──────────────────────┐
+                              │                      │
+                    ┌─────────▼───────┐   ┌─────────▼────────┐
+                    │  MESSAGE BUS    │   │  OBSERVABILITY   │
+                    │ (Kafka + Topics)│   │                  │
+                    │                 │   │ Zipkin (tracing) │
+                    │ shelfj.orders.* │   │ Prometheus       │
+                    │ shelfj.stock.*  │   │ Grafana          │
+                    │ shelfj.payment.*│   │                  │
+                    │ etc.            │   │ (localhost:9411) │
+                    │                 │   │ (localhost:3000) │
+                    └─────────────────┘   └──────────────────┘
+```
+
+### 0.3 Key Data Flows & Workflows
+
+#### Online Checkout (Customer buys on storefront)
+```
+1. Customer browses        → GET /catalog/products (public, no auth)
+2. Adds to cart            → POST /cart/items (guest session or customer token)
+3. Views live pricing      → cart calls pricing-svc for tax/promotions
+4. Clicks Checkout         → POST /order-svc/orders (Idempotency-Key header)
+
+   CHECKOUT SAGA (order-svc coordinates):
+   a) Quote                → pricing-svc.POST /quote (resolve final prices)
+   b) Reserve stock        → inventory-svc.POST /reservations (hold for this order)
+   c) Capture payment      → payment-svc.POST /payments/online (mock: just record)
+   d) Confirm order        → set CONFIRMED, write outbox event OrderConfirmed
+   e) Async:
+      - inventory-svc consumes OrderConfirmed → CONSUME reservation → StockDeducted
+      - notification-svc sends order confirmation
+      - customer-svc accrues loyalty points
+      - reporting-svc records the sale
+
+   Compensation (if step fails):
+   - Payment failed? → inventory-svc releases the reservation
+   - Order marked CANCELLED, no stock deducted
+```
+
+#### POS Sale (Cashier rings up at the store)
+```
+1. Cashier clocks in      → iam-svc.POST /auth/pos/sessions (opens session for store)
+2. Starts sale            → POS app creates client-side cart (local state)
+3. Scans barcode          → product-svc.GET /catalog/variants/by-barcode
+4. Product added          → pricing-svc.GET /prices/resolve (for the POS store)
+5. (optional) Attaches customer → customer-svc lookup
+6. Completes sale         → POST /order-svc/orders (channel=POS, Idempotency-Key)
+
+   [Same checkout saga as above; channel=POS only difference]
+
+7. Tender screen          → payment-svc.POST /payments (cash, card, gift-card, store-credit)
+   - Can split-tender (multiple tenders for one order)
+   - Gift card entered → inventory-svc checks balance, redeems on completion
+   - Store credit → customer-svc checks, redeems
+8. Receipt               → order-svc.POST /orders/{id}/receipts (PRINT or EMAIL)
+9. Clock out             → iam-svc.DELETE /auth/pos/sessions
+
+   POS Till Management:
+   - X-report (mid-day summary, not final)
+   - Z-report (end-of-day close) → payment-svc
+   - Cash drops, pay-in/out → payment-svc.POST /admin/cash/movements
+```
+
+#### Stock Receipt (Admin or warehouse receives goods from supplier)
+```
+1. Create purchase order  → purchase-svc.POST /purchase-orders (supplier, quantities)
+2. Submit to supplier    → purchase-svc.PUT /purchase-orders/{id} (status → SENT)
+3. Goods arrive          → purchase-svc.POST /purchase-orders/{id}/receive (GRN)
+   - Specify: qty, batch_no, expiry_date, cost_price per line
+
+   Async event published: GoodsReceived
+   - inventory-svc consumes → creates inventory_batches rows
+   - reporting-svc consumes → updates inventory_valuation
+
+4. View on-hand          → inventory-svc.GET /admin/inventory/levels
+   - Shows per-store, per-variant stock
+   - Uses FIFO order: earliest expiry / oldest arrival first
+```
+
+#### Planning & Replenishment (Auto-stock suggestions)
+```
+1. Admin sets min/max thresholds    → inventory-svc.PUT /thresholds (per store/SKU)
+2. System runs planning engine      → inventory-svc background job
+   - Min-Max: reorder_qty = (max - current) if current < min
+   - ROP: EOQ + safety stock (demand forecast + MAD)
+   - Kanban: triggered by fixed-quantity cards
+3. Creates requisition              → purchase-svc auto-PO (backend only, no UI yet)
+4. Stock drops below min            → inventory-svc.StockBelowThreshold event
+   - notification-svc sends alert to staff
+```
+
+### 0.4 Frontends
+
+| Frontend | Tech | Status | Running on |
+|---|---|---|---|
+| **Storefront** | Flutter (web) | ✅ Live | http://localhost:8088 |
+| **Admin Console** | Flutter (web) | ✅ Live | http://localhost:8088 |
+| **POS** | Flutter (web) | ✅ Live | http://localhost:8088 |
+| **Web (nginx)** | Docker service | ✅ Live | port 8088, non-root (uid 999) |
+
+All three apps run in one Flutter codebase (`frontends/shelf-app`) served by a single nginx container. Routing is handled client-side (deep-linking, session management).
+
+---
+
 ## 1. What we are building (in plain words)
 
 Shelf-J is a **stock and store management platform** that also lets **customers buy products online**.

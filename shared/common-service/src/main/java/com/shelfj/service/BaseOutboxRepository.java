@@ -2,9 +2,12 @@ package com.shelfj.service;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
 
 /**
  * Extends {@link BaseJdbcRepository} with the three outbox operations every repo that emits domain
@@ -33,31 +36,41 @@ public abstract class BaseOutboxRepository extends BaseJdbcRepository implements
   }
 
   @Override
-  public List<PendingOutbox> pendingOutbox(int limit) {
-    return query(
-        "SELECT id, topic, payload FROM outbox"
-            + " WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?",
-        ps -> ps.setInt(1, limit),
-        rs ->
-            new PendingOutbox(
-                rs.getObject("id", UUID.class), rs.getString("topic"), rs.getString("payload")),
-        "read outbox");
-  }
+  public List<UUID> drainAndPublish(int limit, Function<List<PendingOutbox>, List<UUID>> publish) {
+    return inTx(
+        c -> {
+          List<PendingOutbox> rows = new ArrayList<>();
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT id, topic, payload FROM outbox"
+                      + " WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?"
+                      + " FOR UPDATE SKIP LOCKED")) {
+            ps.setInt(1, limit);
+            try (ResultSet rs = ps.executeQuery()) {
+              while (rs.next()) {
+                rows.add(
+                    new PendingOutbox(
+                        rs.getObject("id", UUID.class),
+                        rs.getString("topic"),
+                        rs.getString("payload")));
+              }
+            }
+          }
+          if (rows.isEmpty()) {
+            return List.of();
+          }
 
-  @Override
-  public void markPublished(UUID id) {
-    exec(
-        "UPDATE outbox SET published_at = now() WHERE id = ?",
-        ps -> ps.setObject(1, id),
-        "mark outbox published");
-  }
-
-  @Override
-  public void markPublished(List<UUID> ids) {
-    if (ids.isEmpty()) return;
-    exec(
-        "UPDATE outbox SET published_at = now() WHERE id = ANY(?)",
-        ps -> ps.setArray(1, ps.getConnection().createArrayOf("uuid", ids.toArray())),
-        "mark outbox batch published");
+          List<UUID> published = publish.apply(rows);
+          if (published == null || published.isEmpty()) {
+            return List.of();
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement("UPDATE outbox SET published_at = now() WHERE id = ANY(?)")) {
+            ps.setArray(1, c.createArrayOf("uuid", published.toArray()));
+            ps.executeUpdate();
+          }
+          return published;
+        },
+        "drain and publish outbox");
   }
 }

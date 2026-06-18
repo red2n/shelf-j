@@ -44,8 +44,9 @@ public class OrderRepository extends BaseOutboxRepository {
                   "INSERT INTO orders"
                       + " (id,tenant_id,store_id,customer_id,channel,fulfilment_type,status,"
                       + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
-                      + "  tax_exempt,exempt_reason)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
+                      + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, order.id());
             ps.setObject(2, order.tenantId());
             ps.setObject(3, order.storeId());
@@ -62,6 +63,12 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setString(14, order.idempotencyKey());
             ps.setBoolean(15, order.taxExempt());
             ps.setString(16, order.exemptReason());
+            ps.setString(17, order.deliveryLine1());
+            ps.setString(18, order.deliveryLine2());
+            ps.setString(19, order.deliveryCity());
+            ps.setString(20, order.deliveryPostalCode());
+            ps.setString(21, order.deliveryRecipientName());
+            ps.setString(22, order.deliveryRecipientPhone());
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -87,7 +94,9 @@ public class OrderRepository extends BaseOutboxRepository {
     return query(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
-                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason"
+                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
+                + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
+                + " delivery_recipient_name, delivery_recipient_phone"
                 + " FROM orders WHERE tenant_id=? AND idempotency_key=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -114,7 +123,9 @@ public class OrderRepository extends BaseOutboxRepository {
         new StringBuilder(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
-                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason"
+                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
+                + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
+                + " delivery_recipient_name, delivery_recipient_phone"
                 + " FROM orders WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
@@ -151,7 +162,9 @@ public class OrderRepository extends BaseOutboxRepository {
         query(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
-                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason"
+                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
+                + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
+                + " delivery_recipient_name, delivery_recipient_phone"
                 + " FROM orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -224,6 +237,19 @@ public class OrderRepository extends BaseOutboxRepository {
   public Return createReturn(Return ret, List<ReturnItem> items, OutboxRow event) {
     return inTx(
         c -> {
+          // Lock each purchased line and re-check the cumulative returned quantity inside this
+          // transaction so two concurrent returns on the same order can't jointly over-refund.
+          for (ReturnItem item : items) {
+            BigDecimal purchasedQty =
+                lockOrderItemQty(c, ret.tenantId(), ret.orderId(), item.variantId());
+            BigDecimal alreadyReturned =
+                sumReturnedQty(c, ret.tenantId(), ret.orderId(), item.variantId());
+            if (item.qty().add(alreadyReturned).compareTo(purchasedQty) > 0)
+              throw ApiException.conflict(
+                  "RETURN_QTY_EXCEEDS_PURCHASED",
+                  "cannot return more than was purchased (and not yet returned) for variant "
+                      + item.variantId());
+          }
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO returns"
@@ -667,7 +693,9 @@ public class OrderRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
-                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason"
+                + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
+                + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
+                + " delivery_recipient_name, delivery_recipient_phone"
                 + " FROM orders WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
@@ -760,6 +788,42 @@ public class OrderRepository extends BaseOutboxRepository {
     }
   }
 
+  /** Locks the purchased line so a concurrent return on the same variant serializes behind it. */
+  private BigDecimal lockOrderItemQty(Connection c, UUID tenantId, UUID orderId, UUID variantId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT qty FROM order_items"
+                + " WHERE tenant_id=? AND order_id=? AND variant_id=? FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next())
+          throw ApiException.notFound(
+              "ITEM_NOT_IN_ORDER", "variant " + variantId + " not in order");
+        return rs.getBigDecimal("qty");
+      }
+    }
+  }
+
+  private BigDecimal sumReturnedQty(Connection c, UUID tenantId, UUID orderId, UUID variantId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT COALESCE(SUM(ri.qty), 0) AS total FROM return_items ri"
+                + " JOIN returns r ON r.id = ri.return_id"
+                + " WHERE r.tenant_id=? AND r.order_id=? AND ri.variant_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (!rs.next()) return BigDecimal.ZERO;
+        return rs.getBigDecimal("total");
+      }
+    }
+  }
+
   // ── mappers ───────────────────────────────────────────────────────────────
 
   private Order mapOrder(ResultSet rs) throws SQLException {
@@ -781,7 +845,13 @@ public class OrderRepository extends BaseOutboxRepository {
         toInstant(rs.getObject("created_at", OffsetDateTime.class)),
         toInstant(rs.getObject("updated_at", OffsetDateTime.class)),
         rs.getBoolean("tax_exempt"),
-        rs.getString("exempt_reason"));
+        rs.getString("exempt_reason"),
+        rs.getString("delivery_line1"),
+        rs.getString("delivery_line2"),
+        rs.getString("delivery_city"),
+        rs.getString("delivery_postal_code"),
+        rs.getString("delivery_recipient_name"),
+        rs.getString("delivery_recipient_phone"));
   }
 
   private OrderItem mapOrderItem(ResultSet rs) throws SQLException {

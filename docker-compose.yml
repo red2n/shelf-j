@@ -558,6 +558,23 @@ services:
     depends_on: *svc-depends
     healthcheck: *svc-healthcheck
 
+  cart-svc:
+    image: ghcr.io/red2n/shelf-j-cart-svc:${SHELFJ_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.svc
+      args: { SVC_PATH: services/cart-svc, SVC_JAR: cart-svc }
+    container_name: shelfj-cart
+    restart: unless-stopped
+    environment:
+      <<: *svc-env
+      JAVA_TOOL_OPTIONS: "${CART_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
+      SHELFJ_ADVERTISE_HOST: cart-svc
+    mem_limit: ${CART_MEM_LIMIT:-512m}
+    networks: [shelfj_network]
+    depends_on: *svc-depends
+    healthcheck: *svc-healthcheck
+
   pricing-svc:
     image: ghcr.io/red2n/shelf-j-pricing-svc:${SHELFJ_TAG:-latest}
     build:
@@ -683,6 +700,10 @@ services:
       shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
       otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
       shelfj.gateway.cors.allowed-origins: "*"
+      # Bulk admin operations (e.g. CSV catalog import) process thousands of rows
+      # synchronously upstream; the 10s code default is tuned for normal request/response
+      # calls and times out well before a large import finishes server-side.
+      shelfj.gateway.upstream.read-timeout-seconds: "${GATEWAY_UPSTREAM_READ_TIMEOUT_SECONDS:-120}"
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
     ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]
     networks: [shelfj_network]
@@ -708,7 +729,7 @@ services:
       gateway: { condition: service_healthy }
     environment:
       ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-admin@shelf-j.dev}
-      ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-Admin1234!}
+      ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD must be set - see .env.example}
     command:
       - sh
       - -c

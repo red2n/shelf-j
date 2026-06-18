@@ -232,7 +232,11 @@ public class ProxyResource {
       int status = upstream.status().code();
       Response.ResponseBuilder rb =
           Response.status(status).header(HttpHeaders.REQUEST_ID, requestId);
-      if (status != 204 && status != 205 && status != 304) {
+      // Some upstream responses carry no body at all (e.g. a 405 from a path/method mismatch, or
+      // any handler that returns a bare status) even when the status isn't 204/205/304.
+      // HttpClientResponse.as(String.class) throws IllegalStateException — not an empty string —
+      // for a truly absent entity, so probe hasEntity() first instead of relying on status alone.
+      if (status != 204 && status != 205 && status != 304 && upstream.entity().hasEntity()) {
         rb.type(MediaType.APPLICATION_JSON).entity(upstream.as(String.class));
       }
       return rb.build();

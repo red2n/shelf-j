@@ -174,6 +174,74 @@ class CustomerIT {
   }
 
   @Test
+  void storeCreditConcurrentRedeemNeverDoubleSpends() throws Exception {
+    Response r =
+        post(
+            "/customers",
+            "{\"email\":\"grace@example.com\",\"firstName\":\"Grace\",\"lastName\":\"Hopper\"}");
+    String id = field(r.readEntity(String.class), "id");
+
+    // Fund exactly 100; then fire N concurrent redeems each draining the whole balance.
+    assertThat(
+        post("/customers/" + id + "/store-credit/issue", "{\"amount\":100.00,\"reason\":\"seed\"}")
+            .getStatus(),
+        is(200));
+
+    int threads = 8;
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+    var ready = new java.util.concurrent.CountDownLatch(threads);
+    var go = new java.util.concurrent.CountDownLatch(1);
+    var ok = new java.util.concurrent.atomic.AtomicInteger();
+    var futures = new java.util.ArrayList<java.util.concurrent.Future<Integer>>();
+    for (int i = 0; i < threads; i++) {
+      futures.add(
+          pool.submit(
+              () -> {
+                ready.countDown();
+                go.await();
+                int status =
+                    post(
+                            "/customers/" + id + "/store-credit/redeem",
+                            "{\"amount\":100.00,\"reason\":\"race\"}")
+                        .getStatus();
+                if (status == 200) ok.incrementAndGet();
+                return status;
+              }));
+    }
+    ready.await();
+    go.countDown(); // release all at once
+    for (var f : futures) f.get();
+    pool.shutdown();
+
+    // With FOR UPDATE row locking, exactly one redeem of the full balance can win; the rest see a
+    // zero balance and get 422. Without the lock this would allow multiple winners (double-spend).
+    assertThat("only one full-balance redeem may succeed", ok.get(), is(1));
+
+    String credit =
+        target
+            .path("/customers/" + id + "/store-credit")
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", TENANT)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    assertThat(credit, containsString("\"balance\":0"));
+  }
+
+  @Test
+  void registerWithJsonBreakingEmailDoesNotCorruptEvent() {
+    // A quoted-local-part email contains a double-quote that would break a string-concatenated JSON
+    // payload (and used to be able to inject into the outbox event). The event is now built with a
+    // JSON writer, so the only valid outcomes are: 201 (accepted and serialised safely) or 400
+    // (bean-validation rejected the address up front) — never a 500 from a corrupted payload.
+    int status =
+        post(
+                "/customers",
+                "{\"email\":\"\\\"weird\\\"@example.com\",\"firstName\":\"Q\",\"lastName\":\"Q\"}")
+            .getStatus();
+    assertThat(status, org.hamcrest.Matchers.anyOf(is(201), is(400)));
+  }
+
+  @Test
   void tenantIsolation() {
     post(
         "/customers",

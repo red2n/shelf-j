@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
 import 'pos_providers.dart';
@@ -60,6 +61,14 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       return 'No product found for that barcode.';
     }
     return 'Scan failed: $s';
+  }
+
+  Future<void> _scanWithCamera() async {
+    final code = await scanBarcodeWithCamera(context);
+    if (code != null && code.isNotEmpty) {
+      _barcodeCtrl.text = code;
+      await _scan(code);
+    }
   }
 
   void _addOffer(PosOffer offer) {
@@ -238,6 +247,12 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
                   ),
                   onSubmitted: _scan,
                 ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filledTonal(
+                tooltip: 'Scan with camera',
+                onPressed: _scanning ? null : _scanWithCamera,
+                icon: const Icon(Icons.camera_alt_outlined),
               ),
               if (showBrowse) ...[
                 const SizedBox(width: 8),

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -31,11 +32,22 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
   int _productCount = 0;
   Set<String> _categoryNames = {};
   Set<String> _storeNamesInCsv = {};
+  bool _hasQtyColumn = false;
+  bool _hasPriceColumn = false;
+  // Per-row {sku, qty, price} — mirrors the backend's exact column detection and
+  // auto-SKU-generation, so rows can be re-matched against the variants the import
+  // actually created (by SKU) to receive stock / set prices afterward.
+  List<_ParsedRow> _parsedRows = [];
 
   // Per-store-name override selected by the user (store name → store UUID)
   final Map<String, String?> _storeMapping = {};
+  // Single destination store for stock receipts (required whenever the CSV has a
+  // Quantity column) — a CSV row's own Store column scopes product sellability, which
+  // is a different concept from "which store's shelf this delivery is going onto".
+  String? _destinationStoreId;
 
   bool _loading = false;
+  String _loadingStage = '';
   String? _error;
   Map<String, dynamic>? _result;
 
@@ -85,12 +97,17 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
       return;
     }
     // _headerIdx returns the first match — duplicate column names use the first occurrence.
+    // Same header names and matching order as ProductService.parseSupplierCsvToRequest, so a
+    // row's parsed sku/qty/price here lines up with the variant the backend actually creates.
     final headers = _splitRow(lines[0]);
+    final idxId = _headerIdx(headers, ['product id', 'product_id', 'sku', 'item no']);
     final idxDesc = _headerIdx(headers, [
       'product description', 'description', 'product name', 'name',
     ]);
     final idxCat = _headerIdx(headers, ['category']);
     final idxStore = _headerIdx(headers, ['store', 'store name', 'store_name']);
+    final idxQty = _headerIdx(headers, ['quantity', 'qty']);
+    final idxPrice = _headerIdx(headers, ['price']);
 
     if (idxDesc < 0) {
       setState(() => _error =
@@ -102,7 +119,9 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
     final products = <String>{};
     final cats = <String>{};
     final storeNames = <String>{};
+    final parsedRows = <_ParsedRow>[];
     int rows = 0;
+    int skuCounter = 0;
 
     for (var i = 1; i < lines.length; i++) {
       final cols = _splitRow(lines[i]);
@@ -118,10 +137,28 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
           cols[idxStore].isNotEmpty) {
         storeNames.add(cols[idxStore]);
       }
+
+      var sku = idxId >= 0 && idxId < cols.length ? cols[idxId].trim() : '';
+      if (sku.isEmpty) {
+        skuCounter++;
+        sku = 'IMP-$skuCounter';
+      }
+      final qtyRaw = idxQty >= 0 && idxQty < cols.length ? cols[idxQty].trim() : '';
+      final priceRaw = idxPrice >= 0 && idxPrice < cols.length ? cols[idxPrice].trim() : '';
+      final qty = qtyRaw.isEmpty
+          ? null
+          : double.tryParse(qtyRaw.replaceAll(RegExp(r'[^0-9.]'), ''));
+      final price = priceRaw.isEmpty
+          ? null
+          : double.tryParse(priceRaw.replaceAll('"', ''));
+      parsedRows.add(_ParsedRow(sku: sku, qty: qty, price: price));
     }
 
     setState(() {
       _rowCount = rows;
+      _hasQtyColumn = idxQty >= 0;
+      _hasPriceColumn = idxPrice >= 0;
+      _parsedRows = parsedRows;
       _productCount = products.length;
       _categoryNames = cats;
       _storeNamesInCsv = storeNames;
@@ -157,6 +194,13 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
 
   Future<void> _import(List<StoreInfo> stores) async {
     if (_csvContent == null) return;
+    if (_hasQtyColumn &&
+        (_destinationStoreId == null || _destinationStoreId!.isEmpty)) {
+      setState(() => _error =
+          'This file has a Quantity column — select a destination store to '
+          'receive that stock into before importing.');
+      return;
+    }
 
     // Build store-name → UUID map from the user's selections + fallback to
     // exact-name match against the loaded store list.
@@ -175,25 +219,121 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
 
     setState(() {
       _loading = true;
+      _loadingStage = 'Importing products…';
       _error = null;
       _result = null;
     });
 
+    final dio = ref.read(apiClientProvider).dio;
     try {
-      final resp = await ref.read(apiClientProvider).dio.post(
+      final resp = await dio.post(
         '/${ApiConstants.product}/admin/import/supplier-csv',
         data: {
           'csv': _csvContent,
           'mode': _mode,
           if (storeNameToId.isNotEmpty) 'storeNameToId': storeNameToId,
         },
+        // A large catalog import is processed synchronously upstream and can take well
+        // past the client's normal request timeout.
+        options: Options(receiveTimeout: const Duration(minutes: 3)),
       );
       ref.invalidate(productsProvider);
       ref.invalidate(categoriesProvider);
+      final result = (resp.data['data'] as Map<String, dynamic>?) ?? {};
+
+      // Match each variant the backend just created/replaced (by SKU) back to its
+      // row's parsed qty/price, then receive stock and set prices for those rows.
+      final importedVariants =
+          (result['importedVariants'] as List?)?.cast<Map<String, dynamic>>() ??
+              [];
+      final bySku = <String, _ParsedRow>{for (final r in _parsedRows) r.sku: r};
+
+      int stockReceived = 0;
+      final stockErrors = <String>[];
+      final priceItems = <Map<String, dynamic>>[];
+      final toReceive = <(String variantId, double qty, String sku)>[];
+      for (final v in importedVariants) {
+        final sku = v['sku'] as String?;
+        final variantId = v['variantId'] as String?;
+        if (sku == null || variantId == null) continue;
+        final row = bySku[sku];
+        if (row == null) continue;
+        if (row.qty != null && row.qty! > 0 && _destinationStoreId != null) {
+          toReceive.add((variantId, row.qty!, sku));
+        }
+        if (row.price != null && row.price! > 0) {
+          priceItems.add({'variantId': variantId, 'price': row.price, 'minQty': 1});
+        }
+      }
+
+      // Bounded concurrency — inventory-svc has no batch-receive endpoint, and an
+      // import can be thousands of rows; sequential one-at-a-time calls would be far
+      // too slow.
+      if (toReceive.isNotEmpty) {
+        if (!mounted) return;
+        setState(() => _loadingStage =
+            'Receiving stock… 0/${toReceive.length}');
+        const concurrency = 16;
+        var done = 0;
+        for (var i = 0; i < toReceive.length; i += concurrency) {
+          final chunk = toReceive.skip(i).take(concurrency);
+          final outcomes = await Future.wait(chunk.map((t) async {
+            final (variantId, qty, sku) = t;
+            try {
+              await dio.post('/${ApiConstants.inventory}/admin/inventory/receive', data: {
+                'storeId': _destinationStoreId,
+                'variantId': variantId,
+                'qty': qty,
+              });
+              return null;
+            } catch (e) {
+              return '$sku: $e';
+            }
+          }));
+          for (final o in outcomes) {
+            if (o == null) {
+              stockReceived++;
+            } else {
+              stockErrors.add(o);
+            }
+          }
+          done += outcomes.length;
+          if (!mounted) return;
+          setState(() =>
+              _loadingStage = 'Receiving stock… $done/${toReceive.length}');
+        }
+      }
+
+      int pricesSet = 0;
+      final priceErrors = <String>[];
+      if (priceItems.isNotEmpty) {
+        if (!mounted) return;
+        setState(() => _loadingStage = 'Setting prices…');
+        try {
+          final priceListId = await ref.read(defaultPriceListProvider.future);
+          final priceResp = await dio.post(
+            '/${ApiConstants.pricing}/price-lists/$priceListId/items/batch',
+            data: {'items': priceItems},
+          );
+          final pdata = priceResp.data['data'] as Map<String, dynamic>?;
+          pricesSet = pdata?['upserted'] as int? ?? 0;
+          priceErrors.addAll((pdata?['errors'] as List?)?.cast<String>() ?? []);
+        } catch (e) {
+          priceErrors.add('Failed to set prices: $e');
+        }
+        ref.invalidate(variantPricesProvider);
+      }
+
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _result = resp.data['data'] as Map<String, dynamic>?;
+        _result = {
+          ...result,
+          'stockReceived': stockReceived,
+          'stockErrors': stockErrors,
+          'pricesSet': pricesSet,
+          'priceErrors': priceErrors,
+        };
       });
     } catch (e) {
       if (!mounted) return;
@@ -310,6 +450,23 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                 ),
               ],
 
+              // Destination store for stock receipt (only if CSV has a Quantity column).
+              if (_hasQtyColumn) ...[
+                const SizedBox(height: 16),
+                storesAsync.when(
+                  loading: () => const LinearProgressIndicator(),
+                  error: (_, __) => const Text(
+                      'Could not load stores — stock cannot be received.'),
+                  data: (stores) => _DestinationStoreCard(
+                    stores: stores,
+                    selected: _destinationStoreId,
+                    hasPriceColumn: _hasPriceColumn,
+                    onChanged: (id) =>
+                        setState(() => _destinationStoreId = id),
+                  ),
+                ),
+              ],
+
               const SizedBox(height: 20),
               storesAsync.when(
                 loading: () => const SizedBox.shrink(),
@@ -323,7 +480,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.cloud_upload_outlined),
                   label: Text(_loading
-                      ? 'Importing…'
+                      ? _loadingStage
                       : 'Import $_productCount products'),
                 ),
                 data: (stores) => FilledButton.icon(
@@ -336,7 +493,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.cloud_upload_outlined),
                   label: Text(_loading
-                      ? 'Importing…'
+                      ? _loadingStage
                       : 'Import $_productCount products'),
                 ),
               ),
@@ -402,11 +559,11 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                 '  • Category → creates the category if it doesn\'t exist\n'
                 '  • Product Description → product name (required)\n'
                 '  • Store / Store Name → restricts product to that store\n'
-                '  • Quantity → stored as-is\n'
-                '  • Price → stored as-is\n\n'
-                'Values are not validated — everything is imported as-is. '
+                '  • Quantity → received as real stock at the destination store you pick\n'
+                '  • Price → set as the selling price on the default price list\n\n'
                 'Blank product name rows are skipped. '
-                'Fields containing commas must be double-quoted.',
+                'Fields containing commas must be double-quoted. '
+                'Only .csv files are supported.',
                 style: TextStyle(fontSize: 12),
               ),
             ],
@@ -587,6 +744,69 @@ class _StoreMappingCard extends StatelessWidget {
   }
 }
 
+// ── Destination store card (stock receipt) ───────────────────────────────────
+
+class _DestinationStoreCard extends StatelessWidget {
+  final List<StoreInfo> stores;
+  final String? selected;
+  final bool hasPriceColumn;
+  final void Function(String? id) onChanged;
+
+  const _DestinationStoreCard({
+    required this.stores,
+    required this.selected,
+    required this.hasPriceColumn,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      color: cs.surfaceContainerHigh,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.inventory_2_outlined, size: 18, color: cs.primary),
+                const SizedBox(width: 6),
+                Text('Receive stock at',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, color: cs.primary)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'This file has a Quantity column — pick the store this stock is '
+              'physically going into. Every row\'s quantity is received there.'
+              '${hasPriceColumn ? ' Price is set as the selling price on the default price list.' : ''}',
+              style: TextStyle(fontSize: 12, color: cs.outline),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: selected,
+              decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+              hint: const Text('Select a store…'),
+              items: [
+                for (final s in stores)
+                  DropdownMenuItem(
+                      value: s.id, child: Text('${s.name} (${s.code})')),
+              ],
+              onChanged: onChanged,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ── Result banner ─────────────────────────────────────────────────────────────
 
 class _ResultBanner extends StatelessWidget {
@@ -597,13 +817,19 @@ class _ResultBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final errors = (result['errors'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final stockErrors = (result['stockErrors'] as List?)?.cast<String>() ?? [];
+    final priceErrors = (result['priceErrors'] as List?)?.cast<String>() ?? [];
+    final hasErrors =
+        errors.isNotEmpty || stockErrors.isNotEmpty || priceErrors.isNotEmpty;
+    final stockReceived = result['stockReceived'] as int?;
+    final pricesSet = result['pricesSet'] as int?;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: errors.isEmpty ? Colors.green.shade50 : cs.errorContainer,
+        color: hasErrors ? cs.errorContainer : Colors.green.shade50,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-            color: errors.isEmpty ? Colors.green.shade300 : cs.error),
+            color: hasErrors ? cs.error : Colors.green.shade300),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -611,19 +837,18 @@ class _ResultBanner extends StatelessWidget {
           Row(
             children: [
               Icon(
-                  errors.isEmpty
-                      ? Icons.check_circle_outline
-                      : Icons.warning_amber_outlined,
-                  color: errors.isEmpty ? Colors.green.shade700 : cs.error),
+                  hasErrors
+                      ? Icons.warning_amber_outlined
+                      : Icons.check_circle_outline,
+                  color: hasErrors ? cs.error : Colors.green.shade700),
               const SizedBox(width: 8),
               Text(
-                errors.isEmpty
-                    ? 'Import completed successfully'
-                    : 'Import completed with errors',
+                hasErrors
+                    ? 'Import completed with errors'
+                    : 'Import completed successfully',
                 style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    color:
-                        errors.isEmpty ? Colors.green.shade800 : cs.error),
+                    color: hasErrors ? cs.error : Colors.green.shade800),
               ),
             ],
           ),
@@ -640,11 +865,14 @@ class _ResultBanner extends StatelessWidget {
                   '${result['productsCreated'] ?? 0}', 'products created'),
               _ResultStat(
                   '${result['variantsCreated'] ?? 0}', 'variants created'),
+              if (stockReceived != null)
+                _ResultStat('$stockReceived', 'stock receipts'),
+              if (pricesSet != null) _ResultStat('$pricesSet', 'prices set'),
             ],
           ),
           if (errors.isNotEmpty) ...[
             const SizedBox(height: 12),
-            Text('Errors:',
+            Text('Catalog errors:',
                 style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 13,
@@ -660,6 +888,42 @@ class _ResultBanner extends StatelessWidget {
                 )),
             if (errors.length > 20)
               Text('…and ${errors.length - 20} more errors',
+                  style: TextStyle(fontSize: 12, color: cs.outline)),
+          ],
+          if (stockErrors.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('Stock receipt errors:',
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: cs.error)),
+            const SizedBox(height: 4),
+            ...stockErrors.take(20).map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('• $e',
+                      style: TextStyle(
+                          fontSize: 12, color: cs.onErrorContainer)),
+                )),
+            if (stockErrors.length > 20)
+              Text('…and ${stockErrors.length - 20} more errors',
+                  style: TextStyle(fontSize: 12, color: cs.outline)),
+          ],
+          if (priceErrors.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('Price errors:',
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: cs.error)),
+            const SizedBox(height: 4),
+            ...priceErrors.take(20).map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('• $e',
+                      style: TextStyle(
+                          fontSize: 12, color: cs.onErrorContainer)),
+                )),
+            if (priceErrors.length > 20)
+              Text('…and ${priceErrors.length - 20} more errors',
                   style: TextStyle(fontSize: 12, color: cs.outline)),
           ],
         ],
@@ -715,4 +979,13 @@ class _ErrorBanner extends StatelessWidget {
       ),
     );
   }
+}
+
+// ── Per-row parse result ──────────────────────────────────────────────────────
+
+class _ParsedRow {
+  final String sku;
+  final double? qty;
+  final double? price;
+  const _ParsedRow({required this.sku, this.qty, this.price});
 }

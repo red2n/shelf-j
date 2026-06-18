@@ -1,5 +1,6 @@
 package com.shelfj.payment.service;
 
+import com.shelfj.payment.client.OrderClient;
 import com.shelfj.payment.domain.Domain.PaymentTender;
 import com.shelfj.payment.domain.Domain.RefundTender;
 import com.shelfj.payment.dto.Dtos.RecordRefundRequest;
@@ -26,19 +27,54 @@ public class PaymentService {
           PaymentTender.METHOD_VOUCHER);
 
   @Inject PaymentRepository repo;
+  @Inject OrderClient orderClient;
 
+  /** Staff-recorded tender (POS/back-office) — the caller's role is the trust boundary. */
   public PaymentTender recordTender(
       RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
+    UUID tenantId = ctx.requireTenantId();
+    return capture(req, tenantId, UUID.fromString(req.orderId()), idempotencyKey);
+  }
+
+  /**
+   * Customer-initiated online tender — no staff role guards this endpoint, so the claim is verified
+   * against order-svc (the data owner) before it's captured: the order must exist in the tenant,
+   * must be an ONLINE order, must belong to the caller when the caller is an authenticated
+   * customer, and the claimed amount must match the order total exactly.
+   */
+  public PaymentTender recordOnlinePayment(
+      RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID orderId = UUID.fromString(req.orderId());
+    OrderClient.OrderInfo order = orderClient.getOrder(tenantId, orderId);
+
+    if (!"ONLINE".equalsIgnoreCase(order.channel())) {
+      throw ApiException.notFound("PAYMENT_ORDER_NOT_FOUND", "order " + orderId + " not found");
+    }
+    UUID callerId = ctx.userId();
+    if (callerId != null
+        && order.customerId() != null
+        && !order.customerId().equals(callerId.toString())) {
+      throw ApiException.notFound("PAYMENT_ORDER_NOT_FOUND", "order " + orderId + " not found");
+    }
+    if (order.total().compareTo(req.amount()) != 0) {
+      throw ApiException.badRequest(
+          "PAYMENT_AMOUNT_MISMATCH",
+          "tendered amount " + req.amount() + " does not match order total " + order.total());
+    }
+
+    return capture(req, tenantId, orderId, idempotencyKey);
+  }
+
+  private PaymentTender capture(
+      RecordTenderRequest req, UUID tenantId, UUID orderId, String idempotencyKey) {
     String method = req.method().toUpperCase(Locale.ROOT);
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
           "PAYMENT_INVALID_METHOD",
           "method must be one of CASH, CARD, GIFT_CARD, VOUCHER — got: " + req.method());
 
-    UUID tenantId = ctx.requireTenantId();
-    UUID orderId = UUID.fromString(req.orderId());
     UUID tenderId = UUID.randomUUID();
-
     UUID storeId = req.storeId() == null ? null : UUID.fromString(req.storeId());
     PaymentTender tender =
         new PaymentTender(

@@ -165,6 +165,57 @@ class ZoneInfo {
       );
 }
 
+class BatchInfo {
+  final String id;
+  final String storeId;
+  final String variantId;
+  final String batchNo;
+  final double receivedQty;
+  final double remainingQty;
+  final double? costPrice;
+  final String? expiryDate;
+  final String createdAt;
+  final String status;
+  final String materialStatus;
+  final String? materialStatusReason;
+  final String? grade;
+  final String? zoneId;
+
+  const BatchInfo({
+    required this.id,
+    required this.storeId,
+    required this.variantId,
+    required this.batchNo,
+    required this.receivedQty,
+    required this.remainingQty,
+    this.costPrice,
+    this.expiryDate,
+    required this.createdAt,
+    required this.status,
+    required this.materialStatus,
+    this.materialStatusReason,
+    this.grade,
+    this.zoneId,
+  });
+
+  factory BatchInfo.fromJson(Map<String, dynamic> j) => BatchInfo(
+        id: j['id'] as String? ?? '',
+        storeId: j['storeId'] as String? ?? '-',
+        variantId: j['variantId'] as String? ?? '-',
+        batchNo: j['batchNo'] as String? ?? '-',
+        receivedQty: (j['receivedQty'] as num?)?.toDouble() ?? 0,
+        remainingQty: (j['remainingQty'] as num?)?.toDouble() ?? 0,
+        costPrice: (j['costPrice'] as num?)?.toDouble(),
+        expiryDate: j['expiryDate'] as String?,
+        createdAt: j['createdAt'] as String? ?? '',
+        status: j['status'] as String? ?? '-',
+        materialStatus: j['materialStatus'] as String? ?? '-',
+        materialStatusReason: j['materialStatusReason'] as String?,
+        grade: j['grade'] as String?,
+        zoneId: j['zoneId'] as String?,
+      );
+}
+
 class OnHandRow {
   final String storeId;
   final String variantId;
@@ -238,6 +289,17 @@ final zonesProvider =
       .get('/${ApiConstants.tenant}/admin/stores/$storeId/zones');
   final data = (resp.data['data'] as List?) ?? [];
   return data.map((e) => ZoneInfo.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+/// Recent batches received into a store (most recent 100), newest first.
+final batchesProvider =
+    FutureProvider.autoDispose.family<List<BatchInfo>, String>((ref, storeId) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+    '/${ApiConstants.inventory}/admin/inventory/batches',
+    queryParameters: {'store': storeId, 'limit': 100},
+  );
+  final data = (resp.data['data'] as List?) ?? [];
+  return data.map((e) => BatchInfo.fromJson(e as Map<String, dynamic>)).toList();
 });
 
 /// Store ids a product is restricted to (empty = sold at all stores).

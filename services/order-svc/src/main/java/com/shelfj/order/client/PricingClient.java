@@ -55,9 +55,17 @@ public class PricingClient {
   }
 
   /**
-   * Returns the effective unit price for one order line, as decided by pricing-svc (price list +
-   * active promotions). Throws 422 when no price is configured, 503 when pricing-svc cannot be
-   * reached.
+   * The pricing-svc-resolved figures for one order line: {@code unitPrice} already has any active
+   * promotion discount applied, and {@code vatAmount} is the per-unit tax pricing-svc computed from
+   * the variant's VAT category. Both are authoritative — never overridden by client input when
+   * price enforcement is on.
+   */
+  public record ResolvedLine(BigDecimal unitPrice, BigDecimal vatAmount) {}
+
+  /**
+   * Returns the effective unit price and VAT for one order line, as decided by pricing-svc (price
+   * list + active promotions + VAT rate). Throws 422 when no price is configured, 503 when
+   * pricing-svc cannot be reached.
    *
    * <p>{@code @Retry}: up to 2 retries on transient network errors; aborts immediately on {@link
    * ApiException} (a valid error response from pricing-svc — retrying a 404 is pointless).
@@ -70,7 +78,7 @@ public class PricingClient {
       delay = 200,
       abortOn = {ApiException.class})
   @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
-  public BigDecimal resolveUnitPrice(
+  public ResolvedLine resolveLine(
       UUID tenantId, UUID variantId, UUID storeId, String channel, BigDecimal qty) {
     ServiceInstance instance =
         registry
@@ -99,7 +107,12 @@ public class PricingClient {
       String body = res.as(String.class);
       try (JsonReader reader = Json.createReader(new StringReader(body))) {
         JsonObject data = reader.readObject().getJsonObject("data");
-        return data.getJsonNumber("unitPrice").bigDecimalValue();
+        BigDecimal unitPrice = data.getJsonNumber("unitPrice").bigDecimalValue();
+        BigDecimal vatAmount =
+            data.containsKey("vatAmount") && !data.isNull("vatAmount")
+                ? data.getJsonNumber("vatAmount").bigDecimalValue()
+                : BigDecimal.ZERO;
+        return new ResolvedLine(unitPrice, vatAmount);
       } catch (RuntimeException e) {
         throw unavailable("malformed response from pricing-svc", e);
       }

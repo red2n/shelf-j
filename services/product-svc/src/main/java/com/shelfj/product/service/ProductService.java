@@ -521,6 +521,7 @@ public class ProductService {
     int prodCreated = 0;
     int varCreated = 0;
     var errors = new java.util.ArrayList<BulkImportError>();
+    var importedVariants = new java.util.ArrayList<com.shelfj.product.dto.Dtos.ImportedVariant>();
     // REPLACE = upsert by SKU (reuse product by name+category, replace existing variants);
     // ADD (default) = create new (duplicate SKUs error).
     final boolean replace = req.mode() != null && "REPLACE".equalsIgnoreCase(req.mode());
@@ -651,6 +652,9 @@ public class ProductService {
                       Events.variantCreated(tenantId, variantId, productId, variant.sku()));
               repo.createVariantWithOutbox(variant, variantEvent);
               varCreated++;
+              importedVariants.add(
+                  new com.shelfj.product.dto.Dtos.ImportedVariant(
+                      variant.sku(), variantId.toString(), productId.toString()));
             } catch (ApiException ae) {
               errors.add(
                   new BulkImportError("variant:" + v.sku() + " on " + p.name(), ae.getMessage()));
@@ -669,7 +673,8 @@ public class ProductService {
       }
     }
 
-    return new BulkImportResult(catCreated, catSkipped, prodCreated, varCreated, errors);
+    return new BulkImportResult(
+        catCreated, catSkipped, prodCreated, varCreated, errors, importedVariants);
   }
 
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────

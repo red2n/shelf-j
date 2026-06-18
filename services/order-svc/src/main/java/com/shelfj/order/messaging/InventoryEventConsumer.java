@@ -1,38 +1,21 @@
 package com.shelfj.order.messaging;
 
-import com.shelfj.service.KafkaEventLoop;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
+import com.shelfj.service.BaseKafkaConsumer;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.enterprise.context.Initialized;
-import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
-import java.lang.System.Logger;
-import java.lang.System.Logger.Level;
 import java.util.List;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Gap #50 — SIM→POS direction. Polls StockReceived, StockDeducted, and StockAdjusted events from
- * inventory-svc and dispatches each to {@link InventoryEventHandler} to update the local
- * pos_stock_positions projection. Consumer lifecycle only; all logic is in the handler (SRP). The
- * shared {@link KafkaEventLoop} provides manual offset commit with seek-back, so a failed record is
- * redelivered instead of silently lost.
+ * Polls StockReceived, StockDeducted, and StockAdjusted events from inventory-svc and dispatches
+ * each to {@link InventoryEventHandler} to update the local pos_stock_positions projection.
+ * Consumer lifecycle is inherited from {@link BaseKafkaConsumer}; all business logic lives in the
+ * handler (SRP).
  */
 @ApplicationScoped
-class InventoryEventConsumer {
-
-  private static final Logger LOG = System.getLogger(InventoryEventConsumer.class.getName());
+class InventoryEventConsumer extends BaseKafkaConsumer {
 
   @Inject InventoryEventHandler handler;
-
-  @Inject
-  @ConfigProperty(name = "shelfj.kafka.enabled", defaultValue = "true")
-  boolean kafkaEnabled;
-
-  @Inject
-  @ConfigProperty(name = "shelfj.kafka.bootstrap", defaultValue = "localhost:9092")
-  String bootstrap;
 
   @Inject
   @ConfigProperty(
@@ -52,36 +35,23 @@ class InventoryEventConsumer {
       defaultValue = "shelfj.inventory.stock-adjusted")
   String stockAdjustedTopic;
 
-  private KafkaEventLoop loop;
-
-  void onStart(@Observes @Initialized(ApplicationScoped.class) Object event) {
-    /* eager init */
+  @Override
+  protected List<String> topics() {
+    return List.of(stockReceivedTopic, stockDeductedTopic, stockAdjustedTopic);
   }
 
-  @PostConstruct
-  void start() {
-    if (!kafkaEnabled) {
-      LOG.log(Level.INFO, "InventoryEvent consumer disabled");
-      return;
-    }
-    try {
-      loop =
-          new KafkaEventLoop(
-              "order-inventory-sync-consumer",
-              bootstrap,
-              "order-svc-inventory-sync",
-              List.of(stockReceivedTopic, stockDeductedTopic, stockAdjustedTopic),
-              (topic, value) -> handler.handle(value));
-      loop.start();
-    } catch (Exception e) {
-      LOG.log(Level.WARNING, "InventoryEvent consumer failed to start: " + e.getMessage());
-    }
+  @Override
+  protected String consumerName() {
+    return "order-inventory-sync-consumer";
   }
 
-  @PreDestroy
-  void stop() {
-    if (loop != null) {
-      loop.close();
-    }
+  @Override
+  protected String groupId() {
+    return "order-svc-inventory-sync";
+  }
+
+  @Override
+  protected void handle(String topic, String value) {
+    handler.handle(value);
   }
 }

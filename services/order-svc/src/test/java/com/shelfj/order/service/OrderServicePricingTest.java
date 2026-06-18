@@ -14,6 +14,8 @@ import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.dto.Dtos.OrderItemRequest;
 import com.shelfj.order.dto.Dtos.PlaceOrderRequest;
 import com.shelfj.order.repo.OrderRepository;
+import com.shelfj.order.repo.StoreStatusRepository;
+import com.shelfj.order.repo.TenantStatusRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import java.math.BigDecimal;
@@ -38,6 +40,8 @@ class OrderServicePricingTest {
   @Mock ServiceConfig config;
   @Mock PricingClient pricing;
   @Mock TenantContext ctx;
+  @Mock TenantStatusRepository tenantStatusRepo;
+  @Mock StoreStatusRepository storeStatusRepo;
 
   private OrderService svc;
 
@@ -47,7 +51,11 @@ class OrderServicePricingTest {
     svc.repo = repo;
     svc.config = config;
     svc.pricing = pricing;
+    svc.tenantStatusRepo = tenantStatusRepo;
+    svc.storeStatusRepo = storeStatusRepo;
     when(ctx.requireTenantId()).thenReturn(TENANT);
+    when(tenantStatusRepo.isActive(any())).thenReturn(true);
+    when(storeStatusRepo.isActive(any())).thenReturn(true);
   }
 
   private static PlaceOrderRequest request(BigDecimal clientUnitPrice, BigDecimal discount) {
@@ -63,14 +71,20 @@ class OrderServicePricingTest {
         null,
         null,
         null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
         null);
   }
 
   @Test
   void enforcementOnUsesServerPriceAndIgnoresClientPrice() {
     when(config.pricingEnforce()).thenReturn(true);
-    when(pricing.resolveUnitPrice(TENANT, VARIANT, STORE, "POS", BigDecimal.ONE))
-        .thenReturn(new BigDecimal("7.77"));
+    when(pricing.resolveLine(TENANT, VARIANT, STORE, "POS", BigDecimal.ONE))
+        .thenReturn(new PricingClient.ResolvedLine(new BigDecimal("7.77"), BigDecimal.ZERO));
     when(repo.createOrder(any(), anyList(), any())).thenAnswer(inv -> inv.getArgument(0));
 
     // client claims the item costs 0.01 — the server-resolved 7.77 must win
@@ -86,7 +100,7 @@ class OrderServicePricingTest {
   @Test
   void enforcementOnFailsClosedWhenPriceCannotBeResolved() {
     when(config.pricingEnforce()).thenReturn(true);
-    when(pricing.resolveUnitPrice(any(), any(), any(), any(), any()))
+    when(pricing.resolveLine(any(), any(), any(), any(), any()))
         .thenThrow(ApiException.unprocessable("ORDER_PRICE_UNRESOLVED", "no price"));
 
     ApiException e =
@@ -120,6 +134,7 @@ class OrderServicePricingTest {
   @Test
   void discountLargerThanSubtotalIsRejected() {
     when(config.pricingEnforce()).thenReturn(false);
+    org.mockito.Mockito.lenient().when(ctx.hasRole("MANAGER")).thenReturn(true);
 
     ApiException e =
         assertThrows(
@@ -129,5 +144,37 @@ class OrderServicePricingTest {
                     request(new BigDecimal("5.00"), new BigDecimal("10.00")), ctx, null));
     assertEquals("ORDER_DISCOUNT_EXCEEDS_SUBTOTAL", e.code());
     verifyNoInteractions(repo);
+  }
+
+  @Test
+  void nonStaffCallerCannotSelfApplyADiscount() {
+    when(config.pricingEnforce()).thenReturn(false);
+    // ctx mock has no staff role stubbed -> hasRole(...) defaults to false for every role.
+
+    ApiException e =
+        assertThrows(
+            ApiException.class,
+            () ->
+                svc.placeOrder(request(new BigDecimal("5.00"), new BigDecimal("1.00")), ctx, null));
+    assertEquals("ORDER_DISCOUNT_NOT_ALLOWED", e.code());
+    verifyNoInteractions(repo);
+  }
+
+  @Test
+  void enforcementOnDerivesTaxFromPricingAndIgnoresClientDiscount() {
+    when(config.pricingEnforce()).thenReturn(true);
+    when(pricing.resolveLine(TENANT, VARIANT, STORE, "POS", BigDecimal.ONE))
+        .thenReturn(
+            new PricingClient.ResolvedLine(new BigDecimal("10.00"), new BigDecimal("2.00")));
+    when(repo.createOrder(any(), anyList(), any())).thenAnswer(inv -> inv.getArgument(0));
+
+    // client tries to claim a 9.00 discount — must be ignored entirely when pricing is enforced.
+    Order order =
+        svc.placeOrder(request(new BigDecimal("0.01"), new BigDecimal("9.00")), ctx, null);
+
+    assertEquals(new BigDecimal("10.00"), order.subtotal());
+    assertEquals(new BigDecimal("2.00"), order.taxAmount());
+    assertEquals(BigDecimal.ZERO, order.discountAmount());
+    assertEquals(new BigDecimal("12.00"), order.total());
   }
 }

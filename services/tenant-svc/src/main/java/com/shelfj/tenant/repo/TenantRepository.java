@@ -125,6 +125,20 @@ public class TenantRepository extends BaseOutboxRepository {
               throw ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found");
             }
           }
+          // Cascade: when a tenant is suspended, mark all its ACTIVE stores SUSPENDED too so
+          // the gateway's TenantStatusGate cache refresh reflects closure immediately.
+          // Stores are NOT auto-reactivated when the tenant is re-enabled — that is an
+          // explicit operator action (PATCH /admin/stores/{id}/status).
+          if (!"ACTIVE".equals(status)) {
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE stores SET status = 'SUSPENDED', updated_at = ?"
+                        + " WHERE tenant_id = ? AND status = 'ACTIVE'")) {
+              ps.setObject(1, now.atOffset(ZoneOffset.UTC));
+              ps.setObject(2, tenantId);
+              ps.executeUpdate();
+            }
+          }
           insertOutbox(c, event);
           return null;
         },
@@ -225,6 +239,34 @@ public class TenantRepository extends BaseOutboxRepository {
           ps.setObject(2, now.atOffset(ZoneOffset.UTC));
           ps.setObject(3, tenantId);
           ps.setObject(4, storeId);
+        },
+        "update store status");
+    return findStore(tenantId, storeId)
+        .orElseThrow(() -> ApiException.notFound("STORE_NOT_FOUND", "Store not found"));
+  }
+
+  /**
+   * Flip a store's status AND publish the change event in one transaction (golden rule #6), so a
+   * store closure can never be applied locally without other services (iam-svc) hearing about it.
+   */
+  public Store updateStoreStatusWithOutbox(
+      UUID tenantId, UUID storeId, String status, OutboxRow event) {
+    Instant now = Instant.now();
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE stores SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?")) {
+            ps.setString(1, status);
+            ps.setObject(2, now.atOffset(ZoneOffset.UTC));
+            ps.setObject(3, tenantId);
+            ps.setObject(4, storeId);
+            if (ps.executeUpdate() == 0) {
+              throw ApiException.notFound("STORE_NOT_FOUND", "Store not found");
+            }
+          }
+          insertOutbox(c, event);
+          return null;
         },
         "update store status");
     return findStore(tenantId, storeId)

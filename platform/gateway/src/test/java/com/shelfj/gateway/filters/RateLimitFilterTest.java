@@ -1,5 +1,8 @@
 package com.shelfj.gateway.filters;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -9,6 +12,7 @@ import static org.mockito.Mockito.when;
 import com.shelfj.gateway.GatewayConfig;
 import jakarta.ws.rs.container.ContainerRequestContext;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -73,5 +77,27 @@ class RateLimitFilterTest {
 
     // three distinct clients as reported by the trusted proxy — nobody throttled
     verify(requestContext, never()).abortWith(any());
+  }
+
+  @Test
+  void capEvictsTheLeastRecentlyActiveBucketNotAnArbitraryOne() throws IOException {
+    when(config.rateLimitEnabled()).thenReturn(true);
+    when(config.rateLimitRequestsPerMinute()).thenReturn(100);
+    when(config.trustForwardedHeaders()).thenReturn(true);
+    var counter = new AtomicInteger();
+    when(requestContext.getHeaderString("X-Forwarded-For"))
+        .thenAnswer(inv -> "10.0.0." + counter.getAndIncrement());
+
+    String firstIp = "10.0.0.0";
+    String lastIp = "10.0.0." + RateLimitFilter.MAX_BUCKETS;
+    // Fill to the cap, then one more distinct IP forces an eviction (no stale entries exist to
+    // reclaim instead, since every bucket was just created).
+    for (int i = 0; i <= RateLimitFilter.MAX_BUCKETS; i++) {
+      filter.filter(requestContext);
+    }
+
+    assertEquals(RateLimitFilter.MAX_BUCKETS, filter.buckets.size());
+    assertFalse(filter.buckets.containsKey(firstIp), "oldest bucket should have been evicted");
+    assertTrue(filter.buckets.containsKey(lastIp), "newest bucket should be kept");
   }
 }

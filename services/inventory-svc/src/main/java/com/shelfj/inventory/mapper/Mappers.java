@@ -97,7 +97,8 @@ public final class Mappers {
         b.status(),
         b.materialStatus(),
         b.materialStatusReason(),
-        b.grade());
+        b.grade(),
+        b.zoneId() == null ? null : b.zoneId().toString());
   }
 
   public static ReservationResponse toReservation(Reservation r) {

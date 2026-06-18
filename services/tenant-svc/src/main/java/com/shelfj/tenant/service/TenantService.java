@@ -303,7 +303,16 @@ public class TenantService {
 
   public Store patchStoreStatus(UUID tenantId, UUID storeId, PatchStatusRequest req) {
     getStore(tenantId, storeId);
-    return repo.updateStoreStatus(tenantId, storeId, req.status());
+    String status = req.status().toUpperCase(Locale.ROOT);
+    // Publish so iam-svc can terminate POS sessions for this store and other consumers can react.
+    var event =
+        new OutboxRow(
+            "StoreStatusChanged",
+            "shelfj.tenant.store-status-changed",
+            tenantId,
+            storeId,
+            Events.storeStatusChanged(tenantId, storeId, status));
+    return repo.updateStoreStatusWithOutbox(tenantId, storeId, status, event);
   }
 
   public Zone getZone(UUID tenantId, UUID zoneId) {

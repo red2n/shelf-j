@@ -29,7 +29,13 @@ public final class Domain {
       Instant createdAt,
       Instant updatedAt,
       boolean taxExempt,
-      String exemptReason) {
+      String exemptReason,
+      String deliveryLine1,
+      String deliveryLine2,
+      String deliveryCity,
+      String deliveryPostalCode,
+      String deliveryRecipientName,
+      String deliveryRecipientPhone) {
     public static final String CHANNEL_ONLINE = "ONLINE";
     public static final String CHANNEL_POS = "POS";
     public static final String FULFILMENT_PICKUP = "PICKUP";

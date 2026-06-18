@@ -16,15 +16,26 @@ final class Events {
 
   private Events() {}
 
-  static OutboxRow orderPlaced(UUID tenantId, UUID orderId, String channel) {
+  static OutboxRow orderPlaced(
+      UUID tenantId, UUID orderId, String channel, UUID customerId, UUID storeId) {
+    String customerPart =
+        customerId != null ? ",\"customerId\":\"" + customerId + "\"" : ",\"customerId\":null";
     return new OutboxRow(
         "OrderPlaced",
         "shelfj.order.order-placed",
         tenantId,
         orderId,
-        String.format(
-            "{\"eventType\":\"OrderPlaced\",\"tenantId\":\"%s\",\"orderId\":\"%s\",\"channel\":\"%s\"}",
-            tenantId, orderId, esc(channel)));
+        "{\"eventType\":\"OrderPlaced\",\"tenantId\":\""
+            + tenantId
+            + "\",\"orderId\":\""
+            + orderId
+            + "\",\"channel\":\""
+            + esc(channel)
+            + "\",\"storeId\":\""
+            + storeId
+            + "\""
+            + customerPart
+            + "}");
   }
 
   static OutboxRow orderConfirmed(UUID tenantId, UUID orderId) {
@@ -51,8 +62,12 @@ final class Events {
 
   static OutboxRow orderFulfilled(
       UUID tenantId, UUID orderId, UUID storeId, List<OrderItem> items) {
+    // eventId is required by inventory-svc's OrderEventHandler for per-line dedupe — without it,
+    // every OrderFulfilled is dropped as a malformed event and stock is never deducted.
     StringBuilder sb = new StringBuilder();
-    sb.append("{\"eventType\":\"OrderFulfilled\",\"tenantId\":\"")
+    sb.append("{\"eventId\":\"")
+        .append(UUID.randomUUID())
+        .append("\",\"eventType\":\"OrderFulfilled\",\"tenantId\":\"")
         .append(tenantId)
         .append("\",\"orderId\":\"")
         .append(orderId)
@@ -74,8 +89,12 @@ final class Events {
 
   static OutboxRow orderReturned(
       UUID tenantId, UUID orderId, UUID returnId, UUID storeId, List<ReturnItem> items) {
+    // eventId is required by inventory-svc's OrderEventHandler for per-line dedupe — without it,
+    // every OrderReturned is dropped as a malformed event and stock is never restocked.
     StringBuilder sb = new StringBuilder();
-    sb.append("{\"eventType\":\"OrderReturned\",\"tenantId\":\"")
+    sb.append("{\"eventId\":\"")
+        .append(UUID.randomUUID())
+        .append("\",\"eventType\":\"OrderReturned\",\"tenantId\":\"")
         .append(tenantId)
         .append("\",\"orderId\":\"")
         .append(orderId)

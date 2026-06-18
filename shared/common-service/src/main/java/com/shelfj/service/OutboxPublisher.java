@@ -10,7 +10,9 @@ import jakarta.inject.Inject;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.time.Duration;
+import java.util.List;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -84,41 +86,40 @@ public class OutboxPublisher {
 
   private void drainQuietly() {
     try {
-      var rows = store.pendingOutbox(100);
-      if (rows.isEmpty()) {
-        return;
-      }
-      // Pipeline the whole batch (one flush) instead of awaiting each send, then mark all
-      // delivered rows published in a single UPDATE — N Kafka roundtrips + N DB roundtrips
-      // become ~1 + 1. A row that fails stays pending and retries next tick (at-least-once).
-      var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>(rows.size());
-      for (var row : rows) {
-        futures.add(
-            producer.send(new ProducerRecord<>(row.topic(), row.id().toString(), row.payload())));
-      }
-      producer.flush();
-      var published = new java.util.ArrayList<java.util.UUID>(rows.size());
-      for (int i = 0; i < rows.size(); i++) {
-        try {
-          futures.get(i).get();
-          published.add(rows.get(i).id());
-        } catch (InterruptedException e) {
-          Thread.currentThread().interrupt();
-          break;
-        } catch (Exception e) {
-          LOG.log(
-              Level.WARNING,
-              "Publish failed for outbox {0}: {1}",
-              rows.get(i).id(),
-              e.getMessage());
-        }
-      }
-      if (!published.isEmpty()) {
-        store.markPublished(published);
-      }
+      // The claim (FOR UPDATE SKIP LOCKED) and the published-mark below run in the repo's single
+      // transaction, so two replicas draining at the same instant never claim the same row.
+      store.drainAndPublish(100, this::publishBatch);
     } catch (Exception e) {
       LOG.log(Level.WARNING, "Outbox drain deferred: " + e.getMessage());
     }
+  }
+
+  /**
+   * Pipelines the whole batch (one flush) instead of awaiting each send, returning exactly the ids
+   * that were confirmed delivered — N Kafka roundtrips become ~1. A row that fails to send isn't
+   * returned, so it stays unpublished and retries next tick (at-least-once).
+   */
+  private List<UUID> publishBatch(List<OutboxStore.PendingOutbox> rows) {
+    var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>(rows.size());
+    for (var row : rows) {
+      futures.add(
+          producer.send(new ProducerRecord<>(row.topic(), row.id().toString(), row.payload())));
+    }
+    producer.flush();
+    var published = new java.util.ArrayList<UUID>(rows.size());
+    for (int i = 0; i < rows.size(); i++) {
+      try {
+        futures.get(i).get();
+        published.add(rows.get(i).id());
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        break;
+      } catch (Exception e) {
+        LOG.log(
+            Level.WARNING, "Publish failed for outbox {0}: {1}", rows.get(i).id(), e.getMessage());
+      }
+    }
+    return published;
   }
 
   @PreDestroy

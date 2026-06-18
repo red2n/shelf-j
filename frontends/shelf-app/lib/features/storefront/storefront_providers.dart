@@ -194,7 +194,8 @@ class StoreCategory {
 /// Per-store storefront display rules, fetched from tenant-svc.
 class StorefrontConfig {
   final bool showPrices;
-  const StorefrontConfig({required this.showPrices});
+  final String storeName;
+  const StorefrontConfig({required this.showPrices, this.storeName = '-'});
 }
 
 /// A tenant store, for the storefront's store switcher.
@@ -249,7 +250,10 @@ final storefrontConfigProvider =
     final resp = await dio.get('/${ApiConstants.tenant}/storefront/config',
         queryParameters: {'store': store});
     final d = resp.data['data'] as Map<String, dynamic>;
-    return StorefrontConfig(showPrices: d['showPrices'] as bool? ?? true);
+    return StorefrontConfig(
+      showPrices: d['showPrices'] as bool? ?? true,
+      storeName: d['storeName'] as String? ?? '-',
+    );
   } catch (_) {
     return const StorefrontConfig(showPrices: true);
   }
@@ -508,6 +512,8 @@ class StorefrontOrderRecord {
   final String currency;
   final int itemCount;
   final DateTime placedAt;
+  final String storeName;
+  final String fulfilmentType;
 
   const StorefrontOrderRecord({
     required this.orderId,
@@ -515,6 +521,8 @@ class StorefrontOrderRecord {
     required this.currency,
     required this.itemCount,
     required this.placedAt,
+    this.storeName = '-',
+    this.fulfilmentType = 'PICKUP',
   });
 
   Map<String, dynamic> toJson() => {
@@ -523,6 +531,8 @@ class StorefrontOrderRecord {
         'currency': currency,
         'itemCount': itemCount,
         'placedAt': placedAt.toIso8601String(),
+        'storeName': storeName,
+        'fulfilmentType': fulfilmentType,
       };
 
   factory StorefrontOrderRecord.fromJson(Map<String, dynamic> j) =>
@@ -533,6 +543,8 @@ class StorefrontOrderRecord {
         itemCount: (j['itemCount'] as num?)?.toInt() ?? 0,
         placedAt:
             DateTime.tryParse(j['placedAt'] as String? ?? '') ?? DateTime.now(),
+        storeName: j['storeName'] as String? ?? '-',
+        fulfilmentType: j['fulfilmentType'] as String? ?? 'PICKUP',
       );
 }
 
@@ -583,6 +595,8 @@ final storefrontOrdersProvider = StateNotifierProvider<StorefrontOrdersNotifier,
 
 class ServerOrderSummary {
   final String id;
+  final String storeId;
+  final String fulfilmentType;
   final String status;
   final double total;
   final String currency;
@@ -590,6 +604,8 @@ class ServerOrderSummary {
 
   const ServerOrderSummary({
     required this.id,
+    required this.storeId,
+    required this.fulfilmentType,
     required this.status,
     required this.total,
     required this.currency,
@@ -599,6 +615,8 @@ class ServerOrderSummary {
   factory ServerOrderSummary.fromJson(Map<String, dynamic> j) =>
       ServerOrderSummary(
         id: j['id'] as String? ?? '',
+        storeId: j['storeId'] as String? ?? '',
+        fulfilmentType: j['fulfilmentType'] as String? ?? 'PICKUP',
         status: j['status'] as String? ?? '-',
         total: (j['total'] as num?)?.toDouble() ?? 0,
         currency: j['currency'] as String? ?? '',

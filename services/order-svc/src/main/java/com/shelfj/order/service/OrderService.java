@@ -26,6 +26,8 @@ import com.shelfj.order.dto.Dtos.RedeemGiftCardRequest;
 import com.shelfj.order.dto.Dtos.ReloadGiftCardRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
 import com.shelfj.order.repo.OrderRepository;
+import com.shelfj.order.repo.StoreStatusRepository;
+import com.shelfj.order.repo.TenantStatusRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -44,10 +46,16 @@ public class OrderService {
   private static final System.Logger LOG = System.getLogger(OrderService.class.getName());
 
   @Inject OrderRepository repo;
+  @Inject TenantStatusRepository tenantStatusRepo;
+  @Inject StoreStatusRepository storeStatusRepo;
   @Inject com.shelfj.order.config.ServiceConfig config;
   @Inject com.shelfj.order.client.PricingClient pricing;
 
   // ── Orders ────────────────────────────────────────────────────────────────
+
+  private static boolean isBlank(String s) {
+    return s == null || s.isBlank();
+  }
 
   public Order placeOrder(PlaceOrderRequest req, TenantContext ctx, String idempotencyKey) {
     if (req.items() == null || req.items().isEmpty())
@@ -55,6 +63,15 @@ public class OrderService {
 
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = UUID.fromString(req.storeId());
+
+    if (!tenantStatusRepo.isActive(tenantId))
+      throw ApiException.conflict(
+          "TENANT_NOT_OPERATIONAL",
+          "Tenant is suspended or blocked — orders cannot be placed at this time");
+    if (!storeStatusRepo.isActive(storeId))
+      throw ApiException.conflict(
+          "STORE_NOT_OPERATIONAL",
+          "Store is closed or suspended — orders cannot be placed at this location");
     // A signed-in storefront customer is bound to their own order from the authenticated identity —
     // never from the (untrusted) request body. Staff placing a POS order may still attach a
     // customer
@@ -68,9 +85,22 @@ public class OrderService {
     String currency = req.currency() != null ? req.currency() : "USD";
     String fulfilment =
         req.fulfilmentType() != null ? req.fulfilmentType() : Order.FULFILMENT_INSTORE;
+    boolean delivery = Order.FULFILMENT_DELIVERY.equals(fulfilment);
+    if (delivery) {
+      if (isBlank(req.deliveryLine1())
+          || isBlank(req.deliveryCity())
+          || isBlank(req.deliveryPostalCode())
+          || isBlank(req.deliveryRecipientName())
+          || isBlank(req.deliveryRecipientPhone()))
+        throw ApiException.badRequest(
+            "ORDER_DELIVERY_ADDRESS_REQUIRED",
+            "deliveryLine1, deliveryCity, deliveryPostalCode, deliveryRecipientName and"
+                + " deliveryRecipientPhone are required when fulfilmentType is DELIVERY");
+    }
     boolean enforcePricing = config.pricingEnforce();
 
     BigDecimal subtotal = BigDecimal.ZERO;
+    BigDecimal serverTax = BigDecimal.ZERO;
     List<OrderItem> items = new ArrayList<>();
     UUID orderId = UUID.randomUUID();
 
@@ -80,7 +110,9 @@ public class OrderService {
       // unitPrice is ignored. When off (local dev / unseeded rigs), the client price is trusted.
       BigDecimal unitPrice;
       if (enforcePricing) {
-        unitPrice = pricing.resolveUnitPrice(tenantId, variantId, storeId, req.channel(), ir.qty());
+        var resolved = pricing.resolveLine(tenantId, variantId, storeId, req.channel(), ir.qty());
+        unitPrice = resolved.unitPrice();
+        serverTax = serverTax.add(resolved.vatAmount().multiply(ir.qty()));
       } else {
         if (ir.unitPrice() == null)
           throw ApiException.badRequest(
@@ -101,8 +133,29 @@ public class OrderService {
               ir.notes()));
     }
 
-    BigDecimal tax = req.taxAmount() != null ? req.taxAmount() : BigDecimal.ZERO;
-    BigDecimal disc = req.discountAmount() != null ? req.discountAmount() : BigDecimal.ZERO;
+    boolean staff =
+        ctx.hasRole("CASHIER")
+            || ctx.hasRole("MANAGER")
+            || ctx.hasRole("OWNER")
+            || ctx.hasRole("PLATFORM_ADMIN");
+
+    BigDecimal tax;
+    BigDecimal disc;
+    if (enforcePricing) {
+      // Tax is derived server-side from pricing-svc's per-line VAT; any promotion discount is
+      // already baked into the resolved unitPrice above, so there is no separate discount left to
+      // apply. Client-supplied taxAmount/discountAmount are never trusted here.
+      tax = serverTax.setScale(2, java.math.RoundingMode.HALF_UP);
+      disc = BigDecimal.ZERO;
+    } else {
+      tax = req.taxAmount() != null ? req.taxAmount() : BigDecimal.ZERO;
+      disc = req.discountAmount() != null ? req.discountAmount() : BigDecimal.ZERO;
+      // Manual discounts are a staff privilege (POS). A non-staff caller (online/guest checkout)
+      // self-applying a discount would let them name their own price.
+      if (!staff && disc.signum() != 0)
+        throw ApiException.forbidden(
+            "ORDER_DISCOUNT_NOT_ALLOWED", "discounts can only be applied by staff");
+    }
     if (disc.compareTo(subtotal) > 0)
       throw ApiException.badRequest(
           "ORDER_DISCOUNT_EXCEEDS_SUBTOTAL",
@@ -129,10 +182,17 @@ public class OrderService {
             Instant.now(),
             Instant.now(),
             taxExempt,
-            req.exemptReason());
+            req.exemptReason(),
+            delivery ? req.deliveryLine1() : null,
+            delivery ? req.deliveryLine2() : null,
+            delivery ? req.deliveryCity() : null,
+            delivery ? req.deliveryPostalCode() : null,
+            delivery ? req.deliveryRecipientName() : null,
+            delivery ? req.deliveryRecipientPhone() : null);
 
     try {
-      return repo.createOrder(order, items, Events.orderPlaced(tenantId, orderId, req.channel()));
+      return repo.createOrder(
+          order, items, Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId));
     } catch (ApiException e) {
       // Idempotent replay: a retried checkout with the same key gets the original order back
       // instead of an error (golden rule #11).
