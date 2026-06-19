@@ -120,7 +120,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-shelfj}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
     ports: ["127.0.0.1:5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Per-service roles + GRANTs (golden rule #1 hardening). Only runs on a fresh
+      # volume; against an existing one, re-apply manually — see header comment in
+      # the script for the exact `docker compose exec` invocation.
+      - ./infra/postgres-init-roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
     networks: [shelfj_network]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shelfj}"]
@@ -141,11 +146,13 @@ services:
     container_name: shelfj-pgbouncer
     restart: always
     environment:
-      DATABASES_HOST: postgres
-      DATABASES_PORT: "5432"
-      DATABASES_USER: ${POSTGRES_USER:-shelfj}
-      DATABASES_PASSWORD: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
-      DATABASES_DBNAME: ${POSTGRES_DB:-shelfj}
+      # Raw DATABASES entry with no fixed user/password: each connecting service
+      # authenticates as its own per-service role (infra/postgres-init-roles.sql), and
+      # that same identity is what PgBouncer uses against the real Postgres backend —
+      # via the credential stored for it in userlist.txt. A fixed DATABASES_USER would
+      # collapse every connection back to one shared identity and defeat the
+      # per-service GRANTs.
+      DATABASES: "* = host=postgres port=5432 dbname=${POSTGRES_DB:-shelfj}"
       PGBOUNCER_POOL_MODE: transaction
       PGBOUNCER_MAX_CLIENT_CONN: "2000"
       PGBOUNCER_DEFAULT_POOL_SIZE: "50"
@@ -158,6 +165,12 @@ services:
       PGBOUNCER_IGNORE_STARTUP_PARAMETERS: "extra_float_digits,options"
       PGBOUNCER_AUTH_TYPE: trust
       PGBOUNCER_AUTH_FILE: /etc/pgbouncer/userlist.txt
+    # infra/pgbouncer-userlist.txt holds one "username" "password" line per role
+    # (bootstrap + all 12 per-service roles), kept in sync by hand with
+    # infra/postgres-init-roles.sql and the <SERVICE>_DB_PASSWORD vars above/below.
+    # IMPORTANT: this pgbouncer build's userlist.txt parser rejects ANY "#" comment
+    # line outright (logs "ERROR broken auth file" and silently drops every user) —
+    # do not add comments to that file; put notes here instead.
     volumes:
       - ./infra/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
     depends_on:
@@ -480,6 +493,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: iam_svc
+      shelfj.db.password: ${IAM_DB_PASSWORD:-iam_dev_change_me}
       JAVA_TOOL_OPTIONS: "${IAM_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: iam-svc
       shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
@@ -498,6 +513,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: tenant_svc
+      shelfj.db.password: ${TENANT_DB_PASSWORD:-tenant_dev_change_me}
       JAVA_TOOL_OPTIONS: "${TENANT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: tenant-svc
     mem_limit: ${TENANT_MEM_LIMIT:-700m}
@@ -515,6 +532,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: inventory_svc
+      shelfj.db.password: ${INVENTORY_DB_PASSWORD:-inventory_dev_change_me}
       JAVA_TOOL_OPTIONS: "${INVENTORY_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: inventory-svc
     mem_limit: ${INVENTORY_MEM_LIMIT:-700m}
@@ -532,6 +551,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: order_svc
+      shelfj.db.password: ${ORDER_DB_PASSWORD:-order_dev_change_me}
       JAVA_TOOL_OPTIONS: "${ORDER_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: order-svc
       # Gap #63 — set to true to make order-svc resolve prices from pricing-svc (ignore client prices)
@@ -551,6 +572,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: purchase_svc
+      shelfj.db.password: ${PURCHASE_DB_PASSWORD:-purchase_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PURCHASE_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: purchase-svc
     mem_limit: ${PURCHASE_MEM_LIMIT:-512m}
@@ -568,6 +591,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: cart_svc
+      shelfj.db.password: ${CART_DB_PASSWORD:-cart_dev_change_me}
       JAVA_TOOL_OPTIONS: "${CART_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: cart-svc
     mem_limit: ${CART_MEM_LIMIT:-512m}
@@ -585,6 +610,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: pricing_svc
+      shelfj.db.password: ${PRICING_DB_PASSWORD:-pricing_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PRICING_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: pricing-svc
     mem_limit: ${PRICING_MEM_LIMIT:-512m}
@@ -602,6 +629,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: payment_svc
+      shelfj.db.password: ${PAYMENT_DB_PASSWORD:-payment_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PAYMENT_JAVA_OPTS:--Xms128m -Xmx256m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: payment-svc
     mem_limit: ${PAYMENT_MEM_LIMIT:-384m}
@@ -619,6 +648,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: product_svc
+      shelfj.db.password: ${PRODUCT_DB_PASSWORD:-product_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PRODUCT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: product-svc
     mem_limit: ${PRODUCT_MEM_LIMIT:-700m}
@@ -636,6 +667,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: customer_svc
+      shelfj.db.password: ${CUSTOMER_DB_PASSWORD:-customer_dev_change_me}
       JAVA_TOOL_OPTIONS: "${CUSTOMER_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: customer-svc
     mem_limit: ${CUSTOMER_MEM_LIMIT:-512m}
@@ -653,6 +686,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: notification_svc
+      shelfj.db.password: ${NOTIFICATION_DB_PASSWORD:-notification_dev_change_me}
       JAVA_TOOL_OPTIONS: "${NOTIFICATION_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: notification-svc
     mem_limit: ${NOTIFICATION_MEM_LIMIT:-512m}
@@ -670,6 +705,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: reporting_svc
+      shelfj.db.password: ${REPORTING_DB_PASSWORD:-reporting_dev_change_me}
       JAVA_TOOL_OPTIONS: "${REPORTING_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: reporting-svc
     mem_limit: ${REPORTING_MEM_LIMIT:-512m}
@@ -704,6 +741,10 @@ services:
       # synchronously upstream; the 10s code default is tuned for normal request/response
       # calls and times out well before a large import finishes server-side.
       shelfj.gateway.upstream.read-timeout-seconds: "${GATEWAY_UPSTREAM_READ_TIMEOUT_SECONDS:-120}"
+      # Rate-limit / brute-force counters live here, shared across every gateway replica.
+      shelfj.redis.host: redis
+      shelfj.redis.port: "6379"
+      shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
     ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]
     networks: [shelfj_network]
@@ -711,6 +752,7 @@ services:
       consul:     { condition: service_healthy }
       iam-svc:    { condition: service_healthy }
       tenant-svc: { condition: service_healthy }
+      redis:      { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health || exit 1"]
       interval: 10s
