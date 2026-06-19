@@ -45,7 +45,7 @@ Notes
 k6 run k6/flow-guard-comprehensive.js --env BASE_URL=http://localhost:8090
 ```
 
-See [FLOW_GUARD_TEST_GUIDE.md](./FLOW_GUARD_TEST_GUIDE.md) for detailed coverage, [ENDPOINT_COVERAGE_AUDIT.md](./ENDPOINT_COVERAGE_AUDIT.md) for what's tested/deferred.
+See `k6/flow-guard-comprehensive.js` for the 8 business phases and 47 endpoints it covers.
 
 ## Run other tests
 

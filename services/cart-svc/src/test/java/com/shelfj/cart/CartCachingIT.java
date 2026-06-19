@@ -1,0 +1,166 @@
+package com.shelfj.cart;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
+
+import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.RedisSupport;
+import io.helidon.microprofile.testing.junit5.HelidonTest;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.client.Entity;
+import jakarta.ws.rs.client.WebTarget;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.UUID;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Integration test for cart-svc against real Postgres + Redis (Testcontainers): cart/item
+ * lifecycle, and proof that the cart-items read is cache-aside (served from Redis, invalidated on
+ * write) rather than hitting Postgres on every view. Kafka/Consul disabled.
+ */
+@HelidonTest
+class CartCachingIT {
+
+  private static final PostgresSupport PG;
+  private static final RedisSupport REDIS;
+
+  static {
+    PG = PostgresSupport.start();
+    System.setProperty("shelfj.db.url", PG.jdbcUrl());
+    System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
+    System.setProperty("shelfj.db.user", PG.username());
+    System.setProperty("shelfj.db.password", PG.password());
+    System.setProperty("shelfj.db.schema", "cart");
+    System.setProperty("shelfj.consul.enabled", "false");
+    System.setProperty("shelfj.kafka.enabled", "false");
+
+    REDIS = RedisSupport.start();
+    System.setProperty("shelfj.redis.host", REDIS.host());
+    System.setProperty("shelfj.redis.port", String.valueOf(REDIS.port()));
+    System.setProperty("shelfj.redis.password", "");
+  }
+
+  private static final String TENANT_A = "11111111-1111-1111-1111-111111111111";
+  private static final String CUSTOMER_A = "33333333-3333-3333-3333-333333333333";
+  private static final String STORE_A = "44444444-4444-4444-4444-444444444444";
+
+  @Inject WebTarget target;
+
+  @AfterAll
+  static void stopDb() {
+    PG.stop();
+    REDIS.stop();
+  }
+
+  private Response post(String path, String json) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", TENANT_A)
+        .header("X-User-Id", CUSTOMER_A)
+        .post(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
+  private String get(String pathAndQuery) {
+    int q = pathAndQuery.indexOf('?');
+    WebTarget t = target.path(q < 0 ? pathAndQuery : pathAndQuery.substring(0, q));
+    if (q >= 0) {
+      for (String param : pathAndQuery.substring(q + 1).split("&")) {
+        int eq = param.indexOf('=');
+        t = t.queryParam(param.substring(0, eq), param.substring(eq + 1));
+      }
+    }
+    return t.request()
+        .header("X-Tenant-Id", TENANT_A)
+        .header("X-User-Id", CUSTOMER_A)
+        .get(String.class);
+  }
+
+  private Response put(String path, String json) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", TENANT_A)
+        .header("X-User-Id", CUSTOMER_A)
+        .put(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
+  /** Bypasses the app entirely — proves a read came from cache rather than the DB. */
+  private static void rawUpdateItemQty(String itemId, String qty) {
+    try (Connection c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        PreparedStatement ps =
+            c.prepareStatement("UPDATE cart.cart_items SET qty = ? WHERE id = ?::uuid")) {
+      ps.setBigDecimal(1, new java.math.BigDecimal(qty));
+      ps.setString(2, itemId);
+      ps.executeUpdate();
+    } catch (SQLException e) {
+      throw new AssertionError(e);
+    }
+  }
+
+  @Test
+  void cartLifecycle() {
+    Response c = post("/cart", "{\"storeId\":\"" + STORE_A + "\"}");
+    assertThat(c.getStatus(), is(200));
+    String cartId = field(c.readEntity(String.class), "id");
+
+    String variantId = UUID.randomUUID().toString();
+    Response added =
+        post(
+            "/cart/items",
+            "{\"cartId\":\"" + cartId + "\",\"variantId\":\"" + variantId + "\",\"qty\":3}");
+    assertThat(added.getStatus(), is(200));
+    assertThat(added.readEntity(String.class), containsString("3"));
+
+    assertThat(get("/cart?cartId=" + cartId), containsString(variantId));
+  }
+
+  @Test
+  void cartItemsAreCachedAndInvalidatedOnUpdate() {
+    Response c = post("/cart", "{\"storeId\":\"" + STORE_A + "\"}");
+    assertThat(c.getStatus(), is(200));
+    String cartId = field(c.readEntity(String.class), "id");
+
+    String variantId = UUID.randomUUID().toString();
+    Response added =
+        post(
+            "/cart/items",
+            "{\"cartId\":\"" + cartId + "\",\"variantId\":\"" + variantId + "\",\"qty\":3}");
+    assertThat(added.getStatus(), is(200));
+    String itemId = field(added.readEntity(String.class), "id");
+
+    // first view — populates the items cache
+    assertThat(get("/cart?cartId=" + cartId), containsString("3.0000"));
+
+    // mutate the row directly in Postgres, bypassing the app and its cache eviction
+    rawUpdateItemQty(itemId, "99");
+
+    // still served from cache — proves the read isn't hitting Postgres every time
+    assertThat(get("/cart?cartId=" + cartId), containsString("3.0000"));
+
+    // a real update goes through the app, which evicts the items cache
+    Response updated = put("/cart/items/" + itemId, "{\"cartId\":\"" + cartId + "\",\"qty\":7}");
+    assertThat(updated.getStatus(), is(200));
+
+    // next read reflects the update, not the raw mutation — cache was invalidated, not just expired
+    String view = get("/cart?cartId=" + cartId);
+    assertThat(view, containsString("7.0000"));
+    assertThat(view, not(containsString("99.0000")));
+  }
+
+  private static String field(String json, String name) {
+    String key = "\"" + name + "\":\"";
+    int i = json.indexOf(key);
+    if (i < 0) throw new AssertionError(name + " not in " + json);
+    int start = i + key.length();
+    return json.substring(start, json.indexOf('"', start));
+  }
+}

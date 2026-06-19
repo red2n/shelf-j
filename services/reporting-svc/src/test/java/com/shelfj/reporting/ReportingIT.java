@@ -23,6 +23,7 @@ class ReportingIT {
   static {
     PG = PostgresSupport.start();
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
+    System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
     System.setProperty("shelfj.db.password", PG.password());
     System.setProperty("shelfj.db.schema", "reporting");

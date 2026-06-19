@@ -30,6 +30,7 @@ class InventoryIT {
   static {
     PG = PostgresSupport.start();
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
+    System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
     System.setProperty("shelfj.db.password", PG.password());
     System.setProperty("shelfj.db.schema", "inventory");
@@ -649,6 +650,50 @@ class InventoryIT {
             .header("X-Roles", "OWNER")
             .put(Entity.entity("{\"storeId\":\"" + S + "\"}", MediaType.APPLICATION_JSON));
     assertThat(r.getStatus(), is(400));
+  }
+
+  @Test
+  void receiveWithSameIdempotencyKeyIsNotDoubleCounted() {
+    String variant = UUID.randomUUID().toString();
+    String key = UUID.randomUUID().toString();
+    String body =
+        "{\"storeId\":\""
+            + S
+            + "\",\"variantId\":\""
+            + variant
+            + "\",\"qty\":10,\"batchNo\":\"R\"}";
+
+    Response first = postWithIdempotencyKey("/admin/inventory/receive", body, T, key);
+    assertThat(first.getStatus(), is(201));
+    String firstBatchId = field(first.readEntity(String.class), "id");
+
+    // a client-timeout retry with the same key replays the original batch, not a second one
+    Response retried = postWithIdempotencyKey("/admin/inventory/receive", body, T, key);
+    assertThat(retried.getStatus(), is(201));
+    assertThat(field(retried.readEntity(String.class), "id"), is(firstBatchId));
+
+    String levels =
+        target
+            .path("/admin/inventory/levels")
+            .queryParam("store", S)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    int marker = levels.indexOf("\"variantId\":\"" + variant + "\"");
+    assertThat(marker, not(-1));
+    String row = levels.substring(levels.lastIndexOf('{', marker), levels.indexOf('}', marker) + 1);
+    assertThat(row, containsString("\"onHand\":10.000"));
+  }
+
+  private Response postWithIdempotencyKey(String path, String json, String tenant, String key) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .header(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY, key)
+        .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
   private static String field(String json, String name) {

@@ -407,10 +407,6 @@ public class TenantService {
   }
 
   private static UUID parseUuid(String s, String field) {
-    try {
-      return UUID.fromString(s);
-    } catch (IllegalArgumentException e) {
-      throw new ApiException(400, "INVALID_UUID", field + " must be a UUID", List.of(), e);
-    }
+    return com.shelfj.web.Parsing.uuid(s, field);
   }
 }

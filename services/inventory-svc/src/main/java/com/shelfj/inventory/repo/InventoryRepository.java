@@ -60,11 +60,24 @@ import java.util.UUID;
 public class InventoryRepository extends BaseOutboxRepository {
 
   // ---------------------------------------------------------------- receive
-  /** Create a batch + RECEIVE movement + outbox event, atomically. */
-  public Batch receive(Batch batch, String refType, UUID refId, OutboxRow event) {
+  /**
+   * Create a batch + RECEIVE movement + outbox event, atomically. {@code idempotencyKey} may be
+   * null (event-driven receives dedupe via {@link #receiveOnce} instead); when present, a retried
+   * call with the same key throws {@code BATCH_DUPLICATE_KEY} (409) instead of double-counting
+   * stock — the caller looks the original batch up via {@link #findBatchByIdempotencyKey}.
+   */
+  public Batch receive(
+      Batch batch, String refType, UUID refId, OutboxRow event, String idempotencyKey) {
     return inTx(
         c -> {
-          insertBatch(c, batch);
+          try {
+            insertBatch(c, batch, idempotencyKey);
+          } catch (SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+              throw new ApiException(
+                  409, "BATCH_DUPLICATE_KEY", "duplicate idempotency key", List.of(), sqle);
+            throw sqle;
+          }
           insertMovement(
               c,
               batch.tenantId(),
@@ -79,6 +92,23 @@ public class InventoryRepository extends BaseOutboxRepository {
           return batch;
         },
         "receive stock");
+  }
+
+  /** Look up a previously-received batch by its idempotency key — used to replay a retry. */
+  public Optional<Batch> findBatchByIdempotencyKey(UUID tenantId, String idempotencyKey) {
+    return query(
+            "SELECT id, tenant_id, store_id, variant_id, batch_no, received_qty, remaining_qty,"
+                + " cost_price, expiry_date, created_at, status, material_status,"
+                + " material_status_reason, grade, zone_id"
+                + " FROM inventory_batches WHERE tenant_id=? AND idempotency_key=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, idempotencyKey);
+            },
+            InventoryRepository::mapBatch,
+            "find batch by idempotency key")
+        .stream()
+        .findFirst();
   }
 
   /**
@@ -1682,12 +1712,17 @@ public class InventoryRepository extends BaseOutboxRepository {
   }
 
   private void insertBatch(Connection c, Batch b) throws SQLException {
+    insertBatch(c, b, null);
+  }
+
+  private void insertBatch(Connection c, Batch b, String idempotencyKey) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO inventory_batches"
                 + " (id, tenant_id, store_id, variant_id, batch_no, received_qty,"
-                + " remaining_qty, cost_price, expiry_date, created_at, status, material_status, grade, zone_id)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " remaining_qty, cost_price, expiry_date, created_at, status, material_status,"
+                + " grade, zone_id, idempotency_key)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, b.id());
       ps.setObject(2, b.tenantId());
       ps.setObject(3, b.storeId());
@@ -1702,6 +1737,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setString(12, b.materialStatus() == null ? Batch.MATERIAL_AVAILABLE : b.materialStatus());
       ps.setString(13, b.grade());
       ps.setObject(14, b.zoneId());
+      ps.setString(15, idempotencyKey);
       ps.executeUpdate();
     }
   }

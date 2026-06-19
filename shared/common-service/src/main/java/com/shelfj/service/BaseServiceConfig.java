@@ -18,6 +18,12 @@ public abstract class BaseServiceConfig implements ServiceSettings {
   String dbUrl;
 
   @Inject
+  @ConfigProperty(
+      name = "shelfj.db.migration-url",
+      defaultValue = "jdbc:postgresql://localhost:5432/shelfj")
+  String dbMigrationUrl;
+
+  @Inject
   @ConfigProperty(name = "shelfj.db.user", defaultValue = "shelfj")
   String dbUser;
 
@@ -56,6 +62,11 @@ public abstract class BaseServiceConfig implements ServiceSettings {
   @Override
   public String dbUrl() {
     return dbUrl;
+  }
+
+  @Override
+  public String dbMigrationUrl() {
+    return dbMigrationUrl;
   }
 
   @Override

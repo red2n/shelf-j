@@ -27,7 +27,10 @@ import com.shelfj.product.domain.Domain.VariantWithProduct;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
+import io.lettuce.core.SetArgs;
+import io.lettuce.core.api.sync.RedisCommands;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.Date;
@@ -44,9 +47,64 @@ import java.util.UUID;
 /**
  * Catalog persistence (JDBC). Every query filters tenant_id FIRST (golden rule #3). Writes that
  * emit an event do so via the outbox in the same transaction (golden rule #6).
+ *
+ * <p>{@link #findProduct} is the single highest-traffic read (storefront product page, POS lookup)
+ * and is cached in Redis, cache-aside, with active invalidation on the one write path that mutates
+ * a product row ({@link #updateProductWithOutbox}). Only positive lookups are cached, so a freshly
+ * created product needs no cache priming or invalidation.
  */
 @ApplicationScoped
 public class ProductRepository extends BaseOutboxRepository {
+
+  /**
+   * Field separator for the flat cache encoding — Postgres TEXT columns can never contain a NUL
+   * byte, so this never collides with real content and needs no escaping.
+   */
+  private static final String FS = "\u0000";
+
+  /**
+   * Products change far less often than they're read; a longer TTL than cart's is safe because
+   * every actual write path goes through {@link #updateProductWithOutbox}, which evicts.
+   */
+  private static final long PRODUCT_TTL_SECONDS = 300;
+
+  @Inject RedisCommands<String, String> redis;
+
+  private static String productKey(UUID tenantId, UUID id) {
+    return "product:" + tenantId + ":" + id;
+  }
+
+  private static String encodeProduct(Product p) {
+    return String.join(
+        FS,
+        p.id().toString(),
+        p.tenantId().toString(),
+        p.name(),
+        p.description() == null ? "" : p.description(),
+        p.brandId() == null ? "" : p.brandId().toString(),
+        p.categoryId() == null ? "" : p.categoryId().toString(),
+        p.status(),
+        Boolean.toString(p.sellableOnline()),
+        Boolean.toString(p.sellablePos()),
+        p.createdAt().toString(),
+        p.updatedAt().toString());
+  }
+
+  private static Product decodeProduct(String s) {
+    String[] f = s.split(FS, -1);
+    return new Product(
+        UUID.fromString(f[0]),
+        UUID.fromString(f[1]),
+        f[2],
+        f[3].isEmpty() ? null : f[3],
+        f[4].isEmpty() ? null : UUID.fromString(f[4]),
+        f[5].isEmpty() ? null : UUID.fromString(f[5]),
+        f[6],
+        Boolean.parseBoolean(f[7]),
+        Boolean.parseBoolean(f[8]),
+        Instant.parse(f[9]),
+        Instant.parse(f[10]));
+  }
 
   // ─────────────────────────────────────────────────────────────── brands
 
@@ -240,45 +298,56 @@ public class ProductRepository extends BaseOutboxRepository {
   }
 
   public Product updateProductWithOutbox(Product p, OutboxRow event) {
-    return inTx(
-        c -> {
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "UPDATE products SET name=?, description=?, brand_id=?, category_id=?,"
-                      + " status=?, sellable_online=?, sellable_pos=?, updated_at=?"
-                      + " WHERE tenant_id=? AND id=?")) {
-            ps.setString(1, p.name());
-            ps.setString(2, p.description());
-            ps.setObject(3, p.brandId());
-            ps.setObject(4, p.categoryId());
-            ps.setString(5, p.status());
-            ps.setBoolean(6, p.sellableOnline());
-            ps.setBoolean(7, p.sellablePos());
-            ps.setObject(8, p.updatedAt().atOffset(ZoneOffset.UTC));
-            ps.setObject(9, p.tenantId());
-            ps.setObject(10, p.id());
-            if (ps.executeUpdate() == 0)
-              throw ApiException.notFound("PRODUCT_NOT_FOUND", "No such product in this tenant");
-          }
-          insertOutbox(c, event);
-          return p;
-        },
-        "update product");
+    Product updated =
+        inTx(
+            c -> {
+              try (PreparedStatement ps =
+                  c.prepareStatement(
+                      "UPDATE products SET name=?, description=?, brand_id=?, category_id=?,"
+                          + " status=?, sellable_online=?, sellable_pos=?, updated_at=?"
+                          + " WHERE tenant_id=? AND id=?")) {
+                ps.setString(1, p.name());
+                ps.setString(2, p.description());
+                ps.setObject(3, p.brandId());
+                ps.setObject(4, p.categoryId());
+                ps.setString(5, p.status());
+                ps.setBoolean(6, p.sellableOnline());
+                ps.setBoolean(7, p.sellablePos());
+                ps.setObject(8, p.updatedAt().atOffset(ZoneOffset.UTC));
+                ps.setObject(9, p.tenantId());
+                ps.setObject(10, p.id());
+                if (ps.executeUpdate() == 0)
+                  throw ApiException.notFound(
+                      "PRODUCT_NOT_FOUND", "No such product in this tenant");
+              }
+              insertOutbox(c, event);
+              return p;
+            },
+            "update product");
+    redis.del(productKey(p.tenantId(), p.id()));
+    return updated;
   }
 
   public Optional<Product> findProduct(UUID tenantId, UUID id) {
-    return query(
-            "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
-                + " sellable_online, sellable_pos, created_at, updated_at"
-                + " FROM products WHERE tenant_id = ? AND id = ?",
-            ps -> {
-              ps.setObject(1, tenantId);
-              ps.setObject(2, id);
-            },
-            ProductRepository::mapProduct,
-            "find product")
-        .stream()
-        .findFirst();
+    String cacheKey = productKey(tenantId, id);
+    String cached = redis.get(cacheKey);
+    if (cached != null) return Optional.of(decodeProduct(cached));
+    Optional<Product> fresh =
+        query(
+                "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
+                    + " sellable_online, sellable_pos, created_at, updated_at"
+                    + " FROM products WHERE tenant_id = ? AND id = ?",
+                ps -> {
+                  ps.setObject(1, tenantId);
+                  ps.setObject(2, id);
+                },
+                ProductRepository::mapProduct,
+                "find product")
+            .stream()
+            .findFirst();
+    fresh.ifPresent(
+        p -> redis.set(cacheKey, encodeProduct(p), SetArgs.Builder.ex(PRODUCT_TTL_SECONDS)));
+    return fresh;
   }
 
   /**

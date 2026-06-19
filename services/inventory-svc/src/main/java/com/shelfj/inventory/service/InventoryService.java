@@ -59,7 +59,7 @@ public class InventoryService {
   @Inject InventoryRepository repo;
   @Inject SerialRepository serialRepo;
 
-  // ---- receive (also the path the GoodsReceived consumer uses) ----
+  // ---- receive (manual GRN entry; event-driven receives go through receiveOnce instead) ----
   public Batch receive(
       UUID tenantId,
       UUID storeId,
@@ -70,7 +70,8 @@ public class InventoryService {
       LocalDate expiry,
       String refType,
       UUID refId,
-      UUID zoneId) {
+      UUID zoneId,
+      String idempotencyKey) {
     UUID batchId = UUID.randomUUID();
     var batch =
         new Batch(
@@ -96,7 +97,16 @@ public class InventoryService {
             tenantId,
             batchId,
             Events.stockReceived(tenantId, storeId, variantId, batchId, qty));
-    return repo.receive(batch, refType, refId, event);
+    try {
+      return repo.receive(batch, refType, refId, event, idempotencyKey);
+    } catch (ApiException e) {
+      // Idempotent replay: a retried receipt with the same key gets the original batch back
+      // instead of double-counting stock (golden rule #11).
+      if ("BATCH_DUPLICATE_KEY".equals(e.code()) && idempotencyKey != null) {
+        return repo.findBatchByIdempotencyKey(tenantId, idempotencyKey).orElseThrow(() -> e);
+      }
+      throw e;
+    }
   }
 
   // ---- Gap #50: POS→SIM deduction (order fulfilled) ----
@@ -149,7 +159,7 @@ public class InventoryService {
   public void receiveReturnFromOrder(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
     Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
-    repo.receive(batch, "RETURN", orderId, stockReceivedEvent(batch));
+    repo.receive(batch, "RETURN", orderId, stockReceivedEvent(batch), null);
   }
 
   /** {@link #receiveReturnFromOrder} deduped on {@code dedupeId} (see deductSaleFromOrderOnce). */
@@ -1234,11 +1244,7 @@ public class InventoryService {
   }
 
   static UUID parseUuid(String s, String field) {
-    try {
-      return UUID.fromString(s);
-    } catch (RuntimeException e) {
-      throw new ApiException(400, "INVALID_UUID", field + " must be a UUID", List.of(), e);
-    }
+    return com.shelfj.web.Parsing.uuid(s, field);
   }
 
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
@@ -1573,7 +1579,7 @@ public class InventoryService {
             tenantId,
             sourceBatchId,
             Events.lotSplit(tenantId, sourceBatchId, newBatchId, qty));
-    Batch newBatch = repo.receive(splitBatch, "LOT_SPLIT", sourceBatchId, splitEvent);
+    Batch newBatch = repo.receive(splitBatch, "LOT_SPLIT", sourceBatchId, splitEvent, null);
     LotAction action =
         repo.insertLotAction(tenantId, LotAction.SPLIT, sourceBatchId, newBatch.id(), qty, notes);
     return new LotSplitResult(newBatch, action);

@@ -312,12 +312,7 @@ public class ProductService {
     if (!ItemCrossReference.SUPPLIER.equals(type) && !ItemCrossReference.CUSTOMER.equals(type)) {
       throw ApiException.badRequest("INVALID_PARTY_TYPE", "partyType must be SUPPLIER or CUSTOMER");
     }
-    UUID partyId;
-    try {
-      partyId = UUID.fromString(req.partyId());
-    } catch (IllegalArgumentException e) {
-      throw new ApiException(400, "INVALID_UUID", "partyId must be a UUID", List.of(), e);
-    }
+    UUID partyId = com.shelfj.web.Parsing.uuid(req.partyId(), "partyId");
     getVariant(tenantId, variantId);
     return repo.createCrossReference(
         new ItemCrossReference(
@@ -348,12 +343,7 @@ public class ProductService {
 
   public ItemRelationship createRelationship(
       UUID tenantId, UUID variantId, CreateItemRelationshipRequest req) {
-    UUID relatedId;
-    try {
-      relatedId = UUID.fromString(req.relatedVariantId());
-    } catch (IllegalArgumentException e) {
-      throw new ApiException(400, "INVALID_UUID", "relatedVariantId must be a UUID", List.of(), e);
-    }
+    UUID relatedId = com.shelfj.web.Parsing.uuid(req.relatedVariantId(), "relatedVariantId");
     String type = req.relationshipType().toUpperCase(java.util.Locale.ROOT);
     if (!ItemRelationship.SUBSTITUTE.equals(type) && !ItemRelationship.COMPLEMENTARY.equals(type)) {
       throw ApiException.badRequest(
@@ -999,12 +989,7 @@ public class ProductService {
   }
 
   private static UUID parseOptionalUuid(String s, String field) {
-    if (s == null || s.isBlank()) return null;
-    try {
-      return UUID.fromString(s);
-    } catch (IllegalArgumentException e) {
-      throw new ApiException(400, "INVALID_UUID", field + " must be a UUID", List.of(), e);
-    }
+    return s == null || s.isBlank() ? null : com.shelfj.web.Parsing.uuid(s, field);
   }
 
   // ── Supplier CSV import ────────────────────────────────────────────────────

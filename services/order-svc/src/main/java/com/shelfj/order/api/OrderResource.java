@@ -22,7 +22,6 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.UUID;
 
@@ -169,17 +168,7 @@ public class OrderResource {
   // ─────────────────────────────────────────────────────────────────── utils
 
   private static Instant parseInstant(String s, String field) {
-    if (s == null || s.isBlank()) return null;
-    try {
-      return Instant.parse(s);
-    } catch (DateTimeParseException e) {
-      throw new com.shelfj.web.ApiException(
-          400,
-          "INVALID_DATE",
-          field + " must be ISO-8601 (e.g. 2025-01-01T00:00:00Z)",
-          List.of(),
-          e);
-    }
+    return s == null || s.isBlank() ? null : com.shelfj.web.Parsing.instant(s, field);
   }
 
   @GET

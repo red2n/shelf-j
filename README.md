@@ -916,7 +916,7 @@ Build in this order. Do not start a phase until the previous one's exit check pa
 
 ## 12. Local development
 
-> **Phase 0 + Phase 1 are implemented.** Platform (gateway, discovery, config) and all back-office business services are live. See [docs/SCAFFOLDING-STATUS.md](docs/SCAFFOLDING-STATUS.md) for current build status.
+> **All 12 business services + platform (gateway, discovery, config) are implemented.** See [AUDIT.md](AUDIT.md) for current gap analysis and audit status.
 
 **Prerequisites:** **JDK 21** (Temurin), Maven 3.9+, Docker + Docker Compose.
 

@@ -763,7 +763,7 @@ shelfj:
 - [README.md](../../README.md) — System overview
 - [docs/coding-standards.md](../coding-standards.md) — SQL + SOLID rules
 - [docs/onboarding-and-locations.md](../onboarding-and-locations.md) — Tenant + store model
-- [FLOW_GUARD_TEST_GUIDE.md](../../k6/FLOW_GUARD_TEST_GUIDE.md) — How endpoints are tested
+- [k6/README.md](../../k6/README.md) — How endpoints are tested
 
 ---
 

@@ -20,6 +20,11 @@ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN
     EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', role_name, role_password);
   END IF;
+  -- Role-level default so search_path is correct on every NEW backend session regardless of
+  -- which physical connection PgBouncer hands out for a given transaction (transaction pool_mode
+  -- does not preserve a client-issued "SET search_path" across backend reassignment — only a
+  -- role-level default, applied by Postgres itself at session start, survives pooling).
+  EXECUTE format('ALTER ROLE %I SET search_path = %I', role_name, schema_name);
   EXECUTE format('CREATE SCHEMA IF NOT EXISTS %I', schema_name);
   EXECUTE format('GRANT CONNECT ON DATABASE shelfj TO %I', role_name);
   EXECUTE format('GRANT USAGE, CREATE ON SCHEMA %I TO %I', schema_name, role_name);

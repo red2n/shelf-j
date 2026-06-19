@@ -6,7 +6,6 @@ import com.shelfj.inventory.dto.Dtos.ReservationResponse;
 import com.shelfj.inventory.dto.Dtos.ReserveRequest;
 import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
-import com.shelfj.web.ApiException;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
@@ -104,10 +103,6 @@ public class ReservationResource {
   }
 
   private static UUID uuid(String s, String field) {
-    try {
-      return UUID.fromString(s);
-    } catch (RuntimeException e) {
-      throw new ApiException(400, "INVALID_UUID", field + " must be a UUID", List.of(), e);
-    }
+    return com.shelfj.web.Parsing.uuid(s, field);
   }
 }

@@ -44,7 +44,11 @@ volumes:
 # ── YAML anchors — shared blocks to avoid repeating 8 env vars per service ──
 x-svc-env: &svc-env
   server.port: "8080"
-  shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
+  # Runtime app pool goes through PgBouncer (golden rule: don't orphan provisioned infra).
+  # Flyway gets its own direct-to-Postgres URL below — its DDL migrations run as multi-statement
+  # transactions that need full session affinity, which PgBouncer's transaction pool_mode breaks.
+  shelfj.db.url: jdbc:postgresql://pgbouncer:6432/${POSTGRES_DB:-shelfj}
+  shelfj.db.migration-url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
   shelfj.db.user: ${POSTGRES_USER:-shelfj}
   shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
   shelfj.consul.host: consul
@@ -53,10 +57,11 @@ x-svc-env: &svc-env
   otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
 
 x-svc-depends: &svc-depends
-  postgres: { condition: service_healthy }
-  kafka:    { condition: service_healthy }
-  consul:   { condition: service_healthy }
-  config:   { condition: service_healthy }
+  postgres:  { condition: service_healthy }
+  pgbouncer: { condition: service_healthy }
+  kafka:     { condition: service_healthy }
+  consul:    { condition: service_healthy }
+  config:    { condition: service_healthy }
 
 x-svc-healthcheck: &svc-healthcheck
 # eclipse-temurin:21-jre ships curl but not wget.
@@ -134,9 +139,10 @@ services:
       retries: 12
 
   # PgBouncer — connection pooler (transaction mode, 2000 app → 150 real connections).
-  # Business services connect to postgres:5432 directly so that embedded Flyway DDL
-  # transactions work without transaction-mode restrictions. Switch app pools to
-  # pgbouncer:6432 once Flyway is separated from the application lifecycle.
+  # Business services route their runtime pool through pgbouncer:6432 (shelfj.db.url, set in
+  # x-svc-env above). Flyway uses its own shelfj.db.migration-url straight to postgres:5432 —
+  # its DDL migrations are multi-statement transactions that need full session affinity, which
+  # this pooler's transaction pool_mode does not guarantee mid-migration.
   # NOTE: auth_type=trust is fine for local dev (no external access). Change to
   # scram-sha-256 for any shared or internet-facing deployment.
   pgbouncer:
@@ -595,9 +601,15 @@ services:
       shelfj.db.password: ${CART_DB_PASSWORD:-cart_dev_change_me}
       JAVA_TOOL_OPTIONS: "${CART_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: cart-svc
+      # Backs the cart/cart-items cache-aside reads (see CartRepository).
+      shelfj.redis.host: redis
+      shelfj.redis.port: "6379"
+      shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
     mem_limit: ${CART_MEM_LIMIT:-512m}
     networks: [shelfj_network]
-    depends_on: *svc-depends
+    depends_on:
+      <<: *svc-depends
+      redis: { condition: service_healthy }
     healthcheck: *svc-healthcheck
 
   pricing-svc:
@@ -652,9 +664,15 @@ services:
       shelfj.db.password: ${PRODUCT_DB_PASSWORD:-product_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PRODUCT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: product-svc
+      # Backs the findProduct cache-aside read (see ProductRepository).
+      shelfj.redis.host: redis
+      shelfj.redis.port: "6379"
+      shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
     mem_limit: ${PRODUCT_MEM_LIMIT:-700m}
     networks: [shelfj_network]
-    depends_on: *svc-depends
+    depends_on:
+      <<: *svc-depends
+      redis: { condition: service_healthy }
     healthcheck: *svc-healthcheck
 
   customer-svc:

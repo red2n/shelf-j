@@ -459,13 +459,8 @@ public class AdminResource {
       @PathParam("variantId") UUID variantId, CreateRevisionRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
-    java.time.LocalDate effectiveDate;
-    try {
-      effectiveDate = java.time.LocalDate.parse(req.effectiveDate());
-    } catch (java.time.format.DateTimeParseException e) {
-      throw new com.shelfj.web.ApiException(
-          400, "INVALID_DATE", "effectiveDate must be ISO date (yyyy-MM-dd)", List.of(), e);
-    }
+    java.time.LocalDate effectiveDate =
+        com.shelfj.web.Parsing.date(req.effectiveDate(), "effectiveDate");
     var rev =
         service.createRevision(
             tenantId, variantId, req.revision(), req.description(), effectiveDate);
@@ -883,12 +878,6 @@ public class AdminResource {
   }
 
   private static UUID parseOptional(String s, String field) {
-    if (s == null || s.isBlank()) return null;
-    try {
-      return UUID.fromString(s);
-    } catch (IllegalArgumentException e) {
-      throw new com.shelfj.web.ApiException(
-          400, "INVALID_UUID", field + " must be a UUID", List.of(), e);
-    }
+    return s == null || s.isBlank() ? null : com.shelfj.web.Parsing.uuid(s, field);
   }
 }

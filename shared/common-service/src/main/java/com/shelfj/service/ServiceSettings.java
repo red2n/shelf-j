@@ -14,6 +14,16 @@ public interface ServiceSettings {
 
   String dbUrl();
 
+  /**
+   * JDBC URL Flyway migrates against. Defaults to {@link #dbUrl()}, but a service can point this
+   * directly at Postgres while {@link #dbUrl()} points at PgBouncer — Flyway's multi-statement DDL
+   * transactions need full session affinity, which PgBouncer's {@code transaction} pool_mode does
+   * not guarantee.
+   */
+  default String dbMigrationUrl() {
+    return dbUrl();
+  }
+
   String dbUser();
 
   String dbPassword();

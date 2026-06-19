@@ -49,12 +49,7 @@ public class CashMovementService {
       UUID tenantId, UUID generatedBy, GenerateZReportRequest req, TenantContext ctx) {
     UUID storeId = UUID.fromString(req.storeId());
     ctx.requireStoreAccess(storeId);
-    LocalDate businessDate;
-    try {
-      businessDate = LocalDate.parse(req.businessDate());
-    } catch (Exception e) {
-      throw new ApiException(400, "INVALID_DATE", "businessDate must be yyyy-MM-dd", List.of(), e);
-    }
+    LocalDate businessDate = com.shelfj.web.Parsing.date(req.businessDate(), "businessDate");
     String currency =
         req.currency() == null || req.currency().isBlank()
             ? "GBP"
@@ -66,12 +61,7 @@ public class CashMovementService {
   public ZReportResponse getZReport(
       UUID tenantId, UUID storeId, String businessDate, TenantContext ctx) {
     ctx.requireStoreAccess(storeId);
-    LocalDate date;
-    try {
-      date = LocalDate.parse(businessDate);
-    } catch (Exception e) {
-      throw new ApiException(400, "INVALID_DATE", "businessDate must be yyyy-MM-dd", List.of(), e);
-    }
+    LocalDate date = com.shelfj.web.Parsing.date(businessDate, "businessDate");
     return repo.findZReport(tenantId, storeId, date)
         .orElseThrow(
             () ->
