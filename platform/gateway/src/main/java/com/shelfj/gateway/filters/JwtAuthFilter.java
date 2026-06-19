@@ -89,6 +89,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     ctx.getHeaders().remove(HttpHeaders.TENANT_ID);
     ctx.getHeaders().remove(HttpHeaders.USER_ID);
     ctx.getHeaders().remove(HttpHeaders.ROLES);
+    ctx.getHeaders().remove(HttpHeaders.STORE_IDS);
 
     // Allow public auth paths without a token.
     if (isPublic(path)) {
@@ -133,6 +134,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     String userId = jwt.getSubject();
     String tenantId = jwt.getClaim("tenant").asString();
     List<String> roles = jwt.getClaim("roles").asList(String.class);
+    List<String> storeIds = jwt.getClaim("storeIds").asList(String.class);
 
     if (userId != null) {
       ctx.getHeaders().putSingle(HttpHeaders.USER_ID, userId);
@@ -158,6 +160,9 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     }
     if (roles != null && !roles.isEmpty()) {
       ctx.getHeaders().putSingle(HttpHeaders.ROLES, String.join(",", roles));
+    }
+    if (storeIds != null && !storeIds.isEmpty()) {
+      ctx.getHeaders().putSingle(HttpHeaders.STORE_IDS, String.join(",", storeIds));
     }
 
     // Restore preserved tenant ID for onboarding paths (flow guard: user provides tenant context)

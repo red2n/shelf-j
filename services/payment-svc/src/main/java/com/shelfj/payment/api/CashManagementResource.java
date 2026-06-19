@@ -40,7 +40,7 @@ public class CashManagementResource {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID userId = ctx.userId();
-    var session = svc.openTill(tenantId, userId, req);
+    var session = svc.openTill(tenantId, userId, req, ctx);
     return Response.status(201).entity(ApiResponse.ok(session)).build();
   }
 
@@ -49,7 +49,7 @@ public class CashManagementResource {
   @Path("/{id}")
   public Response get(@PathParam("id") UUID id) {
     ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
-    return Response.ok(ApiResponse.ok(svc.getSession(ctx.requireTenantId(), id))).build();
+    return Response.ok(ApiResponse.ok(svc.getSession(ctx.requireTenantId(), id, ctx))).build();
   }
 
   /** Record a cash drop (mid-shift safe drop). MANAGER or above. */
@@ -60,7 +60,7 @@ public class CashManagementResource {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID userId = ctx.userId();
-    var drop = svc.recordDrop(tenantId, id, userId, req.amount(), req.notes());
+    var drop = svc.recordDrop(tenantId, id, userId, req.amount(), req.notes(), ctx);
     return Response.status(201).entity(ApiResponse.ok(drop)).build();
   }
 
@@ -69,7 +69,7 @@ public class CashManagementResource {
   @Path("/{id}/x-report")
   public Response xReport(@PathParam("id") UUID id) {
     ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
-    return Response.ok(ApiResponse.ok(svc.xReport(ctx.requireTenantId(), id))).build();
+    return Response.ok(ApiResponse.ok(svc.xReport(ctx.requireTenantId(), id, ctx))).build();
   }
 
   /** Z-report: end-of-day close. Requires counted cash amount. MANAGER or above. */
@@ -78,6 +78,6 @@ public class CashManagementResource {
   public Response close(@PathParam("id") UUID id, CloseTillRequest req) {
     ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
     Validations.validate(req);
-    return Response.ok(ApiResponse.ok(svc.zReport(ctx.requireTenantId(), id, req))).build();
+    return Response.ok(ApiResponse.ok(svc.zReport(ctx.requireTenantId(), id, req, ctx))).build();
   }
 }

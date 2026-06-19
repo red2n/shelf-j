@@ -23,8 +23,10 @@ import java.util.UUID;
  * store. The claim shape stays the same.
  *
  * <p>Claims: {@code sub}=userId, {@code tenant}=tenantId (absent for global customers), {@code
- * roles}=string list, {@code type}=STAFF|CUSTOMER. These map to what the gateway forwards as
- * X-Tenant-Id / X-User-Id / X-Roles.
+ * roles}=string list, {@code type}=STAFF|CUSTOMER, {@code storeIds}=string list (absent means
+ * unrestricted — e.g. OWNER/PLATFORM_ADMIN — present means the holder may only operate in those
+ * stores, e.g. a CASHIER bound to one store). These map to what the gateway forwards as X-Tenant-Id
+ * / X-User-Id / X-Roles / X-Store-Ids.
  */
 @ApplicationScoped
 public class JwtService {
@@ -47,7 +49,8 @@ public class JwtService {
   }
 
   /** Issue a signed access token for a user. */
-  public String issueAccessToken(UUID userId, UUID tenantId, String userType, Set<String> roles) {
+  public String issueAccessToken(
+      UUID userId, UUID tenantId, String userType, Set<String> roles, Set<UUID> storeIds) {
     Instant now = Instant.now();
     var builder =
         JWT.create()
@@ -59,6 +62,12 @@ public class JwtService {
             .withExpiresAt(now.plusSeconds(config.accessTtlSeconds()));
     if (tenantId != null) {
       builder.withClaim("tenant", tenantId.toString());
+    }
+    // Omitted (not an empty claim) when unrestricted, so the gateway/TenantContext distinguish
+    // "no claim present" from "claim present but empty" — both mean unrestricted, but only the
+    // omitted form is what an unrestricted-access user (OWNER/PLATFORM_ADMIN) actually carries.
+    if (storeIds != null && !storeIds.isEmpty()) {
+      builder.withClaim("storeIds", storeIds.stream().map(UUID::toString).toList());
     }
     return builder.sign(algorithm);
   }

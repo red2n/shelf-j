@@ -63,6 +63,7 @@ public class OrderService {
 
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = UUID.fromString(req.storeId());
+    ctx.requireStoreAccess(storeId);
 
     if (!tenantStatusRepo.isActive(tenantId))
       throw ApiException.conflict(
@@ -313,6 +314,7 @@ public class OrderService {
     Order order =
         repo.findOrder(tenantId, orderId)
             .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
+    ctx.requireStoreAccess(order.storeId());
 
     if (Order.STATUS_CANCELLED.equals(order.status()) || Order.STATUS_VOIDED.equals(order.status()))
       throw ApiException.conflict(
@@ -380,6 +382,7 @@ public class OrderService {
     Order order =
         repo.findOrder(tenantId, orderId)
             .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
+    ctx.requireStoreAccess(order.storeId());
     if (!Order.CHANNEL_POS.equals(order.channel()))
       throw ApiException.conflict("ORDER_VOID_ONLY_POS", "void is only allowed on POS orders");
     return repo.voidOrder(
@@ -399,6 +402,7 @@ public class OrderService {
 
     UUID tenantId = ctx.tenantId();
     UUID storeId = UUID.fromString(req.storeId());
+    ctx.requireStoreAccess(storeId);
     UUID customerId = req.customerId() != null ? UUID.fromString(req.customerId()) : null;
     UUID layawayId = UUID.randomUUID();
 
@@ -493,6 +497,8 @@ public class OrderService {
 
   public GiftCard issueGiftCard(IssueGiftCardRequest req, TenantContext ctx) {
     UUID tenantId = ctx.tenantId();
+    UUID storeId = UUID.fromString(req.storeId());
+    ctx.requireStoreAccess(storeId);
     UUID gcId = UUID.randomUUID();
     String code = generateGiftCardCode();
     String currency = req.currency() != null ? req.currency() : "USD";
@@ -502,7 +508,7 @@ public class OrderService {
         new GiftCard(
             gcId,
             tenantId,
-            UUID.fromString(req.storeId()),
+            storeId,
             code,
             req.amount(),
             req.amount(),
@@ -598,13 +604,15 @@ public class OrderService {
 
   // ── Gap #42: Special orders ───────────────────────────────────────────────
 
-  public SpecialOrder createSpecialOrder(UUID tenantId, CreateSpecialOrderRequest req) {
+  public SpecialOrder createSpecialOrder(
+      UUID tenantId, CreateSpecialOrderRequest req, TenantContext ctx) {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest(
           "SPECIAL_ORDER_NO_ITEMS", "special order must have at least one item");
 
     UUID soId = UUID.randomUUID();
     UUID storeId = UUID.fromString(req.storeId());
+    ctx.requireStoreAccess(storeId);
     UUID customerId = req.customerId() != null ? UUID.fromString(req.customerId()) : null;
     String currency = req.currency() != null ? req.currency() : "GBP";
 

@@ -95,6 +95,34 @@ public class UserRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Stores this user may operate in, for the JWT {@code storeIds} claim. A {@code NULL store_id}
+   * row (a tenant-wide role like OWNER/PLATFORM_ADMIN) grants unrestricted access — signalled by
+   * returning an <strong>empty set</strong> — because a tenant-wide grant must not be narrowed by
+   * also holding a store-scoped role elsewhere. Otherwise the result is the distinct {@code
+   * store_id} values the user is bound to, and callers must treat that as an allow-list.
+   */
+  public Set<UUID> storeScopeOf(UUID userId) {
+    String sql = "SELECT store_id FROM user_roles WHERE user_id = ?";
+    Set<UUID> storeIds = new java.util.HashSet<>();
+    try (var c = dataSource.getConnection();
+        var ps = c.prepareStatement(sql)) {
+      ps.setObject(1, userId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          UUID storeId = (UUID) rs.getObject(1);
+          if (storeId == null) {
+            return Set.of();
+          }
+          storeIds.add(storeId);
+        }
+      }
+      return storeIds;
+    } catch (SQLException e) {
+      throw dbError("load store scope", e);
+    }
+  }
+
   // --- atomic write: create user + assign role + write outbox event in one transaction ---
 
   /**

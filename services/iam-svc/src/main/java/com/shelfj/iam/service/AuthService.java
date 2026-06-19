@@ -260,7 +260,8 @@ public class AuthService {
 
   private TokenResponse issueTokens(User user) {
     Set<String> roles = users.rolesOf(user.id());
-    String access = jwt.issueAccessToken(user.id(), user.tenantId(), user.type(), roles);
+    Set<UUID> storeIds = users.storeScopeOf(user.id());
+    String access = jwt.issueAccessToken(user.id(), user.tenantId(), user.type(), roles, storeIds);
 
     String refresh = Tokens.newOpaqueToken();
     refreshTokens.store(

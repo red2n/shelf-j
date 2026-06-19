@@ -39,7 +39,7 @@ public class CashMovementResource {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID recordedBy = ctx.userId();
-    var movement = svc.recordMovement(tenantId, recordedBy, req);
+    var movement = svc.recordMovement(tenantId, recordedBy, req, ctx);
     return Response.status(201)
         .entity(ApiResponse.ok(movement, ApiResponse.Meta.of(ctx.requestId())))
         .build();
@@ -64,7 +64,7 @@ public class CashMovementResource {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID generatedBy = ctx.userId();
-    var report = svc.generateZReport(tenantId, generatedBy, req);
+    var report = svc.generateZReport(tenantId, generatedBy, req, ctx);
     return Response.status(201)
         .entity(ApiResponse.ok(report, ApiResponse.Meta.of(ctx.requestId())))
         .build();
@@ -78,7 +78,7 @@ public class CashMovementResource {
     ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
-        svc.getZReport(tenantId, UUID.fromString(storeId), businessDate),
+        svc.getZReport(tenantId, UUID.fromString(storeId), businessDate, ctx),
         ApiResponse.Meta.of(ctx.requestId()));
   }
 }

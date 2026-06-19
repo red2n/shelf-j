@@ -25,6 +25,7 @@ public class TenantContext {
   private UUID tenantId;
   private UUID userId;
   private Set<String> roles = Set.of();
+  private Set<UUID> storeIds = Set.of();
   private String requestId;
 
   public UUID tenantId() {
@@ -37,6 +38,11 @@ public class TenantContext {
 
   public Set<String> roles() {
     return roles;
+  }
+
+  /** Stores the caller may operate in. Empty means unrestricted (e.g. OWNER/PLATFORM_ADMIN). */
+  public Set<UUID> storeIds() {
+    return storeIds;
   }
 
   public String requestId() {
@@ -81,11 +87,25 @@ public class TenantContext {
     throw ApiException.forbidden("FORBIDDEN", "Insufficient role for this operation");
   }
 
+  /**
+   * Throw 403 if the caller is store-restricted and {@code storeId} is not one of their assigned
+   * stores. A caller with no store restriction (empty {@link #storeIds()} — e.g. OWNER,
+   * PLATFORM_ADMIN) may operate on any store in their tenant, so this is a no-op for them.
+   *
+   * <pre>{@code ctx.requireStoreAccess(storeId); }</pre>
+   */
+  public void requireStoreAccess(UUID storeId) {
+    if (!storeIds.isEmpty() && !storeIds.contains(storeId)) {
+      throw ApiException.forbidden("STORE_ACCESS_DENIED", "Caller is not assigned to this store");
+    }
+  }
+
   // --- populated by the filter ---
-  void set(UUID tenantId, UUID userId, Set<String> roles, String requestId) {
+  void set(UUID tenantId, UUID userId, Set<String> roles, Set<UUID> storeIds, String requestId) {
     this.tenantId = tenantId;
     this.userId = userId;
     this.roles = roles == null ? Set.of() : Set.copyOf(roles);
+    this.storeIds = storeIds == null ? Set.of() : Set.copyOf(storeIds);
     this.requestId = requestId;
   }
 }

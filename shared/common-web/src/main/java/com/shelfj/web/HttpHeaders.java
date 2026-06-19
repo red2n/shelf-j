@@ -24,6 +24,13 @@ public final class HttpHeaders {
   /** Comma-separated roles extracted from the verified JWT by the gateway. */
   public static final String ROLES = "X-Roles";
 
+  /**
+   * Comma-separated store ids the caller may operate in, extracted from the verified JWT's {@code
+   * storeIds} claim. Absent (no header at all) means unrestricted — a tenant-wide role like
+   * OWNER/PLATFORM_ADMIN — never an empty-but-present value.
+   */
+  public static final String STORE_IDS = "X-Store-Ids";
+
   /** Idempotency key for retryable writes (checkout, payment capture, stock receipt). */
   public static final String IDEMPOTENCY_KEY = "Idempotency-Key";
 }
