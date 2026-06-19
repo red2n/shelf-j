@@ -1,18 +1,58 @@
 package com.shelfj.gateway.filters;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.shelfj.test.RedisSupport;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.api.StatefulRedisConnection;
 import java.time.Duration;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Counters now live in Redis (shared across gateway replicas) instead of gateway heap, so these
+ * tests run against a real Redis container rather than mocking the storage layer.
+ */
 class BruteForceProtectionServiceTest {
+
+  private static RedisSupport REDIS;
+  private static RedisClient client;
+  private static StatefulRedisConnection<String, String> connection;
+
+  private BruteForceProtectionService protection;
+
+  @BeforeAll
+  static void startRedis() {
+    REDIS = RedisSupport.start();
+    client = RedisClient.create(RedisURI.Builder.redis(REDIS.host(), REDIS.port()).build());
+    connection = client.connect();
+  }
+
+  @AfterAll
+  static void stopRedis() {
+    connection.close();
+    client.shutdown();
+    REDIS.stop();
+  }
+
+  @BeforeEach
+  void setUp() {
+    connection.sync().flushall();
+    protection = new BruteForceProtectionService(connection.sync(), 3, Duration.ofMinutes(10));
+  }
+
+  @AfterEach
+  void cleanUp() {
+    connection.sync().flushall();
+  }
 
   @Test
   void shouldBlockAfterMaxFailures() {
-    BruteForceProtectionService protection =
-        new BruteForceProtectionService(3, Duration.ofMinutes(10));
     String key = "user:bob";
 
     assertFalse(protection.isBlocked(key));
@@ -26,8 +66,6 @@ class BruteForceProtectionServiceTest {
 
   @Test
   void shouldResetAfterSuccessfulLogin() {
-    BruteForceProtectionService protection =
-        new BruteForceProtectionService(3, Duration.ofMinutes(10));
     String key = "user:bob";
 
     protection.recordFailure(key);
@@ -38,19 +76,28 @@ class BruteForceProtectionServiceTest {
   }
 
   @Test
-  void capEvictsTheLeastRecentlyActiveEntryNotAnArbitraryOne() {
-    BruteForceProtectionService protection =
-        new BruteForceProtectionService(3, Duration.ofMinutes(10));
+  void distinctKeysAreTrackedIndependently() {
+    protection.recordFailure("user:alice");
+    protection.recordFailure("user:alice");
+    protection.recordFailure("user:alice");
 
-    String firstKey = "user:0";
-    for (int i = 0; i <= BruteForceProtectionService.MAX_ENTRIES; i++) {
-      protection.recordFailure("user:" + i);
-    }
-    String lastKey = "user:" + BruteForceProtectionService.MAX_ENTRIES;
+    assertTrue(protection.isBlocked("user:alice"));
+    assertFalse(protection.isBlocked("user:carol"));
+  }
 
-    assertEquals(BruteForceProtectionService.MAX_ENTRIES, protection.stateByKey.size());
-    assertFalse(
-        protection.stateByKey.containsKey(firstKey), "oldest entry should have been evicted");
-    assertTrue(protection.stateByKey.containsKey(lastKey), "newest entry should be kept");
+  @Test
+  void stateIsSharedAcrossInstancesViaRedis() {
+    // The whole point of the fix: a second service instance (i.e. a second gateway replica) must
+    // see the same block, because it lives in Redis rather than per-instance heap.
+    BruteForceProtectionService secondReplica =
+        new BruteForceProtectionService(connection.sync(), 3, Duration.ofMinutes(10));
+    String key = "user:dave";
+
+    protection.recordFailure(key);
+    secondReplica.recordFailure(key);
+    secondReplica.recordFailure(key);
+
+    assertTrue(secondReplica.isBlocked(key));
+    assertTrue(protection.isBlocked(key));
   }
 }

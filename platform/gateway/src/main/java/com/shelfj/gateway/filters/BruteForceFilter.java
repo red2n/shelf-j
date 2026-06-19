@@ -2,6 +2,7 @@ package com.shelfj.gateway.filters;
 
 import com.shelfj.gateway.GatewayConfig;
 import io.helidon.webserver.http.ServerRequest;
+import io.lettuce.core.api.sync.RedisCommands;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -45,6 +46,8 @@ public class BruteForceFilter implements ContainerRequestFilter, ContainerRespon
 
   @Inject GatewayConfig config;
 
+  @Inject RedisCommands<String, String> redis;
+
   @Context ServerRequest serverRequest;
 
   private BruteForceProtectionService protection;
@@ -53,6 +56,7 @@ public class BruteForceFilter implements ContainerRequestFilter, ContainerRespon
   void init() {
     protection =
         new BruteForceProtectionService(
+            redis,
             config.bruteForceMaxFailures(),
             java.time.Duration.ofMinutes(config.bruteForceBlockMinutes()));
   }

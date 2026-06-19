@@ -73,6 +73,14 @@
             <version>4.5.0</version>
         </dependency>
 
+        <!-- Redis — backs rate-limit + brute-force counters so they're shared across gateway
+             replicas instead of living in per-instance heap (golden rule: discover/share state,
+             don't hardcode it locally). -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+
         <!-- JSON-B for any JSON responses the gateway itself emits (errors) -->
         <dependency>
             <groupId>org.glassfish.jersey.media</groupId>
@@ -94,6 +102,11 @@
             <groupId>org.mockito</groupId>
             <artifactId>mockito-junit-jupiter</artifactId>
             <version>5.6.0</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.shelfj</groupId>
+            <artifactId>common-test</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
