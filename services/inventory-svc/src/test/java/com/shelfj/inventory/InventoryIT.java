@@ -12,6 +12,8 @@ import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.time.OffsetDateTime;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -564,6 +566,47 @@ class InventoryIT {
         post("/admin/inventory/movements/purge", "{\"before\":\"2020-01-01T00:00:00Z\"}", T);
     assertThat(r.getStatus(), is(200));
     assertThat(r.readEntity(String.class), containsString("\"purged\""));
+  }
+
+  @Test
+  void purgeMovements_archivesRatherThanDeletes() throws Exception {
+    // Golden rule #8: stock_movements is append-only. Purge must relocate rows to
+    // stock_movements_archive, never destroy them. Seed a pre-dated row directly
+    // (no API backdates created_at), then verify it survives in the archive table.
+    UUID movementId = UUID.randomUUID();
+    OffsetDateTime oldDate = OffsetDateTime.parse("2019-01-01T00:00:00Z");
+    try (var c = PG.dataSource().getConnection();
+        var ps =
+            c.prepareStatement(
+                "INSERT INTO inventory.stock_movements (id, tenant_id, store_id, variant_id,"
+                    + " type, qty, created_at) VALUES (?,?,?,?,'ADJUST',1,?)")) {
+      ps.setObject(1, movementId);
+      ps.setObject(2, UUID.fromString(T));
+      ps.setObject(3, UUID.fromString(S));
+      ps.setObject(4, UUID.fromString(V));
+      ps.setObject(5, oldDate);
+      ps.executeUpdate();
+    }
+
+    Response r =
+        post("/admin/inventory/movements/purge", "{\"before\":\"2020-01-01T00:00:00Z\"}", T);
+    assertThat(r.getStatus(), is(200));
+
+    try (var c = PG.dataSource().getConnection()) {
+      try (var ps = c.prepareStatement("SELECT 1 FROM inventory.stock_movements WHERE id=?")) {
+        ps.setObject(1, movementId);
+        try (var rs = ps.executeQuery()) {
+          assertThat("row must leave the hot table", rs.next(), is(false));
+        }
+      }
+      try (var ps =
+          c.prepareStatement("SELECT 1 FROM inventory.stock_movements_archive WHERE id=?")) {
+        ps.setObject(1, movementId);
+        try (var rs = ps.executeQuery()) {
+          assertThat("row must survive in the archive", rs.next(), is(true));
+        }
+      }
+    }
   }
 
   // ── Tier-1 Gap #31: Zone GL mappings ─────────────────────────────────────

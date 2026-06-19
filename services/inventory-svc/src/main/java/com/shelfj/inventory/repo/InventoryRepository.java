@@ -3520,18 +3520,35 @@ public class InventoryRepository extends BaseOutboxRepository {
   }
 
   // ── Tier-1 Gap #30: Purge transaction history ────────────────────────────
+  // Golden rule #8: stock_movements stays append-only. "Purge" relocates matching
+  // rows into stock_movements_archive (insert + delete in one transaction) instead
+  // of destroying them — the hot table shrinks, history is never lost.
 
   public int purgeMovementsBefore(UUID tenantId, java.time.Instant before) {
-    try (var c = dataSource.getConnection();
-        var ps =
-            c.prepareStatement(
-                "DELETE FROM stock_movements WHERE tenant_id=? AND created_at < ?")) {
-      ps.setObject(1, tenantId);
-      ps.setObject(2, OffsetDateTime.ofInstant(before, java.time.ZoneOffset.UTC));
-      return ps.executeUpdate();
-    } catch (SQLException e) {
-      throw dbError("purge movements", e);
-    }
+    OffsetDateTime cutoff = OffsetDateTime.ofInstant(before, java.time.ZoneOffset.UTC);
+    return inTx(
+        c -> {
+          try (var insert =
+              c.prepareStatement(
+                  "INSERT INTO stock_movements_archive"
+                      + " (id, tenant_id, store_id, variant_id, batch_id, type, qty,"
+                      + " ref_type, ref_id, reason_code, created_at)"
+                      + " SELECT id, tenant_id, store_id, variant_id, batch_id, type, qty,"
+                      + " ref_type, ref_id, reason_code, created_at FROM stock_movements"
+                      + " WHERE tenant_id=? AND created_at < ?")) {
+            insert.setObject(1, tenantId);
+            insert.setObject(2, cutoff);
+            insert.executeUpdate();
+          }
+          try (var delete =
+              c.prepareStatement(
+                  "DELETE FROM stock_movements WHERE tenant_id=? AND created_at < ?")) {
+            delete.setObject(1, tenantId);
+            delete.setObject(2, cutoff);
+            return delete.executeUpdate();
+          }
+        },
+        "archive movements");
   }
 
   // ── Tier-1 Gap #31: Zone GL mappings ─────────────────────────────────────
