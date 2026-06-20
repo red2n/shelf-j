@@ -1236,7 +1236,10 @@ export function isolationCheck(d) {
         } catch (_) { return true; }
       },
     });
-    if (!isolated) isolationViolations.add(1);
+    if (!isolated) {
+      isolationViolations.add(1);
+      console.error(`ISOLATION VIOLATION [IN->UK levels] ukStoreId=${ukStoreId} indiaTenant=${india.tenantId} ukTenant=${uk.tenantId} status=${res.status} body=${res.body}`);
+    }
   }
 
   // 2. UK tenant queries India store levels → must return empty or 404/403
@@ -1252,7 +1255,10 @@ export function isolationCheck(d) {
         } catch (_) { return true; }
       },
     });
-    if (!isolated) isolationViolations.add(1);
+    if (!isolated) {
+      isolationViolations.add(1);
+      console.error(`ISOLATION VIOLATION [UK->IN levels] inStoreId=${inStoreId} indiaTenant=${india.tenantId} ukTenant=${uk.tenantId} status=${res.status} body=${res.body}`);
+    }
   }
 
   // 3. India catalog must not contain UK product names
@@ -2649,10 +2655,14 @@ export function negativeTests(d) {
   const vid    = tenant.variantIds[0];
   const fakeId = '00000000-0000-0000-0000-000000000099';
 
-  // Assert 4xx; record any unexpected 2xx as a metric failure.
+  // Assert 4xx; record any unexpected 2xx as a metric failure. A 5xx is an infra blip, not the
+  // validation/auth bypass this metric is tracking, so it must not be counted here either.
   function neg(res, label, code) {
     const is4xx = res.status >= 400 && res.status < 500;
-    if (!is4xx) negativeUnexpectedSuccess.add(1);
+    if (res.status >= 200 && res.status < 300) {
+      negativeUnexpectedSuccess.add(1);
+      console.error(`NEG UNEXPECTED SUCCESS [${label}] status=${res.status} body=${res.body.substring(0, 300)}`);
+    }
     const assertions = { [`${tag} NEG [${label}] → 4xx`]: r => r.status >= 400 && r.status < 500 };
     if (code) assertions[`${tag} NEG [${label}] → ${code}`] = r => r.status === code;
     check(res, assertions);
@@ -2796,8 +2806,15 @@ export function negativeTests(d) {
 
   // ── Gap #35: catalog groups — negative cases ────────────────────────────────
 
-  if (tenant.variantIds.length > 0) {
-    const negVid = tenant.variantIds[0];
+  if (tenant.variantIds.length > 0 && tenant.productIds.length > 0) {
+    // A dedicated, never-touched variant — tenant.variantIds[0] is shared with other concurrently
+    // running scenarios (e.g. catalogAdmin assigns a catalog group to it), so the "unassigned
+    // variant → 404" check below would intermittently/deterministically see someone else's
+    // assignment rather than proving the no-assignment case.
+    const negVarRes = post(`/api/product-svc/admin/products/${tenant.productIds[0]}/variants`, {
+      sku: `NEG-CG-${slug()}`, barcode: `NEGCG${Date.now()}`, unit: 'PCS',
+    }, tenant.ownerToken);
+    const negVid = body(negVarRes).id || tenant.variantIds[0];
 
     // Blank group name → 400
     neg(post('/api/product-svc/admin/catalog-groups',
@@ -2908,17 +2925,21 @@ export function negativeTests(d) {
       } catch (_) { return null; }
     })();
     if (mo?.id) {
-      // First pick succeeds (DRAFT → COMPLETED)
-      http.post(`${BASE}/api/inventory-svc/admin/inventory/move-orders/${mo.id}/pick`,
+      // First pick succeeds (DRAFT → COMPLETED) — must actually land before the negative
+      // assertion below means anything; a transient failure here would leave the order in
+      // DRAFT, making the "second" pick a legitimate first success, not a guard bypass.
+      const firstPick = http.post(`${BASE}/api/inventory-svc/admin/inventory/move-orders/${mo.id}/pick`,
         null, { headers: hdrs(tenant.ownerToken) });
-      // Second pick on COMPLETED order → must fail
-      neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/move-orders/${mo.id}/pick`,
-        null, { headers: hdrs(tenant.ownerToken) }),
-        'double-pick completed MO');
-      // Cancel COMPLETED order → must fail (only DRAFT can be cancelled)
-      neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/move-orders/${mo.id}/cancel`,
-        null, { headers: hdrs(tenant.ownerToken) }),
-        'cancel completed MO');
+      if (firstPick.status >= 200 && firstPick.status < 300) {
+        // Second pick on COMPLETED order → must fail
+        neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/move-orders/${mo.id}/pick`,
+          null, { headers: hdrs(tenant.ownerToken) }),
+          'double-pick completed MO');
+        // Cancel COMPLETED order → must fail (only DRAFT can be cancelled)
+        neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/move-orders/${mo.id}/cancel`,
+          null, { headers: hdrs(tenant.ownerToken) }),
+          'cancel completed MO');
+      }
     }
 
     // Receive a PENDING DIRECT transfer before shipping (DIRECT has no separate receive step)
@@ -2935,13 +2956,16 @@ export function negativeTests(d) {
       neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf1.id}/receive`,
         null, { headers: hdrs(tenant.ownerToken) }),
         'receive PENDING DIRECT transfer');
-      // Now ship → atomically RECEIVED
-      http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf1.id}/ship`,
+      // Now ship → atomically RECEIVED. Must actually land — a transient failure here would
+      // leave the order PENDING, making the "second" ship a legitimate first success.
+      const firstShip1 = http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf1.id}/ship`,
         null, { headers: hdrs(tenant.ownerToken) });
-      // Ship again on already-RECEIVED order → must fail
-      neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf1.id}/ship`,
-        null, { headers: hdrs(tenant.ownerToken) }),
-        'double-ship RECEIVED DIRECT transfer');
+      if (firstShip1.status >= 200 && firstShip1.status < 300) {
+        // Ship again on already-RECEIVED order → must fail
+        neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf1.id}/ship`,
+          null, { headers: hdrs(tenant.ownerToken) }),
+          'double-ship RECEIVED DIRECT transfer');
+      }
     }
 
     // Cancel a SHIPPED INTRANSIT transfer (only PENDING can be cancelled)
@@ -2954,13 +2978,16 @@ export function negativeTests(d) {
       } catch (_) { return null; }
     })();
     if (tf2?.id) {
-      // Ship → SHIPPED
-      http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf2.id}/ship`,
+      // Ship → SHIPPED — must actually land, or the "cancel" below is operating on a still-PENDING
+      // order, where cancel legitimately succeeds (not a guard bypass).
+      const firstShip2 = http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf2.id}/ship`,
         null, { headers: hdrs(tenant.ownerToken) });
-      // Cancel SHIPPED order → must fail
-      neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf2.id}/cancel`,
-        null, { headers: hdrs(tenant.ownerToken) }),
-        'cancel SHIPPED INTRANSIT transfer');
+      if (firstShip2.status >= 200 && firstShip2.status < 300) {
+        // Cancel SHIPPED order → must fail
+        neg(http.post(`${BASE}/api/inventory-svc/admin/inventory/transfers/${tf2.id}/cancel`,
+          null, { headers: hdrs(tenant.ownerToken) }),
+          'cancel SHIPPED INTRANSIT transfer');
+      }
     }
   }
 
@@ -3040,10 +3067,14 @@ export function negativeTests(d) {
     { storeId: store.storeId, variantId: vid, kanbanType: 'SUPPLIER', reorderQty: '5' }, tenant.ownerToken);
   const kTrigId = (() => { try { return JSON.parse(kTrig.body).data.id; } catch (_) { return null; } })();
   if (kTrigId) {
-    post(`/api/inventory-svc/admin/inventory/kanban-cards/${kTrigId}/trigger`,
+    // Must actually land — a transient failure here leaves the card EMPTY, making the
+    // "second" trigger a legitimate first success, not a guard bypass.
+    const firstTrigger = post(`/api/inventory-svc/admin/inventory/kanban-cards/${kTrigId}/trigger`,
       {}, tenant.ownerToken);
-    neg(post(`/api/inventory-svc/admin/inventory/kanban-cards/${kTrigId}/trigger`,
-      {}, tenant.ownerToken), 'double-trigger kanban 409', 409);
+    if (firstTrigger.status >= 200 && firstTrigger.status < 300) {
+      neg(post(`/api/inventory-svc/admin/inventory/kanban-cards/${kTrigId}/trigger`,
+        {}, tenant.ownerToken), 'double-trigger kanban 409', 409);
+    }
   }
 
   // Replenish an EMPTY card (not yet triggered) → 409
@@ -3272,7 +3303,10 @@ export function pricingVat(d) {
       });
       if (res.status >= 200 && res.status < 300) {
         try {
-          if (JSON.parse(res.body).data?.tenantId === d.uk.tenantId) isolationViolations.add(1);
+          if (JSON.parse(res.body).data?.tenantId === d.uk.tenantId) {
+            isolationViolations.add(1);
+            console.error(`ISOLATION VIOLATION [vat-rates/T1] indiaTenant=${d.india.tenantId} ukTenant=${d.uk.tenantId} status=${res.status} body=${res.body}`);
+          }
         } catch (_) {}
       }
     }
@@ -3443,11 +3477,14 @@ export function intercompanyFlow(d) {
   if (arId) {
     const settleRes = post(`/api/purchase-svc/intercompany-invoices/${arId}/settle`, {}, ownerToken);
     intercompanyLatency.add(settleRes.timings.duration);
-    check(settleRes, { 'settle IC invoice 200': res => res.status === 200 });
+    const settled = check(settleRes, { 'settle IC invoice 200': res => res.status === 200 });
 
-    // Settle again → 409 already settled
-    const settle2 = post(`/api/purchase-svc/intercompany-invoices/${arId}/settle`, {}, ownerToken);
-    check(settle2, { 'double-settle 409': res => res.status === 409 });
+    // Settle again → 409 already settled. Only meaningful if the first settle actually landed —
+    // otherwise the invoice is still unsettled and a second settle legitimately succeeds.
+    if (settled) {
+      const settle2 = post(`/api/purchase-svc/intercompany-invoices/${arId}/settle`, {}, ownerToken);
+      check(settle2, { 'double-settle 409': res => res.status === 409 });
+    }
   }
 
   // ── Positive: Group VAT disregard ──────────────────────────────────────────
@@ -3493,7 +3530,12 @@ export function intercompanyFlow(d) {
   if (otherTenant && arId) {
     r = get(`/api/purchase-svc/intercompany-invoices/${arId}`, otherTenant.ownerToken);
     check(r, { 'IC invoice cross-tenant 404': res => res.status === 404 });
-    if (r.status !== 404) isolationViolations.add(1);
+    // Only a 2xx carrying the other tenant's actual invoice is a real leak — a 404 (correct) or
+    // a transient 5xx (infra blip, not data exposure) must not be counted as a violation.
+    if (r.status >= 200 && r.status < 300) {
+      isolationViolations.add(1);
+      console.error(`ISOLATION VIOLATION [IC invoice] arId=${arId} status=${r.status} body=${r.body}`);
+    }
   }
 
   // ── Negative: create PO with unknown supplier → 404 ──────────────────────
@@ -3660,8 +3702,10 @@ export function gatewaySecurity(d) {
   // Gap #61: a URL that merely embeds a public auth suffix must NOT bypass JWT validation.
   const bypass = http.get(`${BASE}/api/product-svc/products/iam-svc/auth/login`,
     { headers: { 'Content-Type': 'application/json' } });
-  if (!check(bypass, { [`${tag} embedded public-path suffix → 401`]: r => r.status === 401 })) {
+  check(bypass, { [`${tag} embedded public-path suffix → 401`]: r => r.status === 401 });
+  if (bypass.status >= 200 && bypass.status < 300) {
     securityViolations.add(1);
+    console.error(`SECURITY VIOLATION [embedded public-path bypass] status=${bypass.status} body=${bypass.body.substring(0, 300)}`);
   }
 
   // Gap #70: gateway filter errors use the standard envelope (machine-readable error.code).
@@ -3676,7 +3720,10 @@ export function gatewaySecurity(d) {
   check(cfgRes, {
     [`${tag} internal 'config' service not routable`]: r => r.status === 503 || r.status === 404,
   });
-  if (cfgRes.status >= 200 && cfgRes.status < 300) securityViolations.add(1);
+  if (cfgRes.status >= 200 && cfgRes.status < 300) {
+    securityViolations.add(1);
+    console.error(`SECURITY VIOLATION [internal config routable] status=${cfgRes.status} body=${cfgRes.body.substring(0, 300)}`);
+  }
 
   // Gap #72 (CORS): no origins configured → preflight must NOT echo any allow-origin header.
   const pre = http.options(`${BASE}/api/order-svc/orders`, null, { headers: {
@@ -3687,12 +3734,16 @@ export function gatewaySecurity(d) {
     [`${tag} CORS deny-by-default (no allow-origin)`]: r => !r.headers['Access-Control-Allow-Origin'],
   })) {
     securityViolations.add(1);
+    console.error(`SECURITY VIOLATION [CORS] status=${pre.status} allowOrigin=${pre.headers['Access-Control-Allow-Origin']}`);
   }
 
   // Gap #66: POS session sweep is platform-admin only — an OWNER must be refused.
   const sweep = post('/api/iam-svc/auth/pos/sessions/sweep', {}, tenant.ownerToken);
-  if (!check(sweep, { [`${tag} POS sweep with OWNER → 403`]: r => r.status === 403 })) {
+  check(sweep, { [`${tag} POS sweep with OWNER → 403`]: r => r.status === 403 });
+  // Only a 2xx is an actual bypass — a 5xx is an infra blip, not OWNER gaining admin access.
+  if (sweep.status >= 200 && sweep.status < 300) {
     securityViolations.add(1);
+    console.error(`SECURITY VIOLATION [POS sweep] status=${sweep.status} body=${sweep.body.substring(0, 300)}`);
   }
 
   // Gaps #67 + #71: the Idempotency-Key HTTP header is forwarded by the gateway and a
@@ -3708,10 +3759,14 @@ export function gatewaySecurity(d) {
   ok(first, `${tag} idempotent place 201`);
   const firstId = (() => { try { return JSON.parse(first.body).data.id; } catch (_) { return null; } })();
   const retryId = (() => { try { return JSON.parse(retry.body).data.id; } catch (_) { return null; } })();
-  if (!check(retry, {
+  check(retry, {
     [`${tag} Idempotency-Key header replay → same order id`]: _ => firstId !== null && firstId === retryId,
-  })) {
+  });
+  // A genuine violation is a *different*, newly-created order on replay — a retry that errored
+  // (5xx/4xx, retryId null) didn't duplicate anything, it just didn't succeed.
+  if (firstId !== null && retryId !== null && firstId !== retryId) {
     securityViolations.add(1);
+    console.error(`SECURITY VIOLATION [idempotency replay] firstId=${firstId} retryId=${retryId} firstStatus=${first.status} retryStatus=${retry.status}`);
   }
 
   // Gap #72 (pagination): GET /orders pages with an opaque cursor and pages never overlap.
@@ -3749,16 +3804,21 @@ export function gatewaySecurity(d) {
     items: [{ variantId, qty: 1, unitPrice: '10.00' }],
     taxAmount: '-5.00', currency: 'USD',
   }, tenant.ownerToken);
-  if (!check(negTax, { [`${tag} negative taxAmount → 400`]: r => r.status === 400 })) {
+  check(negTax, { [`${tag} negative taxAmount → 400`]: r => r.status === 400 });
+  // Only a 2xx means the invalid input was actually accepted — a 5xx isn't validation being skipped.
+  if (negTax.status >= 200 && negTax.status < 300) {
     securityViolations.add(1);
+    console.error(`SECURITY VIOLATION [negative taxAmount accepted] status=${negTax.status} body=${negTax.body.substring(0, 300)}`);
   }
   const bigDisc = post('/api/order-svc/orders', {
     storeId, channel: 'POS', fulfilmentType: 'INSTORE',
     items: [{ variantId, qty: 1, unitPrice: '10.00' }],
     discountAmount: '999.00', currency: 'USD',
   }, tenant.ownerToken);
-  if (!check(bigDisc, { [`${tag} discount > subtotal → 400`]: r => r.status === 400 })) {
+  check(bigDisc, { [`${tag} discount > subtotal → 400`]: r => r.status === 400 });
+  if (bigDisc.status >= 200 && bigDisc.status < 300) {
     securityViolations.add(1);
+    console.error(`SECURITY VIOLATION [discount > subtotal accepted] status=${bigDisc.status} body=${bigDisc.body.substring(0, 300)}`);
   }
 
   sleep(1);
