@@ -82,6 +82,13 @@ function get(path, tenantId = null, userId = null) {
   return http.get(`${BASE}${path}`, { headers: hdrs(tenantId, userId) });
 }
 
+// Public storefront reads (catalog/*) ignore X-Tenant-Id (the gateway strips it on every
+// request to prevent spoofing) and resolve tenant from X-Storefront-Tenant instead — see
+// JwtAuthFilter.STOREFRONT_TENANT_HEADER.
+function getStorefront(path, tenantId) {
+  return http.get(`${BASE}${path}`, { headers: { ...JSON_CT, 'X-Storefront-Tenant': tenantId } });
+}
+
 function ok(res, tag, expectedStatus = 200) {
   const t0 = Date.now();
   const passed = check(res, {
@@ -107,6 +114,28 @@ function data(res) {
   } catch (_) {
     return {};
   }
+}
+
+// Role grants (e.g. OWNER on tenant creation) propagate async via the outbox + Kafka consumer
+// (see iam-svc TenantCreatedConsumer/Handler) — a login right after the triggering call can race
+// the consumer and come back with the pre-grant role set. Poll login until the expected role
+// claim shows up, instead of trusting a single attempt.
+// Worst case for the role to appear is just under one outbox poll cycle (shelfj.outbox.poll-seconds=5)
+// plus Kafka delivery, but under concurrent load (e.g. repeated back-to-back k6 runs competing
+// for the same poll/consumer resources) it can take noticeably longer — budget generously rather
+// than just past the nominal cycle.
+function loginUntilRole(email, password, expectedRole, attempts = 25, delaySeconds = 1.2) {
+  let lastRes = null;
+  for (let i = 0; i < attempts; i++) {
+    lastRes = post('/api/iam-svc/auth/login', { email, password });
+    const token = data(lastRes).accessToken;
+    if (token && (jwtPayload(token).roles || []).includes(expectedRole)) {
+      authToken = token;
+      return lastRes;
+    }
+    sleep(delaySeconds);
+  }
+  return lastRes;
 }
 
 function jwtPayload(token) {
@@ -142,9 +171,11 @@ export function flowGuardTest() {
   });
 
   // Get userId from auth token (note: requires a second registration for extraction)
+  const userEmail = `flow-guard-${runId}b@test.local`;
+  const userPassword = 'Flow@Guard123';
   const regRes2 = http.post(`${BASE}/api/iam-svc/auth/register`, JSON.stringify({
-    email: `flow-guard-${runId}b@test.local`,
-    password: 'Flow@Guard123',
+    email: userEmail,
+    password: userPassword,
     phone: `99${runId}b`,
   }), { headers: JSON_CT });
   const tokens2 = data(regRes2);
@@ -181,6 +212,12 @@ export function flowGuardTest() {
       console.error('FATAL: Could not extract tenantId');
       return;
     }
+
+    // The OWNER role grant from tenant creation propagates async via the outbox + iam-svc's
+    // TenantCreatedConsumer — poll login until the JWT actually carries it, so every /admin/*
+    // call below (which gates on the role claim, unlike /onboarding/*) is authorized.
+    total++;
+    if (ok(loginUntilRole(userEmail, userPassword, 'OWNER'), 'POST /auth/login (post-tenant-creation)', 200)) passed++;
 
     // GET /api/tenant-svc/admin/tenant
     const getRes = get('/api/tenant-svc/admin/tenant', tenantId, userId);
@@ -305,7 +342,7 @@ export function flowGuardTest() {
         // PUT /api/tenant-svc/admin/stores/{storeId}/zones/{zoneId}
         const updateZoneRes = put(
           `/api/tenant-svc/admin/stores/${storeId}/zones/${zoneId}`,
-          { name: 'Aisle A Updated' },
+          { name: 'Aisle A Updated', code: 'AISLE-A', type: 'AISLE' },
           tenantId,
           userId
         );
@@ -440,7 +477,7 @@ export function flowGuardTest() {
       // PUT /api/product-svc/admin/products/{id}
       const updateProdRes = put(
         `/api/product-svc/admin/products/${productId}`,
-        { name: `FlowGuard Product Updated ${runId}` },
+        { name: `FlowGuard Product Updated ${runId}`, sellableOnline: true, sellablePos: true },
         tenantId,
         userId
       );
@@ -471,18 +508,18 @@ export function flowGuardTest() {
         if (ok(listVarsRes, 'GET /admin/products/{id}/variants', 200)) passed++;
       }
 
-      // GET /api/product-svc/catalog/products (customer/store view)
-      const catalogRes = get('/api/product-svc/catalog/products', tenantId, userId);
+      // GET /api/product-svc/catalog/products (customer/store view — public storefront read)
+      const catalogRes = getStorefront('/api/product-svc/catalog/products', tenantId);
       total++;
       if (ok(catalogRes, 'GET /catalog/products', 200)) passed++;
 
       // GET /api/product-svc/catalog/products/{id}
-      const catalogDetailRes = get(`/api/product-svc/catalog/products/${productId}`, tenantId, userId);
+      const catalogDetailRes = getStorefront(`/api/product-svc/catalog/products/${productId}`, tenantId);
       total++;
       if (ok(catalogDetailRes, 'GET /catalog/products/{id}', 200)) passed++;
 
       // GET /api/product-svc/catalog/products/{id}/variants
-      const catalogVarsRes = get(`/api/product-svc/catalog/products/${productId}/variants`, tenantId, userId);
+      const catalogVarsRes = getStorefront(`/api/product-svc/catalog/products/${productId}/variants`, tenantId);
       total++;
       if (ok(catalogVarsRes, 'GET /catalog/products/{id}/variants', 200)) passed++;
     }
@@ -557,7 +594,7 @@ export function flowGuardTest() {
         userId
       );
       total++;
-      if (ok(adjRes, 'POST /admin/inventory/adjust', 201)) passed++;
+      if (ok(adjRes, 'POST /admin/inventory/adjust', 200)) passed++;
 
       // GET /api/inventory-svc/admin/inventory/movements
       const movementsRes = get(

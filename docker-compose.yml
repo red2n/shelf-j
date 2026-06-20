@@ -29,6 +29,16 @@ networks:
   shelfj_network:
     name: shelfj_network
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+# postgres is pinned to this address (see postgres.networks below) so pgbouncer can
+# reach it via extra_hosts, bypassing pgbouncer's c-ares resolver — which fails to
+# parse Docker's generated /etc/resolv.conf (search "." + edns0/ndots options) and
+# throws "server DNS lookup failed (bad-af)" on the plain "postgres" hostname even
+# though every other client (JVM/libc resolvers) resolves it fine.
+x-postgres-ip: &postgres-ip 172.28.0.10
 
 # ── Named volumes ────────────────────────────────────────────────────────────
 volumes:
@@ -131,7 +141,9 @@ services:
       # volume; against an existing one, re-apply manually — see header comment in
       # the script for the exact `docker compose exec` invocation.
       - ./infra/postgres-init-roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
-    networks: [shelfj_network]
+    networks:
+      shelfj_network:
+        ipv4_address: *postgres-ip
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shelfj}"]
       interval: 5s
@@ -162,9 +174,17 @@ services:
       PGBOUNCER_POOL_MODE: transaction
       PGBOUNCER_MAX_CLIENT_CONN: "2000"
       PGBOUNCER_DEFAULT_POOL_SIZE: "50"
-      PGBOUNCER_MIN_POOL_SIZE: "10"
+      # min_pool_size is a per-service-role idle reservation, paid out of max_db_connections
+      # whether or not that service is busy. At 10 × ~12 service roles it was eating ~120 of
+      # the 150 connection budget just sitting idle, leaving ~30 of real headroom for actual
+      # concurrent load — observed under k6 (SHOW POOLS: 121 idle / 150 max during a run) as
+      # widespread, scattered timeouts across nearly every service. Lowering the per-role
+      # reservation and raising the ceiling (still well under postgres's max_connections=300,
+      # which also serves Flyway's direct migration connections + pgadmin + exporters) trades
+      # idle-connection readiness for burst headroom.
+      PGBOUNCER_MIN_POOL_SIZE: "4"
       PGBOUNCER_RESERVE_POOL_SIZE: "10"
-      PGBOUNCER_MAX_DB_CONNECTIONS: "150"
+      PGBOUNCER_MAX_DB_CONNECTIONS: "220"
       PGBOUNCER_SERVER_LIFETIME: "3600"
       PGBOUNCER_SERVER_IDLE_TIMEOUT: "300"
       PGBOUNCER_QUERY_TIMEOUT: "30"
@@ -179,6 +199,10 @@ services:
     # do not add comments to that file; put notes here instead.
     volumes:
       - ./infra/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    # Bypasses pgbouncer's broken c-ares DNS resolution of "postgres" (see x-postgres-ip
+    # comment above) — written straight to /etc/hosts, no resolver involved.
+    extra_hosts:
+      postgres: *postgres-ip
     depends_on:
       postgres: { condition: service_healthy }
     networks: [shelfj_network]

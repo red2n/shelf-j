@@ -243,6 +243,17 @@ function get(path, token) {
   return http.get(`${BASE}${path}`, { headers: hdrs(token) });
 }
 
+// Public storefront reads (catalog/*, prices/resolve) ignore the caller's Bearer token for
+// tenant resolution — the gateway treats them as guest-reachable and resolves tenant from
+// X-Storefront-Tenant instead (see JwtAuthFilter.isStorefrontPublic / STOREFRONT_TENANT_HEADER).
+function storefrontHdrs(tenantId) {
+  return { 'Content-Type': 'application/json', 'X-Storefront-Tenant': tenantId };
+}
+
+function getStorefront(path, tenantId) {
+  return http.get(`${BASE}${path}`, { headers: storefrontHdrs(tenantId) });
+}
+
 // Assert 2xx and count failures.
 function ok(res, tag) {
   const passed = check(res, { [`${tag} 2xx`]: r => r.status >= 200 && r.status < 300 });
@@ -647,7 +658,7 @@ export function browseCatalog(d) {
     : t => catalogLatencyUK.add(t);
 
   const t0 = Date.now();
-  let res = get('/api/product-svc/catalog/products', tenant.ownerToken);
+  let res = getStorefront('/api/product-svc/catalog/products', tenant.tenantId);
   ok(res, `${tag} catalog list`);
   addLat(Date.now() - t0);
   check(res, {
@@ -1245,7 +1256,7 @@ export function isolationCheck(d) {
   }
 
   // 3. India catalog must not contain UK product names
-  const inCatalog = get('/api/product-svc/catalog/products', india.ownerToken);
+  const inCatalog = getStorefront('/api/product-svc/catalog/products', india.tenantId);
   ok(inCatalog, 'IN catalog reachable');
   check(inCatalog, {
     'IN catalog has no UK products': r => {
@@ -1260,7 +1271,7 @@ export function isolationCheck(d) {
   });
 
   // 4. UK catalog must not contain India product names
-  const ukCatalog = get('/api/product-svc/catalog/products', uk.ownerToken);
+  const ukCatalog = getStorefront('/api/product-svc/catalog/products', uk.tenantId);
   ok(ukCatalog, 'UK catalog reachable');
   check(ukCatalog, {
     'UK catalog has no IN products': r => {
@@ -3194,7 +3205,7 @@ export function pricingVat(d) {
   t0 = Date.now();
   res = http.post(`${BASE}/api/pricing-svc/prices/resolve`,
     JSON.stringify({ variantId: vid, channel: 'ALL', qty: 1 }),
-    { headers: hdrs(tenant.ownerToken) });
+    { headers: storefrontHdrs(tenant.tenantId) });
   pricingLatency.add(Date.now() - t0);
   const priceOk = ok(res, `${tag} resolve price`);
   if (priceOk) {
@@ -3278,7 +3289,7 @@ export function pricingVat(d) {
   // ── Negative: resolve price for unknown variant → 404 ────────────────────
   res = http.post(`${BASE}/api/pricing-svc/prices/resolve`,
     JSON.stringify({ variantId: '99999999-9999-9999-9999-999999999999', channel: 'ALL', qty: 1 }),
-    { headers: hdrs(tenant.ownerToken) });
+    { headers: storefrontHdrs(tenant.tenantId) });
   check(res, { [`${tag} resolve unknown variant 404`]: r => r.status === 404 });
   if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
 
