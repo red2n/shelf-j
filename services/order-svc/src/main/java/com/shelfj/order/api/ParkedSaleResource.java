@@ -38,7 +38,7 @@ public class ParkedSaleResource {
   @POST
   @Path("/parked-sales")
   public Response park(ParkSaleRequest req) {
-    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID cashierId = ctx.userId();
@@ -51,7 +51,7 @@ public class ParkedSaleResource {
   @GET
   @Path("/parked-sales")
   public ApiResponse<List<ParkedSaleResponse>> listParked(@QueryParam("storeId") String storeId) {
-    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
     UUID tenantId = ctx.requireTenantId();
     UUID sid = storeId == null ? null : UUID.fromString(storeId);
     var sales = svc.list(tenantId, sid);
@@ -61,7 +61,7 @@ public class ParkedSaleResource {
   @GET
   @Path("/parked-sales/{id}")
   public ApiResponse<ParkedSaleResponse> getParked(@PathParam("id") UUID id) {
-    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(svc.get(tenantId, id), ApiResponse.Meta.of(ctx.requestId()));
   }
@@ -69,7 +69,7 @@ public class ParkedSaleResource {
   @DELETE
   @Path("/parked-sales/{id}")
   public Response cancel(@PathParam("id") UUID id) {
-    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
     UUID tenantId = ctx.requireTenantId();
     svc.cancel(tenantId, id);
     return Response.noContent().build();
@@ -78,7 +78,7 @@ public class ParkedSaleResource {
   @POST
   @Path("/no-sale")
   public Response logNoSale(NoSaleRequest req) {
-    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
     UUID tenantId = ctx.requireTenantId();
     UUID cashierId = ctx.userId();
     var entry = svc.logNoSale(tenantId, cashierId, req);

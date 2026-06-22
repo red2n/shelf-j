@@ -63,6 +63,17 @@ public class AuthResource {
     return ApiResponse.ok(auth.login(req.email(), req.password()));
   }
 
+  /**
+   * Platform console login — distinct from {@link #login} so a PLATFORM_ADMIN credential is never
+   * valid on a store/POS login screen, and a tenant staff credential is never valid here.
+   */
+  @POST
+  @Path("/platform-login")
+  public ApiResponse<TokenResponse> platformLogin(LoginRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(auth.platformLogin(req.email(), req.password()));
+  }
+
   @POST
   @Path("/refresh")
   public ApiResponse<TokenResponse> refresh(RefreshRequest req) {

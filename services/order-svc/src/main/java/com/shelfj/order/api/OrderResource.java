@@ -93,7 +93,7 @@ public class OrderResource {
       PlaceOrderRequest req) {
     Validations.validate(req);
     if ("POS".equalsIgnoreCase(req.channel())) {
-      ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
+      ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
     }
     // The standard Idempotency-Key header is authoritative; the body field is a legacy fallback.
     String effectiveKey =

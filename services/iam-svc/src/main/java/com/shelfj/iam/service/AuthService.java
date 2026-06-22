@@ -124,15 +124,23 @@ public class AuthService {
   }
 
   /**
-   * Login with email + password. Email is unique only per tenant scope (a user's row moves out of
-   * the NULL scope once a TenantCreated/StaffAssigned event stamps their tenant), so we search all
-   * scopes and let the password disambiguate.
+   * Login with email + password for tenant staff, POS, and customers. Email is unique only per
+   * tenant scope (a user's row moves out of the NULL scope once a TenantCreated/StaffAssigned event
+   * stamps their tenant), so we search all scopes and let the password disambiguate.
+   *
+   * <p>PLATFORM_ADMIN accounts are deliberately excluded here — the platform admin is a separate
+   * identity from any store/tenant, so it must not be a valid credential on a store-scoped login
+   * screen (admin console, POS). It authenticates only via {@link #platformLogin}.
    */
   public TokenResponse login(String email, String password) {
     var candidates = users.findAllByEmail(email);
     for (User user : candidates) {
       if (User.STATUS_ACTIVE.equals(user.status())
           && passwords.verify(user.passwordHash(), password)) {
+        if (users.rolesOf(user.id()).contains("PLATFORM_ADMIN")) {
+          users.audit(user.tenantId(), user.id(), "LOGIN_FAILED", email);
+          throw ApiException.unauthorized("INVALID_CREDENTIALS", "Invalid email or password");
+        }
         // A staff user whose tenant has been deactivated must not be able to log in, even with the
         // right password and an ACTIVE user row. (Customers carry tenantId=null and are
         // unaffected.)
@@ -152,6 +160,30 @@ public class AuthService {
     } else {
       User first = candidates.get(0);
       users.audit(first.tenantId(), first.id(), "LOGIN_FAILED", email);
+    }
+    throw ApiException.unauthorized("INVALID_CREDENTIALS", "Invalid email or password");
+  }
+
+  /**
+   * Login for the platform console only. Mirrors {@link #login} but requires the PLATFORM_ADMIN
+   * role — a tenant staff or customer account must not authenticate here, same generic error so
+   * neither endpoint leaks which kind of account an email belongs to.
+   */
+  public TokenResponse platformLogin(String email, String password) {
+    var candidates = users.findAllByEmail(email);
+    for (User user : candidates) {
+      if (User.STATUS_ACTIVE.equals(user.status())
+          && passwords.verify(user.passwordHash(), password)
+          && users.rolesOf(user.id()).contains("PLATFORM_ADMIN")) {
+        users.audit(null, user.id(), "PLATFORM_LOGIN_OK", email);
+        return issueTokens(user);
+      }
+    }
+    if (candidates.isEmpty()) {
+      passwords.burn(password);
+    } else {
+      User first = candidates.get(0);
+      users.audit(first.tenantId(), first.id(), "PLATFORM_LOGIN_FAILED", email);
     }
     throw ApiException.unauthorized("INVALID_CREDENTIALS", "Invalid email or password");
   }

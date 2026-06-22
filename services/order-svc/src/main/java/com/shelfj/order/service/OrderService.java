@@ -134,11 +134,7 @@ public class OrderService {
               ir.notes()));
     }
 
-    boolean staff =
-        ctx.hasRole("CASHIER")
-            || ctx.hasRole("MANAGER")
-            || ctx.hasRole("OWNER")
-            || ctx.hasRole("PLATFORM_ADMIN");
+    boolean staff = ctx.hasRole("CASHIER") || ctx.hasRole("MANAGER") || ctx.hasRole("OWNER");
 
     BigDecimal tax;
     BigDecimal disc;

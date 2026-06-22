@@ -32,6 +32,20 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     });
   }
 
+  /// Platform console login — distinct endpoint from [login]: a store/tenant staff
+  /// credential is never valid here, and a platform-admin credential is never valid
+  /// on the store/POS login screen.
+  Future<void> platformLogin(String email, String password) async {
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      final resp = await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.iam}/auth/platform-login',
+        data: {'email': email, 'password': password},
+      );
+      return _saveAndDecode(resp.data['data'] as Map<String, dynamic>);
+    });
+  }
+
   Future<void> register(String email, String password, String? phone) async {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {

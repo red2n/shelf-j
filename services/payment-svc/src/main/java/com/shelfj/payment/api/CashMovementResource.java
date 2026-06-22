@@ -35,7 +35,7 @@ public class CashMovementResource {
   @POST
   @Path("/movements")
   public Response recordMovement(CashMovementRequest req) {
-    ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("MANAGER", "OWNER");
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID recordedBy = ctx.userId();
@@ -49,7 +49,7 @@ public class CashMovementResource {
   @GET
   @Path("/movements")
   public ApiResponse<?> listMovements(@QueryParam("tillSessionId") String tillSessionId) {
-    ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("MANAGER", "OWNER");
     UUID tenantId = ctx.requireTenantId();
     UUID sessionId = UUID.fromString(tillSessionId);
     return ApiResponse.ok(
@@ -60,7 +60,7 @@ public class CashMovementResource {
   @POST
   @Path("/z-report")
   public Response generateZReport(GenerateZReportRequest req) {
-    ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("MANAGER", "OWNER");
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID generatedBy = ctx.userId();
@@ -75,7 +75,7 @@ public class CashMovementResource {
   @Path("/z-report")
   public ApiResponse<?> getZReport(
       @QueryParam("storeId") String storeId, @QueryParam("businessDate") String businessDate) {
-    ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("MANAGER", "OWNER");
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
         svc.getZReport(tenantId, UUID.fromString(storeId), businessDate, ctx),

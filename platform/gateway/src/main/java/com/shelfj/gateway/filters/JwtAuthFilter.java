@@ -41,6 +41,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       Set.of(
           "api/iam-svc/auth/register",
           "api/iam-svc/auth/login",
+          "api/iam-svc/auth/platform-login",
           "api/iam-svc/auth/refresh",
           "api/iam-svc/bootstrap/admin");
 

@@ -47,6 +47,7 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
       Set.of(
           "/auth/register",
           "/auth/login",
+          "/auth/platform-login",
           "/auth/refresh",
           "/auth/logout",
           "/auth/change-password");
