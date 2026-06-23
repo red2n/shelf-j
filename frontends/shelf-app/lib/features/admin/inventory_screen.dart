@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/spacing.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
@@ -25,7 +27,8 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.xl, AppSpacing.xl, AppSpacing.xl, 0),
             child: Row(
               children: [
                 Text('Inventory', style: Theme.of(context).textTheme.headlineMedium),
@@ -91,7 +94,8 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
       children: [
         // Search + filter bar
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.xl, AppSpacing.lg, AppSpacing.xl, 0),
           child: Row(
             children: [
               Expanded(
@@ -116,6 +120,7 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
               const SizedBox(width: 8),
               IconButton(
                 icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh inventory',
                 onPressed: () => ref.invalidate(inventoryLevelsProvider),
               ),
             ],
@@ -229,7 +234,8 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.xl, AppSpacing.lg, AppSpacing.xl, 0),
           child: Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -327,6 +333,7 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
               if (_storeId != null)
                 IconButton(
                   icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh batches',
                   onPressed: () => ref.invalidate(batchesProvider(_storeId!)),
                 ),
             ],
@@ -657,7 +664,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                             decimal: true),
                         decoration: const InputDecoration(
                           labelText: 'Cost price',
-                          prefixText: '\$ ',
+                          prefixText: '£ ',
                         ),
                       ),
                     ),
@@ -773,22 +780,26 @@ class _WideTable extends StatelessWidget {
                         color: isLow ? cs.error : cs.onSurface,
                         fontWeight: isLow ? FontWeight.bold : null))),
                 DataCell(
-                  isLow
-                      ? Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.warning_amber_outlined,
-                                size: 14, color: cs.error),
-                            const SizedBox(width: 4),
-                            Text('Low',
-                                style: TextStyle(
-                                    color: cs.error,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12)),
-                          ],
-                        )
-                      : const Text('OK',
-                          style: TextStyle(color: Colors.green, fontSize: 12)),
+                  Semantics(
+                    label: isLow ? 'Low stock' : 'Stock OK',
+                    child: isLow
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.warning_amber_outlined,
+                                  size: 14, color: cs.error),
+                              const SizedBox(width: 4),
+                              Text('Low',
+                                  style: TextStyle(
+                                      color: cs.error,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12)),
+                            ],
+                          )
+                        : Text('OK',
+                            style: TextStyle(
+                                color: context.status.success, fontSize: 12)),
+                  ),
                 ),
               ],
             );
@@ -942,14 +953,15 @@ class _MaterialStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final statusColors = context.status;
     Color color;
     switch (status) {
       case 'AVAILABLE':
-        color = Colors.green;
+        color = statusColors.success;
         break;
       case 'QUARANTINE':
       case 'HOLD':
-        color = Colors.orange;
+        color = statusColors.warning;
         break;
       case 'REJECTED':
         color = cs.error;

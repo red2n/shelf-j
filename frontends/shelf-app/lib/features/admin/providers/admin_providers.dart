@@ -242,18 +242,9 @@ final recentOrdersProvider = FutureProvider.autoDispose<List<OrderSummary>>((ref
   return data.map((e) => OrderSummary.fromJson(e as Map<String, dynamic>)).toList();
 });
 
-/// Orders with optional channel filter ('ALL', 'POS', 'ONLINE').
-final ordersProvider =
-    FutureProvider.autoDispose.family<List<OrderSummary>, String>((ref, channel) async {
-  final params = <String, dynamic>{'limit': 50};
-  if (channel != 'ALL') params['channel'] = channel;
-  final resp = await ref.read(apiClientProvider).dio.get(
-    '/${ApiConstants.order}/orders',
-    queryParameters: params,
-  );
-  final data = (resp.data['data'] as List?) ?? [];
-  return data.map((e) => OrderSummary.fromJson(e as Map<String, dynamic>)).toList();
-});
+// Paginated orders now live in orders_pagination.dart (ordersPaginationProvider) —
+// server-side channel/status filtering + cursor infinite scroll, replacing the old
+// "fetch 50 and filter in Dart" ordersProvider.
 
 /// All inventory levels for the tenant (across all stores).
 final inventoryLevelsProvider = FutureProvider.autoDispose<List<InventoryLevel>>((ref) async {

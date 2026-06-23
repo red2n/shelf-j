@@ -551,7 +551,7 @@ class _OfferTile extends ConsumerWidget {
                           child: Text(o.inStock ? 'In stock' : 'Out of stock',
                               style: TextStyle(
                                   color: o.inStock
-                                      ? Colors.green.shade700
+                                      ? context.status.success
                                       : cs.error,
                                   fontWeight: FontWeight.w600,
                                   fontSize: 12)),
@@ -591,7 +591,7 @@ class _StockDot extends StatelessWidget {
     return Tooltip(
       message: inStock ? 'In stock' : 'Out of stock',
       child: Icon(Icons.circle,
-          size: 10, color: inStock ? Colors.green.shade600 : cs.error),
+          size: 10, color: inStock ? context.status.success : cs.error),
     );
   }
 }

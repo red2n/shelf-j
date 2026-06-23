@@ -12,9 +12,10 @@ class AdaptiveNavDestination {
   });
 }
 
-/// Navigation that stays hidden in every view. The app/product icon in the app
-/// bar toggles a left-docked [NavigationDrawer] open and closed — click it to
-/// dock the menu, click again (or tap outside / pick an item) to undock it.
+/// Responsive navigation. On wide layouts (tablet / desktop / web) a persistent
+/// [NavigationRail] sits beside the content and the app-bar icon expands/collapses
+/// its labels. On phones it collapses to a [NavigationDrawer] toggled by that same
+/// app-bar icon.
 class AdaptiveNavShell extends StatefulWidget {
   final String title;
   final List<AdaptiveNavDestination> destinations;
@@ -47,8 +48,15 @@ class AdaptiveNavShell extends StatefulWidget {
   State<AdaptiveNavShell> createState() => _AdaptiveNavShellState();
 }
 
+/// Below this width the shell collapses to a drawer (phones); at or above it a
+/// persistent [NavigationRail] is shown (tablets / desktop / web), per Material 3.
+const double _railBreakpoint = 800;
+
 class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  /// On wide layouts the rail is always visible; this toggles icon-only ⇄ labelled.
+  bool _railExtended = false;
 
   void _toggleDrawer() {
     final state = _scaffoldKey.currentState;
@@ -60,25 +68,79 @@ class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
     }
   }
 
+  PreferredSizeWidget _appBar({required VoidCallback onLeading}) {
+    return AppBar(
+      backgroundColor: widget.appBarBackgroundColor,
+      foregroundColor: widget.appBarForegroundColor,
+      // Replace the automatic hamburger with the product icon as the toggle.
+      automaticallyImplyLeading: false,
+      leading: IconButton(
+        icon: Icon(widget.leadingIcon),
+        tooltip: 'Toggle menu',
+        onPressed: onLeading,
+      ),
+      title: Text(widget.title, overflow: TextOverflow.ellipsis),
+      actions: widget.actions,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, constraints) {
+      if (constraints.maxWidth >= _railBreakpoint) {
+        return _buildWide(context);
+      }
+      return _buildNarrow(context);
+    });
+  }
+
+  // Phones: nav lives in a drawer toggled from the app-bar icon.
+  Widget _buildNarrow(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      appBar: AppBar(
-        backgroundColor: widget.appBarBackgroundColor,
-        foregroundColor: widget.appBarForegroundColor,
-        // Replace the automatic hamburger with the product icon as the toggle.
-        automaticallyImplyLeading: false,
-        leading: IconButton(
-          icon: Icon(widget.leadingIcon),
-          tooltip: 'Toggle menu',
-          onPressed: _toggleDrawer,
-        ),
-        title: Text(widget.title, overflow: TextOverflow.ellipsis),
-        actions: widget.actions,
-      ),
+      appBar: _appBar(onLeading: _toggleDrawer),
       drawer: _buildDrawer(context),
       body: widget.child,
+    );
+  }
+
+  // Tablet / desktop / web: a persistent rail beside the content. The app-bar
+  // icon expands/collapses it (labels beside icons vs. under them).
+  Widget _buildWide(BuildContext context) {
+    return Scaffold(
+      appBar: _appBar(
+        onLeading: () => setState(() => _railExtended = !_railExtended),
+      ),
+      body: Row(
+        children: [
+          LayoutBuilder(
+            builder: (context, c) => SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: c.maxHeight),
+                child: IntrinsicHeight(
+                  child: NavigationRail(
+                    extended: _railExtended,
+                    selectedIndex: widget.selectedIndex,
+                    onDestinationSelected: widget.onDestinationSelected,
+                    labelType: _railExtended
+                        ? NavigationRailLabelType.none
+                        : NavigationRailLabelType.all,
+                    destinations: widget.destinations
+                        .map((d) => NavigationRailDestination(
+                              icon: Icon(d.icon),
+                              selectedIcon: Icon(d.selectedIcon),
+                              label: Text(d.label),
+                            ))
+                        .toList(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const VerticalDivider(width: 1),
+          Expanded(child: widget.child),
+        ],
+      ),
     );
   }
 

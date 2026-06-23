@@ -4,7 +4,9 @@ import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import '../../core/format.dart';
 import 'providers/admin_providers.dart';
+import 'providers/orders_pagination.dart';
 
 class AdminOrdersScreen extends ConsumerStatefulWidget {
   const AdminOrdersScreen({super.key});
@@ -26,9 +28,33 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
     'CANCELLED'
   ];
 
+  final _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  OrdersFilter get _filter => OrdersFilter(_channel, _status);
+
+  /// Fetch the next page once the user scrolls within 300px of the bottom.
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 300) {
+      ref.read(ordersPaginationProvider(_filter).notifier).loadMore();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final ordersAsync = ref.watch(ordersProvider(_channel));
+    final page = ref.watch(ordersPaginationProvider(_filter));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -43,7 +69,8 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
               IconButton(
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Refresh',
-                onPressed: () => ref.invalidate(ordersProvider(_channel)),
+                onPressed: () =>
+                    ref.read(ordersPaginationProvider(_filter).notifier).refresh(),
               ),
             ],
           ),
@@ -88,17 +115,19 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
 
         // Orders list
         Expanded(
-          child: ordersAsync.when(
-            loading: () => const LoadingView(label: 'Loading orders…'),
-            error: (e, _) => ErrorView(
-              message: 'Could not load orders.\n${e.toString()}',
-              onRetry: () => ref.invalidate(ordersProvider(_channel)),
-            ),
-            data: (all) {
-              final orders = _status == 'ALL'
-                  ? all
-                  : all.where((o) => o.status.toUpperCase() == _status).toList();
-              if (orders.isEmpty) {
+          child: Builder(builder: (context) {
+            if (page.isLoadingInitial) {
+              return const LoadingView(label: 'Loading orders…');
+            }
+            if (page.error != null && page.orders.isEmpty) {
+              return ErrorView(
+                message: 'Could not load orders.\n${page.error}',
+                onRetry: () =>
+                    ref.read(ordersPaginationProvider(_filter).notifier).refresh(),
+              );
+            }
+            final orders = page.orders;
+            if (orders.isEmpty) {
                 final hasFilter = _channel != 'ALL' || _status != 'ALL';
                 return Center(
                   child: Column(
@@ -127,10 +156,18 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
               return LayoutBuilder(builder: (context, bc) {
                 final wide = bc.maxWidth >= 700;
                 return ListView.separated(
+                  controller: _scrollController,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  itemCount: orders.length,
+                  itemCount:
+                      orders.length + (page.hasMore || page.isLoadingMore ? 1 : 0),
                   separatorBuilder: (_, __) => const SizedBox(height: 4),
                   itemBuilder: (context, i) {
+                    if (i >= orders.length) {
+                      return const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Center(child: CircularProgressIndicator()),
+                      );
+                    }
                     final o = orders[i];
                     return Card(
                       child: ListTile(
@@ -160,11 +197,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                             _ChannelBadge(o.channel),
                           ],
                         ),
-                        subtitle: Text(
-                          o.createdAt.length >= 16
-                              ? o.createdAt.substring(0, 16).replaceAll('T', '  ')
-                              : o.createdAt,
-                        ),
+                        subtitle: Text(AppFormat.dateTime(o.createdAt)),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -174,7 +207,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                               SizedBox(
                                 width: 90,
                                 child: Text(
-                                  '${o.currency} ${o.total.toStringAsFixed(2)}',
+                                  AppFormat.money(o.total, currencyCode: o.currency),
                                   style: Theme.of(context)
                                       .textTheme
                                       .titleSmall
@@ -190,7 +223,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                                   _StatusBadge(o.status),
                                   const SizedBox(height: 4),
                                   Text(
-                                      '${o.currency} ${o.total.toStringAsFixed(2)}',
+                                      AppFormat.money(o.total, currencyCode: o.currency),
                                       style: Theme.of(context)
                                           .textTheme
                                           .titleSmall
@@ -209,8 +242,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                   },
                 );
               });
-            },
-          ),
+          }),
         ),
       ],
     );
@@ -223,7 +255,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
         builder: (_) => _ReturnDialog(
           orderId: o.id,
           onDone: () {
-            ref.invalidate(ordersProvider(_channel));
+            ref.read(ordersPaginationProvider(_filter).notifier).refresh();
             ref.invalidate(recentOrdersProvider);
           },
         ),
@@ -259,7 +291,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
             '/${ApiConstants.order}/orders/${o.id}/$action',
             data: action == 'cancel' ? {'reason': reason} : null,
           );
-      ref.invalidate(ordersProvider(_channel));
+      ref.read(ordersPaginationProvider(_filter).notifier).refresh();
       ref.invalidate(recentOrdersProvider);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

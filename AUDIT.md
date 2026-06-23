@@ -112,14 +112,14 @@ Every string is hardcoded English; currency is a hardcoded `'$'` prefix though o
 | A2 | OpenAPI spec + generated Dart client | API | 🔴 | M | 🟡 Partial — specs served; Dart client gen pending |
 | U4 | Consume structured `error.code` centrally | UI | 🔴 | S | 🟡 Core done — `api_error.dart` helper + 2 screens; roll-out pending |
 | U1 | Replace user-facing UUIDs with name/SKU | UI | 🔴 | M | ✅ Done — inventory, orders, pricing (+ backend enabler); store-name resolution pending |
-| U2 | Server-side pagination + search in UI | UI | 🔴 | L | ⬜ Todo |
-| U3 | True adaptive navigation (NavigationRail) | UI | 🟠 | S | ⬜ Todo |
+| U2 | Server-side pagination + search in UI | UI | 🔴 | L | 🟡 Orders list done (cursor infinite scroll); roll to other lists pending |
+| U3 | True adaptive navigation (NavigationRail) | UI | 🟠 | S | ✅ Done — rail on wide, drawer on phones |
 | A4 | Close boundary-validation gaps | API | 🟠 | S | ✅ Done — finding corrected; 2 real holes fixed |
-| U5 | Accessibility (Semantics, non-color status, font sizes) | UI | 🟠 | M | ⬜ Todo |
-| U6 | i18n + locale-aware money/date formatting | UI | 🟠 | L | ⬜ Todo |
+| U5 | Accessibility (Semantics, non-color status, font sizes) | UI | 🟠 | M | 🟡 Template done — semantic colors + Semantics labels + tooltips; roll-out pending |
+| U6 | i18n + locale-aware money/date formatting | UI | 🟠 | L | 🟡 Pipeline live (gen-l10n + login migrated, en/pl); remaining-string extraction ongoing |
 | A5 | Split god-files per aggregate | API | 🟠 | L | 🟡 In progress — 2 repos extracted (−319 lines); pattern proven |
-| U7 | Design tokens (typography/spacing/semantic colors) | UI | 🟠 | M | ⬜ Todo |
-| U8 | Frontend widget/unit tests | UI | 🟠 | L | ⬜ Todo |
+| U7 | Design tokens (typography/spacing/semantic colors) | UI | 🟠 | M | 🟡 Tokens established (StatusColors ext + spacing scale); magic-number sweep pending |
+| U8 | Frontend widget/unit tests | UI | 🟠 | L | 🟡 Harness + 23 tests (new code covered); broaden coverage pending |
 
 ---
 
@@ -183,6 +183,46 @@ Every string is hardcoded English; currency is a hardcoded `'$'` prefix though o
 - **Pricing** price-list item dialog → product name + SKU.
 - `flutter analyze` clean across the app (16 issues, 0 errors/0 warnings — one fewer than baseline).
 - **Follow-up:** resolve **store** UUIDs to store names the same way (a few screens show short store ids), and apply to any remaining admin lists. Note: `#abc12345` order/layaway short-refs are intentional human-friendly references, not UUID leaks.
+
+### U2 — server-side pagination (orders list done)
+- New `providers/orders_pagination.dart`: a `StateNotifierProvider.family` keyed by `OrdersFilter(channel, status)` that fetches one page at a time via the API's `?after=&limit=` cursor (the backend already returns `meta.nextCursor`), accumulating rows. State carries `isLoadingInitial / isLoadingMore / nextCursor / error`.
+- Rewired the admin **orders** screen: channel **and** status filters are now sent to the server (status was previously a client-side `.where`), a `ScrollController` triggers `loadMore()` within 300px of the bottom, and a footer spinner shows while the next page loads. Deleted the old "fetch 50, filter in Dart" `ordersProvider`.
+- `flutter analyze` clean (16 issues, 0 errors/0 warnings).
+- **Follow-up:** apply the same pattern to the other full-list screens (customers, products, inventory levels — the latter needs a paginated backend endpoint; today `/admin/inventory/levels` returns everything).
+
+### U3 — adaptive navigation (done)
+- Reworked the shared `AdaptiveNavShell` (used by all four shells: admin / POS / storefront / platform) from "drawer hidden at every width" to responsive: at ≥ 800px a **persistent `NavigationRail`** sits beside the content (labels under icons by default; the app-bar icon expands it to labelled, scroll-safe via `SingleChildScrollView`+`IntrinsicHeight`); below 800px it keeps the existing `NavigationDrawer`. Public API unchanged, so every shell adopts it for free.
+- `flutter analyze` clean (16 issues, 0 errors/0 warnings).
+
+### U8 — frontend tests (harness + first suite)
+- Stood up the `flutter test` harness (was **0** tests) with **23 passing tests** across 6 files, covering the logic added this session:
+  - `core/format_test.dart` — `AppFormat.money` (GBP symbol/grouping/decimals, defaults, other currencies) + `AppFormat.date` (UK format, fallthrough). Uses `initializeDateFormatting` so intl works in a plain test.
+  - `core/api_error_test.dart` — `apiErrorOf`/`apiErrorCode`/`friendlyError` (envelope extraction, server message, network line, non-Dio fallback).
+  - `features/variant_labels_test.dart` — `variantIdsKey` (sort/dedupe/blank-drop), `variantDisplayName`/`variantSku` (resolved + short-UUID fallback).
+  - `features/orders_pagination_test.dart` — `OrdersFilter` value-equality (stable family key), `OrdersPage.hasMore`/`copyWith`.
+  - `widgets/adaptive_nav_shell_test.dart` — pumps the shell at 1200px (asserts `NavigationRail`) and 500px (asserts none → drawer), locking the U3 behaviour.
+  - `l10n/localization_test.dart` — en resolves base strings, pl resolves translations, an untranslated locale (ro) falls back to English.
+- **Follow-up:** broaden into golden/widget tests for the main screens and provider integration tests; wire `flutter test` into CI alongside the backend Maven suites.
+
+### U7 — design tokens (foundations established)
+- **Semantic colour tokens** promoted from static helpers to a proper `StatusColors` `ThemeExtension` registered in both light/dark themes, read contextually via `context.status.success/warning`. Migrated the U5 call sites (inventory OK/material-status, POS in-stock/stock-dot) onto it — no more manual `Brightness` plumbing or ad-hoc `Colors.green/orange`.
+- **Spacing scale**: new `core/spacing.dart` — `AppSpacing` (4-pt scale `xs…xxl`, plus `pagePadding`/`cardPadding`) and a `Gap` widget — replacing magic numbers. Applied to the inventory screen's page paddings as the template.
+- `flutter analyze` clean (16 issues, 0 errors/0 warnings).
+- **Follow-up:** sweep the remaining magic-number `EdgeInsets`/`SizedBox` onto `AppSpacing` app-wide; consider a `_StatusPill` widget (shared by inventory/orders/POS) and tightening the typography scale. The 11–12px table fonts (also a U5 item) get fixed in the same pass.
+
+### U6 — internationalization (infra + formatting done; string ARB pending)
+- **UK-first locale strategy.** Added `flutter_localizations` + `intl`. `core/l10n/app_locales.dart` declares **en_GB as the default/fallback** plus the largest non-English-speaking UK communities (2021 England & Wales census "main language other than English"): **Polish, Romanian, Punjabi, Urdu, Bengali, Gujarati, Arabic** — all verified to ship with `flutter_localizations`. `main.dart` wires the `Global*Localizations` delegates, `supportedLocales`, and a `localeResolutionCallback` that honours the device language among these and falls back to en_GB. **Urdu/Arabic resolve to RTL automatically** (Flutter mirrors the layout) — so the whole app already flips for those users, and Material widgets (date pickers, dialogs) are localized for all eight.
+- **Locale-aware money/date.** `core/format.dart` (`AppFormat.money/date/dateTime`) replaces the hardcoded `'$'` prefix and bare `toStringAsFixed(2)`/`substring` formatting — GBP default, correct symbol/grouping/decimals (e.g. `£1,234.50`), locale-driven dates. Applied to the orders list (totals + timestamps) and the inventory receive dialog (`'$ '` → `'£ '`).
+- `flutter analyze` clean (16 issues, 0 errors/0 warnings).
+- **ARB translation pipeline (now live).** Enabled `gen-l10n` (`l10n.yaml`, `generate: true`); ARB files under `lib/l10n/` for all eight locales — `app_en.arb` (template) and `app_pl.arb` fully translated, the other six as stubs that fall back to the English template per-key until translated. `AppLocalizations` is generated into `lib/l10n/gen/` and wired as the first `localizationsDelegate`. **Migrated the login screen end-to-end** as the reference vertical slice (subtitle, field labels, validators, buttons, mode toggle, and the friendly auth-error messages) — it renders in Polish on a `pl` device today.
+- **Follow-up:** extend ARB coverage screen-by-screen (the rest still use inline English; same recipe — add keys to `app_en.arb`, run `flutter gen-l10n`, swap literals for `AppLocalizations.of(context)`), then commission translations for pl/ro/pa/ur/bn/gu/ar. Note: `lib/l10n/gen/` is generated — either commit it or gitignore + regenerate on build. Continue rolling `AppFormat` across remaining money/date displays.
+
+### U5 — accessibility (template slice done)
+- **Semantic status colors** added to `AppTheme` (`success`/`warning` that adapt to `Brightness`), replacing hardcoded `Colors.green`/`Colors.green.shade700`/`Colors.orange` that bypassed the colour scheme and lost contrast in dark mode. Applied in the inventory Levels table + material-status chip and the POS catalog stock indicators.
+- **Non-colour-only status:** the inventory stock cell is wrapped in `Semantics(label: 'Low stock' / 'Stock OK')` so screen readers announce state (previously colour-only); the POS stock dot keeps its `Tooltip` (which carries the same label).
+- **Labelled controls:** added tooltips/semantic labels to the previously icon-only refresh buttons.
+- `flutter analyze` clean (16 issues, 0 errors/0 warnings).
+- **Follow-up (roll-out):** apply `AppTheme.success/warning` + `Semantics` to the remaining status indicators app-wide; add `semanticLabel`/tooltips to the other icon-only buttons; bump the 11–12px monospace table text toward the 14px minimum. A reusable `_StatusPill` widget would DRY this up (overlaps with U7 design tokens).
 
 ---
 
