@@ -7,6 +7,7 @@ import com.shelfj.order.dto.Dtos.ParkedSaleItemResponse;
 import com.shelfj.order.dto.Dtos.ParkedSaleResponse;
 import com.shelfj.order.repo.ParkedSaleRepository;
 import com.shelfj.web.ApiException;
+import com.shelfj.web.Parsing;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
@@ -28,7 +29,7 @@ public class ParkedSaleService {
     if (req.items() == null || req.items().isEmpty()) {
       throw new ApiException(400, "PARK_EMPTY", "Cannot park a sale with no items", List.of());
     }
-    UUID storeId = UUID.fromString(req.storeId());
+    UUID storeId = Parsing.uuid(req.storeId(), "storeId");
     UUID saleId = UUID.randomUUID();
 
     List<ParkedSaleItemResponse> items =
@@ -83,8 +84,9 @@ public class ParkedSaleService {
   }
 
   public NoSaleResponse logNoSale(UUID tenantId, UUID cashierId, NoSaleRequest req) {
-    UUID storeId = req.storeId() == null ? null : UUID.fromString(req.storeId());
-    UUID sessionId = req.tillSessionId() == null ? null : UUID.fromString(req.tillSessionId());
+    UUID storeId = req.storeId() == null ? null : Parsing.uuid(req.storeId(), "storeId");
+    UUID sessionId =
+        req.tillSessionId() == null ? null : Parsing.uuid(req.tillSessionId(), "tillSessionId");
     return repo.logNoSale(tenantId, storeId, cashierId, sessionId, req.reason(), null);
   }
 }

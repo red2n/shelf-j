@@ -1,7 +1,9 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
@@ -80,6 +82,8 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
   @override
   Widget build(BuildContext context) {
     final levelsAsync = ref.watch(inventoryLevelsProvider);
+    final labels = ref.watch(inventoryVariantLabelsProvider).valueOrNull ??
+        const <String, VariantLabel>{};
     final cs = Theme.of(context).colorScheme;
 
     return Column(
@@ -93,7 +97,7 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
               Expanded(
                 child: TextField(
                   decoration: const InputDecoration(
-                    hintText: 'Search variant ID…',
+                    hintText: 'Search product, SKU or ID…',
                     prefixIcon: Icon(Icons.search),
                     isDense: true,
                   ),
@@ -157,10 +161,13 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
             data: (levels) {
               var filtered = levels.where((l) {
                 if (_lowOnly && !l.isLow) return false;
-                if (_search.isNotEmpty &&
-                    !l.variantId
-                        .toLowerCase()
-                        .contains(_search.toLowerCase())) return false;
+                if (_search.isNotEmpty) {
+                  final label = labels[l.variantId];
+                  final hay =
+                      '${label?.productName ?? ''} ${label?.sku ?? ''} ${l.variantId}'
+                          .toLowerCase();
+                  if (!hay.contains(_search.toLowerCase())) return false;
+                }
                 return true;
               }).toList();
 
@@ -188,9 +195,9 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
               return LayoutBuilder(builder: (context, bc) {
                 final wide = bc.maxWidth >= 600;
                 if (wide) {
-                  return _WideTable(levels: filtered);
+                  return _WideTable(levels: filtered, labels: labels);
                 }
-                return _NarrowList(levels: filtered);
+                return _NarrowList(levels: filtered, labels: labels);
               });
             },
           ),
@@ -499,10 +506,13 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   }
 
   String _friendly(Object e) {
-    final s = e.toString();
-    if (s.contains('404')) return 'No variant with that ID exists.';
-    if (s.contains('400')) return 'Check the variant ID (UUID) and quantity.';
-    return 'Could not receive stock: $s';
+    // Read the backend's structured error; fall back to a screen-specific hint.
+    final code = apiErrorCode(e);
+    if (code == 'INVALID_UUID') return 'Check the variant ID (UUID) and quantity.';
+    if (e is DioException && e.response?.statusCode == 404) {
+      return 'No variant with that ID exists.';
+    }
+    return friendlyError(e, fallback: 'Could not receive stock.');
   }
 
   @override
@@ -699,9 +709,21 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   }
 }
 
+/// Product name for a variant, falling back to a short UUID while labels resolve.
+String _productNameOf(String variantId, Map<String, VariantLabel> labels) {
+  final l = labels[variantId];
+  if (l != null && l.productName.isNotEmpty) return l.productName;
+  final n = variantId.length >= 8 ? variantId.substring(0, 8) : variantId;
+  return '$n…';
+}
+
+String _skuOf(String variantId, Map<String, VariantLabel> labels) =>
+    labels[variantId]?.sku ?? '';
+
 class _WideTable extends StatelessWidget {
   final List<InventoryLevel> levels;
-  const _WideTable({required this.levels});
+  final Map<String, VariantLabel> labels;
+  const _WideTable({required this.levels, required this.labels});
 
   @override
   Widget build(BuildContext context) {
@@ -713,7 +735,7 @@ class _WideTable extends StatelessWidget {
           headingRowColor: WidgetStatePropertyAll(cs.surfaceContainerHigh),
           columnSpacing: 24,
           columns: const [
-            DataColumn(label: Text('Variant ID')),
+            DataColumn(label: Text('Product')),
             DataColumn(label: Text('Store')),
             DataColumn(label: Text('On-Hand'), numeric: true),
             DataColumn(label: Text('Reserved'), numeric: true),
@@ -722,16 +744,23 @@ class _WideTable extends StatelessWidget {
           ],
           rows: levels.map((l) {
             final isLow = l.isLow;
+            final sku = _skuOf(l.variantId, labels);
             return DataRow(
               color: isLow
                   ? WidgetStatePropertyAll(cs.errorContainer.withAlpha(80))
                   : null,
               cells: [
-                DataCell(Text(
-                  l.variantId.length > 16
-                      ? '${l.variantId.substring(0, 8)}…'
-                      : l.variantId,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                DataCell(Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_productNameOf(l.variantId, labels),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 13)),
+                    if (sku.isNotEmpty)
+                      Text(sku,
+                          style: TextStyle(fontSize: 11, color: cs.outline)),
+                  ],
                 )),
                 DataCell(Text(
                   l.storeId.length > 8 ? l.storeId.substring(0, 8) : l.storeId,
@@ -772,7 +801,8 @@ class _WideTable extends StatelessWidget {
 
 class _NarrowList extends StatelessWidget {
   final List<InventoryLevel> levels;
-  const _NarrowList({required this.levels});
+  final Map<String, VariantLabel> labels;
+  const _NarrowList({required this.levels, required this.labels});
 
   @override
   Widget build(BuildContext context) {
@@ -783,6 +813,7 @@ class _NarrowList extends StatelessWidget {
       itemBuilder: (context, i) {
         final l = levels[i];
         final cs = Theme.of(context).colorScheme;
+        final sku = _skuOf(l.variantId, labels);
         return Card(
           color: l.isLow ? cs.errorContainer.withAlpha(80) : null,
           child: ListTile(
@@ -791,13 +822,11 @@ class _NarrowList extends StatelessWidget {
               color: l.isLow ? cs.error : cs.primary,
             ),
             title: Text(
-              l.variantId.length > 20
-                  ? '${l.variantId.substring(0, 20)}…'
-                  : l.variantId,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              _productNameOf(l.variantId, labels),
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
             ),
             subtitle: Text(
-                'On-hand: ${l.onHand.toStringAsFixed(0)}  ·  Reserved: ${l.reserved.toStringAsFixed(0)}'),
+                '${sku.isNotEmpty ? '$sku  ·  ' : ''}On-hand: ${l.onHand.toStringAsFixed(0)}  ·  Reserved: ${l.reserved.toStringAsFixed(0)}'),
             trailing: Text(
               'Avail: ${l.available.toStringAsFixed(0)}',
               style: TextStyle(

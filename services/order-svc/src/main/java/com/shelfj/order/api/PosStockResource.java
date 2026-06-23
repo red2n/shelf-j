@@ -4,6 +4,7 @@ import com.shelfj.order.domain.Domain.PosStockPosition;
 import com.shelfj.order.dto.Dtos.PosStockPositionResponse;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
@@ -40,8 +41,8 @@ public class PosStockResource {
       @QueryParam("limit") @DefaultValue("50") int limit) {
     int effectiveLimit = limit > 100 ? 100 : limit;
     UUID tenantId = ctx.requireTenantId();
-    UUID storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
-    UUID variantId = variantIdStr != null ? UUID.fromString(variantIdStr) : null;
+    UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "storeId") : null;
+    UUID variantId = variantIdStr != null ? Parsing.uuid(variantIdStr, "variantId") : null;
     List<PosStockPositionResponse> rows =
         svc.listStockPositions(tenantId, storeId, variantId, effectiveLimit).stream()
             .map(PosStockResource::toResponse)

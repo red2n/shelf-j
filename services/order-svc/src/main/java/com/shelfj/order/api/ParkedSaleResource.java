@@ -5,6 +5,7 @@ import com.shelfj.order.dto.Dtos.ParkSaleRequest;
 import com.shelfj.order.dto.Dtos.ParkedSaleResponse;
 import com.shelfj.order.service.ParkedSaleService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -53,7 +54,7 @@ public class ParkedSaleResource {
   public ApiResponse<List<ParkedSaleResponse>> listParked(@QueryParam("storeId") String storeId) {
     ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
     UUID tenantId = ctx.requireTenantId();
-    UUID sid = storeId == null ? null : UUID.fromString(storeId);
+    UUID sid = storeId == null ? null : Parsing.uuid(storeId, "storeId");
     var sales = svc.list(tenantId, sid);
     return ApiResponse.ok(sales, ApiResponse.Meta.of(ctx.requestId()));
   }

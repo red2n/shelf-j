@@ -467,6 +467,11 @@ class _ReturnDialogState extends ConsumerState<_ReturnDialog> {
           ),
           data: (order) {
             final preview = _previewRefund(order.items);
+            final labels = ref
+                    .watch(variantLabelsProvider(
+                        variantIdsKey(order.items.map((l) => l.variantId))))
+                    .valueOrNull ??
+                const <String, VariantLabel>{};
             return SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -516,6 +521,8 @@ class _ReturnDialogState extends ConsumerState<_ReturnDialog> {
                   for (final line in order.items)
                     _ReturnLineRow(
                       line: line,
+                      name: variantDisplayName(line.variantId, labels),
+                      sku: variantSku(line.variantId, labels),
                       currency: order.currency,
                       value: _returnQty[line.variantId] ?? 0,
                       onChanged: (v) =>
@@ -585,11 +592,15 @@ class _ReturnDialogState extends ConsumerState<_ReturnDialog> {
 
 class _ReturnLineRow extends StatelessWidget {
   final OrderLine line;
+  final String name;
+  final String sku;
   final String currency;
   final int value;
   final ValueChanged<int> onChanged;
   const _ReturnLineRow({
     required this.line,
+    required this.name,
+    required this.sku,
     required this.currency,
     required this.value,
     required this.onChanged,
@@ -598,9 +609,6 @@ class _ReturnLineRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final maxQty = line.qty.toInt();
-    final shortVariant = line.variantId.length > 12
-        ? '${line.variantId.substring(0, 12)}…'
-        : line.variantId;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -609,11 +617,11 @@ class _ReturnLineRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(shortVariant,
+                Text(name,
                     style: const TextStyle(
-                        fontFamily: 'monospace', fontSize: 12)),
+                        fontWeight: FontWeight.w600, fontSize: 13)),
                 Text(
-                    'ordered $maxQty · $currency ${line.unitPrice.toStringAsFixed(2)}',
+                    '${sku.isNotEmpty ? '$sku · ' : ''}ordered $maxQty · $currency ${line.unitPrice.toStringAsFixed(2)}',
                     style: TextStyle(
                         fontSize: 11,
                         color: Theme.of(context).colorScheme.outline)),

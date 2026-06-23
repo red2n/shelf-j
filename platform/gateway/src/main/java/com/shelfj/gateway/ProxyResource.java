@@ -46,10 +46,13 @@ public class ProxyResource {
   @Path("/{service}/{path: .*}")
   @Produces(MediaType.APPLICATION_JSON)
   public Response proxyGet(
-      @PathParam("service") String service,
-      @PathParam("path") String path,
+      @PathParam("service") String rawService,
+      @PathParam("path") String rawPath,
       @Context UriInfo uriInfo,
       @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders) {
+    Route route = Route.of(rawService, rawPath);
+    String service = route.service();
+    String path = route.path();
     return resolve(service)
         .map(
             instance -> {
@@ -71,11 +74,14 @@ public class ProxyResource {
   @Consumes(MediaType.APPLICATION_JSON)
   @Produces(MediaType.APPLICATION_JSON)
   public Response proxyPost(
-      @PathParam("service") String service,
-      @PathParam("path") String path,
+      @PathParam("service") String rawService,
+      @PathParam("path") String rawPath,
       @Context UriInfo uriInfo,
       @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders,
       String body) {
+    Route route = Route.of(rawService, rawPath);
+    String service = route.service();
+    String path = route.path();
     return resolve(service)
         .map(
             instance -> {
@@ -97,11 +103,14 @@ public class ProxyResource {
   @Consumes(MediaType.APPLICATION_JSON)
   @Produces(MediaType.APPLICATION_JSON)
   public Response proxyPut(
-      @PathParam("service") String service,
-      @PathParam("path") String path,
+      @PathParam("service") String rawService,
+      @PathParam("path") String rawPath,
       @Context UriInfo uriInfo,
       @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders,
       String body) {
+    Route route = Route.of(rawService, rawPath);
+    String service = route.service();
+    String path = route.path();
     return resolve(service)
         .map(
             instance -> {
@@ -123,11 +132,14 @@ public class ProxyResource {
   @Consumes(MediaType.APPLICATION_JSON)
   @Produces(MediaType.APPLICATION_JSON)
   public Response proxyPatch(
-      @PathParam("service") String service,
-      @PathParam("path") String path,
+      @PathParam("service") String rawService,
+      @PathParam("path") String rawPath,
       @Context UriInfo uriInfo,
       @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders,
       String body) {
+    Route route = Route.of(rawService, rawPath);
+    String service = route.service();
+    String path = route.path();
     return resolve(service)
         .map(
             instance -> {
@@ -148,10 +160,13 @@ public class ProxyResource {
   @Path("/{service}/{path: .*}")
   @Produces(MediaType.APPLICATION_JSON)
   public Response proxyDelete(
-      @PathParam("service") String service,
-      @PathParam("path") String path,
+      @PathParam("service") String rawService,
+      @PathParam("path") String rawPath,
       @Context UriInfo uriInfo,
       @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders) {
+    Route route = Route.of(rawService, rawPath);
+    String service = route.service();
+    String path = route.path();
     return resolve(service)
         .map(
             instance -> {
@@ -169,6 +184,27 @@ public class ProxyResource {
   }
 
   // --- helpers ---
+
+  /**
+   * The effective upstream target after peeling off an optional API version segment. {@code
+   * /api/v1/{service}/{path}} resolves to exactly the same upstream as the unversioned {@code
+   * /api/{service}/{path}} alias, so versioning is a gateway-level concern and business services
+   * stay version-agnostic. The version is currently informational (only {@code v1} exists);
+   * version-specific routing can branch on it here later.
+   */
+  record Route(String service, String path) {
+    static Route of(String service, String path) {
+      String rest = path == null ? "" : path;
+      if (service != null && service.matches("v\\d+")) {
+        int slash = rest.indexOf('/');
+        if (slash < 0) {
+          return new Route(rest, "");
+        }
+        return new Route(rest.substring(0, slash), rest.substring(slash + 1));
+      }
+      return new Route(service, rest);
+    }
+  }
 
   private Optional<ServiceInstance> resolve(String service) {
     // Allowlist gate: only declared business services are routable. An internal service that

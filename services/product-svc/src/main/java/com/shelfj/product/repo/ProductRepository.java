@@ -605,6 +605,34 @@ public class ProductRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Resolves a batch of variant ids to their variant + parent product in one query. Unlike the
+   * storefront barcode lookup this does NOT filter on {@code status='ACTIVE'} — admin screens need
+   * to resolve names/SKUs for every variant they show, including inactive ones. tenant_id is
+   * filtered first (golden rule #3).
+   */
+  public List<VariantWithProduct> findVariantsByIds(UUID tenantId, List<UUID> ids) {
+    if (ids.isEmpty()) {
+      return List.of();
+    }
+    return query(
+        "SELECT v.id AS v_id, v.tenant_id AS v_tid, v.product_id, v.sku, v.barcode,"
+            + " v.manufacturer_pn, v.attributes, v.unit, v.status AS v_status,"
+            + " v.created_at AS v_cat, v.updated_at AS v_uat,"
+            + " p.id AS p_id, p.name, p.description, p.brand_id, p.category_id,"
+            + " p.status AS p_status, p.sellable_online, p.sellable_pos,"
+            + " p.created_at AS p_cat, p.updated_at AS p_uat"
+            + " FROM product_variants v"
+            + " JOIN products p ON p.id = v.product_id AND p.tenant_id = v.tenant_id"
+            + " WHERE v.tenant_id = ? AND v.id = ANY(?)",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setArray(2, ps.getConnection().createArrayOf("uuid", ids.toArray()));
+        },
+        ProductRepository::mapVariantWithProduct,
+        "resolve variants by ids");
+  }
+
   private static Product mapProductAlias(ResultSet rs) throws SQLException {
     return new Product(
         rs.getObject("id", UUID.class),

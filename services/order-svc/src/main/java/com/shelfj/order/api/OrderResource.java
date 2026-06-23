@@ -8,6 +8,7 @@ import com.shelfj.order.mapper.Mappers;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.Cursor;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -53,7 +54,7 @@ public class OrderResource {
       @QueryParam("after") String after,
       @QueryParam("limit") Integer limit) {
     UUID tenantId = ctx.requireTenantId();
-    UUID storeId = store != null && !store.isBlank() ? UUID.fromString(store) : null;
+    UUID storeId = store != null && !store.isBlank() ? Parsing.uuid(store, "store") : null;
     Instant fromInst = parseInstant(from, "from");
     Instant toInst = parseInstant(to, "to");
     int clamped = Cursor.clampLimit(limit);
@@ -106,7 +107,7 @@ public class OrderResource {
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") String id) {
-    var order = svc.getOrder(ctx.tenantId(), UUID.fromString(id));
+    var order = svc.getOrder(ctx.tenantId(), Parsing.uuid(id, "id"));
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
@@ -114,7 +115,7 @@ public class OrderResource {
   @POST
   @Path("/{id}/confirm")
   public Response confirm(@PathParam("id") String id) {
-    var order = svc.confirmOrder(ctx.tenantId(), UUID.fromString(id), ctx.userId());
+    var order = svc.confirmOrder(ctx.tenantId(), Parsing.uuid(id, "id"), ctx.userId());
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
@@ -124,7 +125,10 @@ public class OrderResource {
   public Response cancel(@PathParam("id") String id, VoidRequest req) {
     var order =
         svc.cancelOrder(
-            ctx.tenantId(), UUID.fromString(id), req != null ? req.reason() : null, ctx.userId());
+            ctx.tenantId(),
+            Parsing.uuid(id, "id"),
+            req != null ? req.reason() : null,
+            ctx.userId());
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
@@ -132,7 +136,7 @@ public class OrderResource {
   @POST
   @Path("/{id}/fulfil")
   public Response fulfil(@PathParam("id") String id) {
-    var order = svc.fulfillOrder(ctx.tenantId(), UUID.fromString(id), ctx.userId());
+    var order = svc.fulfillOrder(ctx.tenantId(), Parsing.uuid(id, "id"), ctx.userId());
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
@@ -140,7 +144,7 @@ public class OrderResource {
   @GET
   @Path("/{id}/history")
   public Response history(@PathParam("id") String id) {
-    var hist = svc.getOrderHistory(ctx.tenantId(), UUID.fromString(id));
+    var hist = svc.getOrderHistory(ctx.tenantId(), Parsing.uuid(id, "id"));
     return Response.ok(ApiResponse.ok(hist.stream().map(Mappers::toDto).toList())).build();
   }
 
@@ -150,7 +154,7 @@ public class OrderResource {
   @Path("/{id}/void")
   public Response voidOrder(@PathParam("id") String id, VoidRequest req) {
     Validations.validate(req);
-    var vl = svc.voidOrder(ctx.tenantId(), UUID.fromString(id), req, ctx);
+    var vl = svc.voidOrder(ctx.tenantId(), Parsing.uuid(id, "id"), req, ctx);
     return Response.ok(ApiResponse.ok(Mappers.toDto(vl))).build();
   }
 
@@ -160,7 +164,7 @@ public class OrderResource {
   @Path("/{id}/returns")
   public Response createReturn(@PathParam("id") String id, CreateReturnRequest req) {
     Validations.validate(req);
-    var ret = svc.createReturn(ctx.tenantId(), UUID.fromString(id), req, ctx);
+    var ret = svc.createReturn(ctx.tenantId(), Parsing.uuid(id, "id"), req, ctx);
     var retItems = svc.getReturnItems(ctx.tenantId(), ret.id());
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(ret, retItems))).build();
   }
@@ -174,7 +178,7 @@ public class OrderResource {
   @GET
   @Path("/{id}/returns")
   public Response listReturns(@PathParam("id") String id) {
-    var returns = svc.getReturns(ctx.tenantId(), UUID.fromString(id));
+    var returns = svc.getReturns(ctx.tenantId(), Parsing.uuid(id, "id"));
     var dtos =
         returns.stream()
             .map(

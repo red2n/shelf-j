@@ -127,6 +127,45 @@ class CatalogIT {
   }
 
   @Test
+  void resolveVariantsReturnsNameAndSkuAndIsolatesTenants() {
+    Response p = post("/admin/products", "{\"name\":\"Resolve Me\"}", TENANT_A);
+    String productId = field(p.readEntity(String.class), "id");
+    Response v =
+        post("/admin/products/" + productId + "/variants", "{\"sku\":\"RESOLVE-1\"}", TENANT_A);
+    String variantId = field(v.readEntity(String.class), "id");
+
+    // Resolve maps the variant UUID to its product name + SKU.
+    String resolved = resolve(variantId, TENANT_A);
+    assertThat(resolved, containsString("Resolve Me"));
+    assertThat(resolved, containsString("RESOLVE-1"));
+    assertThat(resolved, containsString(variantId));
+
+    // Another tenant cannot resolve tenant A's variant (isolation).
+    assertThat(resolve(variantId, TENANT_B), not(containsString("Resolve Me")));
+
+    // A malformed id is a 400, not a 500.
+    Response bad =
+        target
+            .path("/admin/products/variants/resolve")
+            .queryParam("ids", "not-a-uuid")
+            .request()
+            .header("X-Tenant-Id", TENANT_A)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(bad.getStatus(), is(400));
+  }
+
+  private String resolve(String variantId, String tenant) {
+    return target
+        .path("/admin/products/variants/resolve")
+        .queryParam("ids", variantId)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get(String.class);
+  }
+
+  @Test
   void getProductIsCachedAndInvalidatedOnUpdate() {
     Response p = post("/admin/products", "{\"name\":\"Cached Widget\"}", TENANT_A);
     assertThat(p.getStatus(), is(201));

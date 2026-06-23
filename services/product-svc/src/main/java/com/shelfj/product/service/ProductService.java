@@ -249,6 +249,14 @@ public class ProductService {
                     "VARIANT_NOT_FOUND", "No active variant found for barcode: " + barcode));
   }
 
+  /**
+   * Batch-resolves variant ids to variant+product (e.g. so admin screens show names, not UUIDs).
+   */
+  public java.util.List<com.shelfj.product.domain.Domain.VariantWithProduct> resolveVariants(
+      UUID tenantId, java.util.List<UUID> ids) {
+    return repo.findVariantsByIds(tenantId, ids);
+  }
+
   // ──────────────────────────────────────────────────────────────── variants
 
   public Variant createVariant(UUID tenantId, UUID productId, CreateVariantRequest req) {

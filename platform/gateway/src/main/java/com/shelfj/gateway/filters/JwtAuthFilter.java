@@ -248,6 +248,9 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     String p = path;
     while (p.startsWith("/")) p = p.substring(1);
     while (p.endsWith("/")) p = p.substring(0, p.length() - 1);
+    // Collapse an optional API version segment so /api/v1/... matches the same public/storefront/
+    // onboarding whitelists as the unversioned /api/... alias (golden rule #2 stays exact-match).
+    p = p.replaceFirst("^api/v\\d+/", "api/");
     return p;
   }
 

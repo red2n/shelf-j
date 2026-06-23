@@ -50,6 +50,7 @@ import com.shelfj.product.dto.Dtos.VariantAttributeGroupValuesResponse;
 import com.shelfj.product.dto.Dtos.VariantCategorySetAssignmentResponse;
 import com.shelfj.product.dto.Dtos.VariantContainerLinkResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
+import com.shelfj.product.dto.Dtos.VariantScanResponse;
 import com.shelfj.product.mapper.Mappers;
 import com.shelfj.product.service.ProductService;
 import com.shelfj.web.ApiResponse;
@@ -240,6 +241,31 @@ public class AdminResource {
     return ApiResponse.ok(
         service.listVariants(ctx.requireTenantId(), productId).stream()
             .map(Mappers::toVariant)
+            .toList());
+  }
+
+  /**
+   * Batch-resolves variant ids to name + SKU + product context so admin screens (e.g. inventory)
+   * can show human-readable labels instead of raw variant UUIDs. {@code ?ids=a,b,c} (max 200);
+   * unknown ids are simply omitted from the result.
+   */
+  @GET
+  @Path("/products/variants/resolve")
+  public ApiResponse<List<VariantScanResponse>> resolveVariants(@QueryParam("ids") String ids) {
+    UUID tenantId = ctx.requireTenantId();
+    if (ids == null || ids.isBlank()) {
+      return ApiResponse.ok(List.of());
+    }
+    List<UUID> idList =
+        java.util.Arrays.stream(ids.split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .limit(200)
+            .map(s -> com.shelfj.web.Parsing.uuid(s, "ids"))
+            .toList();
+    return ApiResponse.ok(
+        service.resolveVariants(tenantId, idList).stream()
+            .map(vp -> Mappers.toVariantScan(vp.variant(), vp.product()))
             .toList());
   }
 

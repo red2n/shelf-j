@@ -52,6 +52,28 @@ class JwtAuthFilterTest {
   }
 
   @Test
+  void versionedPublicLoginPathBypassesTokenValidation() throws IOException {
+    // /api/v1/... must hit the same public whitelist as the unversioned alias.
+    when(uriInfo.getPath()).thenReturn("api/v1/iam-svc/auth/login");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
+  @Test
+  void versionedStorefrontCatalogResolvesTenant() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/v1/product-svc/catalog/products");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-abc", headers.getFirst("X-Tenant-Id"));
+  }
+
+  @Test
   void pathMerelyEmbeddingPublicSuffixStillRequiresToken() throws IOException {
     when(uriInfo.getPath()).thenReturn("api/product-svc/x/iam-svc/auth/login");
     when(requestContext.getHeaderString("Authorization")).thenReturn(null);

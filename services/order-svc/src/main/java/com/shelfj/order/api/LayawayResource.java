@@ -6,6 +6,7 @@ import com.shelfj.order.dto.Dtos.VoidRequest;
 import com.shelfj.order.mapper.Mappers;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -18,7 +19,6 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import java.util.UUID;
 
 /** Layaway management — Gap #14 POS feature. */
 @Path("/layaways")
@@ -44,7 +44,7 @@ public class LayawayResource {
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") String id) {
-    var layaway = svc.getLayaway(ctx.tenantId(), UUID.fromString(id));
+    var layaway = svc.getLayaway(ctx.tenantId(), Parsing.uuid(id, "id"));
     var items = svc.getLayawayItems(ctx.tenantId(), layaway.id());
     var deposits = svc.getLayawayDeposits(ctx.tenantId(), layaway.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(layaway, items, deposits))).build();
@@ -54,7 +54,7 @@ public class LayawayResource {
   @Path("/{id}/deposits")
   public Response addDeposit(@PathParam("id") String id, AddDepositRequest req) {
     Validations.validate(req);
-    var layaway = svc.addDeposit(ctx.tenantId(), UUID.fromString(id), req, ctx);
+    var layaway = svc.addDeposit(ctx.tenantId(), Parsing.uuid(id, "id"), req, ctx);
     var items = svc.getLayawayItems(ctx.tenantId(), layaway.id());
     var deposits = svc.getLayawayDeposits(ctx.tenantId(), layaway.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(layaway, items, deposits))).build();
@@ -63,7 +63,7 @@ public class LayawayResource {
   @POST
   @Path("/{id}/complete")
   public Response complete(@PathParam("id") String id) {
-    var layaway = svc.completeLayaway(ctx.tenantId(), UUID.fromString(id), ctx);
+    var layaway = svc.completeLayaway(ctx.tenantId(), Parsing.uuid(id, "id"), ctx);
     var items = svc.getLayawayItems(ctx.tenantId(), layaway.id());
     var deposits = svc.getLayawayDeposits(ctx.tenantId(), layaway.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(layaway, items, deposits))).build();
@@ -74,7 +74,7 @@ public class LayawayResource {
   public Response cancel(@PathParam("id") String id, VoidRequest req) {
     var layaway =
         svc.cancelLayaway(
-            ctx.tenantId(), UUID.fromString(id), req != null ? req.reason() : null, ctx);
+            ctx.tenantId(), Parsing.uuid(id, "id"), req != null ? req.reason() : null, ctx);
     var items = svc.getLayawayItems(ctx.tenantId(), layaway.id());
     var deposits = svc.getLayawayDeposits(ctx.tenantId(), layaway.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(layaway, items, deposits))).build();

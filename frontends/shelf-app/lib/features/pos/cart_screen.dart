@@ -1,8 +1,10 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../admin/customer_providers.dart';
@@ -56,11 +58,13 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
   }
 
   String _friendly(Object e) {
-    final s = e.toString();
-    if (s.contains('404') || s.contains('No product')) {
+    // Prefer the backend's structured error; PRODUCT_NOT_FOUND (or a bare 404)
+    // means the scanned barcode matched nothing.
+    if (apiErrorCode(e) == 'PRODUCT_NOT_FOUND' ||
+        (e is DioException && e.response?.statusCode == 404)) {
       return 'No product found for that barcode.';
     }
-    return 'Scan failed: $s';
+    return friendlyError(e, fallback: 'Scan failed. Please try again.');
   }
 
   Future<void> _scanWithCamera() async {
@@ -117,7 +121,7 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       ref.invalidate(parkedSalesProvider);
       _snack('Sale held.');
     } catch (e) {
-      _snack('Could not hold sale: $e', error: true);
+      _snack(friendlyError(e, fallback: 'Could not hold sale.'), error: true);
     }
   }
 
@@ -179,7 +183,7 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       );
       _snack('Drawer opened (no sale logged).');
     } catch (e) {
-      _snack('Could not log no-sale: $e', error: true);
+      _snack(friendlyError(e, fallback: 'Could not log no-sale.'), error: true);
     }
   }
 
