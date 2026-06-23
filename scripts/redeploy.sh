@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Clean rebuild + redeploy of the whole Shelf-J stack: infra + all API services +
-# the web UI (admin/storefront/POS), all in Docker.
+# the web UI (admin/storefront/POS) + Swagger UI (API docs), all in Docker.
 #
 #   ./scripts/redeploy.sh                 # rebuild jars + web bundle + all shelf-j images
 #   ./scripts/redeploy.sh --wipe-data     # ALSO drop DB/Kafka volumes (fresh data)
@@ -10,8 +10,9 @@
 #                                         #         images on this machine, not just Shelf-J)
 #
 # Env overrides:
-#   UI_API_BASE   gateway URL baked into the web build (default http://localhost:8090/api)
-#   UI_HOST_PORT  host port for the web UI (default 8088)
+#   UI_API_BASE       gateway URL baked into the web build (default http://localhost:8090/api)
+#   UI_HOST_PORT      host port for the web UI (default 8088)
+#   SWAGGER_UI_PORT   host port for Swagger UI / API docs (default 8082)
 #
 # Default behaviour: down the stack, delete the built `shelf-j-*` images so they
 # rebuild from scratch, rebuild jars + the web bundle, rebuild images, bring
@@ -119,5 +120,44 @@ if curl -fsS -o /dev/null --max-time 5 "http://localhost:${UI:-8088}/healthz"; t
 else
   red "! Web UI not answering yet on port ${UI:-8088} — give it a few more seconds."
 fi
+SWAGGER=$(docker compose port swagger-ui 8080 2>/dev/null | cut -d: -f2 || echo "${SWAGGER_UI_PORT:-8082}")
+if curl -fsS -o /dev/null --max-time 5 "http://localhost:${SWAGGER:-8082}/"; then
+  cyan "✓ Swagger UI (all service API docs) on http://localhost:${SWAGGER:-8082}"
+else
+  red "! Swagger UI not answering yet on port ${SWAGGER:-8082} — give it a few more seconds."
+fi
 $WIPE_DATA && red "Data was wiped — re-run onboarding/seed (platform admin is recreated by the bootstrap container)."
+
+# ── 7. Testing cheat sheet ───────────────────────────────────────────────────
+# All login flows share ONE web bundle (shelf-app) on $UI; go_router picks the
+# screen by path/role — there is no separate "tenant" or "store" login, staff
+# (owner/manager/cashier) all sign in at the same /login and land in /admin or
+# /pos depending on role. POS additionally needs a clock-in (store pick) after
+# signing in. Storefront is unauthenticated/guest, tenant comes from the URL.
+cport() { docker compose port "$1" "$2" 2>/dev/null | cut -d: -f2; }
+KAFKA_UI=$(cport kafka-ui 8080); KAFKA_UI=${KAFKA_UI:-8081}
+PGADMIN=$(cport pgadmin 80); PGADMIN=${PGADMIN:-5555}
+GRAFANA=$(cport grafana 3000); GRAFANA=${GRAFANA:-3100}
+CONSUL=$(cport consul 8500); CONSUL=${CONSUL:-8500}
+PROM=$(cport prometheus 9090); PROM=${PROM:-9090}
+ZIPKIN_P=$(cport zipkin 9411); ZIPKIN_P=${ZIPKIN_P:-9411}
+PG=$(cport postgres 5432); PG=${PG:-5432}
+REDIS_P=$(cport redis 6379); REDIS_P=${REDIS_P:-6379}
+
+cyan "Testing cheat sheet:"
+echo "  Platform admin login     http://localhost:${UI:-8088}/#/platform/login      (admin@shelf-j.dev — see .env PLATFORM_ADMIN_PASSWORD)"
+echo "  Admin / tenant login     http://localhost:${UI:-8088}/#/login               (owner/manager — same screen, lands on /admin/dashboard)"
+echo "  Store staff / POS login  http://localhost:${UI:-8088}/#/login               (cashier/manager — same screen, lands on /pos, then clock in to a store)"
+echo "  Storefront (guest)       http://localhost:${UI:-8088}/?tenant=<tenantId>#/store/products   (online shop, no login)"
+echo
+echo "  Gateway (API)            http://localhost:${GW:-8090}/api"
+echo "  Swagger UI (API docs)    http://localhost:${SWAGGER:-8082}"
+echo "  Kafka UI                 http://localhost:${KAFKA_UI}"
+echo "  pgAdmin                  http://localhost:${PGADMIN}"
+echo "  Grafana                  http://localhost:${GRAFANA}"
+echo "  Consul UI                http://localhost:${CONSUL}"
+echo "  Prometheus               http://localhost:${PROM}"
+echo "  Zipkin                   http://localhost:${ZIPKIN_P}"
+echo "  Postgres (psql/SQL)      localhost:${PG}"
+echo "  Redis (redis-cli)        localhost:${REDIS_P}"
 cyan "Done."

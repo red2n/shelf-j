@@ -16,8 +16,8 @@
 #   8090  gateway (public entry point)    3100  grafana
 #   5555  pgadmin                         8500  consul UI
 #   8081  kafka-ui                        9411  zipkin
+#   8082  swagger-ui (API docs)           9090  prometheus
 #   5432  postgres (direct SQL access)    6379  redis (redis-cli)
-#   9090  prometheus
 #
 # Ports intentionally NOT exposed (internal only — use Grafana for observability):
 #   otel-collector (4317/4318), loki (3100), tempo (3200), node/postgres/redis
@@ -32,6 +32,17 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/24
+          # ip_range scopes Docker's *dynamic* allocator to .128-.255, leaving .2-.127
+          # untouched by auto-assignment. postgres needs a pinned, never-stolen IP (see
+          # x-postgres-ip below); without this, any other container that starts first and
+          # doesn't request a specific IP could be auto-assigned .10, and postgres then
+          # fails to start at all with "Address already in use" — taking pgbouncer, config,
+          # every business service, and the gateway down with it.
+          # NOTE: aux_addresses looks like the obvious tool here but is wrong — it blocks an
+          # address from *all* assignment, including the explicit ipv4_address request below,
+          # so postgres itself could never start. ip_range is the supported way to carve out
+          # a static-only range while leaving the rest of the subnet free for auto-assignment.
+          ip_range: 172.28.0.128/25
 
 # postgres is pinned to this address (see postgres.networks below) so pgbouncer can
 # reach it via extra_hosts, bypassing pgbouncer's c-ares resolver — which fails to
@@ -273,6 +284,42 @@ services:
     depends_on:
       kafka: { condition: service_healthy }
     networks: [shelfj_network]
+
+  # Swagger UI — browses every business service's MicroProfile OpenAPI contract (served at
+  # /api/<service>/openapi through the gateway; that path is whitelisted as public in
+  # JwtAuthFilter so the browser can fetch the spec without a token). One container, a
+  # dropdown per service — nothing to add here when a new service joins; just append it to
+  # routableServices in GatewayConfig and to this URLS list.
+  swagger-ui:
+    image: swaggerapi/swagger-ui:v5.17.14
+    container_name: shelfj-swagger-ui
+    restart: unless-stopped
+    ports: ["127.0.0.1:${SWAGGER_UI_PORT:-8082}:8080"]
+    environment:
+      URLS: >-
+        [{"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/iam-svc/openapi", "name": "iam-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/tenant-svc/openapi", "name": "tenant-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/product-svc/openapi", "name": "product-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/inventory-svc/openapi", "name": "inventory-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/pricing-svc/openapi", "name": "pricing-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/cart-svc/openapi", "name": "cart-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/order-svc/openapi", "name": "order-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/payment-svc/openapi", "name": "payment-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/purchase-svc/openapi", "name": "purchase-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/customer-svc/openapi", "name": "customer-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/notification-svc/openapi", "name": "notification-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/reporting-svc/openapi", "name": "reporting-svc"}]
+      URLS_PRIMARY_NAME: iam-svc
+    mem_limit: ${SWAGGER_UI_MEM_LIMIT:-256m}
+    networks: [shelfj_network]
+    healthcheck:
+      # 127.0.0.1, not localhost: busybox wget in this image resolves localhost to ::1 first,
+      # and nginx here only binds the IPv4 wildcard, so that would always fail with "connection
+      # refused" even though the service is up.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine

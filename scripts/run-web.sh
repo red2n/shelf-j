@@ -37,8 +37,8 @@ case "${1:-}" in
   --platform) MODE="platform"; shift ;;
   --store)    MODE="store";    shift ;;
 esac
-TENANT="${1:-046e140b-2d6d-40d0-a96b-4550e47e051c}"
-PRODUCT="${2:-d12e7d86-9cfe-4ac5-a67d-1a3daab8f66b}"
+TENANT="${1:-dd7d222e-0cbe-4729-a470-01de6a9eef8d}"
+PRODUCT="${2:-b1f4d1ba-86a3-4441-af13-db54de40ceaa}"
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../frontends/shelf-app" && pwd)"
 

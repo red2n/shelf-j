@@ -97,6 +97,12 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       return;
     }
 
+    // OpenAPI contract documents are not sensitive (no tenant data) and need to be reachable by
+    // an unauthenticated browser (Swagger UI) for API discovery/docs.
+    if ("GET".equals(ctx.getMethod()) && isOpenApiSpec(normalizedPath)) {
+      return;
+    }
+
     // Storefront public reads: tenant comes from the storefront header, regardless of whether
     // the caller also happens to carry a customer Bearer token (e.g. a signed-in customer still
     // browsing the catalog after checkout). These paths expose nothing sensitive — anyone can
@@ -242,6 +248,18 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     // Exact match only — a substring match would let any URL that merely embeds a public
     // suffix (e.g. /api/x-svc/foo/iam-svc/auth/login) skip token validation.
     return PUBLIC_PATHS.contains(normalize(path));
+  }
+
+  /**
+   * {@code GET /api/{service}/openapi} — the MicroProfile OpenAPI contract document Helidon exposes
+   * on every business service. Exactly three segments (the trailing-segment match keeps this from
+   * also matching e.g. {@code api/order-svc/orders/openapi-discount}); the service name itself is
+   * still gated by {@link com.shelfj.gateway.GatewayConfig#routableServices()} in {@code
+   * ProxyResource}, so this only ever reaches a real, routable service.
+   */
+  private static boolean isOpenApiSpec(String normalizedPath) {
+    String[] segments = normalizedPath.split("/");
+    return segments.length == 3 && "api".equals(segments[0]) && "openapi".equals(segments[2]);
   }
 
   private static String normalize(String path) {

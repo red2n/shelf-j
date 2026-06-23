@@ -84,6 +84,41 @@ class JwtAuthFilterTest {
   }
 
   @Test
+  void openApiSpecBypassesTokenValidation() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/order-svc/openapi");
+    when(requestContext.getMethod()).thenReturn("GET");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
+  @Test
+  void openApiSpecRequiresGet() throws IOException {
+    // Same path, wrong verb — must not be treated as the public spec endpoint.
+    when(uriInfo.getPath()).thenReturn("api/order-svc/openapi");
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(requestContext.getHeaderString("Authorization")).thenReturn(null);
+
+    filter.filter(requestContext);
+
+    verify(requestContext).abortWith(any());
+  }
+
+  @Test
+  void pathEmbeddingOpenApiSuffixStillRequiresToken() throws IOException {
+    // Trailing-segment match only: a deeper path that happens to end in a different segment
+    // after "openapi" must not slip through.
+    when(uriInfo.getPath()).thenReturn("api/order-svc/orders/openapi");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization")).thenReturn(null);
+
+    filter.filter(requestContext);
+
+    verify(requestContext).abortWith(any());
+  }
+
+  @Test
   void protectedPathWithoutTokenIsRejected() throws IOException {
     when(uriInfo.getPath()).thenReturn("api/order-svc/orders");
     when(requestContext.getHeaderString("Authorization")).thenReturn(null);
