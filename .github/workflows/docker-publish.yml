@@ -2,6 +2,14 @@ name: Build & Publish Docker Images
 
 # Triggers on every merge to main and on version tags.
 # CI (ci.yml) gates quality; this workflow only publishes — it skips tests.
+#
+# Build-once, no-artifact design: the Maven reactor is built a single time and
+# every service image is built + pushed from the local target/ dirs in the same
+# job. We deliberately do NOT hand JARs between jobs via actions/upload-artifact:
+# the bundled per-service target/libs trees are ~700 MB per run and, even at a
+# 1-day retention, expired artifacts keep counting against the (small) storage
+# quota until GitHub's 6–12h purge — which is what broke the deploy. No artifact
+# upload == no artifact storage consumed.
 on:
   push:
     branches: [main]
@@ -13,12 +21,16 @@ env:
   REGISTRY: ghcr.io
   # Produces e.g. ghcr.io/red2n/shelf-j-gateway
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/shelf-j
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
 
 jobs:
-  # ── 1. Build all JARs ──────────────────────────────────────────────────────
-  build-jars:
-    name: Maven build (skip tests)
+  # ── Build every service JAR once, then build & push all images (no artifacts) ─
+  services:
+    name: Build & publish service images
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -36,27 +48,99 @@ jobs:
       - name: Build all modules
         run: mvn -B -V clean install -DskipTests
 
-      - name: Upload JARs and libs as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: service-jars
-          # Preserve directory structure so Dockerfile.svc path references work.
-          path: |
-            platform/*/target/*.jar
-            platform/*/target/libs
-            services/*/target/*.jar
-            services/*/target/libs
-          retention-days: 1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-  # ── 2. Build Flutter web bundle ───────────────────────────────────────────
-  # Runs in parallel with build-jars — independent of the Maven build.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push all service images
+        run: |
+          set -euo pipefail
+
+          # Compute the tag suffixes once (mirrors docker/metadata-action):
+          #   - sha-<short>           always
+          #   - <version>/<maj.min>/<maj>   on v*.*.* tag pushes
+          #   - <branch> + latest     on default-branch pushes / dispatch
+          suffixes=("sha-$(echo "${GITHUB_SHA}" | cut -c1-7)")
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            suffixes+=("$version" "${version%.*}" "${version%%.*}")
+          else
+            suffixes+=("${GITHUB_REF_NAME}")
+            if [[ "${GITHUB_REF_NAME}" == "${DEFAULT_BRANCH}" ]]; then
+              suffixes+=("latest")
+            fi
+          fi
+
+          # name|svc_path|svc_jar  — must stay in sync with the service catalog.
+          services=(
+            # Platform
+            "gateway|platform/gateway|gateway"
+            "config|platform/config|config-svc"
+            # Business — Phase 1 (back-office)
+            "iam-svc|services/iam-svc|iam-svc"
+            "tenant-svc|services/tenant-svc|tenant-svc"
+            "product-svc|services/product-svc|product-svc"
+            "inventory-svc|services/inventory-svc|inventory-svc"
+            "purchase-svc|services/purchase-svc|purchase-svc"
+            # Business — Phase 2 (commerce)
+            "pricing-svc|services/pricing-svc|pricing-svc"
+            "cart-svc|services/cart-svc|cart-svc"
+            "order-svc|services/order-svc|order-svc"
+            "payment-svc|services/payment-svc|payment-svc"
+            # Business — Phase 3 (experience)
+            "customer-svc|services/customer-svc|customer-svc"
+            "notification-svc|services/notification-svc|notification-svc"
+            "reporting-svc|services/reporting-svc|reporting-svc"
+          )
+
+          {
+            echo "## Published images"
+            echo ""
+            echo "| Service | Image |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for entry in "${services[@]}"; do
+            IFS='|' read -r name svc_path svc_jar <<< "$entry"
+            image="${IMAGE_PREFIX}-${name}"
+            tag_args=()
+            for s in "${suffixes[@]}"; do
+              tag_args+=("-t" "${image}:${s}")
+            done
+            echo "::group::Building ${image}"
+            # --provenance/--sbom=false: skip the attestation manifests buildx
+            # otherwise attaches on push — they show up as extra untagged GHCR
+            # versions and just add storage with no value for our single-arch JVM image.
+            docker buildx build \
+              --push \
+              --provenance=false \
+              --sbom=false \
+              --file Dockerfile.svc \
+              --build-arg "SVC_PATH=${svc_path}" \
+              --build-arg "SVC_JAR=${svc_jar}" \
+              "${tag_args[@]}" \
+              .
+            echo "::endgroup::"
+            echo "| ${name} | \`${image}:latest\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  # ── Build the Flutter web bundle and push its image (no artifacts) ─────────
   # Set SHELFJ_API_BASE as a GitHub Actions repository variable (Settings →
   # Variables → Actions) to the production gateway URL, e.g.
   # https://api.example.com/api. Defaults to /api (relative — works when the
   # gateway and web app share a host or nginx proxies /api upstream).
-  build-web:
-    name: Flutter web build
+  web:
+    name: Build & publish web image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout
@@ -80,119 +164,6 @@ jobs:
         run: |
           flutter build web --release \
             --dart-define=SHELFJ_API_BASE=$SHELFJ_API_BASE
-
-      - name: Upload web bundle as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-bundle
-          # Restore path matches COPY source in Dockerfile.web
-          path: frontends/shelf-app/build/web
-          retention-days: 1
-
-  # ── 3. Build & push service Docker images (parallel matrix) ───────────────
-  docker-publish:
-    name: Docker — ${{ matrix.service.name }}
-    needs: build-jars
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    strategy:
-      fail-fast: false
-      matrix:
-        service:
-          # Platform
-          - { name: gateway,          svc_path: platform/gateway,          svc_jar: gateway          }
-          - { name: config,           svc_path: platform/config,           svc_jar: config-svc       }
-          # Business — Phase 1 (back-office)
-          - { name: iam-svc,          svc_path: services/iam-svc,          svc_jar: iam-svc          }
-          - { name: tenant-svc,       svc_path: services/tenant-svc,       svc_jar: tenant-svc       }
-          - { name: product-svc,      svc_path: services/product-svc,      svc_jar: product-svc      }
-          - { name: inventory-svc,    svc_path: services/inventory-svc,    svc_jar: inventory-svc    }
-          - { name: purchase-svc,     svc_path: services/purchase-svc,     svc_jar: purchase-svc     }
-          # Business — Phase 2 (commerce)
-          - { name: pricing-svc,      svc_path: services/pricing-svc,      svc_jar: pricing-svc      }
-          - { name: cart-svc,         svc_path: services/cart-svc,         svc_jar: cart-svc         }
-          - { name: order-svc,        svc_path: services/order-svc,        svc_jar: order-svc        }
-          - { name: payment-svc,      svc_path: services/payment-svc,      svc_jar: payment-svc      }
-          # Business — Phase 3 (experience)
-          - { name: customer-svc,     svc_path: services/customer-svc,     svc_jar: customer-svc     }
-          - { name: notification-svc, svc_path: services/notification-svc, svc_jar: notification-svc }
-          - { name: reporting-svc,    svc_path: services/reporting-svc,    svc_jar: reporting-svc    }
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download JARs
-        uses: actions/download-artifact@v4
-        with:
-          name: service-jars
-          # Restore at repo root so paths like platform/gateway/target/... are intact.
-          path: .
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract image metadata (tags & labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}
-          tags: |
-            # latest on main branch
-            type=raw,value=latest,enable={{is_default_branch}}
-            # branch name (e.g. main)
-            type=ref,event=branch
-            # semver tag (e.g. v1.2.3 → 1.2.3, 1.2, 1)
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            # short commit sha (e.g. sha-abc1234)
-            type=sha,format=short
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.svc
-          push: true
-          build-args: |
-            SVC_PATH=${{ matrix.service.svc_path }}
-            SVC_JAR=${{ matrix.service.svc_jar }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          # GHA layer cache per service — avoids re-pulling base JRE layer
-          cache-from: type=gha,scope=${{ matrix.service.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
-
-  # ── 4. Build & push web Docker image ──────────────────────────────────────
-  docker-publish-web:
-    name: Docker — web (Flutter)
-    needs: build-web
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download web bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: web-bundle
-          # Restore to the path Dockerfile.web COPYs from.
-          path: frontends/shelf-app/build/web
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -223,32 +194,55 @@ jobs:
           context: .
           file: Dockerfile.web
           push: true
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,mode=max,scope=web
 
-  # ── 5. Summary — list all published image digests ─────────────────────────
-  publish-summary:
-    name: Publish summary
-    needs: [docker-publish, docker-publish-web]
+  # ── Prune old GHCR versions: keep current + previous build per package ──────
+  # A push never deletes the old image — it only moves the latest/main tags, so
+  # every prior version lingers (still carrying its unique sha-<commit> tag) and
+  # accumulates forever. This job keeps the 2 newest versions per package (so you
+  # can still roll back one build) and deletes everything older, plus any
+  # untagged leftovers. Runs only on default-branch / tag publishes, never on a
+  # workflow_dispatch from a feature branch.
+  cleanup:
+    name: Prune old GHCR versions
+    needs: [services, web]
     runs-on: ubuntu-latest
-    if: success()
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - shelf-j-gateway
+          - shelf-j-config
+          - shelf-j-iam-svc
+          - shelf-j-tenant-svc
+          - shelf-j-product-svc
+          - shelf-j-inventory-svc
+          - shelf-j-purchase-svc
+          - shelf-j-pricing-svc
+          - shelf-j-cart-svc
+          - shelf-j-order-svc
+          - shelf-j-payment-svc
+          - shelf-j-customer-svc
+          - shelf-j-notification-svc
+          - shelf-j-reporting-svc
+          - shelf-j-web
 
     steps:
-      - name: Print image URLs
-        run: |
-          echo "## Published images" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | Image |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          for svc in \
-            gateway config \
-            iam-svc tenant-svc product-svc inventory-svc purchase-svc \
-            pricing-svc cart-svc order-svc payment-svc \
-            customer-svc notification-svc reporting-svc; do
-            echo "| $svc | \`${{ env.IMAGE_PREFIX }}-${svc}:latest\` |" >> $GITHUB_STEP_SUMMARY
-          done
-          echo "| web | \`${{ env.IMAGE_PREFIX }}-web:latest\` |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Triggered by:** \`${{ github.ref_name }}\` @ \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+      - name: Keep last 2 versions of ${{ matrix.package }}
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          owner: ${{ github.repository_owner }}
+          package: ${{ matrix.package }}
+          # Keep the 2 most recent tagged versions (current + previous build).
+          keep-n-tagged: 2
+          # Remove dangling/untagged manifests left behind by older pushes.
+          delete-untagged: true
+          # Don't fail the run if a package doesn't exist yet (first publish).
+          validate: true
