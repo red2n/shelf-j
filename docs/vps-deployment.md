@@ -60,7 +60,7 @@ The interface the user lands on is determined by their role after login (or, for
 | OS | Ubuntu 22.04 LTS | Ubuntu 24.04 LTS |
 | Open ports | 22 (SSH), 80 (HTTP), 443 (HTTPS) | same |
 
-> **Firewall rule:** allow 80 and 443 inbound only. Ports 8088, 8090, 8081, 5555, etc. must be blocked from the internet — they are for SSH-tunnel access only (see §11).
+> **Port binding security:** every service in `docker-compose.yml` binds its host port to `127.0.0.1` (localhost only), not `0.0.0.0` (all interfaces). This means none of them — gateway, shelf-app, Grafana, pgAdmin, Consul, Postgres, Redis, etc. — are reachable on the public IP at all, regardless of firewall rules. Caddy is the only process that listens on `0.0.0.0:80` and `0.0.0.0:443`, and it only forwards to `app.storeql.com` and `api.storeql.com`. Everything else is reachable via SSH tunnel only (see §11). Firewall rules blocking 8088/8090/etc. are good defence-in-depth but are not load-bearing.
 
 ### Software to install on the server
 

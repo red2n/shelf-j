@@ -9,9 +9,12 @@
 #   - trust-forwarded-headers=true so rate-limiter keys on the real client IP
 #   - Rate-limit restored to 100 req/min  (dev file sets 30,000 for k6 runs)
 #
-# Firewall: allow ports 80 and 443 inbound.
-# Ports 8090 (gateway) and 8088 (shelf-app) remain bound to the host for
-# SSH-tunnel debugging only — block them from the internet via ufw/security group.
+# Firewall: allow ports 80 and 443 inbound only.
+# All other host ports (8090 gateway, 8088 shelf-app, 8081 Kafka UI, etc.) are
+# bound to 127.0.0.1 in docker-compose.yml so they are unreachable on the public
+# IP by design — no separate firewall rule is needed for them. SSH-tunnel access
+# still works because the tunnel connects via the loopback interface (see §11 of
+# docs/vps-deployment.md).
 #
 # Required env vars (add to .env):
 #   CADDY_ACME_EMAIL  — Let's Encrypt renewal notices (e.g. ops@storeql.com)

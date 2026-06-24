@@ -835,7 +835,11 @@ services:
       shelfj.redis.port: "6379"
       shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
-    ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]
+    # 127.0.0.1 binding: only accessible from the host itself (SSH tunnel or Caddy
+    # via the Docker internal network). Matches the same pattern used by all other
+    # internal services (Postgres, Redis, Consul, Kafka UI, etc.) so the gateway
+    # port is never exposed on the public IP, even without a firewall rule.
+    ports: ["127.0.0.1:${GATEWAY_HOST_PORT:-8090}:8080"]
     networks: [shelfj_network]
     depends_on:
       consul:     { condition: service_healthy }
@@ -884,7 +888,8 @@ services:
     container_name: shelfj-web
     restart: unless-stopped
     # Default 8088 to avoid clashing with the dev `flutter run` server (40015).
-    ports: ["${UI_HOST_PORT:-8088}:8080"]
+    # 127.0.0.1 binding: same reasoning as gateway — not reachable on the public IP.
+    ports: ["127.0.0.1:${UI_HOST_PORT:-8088}:8080"]
     networks: [shelfj_network]
     depends_on:
       gateway: { condition: service_started }
