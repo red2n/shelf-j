@@ -24,7 +24,7 @@ public class FlywayRunner {
     try {
       var result =
           Flyway.configure()
-              .dataSource(settings.dbUrl(), settings.dbUser(), settings.dbPassword())
+              .dataSource(settings.dbMigrationUrl(), settings.dbUser(), settings.dbPassword())
               .locations("classpath:db/migration")
               .schemas(settings.dbSchema())
               .defaultSchema(settings.dbSchema())

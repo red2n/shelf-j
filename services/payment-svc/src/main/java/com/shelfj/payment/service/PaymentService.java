@@ -33,7 +33,7 @@ public class PaymentService {
   public PaymentTender recordTender(
       RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
     UUID tenantId = ctx.requireTenantId();
-    return capture(req, tenantId, UUID.fromString(req.orderId()), idempotencyKey);
+    return capture(req, tenantId, UUID.fromString(req.orderId()), idempotencyKey, ctx);
   }
 
   /**
@@ -63,11 +63,15 @@ public class PaymentService {
           "tendered amount " + req.amount() + " does not match order total " + order.total());
     }
 
-    return capture(req, tenantId, orderId, idempotencyKey);
+    return capture(req, tenantId, orderId, idempotencyKey, ctx);
   }
 
   private PaymentTender capture(
-      RecordTenderRequest req, UUID tenantId, UUID orderId, String idempotencyKey) {
+      RecordTenderRequest req,
+      UUID tenantId,
+      UUID orderId,
+      String idempotencyKey,
+      TenantContext ctx) {
     String method = req.method().toUpperCase(Locale.ROOT);
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
@@ -76,6 +80,9 @@ public class PaymentService {
 
     UUID tenderId = UUID.randomUUID();
     UUID storeId = req.storeId() == null ? null : UUID.fromString(req.storeId());
+    if (storeId != null) {
+      ctx.requireStoreAccess(storeId);
+    }
     PaymentTender tender =
         new PaymentTender(
             tenderId,

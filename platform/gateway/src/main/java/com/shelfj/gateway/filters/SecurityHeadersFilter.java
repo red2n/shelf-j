@@ -30,6 +30,9 @@ public class SecurityHeadersFilter implements ContainerResponseFilter {
     h.putSingle("Referrer-Policy", "strict-origin-when-cross-origin");
     h.putSingle("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
     h.putSingle("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    // The gateway only ever returns JSON (frontends are a separate static app/container) — no
+    // script/style/frame source is ever legitimate, so lock everything down rather than enumerate.
+    h.putSingle("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
 
     String path = req.getUriInfo().getPath();
     if (path != null && (path.contains("/auth/login") || path.contains("/auth/refresh"))) {

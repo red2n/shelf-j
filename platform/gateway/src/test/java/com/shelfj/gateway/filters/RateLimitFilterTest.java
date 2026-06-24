@@ -1,8 +1,6 @@
 package com.shelfj.gateway.filters;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -10,27 +8,63 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.shelfj.gateway.GatewayConfig;
+import com.shelfj.test.RedisSupport;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.api.StatefulRedisConnection;
 import jakarta.ws.rs.container.ContainerRequestContext;
 import java.io.IOException;
-import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+/**
+ * Counters now live in Redis (shared across gateway replicas) instead of gateway heap, so these
+ * tests run against a real Redis container rather than mocking the storage layer — a mock would
+ * just verify the mock, not the atomic INCR+EXPIRE behaviour the fix depends on.
+ */
 @ExtendWith(MockitoExtension.class)
 class RateLimitFilterTest {
+
+  private static RedisSupport REDIS;
+  private static RedisClient client;
+  private static StatefulRedisConnection<String, String> connection;
 
   @Mock GatewayConfig config;
   @Mock ContainerRequestContext requestContext;
 
   private RateLimitFilter filter;
 
+  @BeforeAll
+  static void startRedis() {
+    REDIS = RedisSupport.start();
+    client = RedisClient.create(RedisURI.Builder.redis(REDIS.host(), REDIS.port()).build());
+    connection = client.connect();
+  }
+
+  @AfterAll
+  static void stopRedis() {
+    connection.close();
+    client.shutdown();
+    REDIS.stop();
+  }
+
   @BeforeEach
   void setUp() {
+    connection.sync().flushall();
     filter = new RateLimitFilter();
     filter.config = config;
+    filter.redis = connection.sync();
+  }
+
+  @AfterEach
+  void cleanUp() {
+    connection.sync().flushall();
   }
 
   @Test
@@ -80,24 +114,32 @@ class RateLimitFilterTest {
   }
 
   @Test
-  void capEvictsTheLeastRecentlyActiveBucketNotAnArbitraryOne() throws IOException {
+  void counterIsSharedAcrossInstancesViaRedis() throws IOException {
+    // The whole point of the fix: a second filter instance (i.e. a second gateway replica) must
+    // see the same counter, because it lives in Redis rather than per-instance heap.
     when(config.rateLimitEnabled()).thenReturn(true);
-    when(config.rateLimitRequestsPerMinute()).thenReturn(100);
-    when(config.trustForwardedHeaders()).thenReturn(true);
-    var counter = new AtomicInteger();
-    when(requestContext.getHeaderString("X-Forwarded-For"))
-        .thenAnswer(inv -> "10.0.0." + counter.getAndIncrement());
+    when(config.rateLimitRequestsPerMinute()).thenReturn(2);
+    when(config.trustForwardedHeaders()).thenReturn(false);
 
-    String firstIp = "10.0.0.0";
-    String lastIp = "10.0.0." + RateLimitFilter.MAX_BUCKETS;
-    // Fill to the cap, then one more distinct IP forces an eviction (no stale entries exist to
-    // reclaim instead, since every bucket was just created).
-    for (int i = 0; i <= RateLimitFilter.MAX_BUCKETS; i++) {
-      filter.filter(requestContext);
-    }
+    RateLimitFilter secondReplica = new RateLimitFilter();
+    secondReplica.config = config;
+    secondReplica.redis = connection.sync();
 
-    assertEquals(RateLimitFilter.MAX_BUCKETS, filter.buckets.size());
-    assertFalse(filter.buckets.containsKey(firstIp), "oldest bucket should have been evicted");
-    assertTrue(filter.buckets.containsKey(lastIp), "newest bucket should be kept");
+    filter.filter(requestContext); // replica 1: count=1
+    secondReplica.filter(requestContext); // replica 2: count=2
+    secondReplica.filter(requestContext); // replica 2: count=3 -> rejected
+
+    verify(requestContext, times(1)).abortWith(any());
+  }
+
+  @Test
+  void counterResetsAfterTheWindowExpires() throws IOException {
+    when(config.rateLimitEnabled()).thenReturn(true);
+    when(config.rateLimitRequestsPerMinute()).thenReturn(1);
+    when(config.trustForwardedHeaders()).thenReturn(false);
+
+    filter.filter(requestContext);
+    String key = "ratelimit:" + ClientIp.resolve(requestContext, null, false);
+    assertEquals(RateLimitFilter.WINDOW_SECONDS, connection.sync().ttl(key));
   }
 }

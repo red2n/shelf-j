@@ -47,6 +47,7 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
       Set.of(
           "/auth/register",
           "/auth/login",
+          "/auth/platform-login",
           "/auth/refresh",
           "/auth/logout",
           "/auth/change-password");
@@ -116,6 +117,11 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // or by an authenticated customer. POS channel orders require a staff role — enforced
         // inside OrderResource.place() after payload deserialisation.
         || "/orders".equals(path)
+        // Shopping cart self-service: a guest (sessionId) or authenticated CUSTOMER manages their
+        // own cart with no staff role. Object-level authorization (only the owning
+        // customer/session,
+        // or staff acting on a customer's behalf) is enforced inside CartService, not here.
+        || path.startsWith("/cart")
         // Guest storefront online payment (cashless). The staff cash-tender path is POST /payments,
         // which stays role-gated; this is the customer-facing online capture only.
         || "/payments/online".equals(path);

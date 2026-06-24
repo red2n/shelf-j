@@ -29,6 +29,7 @@ class AuthIT {
     PG = PostgresSupport.start();
     PG.migrate("classpath:db/migration");
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
+    System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
     System.setProperty("shelfj.db.password", PG.password());
     System.setProperty("shelfj.consul.enabled", "false");
@@ -222,6 +223,66 @@ class AuthIT {
     Response ok =
         post("/auth/login", "{\"email\":\"susp@example.com\",\"password\":\"strongpass1\"}");
     assertThat(ok.getStatus(), is(200));
+  }
+
+  @Test
+  void provisionStaffCreatesAccountWithoutRoleAssignment() throws Exception {
+    // Regression: the old code passed "STAFF" as roleName to createUserWithOutbox, which called
+    // roleIdByName("STAFF") — but "STAFF" is a user *type*, not a roles-table row, so every call
+    // threw "role not found: STAFF" and returned 500. Now roleName is null → role assignment is
+    // skipped, and the real store-scoped role arrives later via StaffAssigned event.
+    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    Response resp =
+        target
+            .path("/auth/admin/staff-users")
+            .request()
+            .header("X-Tenant-Id", tenantId.toString())
+            .header("X-Roles", "OWNER")
+            .post(
+                Entity.entity(
+                    "{\"email\":\"staff-new@example.com\",\"password\":\"strongpass1\"}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(resp.getStatus(), is(200));
+    String body = resp.readEntity(String.class);
+    String userId = extract(body, "userId");
+
+    // Verify no user_roles row was created — the account is intentionally role-less at this point.
+    try (var c = iamConnection();
+        var ps = c.prepareStatement("SELECT count(*) FROM user_roles WHERE user_id = ?")) {
+      ps.setObject(1, java.util.UUID.fromString(userId));
+      try (var rs = ps.executeQuery()) {
+        rs.next();
+        assertThat(rs.getInt(1), is(0));
+      }
+    }
+  }
+
+  @Test
+  void provisionStaffIsIdempotentForSameEmail() {
+    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    String body1 =
+        target
+            .path("/auth/admin/staff-users")
+            .request()
+            .header("X-Tenant-Id", tenantId.toString())
+            .header("X-Roles", "OWNER")
+            .post(
+                Entity.entity(
+                    "{\"email\":\"staff-idem@example.com\",\"password\":\"strongpass1\"}",
+                    MediaType.APPLICATION_JSON))
+            .readEntity(String.class);
+    String body2 =
+        target
+            .path("/auth/admin/staff-users")
+            .request()
+            .header("X-Tenant-Id", tenantId.toString())
+            .header("X-Roles", "OWNER")
+            .post(
+                Entity.entity(
+                    "{\"email\":\"staff-idem@example.com\",\"password\":\"strongpass1\"}",
+                    MediaType.APPLICATION_JSON))
+            .readEntity(String.class);
+    assertThat(extract(body1, "userId"), is(extract(body2, "userId")));
   }
 
   /** A JDBC connection scoped to iam-svc's schema (the app uses shelfj.db.schema=iam). */

@@ -239,8 +239,7 @@ public class CartService {
     return ctx.hasRole("CASHIER")
         || ctx.hasRole("STOREKEEPER")
         || ctx.hasRole("MANAGER")
-        || ctx.hasRole("OWNER")
-        || ctx.hasRole("PLATFORM_ADMIN");
+        || ctx.hasRole("OWNER");
   }
 
   private UUID parseUuid(String val, String field) {

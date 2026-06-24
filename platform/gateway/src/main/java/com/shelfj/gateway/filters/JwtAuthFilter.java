@@ -41,6 +41,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       Set.of(
           "api/iam-svc/auth/register",
           "api/iam-svc/auth/login",
+          "api/iam-svc/auth/platform-login",
           "api/iam-svc/auth/refresh",
           "api/iam-svc/bootstrap/admin");
 
@@ -73,14 +74,32 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   @Override
   public void filter(ContainerRequestContext ctx) throws IOException {
     // Always strip any client-supplied identity headers to prevent spoofing.
+    // Exception: onboarding paths may provide X-Tenant-Id for tenant context when JWT has no tenant
+    // claim yet.
+    String path = ctx.getUriInfo().getPath();
+    String normalizedPath = normalize(path);
+    boolean isOnboarding = isOnboarding(normalizedPath, ctx.getMethod());
+
+    // Preserve X-Tenant-Id for onboarding paths (user may have just created tenant and is setting
+    // up stores)
+    String preservedTenantId = null;
+    if (isOnboarding) {
+      preservedTenantId = ctx.getHeaderString(HttpHeaders.TENANT_ID);
+    }
+
     ctx.getHeaders().remove(HttpHeaders.TENANT_ID);
     ctx.getHeaders().remove(HttpHeaders.USER_ID);
     ctx.getHeaders().remove(HttpHeaders.ROLES);
-
-    String path = ctx.getUriInfo().getPath();
+    ctx.getHeaders().remove(HttpHeaders.STORE_IDS);
 
     // Allow public auth paths without a token.
     if (isPublic(path)) {
+      return;
+    }
+
+    // OpenAPI contract documents are not sensitive (no tenant data) and need to be reachable by
+    // an unauthenticated browser (Swagger UI) for API discovery/docs.
+    if ("GET".equals(ctx.getMethod()) && isOpenApiSpec(normalizedPath)) {
       return;
     }
 
@@ -89,6 +108,14 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     // browsing the catalog after checkout). These paths expose nothing sensitive — anyone can
     // already reach them with no token at all — so a present-but-irrelevant Bearer must not force
     // JWT verification and reject the request for lacking a tenant claim.
+    //
+    // But these same paths are ALSO called by authenticated staff with no storefront context at
+    // all — e.g. the admin console checking inventory availability, or POS clock-in listing
+    // stores via this same cashier-safe endpoint (see posStoresProvider: "tenant is taken from
+    // the authenticated staff JWT"). Without X-Storefront-Tenant, that is NOT a guest/customer
+    // call — fall through to normal Bearer verification below so the tenant gets resolved from
+    // the JWT instead of being silently left unset (which previously surfaced downstream as a
+    // blanket 401 NO_TENANT, e.g. every product showing "unavailable" regardless of real stock).
     if (isStorefrontPublic(normalize(path), ctx.getMethod())) {
       String storefrontTenant = ctx.getHeaderString(STOREFRONT_TENANT_HEADER);
       if (storefrontTenant != null && !storefrontTenant.isBlank()) {
@@ -98,8 +125,8 @@ public class JwtAuthFilter implements ContainerRequestFilter {
           return;
         }
         ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, tenant);
+        return;
       }
-      return;
     }
 
     String authHeader = ctx.getHeaderString("Authorization");
@@ -122,6 +149,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     String userId = jwt.getSubject();
     String tenantId = jwt.getClaim("tenant").asString();
     List<String> roles = jwt.getClaim("roles").asList(String.class);
+    List<String> storeIds = jwt.getClaim("storeIds").asList(String.class);
 
     if (userId != null) {
       ctx.getHeaders().putSingle(HttpHeaders.USER_ID, userId);
@@ -148,6 +176,30 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if (roles != null && !roles.isEmpty()) {
       ctx.getHeaders().putSingle(HttpHeaders.ROLES, String.join(",", roles));
     }
+    if (storeIds != null && !storeIds.isEmpty()) {
+      ctx.getHeaders().putSingle(HttpHeaders.STORE_IDS, String.join(",", storeIds));
+    }
+
+    // Restore preserved tenant ID for onboarding paths (flow guard: user provides tenant context)
+    if (preservedTenantId != null && !preservedTenantId.isBlank() && tenantId == null) {
+      ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, preservedTenantId.trim());
+    }
+  }
+
+  /**
+   * Onboarding paths where user may provide tenant context before it's in the JWT. These paths are
+   * part of the tenant creation flow and need X-Tenant-Id for the newly created tenant.
+   */
+  private static boolean isOnboarding(String path, String method) {
+    // POST /onboarding/stores — create store for newly created tenant
+    if ("POST".equals(method) && "api/tenant-svc/onboarding/stores".equals(path)) {
+      return true;
+    }
+    // GET /onboarding/status — check onboarding progress for tenant
+    if ("GET".equals(method) && "api/tenant-svc/onboarding/status".equals(path)) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -206,10 +258,25 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     return PUBLIC_PATHS.contains(normalize(path));
   }
 
+  /**
+   * {@code GET /api/{service}/openapi} — the MicroProfile OpenAPI contract document Helidon exposes
+   * on every business service. Exactly three segments (the trailing-segment match keeps this from
+   * also matching e.g. {@code api/order-svc/orders/openapi-discount}); the service name itself is
+   * still gated by {@link com.shelfj.gateway.GatewayConfig#routableServices()} in {@code
+   * ProxyResource}, so this only ever reaches a real, routable service.
+   */
+  private static boolean isOpenApiSpec(String normalizedPath) {
+    String[] segments = normalizedPath.split("/");
+    return segments.length == 3 && "api".equals(segments[0]) && "openapi".equals(segments[2]);
+  }
+
   private static String normalize(String path) {
     String p = path;
     while (p.startsWith("/")) p = p.substring(1);
     while (p.endsWith("/")) p = p.substring(0, p.length() - 1);
+    // Collapse an optional API version segment so /api/v1/... matches the same public/storefront/
+    // onboarding whitelists as the unversioned /api/... alias (golden rule #2 stays exact-match).
+    p = p.replaceFirst("^api/v\\d+/", "api/");
     return p;
   }
 

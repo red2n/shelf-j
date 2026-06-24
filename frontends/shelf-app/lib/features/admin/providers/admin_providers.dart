@@ -242,18 +242,9 @@ final recentOrdersProvider = FutureProvider.autoDispose<List<OrderSummary>>((ref
   return data.map((e) => OrderSummary.fromJson(e as Map<String, dynamic>)).toList();
 });
 
-/// Orders with optional channel filter ('ALL', 'POS', 'ONLINE').
-final ordersProvider =
-    FutureProvider.autoDispose.family<List<OrderSummary>, String>((ref, channel) async {
-  final params = <String, dynamic>{'limit': 50};
-  if (channel != 'ALL') params['channel'] = channel;
-  final resp = await ref.read(apiClientProvider).dio.get(
-    '/${ApiConstants.order}/orders',
-    queryParameters: params,
-  );
-  final data = (resp.data['data'] as List?) ?? [];
-  return data.map((e) => OrderSummary.fromJson(e as Map<String, dynamic>)).toList();
-});
+// Paginated orders now live in orders_pagination.dart (ordersPaginationProvider) —
+// server-side channel/status filtering + cursor infinite scroll, replacing the old
+// "fetch 50 and filter in Dart" ordersProvider.
 
 /// All inventory levels for the tenant (across all stores).
 final inventoryLevelsProvider = FutureProvider.autoDispose<List<InventoryLevel>>((ref) async {
@@ -263,6 +254,67 @@ final inventoryLevelsProvider = FutureProvider.autoDispose<List<InventoryLevel>>
       .get('/${ApiConstants.inventory}/admin/inventory/levels');
   final data = (resp.data['data'] as List?) ?? [];
   return data.map((e) => InventoryLevel.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+/// A human-readable label for a variant — so screens show a name + SKU instead of
+/// the raw variant UUID the inventory/order APIs return.
+class VariantLabel {
+  final String productName;
+  final String sku;
+  const VariantLabel({required this.productName, required this.sku});
+}
+
+/// Display name for a variant id: the resolved product name, or a short UUID
+/// fallback while labels load / for unknown ids.
+String variantDisplayName(String variantId, Map<String, VariantLabel> labels) {
+  final l = labels[variantId];
+  if (l != null && l.productName.isNotEmpty) return l.productName;
+  final n = variantId.length >= 8 ? variantId.substring(0, 8) : variantId;
+  return '$n…';
+}
+
+/// Resolved SKU for a variant id, or empty string when unknown.
+String variantSku(String variantId, Map<String, VariantLabel> labels) =>
+    labels[variantId]?.sku ?? '';
+
+/// Builds a stable cache key (sorted, de-duped, comma-joined) from a set of
+/// variant ids, so [variantLabelsProvider] reuses results across screens that
+/// happen to reference the same variants.
+String variantIdsKey(Iterable<String> ids) {
+  final set = ids.where((s) => s.isNotEmpty).toSet().toList()..sort();
+  return set.join(',');
+}
+
+/// Resolves a set of variant UUIDs (passed as the [variantIdsKey] csv) to their
+/// product name + SKU via product-svc's batch resolve endpoint, so screens show
+/// names instead of raw UUIDs. Missing ids simply aren't in the returned map.
+final variantLabelsProvider = FutureProvider.autoDispose
+    .family<Map<String, VariantLabel>, String>((ref, idsCsv) async {
+  if (idsCsv.isEmpty) return const {};
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.product}/admin/products/variants/resolve',
+        queryParameters: {'ids': idsCsv},
+      );
+  final data = (resp.data['data'] as List?) ?? [];
+  final map = <String, VariantLabel>{};
+  for (final e in data) {
+    final m = e as Map<String, dynamic>;
+    final id = m['variantId'] as String?;
+    if (id == null) continue;
+    map[id] = VariantLabel(
+      productName: (m['productName'] as String?) ?? '',
+      sku: (m['sku'] as String?) ?? '',
+    );
+  }
+  return map;
+});
+
+/// Variant labels for the variants currently on the inventory-levels page.
+final inventoryVariantLabelsProvider =
+    FutureProvider.autoDispose<Map<String, VariantLabel>>((ref) async {
+  final levels = await ref.watch(inventoryLevelsProvider.future);
+  return ref
+      .watch(variantLabelsProvider(variantIdsKey(levels.map((l) => l.variantId))).future);
 });
 
 /// Current tenant info (name, currency, status).

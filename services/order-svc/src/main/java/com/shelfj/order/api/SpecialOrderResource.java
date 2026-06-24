@@ -36,7 +36,7 @@ public class SpecialOrderResource {
   public Response create(CreateSpecialOrderRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
-    var so = svc.createSpecialOrder(tenantId, req);
+    var so = svc.createSpecialOrder(tenantId, req, ctx);
     var items = svc.getSpecialOrderItems(tenantId, so.id());
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(so, items))).build();
   }

@@ -39,8 +39,9 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
     UUID tenantId = parseUuid(req.getHeaderString(HttpHeaders.TENANT_ID));
     UUID userId = parseUuid(req.getHeaderString(HttpHeaders.USER_ID));
     Set<String> roles = parseRoles(req.getHeaderString(HttpHeaders.ROLES));
+    Set<UUID> storeIds = parseUuids(req.getHeaderString(HttpHeaders.STORE_IDS));
 
-    context.set(tenantId, userId, roles, requestId);
+    context.set(tenantId, userId, roles, storeIds, requestId);
     // stash for the response filter
     req.setProperty(HttpHeaders.REQUEST_ID, requestId);
   }
@@ -72,6 +73,18 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
     return Arrays.stream(value.split(","))
         .map(String::trim)
         .filter(s -> !s.isEmpty())
+        .collect(Collectors.toUnmodifiableSet());
+  }
+
+  private static Set<UUID> parseUuids(String value) {
+    if (value == null || value.isBlank()) {
+      return Set.of();
+    }
+    return Arrays.stream(value.split(","))
+        .map(String::trim)
+        .filter(s -> !s.isEmpty())
+        .map(TenantContextFilter::parseUuid)
+        .filter(java.util.Objects::nonNull)
         .collect(Collectors.toUnmodifiableSet());
   }
 }

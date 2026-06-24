@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'auth/auth_notifier.dart';
 import 'auth/auth_state.dart';
 import '../features/auth/login_screen.dart';
+import '../features/platform/platform_login_screen.dart';
 import '../features/onboarding/onboarding_wizard.dart';
 import '../features/admin/admin_shell.dart';
 import '../features/admin/catalog_screen.dart';
@@ -49,12 +50,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (loc.startsWith('/store')) return null;
 
       if (auth is AuthUnauthenticated) {
-        return loc == '/login' ? null : '/login';
+        if (loc == '/login' || loc == '/platform/login') return null;
+        // /platform/* (other than the login page) has no unauthenticated access —
+        // bounce to the platform login, not the store/POS one.
+        return loc.startsWith('/platform') ? '/platform/login' : '/login';
       }
 
       if (auth is AuthAuthenticated) {
         // send logged-in users away from login/root
-        if (loc == '/login' || loc == '/') return auth.homeRoute;
+        if (loc == '/login' || loc == '/platform/login' || loc == '/') {
+          return auth.homeRoute;
+        }
         // force incomplete-onboarding users to the wizard
         if (auth.needsOnboarding && loc != '/onboarding') return '/onboarding';
         // once onboarded, keep them out of the wizard
@@ -78,6 +84,7 @@ final routerProvider = Provider<GoRouter>((ref) {
     },
     routes: [
       GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+      GoRoute(path: '/platform/login', builder: (_, __) => const PlatformLoginScreen()),
       GoRoute(path: '/onboarding', builder: (_, __) => const OnboardingWizard()),
 
       // ── Platform admin shell (PLATFORM_ADMIN only) ─────────────────────────

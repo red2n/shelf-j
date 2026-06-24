@@ -12,6 +12,8 @@ import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.time.OffsetDateTime;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -28,6 +30,7 @@ class InventoryIT {
   static {
     PG = PostgresSupport.start();
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
+    System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
     System.setProperty("shelfj.db.password", PG.password());
     System.setProperty("shelfj.db.schema", "inventory");
@@ -566,6 +569,47 @@ class InventoryIT {
     assertThat(r.readEntity(String.class), containsString("\"purged\""));
   }
 
+  @Test
+  void purgeMovements_archivesRatherThanDeletes() throws Exception {
+    // Golden rule #8: stock_movements is append-only. Purge must relocate rows to
+    // stock_movements_archive, never destroy them. Seed a pre-dated row directly
+    // (no API backdates created_at), then verify it survives in the archive table.
+    UUID movementId = UUID.randomUUID();
+    OffsetDateTime oldDate = OffsetDateTime.parse("2019-01-01T00:00:00Z");
+    try (var c = PG.dataSource().getConnection();
+        var ps =
+            c.prepareStatement(
+                "INSERT INTO inventory.stock_movements (id, tenant_id, store_id, variant_id,"
+                    + " type, qty, created_at) VALUES (?,?,?,?,'ADJUST',1,?)")) {
+      ps.setObject(1, movementId);
+      ps.setObject(2, UUID.fromString(T));
+      ps.setObject(3, UUID.fromString(S));
+      ps.setObject(4, UUID.fromString(V));
+      ps.setObject(5, oldDate);
+      ps.executeUpdate();
+    }
+
+    Response r =
+        post("/admin/inventory/movements/purge", "{\"before\":\"2020-01-01T00:00:00Z\"}", T);
+    assertThat(r.getStatus(), is(200));
+
+    try (var c = PG.dataSource().getConnection()) {
+      try (var ps = c.prepareStatement("SELECT 1 FROM inventory.stock_movements WHERE id=?")) {
+        ps.setObject(1, movementId);
+        try (var rs = ps.executeQuery()) {
+          assertThat("row must leave the hot table", rs.next(), is(false));
+        }
+      }
+      try (var ps =
+          c.prepareStatement("SELECT 1 FROM inventory.stock_movements_archive WHERE id=?")) {
+        ps.setObject(1, movementId);
+        try (var rs = ps.executeQuery()) {
+          assertThat("row must survive in the archive", rs.next(), is(true));
+        }
+      }
+    }
+  }
+
   // ── Tier-1 Gap #31: Zone GL mappings ─────────────────────────────────────
 
   @Test
@@ -606,6 +650,50 @@ class InventoryIT {
             .header("X-Roles", "OWNER")
             .put(Entity.entity("{\"storeId\":\"" + S + "\"}", MediaType.APPLICATION_JSON));
     assertThat(r.getStatus(), is(400));
+  }
+
+  @Test
+  void receiveWithSameIdempotencyKeyIsNotDoubleCounted() {
+    String variant = UUID.randomUUID().toString();
+    String key = UUID.randomUUID().toString();
+    String body =
+        "{\"storeId\":\""
+            + S
+            + "\",\"variantId\":\""
+            + variant
+            + "\",\"qty\":10,\"batchNo\":\"R\"}";
+
+    Response first = postWithIdempotencyKey("/admin/inventory/receive", body, T, key);
+    assertThat(first.getStatus(), is(201));
+    String firstBatchId = field(first.readEntity(String.class), "id");
+
+    // a client-timeout retry with the same key replays the original batch, not a second one
+    Response retried = postWithIdempotencyKey("/admin/inventory/receive", body, T, key);
+    assertThat(retried.getStatus(), is(201));
+    assertThat(field(retried.readEntity(String.class), "id"), is(firstBatchId));
+
+    String levels =
+        target
+            .path("/admin/inventory/levels")
+            .queryParam("store", S)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    int marker = levels.indexOf("\"variantId\":\"" + variant + "\"");
+    assertThat(marker, not(-1));
+    String row = levels.substring(levels.lastIndexOf('{', marker), levels.indexOf('}', marker) + 1);
+    assertThat(row, containsString("\"onHand\":10.000"));
+  }
+
+  private Response postWithIdempotencyKey(String path, String json, String tenant, String key) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .header(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY, key)
+        .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
   private static String field(String json, String name) {

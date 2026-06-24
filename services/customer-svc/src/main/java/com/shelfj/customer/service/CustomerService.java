@@ -325,11 +325,6 @@ public class CustomerService {
   // ── helpers ───────────────────────────────────────────────────────────────
 
   private static LocalDate parseDate(String s) {
-    if (s == null || s.isBlank()) return null;
-    try {
-      return LocalDate.parse(s);
-    } catch (Exception e) {
-      throw new ApiException(400, "INVALID_DATE", "dob must be yyyy-MM-dd", List.of(), e);
-    }
+    return s == null || s.isBlank() ? null : com.shelfj.web.Parsing.date(s, "dob");
   }
 }

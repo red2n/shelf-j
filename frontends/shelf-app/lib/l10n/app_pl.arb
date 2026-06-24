@@ -1,0 +1,18 @@
+{
+  "@@locale": "pl",
+  "signInToContinue": "Zaloguj się, aby kontynuować",
+  "createYourAccount": "Utwórz konto",
+  "fieldEmail": "E-mail",
+  "fieldEmailInvalid": "Wprowadź prawidłowy adres e-mail",
+  "fieldPhoneOptional": "Telefon (opcjonalnie)",
+  "fieldPassword": "Hasło",
+  "fieldPasswordTooShort": "Minimum 8 znaków",
+  "actionSignIn": "Zaloguj się",
+  "actionCreateAccount": "Utwórz konto",
+  "toggleHaveAccount": "Masz już konto? Zaloguj się",
+  "toggleNewHere": "Nowy użytkownik? Utwórz konto",
+  "errInvalidCredentials": "Nieprawidłowy e-mail lub hasło.",
+  "errEmailExists": "Konto z tym adresem e-mail już istnieje.",
+  "errNetwork": "Nie można połączyć się z serwerem. Sprawdź połączenie.",
+  "errGeneric": "Coś poszło nie tak. Spróbuj ponownie."
+}

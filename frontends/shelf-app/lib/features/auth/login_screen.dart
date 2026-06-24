@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/auth_notifier.dart';
+import '../../l10n/gen/app_localizations.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -43,9 +44,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     final authAsync = ref.watch(authNotifierProvider);
     final isLoading = authAsync.isLoading;
-    final error = authAsync.hasError ? _friendlyError(authAsync.error.toString()) : null;
+    final error = authAsync.hasError
+        ? _friendlyError(context, authAsync.error.toString())
+        : null;
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -75,7 +79,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        _isRegister ? 'Create your account' : 'Sign in to continue',
+                        _isRegister ? l.createYourAccount : l.signInToContinue,
                         style: Theme.of(context)
                             .textTheme
                             .bodyMedium
@@ -98,12 +102,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         controller: _emailCtrl,
                         keyboardType: TextInputType.emailAddress,
                         textInputAction: _isRegister ? TextInputAction.next : TextInputAction.next,
-                        decoration: const InputDecoration(
-                          labelText: 'Email',
-                          prefixIcon: Icon(Icons.email_outlined),
+                        decoration: InputDecoration(
+                          labelText: l.fieldEmail,
+                          prefixIcon: const Icon(Icons.email_outlined),
                         ),
                         validator: (v) =>
-                            v == null || !v.contains('@') ? 'Enter a valid email' : null,
+                            v == null || !v.contains('@') ? l.fieldEmailInvalid : null,
                       ),
                       if (_isRegister) ...[
                         const SizedBox(height: 16),
@@ -111,9 +115,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           controller: _phoneCtrl,
                           keyboardType: TextInputType.phone,
                           textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
-                            labelText: 'Phone (optional)',
-                            prefixIcon: Icon(Icons.phone_outlined),
+                          decoration: InputDecoration(
+                            labelText: l.fieldPhoneOptional,
+                            prefixIcon: const Icon(Icons.phone_outlined),
                           ),
                         ),
                       ],
@@ -124,7 +128,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         textInputAction: TextInputAction.done,
                         onFieldSubmitted: (_) => _submit(),
                         decoration: InputDecoration(
-                          labelText: 'Password',
+                          labelText: l.fieldPassword,
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
                             icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
@@ -132,7 +136,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                         ),
                         validator: (v) =>
-                            v == null || v.length < 8 ? 'Minimum 8 characters' : null,
+                            v == null || v.length < 8 ? l.fieldPasswordTooShort : null,
                       ),
                       const SizedBox(height: 24),
                       FilledButton(
@@ -143,16 +147,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 width: 20,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
-                            : Text(_isRegister ? 'Create account' : 'Sign in'),
+                            : Text(_isRegister ? l.actionCreateAccount : l.actionSignIn),
                       ),
                       const SizedBox(height: 8),
                       TextButton(
                         onPressed: isLoading
                             ? null
                             : () => setState(() => _isRegister = !_isRegister),
-                        child: Text(_isRegister
-                            ? 'Already have an account? Sign in'
-                            : 'New here? Create an account'),
+                        child: Text(
+                            _isRegister ? l.toggleHaveAccount : l.toggleNewHere),
                       ),
                     ],
                   ),
@@ -165,16 +168,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  String _friendlyError(String raw) {
+  String _friendlyError(BuildContext context, String raw) {
+    final l = AppLocalizations.of(context);
     if (raw.contains('401') || raw.contains('INVALID_CREDENTIALS')) {
-      return 'Invalid email or password.';
+      return l.errInvalidCredentials;
     }
     if (raw.contains('409') || raw.contains('EMAIL_ALREADY_EXISTS')) {
-      return 'An account with this email already exists.';
+      return l.errEmailExists;
     }
     if (raw.contains('SocketException') || raw.contains('Failed host lookup')) {
-      return 'Cannot reach the server. Check your connection.';
+      return l.errNetwork;
     }
-    return 'Something went wrong. Please try again.';
+    return l.errGeneric;
   }
 }

@@ -16,8 +16,8 @@
 #   8090  gateway (public entry point)    3100  grafana
 #   5555  pgadmin                         8500  consul UI
 #   8081  kafka-ui                        9411  zipkin
+#   8082  swagger-ui (API docs)           9090  prometheus
 #   5432  postgres (direct SQL access)    6379  redis (redis-cli)
-#   9090  prometheus
 #
 # Ports intentionally NOT exposed (internal only — use Grafana for observability):
 #   otel-collector (4317/4318), loki (3100), tempo (3200), node/postgres/redis
@@ -29,6 +29,27 @@ networks:
   shelfj_network:
     name: shelfj_network
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          # ip_range scopes Docker's *dynamic* allocator to .128-.255, leaving .2-.127
+          # untouched by auto-assignment. postgres needs a pinned, never-stolen IP (see
+          # x-postgres-ip below); without this, any other container that starts first and
+          # doesn't request a specific IP could be auto-assigned .10, and postgres then
+          # fails to start at all with "Address already in use" — taking pgbouncer, config,
+          # every business service, and the gateway down with it.
+          # NOTE: aux_addresses looks like the obvious tool here but is wrong — it blocks an
+          # address from *all* assignment, including the explicit ipv4_address request below,
+          # so postgres itself could never start. ip_range is the supported way to carve out
+          # a static-only range while leaving the rest of the subnet free for auto-assignment.
+          ip_range: 172.28.0.128/25
+
+# postgres is pinned to this address (see postgres.networks below) so pgbouncer can
+# reach it via extra_hosts, bypassing pgbouncer's c-ares resolver — which fails to
+# parse Docker's generated /etc/resolv.conf (search "." + edns0/ndots options) and
+# throws "server DNS lookup failed (bad-af)" on the plain "postgres" hostname even
+# though every other client (JVM/libc resolvers) resolves it fine.
+x-postgres-ip: &postgres-ip 172.28.0.10
 
 # ── Named volumes ────────────────────────────────────────────────────────────
 volumes:
@@ -44,7 +65,11 @@ volumes:
 # ── YAML anchors — shared blocks to avoid repeating 8 env vars per service ──
 x-svc-env: &svc-env
   server.port: "8080"
-  shelfj.db.url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
+  # Runtime app pool goes through PgBouncer (golden rule: don't orphan provisioned infra).
+  # Flyway gets its own direct-to-Postgres URL below — its DDL migrations run as multi-statement
+  # transactions that need full session affinity, which PgBouncer's transaction pool_mode breaks.
+  shelfj.db.url: jdbc:postgresql://pgbouncer:6432/${POSTGRES_DB:-shelfj}
+  shelfj.db.migration-url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
   shelfj.db.user: ${POSTGRES_USER:-shelfj}
   shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
   shelfj.consul.host: consul
@@ -53,10 +78,11 @@ x-svc-env: &svc-env
   otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
 
 x-svc-depends: &svc-depends
-  postgres: { condition: service_healthy }
-  kafka:    { condition: service_healthy }
-  consul:   { condition: service_healthy }
-  config:   { condition: service_healthy }
+  postgres:  { condition: service_healthy }
+  pgbouncer: { condition: service_healthy }
+  kafka:     { condition: service_healthy }
+  consul:    { condition: service_healthy }
+  config:    { condition: service_healthy }
 
 x-svc-healthcheck: &svc-healthcheck
 # eclipse-temurin:21-jre ships curl but not wget.
@@ -120,8 +146,15 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-shelfj}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
     ports: ["127.0.0.1:5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
-    networks: [shelfj_network]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Per-service roles + GRANTs (golden rule #1 hardening). Only runs on a fresh
+      # volume; against an existing one, re-apply manually — see header comment in
+      # the script for the exact `docker compose exec` invocation.
+      - ./infra/postgres-init-roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    networks:
+      shelfj_network:
+        ipv4_address: *postgres-ip
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shelfj}"]
       interval: 5s
@@ -129,9 +162,10 @@ services:
       retries: 12
 
   # PgBouncer — connection pooler (transaction mode, 2000 app → 150 real connections).
-  # Business services connect to postgres:5432 directly so that embedded Flyway DDL
-  # transactions work without transaction-mode restrictions. Switch app pools to
-  # pgbouncer:6432 once Flyway is separated from the application lifecycle.
+  # Business services route their runtime pool through pgbouncer:6432 (shelfj.db.url, set in
+  # x-svc-env above). Flyway uses its own shelfj.db.migration-url straight to postgres:5432 —
+  # its DDL migrations are multi-statement transactions that need full session affinity, which
+  # this pooler's transaction pool_mode does not guarantee mid-migration.
   # NOTE: auth_type=trust is fine for local dev (no external access). Change to
   # scram-sha-256 for any shared or internet-facing deployment.
   pgbouncer:
@@ -141,25 +175,45 @@ services:
     container_name: shelfj-pgbouncer
     restart: always
     environment:
-      DATABASES_HOST: postgres
-      DATABASES_PORT: "5432"
-      DATABASES_USER: ${POSTGRES_USER:-shelfj}
-      DATABASES_PASSWORD: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}
-      DATABASES_DBNAME: ${POSTGRES_DB:-shelfj}
+      # Raw DATABASES entry with no fixed user/password: each connecting service
+      # authenticates as its own per-service role (infra/postgres-init-roles.sql), and
+      # that same identity is what PgBouncer uses against the real Postgres backend —
+      # via the credential stored for it in userlist.txt. A fixed DATABASES_USER would
+      # collapse every connection back to one shared identity and defeat the
+      # per-service GRANTs.
+      DATABASES: "* = host=postgres port=5432 dbname=${POSTGRES_DB:-shelfj}"
       PGBOUNCER_POOL_MODE: transaction
       PGBOUNCER_MAX_CLIENT_CONN: "2000"
       PGBOUNCER_DEFAULT_POOL_SIZE: "50"
-      PGBOUNCER_MIN_POOL_SIZE: "10"
+      # min_pool_size is a per-service-role idle reservation, paid out of max_db_connections
+      # whether or not that service is busy. At 10 × ~12 service roles it was eating ~120 of
+      # the 150 connection budget just sitting idle, leaving ~30 of real headroom for actual
+      # concurrent load — observed under k6 (SHOW POOLS: 121 idle / 150 max during a run) as
+      # widespread, scattered timeouts across nearly every service. Lowering the per-role
+      # reservation and raising the ceiling (still well under postgres's max_connections=300,
+      # which also serves Flyway's direct migration connections + pgadmin + exporters) trades
+      # idle-connection readiness for burst headroom.
+      PGBOUNCER_MIN_POOL_SIZE: "4"
       PGBOUNCER_RESERVE_POOL_SIZE: "10"
-      PGBOUNCER_MAX_DB_CONNECTIONS: "150"
+      PGBOUNCER_MAX_DB_CONNECTIONS: "220"
       PGBOUNCER_SERVER_LIFETIME: "3600"
       PGBOUNCER_SERVER_IDLE_TIMEOUT: "300"
       PGBOUNCER_QUERY_TIMEOUT: "30"
       PGBOUNCER_IGNORE_STARTUP_PARAMETERS: "extra_float_digits,options"
       PGBOUNCER_AUTH_TYPE: trust
       PGBOUNCER_AUTH_FILE: /etc/pgbouncer/userlist.txt
+    # infra/pgbouncer-userlist.txt holds one "username" "password" line per role
+    # (bootstrap + all 12 per-service roles), kept in sync by hand with
+    # infra/postgres-init-roles.sql and the <SERVICE>_DB_PASSWORD vars above/below.
+    # IMPORTANT: this pgbouncer build's userlist.txt parser rejects ANY "#" comment
+    # line outright (logs "ERROR broken auth file" and silently drops every user) —
+    # do not add comments to that file; put notes here instead.
     volumes:
       - ./infra/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    # Bypasses pgbouncer's broken c-ares DNS resolution of "postgres" (see x-postgres-ip
+    # comment above) — written straight to /etc/hosts, no resolver involved.
+    extra_hosts:
+      postgres: *postgres-ip
     depends_on:
       postgres: { condition: service_healthy }
     networks: [shelfj_network]
@@ -230,6 +284,42 @@ services:
     depends_on:
       kafka: { condition: service_healthy }
     networks: [shelfj_network]
+
+  # Swagger UI — browses every business service's MicroProfile OpenAPI contract (served at
+  # /api/<service>/openapi through the gateway; that path is whitelisted as public in
+  # JwtAuthFilter so the browser can fetch the spec without a token). One container, a
+  # dropdown per service — nothing to add here when a new service joins; just append it to
+  # routableServices in GatewayConfig and to this URLS list.
+  swagger-ui:
+    image: swaggerapi/swagger-ui:v5.17.14
+    container_name: shelfj-swagger-ui
+    restart: unless-stopped
+    ports: ["127.0.0.1:${SWAGGER_UI_PORT:-8082}:8080"]
+    environment:
+      URLS: >-
+        [{"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/iam-svc/openapi", "name": "iam-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/tenant-svc/openapi", "name": "tenant-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/product-svc/openapi", "name": "product-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/inventory-svc/openapi", "name": "inventory-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/pricing-svc/openapi", "name": "pricing-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/cart-svc/openapi", "name": "cart-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/order-svc/openapi", "name": "order-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/payment-svc/openapi", "name": "payment-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/purchase-svc/openapi", "name": "purchase-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/customer-svc/openapi", "name": "customer-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/notification-svc/openapi", "name": "notification-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/reporting-svc/openapi", "name": "reporting-svc"}]
+      URLS_PRIMARY_NAME: iam-svc
+    mem_limit: ${SWAGGER_UI_MEM_LIMIT:-256m}
+    networks: [shelfj_network]
+    healthcheck:
+      # 127.0.0.1, not localhost: busybox wget in this image resolves localhost to ::1 first,
+      # and nginx here only binds the IPv4 wildcard, so that would always fail with "connection
+      # refused" even though the service is up.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -480,6 +570,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: iam_svc
+      shelfj.db.password: ${IAM_DB_PASSWORD:-iam_dev_change_me}
       JAVA_TOOL_OPTIONS: "${IAM_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: iam-svc
       shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
@@ -498,6 +590,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: tenant_svc
+      shelfj.db.password: ${TENANT_DB_PASSWORD:-tenant_dev_change_me}
       JAVA_TOOL_OPTIONS: "${TENANT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: tenant-svc
     mem_limit: ${TENANT_MEM_LIMIT:-700m}
@@ -515,6 +609,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: inventory_svc
+      shelfj.db.password: ${INVENTORY_DB_PASSWORD:-inventory_dev_change_me}
       JAVA_TOOL_OPTIONS: "${INVENTORY_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: inventory-svc
     mem_limit: ${INVENTORY_MEM_LIMIT:-700m}
@@ -532,6 +628,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: order_svc
+      shelfj.db.password: ${ORDER_DB_PASSWORD:-order_dev_change_me}
       JAVA_TOOL_OPTIONS: "${ORDER_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: order-svc
       # Gap #63 — set to true to make order-svc resolve prices from pricing-svc (ignore client prices)
@@ -551,6 +649,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: purchase_svc
+      shelfj.db.password: ${PURCHASE_DB_PASSWORD:-purchase_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PURCHASE_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: purchase-svc
     mem_limit: ${PURCHASE_MEM_LIMIT:-512m}
@@ -568,11 +668,19 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: cart_svc
+      shelfj.db.password: ${CART_DB_PASSWORD:-cart_dev_change_me}
       JAVA_TOOL_OPTIONS: "${CART_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: cart-svc
+      # Backs the cart/cart-items cache-aside reads (see CartRepository).
+      shelfj.redis.host: redis
+      shelfj.redis.port: "6379"
+      shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
     mem_limit: ${CART_MEM_LIMIT:-512m}
     networks: [shelfj_network]
-    depends_on: *svc-depends
+    depends_on:
+      <<: *svc-depends
+      redis: { condition: service_healthy }
     healthcheck: *svc-healthcheck
 
   pricing-svc:
@@ -585,6 +693,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: pricing_svc
+      shelfj.db.password: ${PRICING_DB_PASSWORD:-pricing_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PRICING_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: pricing-svc
     mem_limit: ${PRICING_MEM_LIMIT:-512m}
@@ -602,6 +712,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: payment_svc
+      shelfj.db.password: ${PAYMENT_DB_PASSWORD:-payment_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PAYMENT_JAVA_OPTS:--Xms128m -Xmx256m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: payment-svc
     mem_limit: ${PAYMENT_MEM_LIMIT:-384m}
@@ -619,11 +731,19 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: product_svc
+      shelfj.db.password: ${PRODUCT_DB_PASSWORD:-product_dev_change_me}
       JAVA_TOOL_OPTIONS: "${PRODUCT_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: product-svc
+      # Backs the findProduct cache-aside read (see ProductRepository).
+      shelfj.redis.host: redis
+      shelfj.redis.port: "6379"
+      shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
     mem_limit: ${PRODUCT_MEM_LIMIT:-700m}
     networks: [shelfj_network]
-    depends_on: *svc-depends
+    depends_on:
+      <<: *svc-depends
+      redis: { condition: service_healthy }
     healthcheck: *svc-healthcheck
 
   customer-svc:
@@ -636,6 +756,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: customer_svc
+      shelfj.db.password: ${CUSTOMER_DB_PASSWORD:-customer_dev_change_me}
       JAVA_TOOL_OPTIONS: "${CUSTOMER_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: customer-svc
     mem_limit: ${CUSTOMER_MEM_LIMIT:-512m}
@@ -653,6 +775,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: notification_svc
+      shelfj.db.password: ${NOTIFICATION_DB_PASSWORD:-notification_dev_change_me}
       JAVA_TOOL_OPTIONS: "${NOTIFICATION_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: notification-svc
     mem_limit: ${NOTIFICATION_MEM_LIMIT:-512m}
@@ -670,6 +794,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *svc-env
+      shelfj.db.user: reporting_svc
+      shelfj.db.password: ${REPORTING_DB_PASSWORD:-reporting_dev_change_me}
       JAVA_TOOL_OPTIONS: "${REPORTING_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: reporting-svc
     mem_limit: ${REPORTING_MEM_LIMIT:-512m}
@@ -704,13 +830,22 @@ services:
       # synchronously upstream; the 10s code default is tuned for normal request/response
       # calls and times out well before a large import finishes server-side.
       shelfj.gateway.upstream.read-timeout-seconds: "${GATEWAY_UPSTREAM_READ_TIMEOUT_SECONDS:-120}"
+      # Rate-limit / brute-force counters live here, shared across every gateway replica.
+      shelfj.redis.host: redis
+      shelfj.redis.port: "6379"
+      shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
-    ports: ["${GATEWAY_HOST_PORT:-8090}:8080"]
+    # 127.0.0.1 binding: only accessible from the host itself (SSH tunnel or Caddy
+    # via the Docker internal network). Matches the same pattern used by all other
+    # internal services (Postgres, Redis, Consul, Kafka UI, etc.) so the gateway
+    # port is never exposed on the public IP, even without a firewall rule.
+    ports: ["127.0.0.1:${GATEWAY_HOST_PORT:-8090}:8080"]
     networks: [shelfj_network]
     depends_on:
       consul:     { condition: service_healthy }
       iam-svc:    { condition: service_healthy }
       tenant-svc: { condition: service_healthy }
+      redis:      { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/health || exit 1"]
       interval: 10s
@@ -753,7 +888,8 @@ services:
     container_name: shelfj-web
     restart: unless-stopped
     # Default 8088 to avoid clashing with the dev `flutter run` server (40015).
-    ports: ["${UI_HOST_PORT:-8088}:8080"]
+    # 127.0.0.1 binding: same reasoning as gateway — not reachable on the public IP.
+    ports: ["127.0.0.1:${UI_HOST_PORT:-8088}:8080"]
     networks: [shelfj_network]
     depends_on:
       gateway: { condition: service_started }

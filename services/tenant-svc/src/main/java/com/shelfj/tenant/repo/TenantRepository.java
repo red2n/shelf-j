@@ -634,4 +634,17 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
+
+  /**
+   * Publish a single event to the outbox. Flow guard: used to emit role grants, status changes,
+   * etc.
+   */
+  public void publishEvent(OutboxRow event) {
+    inTx(
+        c -> {
+          insertOutbox(c, event);
+          return null;
+        },
+        "publish event");
+  }
 }

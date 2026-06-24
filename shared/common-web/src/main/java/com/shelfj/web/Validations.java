@@ -25,7 +25,7 @@ public final class Validations {
   /** Validate a bean; throw a 400 ApiException with field-level details if it fails. */
   public static <T> void validate(T bean) {
     if (bean == null) {
-      throw ApiException.badRequest("BODY_REQUIRED", "Request body required");
+      throw ApiException.badRequest(ErrorCodes.BODY_REQUIRED, "Request body required");
     }
     Set<ConstraintViolation<T>> violations = VALIDATOR.validate(bean);
     if (violations.isEmpty()) {
@@ -33,7 +33,7 @@ public final class Validations {
     }
     List<String> details =
         violations.stream().map(v -> leafField(v) + ": " + v.getMessage()).sorted().toList();
-    throw new ApiException(400, "VALIDATION_FAILED", "Request validation failed", details);
+    throw new ApiException(400, ErrorCodes.VALIDATION_FAILED, "Request validation failed", details);
   }
 
   private static String leafField(ConstraintViolation<?> v) {

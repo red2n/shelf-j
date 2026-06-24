@@ -34,7 +34,7 @@ public class PaymentResource {
   public Response record(
       @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
       RecordTenderRequest req) {
-    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
     Validations.validate(req);
     var tender = svc.recordTender(req, ctx, effectiveKey(idempotencyKey, req.idempotencyKey()));
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(tender))).build();
@@ -86,7 +86,7 @@ public class PaymentResource {
       @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
       @PathParam("orderId") UUID orderId,
       RecordRefundRequest req) {
-    ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("MANAGER", "OWNER");
     Validations.validate(req);
     var refund =
         svc.recordRefund(

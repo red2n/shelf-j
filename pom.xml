@@ -36,6 +36,7 @@
         <hikaricp.version>6.2.1</hikaricp.version>
         <testcontainers.version>1.20.4</testcontainers.version>
         <junit.version>5.11.3</junit.version>
+        <lettuce.version>6.5.1.RELEASE</lettuce.version>
         <shelfj.version>0.1.0-SNAPSHOT</shelfj.version>
 
         <!-- Quality tooling versions -->
@@ -117,6 +118,13 @@
                 <groupId>org.flywaydb</groupId>
                 <artifactId>flyway-database-postgresql</artifactId>
                 <version>${flyway.version}</version>
+            </dependency>
+
+            <!-- Redis client (gateway: distributed rate-limit + brute-force counters) -->
+            <dependency>
+                <groupId>io.lettuce</groupId>
+                <artifactId>lettuce-core</artifactId>
+                <version>${lettuce.version}</version>
             </dependency>
 
             <!-- Testing -->

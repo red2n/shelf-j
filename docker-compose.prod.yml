@@ -1,0 +1,64 @@
+# Production overlay for docker-compose.yml
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this adds / changes vs. the base dev file:
+#   - Caddy as the edge TLS terminator (auto Let's Encrypt, ports 80 + 443)
+#   - Gateway CORS locked to https://app.storeql.com  (dev file uses "*")
+#   - trust-forwarded-headers=true so rate-limiter keys on the real client IP
+#   - Rate-limit restored to 100 req/min  (dev file sets 30,000 for k6 runs)
+#
+# Firewall: allow ports 80 and 443 inbound only.
+# All other host ports (8090 gateway, 8088 shelf-app, 8081 Kafka UI, etc.) are
+# bound to 127.0.0.1 in docker-compose.yml so they are unreachable on the public
+# IP by design — no separate firewall rule is needed for them. SSH-tunnel access
+# still works because the tunnel connects via the loopback interface (see §11 of
+# docs/vps-deployment.md).
+#
+# Required env vars (add to .env):
+#   CADDY_ACME_EMAIL  — Let's Encrypt renewal notices (e.g. ops@storeql.com)
+#
+# Required GitHub Actions variable (Settings → Variables → Actions):
+#   SHELFJ_API_BASE = https://api.storeql.com/api
+#   (baked into the Flutter web bundle at CI build time)
+
+services:
+
+  # ── Edge proxy: TLS termination + subdomain routing ──────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: shelfj-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"        # HTTP → HTTPS redirect + ACME HTTP-01 challenge
+      - "443:443"      # HTTPS (TLS 1.2 / 1.3)
+      - "443:443/udp"  # HTTP/3 (QUIC)
+    environment:
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:?Set CADDY_ACME_EMAIL in .env (e.g. ops@storeql.com)}
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # Let's Encrypt certs — persisted across restarts/upgrades
+      - caddy_config:/config  # Caddy internal state
+    networks: [shelfj_network]
+    depends_on:
+      gateway:   { condition: service_healthy }
+      shelf-app: { condition: service_healthy }
+
+  # ── Gateway: production environment overrides ─────────────────────────────────
+  gateway:
+    environment:
+      # CORS: only the real web app domain may call the API (dev file uses "*")
+      shelfj.gateway.cors.allowed-origins: "https://app.storeql.com"
+      # Trust X-Forwarded-For injected by Caddy so the gateway's rate-limiter and
+      # brute-force protection (login throttle) key on the real client IP
+      shelfj.gateway.trust-forwarded-headers: "true"
+      # Restore the production rate-limit budget (dev file bumps to 30,000 to
+      # avoid 429s while the k6 multi-tenant load test drives ~50 VUs from one IP)
+      shelfj.gateway.rate-limit.requests-per-minute: "100"
+
+volumes:
+  caddy_data:
+    name: shelfj_caddy_data
+  caddy_config:
+    name: shelfj_caddy_config

@@ -95,18 +95,52 @@ public class UserRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Stores this user may operate in, for the JWT {@code storeIds} claim. A {@code NULL store_id}
+   * row (a tenant-wide role like OWNER/PLATFORM_ADMIN) grants unrestricted access — signalled by
+   * returning an <strong>empty set</strong> — because a tenant-wide grant must not be narrowed by
+   * also holding a store-scoped role elsewhere. Otherwise the result is the distinct {@code
+   * store_id} values the user is bound to, and callers must treat that as an allow-list.
+   */
+  public Set<UUID> storeScopeOf(UUID userId) {
+    String sql = "SELECT store_id FROM user_roles WHERE user_id = ?";
+    Set<UUID> storeIds = new java.util.HashSet<>();
+    try (var c = dataSource.getConnection();
+        var ps = c.prepareStatement(sql)) {
+      ps.setObject(1, userId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          UUID storeId = (UUID) rs.getObject(1);
+          if (storeId == null) {
+            return Set.of();
+          }
+          storeIds.add(storeId);
+        }
+      }
+      return storeIds;
+    } catch (SQLException e) {
+      throw dbError("load store scope", e);
+    }
+  }
+
   // --- atomic write: create user + assign role + write outbox event in one transaction ---
 
   /**
-   * Insert a user, assign a role, and write an outbox event — atomically.
+   * Insert a user, optionally assign a role, and write an outbox event — atomically.
    *
+   * @param roleName a real row in {@code roles} to grant immediately (e.g. {@code "CUSTOMER"} on
+   *     self-signup), or {@code null} to skip role assignment — used for admin-driven staff
+   *     provisioning, where the account is created tenant-less and the real store-scoped role is
+   *     bound later when tenant-svc publishes {@code StaffAssigned} (see {@link
+   *     com.shelfj.iam.service.AuthService#provisionStaff}). There is no generic "STAFF" row in
+   *     {@code roles} — passing that name throws "role not found".
    * @return the created user
    */
   public User createUserWithOutbox(User user, String roleName, OutboxRow outbox) {
     return inTx(
         c -> {
           insertUser(c, user);
-          assignRole(c, user.id(), roleName);
+          if (roleName != null) assignRole(c, user.id(), roleName);
           insertOutbox(c, outbox);
           return user;
         },

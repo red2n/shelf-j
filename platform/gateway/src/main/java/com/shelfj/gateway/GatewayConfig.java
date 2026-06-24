@@ -93,6 +93,23 @@ public class GatewayConfig {
   @ConfigProperty(name = "shelfj.gateway.upstream.read-timeout-seconds", defaultValue = "10")
   int upstreamReadTimeoutSeconds;
 
+  /**
+   * Rate-limit and brute-force counters live in Redis, not gateway heap — with multiple gateway
+   * replicas a per-instance map lets an attacker simply round-robin past the limit. Defaults match
+   * docker-compose's redis service (golden rule #5: external config, no hardcoded host:port).
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.redis.host", defaultValue = "localhost")
+  String redisHost;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.redis.port", defaultValue = "6379")
+  int redisPort;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.redis.password", defaultValue = "redis_dev_change_me")
+  String redisPassword;
+
   /** Parsed once at startup — these are consulted on every proxied request. */
   private java.util.Set<String> routableServiceSet;
 
@@ -147,6 +164,18 @@ public class GatewayConfig {
 
   public int upstreamReadTimeoutSeconds() {
     return upstreamReadTimeoutSeconds;
+  }
+
+  public String redisHost() {
+    return redisHost;
+  }
+
+  public int redisPort() {
+    return redisPort;
+  }
+
+  public String redisPassword() {
+    return redisPassword;
   }
 
   public boolean bruteForceEnabled() {

@@ -1,6 +1,7 @@
 package com.shelfj.tenant.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
@@ -142,8 +143,11 @@ public final class Dtos {
       Boolean serialControlEnabled,
       Boolean gradeControlEnabled,
       Boolean expiryTrackingEnabled,
-      String costingMethod,
-      String defaultUom,
+      // Optional, but if supplied must be one of the supported costing methods (was stored
+      // verbatim).
+      @Pattern(regexp = "FIFO|AVERAGE|STANDARD", message = "must be FIFO, AVERAGE or STANDARD")
+          String costingMethod,
+      @Size(max = 16) String defaultUom,
       Boolean reorderAlertEnabled,
       Boolean autoReserveOnOrder) {}
 

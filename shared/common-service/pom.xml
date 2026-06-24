@@ -73,6 +73,13 @@
             <groupId>com.zaxxer</groupId>
             <artifactId>HikariCP</artifactId>
         </dependency>
+        <!-- Redis client for the shared cache-aside producer — compile scope, same reasoning as
+             HikariCP above: present in every service, only actually connected by services that
+             inject RedisCommands (version pinned in the parent). -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>

@@ -7,6 +7,7 @@
 #   ./scripts/run-web.sh                 # storefront product deep-link (default)
 #   ./scripts/run-web.sh --pos           # open the in-store POS till
 #   ./scripts/run-web.sh --admin         # open the admin console login
+#   ./scripts/run-web.sh --platform      # open the platform-admin console login
 #   ./scripts/run-web.sh <tenantId> <productId>   # storefront, custom ids
 #
 # Notes:
@@ -18,27 +19,36 @@
 #   - Press 'q' in this terminal to stop.
 set -euo pipefail
 
+# Prefer a non-snap Flutter SDK if present: snap-confine can't run in some
+# sandboxed/containerized dev environments (missing capabilities), which
+# breaks the snap-packaged `flutter` even though the SDK itself is fine.
+if [ -x "${HOME}/development/flutter/bin/flutter" ]; then
+  export PATH="${HOME}/development/flutter/bin:${PATH}"
+fi
+
 PORT="${POS_WEB_PORT:-40015}"
 GATEWAY="${SHELFJ_GATEWAY:-http://localhost:8090}"
 
 # Parse an optional mode flag, then positional <tenantId> <productId>.
 MODE="store"
 case "${1:-}" in
-  --pos)   MODE="pos";   shift ;;
-  --admin) MODE="admin"; shift ;;
-  --store) MODE="store"; shift ;;
+  --pos)      MODE="pos";      shift ;;
+  --admin)    MODE="admin";    shift ;;
+  --platform) MODE="platform"; shift ;;
+  --store)    MODE="store";    shift ;;
 esac
-TENANT="${1:-acc45737-6a1a-429f-a0a7-817aac8c20b1}"
-PRODUCT="${2:-d799a20e-fc2e-46f7-8fd8-245eb5dc6135}"
+TENANT="${1:-dd7d222e-0cbe-4729-a470-01de6a9eef8d}"
+PRODUCT="${2:-b1f4d1ba-86a3-4441-af13-db54de40ceaa}"
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../frontends/shelf-app" && pwd)"
 
 # The storefront is tenant-scoped via ?tenant= (guest); POS/admin are staff-authed
 # (tenant comes from the JWT), so they need no tenant in the URL.
 case "${MODE}" in
-  pos)   URL="http://localhost:${PORT}/#/pos/cart" ;;
-  admin) URL="http://localhost:${PORT}/#/login" ;;
-  *)     URL="http://localhost:${PORT}/?tenant=${TENANT}#/store/products/${PRODUCT}" ;;
+  pos)      URL="http://localhost:${PORT}/#/pos/cart" ;;
+  admin)    URL="http://localhost:${PORT}/#/login" ;;
+  platform) URL="http://localhost:${PORT}/#/platform/login" ;;
+  *)        URL="http://localhost:${PORT}/?tenant=${TENANT}#/store/products/${PRODUCT}" ;;
 esac
 
 cyan() { printf '\033[1;36m%s\033[0m\n' "$*"; }

@@ -51,5 +51,12 @@
             <version>3.1.11</version>
             <scope>provided</scope>
         </dependency>
+
+        <!-- Unit tests. junit-bom is managed by the parent. -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

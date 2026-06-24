@@ -115,7 +115,9 @@ public class AdminResource {
 
   @POST
   @Path("/receive")
-  public Response receive(ReceiveRequest req) {
+  public Response receive(
+      @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      ReceiveRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     LocalDate expiry =
@@ -133,7 +135,8 @@ public class AdminResource {
             expiry,
             "MANUAL",
             null,
-            zoneId);
+            zoneId,
+            idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : null);
     return Response.status(Response.Status.CREATED)
         .entity(ApiResponse.ok(Mappers.toBatch(batch)))
         .build();
@@ -781,19 +784,11 @@ public class AdminResource {
   // ── helpers ──────────────────────────────────────────────────────────────
 
   private static UUID uuid(String s, String field) {
-    try {
-      return UUID.fromString(s);
-    } catch (RuntimeException e) {
-      throw new ApiException(400, "INVALID_UUID", field + " must be a UUID", List.of(), e);
-    }
+    return com.shelfj.web.Parsing.uuid(s, field);
   }
 
   private static LocalDate parseDate(String s) {
-    try {
-      return LocalDate.parse(s);
-    } catch (RuntimeException e) {
-      throw new ApiException(400, "INVALID_DATE", "expiryDate must be yyyy-MM-dd", List.of(), e);
-    }
+    return com.shelfj.web.Parsing.date(s, "expiryDate");
   }
 
   // ── Physical Inventory (Gap #16) ─────────────────────────────────────────

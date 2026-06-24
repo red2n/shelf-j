@@ -52,8 +52,65 @@ class JwtAuthFilterTest {
   }
 
   @Test
+  void versionedPublicLoginPathBypassesTokenValidation() throws IOException {
+    // /api/v1/... must hit the same public whitelist as the unversioned alias.
+    when(uriInfo.getPath()).thenReturn("api/v1/iam-svc/auth/login");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
+  @Test
+  void versionedStorefrontCatalogResolvesTenant() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/v1/product-svc/catalog/products");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-abc", headers.getFirst("X-Tenant-Id"));
+  }
+
+  @Test
   void pathMerelyEmbeddingPublicSuffixStillRequiresToken() throws IOException {
     when(uriInfo.getPath()).thenReturn("api/product-svc/x/iam-svc/auth/login");
+    when(requestContext.getHeaderString("Authorization")).thenReturn(null);
+
+    filter.filter(requestContext);
+
+    verify(requestContext).abortWith(any());
+  }
+
+  @Test
+  void openApiSpecBypassesTokenValidation() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/order-svc/openapi");
+    when(requestContext.getMethod()).thenReturn("GET");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
+  @Test
+  void openApiSpecRequiresGet() throws IOException {
+    // Same path, wrong verb — must not be treated as the public spec endpoint.
+    when(uriInfo.getPath()).thenReturn("api/order-svc/openapi");
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(requestContext.getHeaderString("Authorization")).thenReturn(null);
+
+    filter.filter(requestContext);
+
+    verify(requestContext).abortWith(any());
+  }
+
+  @Test
+  void pathEmbeddingOpenApiSuffixStillRequiresToken() throws IOException {
+    // Trailing-segment match only: a deeper path that happens to end in a different segment
+    // after "openapi" must not slip through.
+    when(uriInfo.getPath()).thenReturn("api/order-svc/orders/openapi");
+    when(requestContext.getMethod()).thenReturn("GET");
     when(requestContext.getHeaderString("Authorization")).thenReturn(null);
 
     filter.filter(requestContext);
@@ -174,6 +231,37 @@ class JwtAuthFilterTest {
 
     verify(requestContext, never()).abortWith(any());
     org.junit.jupiter.api.Assertions.assertEquals("tenant-abc", headers.getFirst("X-Tenant-Id"));
+  }
+
+  @Test
+  void staffBearerTokenResolvesTenantOnStorefrontPublicPathWithoutHeader() throws IOException {
+    // Regression: an authenticated staff caller (e.g. the admin console checking inventory
+    // availability, or POS clock-in listing stores via the same cashier-safe endpoint) has no
+    // storefront context and sends no X-Storefront-Tenant — it must fall through to normal Bearer
+    // verification instead of being silently left tenant-less (previously surfaced downstream as
+    // a blanket 401 NO_TENANT on every call).
+    String token =
+        com.auth0
+            .jwt
+            .JWT
+            .create()
+            .withIssuer("shelfj")
+            .withSubject("22222222-2222-2222-2222-222222222222")
+            .withClaim("type", "STAFF")
+            .withClaim("tenant", "tenant-xyz")
+            .withArrayClaim("roles", new String[] {"OWNER"})
+            .sign(
+                com.auth0.jwt.algorithms.Algorithm.HMAC256(
+                    "unit-test-secret-of-at-least-32-chars!!"));
+    when(uriInfo.getPath()).thenReturn("api/inventory-svc/inventory/availability");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + token);
+    when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn(null);
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-xyz", headers.getFirst("X-Tenant-Id"));
   }
 
   @Test

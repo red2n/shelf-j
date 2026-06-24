@@ -5,6 +5,7 @@ import '../../core/network/api_client.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'pricing_providers.dart';
+import 'providers/admin_providers.dart';
 import 'widgets/variant_picker.dart';
 
 class PricingScreen extends ConsumerWidget {
@@ -256,21 +257,25 @@ class _PriceListItemsDialog extends ConsumerWidget {
               return Center(
                   child: Text('No items yet.', style: TextStyle(color: cs.outline)));
             }
+            final labels = ref
+                    .watch(variantLabelsProvider(
+                        variantIdsKey(items.map((it) => it.variantId))))
+                    .valueOrNull ??
+                const <String, VariantLabel>{};
             return ListView.separated(
               itemCount: items.length,
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (_, i) {
                 final it = items[i];
+                final sku = variantSku(it.variantId, labels);
                 return ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
-                  title: Text(
-                      it.variantId.length > 16
-                          ? '${it.variantId.substring(0, 16)}…'
-                          : it.variantId,
-                      style:
-                          const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-                  subtitle: Text('min qty ${it.minQty.toStringAsFixed(0)}'),
+                  title: Text(variantDisplayName(it.variantId, labels),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 13)),
+                  subtitle: Text(
+                      '${sku.isNotEmpty ? '$sku  ·  ' : ''}min qty ${it.minQty.toStringAsFixed(0)}'),
                   trailing: Text(
                       '${priceList.currency ?? ''} ${it.price.toStringAsFixed(2)}',
                       style: const TextStyle(fontWeight: FontWeight.bold)),

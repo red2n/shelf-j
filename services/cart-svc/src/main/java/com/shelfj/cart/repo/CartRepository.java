@@ -4,18 +4,146 @@ import com.shelfj.cart.domain.Domain.Cart;
 import com.shelfj.cart.domain.Domain.CartItem;
 import com.shelfj.service.BaseJdbcRepository;
 import com.shelfj.web.ApiException;
+import io.lettuce.core.SetArgs;
+import io.lettuce.core.api.sync.RedisCommands;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
-/** Persistence for {@link Cart} and {@link CartItem}. All queries filter tenant_id first. */
+/**
+ * Persistence for {@link Cart} and {@link CartItem}. All queries filter tenant_id first.
+ *
+ * <p>Cart-row and item-list reads are cached in Redis (cache-aside, short TTL as a backstop) since
+ * they are re-read on nearly every cart request. Only positive lookups are cached — a miss simply
+ * falls through to Postgres next time, which sidesteps having to invalidate a cached "not found"
+ * the instant a cart is created.
+ */
 @ApplicationScoped
 public class CartRepository extends BaseJdbcRepository {
+
+  /**
+   * Field separator for the flat cache encoding — Postgres TEXT columns can never contain a NUL
+   * byte, so this never collides with real content and needs no escaping.
+   */
+  private static final String FS = "\u0000";
+
+  /** Row separator for the cached item list — same NUL-safety argument as {@link #FS}. */
+  private static final String RS = "\u0001";
+
+  private static final long CART_TTL_SECONDS = 60;
+  private static final long ITEMS_TTL_SECONDS = 60;
+
+  @Inject RedisCommands<String, String> redis;
+
+  // ── Cache ─────────────────────────────────────────────────────────────────
+
+  private static String cartKey(UUID tenantId, UUID cartId) {
+    return "cart:" + tenantId + ":" + cartId;
+  }
+
+  private static String activeByCustomerKey(UUID tenantId, UUID customerId) {
+    return "cart:active:customer:" + tenantId + ":" + customerId;
+  }
+
+  private static String activeBySessionKey(UUID tenantId, String sessionId) {
+    return "cart:active:session:" + tenantId + ":" + sessionId;
+  }
+
+  private static String itemsKey(UUID tenantId, UUID cartId) {
+    return "cart-items:" + tenantId + ":" + cartId;
+  }
+
+  private Optional<Cart> cachedCart(UUID tenantId, UUID cartId) {
+    String cached = redis.get(cartKey(tenantId, cartId));
+    return cached == null ? Optional.empty() : Optional.of(decodeCart(cached));
+  }
+
+  private void cacheCart(Cart c) {
+    redis.set(cartKey(c.tenantId(), c.id()), encodeCart(c), SetArgs.Builder.ex(CART_TTL_SECONDS));
+  }
+
+  /**
+   * Invalidates the cached row. Pointer caches (active-by-customer/session) self-heal: they store
+   * only the cart id and re-validate the row's status on next read.
+   */
+  private void evictCart(UUID tenantId, UUID cartId) {
+    redis.del(cartKey(tenantId, cartId));
+  }
+
+  private Optional<List<CartItem>> cachedItems(UUID tenantId, UUID cartId) {
+    String cached = redis.get(itemsKey(tenantId, cartId));
+    if (cached == null) return Optional.empty();
+    if (cached.isEmpty()) return Optional.of(List.of());
+    return Optional.of(Arrays.stream(cached.split(RS)).map(CartRepository::decodeItem).toList());
+  }
+
+  private void cacheItems(UUID tenantId, UUID cartId, List<CartItem> items) {
+    String encoded = items.stream().map(CartRepository::encodeItem).collect(Collectors.joining(RS));
+    redis.set(itemsKey(tenantId, cartId), encoded, SetArgs.Builder.ex(ITEMS_TTL_SECONDS));
+  }
+
+  private void evictItems(UUID tenantId, UUID cartId) {
+    redis.del(itemsKey(tenantId, cartId));
+  }
+
+  private static String encodeCart(Cart c) {
+    return String.join(
+        FS,
+        c.id().toString(),
+        c.tenantId().toString(),
+        c.customerId() == null ? "" : c.customerId().toString(),
+        c.sessionId() == null ? "" : c.sessionId(),
+        c.storeId().toString(),
+        c.status(),
+        c.createdAt().toString(),
+        c.updatedAt().toString());
+  }
+
+  private static Cart decodeCart(String s) {
+    String[] f = s.split(FS, -1);
+    return new Cart(
+        UUID.fromString(f[0]),
+        UUID.fromString(f[1]),
+        f[2].isEmpty() ? null : UUID.fromString(f[2]),
+        f[3].isEmpty() ? null : f[3],
+        UUID.fromString(f[4]),
+        f[5],
+        Instant.parse(f[6]),
+        Instant.parse(f[7]));
+  }
+
+  private static String encodeItem(CartItem i) {
+    return String.join(
+        FS,
+        i.id().toString(),
+        i.cartId().toString(),
+        i.tenantId().toString(),
+        i.variantId().toString(),
+        i.qty().toString(),
+        i.unitPrice() == null ? "" : i.unitPrice().toString(),
+        i.addedAt().toString());
+  }
+
+  private static CartItem decodeItem(String s) {
+    String[] f = s.split(FS, -1);
+    return new CartItem(
+        UUID.fromString(f[0]),
+        UUID.fromString(f[1]),
+        UUID.fromString(f[2]),
+        UUID.fromString(f[3]),
+        new BigDecimal(f[4]),
+        f[5].isEmpty() ? null : new BigDecimal(f[5]),
+        Instant.parse(f[6]));
+  }
 
   // ── Carts ─────────────────────────────────────────────────────────────────
 
@@ -36,47 +164,87 @@ public class CartRepository extends BaseJdbcRepository {
   }
 
   public Optional<Cart> findById(UUID tenantId, UUID cartId) {
-    return query(
-            "SELECT id, tenant_id, customer_id, session_id, store_id, status,"
-                + " created_at, updated_at FROM carts WHERE tenant_id = ? AND id = ?",
-            ps -> {
-              ps.setObject(1, tenantId);
-              ps.setObject(2, cartId);
-            },
-            this::mapCart,
-            "find cart by id")
-        .stream()
-        .findFirst();
+    Optional<Cart> cached = cachedCart(tenantId, cartId);
+    if (cached.isPresent()) return cached;
+    Optional<Cart> fresh =
+        query(
+                "SELECT id, tenant_id, customer_id, session_id, store_id, status,"
+                    + " created_at, updated_at FROM carts WHERE tenant_id = ? AND id = ?",
+                ps -> {
+                  ps.setObject(1, tenantId);
+                  ps.setObject(2, cartId);
+                },
+                this::mapCart,
+                "find cart by id")
+            .stream()
+            .findFirst();
+    fresh.ifPresent(this::cacheCart);
+    return fresh;
   }
 
+  /**
+   * The active-by-customer/session pointer caches store only a cart id; on a hit we re-fetch the
+   * row (itself cached) and re-check status before trusting it — a cart that has since been checked
+   * out or abandoned must not be handed back as "the active cart" just because the pointer hasn't
+   * expired yet.
+   */
   public Optional<Cart> findActiveByCustomer(UUID tenantId, UUID customerId) {
-    return query(
-            "SELECT id, tenant_id, customer_id, session_id, store_id, status,"
-                + " created_at, updated_at FROM carts"
-                + " WHERE tenant_id = ? AND customer_id = ? AND status = 'ACTIVE' LIMIT 1",
-            ps -> {
-              ps.setObject(1, tenantId);
-              ps.setObject(2, customerId);
-            },
-            this::mapCart,
-            "find active cart by customer")
-        .stream()
-        .findFirst();
+    String pointerKey = activeByCustomerKey(tenantId, customerId);
+    String pointedId = redis.get(pointerKey);
+    if (pointedId != null) {
+      Optional<Cart> cart = findById(tenantId, UUID.fromString(pointedId));
+      if (cart.isPresent() && Cart.STATUS_ACTIVE.equals(cart.get().status())) return cart;
+      redis.del(pointerKey);
+    }
+    Optional<Cart> fresh =
+        query(
+                "SELECT id, tenant_id, customer_id, session_id, store_id, status,"
+                    + " created_at, updated_at FROM carts"
+                    + " WHERE tenant_id = ? AND customer_id = ? AND status = 'ACTIVE' LIMIT 1",
+                ps -> {
+                  ps.setObject(1, tenantId);
+                  ps.setObject(2, customerId);
+                },
+                this::mapCart,
+                "find active cart by customer")
+            .stream()
+            .findFirst();
+    fresh.ifPresent(
+        c -> {
+          cacheCart(c);
+          redis.set(pointerKey, c.id().toString(), SetArgs.Builder.ex(CART_TTL_SECONDS));
+        });
+    return fresh;
   }
 
+  /** See {@link #findActiveByCustomer} for the pointer-cache + status-recheck rationale. */
   public Optional<Cart> findActiveBySession(UUID tenantId, String sessionId) {
-    return query(
-            "SELECT id, tenant_id, customer_id, session_id, store_id, status,"
-                + " created_at, updated_at FROM carts"
-                + " WHERE tenant_id = ? AND session_id = ? AND status = 'ACTIVE' LIMIT 1",
-            ps -> {
-              ps.setObject(1, tenantId);
-              ps.setString(2, sessionId);
-            },
-            this::mapCart,
-            "find active cart by session")
-        .stream()
-        .findFirst();
+    String pointerKey = activeBySessionKey(tenantId, sessionId);
+    String pointedId = redis.get(pointerKey);
+    if (pointedId != null) {
+      Optional<Cart> cart = findById(tenantId, UUID.fromString(pointedId));
+      if (cart.isPresent() && Cart.STATUS_ACTIVE.equals(cart.get().status())) return cart;
+      redis.del(pointerKey);
+    }
+    Optional<Cart> fresh =
+        query(
+                "SELECT id, tenant_id, customer_id, session_id, store_id, status,"
+                    + " created_at, updated_at FROM carts"
+                    + " WHERE tenant_id = ? AND session_id = ? AND status = 'ACTIVE' LIMIT 1",
+                ps -> {
+                  ps.setObject(1, tenantId);
+                  ps.setString(2, sessionId);
+                },
+                this::mapCart,
+                "find active cart by session")
+            .stream()
+            .findFirst();
+    fresh.ifPresent(
+        c -> {
+          cacheCart(c);
+          redis.set(pointerKey, c.id().toString(), SetArgs.Builder.ex(CART_TTL_SECONDS));
+        });
+    return fresh;
   }
 
   /** Marks a cart's status and touches updated_at. */
@@ -89,11 +257,16 @@ public class CartRepository extends BaseJdbcRepository {
           ps.setObject(3, cartId);
         },
         "update cart status");
+    evictCart(tenantId, cartId);
   }
 
   /**
    * Marks the customer's ACTIVE cart at the given store as CHECKED_OUT. Called when an OrderPlaced
    * event arrives for a known customer. No-op if no matching cart exists.
+   *
+   * <p>The target cart id isn't known to the caller (only customerId/storeId are), so the row cache
+   * can't be evicted directly here — it self-corrects within {@code CART_TTL_SECONDS}. The pointer
+   * cache, however, is keyed by customerId, so it is evicted eagerly to shrink that window.
    */
   public void markCheckedOutByCustomerAndStore(UUID tenantId, UUID customerId, UUID storeId) {
     exec(
@@ -105,6 +278,7 @@ public class CartRepository extends BaseJdbcRepository {
           ps.setObject(3, storeId);
         },
         "mark cart checked out");
+    redis.del(activeByCustomerKey(tenantId, customerId));
   }
 
   // ── Items ─────────────────────────────────────────────────────────────────
@@ -114,29 +288,33 @@ public class CartRepository extends BaseJdbcRepository {
    * updated if the new value is non-null.
    */
   public CartItem upsertItem(CartItem item) {
-    return inTx(
-        c -> {
-          try (var ps =
-              c.prepareStatement(
-                  "INSERT INTO cart_items (id, cart_id, tenant_id, variant_id, qty, unit_price,"
-                      + " added_at) VALUES (?,?,?,?,?,?, now())"
-                      + " ON CONFLICT (cart_id, variant_id) DO UPDATE SET"
-                      + "   qty        = cart_items.qty + EXCLUDED.qty,"
-                      + "   unit_price = COALESCE(EXCLUDED.unit_price, cart_items.unit_price)"
-                      + " RETURNING id, cart_id, tenant_id, variant_id, qty, unit_price, added_at")) {
-            ps.setObject(1, item.id());
-            ps.setObject(2, item.cartId());
-            ps.setObject(3, item.tenantId());
-            ps.setObject(4, item.variantId());
-            ps.setBigDecimal(5, item.qty());
-            ps.setBigDecimal(6, item.unitPrice());
-            try (var rs = ps.executeQuery()) {
-              if (rs.next()) return mapItem(rs);
-            }
-          }
-          throw ApiException.unprocessable("CART_ITEM_UPSERT_FAILED", "upsert returned no row");
-        },
-        "upsert cart item");
+    CartItem result =
+        inTx(
+            c -> {
+              try (var ps =
+                  c.prepareStatement(
+                      "INSERT INTO cart_items (id, cart_id, tenant_id, variant_id, qty,"
+                          + " unit_price, added_at) VALUES (?,?,?,?,?,?, now())"
+                          + " ON CONFLICT (cart_id, variant_id) DO UPDATE SET"
+                          + "   qty        = cart_items.qty + EXCLUDED.qty,"
+                          + "   unit_price = COALESCE(EXCLUDED.unit_price, cart_items.unit_price)"
+                          + " RETURNING id, cart_id, tenant_id, variant_id, qty, unit_price,"
+                          + " added_at")) {
+                ps.setObject(1, item.id());
+                ps.setObject(2, item.cartId());
+                ps.setObject(3, item.tenantId());
+                ps.setObject(4, item.variantId());
+                ps.setBigDecimal(5, item.qty());
+                ps.setBigDecimal(6, item.unitPrice());
+                try (var rs = ps.executeQuery()) {
+                  if (rs.next()) return mapItem(rs);
+                }
+              }
+              throw ApiException.unprocessable("CART_ITEM_UPSERT_FAILED", "upsert returned no row");
+            },
+            "upsert cart item");
+    evictItems(result.tenantId(), result.cartId());
+    return result;
   }
 
   public Optional<CartItem> findItemById(UUID tenantId, UUID itemId) {
@@ -154,15 +332,20 @@ public class CartRepository extends BaseJdbcRepository {
   }
 
   public List<CartItem> findItemsByCart(UUID tenantId, UUID cartId) {
-    return query(
-        "SELECT id, cart_id, tenant_id, variant_id, qty, unit_price, added_at"
-            + " FROM cart_items WHERE tenant_id = ? AND cart_id = ? ORDER BY added_at",
-        ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, cartId);
-        },
-        this::mapItem,
-        "list cart items");
+    Optional<List<CartItem>> cached = cachedItems(tenantId, cartId);
+    if (cached.isPresent()) return cached.get();
+    List<CartItem> fresh =
+        query(
+            "SELECT id, cart_id, tenant_id, variant_id, qty, unit_price, added_at"
+                + " FROM cart_items WHERE tenant_id = ? AND cart_id = ? ORDER BY added_at",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, cartId);
+            },
+            this::mapItem,
+            "list cart items");
+    cacheItems(tenantId, cartId, fresh);
+    return fresh;
   }
 
   public void updateItemQty(UUID tenantId, UUID cartId, UUID itemId, BigDecimal qty) {
@@ -175,6 +358,7 @@ public class CartRepository extends BaseJdbcRepository {
           ps.setObject(4, itemId);
         },
         "update cart item qty");
+    evictItems(tenantId, cartId);
   }
 
   public void deleteItem(UUID tenantId, UUID cartId, UUID itemId) {
@@ -186,6 +370,7 @@ public class CartRepository extends BaseJdbcRepository {
           ps.setObject(3, itemId);
         },
         "delete cart item");
+    evictItems(tenantId, cartId);
   }
 
   // ── Merge ─────────────────────────────────────────────────────────────────
@@ -235,6 +420,9 @@ public class CartRepository extends BaseJdbcRepository {
           return null;
         },
         "merge guest cart");
+    evictCart(tenantId, guestCartId);
+    evictItems(tenantId, guestCartId);
+    evictItems(tenantId, targetCartId);
   }
 
   // ── Mappers ───────────────────────────────────────────────────────────────

@@ -10,6 +10,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # localization: Material/Cupertino localized widgets + locale-aware number/date
+  # formatting. UK customers first (en_GB default), then the largest
+  # non-English-speaking communities in the UK.
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.20.2
   # navigation
   go_router: ^14.6.2
   # state management
@@ -31,6 +37,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # Generate AppLocalizations from lib/l10n/*.arb (see l10n.yaml).
+  generate: true
 
 flutter_launcher_icons:
   image_path: "assets/icon/icon.png"

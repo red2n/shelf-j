@@ -50,7 +50,7 @@ public abstract class BaseJdbcRepository {
    * error responses.
    */
   protected <R> R inTx(TxWork<R> work, String what) {
-    try (Connection c = dataSource.getConnection()) {
+    try (Connection c = acquireConnection()) {
       c.setAutoCommit(false);
       try {
         R r = work.run(c);
@@ -68,6 +68,33 @@ public abstract class BaseJdbcRepository {
     } catch (SQLException e) {
       throw dbError(what + " (connection)", e);
     }
+  }
+
+  /**
+   * Acquires a pooled connection, retrying briefly on transient failures (observed in practice as
+   * pgbouncer transaction-pooling contention under concurrent writes — see the {@code
+   * pgbouncer-gotchas} note: same call retried 1-2x always succeeded). This only retries the
+   * acquire step itself, never {@code work.run(c)}, so a retry can never double-execute business
+   * logic.
+   */
+  private Connection acquireConnection() throws SQLException {
+    final int maxAttempts = 3;
+    SQLException last = null;
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return dataSource.getConnection();
+      } catch (SQLException e) {
+        last = e;
+        if (attempt == maxAttempts) break;
+        try {
+          Thread.sleep(100L * attempt);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          break;
+        }
+      }
+    }
+    throw last;
   }
 
   /**

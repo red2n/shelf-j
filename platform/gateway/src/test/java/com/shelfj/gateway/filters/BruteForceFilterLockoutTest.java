@@ -8,6 +8,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.shelfj.gateway.GatewayConfig;
+import com.shelfj.test.RedisSupport;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.api.StatefulRedisConnection;
 import jakarta.ws.rs.container.ContainerRequestContext;
 import jakarta.ws.rs.container.ContainerResponseContext;
 import jakarta.ws.rs.core.UriInfo;
@@ -17,17 +21,27 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** Drives the full lockout loop: failed logins must actually block the next attempt. */
+/**
+ * Drives the full lockout loop: failed logins must actually block the next attempt. Counters live
+ * in Redis now, so this runs against a real Redis container rather than mocking the storage layer.
+ */
 @ExtendWith(MockitoExtension.class)
 class BruteForceFilterLockoutTest {
 
   private static final String LOGIN_BODY = "{\"email\":\"bob@example.com\",\"password\":\"x\"}";
+
+  private static RedisSupport REDIS;
+  private static RedisClient client;
+  private static StatefulRedisConnection<String, String> connection;
 
   @Mock GatewayConfig config;
   @Mock ContainerRequestContext request;
@@ -36,6 +50,25 @@ class BruteForceFilterLockoutTest {
 
   private BruteForceFilter filter;
   private final Map<String, Object> props = new HashMap<>();
+
+  @BeforeAll
+  static void startRedis() {
+    REDIS = RedisSupport.start();
+    client = RedisClient.create(RedisURI.Builder.redis(REDIS.host(), REDIS.port()).build());
+    connection = client.connect();
+  }
+
+  @AfterAll
+  static void stopRedis() {
+    connection.close();
+    client.shutdown();
+    REDIS.stop();
+  }
+
+  @AfterEach
+  void cleanUp() {
+    connection.sync().flushall();
+  }
 
   @BeforeEach
   void setUp() throws IOException {
@@ -47,6 +80,7 @@ class BruteForceFilterLockoutTest {
 
     filter = new BruteForceFilter();
     filter.config = config;
+    filter.redis = connection.sync();
     filter.init();
 
     lenient().when(request.getUriInfo()).thenReturn(uriInfo);

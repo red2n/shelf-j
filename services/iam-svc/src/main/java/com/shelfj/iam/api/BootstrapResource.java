@@ -2,6 +2,7 @@ package com.shelfj.iam.api;
 
 import com.shelfj.iam.service.AuthService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.validation.constraints.NotBlank;
@@ -38,6 +39,7 @@ public class BootstrapResource {
   @POST
   @Path("/admin")
   public Response createPlatformAdmin(BootstrapRequest req) {
+    Validations.validate(req);
     UUID userId = svc.bootstrapAdmin(req.email(), req.password());
     return Response.status(Response.Status.CREATED)
         .entity(

@@ -36,6 +36,8 @@ import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
 import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
 import com.shelfj.inventory.repo.InventoryRepository;
+import com.shelfj.inventory.repo.PlanningConfigRepository;
+import com.shelfj.inventory.repo.ReferenceDataRepository;
 import com.shelfj.inventory.repo.SerialRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -58,8 +60,10 @@ public class InventoryService {
   @Inject ServiceConfig config;
   @Inject InventoryRepository repo;
   @Inject SerialRepository serialRepo;
+  @Inject ReferenceDataRepository refData;
+  @Inject PlanningConfigRepository planningConfig;
 
-  // ---- receive (also the path the GoodsReceived consumer uses) ----
+  // ---- receive (manual GRN entry; event-driven receives go through receiveOnce instead) ----
   public Batch receive(
       UUID tenantId,
       UUID storeId,
@@ -70,7 +74,8 @@ public class InventoryService {
       LocalDate expiry,
       String refType,
       UUID refId,
-      UUID zoneId) {
+      UUID zoneId,
+      String idempotencyKey) {
     UUID batchId = UUID.randomUUID();
     var batch =
         new Batch(
@@ -96,7 +101,16 @@ public class InventoryService {
             tenantId,
             batchId,
             Events.stockReceived(tenantId, storeId, variantId, batchId, qty));
-    return repo.receive(batch, refType, refId, event);
+    try {
+      return repo.receive(batch, refType, refId, event, idempotencyKey);
+    } catch (ApiException e) {
+      // Idempotent replay: a retried receipt with the same key gets the original batch back
+      // instead of double-counting stock (golden rule #11).
+      if ("BATCH_DUPLICATE_KEY".equals(e.code()) && idempotencyKey != null) {
+        return repo.findBatchByIdempotencyKey(tenantId, idempotencyKey).orElseThrow(() -> e);
+      }
+      throw e;
+    }
   }
 
   // ---- Gap #50: POS→SIM deduction (order fulfilled) ----
@@ -149,7 +163,7 @@ public class InventoryService {
   public void receiveReturnFromOrder(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
     Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
-    repo.receive(batch, "RETURN", orderId, stockReceivedEvent(batch));
+    repo.receive(batch, "RETURN", orderId, stockReceivedEvent(batch), null);
   }
 
   /** {@link #receiveReturnFromOrder} deduped on {@code dedupeId} (see deductSaleFromOrderOnce). */
@@ -1234,11 +1248,7 @@ public class InventoryService {
   }
 
   static UUID parseUuid(String s, String field) {
-    try {
-      return UUID.fromString(s);
-    } catch (RuntimeException e) {
-      throw new ApiException(400, "INVALID_UUID", field + " must be a UUID", List.of(), e);
-    }
+    return com.shelfj.web.Parsing.uuid(s, field);
   }
 
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
@@ -1506,29 +1516,29 @@ public class InventoryService {
   // ── Tier-1 Gap #21: Transaction reason codes ─────────────────────────────
 
   public ReasonCode createReasonCode(UUID tenantId, String code, String description) {
-    return repo.insertReasonCode(tenantId, code.toUpperCase(Locale.ROOT), description);
+    return refData.insertReasonCode(tenantId, code.toUpperCase(Locale.ROOT), description);
   }
 
   public List<ReasonCode> listReasonCodes(UUID tenantId) {
-    return repo.listReasonCodes(tenantId);
+    return refData.listReasonCodes(tenantId);
   }
 
   public ReasonCode setReasonCodeActive(UUID tenantId, UUID id, boolean active) {
-    return repo.setReasonCodeActive(tenantId, id, active);
+    return refData.setReasonCodeActive(tenantId, id, active);
   }
 
   // ── Tier-1 Gap #22: Transaction source types ──────────────────────────────
 
   public TransactionSourceType createSourceType(UUID tenantId, String code, String description) {
-    return repo.insertSourceType(tenantId, code.toUpperCase(Locale.ROOT), description);
+    return refData.insertSourceType(tenantId, code.toUpperCase(Locale.ROOT), description);
   }
 
   public List<TransactionSourceType> listSourceTypes(UUID tenantId) {
-    return repo.listSourceTypes(tenantId);
+    return refData.listSourceTypes(tenantId);
   }
 
   public TransactionSourceType setSourceTypeActive(UUID tenantId, UUID id, boolean active) {
-    return repo.setSourceTypeActive(tenantId, id, active);
+    return refData.setSourceTypeActive(tenantId, id, active);
   }
 
   // ── Tier-1 Gap #23: Lot actions (split / merge) ───────────────────────────
@@ -1573,7 +1583,7 @@ public class InventoryService {
             tenantId,
             sourceBatchId,
             Events.lotSplit(tenantId, sourceBatchId, newBatchId, qty));
-    Batch newBatch = repo.receive(splitBatch, "LOT_SPLIT", sourceBatchId, splitEvent);
+    Batch newBatch = repo.receive(splitBatch, "LOT_SPLIT", sourceBatchId, splitEvent, null);
     LotAction action =
         repo.insertLotAction(tenantId, LotAction.SPLIT, sourceBatchId, newBatch.id(), qty, notes);
     return new LotSplitResult(newBatch, action);
@@ -1648,11 +1658,11 @@ public class InventoryService {
     if (factor.compareTo(BigDecimal.ZERO) <= 0) {
       throw ApiException.badRequest("INVALID_FACTOR", "UOM conversion factor must be positive");
     }
-    return repo.upsertLotUomConversion(tenantId, batchId, fromUom, toUom, factor, notes);
+    return planningConfig.upsertLotUomConversion(tenantId, batchId, fromUom, toUom, factor, notes);
   }
 
   public List<LotUomConversion> listLotUomConversions(UUID tenantId, UUID batchId) {
-    return repo.listLotUomConversions(tenantId, batchId);
+    return planningConfig.listLotUomConversions(tenantId, batchId);
   }
 
   // ── Tier-1 Gap #27: PAR levels ────────────────────────────────────────────
@@ -1674,15 +1684,16 @@ public class InventoryService {
       throw ApiException.badRequest(
           "INVALID_REVIEW_CYCLE", "reviewCycle must be DAILY, WEEKLY, or MONTHLY");
     }
-    return repo.upsertParLevel(tenantId, storeId, variantId, parQty, uom, cycle);
+    return planningConfig.upsertParLevel(tenantId, storeId, variantId, parQty, uom, cycle);
   }
 
   public List<ParLevelConfig> listParLevels(UUID tenantId, UUID storeId) {
-    return repo.listParLevels(tenantId, storeId);
+    return planningConfig.listParLevels(tenantId, storeId);
   }
 
   public ParLevelConfig getParLevel(UUID tenantId, UUID storeId, UUID variantId) {
-    return repo.findParLevel(tenantId, storeId, variantId)
+    return planningConfig
+        .findParLevel(tenantId, storeId, variantId)
         .orElseThrow(() -> ApiException.notFound("PAR_LEVEL_NOT_FOUND", "No PAR level configured"));
   }
 
@@ -1734,11 +1745,11 @@ public class InventoryService {
 
   public ZoneGlMapping upsertZoneGlMapping(
       UUID tenantId, UUID storeId, UUID zoneId, String nominalCode, String description) {
-    return repo.upsertZoneGlMapping(tenantId, storeId, zoneId, nominalCode, description);
+    return refData.upsertZoneGlMapping(tenantId, storeId, zoneId, nominalCode, description);
   }
 
   public List<ZoneGlMapping> listZoneGlMappings(UUID tenantId, UUID storeId) {
-    return repo.listZoneGlMappings(tenantId, storeId);
+    return refData.listZoneGlMappings(tenantId, storeId);
   }
 
   // ── Picking Rules (Gap #38) ──────────────────────────────────────────────

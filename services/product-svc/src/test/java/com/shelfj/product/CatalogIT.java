@@ -6,12 +6,17 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
 import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.RedisSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -24,15 +29,22 @@ import org.junit.jupiter.api.Test;
 class CatalogIT {
 
   private static final PostgresSupport PG;
+  private static final RedisSupport REDIS;
 
   static {
     PG = PostgresSupport.start();
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
+    System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
     System.setProperty("shelfj.db.password", PG.password());
     System.setProperty("shelfj.db.schema", "product");
     System.setProperty("shelfj.consul.enabled", "false");
     System.setProperty("shelfj.kafka.enabled", "false");
+
+    REDIS = RedisSupport.start();
+    System.setProperty("shelfj.redis.host", REDIS.host());
+    System.setProperty("shelfj.redis.port", String.valueOf(REDIS.port()));
+    System.setProperty("shelfj.redis.password", "");
   }
 
   private static final String TENANT_A = "11111111-1111-1111-1111-111111111111";
@@ -43,6 +55,7 @@ class CatalogIT {
   @AfterAll
   static void stopDb() {
     PG.stop();
+    REDIS.stop();
   }
 
   private Response post(String path, String json, String tenant) {
@@ -56,6 +69,28 @@ class CatalogIT {
 
   private String get(String path, String tenant) {
     return target.path(path).request().header("X-Tenant-Id", tenant).get(String.class);
+  }
+
+  private Response put(String path, String json, String tenant) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .put(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
+  /** Bypasses the app entirely — proves a read came from cache rather than the DB. */
+  private static void rawUpdateProductName(String productId, String name) {
+    try (Connection c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        PreparedStatement ps =
+            c.prepareStatement("UPDATE product.products SET name = ? WHERE id = ?::uuid")) {
+      ps.setString(1, name);
+      ps.setString(2, productId);
+      ps.executeUpdate();
+    } catch (SQLException e) {
+      throw new AssertionError(e);
+    }
   }
 
   @Test
@@ -89,6 +124,75 @@ class CatalogIT {
         .header("X-Roles", "OWNER")
         .delete();
     assertThat(get("/catalog/products", TENANT_A), not(containsString("Rice 5kg")));
+  }
+
+  @Test
+  void resolveVariantsReturnsNameAndSkuAndIsolatesTenants() {
+    Response p = post("/admin/products", "{\"name\":\"Resolve Me\"}", TENANT_A);
+    String productId = field(p.readEntity(String.class), "id");
+    Response v =
+        post("/admin/products/" + productId + "/variants", "{\"sku\":\"RESOLVE-1\"}", TENANT_A);
+    String variantId = field(v.readEntity(String.class), "id");
+
+    // Resolve maps the variant UUID to its product name + SKU.
+    String resolved = resolve(variantId, TENANT_A);
+    assertThat(resolved, containsString("Resolve Me"));
+    assertThat(resolved, containsString("RESOLVE-1"));
+    assertThat(resolved, containsString(variantId));
+
+    // Another tenant cannot resolve tenant A's variant (isolation).
+    assertThat(resolve(variantId, TENANT_B), not(containsString("Resolve Me")));
+
+    // A malformed id is a 400, not a 500.
+    Response bad =
+        target
+            .path("/admin/products/variants/resolve")
+            .queryParam("ids", "not-a-uuid")
+            .request()
+            .header("X-Tenant-Id", TENANT_A)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(bad.getStatus(), is(400));
+  }
+
+  private String resolve(String variantId, String tenant) {
+    return target
+        .path("/admin/products/variants/resolve")
+        .queryParam("ids", variantId)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get(String.class);
+  }
+
+  @Test
+  void getProductIsCachedAndInvalidatedOnUpdate() {
+    Response p = post("/admin/products", "{\"name\":\"Cached Widget\"}", TENANT_A);
+    assertThat(p.getStatus(), is(201));
+    String productId = field(p.readEntity(String.class), "id");
+
+    // first read — populates the cache
+    assertThat(get("/catalog/products/" + productId, TENANT_A), containsString("Cached Widget"));
+
+    // mutate the row directly in Postgres, bypassing the app and its cache eviction
+    rawUpdateProductName(productId, "Mutated Behind Cache");
+
+    // still served from cache — proves the read isn't hitting Postgres every time
+    assertThat(get("/catalog/products/" + productId, TENANT_A), containsString("Cached Widget"));
+
+    // a real update goes through the app, which evicts the cache key
+    Response updated =
+        put(
+            "/admin/products/" + productId,
+            "{\"name\":\"Updated Widget\",\"sellableOnline\":true,\"sellablePos\":true}",
+            TENANT_A);
+    assertThat(updated.getStatus(), is(200));
+
+    // next read reflects the update, not the raw mutation — cache was invalidated, not just expired
+    assertThat(get("/catalog/products/" + productId, TENANT_A), containsString("Updated Widget"));
+    assertThat(
+        get("/catalog/products/" + productId, TENANT_A),
+        not(containsString("Mutated Behind Cache")));
   }
 
   @Test

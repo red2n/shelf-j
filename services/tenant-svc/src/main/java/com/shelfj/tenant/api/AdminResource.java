@@ -172,12 +172,7 @@ public class AdminResource {
     if (storeParam == null || storeParam.isBlank()) {
       throw ApiException.badRequest("MISSING_STORE", "?store=<storeId> is required");
     }
-    UUID storeId;
-    try {
-      storeId = UUID.fromString(storeParam);
-    } catch (IllegalArgumentException e) {
-      throw new ApiException(400, "INVALID_UUID", "store must be a UUID", List.of(), e);
-    }
+    UUID storeId = com.shelfj.web.Parsing.uuid(storeParam, "store");
     service.removeStaff(ctx.requireTenantId(), userId, storeId);
     return ApiResponse.ok("removed");
   }

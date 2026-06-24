@@ -29,6 +29,7 @@ import com.shelfj.order.repo.OrderRepository;
 import com.shelfj.order.repo.StoreStatusRepository;
 import com.shelfj.order.repo.TenantStatusRepository;
 import com.shelfj.web.ApiException;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -62,7 +63,8 @@ public class OrderService {
       throw ApiException.badRequest("ORDER_NO_ITEMS", "order must have at least one item");
 
     UUID tenantId = ctx.requireTenantId();
-    UUID storeId = UUID.fromString(req.storeId());
+    UUID storeId = Parsing.uuid(req.storeId(), "storeId");
+    ctx.requireStoreAccess(storeId);
 
     if (!tenantStatusRepo.isActive(tenantId))
       throw ApiException.conflict(
@@ -80,7 +82,7 @@ public class OrderService {
     if (ctx.hasRole("CUSTOMER") && ctx.userId() != null) {
       customerId = ctx.userId();
     } else {
-      customerId = req.customerId() != null ? UUID.fromString(req.customerId()) : null;
+      customerId = req.customerId() != null ? Parsing.uuid(req.customerId(), "customerId") : null;
     }
     String currency = req.currency() != null ? req.currency() : "USD";
     String fulfilment =
@@ -105,7 +107,7 @@ public class OrderService {
     UUID orderId = UUID.randomUUID();
 
     for (var ir : req.items()) {
-      UUID variantId = UUID.fromString(ir.variantId());
+      UUID variantId = Parsing.uuid(ir.variantId(), "variantId");
       // Gap #63: when enforcement is on, the price comes from pricing-svc — the client-supplied
       // unitPrice is ignored. When off (local dev / unseeded rigs), the client price is trusted.
       BigDecimal unitPrice;
@@ -133,11 +135,7 @@ public class OrderService {
               ir.notes()));
     }
 
-    boolean staff =
-        ctx.hasRole("CASHIER")
-            || ctx.hasRole("MANAGER")
-            || ctx.hasRole("OWNER")
-            || ctx.hasRole("PLATFORM_ADMIN");
+    boolean staff = ctx.hasRole("CASHIER") || ctx.hasRole("MANAGER") || ctx.hasRole("OWNER");
 
     BigDecimal tax;
     BigDecimal disc;
@@ -313,6 +311,7 @@ public class OrderService {
     Order order =
         repo.findOrder(tenantId, orderId)
             .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
+    ctx.requireStoreAccess(order.storeId());
 
     if (Order.STATUS_CANCELLED.equals(order.status()) || Order.STATUS_VOIDED.equals(order.status()))
       throw ApiException.conflict(
@@ -325,7 +324,7 @@ public class OrderService {
     String method = req.refundMethod() != null ? req.refundMethod() : Return.METHOD_ORIGINAL;
 
     for (var ri : req.items()) {
-      UUID variantId = UUID.fromString(ri.variantId());
+      UUID variantId = Parsing.uuid(ri.variantId(), "variantId");
       OrderItem matched =
           orderItems.stream()
               .filter(oi -> oi.variantId().equals(variantId))
@@ -380,6 +379,7 @@ public class OrderService {
     Order order =
         repo.findOrder(tenantId, orderId)
             .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
+    ctx.requireStoreAccess(order.storeId());
     if (!Order.CHANNEL_POS.equals(order.channel()))
       throw ApiException.conflict("ORDER_VOID_ONLY_POS", "void is only allowed on POS orders");
     return repo.voidOrder(
@@ -398,8 +398,10 @@ public class OrderService {
       throw ApiException.badRequest("LAYAWAY_NO_ITEMS", "layaway must have at least one item");
 
     UUID tenantId = ctx.tenantId();
-    UUID storeId = UUID.fromString(req.storeId());
-    UUID customerId = req.customerId() != null ? UUID.fromString(req.customerId()) : null;
+    UUID storeId = Parsing.uuid(req.storeId(), "storeId");
+    ctx.requireStoreAccess(storeId);
+    UUID customerId =
+        req.customerId() != null ? Parsing.uuid(req.customerId(), "customerId") : null;
     UUID layawayId = UUID.randomUUID();
 
     BigDecimal total = BigDecimal.ZERO;
@@ -412,7 +414,7 @@ public class OrderService {
               UUID.randomUUID(),
               tenantId,
               layawayId,
-              UUID.fromString(li.variantId()),
+              Parsing.uuid(li.variantId(), "variantId"),
               li.qty(),
               li.unitPrice(),
               line));
@@ -493,6 +495,8 @@ public class OrderService {
 
   public GiftCard issueGiftCard(IssueGiftCardRequest req, TenantContext ctx) {
     UUID tenantId = ctx.tenantId();
+    UUID storeId = Parsing.uuid(req.storeId(), "storeId");
+    ctx.requireStoreAccess(storeId);
     UUID gcId = UUID.randomUUID();
     String code = generateGiftCardCode();
     String currency = req.currency() != null ? req.currency() : "USD";
@@ -502,7 +506,7 @@ public class OrderService {
         new GiftCard(
             gcId,
             tenantId,
-            UUID.fromString(req.storeId()),
+            storeId,
             code,
             req.amount(),
             req.amount(),
@@ -537,7 +541,7 @@ public class OrderService {
   }
 
   public GiftCard redeemGiftCard(UUID tenantId, String code, RedeemGiftCardRequest req) {
-    UUID orderId = req.orderId() != null ? UUID.fromString(req.orderId()) : null;
+    UUID orderId = req.orderId() != null ? Parsing.uuid(req.orderId(), "orderId") : null;
     return repo.redeemGiftCard(tenantId, code, req.amount(), orderId, req.reference());
   }
 
@@ -598,14 +602,17 @@ public class OrderService {
 
   // ── Gap #42: Special orders ───────────────────────────────────────────────
 
-  public SpecialOrder createSpecialOrder(UUID tenantId, CreateSpecialOrderRequest req) {
+  public SpecialOrder createSpecialOrder(
+      UUID tenantId, CreateSpecialOrderRequest req, TenantContext ctx) {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest(
           "SPECIAL_ORDER_NO_ITEMS", "special order must have at least one item");
 
     UUID soId = UUID.randomUUID();
-    UUID storeId = UUID.fromString(req.storeId());
-    UUID customerId = req.customerId() != null ? UUID.fromString(req.customerId()) : null;
+    UUID storeId = Parsing.uuid(req.storeId(), "storeId");
+    ctx.requireStoreAccess(storeId);
+    UUID customerId =
+        req.customerId() != null ? Parsing.uuid(req.customerId(), "customerId") : null;
     String currency = req.currency() != null ? req.currency() : "GBP";
 
     java.math.BigDecimal subtotal = java.math.BigDecimal.ZERO;
@@ -618,7 +625,7 @@ public class OrderService {
               UUID.randomUUID(),
               tenantId,
               soId,
-              UUID.fromString(ir.variantId()),
+              Parsing.uuid(ir.variantId(), "variantId"),
               ir.qty(),
               ir.unitPrice(),
               line,
@@ -654,8 +661,8 @@ public class OrderService {
 
   public List<SpecialOrder> listSpecialOrders(
       UUID tenantId, String storeIdStr, String customerIdStr) {
-    UUID storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
-    UUID customerId = customerIdStr != null ? UUID.fromString(customerIdStr) : null;
+    UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "storeId") : null;
+    UUID customerId = customerIdStr != null ? Parsing.uuid(customerIdStr, "customerId") : null;
     return repo.listSpecialOrders(tenantId, storeId, customerId);
   }
 
@@ -727,7 +734,7 @@ public class OrderService {
   }
 
   public List<PosLogEntry> listPosLog(UUID tenantId, String storeIdStr) {
-    UUID storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
+    UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "storeId") : null;
     return repo.listPosLog(tenantId, storeId);
   }
 

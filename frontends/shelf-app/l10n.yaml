@@ -1,0 +1,10 @@
+# Flutter gen-l10n configuration. ARB files live in lib/l10n; the generated
+# AppLocalizations is written into the source tree (not a synthetic package) so
+# it's straightforward to import and analyze.
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-dir: lib/l10n/gen
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+synthetic-package: false
+nullable-getter: false

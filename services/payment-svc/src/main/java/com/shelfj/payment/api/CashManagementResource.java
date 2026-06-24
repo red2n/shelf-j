@@ -36,11 +36,11 @@ public class CashManagementResource {
   /** Open a till session (record opening float). CASHIER or above. */
   @POST
   public Response open(OpenTillRequest req) {
-    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID userId = ctx.userId();
-    var session = svc.openTill(tenantId, userId, req);
+    var session = svc.openTill(tenantId, userId, req, ctx);
     return Response.status(201).entity(ApiResponse.ok(session)).build();
   }
 
@@ -48,19 +48,19 @@ public class CashManagementResource {
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") UUID id) {
-    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER", "PLATFORM_ADMIN");
-    return Response.ok(ApiResponse.ok(svc.getSession(ctx.requireTenantId(), id))).build();
+    ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
+    return Response.ok(ApiResponse.ok(svc.getSession(ctx.requireTenantId(), id, ctx))).build();
   }
 
   /** Record a cash drop (mid-shift safe drop). MANAGER or above. */
   @POST
   @Path("/{id}/drops")
   public Response drop(@PathParam("id") UUID id, RecordCashDropRequest req) {
-    ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("MANAGER", "OWNER");
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID userId = ctx.userId();
-    var drop = svc.recordDrop(tenantId, id, userId, req.amount(), req.notes());
+    var drop = svc.recordDrop(tenantId, id, userId, req.amount(), req.notes(), ctx);
     return Response.status(201).entity(ApiResponse.ok(drop)).build();
   }
 
@@ -68,16 +68,16 @@ public class CashManagementResource {
   @GET
   @Path("/{id}/x-report")
   public Response xReport(@PathParam("id") UUID id) {
-    ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
-    return Response.ok(ApiResponse.ok(svc.xReport(ctx.requireTenantId(), id))).build();
+    ctx.requireAnyRole("MANAGER", "OWNER");
+    return Response.ok(ApiResponse.ok(svc.xReport(ctx.requireTenantId(), id, ctx))).build();
   }
 
   /** Z-report: end-of-day close. Requires counted cash amount. MANAGER or above. */
   @POST
   @Path("/{id}/close")
   public Response close(@PathParam("id") UUID id, CloseTillRequest req) {
-    ctx.requireAnyRole("MANAGER", "OWNER", "PLATFORM_ADMIN");
+    ctx.requireAnyRole("MANAGER", "OWNER");
     Validations.validate(req);
-    return Response.ok(ApiResponse.ok(svc.zReport(ctx.requireTenantId(), id, req))).build();
+    return Response.ok(ApiResponse.ok(svc.zReport(ctx.requireTenantId(), id, req, ctx))).build();
   }
 }

@@ -10,6 +10,7 @@ import com.shelfj.payment.dto.Dtos.TillReportResponse;
 import com.shelfj.payment.dto.Dtos.TillSessionResponse;
 import com.shelfj.payment.repo.CashManagementRepository;
 import com.shelfj.web.ApiException;
+import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
@@ -24,8 +25,10 @@ public class CashManagementService {
 
   @Inject CashManagementRepository repo;
 
-  public TillSessionResponse openTill(UUID tenantId, UUID openedBy, OpenTillRequest req) {
+  public TillSessionResponse openTill(
+      UUID tenantId, UUID openedBy, OpenTillRequest req, TenantContext ctx) {
     UUID storeId = UUID.fromString(req.storeId());
+    ctx.requireStoreAccess(storeId);
     TillSession session =
         new TillSession(
             UUID.randomUUID(),
@@ -41,13 +44,18 @@ public class CashManagementService {
     return toSessionResponse(repo.openTill(session));
   }
 
-  public TillSessionResponse getSession(UUID tenantId, UUID sessionId) {
-    return toSessionResponse(requireSession(tenantId, sessionId));
+  public TillSessionResponse getSession(UUID tenantId, UUID sessionId, TenantContext ctx) {
+    return toSessionResponse(requireSession(tenantId, sessionId, ctx));
   }
 
   public CashDropResponse recordDrop(
-      UUID tenantId, UUID sessionId, UUID recordedBy, BigDecimal amount, String notes) {
-    TillSession session = requireSession(tenantId, sessionId);
+      UUID tenantId,
+      UUID sessionId,
+      UUID recordedBy,
+      BigDecimal amount,
+      String notes,
+      TenantContext ctx) {
+    TillSession session = requireSession(tenantId, sessionId, ctx);
     if (!TillSession.STATUS_OPEN.equals(session.status())) {
       throw ApiException.badRequest("TILL_CLOSED", "Till session is already closed");
     }
@@ -62,14 +70,15 @@ public class CashManagementService {
   }
 
   /** X-report: read-only snapshot of the current session's totals. Does not close the session. */
-  public TillReportResponse xReport(UUID tenantId, UUID sessionId) {
-    TillSession session = requireSession(tenantId, sessionId);
+  public TillReportResponse xReport(UUID tenantId, UUID sessionId, TenantContext ctx) {
+    TillSession session = requireSession(tenantId, sessionId, ctx);
     return buildReport(session, null);
   }
 
   /** Z-report: computes totals, records counted cash, closes the session. */
-  public TillReportResponse zReport(UUID tenantId, UUID sessionId, CloseTillRequest req) {
-    TillSession session = requireSession(tenantId, sessionId);
+  public TillReportResponse zReport(
+      UUID tenantId, UUID sessionId, CloseTillRequest req, TenantContext ctx) {
+    TillSession session = requireSession(tenantId, sessionId, ctx);
     if (!TillSession.STATUS_OPEN.equals(session.status())) {
       throw ApiException.badRequest("TILL_CLOSED", "Till session is already closed");
     }
@@ -142,10 +151,13 @@ public class CashManagementService {
         netSales);
   }
 
-  private TillSession requireSession(UUID tenantId, UUID sessionId) {
-    return repo.findSession(tenantId, sessionId)
-        .orElseThrow(
-            () -> ApiException.notFound("TILL_SESSION_NOT_FOUND", "Till session not found"));
+  private TillSession requireSession(UUID tenantId, UUID sessionId, TenantContext ctx) {
+    TillSession session =
+        repo.findSession(tenantId, sessionId)
+            .orElseThrow(
+                () -> ApiException.notFound("TILL_SESSION_NOT_FOUND", "Till session not found"));
+    ctx.requireStoreAccess(session.storeId());
+    return session;
   }
 
   private static TillSessionResponse toSessionResponse(TillSession s) {

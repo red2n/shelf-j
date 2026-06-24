@@ -5,6 +5,7 @@ import com.shelfj.tenant.dto.Dtos.UpsertInventoryConfigRequest;
 import com.shelfj.tenant.service.TenantService;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.TenantContext;
+import com.shelfj.web.Validations;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
@@ -27,6 +28,10 @@ public class InventoryConfigResource {
 
   @PUT
   public Response upsert(UpsertInventoryConfigRequest req) {
+    // Body is optional (PUT with no body = upsert defaults); validate only when one is supplied.
+    if (req != null) {
+      Validations.validate(req);
+    }
     TenantInventoryConfigResponse body =
         svc.upsertInventoryConfig(
             ctx.requireTenantId(),

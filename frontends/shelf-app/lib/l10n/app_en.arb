@@ -1,0 +1,20 @@
+{
+  "@@locale": "en",
+  "signInToContinue": "Sign in to continue",
+  "@signInToContinue": { "description": "Login screen subtitle (sign-in mode)" },
+  "createYourAccount": "Create your account",
+  "@createYourAccount": { "description": "Login screen subtitle (register mode)" },
+  "fieldEmail": "Email",
+  "fieldEmailInvalid": "Enter a valid email",
+  "fieldPhoneOptional": "Phone (optional)",
+  "fieldPassword": "Password",
+  "fieldPasswordTooShort": "Minimum 8 characters",
+  "actionSignIn": "Sign in",
+  "actionCreateAccount": "Create account",
+  "toggleHaveAccount": "Already have an account? Sign in",
+  "toggleNewHere": "New here? Create an account",
+  "errInvalidCredentials": "Invalid email or password.",
+  "errEmailExists": "An account with this email already exists.",
+  "errNetwork": "Cannot reach the server. Check your connection.",
+  "errGeneric": "Something went wrong. Please try again."
+}
