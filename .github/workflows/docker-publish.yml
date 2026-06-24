@@ -48,7 +48,48 @@ jobs:
             services/*/target/libs
           retention-days: 1
 
-  # ── 2. Build & push Docker images (parallel matrix) ───────────────────────
+  # ── 2. Build Flutter web bundle ───────────────────────────────────────────
+  # Runs in parallel with build-jars — independent of the Maven build.
+  # Set SHELFJ_API_BASE as a GitHub Actions repository variable (Settings →
+  # Variables → Actions) to the production gateway URL, e.g.
+  # https://api.example.com/api. Defaults to /api (relative — works when the
+  # gateway and web app share a host or nginx proxies /api upstream).
+  build-web:
+    name: Flutter web build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.0'
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        working-directory: frontends/shelf-app
+        run: flutter pub get
+
+      - name: Flutter build web
+        working-directory: frontends/shelf-app
+        env:
+          SHELFJ_API_BASE: ${{ vars.SHELFJ_API_BASE || '/api' }}
+        run: |
+          flutter build web --release \
+            --dart-define=SHELFJ_API_BASE=$SHELFJ_API_BASE
+
+      - name: Upload web bundle as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-bundle
+          # Restore path matches COPY source in Dockerfile.web
+          path: frontends/shelf-app/build/web
+          retention-days: 1
+
+  # ── 3. Build & push service Docker images (parallel matrix) ───────────────
   docker-publish:
     name: Docker — ${{ matrix.service.name }}
     needs: build-jars
@@ -61,12 +102,24 @@ jobs:
       fail-fast: false
       matrix:
         service:
-          - { name: gateway,       svc_path: platform/gateway,       svc_jar: gateway       }
-          - { name: config,        svc_path: platform/config,        svc_jar: config-svc    }
-          - { name: iam-svc,       svc_path: services/iam-svc,       svc_jar: iam-svc       }
-          - { name: tenant-svc,    svc_path: services/tenant-svc,    svc_jar: tenant-svc    }
-          - { name: product-svc,   svc_path: services/product-svc,   svc_jar: product-svc   }
-          - { name: inventory-svc, svc_path: services/inventory-svc, svc_jar: inventory-svc }
+          # Platform
+          - { name: gateway,          svc_path: platform/gateway,          svc_jar: gateway          }
+          - { name: config,           svc_path: platform/config,           svc_jar: config-svc       }
+          # Business — Phase 1 (back-office)
+          - { name: iam-svc,          svc_path: services/iam-svc,          svc_jar: iam-svc          }
+          - { name: tenant-svc,       svc_path: services/tenant-svc,       svc_jar: tenant-svc       }
+          - { name: product-svc,      svc_path: services/product-svc,      svc_jar: product-svc      }
+          - { name: inventory-svc,    svc_path: services/inventory-svc,    svc_jar: inventory-svc    }
+          - { name: purchase-svc,     svc_path: services/purchase-svc,     svc_jar: purchase-svc     }
+          # Business — Phase 2 (commerce)
+          - { name: pricing-svc,      svc_path: services/pricing-svc,      svc_jar: pricing-svc      }
+          - { name: cart-svc,         svc_path: services/cart-svc,         svc_jar: cart-svc         }
+          - { name: order-svc,        svc_path: services/order-svc,        svc_jar: order-svc        }
+          - { name: payment-svc,      svc_path: services/payment-svc,      svc_jar: payment-svc      }
+          # Business — Phase 3 (experience)
+          - { name: customer-svc,     svc_path: services/customer-svc,     svc_jar: customer-svc     }
+          - { name: notification-svc, svc_path: services/notification-svc, svc_jar: notification-svc }
+          - { name: reporting-svc,    svc_path: services/reporting-svc,    svc_jar: reporting-svc    }
 
     steps:
       - name: Checkout
@@ -121,10 +174,64 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
 
-  # ── 3. Summary — list all published image digests ─────────────────────────
+  # ── 4. Build & push web Docker image ──────────────────────────────────────
+  docker-publish-web:
+    name: Docker — web (Flutter)
+    needs: build-web
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: web-bundle
+          # Restore to the path Dockerfile.web COPYs from.
+          path: frontends/shelf-app/build/web
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}-web
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.web
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+  # ── 5. Summary — list all published image digests ─────────────────────────
   publish-summary:
     name: Publish summary
-    needs: docker-publish
+    needs: [docker-publish, docker-publish-web]
     runs-on: ubuntu-latest
     if: success()
 
@@ -135,8 +242,13 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Service | Image |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          for svc in gateway config iam-svc tenant-svc product-svc inventory-svc; do
+          for svc in \
+            gateway config \
+            iam-svc tenant-svc product-svc inventory-svc purchase-svc \
+            pricing-svc cart-svc order-svc payment-svc \
+            customer-svc notification-svc reporting-svc; do
             echo "| $svc | \`${{ env.IMAGE_PREFIX }}-${svc}:latest\` |" >> $GITHUB_STEP_SUMMARY
           done
+          echo "| web | \`${{ env.IMAGE_PREFIX }}-web:latest\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Triggered by:** \`${{ github.ref_name }}\` @ \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
