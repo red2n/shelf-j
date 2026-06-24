@@ -234,6 +234,37 @@ class JwtAuthFilterTest {
   }
 
   @Test
+  void staffBearerTokenResolvesTenantOnStorefrontPublicPathWithoutHeader() throws IOException {
+    // Regression: an authenticated staff caller (e.g. the admin console checking inventory
+    // availability, or POS clock-in listing stores via the same cashier-safe endpoint) has no
+    // storefront context and sends no X-Storefront-Tenant — it must fall through to normal Bearer
+    // verification instead of being silently left tenant-less (previously surfaced downstream as
+    // a blanket 401 NO_TENANT on every call).
+    String token =
+        com.auth0
+            .jwt
+            .JWT
+            .create()
+            .withIssuer("shelfj")
+            .withSubject("22222222-2222-2222-2222-222222222222")
+            .withClaim("type", "STAFF")
+            .withClaim("tenant", "tenant-xyz")
+            .withArrayClaim("roles", new String[] {"OWNER"})
+            .sign(
+                com.auth0.jwt.algorithms.Algorithm.HMAC256(
+                    "unit-test-secret-of-at-least-32-chars!!"));
+    when(uriInfo.getPath()).thenReturn("api/inventory-svc/inventory/availability");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + token);
+    when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn(null);
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals("tenant-xyz", headers.getFirst("X-Tenant-Id"));
+  }
+
+  @Test
   void suspendedTenantStorefrontRequestIsBlocked() throws IOException {
     when(uriInfo.getPath()).thenReturn("api/product-svc/catalog/products");
     when(requestContext.getMethod()).thenReturn("GET");

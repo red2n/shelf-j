@@ -108,6 +108,14 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     // browsing the catalog after checkout). These paths expose nothing sensitive — anyone can
     // already reach them with no token at all — so a present-but-irrelevant Bearer must not force
     // JWT verification and reject the request for lacking a tenant claim.
+    //
+    // But these same paths are ALSO called by authenticated staff with no storefront context at
+    // all — e.g. the admin console checking inventory availability, or POS clock-in listing
+    // stores via this same cashier-safe endpoint (see posStoresProvider: "tenant is taken from
+    // the authenticated staff JWT"). Without X-Storefront-Tenant, that is NOT a guest/customer
+    // call — fall through to normal Bearer verification below so the tenant gets resolved from
+    // the JWT instead of being silently left unset (which previously surfaced downstream as a
+    // blanket 401 NO_TENANT, e.g. every product showing "unavailable" regardless of real stock).
     if (isStorefrontPublic(normalize(path), ctx.getMethod())) {
       String storefrontTenant = ctx.getHeaderString(STOREFRONT_TENANT_HEADER);
       if (storefrontTenant != null && !storefrontTenant.isBlank()) {
@@ -117,8 +125,8 @@ public class JwtAuthFilter implements ContainerRequestFilter {
           return;
         }
         ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, tenant);
+        return;
       }
-      return;
     }
 
     String authHeader = ctx.getHeaderString("Authorization");

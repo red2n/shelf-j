@@ -268,27 +268,36 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
 
       // Bounded concurrency — inventory-svc has no batch-receive endpoint, and an
       // import can be thousands of rows; sequential one-at-a-time calls would be far
-      // too slow.
+      // too slow. Kept below inventory-svc's DB pool size (shelfj.db.pool-max-size,
+      // default 10) — at concurrency 16 a large import reliably exhausted the pool
+      // and ~38% of receives failed with DB_ERROR. A couple of retries on top absorb
+      // any remaining transient contention (e.g. right after a fresh deploy) instead
+      // of silently dropping stock for that row.
       if (toReceive.isNotEmpty) {
         if (!mounted) return;
         setState(() => _loadingStage =
             'Receiving stock… 0/${toReceive.length}');
-        const concurrency = 16;
+        const concurrency = 8;
+        const maxAttempts = 3;
         var done = 0;
         for (var i = 0; i < toReceive.length; i += concurrency) {
           final chunk = toReceive.skip(i).take(concurrency);
           final outcomes = await Future.wait(chunk.map((t) async {
             final (variantId, qty, sku) = t;
-            try {
-              await dio.post('/${ApiConstants.inventory}/admin/inventory/receive', data: {
-                'storeId': _destinationStoreId,
-                'variantId': variantId,
-                'qty': qty,
-              });
-              return null;
-            } catch (e) {
-              return '$sku: $e';
+            for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+              try {
+                await dio.post('/${ApiConstants.inventory}/admin/inventory/receive', data: {
+                  'storeId': _destinationStoreId,
+                  'variantId': variantId,
+                  'qty': qty,
+                });
+                return null;
+              } catch (e) {
+                if (attempt == maxAttempts) return '$sku: $e';
+                await Future.delayed(Duration(milliseconds: 200 * attempt));
+              }
             }
+            return '$sku: unreachable';
           }));
           for (final o in outcomes) {
             if (o == null) {

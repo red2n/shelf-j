@@ -118,7 +118,9 @@ public class AuthService {
             .toString();
     var outbox =
         new OutboxRow("UserRegistered", "shelfj.iam.user-registered", null, userId, payload);
-    users.createUserWithOutbox(user, "STAFF", outbox);
+    // No role yet — "STAFF" is a user `type`, not a row in `roles`; the real store-scoped role
+    // (MANAGER/CASHIER/...) is granted when tenant-svc publishes StaffAssigned (see bindStaffOnce).
+    users.createUserWithOutbox(user, null, outbox);
     users.audit(tenantId, userId, "STAFF_PROVISIONED", email);
     return new ProvisionStaffResponse(userId.toString(), email, true);
   }

@@ -126,15 +126,21 @@ public class UserRepository extends BaseOutboxRepository {
   // --- atomic write: create user + assign role + write outbox event in one transaction ---
 
   /**
-   * Insert a user, assign a role, and write an outbox event — atomically.
+   * Insert a user, optionally assign a role, and write an outbox event — atomically.
    *
+   * @param roleName a real row in {@code roles} to grant immediately (e.g. {@code "CUSTOMER"} on
+   *     self-signup), or {@code null} to skip role assignment — used for admin-driven staff
+   *     provisioning, where the account is created tenant-less and the real store-scoped role is
+   *     bound later when tenant-svc publishes {@code StaffAssigned} (see {@link
+   *     com.shelfj.iam.service.AuthService#provisionStaff}). There is no generic "STAFF" row in
+   *     {@code roles} — passing that name throws "role not found".
    * @return the created user
    */
   public User createUserWithOutbox(User user, String roleName, OutboxRow outbox) {
     return inTx(
         c -> {
           insertUser(c, user);
-          assignRole(c, user.id(), roleName);
+          if (roleName != null) assignRole(c, user.id(), roleName);
           insertOutbox(c, outbox);
           return user;
         },
