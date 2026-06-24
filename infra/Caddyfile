@@ -1,0 +1,61 @@
+# Production edge proxy for storeql.com
+#
+# Caddy obtains and auto-renews TLS certificates from Let's Encrypt.
+# No certificate management needed — just point the DNS A records at this
+# server and start the stack with docker-compose.prod.yml.
+#
+# Prerequisites before first deploy:
+#   DNS A records pointing to your server's public IP:
+#     app.storeql.com  → <server-ip>
+#     api.storeql.com  → <server-ip>
+#     storeql.com      → <server-ip>
+#   Ports 80 and 443 open in the firewall (ufw / security group).
+#   ACME email set via CADDY_ACME_EMAIL env var (used for cert expiry notices).
+
+{
+    # Let's Encrypt contact address — receives renewal warnings before expiry.
+    # Set as an environment variable rather than hardcoding here.
+    email {$CADDY_ACME_EMAIL:admin@storeql.com}
+}
+
+# ── Web UI (Flutter SPA — admin console, storefront, POS) ────────────────────
+app.storeql.com {
+    reverse_proxy shelf-app:8080
+
+    # Caddy adds Zstd on top of the gzip already handled by nginx-spa.conf
+    encode zstd gzip
+
+    # Security hardening for the management console
+    header {
+        X-Frame-Options SAMEORIGIN
+        X-Content-Type-Options nosniff
+        Referrer-Policy strict-origin-when-cross-origin
+        # HSTS: tell browsers to always use HTTPS for this subdomain
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+}
+
+# ── API Gateway (all /api/* requests from the browser) ───────────────────────
+api.storeql.com {
+    reverse_proxy gateway:8080 {
+        # Forward the real client IP so the gateway's per-IP rate-limiter and
+        # brute-force protection (login throttle) see the actual caller, not
+        # the Caddy container IP. Requires trust-forwarded-headers=true in gateway
+        # (set in docker-compose.prod.yml).
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        # The gateway already sets X-Content-Type-Options / Referrer-Policy on
+        # API responses; add HSTS only (don't duplicate what the gateway emits).
+    }
+}
+
+# ── Bare domain: redirect storeql.com → app.storeql.com ──────────────────────
+storeql.com {
+    redir https://app.storeql.com{uri} permanent
+}
