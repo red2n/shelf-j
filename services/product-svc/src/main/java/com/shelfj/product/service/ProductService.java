@@ -61,6 +61,8 @@ import java.util.UUID;
 public class ProductService {
 
   @Inject ProductRepository repo;
+  @Inject com.shelfj.product.client.InventoryClient inventoryClient;
+  @Inject com.shelfj.product.client.PricingClient pricingClient;
 
   // ─────────────────────────────────────────────────────────────────── brands
 
@@ -672,7 +674,16 @@ public class ProductService {
     }
 
     return new BulkImportResult(
-        catCreated, catSkipped, prodCreated, varCreated, errors, importedVariants);
+        catCreated,
+        catSkipped,
+        prodCreated,
+        varCreated,
+        errors,
+        importedVariants,
+        null,
+        null,
+        null,
+        null);
   }
 
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
@@ -1022,13 +1033,77 @@ public class ProductService {
    * outside it.
    */
   public BulkImportResult importSupplierCsv(
-      UUID tenantId, com.shelfj.product.dto.Dtos.SupplierCsvImportRequest req) {
-    var bulkReq =
-        parseSupplierCsvToRequest(
-            req.csv(),
-            req.mode(),
-            req.storeNameToId() != null ? req.storeNameToId() : java.util.Map.of());
-    return bulkImport(tenantId, bulkReq);
+      UUID tenantId, String rolesHeader, com.shelfj.product.dto.Dtos.SupplierCsvImportRequest req) {
+    var storeNameToId =
+        req.storeNameToId() != null ? req.storeNameToId() : java.util.Map.<String, String>of();
+    var parsed = parseCsvFull(req.csv(), req.mode(), storeNameToId);
+    var catalogResult = bulkImport(tenantId, parsed.request());
+
+    Integer stockReceived = null;
+    List<String> stockErrors = null;
+    if (req.storeId() != null
+        && !req.storeId().isBlank()
+        && !catalogResult.importedVariants().isEmpty()) {
+      var receiveItems =
+          catalogResult.importedVariants().stream()
+              .filter(v -> parsed.skuQty().containsKey(v.sku()))
+              .map(
+                  v ->
+                      new com.shelfj.product.client.InventoryClient.ReceiveItem(
+                          v.variantId(), parsed.skuQty().get(v.sku())))
+              .toList();
+      if (!receiveItems.isEmpty()) {
+        var r =
+            inventoryClient.batchReceive(
+                tenantId, UUID.fromString(req.storeId()), rolesHeader, receiveItems);
+        stockReceived = r.received();
+        stockErrors = r.errors().isEmpty() ? null : r.errors();
+      }
+    }
+
+    Integer pricesSet = null;
+    List<String> priceErrors = null;
+    if (!catalogResult.importedVariants().isEmpty()) {
+      var priceItems =
+          catalogResult.importedVariants().stream()
+              .filter(v -> parsed.skuPrice().containsKey(v.sku()))
+              .map(
+                  v ->
+                      new com.shelfj.product.client.PricingClient.PriceItem(
+                          v.variantId(), parsed.skuPrice().get(v.sku())))
+              .toList();
+      if (!priceItems.isEmpty()) {
+        String cur = (req.currency() != null && !req.currency().isBlank()) ? req.currency() : "GBP";
+        var r = pricingClient.batchSetPrices(tenantId, cur, rolesHeader, priceItems);
+        pricesSet = r.upserted();
+        priceErrors = r.errors().isEmpty() ? null : r.errors();
+      }
+    }
+
+    return new BulkImportResult(
+        catalogResult.categoriesCreated(),
+        catalogResult.categoriesSkipped(),
+        catalogResult.productsCreated(),
+        catalogResult.variantsCreated(),
+        catalogResult.errors(),
+        catalogResult.importedVariants(),
+        stockReceived,
+        stockErrors,
+        pricesSet,
+        priceErrors);
+  }
+
+  private record CsvParseResult(
+      BulkImportRequest request,
+      java.util.Map<String, BigDecimal> skuQty,
+      java.util.Map<String, BigDecimal> skuPrice) {}
+
+  private CsvParseResult parseCsvFull(
+      String csv, String mode, java.util.Map<String, String> storeNameToId) {
+    var skuQty = new java.util.HashMap<String, BigDecimal>();
+    var skuPrice = new java.util.HashMap<String, BigDecimal>();
+    var req = parseSupplierCsvToRequest(csv, mode, storeNameToId, skuQty, skuPrice);
+    return new CsvParseResult(req, skuQty, skuPrice);
   }
 
   private record ProductEntry(
@@ -1037,7 +1112,11 @@ public class ProductService {
       java.util.Set<String> storeIds) {}
 
   private BulkImportRequest parseSupplierCsvToRequest(
-      String csv, String mode, java.util.Map<String, String> storeNameToId) {
+      String csv,
+      String mode,
+      java.util.Map<String, String> storeNameToId,
+      java.util.Map<String, BigDecimal> outSkuQty,
+      java.util.Map<String, BigDecimal> outSkuPrice) {
     var lines =
         java.util.Arrays.asList(csv.split("\\r?\\n")).stream().filter(l -> !l.isBlank()).toList();
     if (lines.size() < 2) {
@@ -1080,11 +1159,25 @@ public class ProductService {
       }
 
       String category = idxCat >= 0 ? col(cols, idxCat).trim() : "";
+      String qtyStr = idxQty >= 0 ? col(cols, idxQty).trim() : "";
+      String priceStr = idxPrice >= 0 ? col(cols, idxPrice).trim() : "";
+
+      // Capture numeric qty / price for stock-receive and pricing steps.
+      if (!qtyStr.isEmpty() && outSkuQty != null) {
+        try {
+          outSkuQty.put(sku, new BigDecimal(qtyStr));
+        } catch (NumberFormatException ignored) {
+        }
+      }
+      if (!priceStr.isEmpty() && outSkuPrice != null) {
+        try {
+          outSkuPrice.put(sku, new BigDecimal(priceStr));
+        } catch (NumberFormatException ignored) {
+        }
+      }
+
       // Build attributes from whatever is present — no parsing/validation.
-      String attributes =
-          buildAttributes(
-              idxQty >= 0 ? col(cols, idxQty).trim() : "",
-              idxPrice >= 0 ? col(cols, idxPrice).trim() : "");
+      String attributes = buildAttributes(qtyStr, priceStr);
 
       var variant =
           new com.shelfj.product.dto.Dtos.ImportVariantRequest(sku, null, null, "CS", attributes);

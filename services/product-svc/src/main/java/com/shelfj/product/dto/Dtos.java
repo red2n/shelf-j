@@ -216,8 +216,17 @@ public final class Dtos {
    * parses the CSV; the client resolves store names to UUIDs before sending (since tenant-svc owns
    * store data and product-svc must not call it synchronously during a bulk import).
    */
+  /**
+   * @param storeId destination store UUID for stock receipt (optional — if absent no stock is
+   *     received)
+   * @param currency ISO-4217 currency for price list creation (defaults to GBP when absent)
+   */
   public record SupplierCsvImportRequest(
-      @NotBlank String csv, String mode, java.util.Map<String, String> storeNameToId) {}
+      @NotBlank String csv,
+      String mode,
+      java.util.Map<String, String> storeNameToId,
+      String storeId,
+      String currency) {}
 
   public record BulkImportError(String item, String reason) {}
 
@@ -233,7 +242,11 @@ public final class Dtos {
       int productsCreated,
       int variantsCreated,
       List<BulkImportError> errors,
-      List<ImportedVariant> importedVariants) {}
+      List<ImportedVariant> importedVariants,
+      Integer stockReceived,
+      List<String> stockErrors,
+      Integer pricesSet,
+      List<String> priceErrors) {}
 
   // ── Container Types (Gap #37) ───────────────────────────────────────────
 

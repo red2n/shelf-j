@@ -100,6 +100,9 @@ class OfferPriceAdd extends ConsumerWidget {
         if (offer == null) {
           return Text('Unpriced', style: TextStyle(color: cs.outline));
         }
+        final availMap = ref.watch(storefrontAvailabilityProvider).valueOrNull;
+        final inStock = availMap == null ? true : (availMap[offer.variant.id] ?? false);
+
         final cart = ref.watch(cartProvider);
         final notifier = ref.read(cartProvider.notifier);
         int qty = 0;
@@ -110,16 +113,25 @@ class OfferPriceAdd extends ConsumerWidget {
           }
         }
 
-        final Widget info = Text(
-          '${offer.price.currency} ${offer.price.totalWithVat.toStringAsFixed(2)}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-              color: cs.primary, fontWeight: FontWeight.bold, fontSize: 15),
+        final Widget info = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${offer.price.currency} ${offer.price.totalWithVat.toStringAsFixed(2)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: cs.primary, fontWeight: FontWeight.bold, fontSize: 15),
+            ),
+            if (availMap != null) StockBadge(inStock: inStock),
+          ],
         );
 
         Widget control;
-        if (qty == 0) {
+        if (!inStock) {
+          control = const SizedBox.shrink();
+        } else if (qty == 0) {
           control = IconButton.filledTonal(
             visualDensity: VisualDensity.compact,
             tooltip: 'Add to cart',

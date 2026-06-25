@@ -8,6 +8,8 @@ import com.shelfj.inventory.dto.Dtos.AddTagRequest;
 import com.shelfj.inventory.dto.Dtos.AdjustRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateResult;
+import com.shelfj.inventory.dto.Dtos.BatchReceiveRequest;
+import com.shelfj.inventory.dto.Dtos.BatchReceiveResult;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.ComputeRopResult;
 import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockRequest;
@@ -140,6 +142,37 @@ public class AdminResource {
     return Response.status(Response.Status.CREATED)
         .entity(ApiResponse.ok(Mappers.toBatch(batch)))
         .build();
+  }
+
+  @POST
+  @Path("/receive/batch")
+  public ApiResponse<BatchReceiveResult> receiveBatch(BatchReceiveRequest req) {
+    if (req == null || req.items() == null || req.items().isEmpty()) {
+      return ApiResponse.ok(new BatchReceiveResult(0, List.of()));
+    }
+    UUID tenantId = ctx.requireTenantId();
+    int received = 0;
+    var errors = new java.util.ArrayList<String>();
+    for (var item : req.items()) {
+      try {
+        service.receive(
+            tenantId,
+            uuid(item.storeId(), "storeId"),
+            uuid(item.variantId(), "variantId"),
+            item.qty(),
+            null,
+            null,
+            null,
+            "MANUAL",
+            null,
+            null,
+            null);
+        received++;
+      } catch (Exception e) {
+        errors.add(item.variantId() + ": " + e.getMessage());
+      }
+    }
+    return ApiResponse.ok(new BatchReceiveResult(received, errors));
   }
 
   // ── adjust ───────────────────────────────────────────────────────────────

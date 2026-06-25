@@ -554,7 +554,8 @@ public class AdminResource {
       throw new com.shelfj.web.ApiException(
           400, "INVALID_BODY", "csv field is required", List.of(), null);
     }
-    return ApiResponse.ok(service.importSupplierCsv(ctx.requireTenantId(), req));
+    return ApiResponse.ok(
+        service.importSupplierCsv(ctx.requireTenantId(), String.join(",", ctx.roles()), req));
   }
 
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
