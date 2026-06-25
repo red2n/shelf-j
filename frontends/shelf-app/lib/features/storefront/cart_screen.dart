@@ -317,6 +317,9 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     if (cart.isEmpty) return;
     final delivery = _fulfilment == 'DELIVERY';
     if (delivery && !(_addressFormKey.currentState?.validate() ?? false)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Please fill in all delivery address fields.'),
+      ));
       return;
     }
     final showPrices = ref.read(storefrontShowPricesProvider);
@@ -328,7 +331,11 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     setState(() => _placing = true);
     final dio = ref.read(storefrontDioProvider);
     final storeId = ref.read(storefrontStoreProvider);
-    final currency = cart.first.currency;
+    // In catalog mode, CartLine.currency is '' (no price was ever fetched). Fall
+    // back to 'GBP' so the order-svc currency field is never an empty string,
+    // which would trigger a 400 validation error on the server.
+    final rawCurrency = cart.first.currency;
+    final currency = rawCurrency.isNotEmpty ? rawCurrency : 'GBP';
     final cartTotal = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final idemBase = 'sf-${DateTime.now().millisecondsSinceEpoch}';
     try {

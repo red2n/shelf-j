@@ -241,9 +241,12 @@ final storefrontStoresProvider =
 });
 
 /// Whether the current store shows prices (priced shop) or hides them and shows
-/// stock availability instead (catalog mode). Fails open to a priced shop.
+/// stock availability instead (catalog mode). Fails open to hiding prices (safe
+/// default) while loading. Not autoDispose so the config survives navigation
+/// between product list → cart → detail without a re-fetch that would briefly
+/// flash showPrices=true and let price-resolve calls slip through.
 final storefrontConfigProvider =
-    FutureProvider.autoDispose<StorefrontConfig>((ref) async {
+    FutureProvider<StorefrontConfig>((ref) async {
   final dio = ref.watch(storefrontDioProvider);
   final store = ref.watch(storefrontStoreProvider);
   try {
@@ -383,9 +386,11 @@ final storefrontVariantsProvider =
 
 /// Whether the current store shows prices. When false (catalog mode) the whole
 /// storefront hides prices AND skips price-resolve calls; checkout is order-only.
-/// Defaults to true until the store config resolves.
-final storefrontShowPricesProvider = Provider.autoDispose<bool>(
-    (ref) => ref.watch(storefrontConfigProvider).valueOrNull?.showPrices ?? true);
+/// Defaults to false while config is loading — safer than defaulting to true,
+/// which would let prices flash and let price-resolve calls fire prematurely.
+/// Not autoDispose: must survive navigation alongside storefrontConfigProvider.
+final storefrontShowPricesProvider = Provider<bool>(
+    (ref) => ref.watch(storefrontConfigProvider).valueOrNull?.showPrices ?? false);
 
 /// First sellable variant of a product (no price) — used to add to cart in
 /// catalog mode without ever resolving a price.

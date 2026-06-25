@@ -75,12 +75,21 @@ class OfferPriceAdd extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final configAsync = ref.watch(storefrontConfigProvider);
+
+    // While config is still loading, show a neutral placeholder rather than
+    // resolving a price or showing add-to-cart — prevents adding items with the
+    // wrong price mode before showPrices is known.
+    if (configAsync.isLoading) {
+      return Text('…', style: TextStyle(color: cs.outline));
+    }
+
     // Catalog mode (store hides prices): never resolve a price — show stock only.
-    if (!ref.watch(storefrontShowPricesProvider)) {
+    if (!(configAsync.value?.showPrices ?? false)) {
       return _CatalogAdd(product: product);
     }
 
-    final cs = Theme.of(context).colorScheme;
     final offerAsync = ref.watch(productCardOfferProvider(product.id));
 
     return offerAsync.when(
