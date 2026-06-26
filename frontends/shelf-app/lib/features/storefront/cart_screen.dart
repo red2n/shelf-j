@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import 'storefront_providers.dart';
+import 'survey_widgets.dart';
 
 class StorefrontCartScreen extends ConsumerStatefulWidget {
   const StorefrontCartScreen({super.key});
@@ -456,6 +457,14 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           ],
         ),
       );
+      // Show post-order survey at most once per day — after the dialog so the
+      // customer has a natural pause before the next prompt.
+      final capturedOrderId = orderId;
+      final shownToday =
+          await ref.read(customerPrefsProvider.notifier).wasSurveyShownToday();
+      if (mounted && !shownToday) {
+        showPostOrderSurveySheet(context, capturedOrderId);
+      }
       _line1Ctrl.clear();
       _line2Ctrl.clear();
       _cityCtrl.clear();

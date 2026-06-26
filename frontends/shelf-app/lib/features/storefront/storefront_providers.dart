@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../core/constants.dart';
@@ -644,3 +645,263 @@ final serverOrdersProvider =
       .map((e) => ServerOrderSummary.fromJson(e as Map<String, dynamic>))
       .toList();
 });
+
+// ── Customer preferences & data collection ───────────────────────────────────
+
+enum CustomerGender { male, female, other, preferNotToSay }
+
+class CustomerPrefs {
+  final List<String> shoppingFor;
+  final String notifications;
+
+  const CustomerPrefs({required this.shoppingFor, required this.notifications});
+
+  Map<String, dynamic> toJson() => {
+        'shoppingFor': shoppingFor,
+        'notifications': notifications,
+      };
+
+  factory CustomerPrefs.fromJson(Map<String, dynamic> j) => CustomerPrefs(
+        shoppingFor: List<String>.from(j['shoppingFor'] as List? ?? []),
+        notifications: j['notifications'] as String? ?? 'None',
+      );
+}
+
+class SurveyResponse {
+  final String orderId;
+  final int experienceRating;
+  final int nps;
+  final String? comment;
+  final String platform;
+  final String formFactor;
+  final DateTime submittedAt;
+
+  const SurveyResponse({
+    required this.orderId,
+    required this.experienceRating,
+    required this.nps,
+    this.comment,
+    required this.platform,
+    required this.formFactor,
+    required this.submittedAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'orderId': orderId,
+        'experienceRating': experienceRating,
+        'nps': nps,
+        if (comment != null && comment!.isNotEmpty) 'comment': comment,
+        'platform': platform,
+        'formFactor': formFactor,
+        'submittedAt': submittedAt.toIso8601String(),
+      };
+
+  factory SurveyResponse.fromJson(Map<String, dynamic> j) => SurveyResponse(
+        orderId: j['orderId'] as String? ?? '',
+        experienceRating: (j['experienceRating'] as num?)?.toInt() ?? 3,
+        nps: (j['nps'] as num?)?.toInt() ?? 5,
+        comment: j['comment'] as String?,
+        platform: j['platform'] as String? ?? 'unknown',
+        formFactor: j['formFactor'] as String? ?? 'phone',
+        submittedAt:
+            DateTime.tryParse(j['submittedAt'] as String? ?? '') ?? DateTime.now(),
+      );
+}
+
+class AppFeedbackEntry {
+  final String category;
+  final String text;
+  final int? starRating;
+  final String platform;
+  final String formFactor;
+  final DateTime submittedAt;
+
+  const AppFeedbackEntry({
+    required this.category,
+    required this.text,
+    this.starRating,
+    required this.platform,
+    required this.formFactor,
+    required this.submittedAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'category': category,
+        'text': text,
+        if (starRating != null) 'starRating': starRating,
+        'platform': platform,
+        'formFactor': formFactor,
+        'submittedAt': submittedAt.toIso8601String(),
+      };
+
+  factory AppFeedbackEntry.fromJson(Map<String, dynamic> j) => AppFeedbackEntry(
+        category: j['category'] as String? ?? 'Other',
+        text: j['text'] as String? ?? '',
+        starRating: (j['starRating'] as num?)?.toInt(),
+        platform: j['platform'] as String? ?? 'unknown',
+        formFactor: j['formFactor'] as String? ?? 'phone',
+        submittedAt:
+            DateTime.tryParse(j['submittedAt'] as String? ?? '') ?? DateTime.now(),
+      );
+}
+
+class CustomerPreferencesState {
+  final bool genderAsked;
+  final CustomerGender? gender;
+  final bool prefsAsked;
+  final CustomerPrefs? prefs;
+  final List<SurveyResponse> surveys;
+  final List<AppFeedbackEntry> feedback;
+
+  const CustomerPreferencesState({
+    this.genderAsked = false,
+    this.gender,
+    this.prefsAsked = false,
+    this.prefs,
+    this.surveys = const [],
+    this.feedback = const [],
+  });
+
+  CustomerPreferencesState copyWith({
+    bool? genderAsked,
+    CustomerGender? gender,
+    bool? prefsAsked,
+    CustomerPrefs? prefs,
+    List<SurveyResponse>? surveys,
+    List<AppFeedbackEntry>? feedback,
+  }) =>
+      CustomerPreferencesState(
+        genderAsked: genderAsked ?? this.genderAsked,
+        gender: gender ?? this.gender,
+        prefsAsked: prefsAsked ?? this.prefsAsked,
+        prefs: prefs ?? this.prefs,
+        surveys: surveys ?? this.surveys,
+        feedback: feedback ?? this.feedback,
+      );
+}
+
+class CustomerPreferencesNotifier
+    extends StateNotifier<CustomerPreferencesState> {
+  CustomerPreferencesNotifier() : super(const CustomerPreferencesState()) {
+    _load();
+  }
+
+  static const _storage = FlutterSecureStorage();
+
+  Future<void> _load() async {
+    final genderAsked =
+        (await _storage.read(key: StorageKeys.sfGenderAsked)) == 'true';
+    final genderRaw = await _storage.read(key: StorageKeys.sfGender);
+    final CustomerGender? gender = genderRaw != null
+        ? CustomerGender.values.where((g) => g.name == genderRaw).firstOrNull
+        : null;
+
+    final prefsAsked =
+        (await _storage.read(key: StorageKeys.sfPrefsAsked)) == 'true';
+    CustomerPrefs? prefs;
+    final prefsRaw = await _storage.read(key: StorageKeys.sfPrefs);
+    if (prefsRaw != null) {
+      try {
+        prefs = CustomerPrefs.fromJson(
+            jsonDecode(prefsRaw) as Map<String, dynamic>);
+      } catch (_) {}
+    }
+
+    List<SurveyResponse> surveys = const [];
+    final surveysRaw = await _storage.read(key: StorageKeys.sfSurveys);
+    if (surveysRaw != null) {
+      try {
+        surveys = (jsonDecode(surveysRaw) as List)
+            .map((e) => SurveyResponse.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } catch (_) {}
+    }
+
+    List<AppFeedbackEntry> feedback = const [];
+    final feedbackRaw = await _storage.read(key: StorageKeys.sfFeedback);
+    if (feedbackRaw != null) {
+      try {
+        feedback = (jsonDecode(feedbackRaw) as List)
+            .map((e) => AppFeedbackEntry.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } catch (_) {}
+    }
+
+    state = CustomerPreferencesState(
+      genderAsked: genderAsked,
+      gender: gender,
+      prefsAsked: prefsAsked,
+      prefs: prefs,
+      surveys: surveys,
+      feedback: feedback,
+    );
+  }
+
+  Future<void> setGender(CustomerGender gender) async {
+    await _storage.write(key: StorageKeys.sfGender, value: gender.name);
+    await _storage.write(key: StorageKeys.sfGenderAsked, value: 'true');
+    state = state.copyWith(gender: gender, genderAsked: true);
+  }
+
+  Future<void> skipGender() async {
+    await _storage.write(key: StorageKeys.sfGenderAsked, value: 'true');
+    state = state.copyWith(genderAsked: true);
+  }
+
+  Future<void> setPrefs(CustomerPrefs prefs) async {
+    await _storage.write(
+        key: StorageKeys.sfPrefs, value: jsonEncode(prefs.toJson()));
+    await _storage.write(key: StorageKeys.sfPrefsAsked, value: 'true');
+    state = state.copyWith(prefs: prefs, prefsAsked: true);
+  }
+
+  Future<void> skipPrefs() async {
+    await _storage.write(key: StorageKeys.sfPrefsAsked, value: 'true');
+    state = state.copyWith(prefsAsked: true);
+  }
+
+  Future<void> addSurvey(SurveyResponse response) async {
+    final updated = [response, ...state.surveys];
+    await _storage.write(
+      key: StorageKeys.sfSurveys,
+      value: jsonEncode(updated.map((e) => e.toJson()).toList()),
+    );
+    await _storage.write(
+      key: StorageKeys.sfSurveyLastDate,
+      value: _todayString(),
+    );
+    state = state.copyWith(surveys: updated);
+  }
+
+  Future<void> addFeedback(AppFeedbackEntry entry) async {
+    final updated = [entry, ...state.feedback];
+    await _storage.write(
+      key: StorageKeys.sfFeedback,
+      value: jsonEncode(updated.map((e) => e.toJson()).toList()),
+    );
+    state = state.copyWith(feedback: updated);
+    debugPrint('[Feedback] ${jsonEncode(entry.toJson())}');
+  }
+
+  Future<bool> wasSurveyShownToday() async {
+    final last = await _storage.read(key: StorageKeys.sfSurveyLastDate);
+    return last == _todayString();
+  }
+
+  String _todayString() {
+    final now = DateTime.now();
+    return '${now.year}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+  }
+}
+
+final customerPrefsProvider =
+    StateNotifierProvider<CustomerPreferencesNotifier, CustomerPreferencesState>(
+        (ref) => CustomerPreferencesNotifier());
+
+/// Ephemeral flag set to true immediately after a successful storefront login or
+/// register. The shell listens to this and shows the preferences sheet once if
+/// the customer hasn't been asked yet. Reset to false immediately after reading.
+final storefrontJustAuthenticatedProvider =
+    StateProvider<bool>((ref) => false);

@@ -7,6 +7,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'storefront_providers.dart';
 import 'storefront_widgets.dart';
+import 'survey_widgets.dart';
 
 class ProductListScreen extends ConsumerStatefulWidget {
   const ProductListScreen({super.key});
@@ -17,6 +18,17 @@ class ProductListScreen extends ConsumerStatefulWidget {
 
 class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+      final asked = ref.read(customerPrefsProvider).genderAsked;
+      if (!asked) showGenderPickerSheet(context);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
