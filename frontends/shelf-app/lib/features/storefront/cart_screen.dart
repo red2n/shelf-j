@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import 'storefront_providers.dart';
 import 'survey_widgets.dart';
 
@@ -323,6 +324,25 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       ));
       return;
     }
+    // Guard: if the customer already has a pending order, ask before firing another.
+    final pendingOrder = await _findPendingOrder();
+    if (!mounted) return;
+    if (pendingOrder != null) {
+      final action = await _showPendingOrderDialog(pendingOrder);
+      if (!mounted) return;
+      if (action == 'update') {
+        // Navigate to the orders screen so the customer can review/contact the store.
+        // When order-svc exposes a PATCH /orders/{id}/items endpoint this becomes
+        // a direct edit flow instead.
+        context.go('/store/orders');
+        return;
+      } else if (action != 'new') {
+        // null = dialog dismissed / cancelled — do nothing
+        return;
+      }
+      // action == 'new' → fall through and place a second order
+    }
+
     final showPrices = ref.read(storefrontShowPricesProvider);
     final storeName = ref.read(storefrontConfigProvider).value?.storeName ?? '-';
     // Catalog mode (store hides prices) has no known price to charge online, so payment is
@@ -486,4 +506,100 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       );
     }
   }
+
+  // ── Pending-order guard ──────────────────────────────────────────────────
+
+  /// Returns the most recent pending order for this customer, or null if none.
+  ///
+  /// For signed-in customers: queries the server order list and looks for any
+  /// order whose status indicates it has not yet been fulfilled.
+  /// For guests: checks the device-local history and treats orders placed
+  /// within the last 4 hours as potentially still pending (no status available
+  /// for anonymous orders without a server call).
+  Future<_PendingOrder?> _findPendingOrder() async {
+    final auth = ref.read(storefrontAuthProvider);
+    if (auth.isSignedIn) {
+      try {
+        final orders = await ref.read(serverOrdersProvider.future);
+        if (orders == null || orders.isEmpty) return null;
+        const pendingStatuses = {
+          'PENDING', 'RECEIVED', 'CONFIRMED', 'PROCESSING'
+        };
+        final pending = orders
+            .where((o) => pendingStatuses.contains(o.status.toUpperCase()))
+            .toList()
+          ..sort((a, b) => b.placedAt.compareTo(a.placedAt));
+        if (pending.isEmpty) return null;
+        final o = pending.first;
+        return _PendingOrder(
+            orderId: o.id, placedAt: o.placedAt, status: o.status);
+      } catch (_) {
+        // Fail open — never block checkout if the status check errors.
+        return null;
+      }
+    } else {
+      final local = ref.read(storefrontOrdersProvider);
+      if (local.isEmpty) return null;
+      final recent = local.first; // list is newest-first
+      if (DateTime.now().difference(recent.placedAt).inHours < 4) {
+        return _PendingOrder(
+            orderId: recent.orderId,
+            placedAt: recent.placedAt,
+            status: 'pending');
+      }
+      return null;
+    }
+  }
+
+  Future<String?> _showPendingOrderDialog(_PendingOrder order) {
+    final shortId = order.orderId.length >= 8
+        ? order.orderId.substring(0, 8)
+        : order.orderId;
+    final placedStr = AppFormat.dateTime(order.placedAt.toIso8601String());
+    final cs = Theme.of(context).colorScheme;
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.pending_actions_outlined,
+            size: 40, color: cs.primary),
+        title: const Text('You have a pending order'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Order #$shortId placed at $placedStr is still being '
+                'processed by the store.'),
+            const SizedBox(height: 12),
+            const Text('Would you like to update that order, or go ahead '
+                'and place a new one?'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx, 'new'),
+            child: const Text('Place new order'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'update'),
+            child: const Text('View pending order'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+class _PendingOrder {
+  final String orderId;
+  final DateTime placedAt;
+  final String status;
+  const _PendingOrder(
+      {required this.orderId,
+      required this.placedAt,
+      required this.status});
 }
