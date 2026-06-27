@@ -1,13 +1,20 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'storefront_providers.dart';
 import 'storefront_widgets.dart';
 import 'survey_widgets.dart';
+
+// Sentinel placed in the mixed display list to mark where the ad renders.
+class _AdSlot {
+  const _AdSlot();
+}
 
 class ProductListScreen extends ConsumerStatefulWidget {
   const ProductListScreen({super.key});
@@ -90,13 +97,22 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                 child: _EmptyProducts(),
               );
             }
+            // Inject one ad at a random position among the real products.
+            final adIndex = math.Random().nextInt(products.length + 1);
+            final items = <Object>[...products]..insert(adIndex, const _AdSlot());
+
             if (cols == 1) {
               return SliverPadding(
                 padding: const EdgeInsets.all(16),
                 sliver: SliverList.separated(
-                  itemCount: products.length,
+                  itemCount: items.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (_, i) => _ProductRow(product: products[i]),
+                  itemBuilder: (_, i) {
+                    final item = items[i];
+                    return item is _AdSlot
+                        ? const _AdRow()
+                        : _ProductRow(product: item as StoreProduct);
+                  },
                 ),
               );
             }
@@ -109,8 +125,13 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   mainAxisSpacing: 12,
                   childAspectRatio: 0.78,
                 ),
-                itemCount: products.length,
-                itemBuilder: (_, i) => _ProductCard(product: products[i]),
+                itemCount: items.length,
+                itemBuilder: (_, i) {
+                  final item = items[i];
+                  return item is _AdSlot
+                      ? const _AdCard()
+                      : _ProductCard(product: item as StoreProduct);
+                },
               ),
             );
           },
@@ -483,6 +504,158 @@ class _ProductRow extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ── Sponsored ad widgets ──────────────────────────────────────────────────────
+
+const _kAdUrl = 'https://storeql.com';
+const _kAdGradient = LinearGradient(
+  colors: [Color(0xFF1A237E), Color(0xFF3F51B5)],
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+);
+
+Future<void> _openAd() =>
+    launchUrl(Uri.parse(_kAdUrl), mode: LaunchMode.externalApplication);
+
+/// Grid-card variant of the StoreQL ad tile.
+class _AdCard extends StatelessWidget {
+  const _AdCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: _openAd,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Stack(
+                children: [
+                  Container(
+                    decoration: const BoxDecoration(gradient: _kAdGradient),
+                    alignment: Alignment.center,
+                    child: Icon(Icons.inventory_2_outlined,
+                        size: 48, color: Colors.white.withAlpha(180)),
+                  ),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: _AdBadge(cs: cs),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 6, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('StoreQL',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Text('Smart stock & storefront platform',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11, color: cs.outline)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// List-row variant of the StoreQL ad tile.
+class _AdRow extends StatelessWidget {
+  const _AdRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: _openAd,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 72,
+                height: 72,
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: _kAdGradient,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.inventory_2_outlined,
+                      size: 32, color: Colors.white),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text('StoreQL',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w600, fontSize: 15)),
+                        ),
+                        _AdBadge(cs: cs),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text('Smart stock & storefront platform',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: cs.outline)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AdBadge extends StatelessWidget {
+  const _AdBadge({required this.cs});
+  final ColorScheme cs;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: cs.secondaryContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text('AD',
+          style: TextStyle(
+              color: cs.onSecondaryContainer,
+              fontSize: 9,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5)),
     );
   }
 }
