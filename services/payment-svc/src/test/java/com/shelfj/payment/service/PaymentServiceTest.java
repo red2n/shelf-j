@@ -69,7 +69,7 @@ class PaymentServiceTest {
     svc.orderClient =
         fakeOrderClient(
             new OrderClient.OrderInfo(
-                null, "POS", new BigDecimal("10.00"), "OPEN", UUID.randomUUID().toString()));
+                null, "POS", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
 
     var ex =
         assertThrows(
@@ -91,7 +91,7 @@ class PaymentServiceTest {
                 ownerId.toString(),
                 "ONLINE",
                 new BigDecimal("10.00"),
-                "OPEN",
+                "PENDING",
                 UUID.randomUUID().toString()));
 
     var ex =
@@ -106,13 +106,35 @@ class PaymentServiceTest {
   }
 
   @Test
+  void onlinePayment_rejectsAnAlreadyConfirmedOrder() {
+    PaymentService svc = new PaymentService();
+    UUID orderId = UUID.randomUUID();
+    svc.orderClient =
+        fakeOrderClient(
+            new OrderClient.OrderInfo(
+                null,
+                "ONLINE",
+                new BigDecimal("10.00"),
+                "CONFIRMED",
+                UUID.randomUUID().toString()));
+
+    var ex =
+        assertThrows(
+            ApiException.class,
+            () ->
+                svc.recordOnlinePayment(
+                    req(orderId, new BigDecimal("10.00")), ctx(UUID.randomUUID(), null), null));
+    assertEquals("PAYMENT_ORDER_NOT_PAYABLE", ex.code());
+  }
+
+  @Test
   void onlinePayment_rejectsAmountMismatch() {
     PaymentService svc = new PaymentService();
     UUID orderId = UUID.randomUUID();
     svc.orderClient =
         fakeOrderClient(
             new OrderClient.OrderInfo(
-                null, "ONLINE", new BigDecimal("10.00"), "OPEN", UUID.randomUUID().toString()));
+                null, "ONLINE", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
 
     var ex =
         assertThrows(
@@ -130,7 +152,7 @@ class PaymentServiceTest {
     svc.orderClient =
         fakeOrderClient(
             new OrderClient.OrderInfo(
-                null, "ONLINE", new BigDecimal("10.00"), "OPEN", UUID.randomUUID().toString()));
+                null, "ONLINE", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
     svc.repo = capturingRepo();
 
     var tender =
@@ -151,7 +173,7 @@ class PaymentServiceTest {
                 customerId.toString(),
                 "ONLINE",
                 new BigDecimal("25.50"),
-                "OPEN",
+                "PENDING",
                 UUID.randomUUID().toString()));
     svc.repo = capturingRepo();
 

@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.order.service.OrderService;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -11,6 +12,8 @@ import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.math.BigDecimal;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -41,6 +44,7 @@ class OrderIT {
   private static final String V = "33333333-3333-3333-3333-333333333333";
 
   @Inject WebTarget target;
+  @Inject OrderService orderService;
 
   @AfterAll
   static void stopDb() {
@@ -124,6 +128,79 @@ class OrderIT {
             T);
     assertThat(r3.getStatus(), is(201));
     assertThat(r3.readEntity(String.class), containsString("COMPLETED"));
+  }
+
+  /**
+   * Simulates what {@code PaymentEventHandler} does on each PaymentCaptured event — Kafka is
+   * disabled in this IT, so the events are driven directly through {@link OrderService} instead of
+   * a real consumer loop.
+   */
+  @Test
+  void splitTendersAccumulateAndConfirmOnlyOnceTotalIsCovered() {
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\","
+                + "\"channel\":\"POS\","
+                + "\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}],"
+                + "\"currency\":\"USD\"}",
+            T,
+            "it-split-tender");
+    assertThat(placed.getStatus(), is(201));
+    UUID orderId = UUID.fromString(extractId(placed.readEntity(String.class)));
+    UUID tenantId = UUID.fromString(T);
+
+    // First tender (cash, $4) — covers less than the $10 total: still PENDING.
+    orderService.handlePaymentCaptured(
+        tenantId, orderId, UUID.randomUUID(), new BigDecimal("4.00"));
+    Response afterFirst = get("/orders/" + orderId, T);
+    assertThat(afterFirst.readEntity(String.class), containsString("PENDING"));
+
+    // Second tender (card, $6) — the two together cover the total: now CONFIRMED.
+    orderService.handlePaymentCaptured(
+        tenantId, orderId, UUID.randomUUID(), new BigDecimal("6.00"));
+    Response afterSecond = get("/orders/" + orderId, T);
+    assertThat(afterSecond.readEntity(String.class), containsString("CONFIRMED"));
+  }
+
+  /**
+   * Redelivery of the same Kafka event (same paymentId) must not double-count toward paid_amount —
+   * verified on a second order where double-counting a single $6 tender (redelivered once) would
+   * incorrectly push paid_amount past the $10 total and confirm prematurely.
+   */
+  @Test
+  void redeliveredPaymentEventIsNotDoubleCounted() {
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\","
+                + "\"channel\":\"POS\","
+                + "\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}],"
+                + "\"currency\":\"USD\"}",
+            T,
+            "it-redelivery");
+    assertThat(placed.getStatus(), is(201));
+    UUID orderId = UUID.fromString(extractId(placed.readEntity(String.class)));
+    UUID tenantId = UUID.fromString(T);
+
+    UUID paymentId = UUID.randomUUID();
+    orderService.handlePaymentCaptured(tenantId, orderId, paymentId, new BigDecimal("6.00"));
+    // Same paymentId redelivered: if paid_amount were double-counted (6+6=12 >= 10) the order
+    // would wrongly confirm. The unique key on order_payment_events must make this a no-op.
+    orderService.handlePaymentCaptured(tenantId, orderId, paymentId, new BigDecimal("6.00"));
+
+    Response after = get("/orders/" + orderId, T);
+    assertThat(after.readEntity(String.class), containsString("PENDING"));
   }
 
   @Test
@@ -338,6 +415,41 @@ class OrderIT {
     Response r3 = post("/layaways/" + layawayId + "/complete", "{}", T);
     assertThat(r3.getStatus(), is(200));
     assertThat(r3.readEntity(String.class), containsString("COMPLETED"));
+  }
+
+  @Test
+  void layawayDepositCannotExceedOutstandingBalance() {
+    Response created =
+        post(
+            "/layaways",
+            "{\"storeId\":\""
+                + S
+                + "\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":100.00}],"
+                + "\"initialDeposit\":30.00,"
+                + "\"paymentMethod\":\"CASH\"}",
+            T);
+    assertThat(created.getStatus(), is(201));
+    String layawayId = extractLayawayId(created.readEntity(String.class));
+
+    // Outstanding balance is $70 — a $71 deposit must be rejected, not silently overpay.
+    Response overpay =
+        post(
+            "/layaways/" + layawayId + "/deposits",
+            "{\"amount\":71.00,\"paymentMethod\":\"CARD\"}",
+            T);
+    assertThat(overpay.getStatus(), is(400));
+    assertThat(overpay.readEntity(String.class), containsString("LAYAWAY_DEPOSIT_EXCEEDS_BALANCE"));
+
+    // The exact remaining balance is still accepted.
+    Response exact =
+        post(
+            "/layaways/" + layawayId + "/deposits",
+            "{\"amount\":70.00,\"paymentMethod\":\"CARD\"}",
+            T);
+    assertThat(exact.getStatus(), is(200));
   }
 
   @Test

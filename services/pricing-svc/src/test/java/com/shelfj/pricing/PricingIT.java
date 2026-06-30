@@ -92,6 +92,37 @@ class PricingIT {
   }
 
   @Test
+  void priceOverrideRejectsNegativeOriginalPrice() {
+    Response r =
+        post(
+            "/admin/price-overrides",
+            "{\"variantId\":\""
+                + V
+                + "\",\"storeId\":\""
+                + S
+                + "\",\"originalPrice\":-5.00,\"overridePrice\":10.00,"
+                + "\"overrideReason\":\"manager discretion\"}",
+            T);
+    assertThat(r.getStatus(), is(400));
+  }
+
+  @Test
+  void priceOverrideAcceptsValidRequest() {
+    Response r =
+        post(
+            "/admin/price-overrides",
+            "{\"variantId\":\""
+                + V
+                + "\",\"storeId\":\""
+                + S
+                + "\",\"originalPrice\":20.00,\"overridePrice\":10.00,"
+                + "\"overrideReason\":\"manager discretion\"}",
+            T);
+    assertThat(r.getStatus(), is(201));
+    assertThat(r.readEntity(String.class), containsString("10.00"));
+  }
+
+  @Test
   void vatRateCrudAndTenantIsolation() {
     // Create UK standard rate T1 = 20%
     Response r1 =

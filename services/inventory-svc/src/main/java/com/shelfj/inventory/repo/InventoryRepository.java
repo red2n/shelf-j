@@ -154,55 +154,127 @@ public class InventoryRepository extends BaseOutboxRepository {
       BigDecimal delta,
       String reason,
       OutboxRow event) {
+    adjust(tenantId, storeId, variantId, delta, reason, event, null);
+  }
+
+  /**
+   * As {@link #adjust(UUID, UUID, UUID, BigDecimal, String, OutboxRow)}, but a retried call with
+   * the same {@code idempotencyKey} is a no-op instead of double-applying the delta — checked
+   * before the deduction is attempted, since a negative delta's FIFO deduction could otherwise fail
+   * with INSUFFICIENT_STOCK on retry (the original call already consumed that stock).
+   */
+  public void adjust(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal delta,
+      String reason,
+      OutboxRow event,
+      String idempotencyKey) {
     inTx(
         c -> {
-          if (delta.signum() >= 0) {
-            Batch b =
-                new Batch(
-                    UUID.randomUUID(),
-                    tenantId,
-                    storeId,
-                    variantId,
-                    "ADJ",
-                    delta,
-                    delta,
-                    null,
-                    null,
-                    Instant.now(),
-                    Batch.STATUS_ACTIVE,
-                    Batch.MATERIAL_AVAILABLE,
-                    null,
-                    null,
-                    null);
-            insertBatch(c, b);
-          } else {
-            deductFifo(
-                c,
-                tenantId,
-                storeId,
-                variantId,
-                delta.negate(),
-                MoveType.ADJUST,
-                "ADJUSTMENT",
-                null);
-            checkThresholdTx(c, tenantId, storeId, variantId);
+          if (idempotencyKey != null) {
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "INSERT INTO inventory_adjustment_events (tenant_id, idempotency_key)"
+                        + " VALUES (?,?)")) {
+              ps.setObject(1, tenantId);
+              ps.setString(2, idempotencyKey);
+              ps.executeUpdate();
+            } catch (SQLException sqle) {
+              if (UNIQUE_VIOLATION.equals(sqle.getSQLState())) {
+                return null; // already applied — retry, no-op
+              }
+              throw sqle;
+            }
           }
-          insertMovement(
-              c, tenantId, storeId, variantId, null, MoveType.ADJUST, delta, "ADJUSTMENT", null);
-          insertOutbox(c, event);
+          adjustTx(c, tenantId, storeId, variantId, delta, reason, event);
           return null;
         },
         "adjust stock");
   }
 
+  private void adjustTx(
+      Connection c,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal delta,
+      String reason,
+      OutboxRow event)
+      throws SQLException {
+    if (delta.signum() >= 0) {
+      Batch b =
+          new Batch(
+              UUID.randomUUID(),
+              tenantId,
+              storeId,
+              variantId,
+              "ADJ",
+              delta,
+              delta,
+              null,
+              null,
+              Instant.now(),
+              Batch.STATUS_ACTIVE,
+              Batch.MATERIAL_AVAILABLE,
+              null,
+              null,
+              null);
+      insertBatch(c, b);
+    } else {
+      deductFifo(
+          c, tenantId, storeId, variantId, delta.negate(), MoveType.ADJUST, "ADJUSTMENT", null);
+      checkThresholdTx(c, tenantId, storeId, variantId);
+    }
+    insertMovement(
+        c, tenantId, storeId, variantId, null, MoveType.ADJUST, delta, "ADJUSTMENT", null);
+    insertOutbox(c, event);
+  }
+
+  /**
+   * Lot merge: deduct {@code qty} from the source batch's (store, variant) and add it to the
+   * target's, in one transaction. The two legs used to be separate {@link #adjust} calls in
+   * separate transactions — a crash between them could silently lose stock with no compensating
+   * event. Doing both within a single {@code inTx} makes the merge all-or-nothing.
+   */
+  public void mergeLotAdjust(
+      UUID tenantId,
+      UUID sourceStoreId,
+      UUID sourceVariantId,
+      OutboxRow outEvent,
+      UUID targetStoreId,
+      UUID targetVariantId,
+      OutboxRow inEvent,
+      BigDecimal qty) {
+    inTx(
+        c -> {
+          adjustTx(
+              c, tenantId, sourceStoreId, sourceVariantId, qty.negate(), "LOT_MERGE_OUT", outEvent);
+          adjustTx(c, tenantId, targetStoreId, targetVariantId, qty, "LOT_MERGE_IN", inEvent);
+          return null;
+        },
+        "merge lot");
+  }
+
   // ---------------------------------------------------------------- reserve
   /**
    * Hold stock if available. Inserts a HELD reservation + RESERVE movement + outbox. Throws 409 if
-   * short.
+   * short. If {@code idempotencyKey} matches an already-held reservation, that reservation is
+   * returned unchanged (replay) — checked *before* the availability check, since the original
+   * hold's own qty is already counted against availability and would otherwise make a retry of a
+   * fully-successful reservation look like it's short on stock.
    */
-  public Reservation reserve(Reservation r, OutboxRow event) {
+  public Reservation reserve(Reservation r, OutboxRow event, String idempotencyKey) {
     return inTx(
         c -> {
+          if (idempotencyKey != null) {
+            Reservation existing =
+                findReservationByIdempotencyKeyTx(c, r.tenantId(), idempotencyKey);
+            if (existing != null) {
+              return existing;
+            }
+          }
           BigDecimal available = availableForUpdate(c, r.tenantId(), r.storeId(), r.variantId());
           if (available.compareTo(r.qty()) < 0) {
             throw ApiException.unprocessable(
@@ -212,7 +284,14 @@ public class InventoryRepository extends BaseOutboxRepository {
                     + " available, requested "
                     + r.qty().toPlainString());
           }
-          insertReservation(c, r);
+          try {
+            insertReservation(c, r, idempotencyKey);
+          } catch (SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+              throw new ApiException(
+                  409, "RESERVATION_DUPLICATE_KEY", "duplicate idempotency key", List.of(), sqle);
+            throw sqle;
+          }
           insertMovement(
               c,
               r.tenantId(),
@@ -564,6 +643,36 @@ public class InventoryRepository extends BaseOutboxRepository {
             InventoryRepository::mapReservation,
             "get reservation");
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  /** Look up a previously-held reservation by its idempotency key — used to replay a retry. */
+  public Optional<Reservation> findReservationByIdempotencyKey(
+      UUID tenantId, String idempotencyKey) {
+    var list =
+        query(
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+                + " created_at FROM reservations WHERE tenant_id = ? AND idempotency_key = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, idempotencyKey);
+            },
+            InventoryRepository::mapReservation,
+            "find reservation by idempotency key");
+    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  private static Reservation findReservationByIdempotencyKeyTx(
+      Connection c, UUID tenantId, String idempotencyKey) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+                + " created_at FROM reservations WHERE tenant_id = ? AND idempotency_key = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setString(2, idempotencyKey);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? mapReservation(rs) : null;
+      }
+    }
   }
 
   // ---------------------------------------------------------------- thresholds
@@ -1737,12 +1846,14 @@ public class InventoryRepository extends BaseOutboxRepository {
     }
   }
 
-  private void insertReservation(Connection c, Reservation r) throws SQLException {
+  private void insertReservation(Connection c, Reservation r, String idempotencyKey)
+      throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO reservations"
-                + " (id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, created_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+                + " (id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+                + " created_at, idempotency_key)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, r.id());
       ps.setObject(2, r.tenantId());
       ps.setObject(3, r.storeId());
@@ -1752,6 +1863,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setString(7, r.status());
       ps.setObject(8, r.expiresAt() == null ? null : r.expiresAt().atOffset(ZoneOffset.UTC));
       ps.setObject(9, r.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setString(10, idempotencyKey);
       ps.executeUpdate();
     }
   }

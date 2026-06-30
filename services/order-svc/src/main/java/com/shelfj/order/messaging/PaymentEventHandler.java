@@ -12,10 +12,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Handles PaymentCaptured / PaymentFailed events; delegates to {@link OrderService}. Naturally
- * idempotent: the order transition is guarded on PENDING status, so redelivery is a no-op.
- * Malformed payloads and 4xx business conflicts (already transitioned) are skipped; transient
- * failures propagate so the consumer loop redelivers instead of losing the event.
+ * Handles PaymentCaptured / PaymentFailed events; delegates to {@link OrderService}.
+ * PaymentCaptured is idempotent via the {@code order_payment_events} ledger keyed on {@code
+ * paymentId} (golden rule #7), so redelivery of the same tender is a no-op. Malformed payloads and
+ * 4xx business conflicts are skipped; transient failures propagate so the consumer loop redelivers
+ * instead of losing the event.
  */
 @ApplicationScoped
 class PaymentEventHandler {
@@ -26,6 +27,8 @@ class PaymentEventHandler {
       Pattern.compile("\"orderId\"\\s*:\\s*\"([0-9a-fA-F-]{36})\"");
   private static final Pattern TENANT_ID_PAT =
       Pattern.compile("\"tenantId\"\\s*:\\s*\"([0-9a-fA-F-]{36})\"");
+  private static final Pattern PAYMENT_ID_PAT =
+      Pattern.compile("\"paymentId\"\\s*:\\s*\"([0-9a-fA-F-]{36})\"");
   private static final Pattern AMOUNT_PAT =
       Pattern.compile("\"amount\"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)");
 
@@ -35,15 +38,18 @@ class PaymentEventHandler {
     String eventType;
     UUID orderId;
     UUID tenantId;
+    UUID paymentId;
     BigDecimal amount;
     try {
       eventType = extract(EVENT_TYPE_PAT, payload);
       String orderIdStr = extract(ORDER_ID_PAT, payload);
       String tenantIdStr = extract(TENANT_ID_PAT, payload);
+      String paymentIdStr = extract(PAYMENT_ID_PAT, payload);
       String amountStr = extract(AMOUNT_PAT, payload);
       if (orderIdStr == null || tenantIdStr == null) return;
       orderId = UUID.fromString(orderIdStr);
       tenantId = UUID.fromString(tenantIdStr);
+      paymentId = paymentIdStr != null ? UUID.fromString(paymentIdStr) : null;
       amount = amountStr != null ? new BigDecimal(amountStr) : null;
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed payment event skipped: " + e.getMessage());
@@ -52,7 +58,7 @@ class PaymentEventHandler {
 
     try {
       if ("PaymentCaptured".equals(eventType)) {
-        svc.handlePaymentCaptured(tenantId, orderId, amount);
+        svc.handlePaymentCaptured(tenantId, orderId, paymentId, amount);
       } else if ("PaymentFailed".equals(eventType)) {
         svc.handlePaymentFailed(tenantId, orderId);
       }

@@ -213,7 +213,7 @@ public final class Dtos {
       String orderId,
       @NotBlank String variantId,
       @NotBlank String storeId,
-      BigDecimal originalPrice,
+      @PositiveOrZero BigDecimal originalPrice,
       @NotNull @PositiveOrZero BigDecimal overridePrice,
       String overrideReason,
       String overriddenBy) {}

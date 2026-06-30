@@ -58,6 +58,22 @@ public class CustomerRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /** Connection-scoped read within an existing transaction; null (not Optional) if not found. */
+  private static Customer findById(Connection conn, UUID tenantId, UUID customerId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        conn.prepareStatement(
+            "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
+                + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " FROM customers WHERE tenant_id = ? AND id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? mapCustomer(rs) : null;
+      }
+    }
+  }
+
   public Optional<Customer> findByEmail(UUID tenantId, String email) {
     return query(
             "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
@@ -118,24 +134,40 @@ public class CustomerRepository extends BaseOutboxRepository {
   }
 
   public Customer updateCustomer(Customer c) {
-    exec(
-        "UPDATE customers SET phone=?, first_name=?, last_name=?, dob=?, gender=?,"
-            + " gdpr_consent_at=?, updated_at=? WHERE tenant_id=? AND id=?",
-        ps -> {
-          ps.setString(1, c.phone());
-          ps.setString(2, c.firstName());
-          ps.setString(3, c.lastName());
-          ps.setObject(4, c.dob() == null ? null : java.sql.Date.valueOf(c.dob()));
-          ps.setString(5, c.gender());
-          ps.setObject(
-              6, c.gdprConsentAt() == null ? null : c.gdprConsentAt().atOffset(ZoneOffset.UTC));
-          ps.setObject(7, c.updatedAt().atOffset(ZoneOffset.UTC));
-          ps.setObject(8, c.tenantId());
-          ps.setObject(9, c.id());
+    // `AND status != 'ANONYMIZED'` makes the guard atomic with the write — without it, a profile
+    // update racing a concurrent GDPR anonymize (or simply targeting an already-anonymized
+    // customer directly) would silently resurrect erased PII.
+    return inTx(
+        conn -> {
+          int rows;
+          try (PreparedStatement ps =
+              conn.prepareStatement(
+                  "UPDATE customers SET phone=?, first_name=?, last_name=?, dob=?, gender=?,"
+                      + " gdpr_consent_at=?, updated_at=? WHERE tenant_id=? AND id=?"
+                      + " AND status != 'ANONYMIZED'")) {
+            ps.setString(1, c.phone());
+            ps.setString(2, c.firstName());
+            ps.setString(3, c.lastName());
+            ps.setObject(4, c.dob() == null ? null : java.sql.Date.valueOf(c.dob()));
+            ps.setString(5, c.gender());
+            ps.setObject(
+                6, c.gdprConsentAt() == null ? null : c.gdprConsentAt().atOffset(ZoneOffset.UTC));
+            ps.setObject(7, c.updatedAt().atOffset(ZoneOffset.UTC));
+            ps.setObject(8, c.tenantId());
+            ps.setObject(9, c.id());
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) {
+            Customer existing = findById(conn, c.tenantId(), c.id());
+            if (existing == null) {
+              throw ApiException.notFound("CUSTOMER_NOT_FOUND", "Customer not found");
+            }
+            throw ApiException.conflict(
+                "CUSTOMER_ANONYMIZED", "Customer has been anonymized and can no longer be updated");
+          }
+          return findById(conn, c.tenantId(), c.id());
         },
         "update customer");
-    return findById(c.tenantId(), c.id())
-        .orElseThrow(() -> ApiException.notFound("CUSTOMER_NOT_FOUND", "Customer not found"));
   }
 
   public Customer anonymize(UUID tenantId, UUID customerId) {

@@ -207,6 +207,78 @@ public class OrderRepository extends BaseOutboxRepository {
         "transition order " + orderId);
   }
 
+  /**
+   * Idempotently accumulates a captured payment toward an order's total, and confirms the order
+   * (PENDING -&gt; CONFIRMED) once {@code paid_amount} reaches {@code total}. A single full-amount
+   * tender confirms immediately, same as before; split tenders (e.g. POS cash+card, each below the
+   * order total individually) now accumulate instead of each being silently dropped. Redelivery of
+   * the same {@code paymentId} (golden rule #7) is a no-op via the unique key on {@code
+   * order_payment_events}.
+   */
+  public void applyPaymentCaptured(
+      UUID tenantId, UUID orderId, UUID paymentId, BigDecimal amount, OutboxRow confirmEvent) {
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO order_payment_events (tenant_id, payment_id, order_id, amount)"
+                      + " VALUES (?,?,?,?)")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, paymentId);
+            ps.setObject(3, orderId);
+            ps.setBigDecimal(4, amount);
+            ps.executeUpdate();
+          } catch (SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState())) {
+              return null; // already applied — event redelivery, no-op
+            }
+            throw sqle;
+          }
+
+          BigDecimal newPaid;
+          BigDecimal total;
+          String status;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET paid_amount = paid_amount + ?, updated_at = now()"
+                      + " WHERE tenant_id = ? AND id = ?"
+                      + " RETURNING paid_amount, total, status")) {
+            ps.setBigDecimal(1, amount);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next()) return null; // order not found
+              newPaid = rs.getBigDecimal("paid_amount");
+              total = rs.getBigDecimal("total");
+              status = rs.getString("status");
+            }
+          }
+
+          if (Order.STATUS_PENDING.equals(status) && newPaid.compareTo(total) >= 0) {
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE orders SET status='CONFIRMED', updated_at=now()"
+                        + " WHERE tenant_id=? AND id=? AND status='PENDING'")) {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, orderId);
+              if (ps.executeUpdate() > 0) {
+                appendStatusHistory(
+                    c,
+                    tenantId,
+                    orderId,
+                    Order.STATUS_PENDING,
+                    Order.STATUS_CONFIRMED,
+                    "payment captured",
+                    null);
+                insertOutbox(c, confirmEvent);
+              }
+            }
+          }
+          return null;
+        },
+        "apply payment captured");
+  }
+
   public List<OrderItem> findOrderItems(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total,"
@@ -406,21 +478,36 @@ public class OrderRepository extends BaseOutboxRepository {
     return inTx(
         c -> {
           int rows;
+          // `AND balance >= ?` makes the overpayment check atomic with the update — without it a
+          // deposit larger than the remaining balance was accepted unconditionally, driving
+          // `balance` negative.
           try (PreparedStatement ps =
               c.prepareStatement(
                   "UPDATE layaways"
                       + " SET deposit_paid = deposit_paid + ?,"
                       + "     balance = balance - ?,"
                       + "     updated_at = now()"
-                      + " WHERE tenant_id=? AND id=? AND status='ACTIVE'")) {
+                      + " WHERE tenant_id=? AND id=? AND status='ACTIVE' AND balance >= ?")) {
             ps.setBigDecimal(1, deposit.amount());
             ps.setBigDecimal(2, deposit.amount());
             ps.setObject(3, tenantId);
             ps.setObject(4, layawayId);
+            ps.setBigDecimal(5, deposit.amount());
             rows = ps.executeUpdate();
           }
-          if (rows == 0)
-            throw ApiException.notFound("LAYAWAY_NOT_FOUND", "layaway not found or not active");
+          if (rows == 0) {
+            // findLayawayInTx throws LAYAWAY_NOT_FOUND itself if the id doesn't exist at all.
+            Layaway existing = findLayawayInTx(c, tenantId, layawayId);
+            if (!Layaway.STATUS_ACTIVE.equals(existing.status())) {
+              throw ApiException.notFound("LAYAWAY_NOT_FOUND", "layaway not found or not active");
+            }
+            throw ApiException.badRequest(
+                "LAYAWAY_DEPOSIT_EXCEEDS_BALANCE",
+                "deposit "
+                    + deposit.amount()
+                    + " exceeds outstanding balance "
+                    + existing.balance());
+          }
           insertLayawayDeposit(c, deposit);
           return findLayawayInTx(c, tenantId, layawayId);
         },

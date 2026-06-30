@@ -686,6 +686,68 @@ class InventoryIT {
     assertThat(row, containsString("\"onHand\":10.000"));
   }
 
+  @Test
+  void reserveWithSameIdempotencyKeyIsNotDoubleHeld() {
+    String variant = UUID.randomUUID().toString();
+    String key = UUID.randomUUID().toString();
+    String receiveBody =
+        "{\"storeId\":\""
+            + S
+            + "\",\"variantId\":\""
+            + variant
+            + "\",\"qty\":10,\"batchNo\":\"RV\"}";
+    assertThat(post("/admin/inventory/receive", receiveBody, T).getStatus(), is(201));
+
+    String reserveBody = "{\"storeId\":\"" + S + "\",\"variantId\":\"" + variant + "\",\"qty\":7}";
+    Response first = postWithIdempotencyKey("/inventory/reservations", reserveBody, T, key);
+    assertThat(first.getStatus(), is(201));
+    String firstReservationId = field(first.readEntity(String.class), "id");
+
+    // a client-timeout retry with the same key replays the original hold, not a second one — if
+    // it held stock twice, only 10-7-7=-4 would remain and a third reserve of 4 would fail
+    Response retried = postWithIdempotencyKey("/inventory/reservations", reserveBody, T, key);
+    assertThat(retried.getStatus(), is(201));
+    assertThat(field(retried.readEntity(String.class), "id"), is(firstReservationId));
+
+    String remainder = "{\"storeId\":\"" + S + "\",\"variantId\":\"" + variant + "\",\"qty\":3}";
+    Response third = post("/inventory/reservations", remainder, T);
+    assertThat(third.getStatus(), is(201));
+  }
+
+  @Test
+  void adjustWithSameIdempotencyKeyIsNotDoubleApplied() {
+    String variant = UUID.randomUUID().toString();
+    String key = UUID.randomUUID().toString();
+    String receiveBody =
+        "{\"storeId\":\""
+            + S
+            + "\",\"variantId\":\""
+            + variant
+            + "\",\"qty\":10,\"batchNo\":\"ADJ\"}";
+    assertThat(post("/admin/inventory/receive", receiveBody, T).getStatus(), is(201));
+
+    // a -4 adjustment, retried with the same key — applied once leaves onHand 6, not 2
+    String adjustBody =
+        "{\"storeId\":\"" + S + "\",\"variantId\":\"" + variant + "\",\"delta\":-4}";
+    Response first = postWithIdempotencyKey("/admin/inventory/adjust", adjustBody, T, key);
+    assertThat(first.getStatus(), is(200));
+    Response retried = postWithIdempotencyKey("/admin/inventory/adjust", adjustBody, T, key);
+    assertThat(retried.getStatus(), is(200));
+
+    String levels =
+        target
+            .path("/admin/inventory/levels")
+            .queryParam("store", S)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    int marker = levels.indexOf("\"variantId\":\"" + variant + "\"");
+    assertThat(marker, not(-1));
+    String row = levels.substring(levels.lastIndexOf('{', marker), levels.indexOf('}', marker) + 1);
+    assertThat(row, containsString("\"onHand\":6.000"));
+  }
+
   private Response postWithIdempotencyKey(String path, String json, String tenant, String key) {
     return target
         .path(path)

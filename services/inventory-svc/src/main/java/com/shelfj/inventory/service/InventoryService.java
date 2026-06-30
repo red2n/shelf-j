@@ -247,7 +247,13 @@ public class InventoryService {
   }
 
   // ---- adjust ----
-  public void adjust(UUID tenantId, UUID storeId, UUID variantId, BigDecimal delta, String reason) {
+  public void adjust(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal delta,
+      String reason,
+      String idempotencyKey) {
     var event =
         new OutboxRow(
             "StockAdjusted",
@@ -255,12 +261,18 @@ public class InventoryService {
             tenantId,
             variantId,
             Events.stockAdjusted(tenantId, storeId, variantId, delta));
-    repo.adjust(tenantId, storeId, variantId, delta, reason, event);
+    repo.adjust(tenantId, storeId, variantId, delta, reason, event, idempotencyKey);
   }
 
   // ---- reserve ----
   public Reservation reserve(
-      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId, Long ttlSeconds) {
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId,
+      Long ttlSeconds,
+      String idempotencyKey) {
     long ttl = ttlSeconds == null ? config.reservationTtlSeconds() : ttlSeconds;
     UUID id = UUID.randomUUID();
     var reservation =
@@ -281,7 +293,16 @@ public class InventoryService {
             tenantId,
             id,
             Events.stockReserved(tenantId, storeId, variantId, id, qty));
-    return repo.reserve(reservation, event);
+    try {
+      return repo.reserve(reservation, event, idempotencyKey);
+    } catch (ApiException e) {
+      // Idempotent replay: a retried reservation with the same key gets the original hold back
+      // instead of holding stock twice for one checkout attempt (golden rule #11).
+      if ("RESERVATION_DUPLICATE_KEY".equals(e.code()) && idempotencyKey != null) {
+        return repo.findReservationByIdempotencyKey(tenantId, idempotencyKey).orElseThrow(() -> e);
+      }
+      throw e;
+    }
   }
 
   // ---- consume (FIFO deduct) ----
@@ -1610,9 +1631,6 @@ public class InventoryService {
             tenantId,
             sourceBatchId,
             Events.lotMerge(tenantId, sourceBatchId, targetBatchId, qty));
-    // Deduct from source, add to target
-    repo.adjust(
-        tenantId, source.storeId(), source.variantId(), qty.negate(), "LOT_MERGE_OUT", mergeEvent);
     OutboxRow addEvent =
         new OutboxRow(
             "LotMergeIn",
@@ -1620,7 +1638,16 @@ public class InventoryService {
             tenantId,
             targetBatchId,
             Events.lotMerge(tenantId, sourceBatchId, targetBatchId, qty));
-    repo.adjust(tenantId, target.storeId(), target.variantId(), qty, "LOT_MERGE_IN", addEvent);
+    // Deduct from source and add to target atomically — see mergeLotAdjust's Javadoc.
+    repo.mergeLotAdjust(
+        tenantId,
+        source.storeId(),
+        source.variantId(),
+        mergeEvent,
+        target.storeId(),
+        target.variantId(),
+        addEvent,
+        qty);
     Batch updated =
         repo.getBatch(tenantId, targetBatchId)
             .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));
@@ -1722,7 +1749,8 @@ public class InventoryService {
         UUID storeId = UUID.fromString(req.storeId());
         UUID variantId = UUID.fromString(req.variantId());
         UUID orderId = req.orderId() != null ? UUID.fromString(req.orderId()) : null;
-        succeeded.add(reserve(tenantId, storeId, variantId, req.qty(), orderId, req.ttlSeconds()));
+        succeeded.add(
+            reserve(tenantId, storeId, variantId, req.qty(), orderId, req.ttlSeconds(), null));
       } catch (Exception ignored) {
         failed++;
       }

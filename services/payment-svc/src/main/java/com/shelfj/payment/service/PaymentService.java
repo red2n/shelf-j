@@ -55,6 +55,14 @@ public class PaymentService {
     if (!"ONLINE".equalsIgnoreCase(order.channel())) {
       throw ApiException.notFound("PAYMENT_ORDER_NOT_FOUND", "order " + orderId + " not found");
     }
+    // Only a PENDING order is awaiting payment — capturing against an order that's already
+    // confirmed (e.g. a split/earlier tender already covered it), cancelled, or otherwise
+    // resolved would record a stray/duplicate tender with no order-side effect to match it.
+    if (!"PENDING".equalsIgnoreCase(order.status())) {
+      throw ApiException.conflict(
+          "PAYMENT_ORDER_NOT_PAYABLE",
+          "order " + orderId + " is not awaiting payment (status: " + order.status() + ")");
+    }
     UUID callerId = ctx.userId();
     if (callerId != null
         && order.customerId() != null

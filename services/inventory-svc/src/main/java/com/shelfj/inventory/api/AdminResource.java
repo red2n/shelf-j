@@ -179,7 +179,9 @@ public class AdminResource {
 
   @POST
   @Path("/adjust")
-  public ApiResponse<String> adjust(AdjustRequest req) {
+  public ApiResponse<String> adjust(
+      @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      AdjustRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     service.adjust(
@@ -187,7 +189,8 @@ public class AdminResource {
         uuid(req.storeId(), "storeId"),
         uuid(req.variantId(), "variantId"),
         req.delta(),
-        req.reason());
+        req.reason(),
+        idempotencyKey);
     return ApiResponse.ok("adjusted");
   }
 

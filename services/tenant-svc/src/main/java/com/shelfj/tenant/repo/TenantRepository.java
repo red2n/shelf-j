@@ -539,48 +539,84 @@ public class TenantRepository extends BaseOutboxRepository {
   // ── Gap #53: Inventory org config ────────────────────────────────────────
 
   public TenantInventoryConfig upsertInventoryConfig(TenantInventoryConfig cfg) {
+    return inTx(c -> upsertInventoryConfigTx(c, cfg), "upsert inventory config");
+  }
+
+  /**
+   * Locks the tenant's config row (if any) for the duration of the transaction, lets {@code merge}
+   * compute the new value from it, then atomically upserts the result — closing the race where two
+   * concurrent partial updates each read the same stale snapshot and the second silently clobbers
+   * fields the first one just set. {@code SELECT ... FOR UPDATE} serializes concurrent callers on
+   * the same tenant_id; a first-ever insert for a tenant has no row to lock, but {@code ON
+   * CONFLICT} already makes concurrent first-inserts safe on its own.
+   */
+  public TenantInventoryConfig upsertInventoryConfigMerged(
+      UUID tenantId, java.util.function.UnaryOperator<TenantInventoryConfig> merge) {
     return inTx(
         c -> {
-          String sql =
-              """
-              INSERT INTO tenant_inventory_config
-                (id, tenant_id, lot_control_enabled, serial_control_enabled,
-                 grade_control_enabled, expiry_tracking_enabled, costing_method,
-                 default_uom, reorder_alert_enabled, auto_reserve_on_order,
-                 created_at, updated_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-              ON CONFLICT (tenant_id) DO UPDATE SET
-                lot_control_enabled     = EXCLUDED.lot_control_enabled,
-                serial_control_enabled  = EXCLUDED.serial_control_enabled,
-                grade_control_enabled   = EXCLUDED.grade_control_enabled,
-                expiry_tracking_enabled = EXCLUDED.expiry_tracking_enabled,
-                costing_method          = EXCLUDED.costing_method,
-                default_uom             = EXCLUDED.default_uom,
-                reorder_alert_enabled   = EXCLUDED.reorder_alert_enabled,
-                auto_reserve_on_order   = EXCLUDED.auto_reserve_on_order,
-                updated_at              = now()
-              RETURNING *
-              """;
-          try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setObject(1, cfg.id());
-            ps.setObject(2, cfg.tenantId());
-            ps.setBoolean(3, cfg.lotControlEnabled());
-            ps.setBoolean(4, cfg.serialControlEnabled());
-            ps.setBoolean(5, cfg.gradeControlEnabled());
-            ps.setBoolean(6, cfg.expiryTrackingEnabled());
-            ps.setString(7, cfg.costingMethod());
-            ps.setString(8, cfg.defaultUom());
-            ps.setBoolean(9, cfg.reorderAlertEnabled());
-            ps.setBoolean(10, cfg.autoReserveOnOrder());
-            ps.setObject(11, OffsetDateTime.ofInstant(cfg.createdAt(), ZoneOffset.UTC));
-            ps.setObject(12, OffsetDateTime.ofInstant(cfg.updatedAt(), ZoneOffset.UTC));
-            try (ResultSet rs = ps.executeQuery()) {
-              rs.next();
-              return mapInventoryConfig(rs);
-            }
-          }
+          TenantInventoryConfig existing = lockInventoryConfigForUpdate(c, tenantId);
+          TenantInventoryConfig merged = merge.apply(existing);
+          return upsertInventoryConfigTx(c, merged);
         },
-        "upsert inventory config");
+        "upsert inventory config (merged)");
+  }
+
+  private TenantInventoryConfig lockInventoryConfigForUpdate(Connection c, UUID tenantId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, lot_control_enabled, serial_control_enabled,"
+                + " grade_control_enabled, expiry_tracking_enabled, costing_method,"
+                + " default_uom, reorder_alert_enabled, auto_reserve_on_order,"
+                + " created_at, updated_at"
+                + " FROM tenant_inventory_config WHERE tenant_id = ? FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? mapInventoryConfig(rs) : null;
+      }
+    }
+  }
+
+  private TenantInventoryConfig upsertInventoryConfigTx(Connection c, TenantInventoryConfig cfg)
+      throws SQLException {
+    String sql =
+        """
+        INSERT INTO tenant_inventory_config
+          (id, tenant_id, lot_control_enabled, serial_control_enabled,
+           grade_control_enabled, expiry_tracking_enabled, costing_method,
+           default_uom, reorder_alert_enabled, auto_reserve_on_order,
+           created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT (tenant_id) DO UPDATE SET
+          lot_control_enabled     = EXCLUDED.lot_control_enabled,
+          serial_control_enabled  = EXCLUDED.serial_control_enabled,
+          grade_control_enabled   = EXCLUDED.grade_control_enabled,
+          expiry_tracking_enabled = EXCLUDED.expiry_tracking_enabled,
+          costing_method          = EXCLUDED.costing_method,
+          default_uom             = EXCLUDED.default_uom,
+          reorder_alert_enabled   = EXCLUDED.reorder_alert_enabled,
+          auto_reserve_on_order   = EXCLUDED.auto_reserve_on_order,
+          updated_at              = now()
+        RETURNING *
+        """;
+    try (PreparedStatement ps = c.prepareStatement(sql)) {
+      ps.setObject(1, cfg.id());
+      ps.setObject(2, cfg.tenantId());
+      ps.setBoolean(3, cfg.lotControlEnabled());
+      ps.setBoolean(4, cfg.serialControlEnabled());
+      ps.setBoolean(5, cfg.gradeControlEnabled());
+      ps.setBoolean(6, cfg.expiryTrackingEnabled());
+      ps.setString(7, cfg.costingMethod());
+      ps.setString(8, cfg.defaultUom());
+      ps.setBoolean(9, cfg.reorderAlertEnabled());
+      ps.setBoolean(10, cfg.autoReserveOnOrder());
+      ps.setObject(11, OffsetDateTime.ofInstant(cfg.createdAt(), ZoneOffset.UTC));
+      ps.setObject(12, OffsetDateTime.ofInstant(cfg.updatedAt(), ZoneOffset.UTC));
+      try (ResultSet rs = ps.executeQuery()) {
+        rs.next();
+        return mapInventoryConfig(rs);
+      }
+    }
   }
 
   public List<Tenant> listAllTenants() {

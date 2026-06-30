@@ -13,6 +13,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
@@ -37,7 +38,9 @@ public class ReservationResource {
   @Inject TenantContext ctx;
 
   @POST
-  public Response reserve(ReserveRequest req) {
+  public Response reserve(
+      @HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      ReserveRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID orderId =
@@ -49,7 +52,8 @@ public class ReservationResource {
             uuid(req.variantId(), "variantId"),
             req.qty(),
             orderId,
-            req.ttlSeconds());
+            req.ttlSeconds(),
+            idempotencyKey);
     return Response.status(Response.Status.CREATED)
         .entity(ApiResponse.ok(Mappers.toReservation(r)))
         .build();

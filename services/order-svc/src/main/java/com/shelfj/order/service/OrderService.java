@@ -554,33 +554,25 @@ public class OrderService {
 
   // ── Payment event handlers (called by PaymentEventHandler) ───────────────
 
+  /**
+   * Accumulates a captured tender toward the order's total and confirms the order once tenders
+   * cover it. Split tenders (e.g. POS cash+card, each individually below the order total) each call
+   * this once and accumulate, instead of the order only confirming on a single full-amount tender.
+   */
   public void handlePaymentCaptured(
-      java.util.UUID tenantId, java.util.UUID orderId, java.math.BigDecimal amount) {
-    repo.findOrder(tenantId, orderId)
-        .ifPresent(
-            o -> {
-              if (!Order.STATUS_PENDING.equals(o.status())) return;
-              // Reject if the tendered amount is less than the order total.
-              // Split-payment support (accumulating paid_amount) is a separate feature; until
-              // then a single tender must cover the full balance.
-              if (amount == null || amount.compareTo(o.total()) < 0) {
-                LOG.log(
-                    java.lang.System.Logger.Level.WARNING,
-                    "PaymentCaptured for order {0} ignored: tendered {1} < order total {2}",
-                    orderId,
-                    amount,
-                    o.total());
-                return;
-              }
-              repo.transitionOrderStatus(
-                  tenantId,
-                  orderId,
-                  Order.STATUS_PENDING,
-                  Order.STATUS_CONFIRMED,
-                  "payment captured",
-                  null,
-                  Events.orderConfirmed(tenantId, orderId));
-            });
+      java.util.UUID tenantId,
+      java.util.UUID orderId,
+      java.util.UUID paymentId,
+      java.math.BigDecimal amount) {
+    if (amount == null || paymentId == null) {
+      LOG.log(
+          java.lang.System.Logger.Level.WARNING,
+          "PaymentCaptured for order {0} ignored: missing paymentId or amount",
+          orderId);
+      return;
+    }
+    repo.applyPaymentCaptured(
+        tenantId, orderId, paymentId, amount, Events.orderConfirmed(tenantId, orderId));
   }
 
   public void handlePaymentFailed(java.util.UUID tenantId, java.util.UUID orderId) {

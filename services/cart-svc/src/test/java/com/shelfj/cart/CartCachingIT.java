@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.shelfj.cart.repo.CartRepository;
 import com.shelfj.test.PostgresSupport;
 import com.shelfj.test.RedisSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -53,6 +54,7 @@ class CartCachingIT {
   private static final String STORE_A = "44444444-4444-4444-4444-444444444444";
 
   @Inject WebTarget target;
+  @Inject CartRepository repo;
 
   @AfterAll
   static void stopDb() {
@@ -154,6 +156,47 @@ class CartCachingIT {
     String view = get("/cart?cartId=" + cartId);
     assertThat(view, containsString("7.0000"));
     assertThat(view, not(containsString("99.0000")));
+  }
+
+  /**
+   * markCheckedOutByCustomerAndStore is what the OrderPlaced event handler calls; it didn't use to
+   * know the cart's id (only customerId/storeId), so it could only evict the pointer cache and the
+   * items cache self-corrected within the TTL instead of immediately. It now captures the affected
+   * cart's id via {@code RETURNING id} and evicts both caches right away.
+   */
+  @Test
+  void markCheckedOutEvictsTheItemsCacheImmediately() {
+    Response c = post("/cart", "{\"storeId\":\"" + STORE_A + "\"}");
+    assertThat(c.getStatus(), is(200));
+    String cartId = field(c.readEntity(String.class), "id");
+
+    String variantId = UUID.randomUUID().toString();
+    Response added =
+        post(
+            "/cart/items",
+            "{\"cartId\":\"" + cartId + "\",\"variantId\":\"" + variantId + "\",\"qty\":3}");
+    assertThat(added.getStatus(), is(200));
+    String itemId = field(added.readEntity(String.class), "id");
+
+    // first view — populates the items cache
+    assertThat(get("/cart?cartId=" + cartId), containsString("3.0000"));
+
+    // simulate the OrderPlaced handler marking the cart checked out, then a raw mutation (as if a
+    // human inspected the now-archived cart's data directly)
+    repo.markCheckedOutByCustomerAndStore(
+        UUID.fromString(TENANT_A), UUID.fromString(CUSTOMER_A), UUID.fromString(STORE_A));
+    rawUpdateItemQty(itemId, "99");
+
+    // the items cache was evicted by markCheckedOutByCustomerAndStore itself, not left to expire —
+    // a direct repo read reflects the raw mutation immediately. (Other tests share this customer's
+    // cart, so find the item we just mutated by id rather than assuming list position.)
+    var freshItems = repo.findItemsByCart(UUID.fromString(TENANT_A), UUID.fromString(cartId));
+    var mutated =
+        freshItems.stream()
+            .filter(i -> i.id().equals(UUID.fromString(itemId)))
+            .findFirst()
+            .orElseThrow();
+    assertThat(mutated.qty().toPlainString(), is("99.0000"));
   }
 
   private static String field(String json, String name) {

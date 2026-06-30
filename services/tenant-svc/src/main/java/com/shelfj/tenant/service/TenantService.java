@@ -358,43 +358,50 @@ public class TenantService {
 
   public TenantInventoryConfigResponse upsertInventoryConfig(
       UUID tenantId, UpsertInventoryConfigRequest req) {
-    TenantInventoryConfig existing = repo.findInventoryConfig(tenantId).orElse(null);
-    Instant now = Instant.now();
-    UUID id = existing != null ? existing.id() : UUID.randomUUID();
-    Instant createdAt = existing != null ? existing.createdAt() : now;
-    TenantInventoryConfig cfg =
-        new TenantInventoryConfig(
-            id,
+    // The read (existing) and the merge both happen inside repo.upsertInventoryConfigMerged's
+    // transaction, with the row locked FOR UPDATE first — otherwise two concurrent partial
+    // updates can each merge against the same stale snapshot and the second silently clobbers
+    // fields the first one just set.
+    TenantInventoryConfig merged =
+        repo.upsertInventoryConfigMerged(
             tenantId,
-            req.lotControlEnabled() != null
-                ? req.lotControlEnabled()
-                : (existing != null ? existing.lotControlEnabled() : true),
-            req.serialControlEnabled() != null
-                ? req.serialControlEnabled()
-                : (existing != null ? existing.serialControlEnabled() : false),
-            req.gradeControlEnabled() != null
-                ? req.gradeControlEnabled()
-                : (existing != null ? existing.gradeControlEnabled() : false),
-            req.expiryTrackingEnabled() != null
-                ? req.expiryTrackingEnabled()
-                : (existing != null ? existing.expiryTrackingEnabled() : true),
-            req.costingMethod() != null
-                ? req.costingMethod()
-                : (existing != null
-                    ? existing.costingMethod()
-                    : TenantInventoryConfig.COSTING_FIFO),
-            req.defaultUom() != null
-                ? req.defaultUom()
-                : (existing != null ? existing.defaultUom() : "EA"),
-            req.reorderAlertEnabled() != null
-                ? req.reorderAlertEnabled()
-                : (existing != null ? existing.reorderAlertEnabled() : true),
-            req.autoReserveOnOrder() != null
-                ? req.autoReserveOnOrder()
-                : (existing != null ? existing.autoReserveOnOrder() : true),
-            createdAt,
-            now);
-    return Mappers.toDto(repo.upsertInventoryConfig(cfg));
+            existing -> {
+              Instant now = Instant.now();
+              UUID id = existing != null ? existing.id() : UUID.randomUUID();
+              Instant createdAt = existing != null ? existing.createdAt() : now;
+              return new TenantInventoryConfig(
+                  id,
+                  tenantId,
+                  req.lotControlEnabled() != null
+                      ? req.lotControlEnabled()
+                      : (existing != null ? existing.lotControlEnabled() : true),
+                  req.serialControlEnabled() != null
+                      ? req.serialControlEnabled()
+                      : (existing != null ? existing.serialControlEnabled() : false),
+                  req.gradeControlEnabled() != null
+                      ? req.gradeControlEnabled()
+                      : (existing != null ? existing.gradeControlEnabled() : false),
+                  req.expiryTrackingEnabled() != null
+                      ? req.expiryTrackingEnabled()
+                      : (existing != null ? existing.expiryTrackingEnabled() : true),
+                  req.costingMethod() != null
+                      ? req.costingMethod()
+                      : (existing != null
+                          ? existing.costingMethod()
+                          : TenantInventoryConfig.COSTING_FIFO),
+                  req.defaultUom() != null
+                      ? req.defaultUom()
+                      : (existing != null ? existing.defaultUom() : "EA"),
+                  req.reorderAlertEnabled() != null
+                      ? req.reorderAlertEnabled()
+                      : (existing != null ? existing.reorderAlertEnabled() : true),
+                  req.autoReserveOnOrder() != null
+                      ? req.autoReserveOnOrder()
+                      : (existing != null ? existing.autoReserveOnOrder() : true),
+                  createdAt,
+                  now);
+            });
+    return Mappers.toDto(merged);
   }
 
   public TenantInventoryConfigResponse getInventoryConfig(UUID tenantId) {
