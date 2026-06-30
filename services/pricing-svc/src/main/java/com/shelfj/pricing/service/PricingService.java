@@ -291,6 +291,17 @@ public class PricingService {
         promoApplied);
   }
 
+  /**
+   * Resolves many lines in one call. Each line is still resolved independently (same DB reads as
+   * {@link #resolvePrice}), but collapsing this into one service call removes the per-line HTTP
+   * round trip (and circuit-breaker/retry overhead) a caller like order-svc's checkout would
+   * otherwise pay once per order line.
+   */
+  public java.util.List<ResolvedPrice> resolvePrices(
+      java.util.List<ResolvePriceRequest> reqs, TenantContext ctx) {
+    return reqs.stream().map(r -> resolvePrice(r, ctx)).toList();
+  }
+
   // ── Promotions ────────────────────────────────────────────────────────────
 
   public Promotion createPromotion(CreatePromotionRequest req, TenantContext ctx) {

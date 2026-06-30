@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -83,8 +84,9 @@ class OrderServicePricingTest {
   @Test
   void enforcementOnUsesServerPriceAndIgnoresClientPrice() {
     when(config.pricingEnforce()).thenReturn(true);
-    when(pricing.resolveLine(TENANT, VARIANT, STORE, "POS", BigDecimal.ONE))
-        .thenReturn(new PricingClient.ResolvedLine(new BigDecimal("7.77"), BigDecimal.ZERO));
+    when(pricing.resolveLines(eq(TENANT), anyList(), eq(STORE), eq("POS")))
+        .thenReturn(
+            List.of(new PricingClient.ResolvedLine(new BigDecimal("7.77"), BigDecimal.ZERO)));
     when(repo.createOrder(any(), anyList(), any())).thenAnswer(inv -> inv.getArgument(0));
 
     // client claims the item costs 0.01 — the server-resolved 7.77 must win
@@ -100,7 +102,7 @@ class OrderServicePricingTest {
   @Test
   void enforcementOnFailsClosedWhenPriceCannotBeResolved() {
     when(config.pricingEnforce()).thenReturn(true);
-    when(pricing.resolveLine(any(), any(), any(), any(), any()))
+    when(pricing.resolveLines(any(), any(), any(), any()))
         .thenThrow(ApiException.unprocessable("ORDER_PRICE_UNRESOLVED", "no price"));
 
     ApiException e =
@@ -163,9 +165,10 @@ class OrderServicePricingTest {
   @Test
   void enforcementOnDerivesTaxFromPricingAndIgnoresClientDiscount() {
     when(config.pricingEnforce()).thenReturn(true);
-    when(pricing.resolveLine(TENANT, VARIANT, STORE, "POS", BigDecimal.ONE))
+    when(pricing.resolveLines(eq(TENANT), anyList(), eq(STORE), eq("POS")))
         .thenReturn(
-            new PricingClient.ResolvedLine(new BigDecimal("10.00"), new BigDecimal("2.00")));
+            List.of(
+                new PricingClient.ResolvedLine(new BigDecimal("10.00"), new BigDecimal("2.00"))));
     when(repo.createOrder(any(), anyList(), any())).thenAnswer(inv -> inv.getArgument(0));
 
     // client tries to claim a 9.00 discount — must be ignored entirely when pricing is enforced.

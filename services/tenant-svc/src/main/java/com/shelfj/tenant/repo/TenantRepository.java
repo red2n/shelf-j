@@ -613,7 +613,9 @@ public class TenantRepository extends BaseOutboxRepository {
       ps.setObject(11, OffsetDateTime.ofInstant(cfg.createdAt(), ZoneOffset.UTC));
       ps.setObject(12, OffsetDateTime.ofInstant(cfg.updatedAt(), ZoneOffset.UTC));
       try (ResultSet rs = ps.executeQuery()) {
-        rs.next();
+        if (!rs.next()) {
+          throw new IllegalStateException("upsert inventory config returned no row");
+        }
         return mapInventoryConfig(rs);
       }
     }

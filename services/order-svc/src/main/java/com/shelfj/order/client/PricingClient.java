@@ -13,12 +13,15 @@ import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
+import jakarta.json.JsonArray;
+import jakarta.json.JsonArrayBuilder;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonObjectBuilder;
 import jakarta.json.JsonReader;
 import java.io.StringReader;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
@@ -113,6 +116,80 @@ public class PricingClient {
                 ? data.getJsonNumber("vatAmount").bigDecimalValue()
                 : BigDecimal.ZERO;
         return new ResolvedLine(unitPrice, vatAmount);
+      } catch (RuntimeException e) {
+        throw unavailable("malformed response from pricing-svc", e);
+      }
+    } catch (ApiException e) {
+      throw e;
+    } catch (CircuitBreakerOpenException e) {
+      throw unavailable("pricing-svc circuit open — too many recent failures", e);
+    } catch (RuntimeException e) {
+      throw unavailable("pricing-svc unreachable", e);
+    }
+  }
+
+  /** One line to resolve in a {@link #resolveLines} batch call. */
+  public record LineRequest(UUID variantId, BigDecimal qty) {}
+
+  /**
+   * Batch form of {@link #resolveLine} — resolves every line of an order in one HTTP call instead
+   * of one call per line, removing the per-line round trip (and circuit-breaker/retry overhead)
+   * that checkout used to pay once per item. Results are returned in the same order as {@code
+   * lines}. Same fail-closed behavior as the single-line form: any line that can't be priced fails
+   * the whole call (placeOrder never persisted a partially-priced order before this change either).
+   */
+  @Retry(
+      maxRetries = 2,
+      delay = 200,
+      abortOn = {ApiException.class})
+  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
+  public List<ResolvedLine> resolveLines(
+      UUID tenantId, List<LineRequest> lines, UUID storeId, String channel) {
+    if (lines.isEmpty()) return List.of();
+    ServiceInstance instance =
+        registry
+            .resolve(PRICING_SERVICE)
+            .orElseThrow(() -> unavailable("no healthy pricing-svc instance in discovery", null));
+
+    JsonArrayBuilder linesArray = Json.createArrayBuilder();
+    for (LineRequest l : lines) {
+      JsonObjectBuilder lineObj =
+          Json.createObjectBuilder().add("variantId", l.variantId().toString());
+      if (storeId != null) lineObj.add("storeId", storeId.toString());
+      if (channel != null) lineObj.add("channel", channel);
+      if (l.qty() != null) lineObj.add("qty", l.qty());
+      linesArray.add(lineObj);
+    }
+    String payload = Json.createObjectBuilder().add("lines", linesArray).build().toString();
+
+    try (HttpClientResponse res =
+        webClient
+            .post(instance.baseUri() + "/prices/resolve-batch")
+            .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
+            .header(HeaderNames.CONTENT_TYPE, "application/json")
+            .submit(payload)) {
+      int status = res.status().code();
+      if (status == 404) {
+        throw ApiException.unprocessable(
+            "ORDER_PRICE_UNRESOLVED", "no active price configured for one or more order lines");
+      }
+      if (status != 200) {
+        throw unavailable("pricing-svc returned HTTP " + status, null);
+      }
+      String body = res.as(String.class);
+      try (JsonReader reader = Json.createReader(new StringReader(body))) {
+        JsonArray results = reader.readObject().getJsonObject("data").getJsonArray("results");
+        List<ResolvedLine> resolved = new ArrayList<>(results.size());
+        for (var r : results) {
+          JsonObject data = r.asJsonObject();
+          BigDecimal unitPrice = data.getJsonNumber("unitPrice").bigDecimalValue();
+          BigDecimal vatAmount =
+              data.containsKey("vatAmount") && !data.isNull("vatAmount")
+                  ? data.getJsonNumber("vatAmount").bigDecimalValue()
+                  : BigDecimal.ZERO;
+          resolved.add(new ResolvedLine(unitPrice, vatAmount));
+        }
+        return resolved;
       } catch (RuntimeException e) {
         throw unavailable("malformed response from pricing-svc", e);
       }

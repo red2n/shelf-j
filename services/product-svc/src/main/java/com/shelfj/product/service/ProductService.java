@@ -214,8 +214,34 @@ public class ProductService {
     return repo.listProducts(tenantId, categoryId, onlineOnly, posOnly, storeId, limit);
   }
 
-  public List<Product> listProductsAdmin(UUID tenantId, UUID categoryId, String status, int limit) {
-    return repo.listProductsAdmin(tenantId, categoryId, status, limit);
+  /** One page of admin products plus the opaque cursor for the next page (null when exhausted). */
+  public record ProductPage(List<Product> products, String nextCursor) {}
+
+  public ProductPage listProductsAdmin(
+      UUID tenantId, UUID categoryId, String status, String afterCursor, int limit) {
+    Instant afterCreatedAt = null;
+    UUID afterId = null;
+    String rawKey = com.shelfj.web.Cursor.decode(afterCursor);
+    if (rawKey != null) {
+      int sep = rawKey.indexOf('|');
+      try {
+        if (sep < 0) throw new IllegalArgumentException("missing separator");
+        afterCreatedAt = Instant.parse(rawKey.substring(0, sep));
+        afterId = UUID.fromString(rawKey.substring(sep + 1));
+      } catch (RuntimeException e) {
+        throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
+      }
+    }
+    // Fetch one extra row to learn whether a further page exists without a second query.
+    List<Product> rows =
+        repo.listProductsAdmin(tenantId, categoryId, status, afterCreatedAt, afterId, limit + 1);
+    if (rows.size() <= limit) {
+      return new ProductPage(rows, null);
+    }
+    List<Product> page = rows.subList(0, limit);
+    Product last = page.get(page.size() - 1);
+    return new ProductPage(
+        page, com.shelfj.web.Cursor.encode(last.createdAt().toString() + "|" + last.id()));
   }
 
   public List<Product> searchProducts(
@@ -526,26 +552,38 @@ public class ProductService {
     // ADD (default) = create new (duplicate SKUs error).
     final boolean replace = req.mode() != null && "REPLACE".equalsIgnoreCase(req.mode());
 
+    // A CSV sheet typically has far fewer distinct category/brand names than product rows — cache
+    // resolved ids by name within this import so repeated rows for the same category/brand don't
+    // each cost a round trip.
+    var categoryIdByName = new java.util.HashMap<String, UUID>();
+    var brandIdByName = new java.util.HashMap<String, UUID>();
+
     // ── 1. categories ────────────────────────────────────────────────────────
     if (req.categories() != null) {
       for (var c : req.categories()) {
         try {
-          if (repo.findCategoryByName(tenantId, c.name().trim()).isPresent()) {
+          var existingCat = repo.findCategoryByName(tenantId, c.name().trim());
+          if (existingCat.isPresent()) {
+            categoryIdByName.put(c.name().trim(), existingCat.get().id());
             catSkipped++;
             continue;
           }
           UUID parentId = null;
           if (c.parentName() != null && !c.parentName().isBlank()) {
-            parentId =
-                repo.findCategoryByName(tenantId, c.parentName().trim())
-                    .map(cat -> cat.id())
-                    .orElseThrow(
-                        () ->
-                            ApiException.badRequest(
-                                "PARENT_NOT_FOUND",
-                                "parent category not found: " + c.parentName()));
+            String parentName = c.parentName().trim();
+            parentId = categoryIdByName.get(parentName);
+            if (parentId == null) {
+              parentId =
+                  repo.findCategoryByName(tenantId, parentName)
+                      .map(cat -> cat.id())
+                      .orElseThrow(
+                          () ->
+                              ApiException.badRequest(
+                                  "PARENT_NOT_FOUND", "parent category not found: " + parentName));
+            }
           }
-          repo.createCategory(tenantId, parentId, c.name().trim());
+          UUID newCategoryId = repo.createCategory(tenantId, parentId, c.name().trim()).id();
+          categoryIdByName.put(c.name().trim(), newCategoryId);
           catCreated++;
         } catch (ApiException ae) {
           errors.add(new BulkImportError("category:" + c.name(), ae.getMessage()));
@@ -564,19 +602,28 @@ public class ProductService {
             continue;
           }
 
-          UUID categoryId =
-              p.categoryName() != null && !p.categoryName().isBlank()
-                  ? repo.findCategoryByName(tenantId, p.categoryName().trim())
-                      .map(cat -> cat.id())
-                      .orElse(null)
-                  : null;
+          UUID categoryId = null;
+          if (p.categoryName() != null && !p.categoryName().isBlank()) {
+            String categoryName = p.categoryName().trim();
+            categoryId = categoryIdByName.get(categoryName);
+            if (categoryId == null) {
+              var found = repo.findCategoryByName(tenantId, categoryName);
+              categoryId = found.map(cat -> cat.id()).orElse(null);
+              if (categoryId != null) categoryIdByName.put(categoryName, categoryId);
+            }
+          }
 
           UUID brandId = null;
           if (p.brandName() != null && !p.brandName().isBlank()) {
-            brandId =
-                repo.findBrandByName(tenantId, p.brandName().trim())
-                    .map(b -> b.id())
-                    .orElseGet(() -> repo.createBrand(tenantId, p.brandName().trim()).id());
+            String brandName = p.brandName().trim();
+            brandId = brandIdByName.get(brandName);
+            if (brandId == null) {
+              brandId =
+                  repo.findBrandByName(tenantId, brandName)
+                      .map(b -> b.id())
+                      .orElseGet(() -> repo.createBrand(tenantId, brandName).id());
+              brandIdByName.put(brandName, brandId);
+            }
           }
 
           Instant now = Instant.now();

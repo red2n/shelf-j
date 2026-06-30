@@ -188,6 +188,10 @@ public final class KafkaEventLoop implements AutoCloseable {
     }
   }
 
+  // Try-with-resources doesn't fit: the consumer must be closed with a bounded timeout only
+  // *after* the scheduler has been asked to stop and given a chance to terminate, and the
+  // producer is closed afterwards too — there's no single resource a TWR clause can own here.
+  @SuppressWarnings("PMD.UseTryWithResources")
   @Override
   public void close() {
     running = false;

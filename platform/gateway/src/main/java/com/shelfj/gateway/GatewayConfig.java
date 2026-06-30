@@ -94,6 +94,19 @@ public class GatewayConfig {
   int upstreamReadTimeoutSeconds;
 
   /**
+   * Per-upstream-service circuit breaker (see {@link UpstreamCircuitBreaker}): after this many
+   * consecutive connect/read failures to one service, its circuit opens and the gateway fails fast
+   * for that service alone instead of dispatching every request at full volume.
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.circuit-breaker.failure-threshold", defaultValue = "5")
+  int circuitBreakerFailureThreshold;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.circuit-breaker.open-seconds", defaultValue = "10")
+  int circuitBreakerOpenSeconds;
+
+  /**
    * Rate-limit and brute-force counters live in Redis, not gateway heap — with multiple gateway
    * replicas a per-instance map lets an attacker simply round-robin past the limit. Defaults match
    * docker-compose's redis service (golden rule #5: external config, no hardcoded host:port).
@@ -164,6 +177,14 @@ public class GatewayConfig {
 
   public int upstreamReadTimeoutSeconds() {
     return upstreamReadTimeoutSeconds;
+  }
+
+  public int circuitBreakerFailureThreshold() {
+    return circuitBreakerFailureThreshold;
+  }
+
+  public int circuitBreakerOpenSeconds() {
+    return circuitBreakerOpenSeconds;
   }
 
   public String redisHost() {

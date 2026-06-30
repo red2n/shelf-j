@@ -4,6 +4,7 @@ import com.shelfj.order.dto.Dtos.CreateSpecialOrderRequest;
 import com.shelfj.order.mapper.Mappers;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.RequestScoped;
@@ -43,13 +44,20 @@ public class SpecialOrderResource {
 
   @GET
   public Response list(
-      @QueryParam("storeId") String storeId, @QueryParam("customerId") String customerId) {
+      @QueryParam("storeId") String storeId,
+      @QueryParam("customerId") String customerId,
+      @QueryParam("after") String after,
+      @QueryParam("limit") Integer limit) {
     UUID tenantId = ctx.requireTenantId();
+    int clamped = Cursor.clampLimit(limit);
+    var page = svc.listSpecialOrders(tenantId, storeId, customerId, after, clamped);
     var list =
-        svc.listSpecialOrders(tenantId, storeId, customerId).stream()
+        page.orders().stream()
             .map(so -> Mappers.toDto(so, svc.getSpecialOrderItems(tenantId, so.id())))
             .toList();
-    return Response.ok(ApiResponse.ok(list)).build();
+    return Response.ok(
+            ApiResponse.ok(list, new ApiResponse.Meta(ctx.requestId(), page.nextCursor())))
+        .build();
   }
 
   @GET

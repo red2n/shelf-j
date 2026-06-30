@@ -771,7 +771,7 @@ public class AdminResource {
       @QueryParam("status") String status,
       @QueryParam("limit") Integer limit) {
     UUID tenantId = ctx.requireTenantId();
-    int lim = limit != null ? limit : 20;
+    int lim = limit == null || limit < 1 ? 20 : Math.min(limit, 100);
     var headers = service.listCycleCounts(tenantId, storeId, status, lim);
     var items =
         headers.stream().map(cwl -> Mappers.toCycleCountHeader(cwl.header(), cwl.lines())).toList();
@@ -1335,9 +1335,11 @@ public class AdminResource {
 
   @GET
   @Path("/picking-rules")
-  public ApiResponse<List<PickingRuleResponse>> listPickingRules() {
+  public ApiResponse<List<PickingRuleResponse>> listPickingRules(
+      @QueryParam("limit") Integer limitParam) {
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
     return ApiResponse.ok(
-        service.listPickingRules(ctx.requireTenantId()).stream()
+        service.listPickingRules(ctx.requireTenantId(), limit).stream()
             .map(Mappers::toPickingRule)
             .toList());
   }
@@ -1390,9 +1392,11 @@ public class AdminResource {
 
   @GET
   @Path("/picking-rule-assignments")
-  public ApiResponse<List<PickingRuleAssignmentResponse>> listPickingRuleAssignments() {
+  public ApiResponse<List<PickingRuleAssignmentResponse>> listPickingRuleAssignments(
+      @QueryParam("limit") Integer limitParam) {
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
     return ApiResponse.ok(
-        service.listPickingRuleAssignments(ctx.requireTenantId()).stream()
+        service.listPickingRuleAssignments(ctx.requireTenantId(), limit).stream()
             .map(Mappers::toPickingRuleAssignment)
             .toList());
   }

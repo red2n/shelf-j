@@ -109,8 +109,13 @@ class OfferPriceAdd extends ConsumerWidget {
         if (offer == null) {
           return Text('Unpriced', style: TextStyle(color: cs.outline));
         }
-        final availMap = ref.watch(storefrontAvailabilityProvider).valueOrNull;
-        final inStock = availMap == null ? true : (availMap[offer.variant.id] ?? false);
+        // .select() so this tile only rebuilds when *its own* variant's availability changes,
+        // not on every store switch's whole-map refetch.
+        final (inStock, hasAvailData) =
+            ref.watch(storefrontAvailabilityProvider.select((async) {
+          final map = async.valueOrNull;
+          return (map == null ? true : (map[offer.variant.id] ?? false), map != null);
+        }));
 
         final cart = ref.watch(cartProvider);
         final notifier = ref.read(cartProvider.notifier);
@@ -133,7 +138,7 @@ class OfferPriceAdd extends ConsumerWidget {
               style: TextStyle(
                   color: cs.primary, fontWeight: FontWeight.bold, fontSize: 15),
             ),
-            if (availMap != null) StockBadge(inStock: inStock),
+            if (hasAvailData) StockBadge(inStock: inStock),
           ],
         );
 
@@ -191,8 +196,12 @@ class _CatalogAdd extends ConsumerWidget {
         if (variant == null) {
           return Text('Unavailable', style: TextStyle(color: cs.outline));
         }
-        final availMap = ref.watch(storefrontAvailabilityProvider).valueOrNull;
-        final inStock = availMap == null ? true : (availMap[variant.id] ?? false);
+        // .select() so this tile only rebuilds when *its own* variant's availability changes,
+        // not on every store switch's whole-map refetch.
+        final inStock = ref.watch(storefrontAvailabilityProvider.select((async) {
+          final map = async.valueOrNull;
+          return map == null ? true : (map[variant.id] ?? false);
+        }));
         final cart = ref.watch(cartProvider);
         final notifier = ref.read(cartProvider.notifier);
         int qty = 0;

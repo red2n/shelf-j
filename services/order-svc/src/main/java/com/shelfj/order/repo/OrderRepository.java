@@ -1113,39 +1113,43 @@ public class OrderRepository extends BaseOutboxRepository {
         "create special order");
   }
 
-  public List<SpecialOrder> listSpecialOrders(UUID tenantId, UUID storeId, UUID customerId) {
-    if (storeId != null) {
-      return query(
-          "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
-              + " customer_email, delivery_address, requested_delivery_date, notes, status,"
-              + " subtotal, total, currency, idempotency_key, created_at, updated_at"
-              + " FROM special_orders WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
-          ps -> {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, storeId);
-          },
-          this::mapSpecialOrder,
-          "list special orders by store");
-    }
-    if (customerId != null) {
-      return query(
-          "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
-              + " customer_email, delivery_address, requested_delivery_date, notes, status,"
-              + " subtotal, total, currency, idempotency_key, created_at, updated_at"
-              + " FROM special_orders WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC",
-          ps -> {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, customerId);
-          },
-          this::mapSpecialOrder,
-          "list special orders by customer");
-    }
+  /**
+   * Keyset-paginated: {@code afterCreatedAt}/{@code afterId} are the last-seen row's sort key (null
+   * for the first page), and the caller fetches {@code limit + 1} rows to detect whether a further
+   * page exists. Previously the store/customer-filtered branches had no limit at all and the
+   * unfiltered branch was a flat {@code LIMIT 100} with no cursor — both silently truncated with no
+   * way to see the rest.
+   */
+  public List<SpecialOrder> listSpecialOrders(
+      UUID tenantId,
+      UUID storeId,
+      UUID customerId,
+      Instant afterCreatedAt,
+      UUID afterId,
+      int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
+                + " customer_email, delivery_address, requested_delivery_date, notes, status,"
+                + " subtotal, total, currency, idempotency_key, created_at, updated_at"
+                + " FROM special_orders WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (customerId != null) sql.append(" AND customer_id=?");
+    if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) < (?, ?)");
+    sql.append(" ORDER BY created_at DESC, id DESC LIMIT ?");
     return query(
-        "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
-            + " customer_email, delivery_address, requested_delivery_date, notes, status,"
-            + " subtotal, total, currency, idempotency_key, created_at, updated_at"
-            + " FROM special_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100",
-        ps -> ps.setObject(1, tenantId),
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (customerId != null) ps.setObject(i++, customerId);
+          if (afterCreatedAt != null && afterId != null) {
+            ps.setObject(i++, afterCreatedAt.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
+        },
         this::mapSpecialOrder,
         "list special orders");
   }
@@ -1335,26 +1339,35 @@ public class OrderRepository extends BaseOutboxRepository {
         "find pos log by order");
   }
 
-  public List<PosLogEntry> listPosLog(UUID tenantId, UUID storeId) {
-    if (storeId != null) {
-      return query(
-          "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
-              + " discount_amount, total, currency, tax_exempt, exempt_reason,"
-              + " transaction_ts, created_at"
-              + " FROM pos_log_entries WHERE tenant_id=? AND store_id=? ORDER BY transaction_ts DESC LIMIT 200",
-          ps -> {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, storeId);
-          },
-          this::mapPosLogEntry,
-          "list pos log by store");
+  /**
+   * Keyset-paginated on {@code (transaction_ts, id)}; previously a flat {@code LIMIT 200} with no
+   * cursor, silently truncating a busy store's log with no way to see the rest.
+   */
+  public List<PosLogEntry> listPosLog(
+      UUID tenantId, UUID storeId, Instant afterTransactionTs, UUID afterId, int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
+                + " discount_amount, total, currency, tax_exempt, exempt_reason,"
+                + " transaction_ts, created_at"
+                + " FROM pos_log_entries WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (afterTransactionTs != null && afterId != null) {
+      sql.append(" AND (transaction_ts, id) < (?, ?)");
     }
+    sql.append(" ORDER BY transaction_ts DESC, id DESC LIMIT ?");
     return query(
-        "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
-            + " discount_amount, total, currency, tax_exempt, exempt_reason,"
-            + " transaction_ts, created_at"
-            + " FROM pos_log_entries WHERE tenant_id=? ORDER BY transaction_ts DESC LIMIT 200",
-        ps -> ps.setObject(1, tenantId),
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (afterTransactionTs != null && afterId != null) {
+            ps.setObject(i++, afterTransactionTs.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
+        },
         this::mapPosLogEntry,
         "list pos log");
   }

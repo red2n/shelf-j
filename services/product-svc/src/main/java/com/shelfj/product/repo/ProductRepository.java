@@ -429,8 +429,18 @@ public class ProductRepository extends BaseOutboxRepository {
       " AND (NOT EXISTS (SELECT 1 FROM product_stores ps WHERE ps.product_id = $P)"
           + " OR EXISTS (SELECT 1 FROM product_stores ps WHERE ps.product_id = $P AND ps.store_id = ?))";
 
-  /** Admin list — all statuses, optionally filtered by category and/or status. */
-  public List<Product> listProductsAdmin(UUID tenantId, UUID categoryId, String status, int limit) {
+  /**
+   * Admin list — all statuses, optionally filtered by category and/or status. Keyset-paginated on
+   * {@code (created_at, id)}; previously had a {@code limit} param but no cursor, so a tenant with
+   * more products than the page size could never see the rest.
+   */
+  public List<Product> listProductsAdmin(
+      UUID tenantId,
+      UUID categoryId,
+      String status,
+      Instant afterCreatedAt,
+      UUID afterId,
+      int limit) {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, name, description, brand_id, category_id, status,"
@@ -438,7 +448,8 @@ public class ProductRepository extends BaseOutboxRepository {
                 + " FROM products WHERE tenant_id = ?");
     if (categoryId != null) sql.append(" AND category_id = ?");
     if (status != null) sql.append(" AND status = ?");
-    sql.append(" ORDER BY created_at DESC LIMIT ?");
+    if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) < (?, ?)");
+    sql.append(" ORDER BY created_at DESC, id DESC LIMIT ?");
     return query(
         sql.toString(),
         ps -> {
@@ -451,6 +462,12 @@ public class ProductRepository extends BaseOutboxRepository {
           }
           if (status != null) {
             ps.setString(i, status);
+            i++;
+          }
+          if (afterCreatedAt != null && afterId != null) {
+            ps.setObject(i, afterCreatedAt.atOffset(ZoneOffset.UTC));
+            i++;
+            ps.setObject(i, afterId);
             i++;
           }
           ps.setInt(i, limit);

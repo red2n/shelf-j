@@ -37,7 +37,7 @@ public class PaymentService {
     if (storeId != null) {
       ctx.requireStoreAccess(storeId);
     }
-    return capture(req, tenantId, UUID.fromString(req.orderId()), storeId, idempotencyKey, ctx);
+    return capture(req, tenantId, UUID.fromString(req.orderId()), storeId, idempotencyKey);
   }
 
   /**
@@ -79,16 +79,11 @@ public class PaymentService {
     // endpoint has no staff role to trust, so an unverified store would let a guest attribute the
     // payment to an arbitrary store and corrupt that store's Z-report/reporting.
     UUID storeId = order.storeId() == null ? null : UUID.fromString(order.storeId());
-    return capture(req, tenantId, orderId, storeId, idempotencyKey, ctx);
+    return capture(req, tenantId, orderId, storeId, idempotencyKey);
   }
 
   private PaymentTender capture(
-      RecordTenderRequest req,
-      UUID tenantId,
-      UUID orderId,
-      UUID storeId,
-      String idempotencyKey,
-      TenantContext ctx) {
+      RecordTenderRequest req, UUID tenantId, UUID orderId, UUID storeId, String idempotencyKey) {
     String method = req.method().toUpperCase(Locale.ROOT);
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(

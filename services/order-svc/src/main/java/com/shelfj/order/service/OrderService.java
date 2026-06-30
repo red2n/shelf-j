@@ -106,13 +106,29 @@ public class OrderService {
     List<OrderItem> items = new ArrayList<>();
     UUID orderId = UUID.randomUUID();
 
-    for (var ir : req.items()) {
-      UUID variantId = Parsing.uuid(ir.variantId(), "variantId");
-      // Gap #63: when enforcement is on, the price comes from pricing-svc — the client-supplied
-      // unitPrice is ignored. When off (local dev / unseeded rigs), the client price is trusted.
+    List<UUID> variantIds =
+        req.items().stream().map(ir -> Parsing.uuid(ir.variantId(), "variantId")).toList();
+    // Gap #63: when enforcement is on, the price comes from pricing-svc — the client-supplied
+    // unitPrice is ignored. When off (local dev / unseeded rigs), the client price is trusted.
+    // One batched call resolves every line instead of one cross-service HTTP call per line.
+    List<com.shelfj.order.client.PricingClient.ResolvedLine> resolvedLines = null;
+    if (enforcePricing) {
+      var lineRequests =
+          new ArrayList<com.shelfj.order.client.PricingClient.LineRequest>(variantIds.size());
+      for (int i = 0; i < variantIds.size(); i++) {
+        lineRequests.add(
+            new com.shelfj.order.client.PricingClient.LineRequest(
+                variantIds.get(i), req.items().get(i).qty()));
+      }
+      resolvedLines = pricing.resolveLines(tenantId, lineRequests, storeId, req.channel());
+    }
+
+    for (int i = 0; i < req.items().size(); i++) {
+      var ir = req.items().get(i);
+      UUID variantId = variantIds.get(i);
       BigDecimal unitPrice;
       if (enforcePricing) {
-        var resolved = pricing.resolveLine(tenantId, variantId, storeId, req.channel(), ir.qty());
+        var resolved = resolvedLines.get(i);
         unitPrice = resolved.unitPrice();
         serverTax = serverTax.add(resolved.vatAmount().multiply(ir.qty()));
       } else {
@@ -651,11 +667,36 @@ public class OrderService {
     return repo.createSpecialOrder(so, items);
   }
 
-  public List<SpecialOrder> listSpecialOrders(
-      UUID tenantId, String storeIdStr, String customerIdStr) {
+  /** One page of special orders plus the opaque cursor for the next page (null when exhausted). */
+  public record SpecialOrderPage(List<SpecialOrder> orders, String nextCursor) {}
+
+  public SpecialOrderPage listSpecialOrders(
+      UUID tenantId, String storeIdStr, String customerIdStr, String afterCursor, int limit) {
     UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "storeId") : null;
     UUID customerId = customerIdStr != null ? Parsing.uuid(customerIdStr, "customerId") : null;
-    return repo.listSpecialOrders(tenantId, storeId, customerId);
+    Instant afterCreatedAt = null;
+    UUID afterId = null;
+    String rawKey = com.shelfj.web.Cursor.decode(afterCursor);
+    if (rawKey != null) {
+      int sep = rawKey.indexOf('|');
+      try {
+        if (sep < 0) throw new IllegalArgumentException("missing separator");
+        afterCreatedAt = Instant.parse(rawKey.substring(0, sep));
+        afterId = UUID.fromString(rawKey.substring(sep + 1));
+      } catch (RuntimeException e) {
+        throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
+      }
+    }
+    // Fetch one extra row to learn whether a further page exists without a second query.
+    List<SpecialOrder> rows =
+        repo.listSpecialOrders(tenantId, storeId, customerId, afterCreatedAt, afterId, limit + 1);
+    if (rows.size() <= limit) {
+      return new SpecialOrderPage(rows, null);
+    }
+    List<SpecialOrder> page = rows.subList(0, limit);
+    SpecialOrder last = page.get(page.size() - 1);
+    return new SpecialOrderPage(
+        page, com.shelfj.web.Cursor.encode(last.createdAt().toString() + "|" + last.id()));
   }
 
   public SpecialOrder getSpecialOrder(UUID tenantId, UUID id) {
@@ -725,9 +766,34 @@ public class OrderService {
     return repo.insertPosLogEntry(entry);
   }
 
-  public List<PosLogEntry> listPosLog(UUID tenantId, String storeIdStr) {
+  /** One page of POSLog entries plus the opaque cursor for the next page (null when exhausted). */
+  public record PosLogPage(List<PosLogEntry> entries, String nextCursor) {}
+
+  public PosLogPage listPosLog(UUID tenantId, String storeIdStr, String afterCursor, int limit) {
     UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "storeId") : null;
-    return repo.listPosLog(tenantId, storeId);
+    Instant afterTransactionTs = null;
+    UUID afterId = null;
+    String rawKey = com.shelfj.web.Cursor.decode(afterCursor);
+    if (rawKey != null) {
+      int sep = rawKey.indexOf('|');
+      try {
+        if (sep < 0) throw new IllegalArgumentException("missing separator");
+        afterTransactionTs = Instant.parse(rawKey.substring(0, sep));
+        afterId = UUID.fromString(rawKey.substring(sep + 1));
+      } catch (RuntimeException e) {
+        throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
+      }
+    }
+    // Fetch one extra row to learn whether a further page exists without a second query.
+    List<PosLogEntry> rows =
+        repo.listPosLog(tenantId, storeId, afterTransactionTs, afterId, limit + 1);
+    if (rows.size() <= limit) {
+      return new PosLogPage(rows, null);
+    }
+    List<PosLogEntry> page = rows.subList(0, limit);
+    PosLogEntry last = page.get(page.size() - 1);
+    return new PosLogPage(
+        page, com.shelfj.web.Cursor.encode(last.transactionTs().toString() + "|" + last.id()));
   }
 
   public List<PosLogEntry> getPosLogByOrder(UUID tenantId, UUID orderId) {

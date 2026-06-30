@@ -41,6 +41,7 @@ public class ProxyResource {
   @Inject ServiceRegistry registry;
   @Inject WebClient webClient;
   @Inject GatewayConfig config;
+  @Inject UpstreamCircuitBreaker breaker;
 
   @GET
   @Path("/{service}/{path: .*}")
@@ -53,6 +54,7 @@ public class ProxyResource {
     Route route = Route.of(rawService, rawPath);
     String service = route.service();
     String path = route.path();
+    if (breaker.isOpen(service)) return circuitOpenResponse(service);
     return resolve(service)
         .map(
             instance -> {
@@ -82,6 +84,7 @@ public class ProxyResource {
     Route route = Route.of(rawService, rawPath);
     String service = route.service();
     String path = route.path();
+    if (breaker.isOpen(service)) return circuitOpenResponse(service);
     return resolve(service)
         .map(
             instance -> {
@@ -111,6 +114,7 @@ public class ProxyResource {
     Route route = Route.of(rawService, rawPath);
     String service = route.service();
     String path = route.path();
+    if (breaker.isOpen(service)) return circuitOpenResponse(service);
     return resolve(service)
         .map(
             instance -> {
@@ -140,6 +144,7 @@ public class ProxyResource {
     Route route = Route.of(rawService, rawPath);
     String service = route.service();
     String path = route.path();
+    if (breaker.isOpen(service)) return circuitOpenResponse(service);
     return resolve(service)
         .map(
             instance -> {
@@ -167,6 +172,7 @@ public class ProxyResource {
     Route route = Route.of(rawService, rawPath);
     String service = route.service();
     String path = route.path();
+    if (breaker.isOpen(service)) return circuitOpenResponse(service);
     return resolve(service)
         .map(
             instance -> {
@@ -247,12 +253,19 @@ public class ProxyResource {
    * connect/read failures (including the WebClient timeouts configured in {@link GatewayBeans})
    * surface as 504/502 envelopes instead of leaking as container 500s.
    */
+  // upstream IS closed below via `try (upstream) { ... }` — PMD's CloseResource analysis doesn't
+  // track a resource assigned in one try/catch and closed via try-with-resources on the
+  // already-initialized variable in a later block, hence the false positive here.
+  @SuppressWarnings("PMD.CloseResource")
   private Response relay(
       java.util.function.Supplier<HttpClientResponse> call, String service, String requestId) {
     HttpClientResponse upstream;
     try {
       upstream = call.get();
     } catch (RuntimeException e) {
+      // Only a connectivity/timeout failure (the service didn't answer at all) counts against its
+      // circuit — see UpstreamCircuitBreaker's class doc.
+      breaker.recordFailure(service);
       boolean timeout = hasCause(e, java.net.SocketTimeoutException.class);
       return Response.status(timeout ? 504 : 502)
           .header(HttpHeaders.REQUEST_ID, requestId)
@@ -264,6 +277,7 @@ public class ProxyResource {
                       "'" + service + "' did not answer" + (timeout ? " in time" : ""))))
           .build();
     }
+    breaker.recordSuccess(service);
     try (upstream) {
       int status = upstream.status().code();
       Response.ResponseBuilder rb =
@@ -294,6 +308,21 @@ public class ProxyResource {
                 ErrorBody.of(
                     "UPSTREAM_UNAVAILABLE",
                     "No healthy instance of '" + service + "' in discovery")))
+        .build();
+  }
+
+  /**
+   * Fails fast instead of dispatching to a service whose circuit is open (see {@link
+   * UpstreamCircuitBreaker}) — every other proxied service is unaffected.
+   */
+  private Response circuitOpenResponse(String service) {
+    return Response.status(Response.Status.SERVICE_UNAVAILABLE)
+        .type(MediaType.APPLICATION_JSON)
+        .entity(
+            ApiResponse.error(
+                ErrorBody.of(
+                    "UPSTREAM_CIRCUIT_OPEN",
+                    "'" + service + "' has failed repeatedly and is temporarily bypassed")))
         .build();
   }
 

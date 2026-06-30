@@ -89,6 +89,18 @@ class OrderIT {
     return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get();
   }
 
+  private Response listSpecialOrders(String tenant, int limit, String after) {
+    WebTarget t = target.path("/admin/special-orders").queryParam("limit", limit);
+    if (after != null) t = t.queryParam("after", after);
+    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get();
+  }
+
+  private Response listPosLog(String tenant, int limit, String after) {
+    WebTarget t = target.path("/admin/pos-log").queryParam("limit", limit);
+    if (after != null) t = t.queryParam("after", after);
+    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get();
+  }
+
   @Test
   void placeOrderConfirmAndReturn() {
     // place POS order
@@ -312,6 +324,109 @@ class OrderIT {
     Response bad = listOrders(tenant, 2, "!!not-base64!!");
     assertThat(bad.getStatus(), is(400));
     assertThat(bad.readEntity(String.class), containsString("INVALID_CURSOR"));
+  }
+
+  @Test
+  void listSpecialOrdersPaginatesWithCursor() {
+    // Dedicated tenant so special orders created by other tests never leak into these pages.
+    String tenant = "55555555-5555-5555-5555-555555555555";
+    var allNames = new java.util.HashSet<String>();
+    for (int i = 0; i < 3; i++) {
+      String name = "Cust" + i;
+      Response r =
+          post(
+              "/admin/special-orders",
+              "{\"storeId\":\""
+                  + S
+                  + "\",\"customerName\":\""
+                  + name
+                  + "\",\"items\":[{\"variantId\":\""
+                  + V
+                  + "\",\"qty\":1,\"unitPrice\":1.00}]}",
+              tenant);
+      assertThat(r.getStatus(), is(201));
+      allNames.add(name);
+    }
+
+    // Each special order's own "id" plus its single item's "id" both match a naive "id":"..."
+    // scan, so page membership is checked via the per-order customerName instead (unique, and
+    // absent from the nested item objects).
+    Response p1 = listSpecialOrders(tenant, 2, null);
+    assertThat(p1.getStatus(), is(200));
+    String body1 = p1.readEntity(String.class);
+    java.util.Set<String> page1 = extractAllCustomerNames(body1);
+    assertThat(page1.size(), is(2));
+    String cursor = extractNextCursor(body1);
+    assertThat(cursor, org.hamcrest.Matchers.notNullValue());
+
+    Response p2 = listSpecialOrders(tenant, 2, cursor);
+    assertThat(p2.getStatus(), is(200));
+    String body2 = p2.readEntity(String.class);
+    java.util.Set<String> page2 = extractAllCustomerNames(body2);
+    assertThat(page2.size(), is(1));
+    assertThat(extractNextCursor(body2), org.hamcrest.Matchers.nullValue());
+
+    java.util.Set<String> seen = new java.util.HashSet<>(page1);
+    seen.addAll(page2);
+    assertThat(seen, is(allNames));
+  }
+
+  private static java.util.Set<String> extractAllCustomerNames(String json) {
+    var names = new java.util.HashSet<String>();
+    int from = 0;
+    while (true) {
+      int start = json.indexOf("\"customerName\":\"", from);
+      if (start < 0) break;
+      start += "\"customerName\":\"".length();
+      int end = json.indexOf('"', start);
+      names.add(json.substring(start, end));
+      from = end;
+    }
+    return names;
+  }
+
+  @Test
+  void listPosLogPaginatesWithCursor() {
+    // Dedicated tenant so POSLog entries created by other tests never leak into these pages.
+    String tenant = "66666666-6666-6666-6666-666666666666";
+    var allIds = new java.util.HashSet<String>();
+    for (int i = 0; i < 3; i++) {
+      Response placed =
+          post(
+              "/orders",
+              "{\"storeId\":\""
+                  + S
+                  + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                  + "\"items\":[{\"variantId\":\""
+                  + V
+                  + "\",\"qty\":1,\"unitPrice\":1.00}],\"currency\":\"USD\"}",
+              tenant,
+              "it-poslog-" + i);
+      assertThat(placed.getStatus(), is(201));
+      String orderId = extractId(placed.readEntity(String.class));
+      Response logged = post("/admin/pos-log/orders/" + orderId, "", tenant);
+      assertThat(logged.getStatus(), is(201));
+      allIds.add(extractId(logged.readEntity(String.class)));
+    }
+
+    Response p1 = listPosLog(tenant, 2, null);
+    assertThat(p1.getStatus(), is(200));
+    String body1 = p1.readEntity(String.class);
+    java.util.Set<String> page1 = extractAllIds(body1);
+    assertThat(page1.size(), is(2));
+    String cursor = extractNextCursor(body1);
+    assertThat(cursor, org.hamcrest.Matchers.notNullValue());
+
+    Response p2 = listPosLog(tenant, 2, cursor);
+    assertThat(p2.getStatus(), is(200));
+    String body2 = p2.readEntity(String.class);
+    java.util.Set<String> page2 = extractAllIds(body2);
+    assertThat(page2.size(), is(1));
+    assertThat(extractNextCursor(body2), org.hamcrest.Matchers.nullValue());
+
+    java.util.Set<String> seen = new java.util.HashSet<>(page1);
+    seen.addAll(page2);
+    assertThat(seen, is(allIds));
   }
 
   @Test

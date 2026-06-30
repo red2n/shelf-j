@@ -633,8 +633,14 @@ class ServerOrderSummary {
 
 /// The signed-in customer's real order history. Returns null when not signed in
 /// (the UI then shows the device-local list / a sign-in prompt).
-final serverOrdersProvider =
-    FutureProvider.autoDispose<List<ServerOrderSummary>?>((ref) async {
+///
+/// Deliberately not `autoDispose`: checkout's pending-order guard does a `ref.read(...future)`
+/// on every checkout attempt purely to look for one pending order, and with `autoDispose` nothing
+/// else is necessarily watching this in between checkouts, so every attempt forced a fresh
+/// network fetch of the customer's whole order history. Staying alive lets that reuse the
+/// already-fetched list; `ref.watch(storefrontAuthProvider)` below still recomputes it on
+/// sign-in/sign-out, and call sites already `ref.invalidate` it after placing or refreshing.
+final serverOrdersProvider = FutureProvider<List<ServerOrderSummary>?>((ref) async {
   final auth = ref.watch(storefrontAuthProvider);
   if (!auth.isSignedIn) return null;
   final dio = ref.watch(storefrontDioProvider);

@@ -1206,20 +1206,28 @@ public class InventoryService {
     } else {
       targets = repo.listSafetyStockParamsAll(tenantId, storeId);
     }
-    int updated = 0;
+    if (targets.isEmpty()) return 0;
+
+    // One batched read for every target's demand history, instead of one query per row.
+    var bucketsByStoreThenVariant = repo.demandBucketsBatch(tenantId, targets, 30);
     Instant now = Instant.now();
+    var qtyByStoreThenVariant = new java.util.HashMap<UUID, java.util.Map<UUID, BigDecimal>>();
     for (SafetyStockParams p : targets) {
-      BigDecimal qty = computeForOne(p);
-      repo.updateSafetyStockQty(p.tenantId(), p.storeId(), p.variantId(), qty, now);
-      updated++;
+      List<DemandBucket> buckets =
+          bucketsByStoreThenVariant
+              .getOrDefault(p.storeId(), java.util.Map.of())
+              .getOrDefault(p.variantId(), List.of());
+      BigDecimal qty = computeForOne(p, buckets);
+      qtyByStoreThenVariant
+          .computeIfAbsent(p.storeId(), k -> new java.util.HashMap<>())
+          .put(p.variantId(), qty);
     }
-    return updated;
+    // One batched write for every target, instead of one connection checkout per row.
+    return repo.updateSafetyStockQtyBatch(tenantId, qtyByStoreThenVariant, now);
   }
 
-  private BigDecimal computeForOne(SafetyStockParams p) {
-    // Fetch last 30 daily buckets (enough for meaningful MAD)
-    List<DemandBucket> buckets =
-        repo.demandBucketsForCompute(p.tenantId(), p.storeId(), p.variantId(), 30);
+  /** {@code buckets} is the last 30 daily buckets (enough for meaningful MAD), oldest-first. */
+  private BigDecimal computeForOne(SafetyStockParams p, List<DemandBucket> buckets) {
     if (buckets.isEmpty()) return BigDecimal.ZERO;
 
     int n = buckets.size();
@@ -1803,8 +1811,8 @@ public class InventoryService {
             () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
   }
 
-  public List<PickingRule> listPickingRules(UUID tenantId) {
-    return repo.listPickingRules(tenantId);
+  public List<PickingRule> listPickingRules(UUID tenantId, int limit) {
+    return repo.listPickingRules(tenantId, limit);
   }
 
   public PickingRule deactivatePickingRule(UUID tenantId, UUID id) {
@@ -1857,8 +1865,8 @@ public class InventoryService {
     return repo.createPickingRuleAssignment(tenantId, ruleId, scopeType, scopeId);
   }
 
-  public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId) {
-    return repo.listPickingRuleAssignments(tenantId);
+  public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId, int limit) {
+    return repo.listPickingRuleAssignments(tenantId, limit);
   }
 
   public void deletePickingRuleAssignment(UUID tenantId, UUID id) {

@@ -6,6 +6,7 @@ import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import 'providers/products_pagination.dart';
 
 class ProductsScreen extends ConsumerStatefulWidget {
   const ProductsScreen({super.key});
@@ -20,7 +21,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final productsAsync = ref.watch(productsProvider);
+    final page = ref.watch(productsPaginationProvider(_categoryFilter));
     final catsAsync = ref.watch(categoriesProvider);
     final cs = Theme.of(context).colorScheme;
 
@@ -42,14 +43,14 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                     child: Text('Products',
                         style: Theme.of(context).textTheme.headlineMedium),
                   ),
-                  productsAsync.when(
-                    loading: () => const SizedBox.shrink(),
-                    error: (_, __) => const SizedBox.shrink(),
-                    data: (list) => Chip(
-                      label: Text('${list.length} products'),
+                  if (!page.isLoadingInitial && page.error == null)
+                    Chip(
+                      // "+" signals more exist beyond what's loaded so far — page.products.length
+                      // alone isn't the tenant's true total once results span more than one page.
+                      label: Text(
+                          '${page.products.length}${page.hasMore ? '+' : ''} products'),
                       backgroundColor: cs.secondaryContainer,
                     ),
-                  ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -66,7 +67,9 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                   ),
                   OutlinedButton.icon(
                     onPressed: () {
-                      ref.invalidate(productsProvider);
+                      ref
+                          .read(productsPaginationProvider(_categoryFilter).notifier)
+                          .refresh();
                       ref.invalidate(categoriesProvider);
                     },
                     icon: const Icon(Icons.refresh),
@@ -112,81 +115,107 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
 
         // List
         Expanded(
-          child: productsAsync.when(
-            loading: () => const LoadingView(label: 'Loading products…'),
-            error: (e, _) => ErrorView(
-              message: 'Could not load products.',
-              onRetry: () => ref.invalidate(productsProvider),
-            ),
-            data: (products) {
-              var filtered = products.where((p) {
-                if (_search.isNotEmpty &&
-                    !p.name.toLowerCase().contains(_search.toLowerCase())) {
-                  return false;
-                }
-                if (_categoryFilter != null &&
-                    p.categoryId != _categoryFilter) {
-                  return false;
-                }
-                return true;
-              }).toList();
+          child: Builder(builder: (context) {
+            if (page.isLoadingInitial) {
+              return const LoadingView(label: 'Loading products…');
+            }
+            if (page.error != null && page.products.isEmpty) {
+              return ErrorView(
+                message: 'Could not load products.',
+                onRetry: () => ref
+                    .read(productsPaginationProvider(_categoryFilter).notifier)
+                    .refresh(),
+              );
+            }
+            // The category filter is applied server-side (it's the pagination family key);
+            // free-text search stays a client-side filter over whatever's loaded so far.
+            final filtered = _search.isEmpty
+                ? page.products
+                : page.products
+                    .where((p) =>
+                        p.name.toLowerCase().contains(_search.toLowerCase()))
+                    .toList();
 
-              if (filtered.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.inventory_2_outlined,
-                          size: 64, color: cs.outlineVariant),
-                      const SizedBox(height: 16),
-                      Text(
-                        products.isEmpty
-                            ? 'No products yet'
-                            : 'No products match the filter',
-                        style: Theme.of(context).textTheme.titleMedium,
+            if (filtered.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.inventory_2_outlined,
+                        size: 64, color: cs.outlineVariant),
+                    const SizedBox(height: 16),
+                    Text(
+                      page.products.isEmpty
+                          ? 'No products yet'
+                          : 'No products match the filter',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    if (page.products.isEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () =>
+                            _showCreateDialog(context, ref, cats),
+                        icon: const Icon(Icons.add),
+                        label: const Text('New Product'),
+                      )
+                    else
+                      TextButton(
+                        onPressed: () => setState(() {
+                          _search = '';
+                          _categoryFilter = null;
+                        }),
+                        child: const Text('Clear filter'),
                       ),
-                      const SizedBox(height: 8),
-                      if (products.isEmpty)
-                        OutlinedButton.icon(
-                          onPressed: () =>
-                              _showCreateDialog(context, ref, cats),
-                          icon: const Icon(Icons.add),
-                          label: const Text('New Product'),
-                        )
-                      else
-                        TextButton(
-                          onPressed: () => setState(
-                              () => _categoryFilter = null),
-                          child: const Text('Clear filter'),
-                        ),
-                    ],
-                  ),
-                );
-              }
+                  ],
+                ),
+              );
+            }
 
-              return LayoutBuilder(builder: (context, bc) {
-                final wide = bc.maxWidth >= 700;
-                if (wide) {
-                  return _WideTable(
-                    products: filtered,
-                    catById: catById,
-                    onViewVariants: (p) =>
-                        _showVariantsDialog(context, ref, p),
-                    onAssortment: (p) => _showAssortmentDialog(context, ref, p),
-                    onDelist: (p) => _delist(context, ref, p),
-                  );
-                }
-                return _NarrowList(
-                  products: filtered,
-                  catById: catById,
-                  onViewVariants: (p) =>
-                      _showVariantsDialog(context, ref, p),
-                  onAssortment: (p) => _showAssortmentDialog(context, ref, p),
-                  onDelist: (p) => _delist(context, ref, p),
-                );
-              });
-            },
-          ),
+            return Column(
+              children: [
+                Expanded(
+                  child: LayoutBuilder(builder: (context, bc) {
+                    final wide = bc.maxWidth >= 700;
+                    if (wide) {
+                      return _WideTable(
+                        products: filtered,
+                        catById: catById,
+                        onViewVariants: (p) =>
+                            _showVariantsDialog(context, ref, p),
+                        onAssortment: (p) =>
+                            _showAssortmentDialog(context, ref, p),
+                        onDelist: (p) => _delist(context, ref, p),
+                      );
+                    }
+                    return _NarrowList(
+                      products: filtered,
+                      catById: catById,
+                      onViewVariants: (p) =>
+                          _showVariantsDialog(context, ref, p),
+                      onAssortment: (p) => _showAssortmentDialog(context, ref, p),
+                      onDelist: (p) => _delist(context, ref, p),
+                    );
+                  }),
+                ),
+                if (page.hasMore || page.isLoadingMore)
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: page.isLoadingMore
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : OutlinedButton(
+                            onPressed: () => ref
+                                .read(productsPaginationProvider(_categoryFilter)
+                                    .notifier)
+                                .loadMore(),
+                            child: const Text('Load more'),
+                          ),
+                  ),
+              ],
+            );
+          }),
         ),
       ],
     );
@@ -203,7 +232,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                 '/${ApiConstants.product}/admin/products',
                 data: data,
               );
-          ref.invalidate(productsProvider);
+          ref.read(productsPaginationProvider(_categoryFilter).notifier).refresh();
         },
       ),
     );
@@ -254,7 +283,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           .read(apiClientProvider)
           .dio
           .delete('/${ApiConstants.product}/admin/products/${product.id}');
-      ref.invalidate(productsProvider);
+      ref.read(productsPaginationProvider(_categoryFilter).notifier).refresh();
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
