@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
@@ -281,21 +282,9 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('$email can now sign in with this temporary password '
-                  '(ask them to change it after first login):'),
+                  '(ask them to change it after first login). It will not be shown again:'),
               const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: SelectableText(tempPassword,
-                    style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold)),
-              ),
+              _TempPasswordReveal(password: tempPassword),
             ],
           ),
           actions: [
@@ -444,6 +433,71 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
               : const Text('Assign'),
         ),
       ],
+    );
+  }
+}
+
+/// Shows a one-time temp password masked by default (shoulder-surfing on a shared admin
+/// screen is the threat model here, not just the network/log exposure a one-time secret already
+/// avoids) with an explicit reveal toggle and a copy button so the admin doesn't need to select
+/// the raw text by hand.
+class _TempPasswordReveal extends StatefulWidget {
+  final String password;
+  const _TempPasswordReveal({required this.password});
+
+  @override
+  State<_TempPasswordReveal> createState() => _TempPasswordRevealState();
+}
+
+class _TempPasswordRevealState extends State<_TempPasswordReveal> {
+  bool _revealed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _revealed
+                ? SelectableText(widget.password,
+                    style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold))
+                : Text('•' * widget.password.length,
+                    style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 2)),
+          ),
+          IconButton(
+            tooltip: _revealed ? 'Hide' : 'Reveal',
+            icon: Icon(_revealed ? Icons.visibility_off : Icons.visibility, size: 20),
+            onPressed: () => setState(() => _revealed = !_revealed),
+          ),
+          IconButton(
+            tooltip: 'Copy',
+            icon: const Icon(Icons.copy, size: 20),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: widget.password));
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content: Text('Password copied. Clear your clipboard once it\'s shared.'),
+                    duration: Duration(seconds: 3)),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 }

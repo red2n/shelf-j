@@ -124,7 +124,8 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // own cart with no staff role. Object-level authorization (only the owning
         // customer/session,
         // or staff acting on a customer's behalf) is enforced inside CartService, not here.
-        || path.startsWith("/cart")
+        || "/cart".equals(path)
+        || path.startsWith("/cart/")
         // Guest storefront online payment (cashless). The staff cash-tender path is POST /payments,
         // which stays role-gated; this is the customer-facing online capture only.
         || "/payments/online".equals(path);

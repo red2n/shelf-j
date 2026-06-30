@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../core/constants.dart';
@@ -886,7 +885,6 @@ class CustomerPreferencesNotifier
       value: jsonEncode(updated.map((e) => e.toJson()).toList()),
     );
     state = state.copyWith(feedback: updated);
-    debugPrint('[Feedback] ${jsonEncode(entry.toJson())}');
   }
 
   Future<bool> wasSurveyShownToday() async {

@@ -90,6 +90,23 @@ class AuthIT {
   }
 
   @Test
+  void disabledUserCannotLogIn() throws Exception {
+    post("/auth/register", "{\"email\":\"disabled@example.com\",\"password\":\"correctpass1\"}");
+    try (var c = iamConnection();
+        var ps = c.prepareStatement("UPDATE users SET status='DISABLED' WHERE lower(email)=?")) {
+      ps.setString(1, "disabled@example.com");
+      assertThat(ps.executeUpdate(), is(1));
+    }
+    // Right password, but the account is disabled — must still be rejected, not silently logged
+    // in (and not via a different/faster code path that would leak the account's status by
+    // timing — see AuthService.login()'s burn() call on the non-ACTIVE branch).
+    Response login =
+        post("/auth/login", "{\"email\":\"disabled@example.com\",\"password\":\"correctpass1\"}");
+    assertThat(login.getStatus(), is(401));
+    assertThat(login.readEntity(String.class), containsString("INVALID_CREDENTIALS"));
+  }
+
+  @Test
   void invalidInputIs400WithCleanEnvelope() {
     Response bad = post("/auth/register", "{\"email\":\"notanemail\",\"password\":\"short\"}");
     assertThat(bad.getStatus(), is(400));
@@ -223,6 +240,54 @@ class AuthIT {
     Response ok =
         post("/auth/login", "{\"email\":\"susp@example.com\",\"password\":\"strongpass1\"}");
     assertThat(ok.getStatus(), is(200));
+  }
+
+  @Test
+  void provisionStaffRejectsBlankAndShortPassword() {
+    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    Response blank =
+        target
+            .path("/auth/admin/staff-users")
+            .request()
+            .header("X-Tenant-Id", tenantId.toString())
+            .header("X-Roles", "OWNER")
+            .post(
+                Entity.entity(
+                    "{\"email\":\"staff-blankpw@example.com\",\"password\":\"\"}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(blank.getStatus(), is(400));
+    assertThat(blank.readEntity(String.class), containsString("VALIDATION_FAILED"));
+
+    Response tooShort =
+        target
+            .path("/auth/admin/staff-users")
+            .request()
+            .header("X-Tenant-Id", tenantId.toString())
+            .header("X-Roles", "OWNER")
+            .post(
+                Entity.entity(
+                    "{\"email\":\"staff-shortpw@example.com\",\"password\":\"short1\"}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(tooShort.getStatus(), is(400));
+    assertThat(tooShort.readEntity(String.class), containsString("VALIDATION_FAILED"));
+  }
+
+  @Test
+  void provisionStaffRequiresManagementRole() {
+    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    // Asserted directly in AuthResource.provisionStaff as a backstop independent of the shared
+    // filter's "/admin/" path-prefix rule — see its javadoc.
+    Response asCashier =
+        target
+            .path("/auth/admin/staff-users")
+            .request()
+            .header("X-Tenant-Id", tenantId.toString())
+            .header("X-Roles", "CASHIER")
+            .post(
+                Entity.entity(
+                    "{\"email\":\"staff-forbidden@example.com\",\"password\":\"strongpass1\"}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(asCashier.getStatus(), is(403));
   }
 
   @Test

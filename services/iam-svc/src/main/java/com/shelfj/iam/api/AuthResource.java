@@ -37,14 +37,18 @@ public class AuthResource {
   @Inject TenantContext ctx;
 
   /**
-   * Admin endpoint (requires a management role — enforced by AdminAuthorizationFilter on the {@code
-   * /admin/} path). Find-or-create a staff account by email and return the userId the caller
+   * Admin endpoint. Find-or-create a staff account by email and return the userId the caller
    * assigns a store role to via tenant-svc. Tenant comes from the JWT, never the body.
+   *
+   * <p>Also gated by AdminAuthorizationFilter on the {@code /admin/} path prefix, but asserted here
+   * too rather than relying on that alone — a future rename/move of this path off {@code /admin/}
+   * must not silently drop the management-role requirement.
    */
   @POST
   @Path("/admin/staff-users")
   public ApiResponse<ProvisionStaffResponse> provisionStaff(ProvisionStaffRequest req) {
     Validations.validate(req);
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
     return ApiResponse.ok(auth.provisionStaff(ctx.requireTenantId(), req.email(), req.password()));
   }
 

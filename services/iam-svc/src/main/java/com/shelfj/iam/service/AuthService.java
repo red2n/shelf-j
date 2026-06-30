@@ -137,8 +137,14 @@ public class AuthService {
   public TokenResponse login(String email, String password) {
     var candidates = users.findAllByEmail(email);
     for (User user : candidates) {
-      if (User.STATUS_ACTIVE.equals(user.status())
-          && passwords.verify(user.passwordHash(), password)) {
+      if (!User.STATUS_ACTIVE.equals(user.status())) {
+        // Burn the same Argon2 cost a real verify would pay, so a non-ACTIVE (e.g. SUSPENDED)
+        // account doesn't answer faster than an ACTIVE one with a wrong password — same
+        // timing-oracle concern as the unknown-email case below.
+        passwords.burn(password);
+        continue;
+      }
+      if (passwords.verify(user.passwordHash(), password)) {
         if (users.rolesOf(user.id()).contains("PLATFORM_ADMIN")) {
           users.audit(user.tenantId(), user.id(), "LOGIN_FAILED", email);
           throw ApiException.unauthorized("INVALID_CREDENTIALS", "Invalid email or password");
@@ -174,8 +180,12 @@ public class AuthService {
   public TokenResponse platformLogin(String email, String password) {
     var candidates = users.findAllByEmail(email);
     for (User user : candidates) {
-      if (User.STATUS_ACTIVE.equals(user.status())
-          && passwords.verify(user.passwordHash(), password)
+      if (!User.STATUS_ACTIVE.equals(user.status())) {
+        // See login()'s identical timing-equalization comment.
+        passwords.burn(password);
+        continue;
+      }
+      if (passwords.verify(user.passwordHash(), password)
           && users.rolesOf(user.id()).contains("PLATFORM_ADMIN")) {
         users.audit(null, user.id(), "PLATFORM_LOGIN_OK", email);
         return issueTokens(user);

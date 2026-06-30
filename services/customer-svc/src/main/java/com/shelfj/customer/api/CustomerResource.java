@@ -95,9 +95,17 @@ public class CustomerResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * GDPR erasure — destructive and hard-to-reverse, unlike the loyalty/store-credit redemption
+   * endpoints below which deliberately stay open to any staff role for normal POS checkout use.
+   * Restricted to management roles; the shared filter's generic "any staff role" rule would
+   * otherwise let a CASHIER erase a customer's PII (this path isn't under {@code /admin/}, so it
+   * doesn't get that filter's stricter rule for free).
+   */
   @DELETE
   @Path("/{id}")
   public Response anonymize(@PathParam("id") UUID id) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
     UUID tenantId = ctx.requireTenantId();
     service.anonymize(tenantId, id);
     return Response.noContent().build();
