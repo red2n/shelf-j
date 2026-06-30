@@ -194,11 +194,14 @@ public final class KafkaEventLoop implements AutoCloseable {
     consumer.wakeup();
     scheduler.shutdownNow();
     try {
-      if (scheduler.awaitTermination(3, TimeUnit.SECONDS)) {
-        consumer.close(Duration.ofSeconds(2));
-      }
+      scheduler.awaitTermination(3, TimeUnit.SECONDS);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+    } finally {
+      // Always close the consumer (releasing its sockets and leaving the consumer group) even if
+      // the poll thread didn't terminate within the await window — otherwise a slow/blocked
+      // poll() leaks the consumer for the life of the JVM.
+      consumer.close(Duration.ofSeconds(2));
     }
     if (dlqProducer != null) {
       dlqProducer.close(Duration.ofSeconds(2));

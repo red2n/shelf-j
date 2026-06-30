@@ -1052,6 +1052,7 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
         ),
       ),
     );
+    ctrl.dispose();
   }
 
   Future<void> _saveVariant() async {

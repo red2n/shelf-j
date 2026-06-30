@@ -63,8 +63,12 @@ class OrdersPaginationNotifier extends StateNotifier<OrdersPage> {
     state = const OrdersPage(isLoadingInitial: true);
     try {
       final (orders, next) = await _fetch(null);
+      // The provider is `autoDispose`; navigating away from the orders screen mid-fetch disposes
+      // this notifier, and writing to `state` afterwards throws.
+      if (!mounted) return;
       state = OrdersPage(orders: orders, nextCursor: next, isLoadingInitial: false);
     } catch (e) {
+      if (!mounted) return;
       state = OrdersPage(isLoadingInitial: false, error: e);
     }
   }
@@ -76,6 +80,7 @@ class OrdersPaginationNotifier extends StateNotifier<OrdersPage> {
     state = state.copyWith(isLoadingMore: true);
     try {
       final (more, next) = await _fetch(state.nextCursor);
+      if (!mounted) return;
       state = OrdersPage(
         orders: [...state.orders, ...more],
         nextCursor: next,
@@ -83,6 +88,7 @@ class OrdersPaginationNotifier extends StateNotifier<OrdersPage> {
         isLoadingMore: false,
       );
     } catch (e) {
+      if (!mounted) return;
       state = state.copyWith(isLoadingMore: false, error: e);
     }
   }

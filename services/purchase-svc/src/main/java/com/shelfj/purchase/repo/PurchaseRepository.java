@@ -228,19 +228,32 @@ public class PurchaseRepository extends BaseOutboxRepository {
 
   // ── Goods Receipts ────────────────────────────────────────────────────────────
 
+  /**
+   * Record a goods receipt and atomically transition the PO SUBMITTED -&gt; RECEIVED. If the same
+   * Idempotency-Key was already stored for this tenant, the original receipt is returned unchanged
+   * (replay). If the PO is no longer SUBMITTED (e.g. a concurrent/duplicate receive already ran),
+   * the whole transaction is rolled back instead of double-counting received stock.
+   */
   public GoodsReceipt createGoodsReceipt(
       GoodsReceipt gr, List<GoodsReceiptLine> lines, OutboxRow event) {
     return inTx(
         c -> {
+          if (gr.idempotencyKey() != null) {
+            GoodsReceipt existing = findGoodsReceiptByKeyTx(c, gr.tenantId(), gr.idempotencyKey());
+            if (existing != null) {
+              return existing;
+            }
+          }
           try (var ps =
               c.prepareStatement(
-                  "INSERT INTO goods_receipts (id,tenant_id,po_id,store_id,received_at)"
-                      + " VALUES (?,?,?,?,?)")) {
+                  "INSERT INTO goods_receipts (id,tenant_id,po_id,store_id,received_at,"
+                      + " idempotency_key) VALUES (?,?,?,?,?,?)")) {
             ps.setObject(1, gr.id());
             ps.setObject(2, gr.tenantId());
             ps.setObject(3, gr.poId());
             ps.setObject(4, gr.storeId());
             ps.setObject(5, toOdt(gr.receivedAt()));
+            ps.setString(6, gr.idempotencyKey());
             ps.executeUpdate();
           }
           for (GoodsReceiptLine l : lines) {
@@ -256,14 +269,20 @@ public class PurchaseRepository extends BaseOutboxRepository {
               ps.executeUpdate();
             }
           }
-          // Update PO status to RECEIVED
+          // Update PO status to RECEIVED — only if it's still SUBMITTED, so a duplicate/concurrent
+          // receive for the same PO is rejected atomically instead of double-counting stock.
+          int rows;
           try (var ps =
               c.prepareStatement(
                   "UPDATE purchase_orders SET status='RECEIVED', updated_at=now()"
-                      + " WHERE tenant_id=? AND id=?")) {
+                      + " WHERE tenant_id=? AND id=? AND status='SUBMITTED'")) {
             ps.setObject(1, gr.tenantId());
             ps.setObject(2, gr.poId());
-            ps.executeUpdate();
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) {
+            throw ApiException.conflict(
+                "PURCHASE_PO_NOT_SUBMITTED", "Only SUBMITTED orders can be received");
           }
           insertOutbox(c, event);
           return gr;
@@ -271,22 +290,40 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "create goods receipt");
   }
 
+  private GoodsReceipt findGoodsReceiptByKeyTx(
+      java.sql.Connection c, UUID tenantId, String idempotencyKey) throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "SELECT id,tenant_id,po_id,store_id,received_at,created_at,idempotency_key"
+                + " FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?")) {
+      ps.setObject(1, tenantId);
+      ps.setString(2, idempotencyKey);
+      try (var rs = ps.executeQuery()) {
+        return rs.next() ? mapGoodsReceipt(rs) : null;
+      }
+    }
+  }
+
+  private static GoodsReceipt mapGoodsReceipt(ResultSet rs) throws SQLException {
+    return new GoodsReceipt(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("po_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("received_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getString("idempotency_key"));
+  }
+
   public List<GoodsReceipt> findGoodsReceiptsByPo(UUID tenantId, UUID poId) {
     return query(
-        "SELECT id,tenant_id,po_id,store_id,received_at,created_at"
+        "SELECT id,tenant_id,po_id,store_id,received_at,created_at,idempotency_key"
             + " FROM goods_receipts WHERE tenant_id=? AND po_id=? ORDER BY received_at",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setObject(2, poId);
         },
-        rs ->
-            new GoodsReceipt(
-                rs.getObject("id", UUID.class),
-                rs.getObject("tenant_id", UUID.class),
-                rs.getObject("po_id", UUID.class),
-                rs.getObject("store_id", UUID.class),
-                rs.getObject("received_at", OffsetDateTime.class).toInstant(),
-                rs.getObject("created_at", OffsetDateTime.class).toInstant()),
+        PurchaseRepository::mapGoodsReceipt,
         "find grns by po");
   }
 

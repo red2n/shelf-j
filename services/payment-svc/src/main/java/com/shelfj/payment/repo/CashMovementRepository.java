@@ -21,6 +21,11 @@ import java.util.UUID;
 @ApplicationScoped
 public class CashMovementRepository extends BaseOutboxRepository {
 
+  /**
+   * Record a pay-in/pay-out. If the same Idempotency-Key was already stored for this tenant, the
+   * original movement is returned unchanged (replay) — a retried request must not double-count cash
+   * in/out of the till.
+   */
   public CashMovementResponse insertMovement(
       UUID tenantId,
       UUID storeId,
@@ -29,27 +34,55 @@ public class CashMovementRepository extends BaseOutboxRepository {
       BigDecimal amount,
       String reason,
       UUID authorisedBy,
-      UUID recordedBy) {
-    UUID id = UUID.randomUUID();
-    Instant now = Instant.now();
-    exec(
-        "INSERT INTO cash_movements (id, tenant_id, store_id, till_session_id, direction,"
-            + " amount, reason, authorised_by, recorded_by, created_at)"
-            + " VALUES (?,?,?,?,?,?,?,?,?,?)",
-        ps -> {
-          ps.setObject(1, id);
-          ps.setObject(2, tenantId);
-          ps.setObject(3, storeId);
-          ps.setObject(4, tillSessionId);
-          ps.setString(5, direction);
-          ps.setBigDecimal(6, amount);
-          ps.setString(7, reason);
-          ps.setObject(8, authorisedBy);
-          ps.setObject(9, recordedBy);
-          ps.setObject(10, now.atOffset(ZoneOffset.UTC));
+      UUID recordedBy,
+      String idempotencyKey) {
+    return inTx(
+        c -> {
+          if (idempotencyKey != null) {
+            CashMovementResponse existing = findMovementByKeyTx(c, tenantId, idempotencyKey);
+            if (existing != null) {
+              return existing;
+            }
+          }
+          UUID id = UUID.randomUUID();
+          Instant now = Instant.now();
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO cash_movements (id, tenant_id, store_id, till_session_id,"
+                      + " direction, amount, reason, authorised_by, recorded_by, created_at,"
+                      + " idempotency_key) VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, id);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, storeId);
+            ps.setObject(4, tillSessionId);
+            ps.setString(5, direction);
+            ps.setBigDecimal(6, amount);
+            ps.setString(7, reason);
+            ps.setObject(8, authorisedBy);
+            ps.setObject(9, recordedBy);
+            ps.setObject(10, now.atOffset(ZoneOffset.UTC));
+            ps.setString(11, idempotencyKey);
+            ps.executeUpdate();
+          }
+          return new CashMovementResponse(
+              id, storeId, tillSessionId, direction, amount, reason, now);
         },
         "insert cash movement");
-    return new CashMovementResponse(id, storeId, tillSessionId, direction, amount, reason, now);
+  }
+
+  private CashMovementResponse findMovementByKeyTx(
+      Connection c, UUID tenantId, String idempotencyKey) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, store_id, till_session_id, direction, amount, reason,"
+                + " authorised_by, recorded_by, created_at"
+                + " FROM cash_movements WHERE tenant_id=? AND idempotency_key=?")) {
+      ps.setObject(1, tenantId);
+      ps.setString(2, idempotencyKey);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? mapMovement(rs) : null;
+      }
+    }
   }
 
   public List<CashMovementResponse> listMovements(UUID tenantId, UUID tillSessionId) {

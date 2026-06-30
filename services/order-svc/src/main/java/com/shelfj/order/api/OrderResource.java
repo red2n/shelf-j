@@ -6,6 +6,7 @@ import com.shelfj.order.dto.Dtos.PlaceOrderRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
 import com.shelfj.order.mapper.Mappers;
 import com.shelfj.order.service.OrderService;
+import com.shelfj.web.ApiException;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.Cursor;
 import com.shelfj.web.Parsing;
@@ -99,6 +100,10 @@ public class OrderResource {
     // The standard Idempotency-Key header is authoritative; the body field is a legacy fallback.
     String effectiveKey =
         idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : req.idempotencyKey();
+    if (effectiveKey == null || effectiveKey.isBlank()) {
+      throw ApiException.badRequest(
+          "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required to place an order");
+    }
     var order = svc.placeOrder(req, ctx, effectiveKey);
     var items = svc.getOrderItems(order.tenantId(), order.id());
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(order, items))).build();

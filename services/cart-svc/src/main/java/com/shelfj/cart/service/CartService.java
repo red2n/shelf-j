@@ -66,7 +66,21 @@ public class CartService {
             Cart.STATUS_ACTIVE,
             Instant.now(),
             Instant.now());
-    return toResponse(repo.insert(cart));
+    try {
+      return toResponse(repo.insert(cart));
+    } catch (ApiException e) {
+      // The find above is not atomic with this insert: a concurrent request for the same
+      // customer/session can win the race and insert first, tripping the partial unique index on
+      // (tenant_id, customer_id|session_id) WHERE status='ACTIVE'. Return that winner's cart
+      // instead of erroring.
+      if (!"DUPLICATE".equals(e.code())) throw e;
+      Cart winner =
+          customerId != null
+              ? repo.findActiveByCustomer(tenantId, customerId).orElse(null)
+              : repo.findActiveBySession(tenantId, sessionId).orElse(null);
+      if (winner == null) throw e;
+      return toResponse(winner);
+    }
   }
 
   public CartViewResponse viewCart(TenantContext ctx, String cartId, String sessionId) {

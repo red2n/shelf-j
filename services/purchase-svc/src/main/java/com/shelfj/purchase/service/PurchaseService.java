@@ -130,7 +130,8 @@ public class PurchaseService {
 
   // ── Goods Receipts ────────────────────────────────────────────────────────────
 
-  public GoodsReceipt receiveGoods(CreateGoodsReceiptRequest req, TenantContext ctx) {
+  public GoodsReceipt receiveGoods(
+      CreateGoodsReceiptRequest req, TenantContext ctx, String idempotencyKey) {
     PurchaseOrder po = getPurchaseOrder(ctx, req.poId());
     if (!Domain.PO_SUBMITTED.equals(po.status()))
       throw ApiException.badRequest(
@@ -145,7 +146,8 @@ public class PurchaseService {
             req.poId(),
             req.storeId(),
             Instant.now(),
-            Instant.now());
+            Instant.now(),
+            idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : null);
     List<GoodsReceiptLine> lines =
         req.lines().stream()
             .map(

@@ -67,7 +67,9 @@ class PaymentServiceTest {
     PaymentService svc = new PaymentService();
     UUID orderId = UUID.randomUUID();
     svc.orderClient =
-        fakeOrderClient(new OrderClient.OrderInfo(null, "POS", new BigDecimal("10.00"), "OPEN"));
+        fakeOrderClient(
+            new OrderClient.OrderInfo(
+                null, "POS", new BigDecimal("10.00"), "OPEN", UUID.randomUUID().toString()));
 
     var ex =
         assertThrows(
@@ -86,7 +88,11 @@ class PaymentServiceTest {
     svc.orderClient =
         fakeOrderClient(
             new OrderClient.OrderInfo(
-                ownerId.toString(), "ONLINE", new BigDecimal("10.00"), "OPEN"));
+                ownerId.toString(),
+                "ONLINE",
+                new BigDecimal("10.00"),
+                "OPEN",
+                UUID.randomUUID().toString()));
 
     var ex =
         assertThrows(
@@ -104,7 +110,9 @@ class PaymentServiceTest {
     PaymentService svc = new PaymentService();
     UUID orderId = UUID.randomUUID();
     svc.orderClient =
-        fakeOrderClient(new OrderClient.OrderInfo(null, "ONLINE", new BigDecimal("10.00"), "OPEN"));
+        fakeOrderClient(
+            new OrderClient.OrderInfo(
+                null, "ONLINE", new BigDecimal("10.00"), "OPEN", UUID.randomUUID().toString()));
 
     var ex =
         assertThrows(
@@ -120,7 +128,9 @@ class PaymentServiceTest {
     PaymentService svc = new PaymentService();
     UUID orderId = UUID.randomUUID();
     svc.orderClient =
-        fakeOrderClient(new OrderClient.OrderInfo(null, "ONLINE", new BigDecimal("10.00"), "OPEN"));
+        fakeOrderClient(
+            new OrderClient.OrderInfo(
+                null, "ONLINE", new BigDecimal("10.00"), "OPEN", UUID.randomUUID().toString()));
     svc.repo = capturingRepo();
 
     var tender =
@@ -138,7 +148,11 @@ class PaymentServiceTest {
     svc.orderClient =
         fakeOrderClient(
             new OrderClient.OrderInfo(
-                customerId.toString(), "ONLINE", new BigDecimal("25.50"), "OPEN"));
+                customerId.toString(),
+                "ONLINE",
+                new BigDecimal("25.50"),
+                "OPEN",
+                UUID.randomUUID().toString()));
     svc.repo = capturingRepo();
 
     var tender =

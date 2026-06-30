@@ -155,7 +155,7 @@ public class CustomerService {
 
   public CustomerAddress updateAddress(
       UUID tenantId, UUID customerId, UUID addressId, AddAddressRequest req) {
-    repo.findAddress(tenantId, addressId)
+    repo.findAddress(tenantId, customerId, addressId)
         .orElseThrow(() -> ApiException.notFound("ADDRESS_NOT_FOUND", "Address not found"));
     var updated =
         new CustomerAddress(
@@ -174,10 +174,10 @@ public class CustomerService {
     return repo.updateAddress(updated);
   }
 
-  public void deleteAddress(UUID tenantId, UUID addressId) {
-    repo.findAddress(tenantId, addressId)
+  public void deleteAddress(UUID tenantId, UUID customerId, UUID addressId) {
+    repo.findAddress(tenantId, customerId, addressId)
         .orElseThrow(() -> ApiException.notFound("ADDRESS_NOT_FOUND", "Address not found"));
-    repo.deleteAddress(tenantId, addressId);
+    repo.deleteAddress(tenantId, customerId, addressId);
   }
 
   // ── loyalty ───────────────────────────────────────────────────────────────

@@ -923,9 +923,9 @@ class _StatusChip extends StatelessWidget {
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
-Future<double?> _amountDialog(BuildContext context, String title) {
+Future<double?> _amountDialog(BuildContext context, String title) async {
   final ctrl = TextEditingController();
-  return showDialog<double>(
+  final amount = await showDialog<double>(
     context: context,
     builder: (ctx) => AlertDialog(
       title: Text(title),
@@ -948,6 +948,8 @@ Future<double?> _amountDialog(BuildContext context, String title) {
       ],
     ),
   );
+  ctrl.dispose();
+  return amount;
 }
 
 List<Widget> _actions(

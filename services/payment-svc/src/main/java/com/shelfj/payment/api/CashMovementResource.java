@@ -10,6 +10,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
@@ -34,12 +35,14 @@ public class CashMovementResource {
   /** Record a pay-in or pay-out against an open till session. */
   @POST
   @Path("/movements")
-  public Response recordMovement(CashMovementRequest req) {
+  public Response recordMovement(
+      @HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      CashMovementRequest req) {
     ctx.requireAnyRole("MANAGER", "OWNER");
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID recordedBy = ctx.userId();
-    var movement = svc.recordMovement(tenantId, recordedBy, req, ctx);
+    var movement = svc.recordMovement(tenantId, recordedBy, req, ctx, idempotencyKey);
     return Response.status(201)
         .entity(ApiResponse.ok(movement, ApiResponse.Meta.of(ctx.requestId())))
         .build();

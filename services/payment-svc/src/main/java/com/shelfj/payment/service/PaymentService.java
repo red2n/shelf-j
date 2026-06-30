@@ -33,7 +33,11 @@ public class PaymentService {
   public PaymentTender recordTender(
       RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
     UUID tenantId = ctx.requireTenantId();
-    return capture(req, tenantId, UUID.fromString(req.orderId()), idempotencyKey, ctx);
+    UUID storeId = req.storeId() == null ? null : UUID.fromString(req.storeId());
+    if (storeId != null) {
+      ctx.requireStoreAccess(storeId);
+    }
+    return capture(req, tenantId, UUID.fromString(req.orderId()), storeId, idempotencyKey, ctx);
   }
 
   /**
@@ -63,13 +67,18 @@ public class PaymentService {
           "tendered amount " + req.amount() + " does not match order total " + order.total());
     }
 
-    return capture(req, tenantId, orderId, idempotencyKey, ctx);
+    // The order's own storeId is authoritative here, not the client-supplied req.storeId() — this
+    // endpoint has no staff role to trust, so an unverified store would let a guest attribute the
+    // payment to an arbitrary store and corrupt that store's Z-report/reporting.
+    UUID storeId = order.storeId() == null ? null : UUID.fromString(order.storeId());
+    return capture(req, tenantId, orderId, storeId, idempotencyKey, ctx);
   }
 
   private PaymentTender capture(
       RecordTenderRequest req,
       UUID tenantId,
       UUID orderId,
+      UUID storeId,
       String idempotencyKey,
       TenantContext ctx) {
     String method = req.method().toUpperCase(Locale.ROOT);
@@ -79,10 +88,6 @@ public class PaymentService {
           "method must be one of CASH, CARD, GIFT_CARD, VOUCHER — got: " + req.method());
 
     UUID tenderId = UUID.randomUUID();
-    UUID storeId = req.storeId() == null ? null : UUID.fromString(req.storeId());
-    if (storeId != null) {
-      ctx.requireStoreAccess(storeId);
-    }
     PaymentTender tender =
         new PaymentTender(
             tenderId,

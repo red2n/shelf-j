@@ -11,6 +11,7 @@ import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
@@ -30,9 +31,11 @@ public class GoodsReceiptResource {
   @Inject TenantContext ctx;
 
   @POST
-  public Response receive(CreateGoodsReceiptRequest req) {
+  public Response receive(
+      @HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      CreateGoodsReceiptRequest req) {
     Validations.validate(req);
-    var gr = svc.receiveGoods(req, ctx);
+    var gr = svc.receiveGoods(req, ctx, idempotencyKey);
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(gr, List.of()))).build();
   }
 

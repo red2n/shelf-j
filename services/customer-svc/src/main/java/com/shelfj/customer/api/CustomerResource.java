@@ -144,7 +144,7 @@ public class CustomerResource {
   public Response deleteAddress(
       @PathParam("id") UUID customerId, @PathParam("addressId") UUID addressId) {
     UUID tenantId = ctx.requireTenantId();
-    service.deleteAddress(tenantId, addressId);
+    service.deleteAddress(tenantId, customerId, addressId);
     return Response.noContent().build();
   }
 

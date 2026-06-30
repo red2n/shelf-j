@@ -17,6 +17,10 @@ class StorefrontCartScreen extends ConsumerStatefulWidget {
 
 class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   bool _placing = false;
+  // Re-entrancy guard distinct from [_placing]: set synchronously before the first await so a
+  // double-tap can't fire two concurrent checkouts while still on the pending-order lookup (which
+  // happens before [_placing] flips the button's loading spinner on).
+  bool _checkoutInFlight = false;
   String _fulfilment = 'PICKUP'; // PICKUP | DELIVERY
   bool _payNow = true; // only consulted when showPrices — catalog mode has no price to charge.
   final _addressFormKey = GlobalKey<FormState>();
@@ -324,6 +328,21 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       ));
       return;
     }
+    // Re-entrancy guard, set synchronously before the first await: a double-tap landing while
+    // this call is still on the pending-order lookup below must not fire a second checkout. This
+    // is deliberately separate from [_placing] (which only flips once we commit to placing the
+    // order) so the button doesn't show a loading spinner for the whole pending-order-dialog
+    // detour — it just silently ignores the extra tap.
+    if (_checkoutInFlight) return;
+    _checkoutInFlight = true;
+    try {
+      await _doCheckout(cart, delivery);
+    } finally {
+      _checkoutInFlight = false;
+    }
+  }
+
+  Future<void> _doCheckout(List<CartLine> cart, bool delivery) async {
     // Guard: if the customer already has a pending order, ask before firing another.
     final pendingOrder = await _findPendingOrder();
     if (!mounted) return;
@@ -349,7 +368,6 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     // always deferred there regardless of the on-screen toggle; priced shops let the customer
     // choose to pay now or defer to pickup/delivery.
     final payNow = showPrices && _payNow;
-    setState(() => _placing = true);
     final dio = ref.read(storefrontDioProvider);
     final storeId = ref.read(storefrontStoreProvider);
     // In catalog mode, CartLine.currency is '' (no price was ever fetched). Fall
@@ -359,6 +377,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     final currency = rawCurrency.isNotEmpty ? rawCurrency : 'GBP';
     final cartTotal = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final idemBase = 'sf-${DateTime.now().millisecondsSinceEpoch}';
+    setState(() => _placing = true);
     try {
       // 1. Place the order (created PENDING). In catalog mode we send no client price — the
       // server resolves it (when pricing enforcement is on).

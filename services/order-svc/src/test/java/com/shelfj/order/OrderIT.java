@@ -56,6 +56,20 @@ class OrderIT {
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
+  /**
+   * Like {@link #post(String, String, String)} but with an Idempotency-Key header — required by
+   * {@code POST /orders} now that the server rejects order placement without one.
+   */
+  private Response post(String path, String json, String tenant, String idempotencyKey) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .header("Idempotency-Key", idempotencyKey)
+        .post(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
   private Response get(String path, String tenant) {
     return target
         .path(path)
@@ -86,7 +100,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":2,\"unitPrice\":10.00}],"
                 + "\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-place-confirm-return");
     assertThat(r1.getStatus(), is(201));
     String body1 = r1.readEntity(String.class);
     assertThat(body1, containsString("PENDING"));
@@ -148,7 +163,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}],"
                 + "\"taxAmount\":-5.00,\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-neg-tax");
     assertThat(negTax.getStatus(), is(400));
 
     // discount larger than the subtotal must not drive the total negative
@@ -162,7 +178,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}],"
                 + "\"discountAmount\":50.00,\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-big-disc");
     assertThat(bigDisc.getStatus(), is(400));
     assertThat(bigDisc.readEntity(String.class), containsString("ORDER_DISCOUNT_EXCEEDS_SUBTOTAL"));
   }
@@ -185,7 +202,8 @@ class OrderIT {
                   + V
                   + "\",\"qty\":1,\"unitPrice\":1.00}],"
                   + "\"currency\":\"USD\"}",
-              tenant);
+              tenant,
+              "it-paginate-" + i);
       assertThat(r.getStatus(), is(201));
       allIds.add(extractId(r.readEntity(String.class)));
     }
@@ -233,7 +251,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":2,\"unitPrice\":10.00}],"
                 + "\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-return-qty");
     assertThat(r1.getStatus(), is(201));
     String orderId = extractId(r1.readEntity(String.class));
 
@@ -277,7 +296,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":5.00}],"
                 + "\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-pos-void");
     assertThat(r1.getStatus(), is(201));
     String orderId = extractId(r1.readEntity(String.class));
 
@@ -363,7 +383,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":5.00}],"
                 + "\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-void-online");
     String orderId = extractId(r1.readEntity(String.class));
     Response rv = post("/orders/" + orderId + "/void", "{\"reason\":\"test\"}", T);
     assertThat(rv.getStatus(), is(409));

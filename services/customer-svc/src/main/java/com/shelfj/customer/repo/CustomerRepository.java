@@ -192,7 +192,8 @@ public class CustomerRepository extends BaseOutboxRepository {
           exec(
               conn,
               "UPDATE customer_addresses SET type=?, line1=?, line2=?, city=?, state=?,"
-                  + " country=?, pincode=?, is_default=? WHERE tenant_id=? AND id=?",
+                  + " country=?, pincode=?, is_default=? WHERE tenant_id=? AND customer_id=? AND"
+                  + " id=?",
               ps -> {
                 ps.setString(1, a.type());
                 ps.setString(2, a.line1());
@@ -203,31 +204,34 @@ public class CustomerRepository extends BaseOutboxRepository {
                 ps.setString(7, a.pincode());
                 ps.setBoolean(8, a.isDefault());
                 ps.setObject(9, a.tenantId());
-                ps.setObject(10, a.id());
+                ps.setObject(10, a.customerId());
+                ps.setObject(11, a.id());
               });
-          return findAddress(conn, a.tenantId(), a.id());
+          return findAddress(conn, a.tenantId(), a.customerId(), a.id());
         },
         "update address tx");
   }
 
-  public void deleteAddress(UUID tenantId, UUID addressId) {
+  public void deleteAddress(UUID tenantId, UUID customerId, UUID addressId) {
     exec(
-        "DELETE FROM customer_addresses WHERE tenant_id = ? AND id = ?",
+        "DELETE FROM customer_addresses WHERE tenant_id = ? AND customer_id = ? AND id = ?",
         ps -> {
           ps.setObject(1, tenantId);
-          ps.setObject(2, addressId);
+          ps.setObject(2, customerId);
+          ps.setObject(3, addressId);
         },
         "delete address");
   }
 
-  public Optional<CustomerAddress> findAddress(UUID tenantId, UUID addressId) {
+  public Optional<CustomerAddress> findAddress(UUID tenantId, UUID customerId, UUID addressId) {
     return query(
             "SELECT id, tenant_id, customer_id, type, line1, line2, city, state, country,"
                 + " pincode, is_default, created_at"
-                + " FROM customer_addresses WHERE tenant_id = ? AND id = ?",
+                + " FROM customer_addresses WHERE tenant_id = ? AND customer_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
-              ps.setObject(2, addressId);
+              ps.setObject(2, customerId);
+              ps.setObject(3, addressId);
             },
             CustomerRepository::mapAddress,
             "find address")
@@ -534,15 +538,16 @@ public class CustomerRepository extends BaseOutboxRepository {
     }
   }
 
-  private CustomerAddress findAddress(Connection c, UUID tenantId, UUID addressId)
+  private CustomerAddress findAddress(Connection c, UUID tenantId, UUID customerId, UUID addressId)
       throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT id, tenant_id, customer_id, type, line1, line2, city, state, country,"
                 + " pincode, is_default, created_at"
-                + " FROM customer_addresses WHERE tenant_id = ? AND id = ?")) {
+                + " FROM customer_addresses WHERE tenant_id = ? AND customer_id = ? AND id = ?")) {
       ps.setObject(1, tenantId);
-      ps.setObject(2, addressId);
+      ps.setObject(2, customerId);
+      ps.setObject(3, addressId);
       try (ResultSet rs = ps.executeQuery()) {
         if (rs.next()) return mapAddress(rs);
         throw ApiException.notFound("ADDRESS_NOT_FOUND", "Address not found");
