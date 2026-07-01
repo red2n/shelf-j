@@ -1,6 +1,5 @@
-package com.shelfj.order.repo;
+package com.shelfj.service;
 
-import com.shelfj.service.BaseJdbcRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -9,10 +8,8 @@ import java.util.UUID;
 
 /**
  * Local projection of store operational status, fed by {@code StoreStatusChanged} Kafka events.
- * Used by {@link com.shelfj.order.service.OrderService} to guard order placement without a
- * synchronous call to tenant-svc.
- *
- * <p>Fail-open: a missing row means ACTIVE.
+ * Services inject this to gate operations without a synchronous call to tenant-svc. Fail-open: a
+ * missing row is treated as ACTIVE.
  */
 @ApplicationScoped
 public class StoreStatusRepository extends BaseJdbcRepository {
@@ -42,7 +39,7 @@ public class StoreStatusRepository extends BaseJdbcRepository {
         var ps = c.prepareStatement("SELECT status FROM store_status WHERE store_id = ?")) {
       ps.setObject(1, storeId);
       try (var rs = ps.executeQuery()) {
-        if (!rs.next()) return true; // no row → fail-open
+        if (!rs.next()) return true;
         return "ACTIVE".equalsIgnoreCase(rs.getString("status"));
       }
     } catch (SQLException e) {

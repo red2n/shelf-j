@@ -1,6 +1,5 @@
-package com.shelfj.order.messaging;
+package com.shelfj.service;
 
-import com.shelfj.order.repo.StoreStatusRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -12,20 +11,18 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Business handler for {@code shelfj.tenant.store-status-changed}. Upserts the local store-status
- * projection so {@link com.shelfj.order.service.OrderService} can block order placement for stores
- * that are closed or suspended without a cross-service call at request time.
- *
- * <p>Idempotent: the upsert is guarded by {@code status_changed_at}.
+ * Upserts the local store-status projection on receipt of a {@code StoreStatusChanged} event.
+ * Shared by every service that maintains a {@code store_status} table. Business logic lives here;
+ * the per-service consumer class only contributes its consumer-name and group-id.
  */
 @ApplicationScoped
-class StoreStatusChangedHandler {
+public class StoreStatusChangedHandler {
 
   private static final Logger LOG = System.getLogger(StoreStatusChangedHandler.class.getName());
 
   @Inject StoreStatusRepository storeStatus;
 
-  void handle(String json) {
+  public void handle(String json) {
     UUID tenantId;
     UUID storeId;
     String status;
@@ -40,7 +37,6 @@ class StoreStatusChangedHandler {
       LOG.log(Level.WARNING, "Malformed StoreStatusChanged payload skipped: " + e.getMessage());
       return;
     }
-
     storeStatus.upsertStoreStatus(storeId, tenantId, status, occurredAt);
     LOG.log(Level.INFO, "Store {0} projection updated to {1}", storeId, status);
   }
