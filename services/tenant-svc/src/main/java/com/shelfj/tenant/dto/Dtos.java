@@ -98,7 +98,15 @@ public final class Dtos {
 
   /** Public storefront config for a store (what the guest shop needs to render). */
   public record StorefrontConfigResponse(
-      String storeId, String storeName, String status, boolean showPrices) {}
+      String storeId,
+      String storeName,
+      String status,
+      boolean showPrices,
+      String line1,
+      String city,
+      String country,
+      String pincode,
+      String phone) {}
 
   public record ZoneResponse(
       String id,

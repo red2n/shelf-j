@@ -329,8 +329,10 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
                   controller: _phoneCtrl,
                   keyboardType: TextInputType.phone,
                   decoration: const InputDecoration(
-                      labelText: 'Phone (optional)',
+                      labelText: 'Phone number',
                       prefixIcon: Icon(Icons.phone_outlined)),
+                  validator: (v) =>
+                      v == null || v.trim().isEmpty ? 'Phone number required' : null,
                 ),
               ],
               const SizedBox(height: 8),

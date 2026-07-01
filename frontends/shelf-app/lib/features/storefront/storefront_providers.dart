@@ -507,9 +507,9 @@ final cartProvider =
 
 // ── Order history (device-local) ─────────────────────────────────────────────
 //
-// The storefront checks out as a guest (tokenless), and `GET /orders` is not a
-// public gateway path, so there is no server-side "my orders" without customer
-// auth. As a pragmatic stand-in we remember each order placed on THIS device.
+// On-device cache of orders placed by the current customer. Signed-in customers
+// also get a server-backed list via serverOrdersProvider; this local copy acts
+// as a fast, offline-safe supplement and is kept in sync on every checkout.
 
 class StorefrontOrderRecord {
   final String orderId;

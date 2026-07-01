@@ -128,22 +128,17 @@ final posStoresProvider = FutureProvider.autoDispose<List<StoreInfo>>((ref) asyn
       type: 'STORE',
       status: m['status'] as String? ?? 'ACTIVE',
       showPrices: m['showPrices'] as bool? ?? true,
+      line1: m['line1'] as String?,
+      city: m['city'] as String?,
+      country: m['country'] as String?,
+      pincode: m['pincode'] as String?,
     );
   }).toList();
 });
 
-/// Whether the terminal's store shows prices. When false (catalog / show-stock-only
-/// mode) the POS hides every price and checkout becomes order-only (no tender).
-/// Defaults to true until the store list resolves.
-final posShowPricesProvider = Provider.autoDispose<bool>((ref) {
-  final storeId = ref.watch(posStoreProvider);
-  final stores = ref.watch(posStoresProvider).valueOrNull;
-  if (storeId == null || stores == null) return true;
-  for (final s in stores) {
-    if (s.id == storeId) return s.showPrices;
-  }
-  return true;
-});
+/// POS always shows prices — show_prices is a customer-facing storefront flag only.
+/// Staff at the till always need to see and charge the correct price.
+final posShowPricesProvider = Provider.autoDispose<bool>((ref) => true);
 
 /// The customer attached to the in-progress sale (null = walk-in). Lets POS
 /// attribute the order so loyalty / store-credit can apply.

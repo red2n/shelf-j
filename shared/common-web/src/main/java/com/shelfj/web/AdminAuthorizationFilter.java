@@ -134,6 +134,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   private static boolean requiresManagement(String path, String method) {
     // Bootstrap carve-out — see isOpenMutation.
     if (path.endsWith("/admin/tenant") && "POST".equalsIgnoreCase(method)) return false;
+    // Receipt printing is a cashier action (logging a print event after completing a sale);
+    // it must not be locked behind management roles even though the path is under /admin/.
+    if (path.endsWith("/receipts") && "POST".equalsIgnoreCase(method)) return false;
     if (path.startsWith("/admin/")) return true;
     if (path.endsWith("/refunds") && "POST".equalsIgnoreCase(method)) return true;
     if (path.endsWith("/void") && "POST".equalsIgnoreCase(method)) return true;

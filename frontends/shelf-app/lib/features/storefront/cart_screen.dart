@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../core/format.dart';
 import 'storefront_providers.dart';
+import 'storefront_shell.dart' show StorefrontAuthDialog;
 import 'survey_widgets.dart';
 
 class StorefrontCartScreen extends ConsumerStatefulWidget {
@@ -321,6 +322,17 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   Future<void> _checkout() async {
     final cart = ref.read(cartProvider);
     if (cart.isEmpty) return;
+
+    // Order placement requires a signed-in customer so the store has at least a
+    // phone number on file (mandatory for pay-later follow-up / delivery contact).
+    if (!ref.read(storefrontAuthProvider).isSignedIn) {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => const StorefrontAuthDialog(),
+      );
+      if (!mounted || !ref.read(storefrontAuthProvider).isSignedIn) return;
+    }
+
     final delivery = _fulfilment == 'DELIVERY';
     if (delivery && !(_addressFormKey.currentState?.validate() ?? false)) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
