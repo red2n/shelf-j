@@ -62,6 +62,7 @@ class _GiftCardsTabState extends ConsumerState<_GiftCardsTab> {
   GiftCard? _card;
   List<GiftCardTxn> _txns = [];
   bool _loading = false;
+  bool _submitting = false;
   String? _error;
 
   @override
@@ -101,11 +102,13 @@ class _GiftCardsTabState extends ConsumerState<_GiftCardsTab> {
   }
 
   Future<void> _reloadOrRedeem(String action) async {
+    if (_submitting) return;
     final card = _card;
     if (card == null) return;
     final amount = await _amountDialog(
         context, action == 'reload' ? 'Reload gift card' : 'Redeem gift card');
     if (amount == null) return;
+    setState(() => _submitting = true);
     try {
       await ref.read(apiClientProvider).dio.post(
         '/${ApiConstants.order}/gift-cards/${card.code}/$action',
@@ -117,6 +120,8 @@ class _GiftCardsTabState extends ConsumerState<_GiftCardsTab> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Failed: $e'),
           backgroundColor: Theme.of(context).colorScheme.error));
+    } finally {
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -175,13 +180,13 @@ class _GiftCardsTabState extends ConsumerState<_GiftCardsTab> {
                   Row(
                     children: [
                       OutlinedButton.icon(
-                        onPressed: () => _reloadOrRedeem('reload'),
+                        onPressed: _submitting ? null : () => _reloadOrRedeem('reload'),
                         icon: const Icon(Icons.add, size: 18),
                         label: const Text('Reload'),
                       ),
                       const SizedBox(width: 8),
                       OutlinedButton.icon(
-                        onPressed: () => _reloadOrRedeem('redeem'),
+                        onPressed: _submitting ? null : () => _reloadOrRedeem('redeem'),
                         icon: const Icon(Icons.remove, size: 18),
                         label: const Text('Redeem'),
                       ),

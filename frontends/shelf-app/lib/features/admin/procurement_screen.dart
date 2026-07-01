@@ -558,12 +558,20 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
   }
 }
 
-class _PoDetailDialog extends ConsumerWidget {
+class _PoDetailDialog extends ConsumerStatefulWidget {
   final String poId;
   const _PoDetailDialog({required this.poId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_PoDetailDialog> createState() => _PoDetailDialogState();
+}
+
+class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
+  bool _submitting = false;
+  String get poId => widget.poId;
+
+  @override
+  Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final linesAsync = ref.watch(purchaseOrderLinesProvider(poId));
     final posAsync = ref.watch(purchaseOrdersProvider);
@@ -657,7 +665,7 @@ class _PoDetailDialog extends ConsumerWidget {
         ),
         if (isDraft)
           FilledButton.icon(
-            onPressed: () => _submitPo(context, ref),
+            onPressed: _submitting ? null : () => _submitPo(context, ref),
             icon: const Icon(Icons.send_outlined, size: 18),
             label: const Text('Submit'),
           )
@@ -681,6 +689,8 @@ class _PoDetailDialog extends ConsumerWidget {
   }
 
   Future<void> _submitPo(BuildContext context, WidgetRef ref) async {
+    if (_submitting) return;
+    setState(() => _submitting = true);
     try {
       await ref
           .read(apiClientProvider)
@@ -692,7 +702,8 @@ class _PoDetailDialog extends ConsumerWidget {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Purchase order submitted.')));
     } catch (e) {
-      if (!context.mounted) return;
+      if (!mounted) return;
+      setState(() => _submitting = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Could not submit PO: $e'),
         backgroundColor: Theme.of(context).colorScheme.error,

@@ -96,7 +96,6 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
     // Same header names and matching order as ProductService.parseSupplierCsvToRequest, so a
     // row's parsed sku/qty/price here lines up with the variant the backend actually creates.
     final headers = _splitRow(lines[0]);
-    final idxId = _headerIdx(headers, ['product id', 'product_id', 'sku', 'item no']);
     final idxDesc = _headerIdx(headers, [
       'product description', 'description', 'product name', 'name',
     ]);

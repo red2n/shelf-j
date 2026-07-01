@@ -92,6 +92,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
   }
 
   Future<void> _complete() async {
+    if (_processing) return;
     final cart = ref.read(posCartProvider);
     final storeId = ref.read(posStoreProvider);
     final customer = ref.read(posCustomerProvider);

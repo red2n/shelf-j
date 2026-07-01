@@ -621,12 +621,20 @@ Future<_AmountReason?> _amountReason(
 
 // ── Addresses ────────────────────────────────────────────────────────────────
 
-class _AddressesSection extends ConsumerWidget {
+class _AddressesSection extends ConsumerStatefulWidget {
   final String customerId;
   const _AddressesSection({required this.customerId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_AddressesSection> createState() => _AddressesSectionState();
+}
+
+class _AddressesSectionState extends ConsumerState<_AddressesSection> {
+  final Set<String> _deleting = {};
+  String get customerId => widget.customerId;
+
+  @override
+  Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final async = ref.watch(customerAddressesProvider(customerId));
     return Column(
@@ -690,7 +698,9 @@ class _AddressesSection extends ConsumerWidget {
                             IconButton(
                               visualDensity: VisualDensity.compact,
                               icon: const Icon(Icons.delete_outline, size: 18),
-                              onPressed: () => _delete(context, ref, a.id),
+                              onPressed: _deleting.contains(a.id)
+                                  ? null
+                                  : () => _delete(a.id),
                             ),
                           ],
                         ),
@@ -702,16 +712,20 @@ class _AddressesSection extends ConsumerWidget {
     );
   }
 
-  Future<void> _delete(BuildContext context, WidgetRef ref, String addressId) async {
+  Future<void> _delete(String addressId) async {
+    if (_deleting.contains(addressId)) return;
+    setState(() => _deleting.add(addressId));
     try {
       await ref.read(apiClientProvider).dio.delete(
           '/${ApiConstants.customer}/customers/$customerId/addresses/$addressId');
       ref.invalidate(customerAddressesProvider(customerId));
     } catch (e) {
-      if (!context.mounted) return;
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not delete address: $e')),
       );
+    } finally {
+      if (mounted) setState(() => _deleting.remove(addressId));
     }
   }
 }

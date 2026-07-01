@@ -223,9 +223,9 @@ void main() {
 
   group('OfferPriceAdd — config loading state', () {
     testWidgets('shows placeholder while config is loading', (tester) async {
-      final product = StoreProduct(id: 'p1', name: 'Widget A');
+      const product = StoreProduct(id: 'p1', name: 'Widget A');
       await tester.pumpWidget(_scope(
-        OfferPriceAdd(product: product),
+        const OfferPriceAdd(product: product),
         overrides: [_configLoading()],
       ));
       // Single pump — the future never resolves, so loading state persists.
@@ -238,10 +238,10 @@ void main() {
 
     testWidgets('shows add-to-cart in catalog mode once config resolves',
         (tester) async {
-      final product = StoreProduct(id: 'p1', name: 'Widget A');
+      const product = StoreProduct(id: 'p1', name: 'Widget A');
       // Override availability so variant 'v1' is treated as in-stock.
       await tester.pumpWidget(_scope(
-        OfferPriceAdd(product: product),
+        const OfferPriceAdd(product: product),
         overrides: [
           _configOverride(showPrices: false),
           storefrontAvailabilityProvider

@@ -149,9 +149,9 @@ void main() {
   group('Catalog mode — OfferPriceAdd (product listing)', () {
     testWidgets('in-stock variant shows "In stock" badge — no price',
         (tester) async {
-      final product = StoreProduct(id: 'p1', name: 'Widget A');
+      const product = StoreProduct(id: 'p1', name: 'Widget A');
       await tester.pumpWidget(_scope(
-        OfferPriceAdd(product: product),
+        const OfferPriceAdd(product: product),
         overrides: [
           _catalogConfig(),
           storefrontAvailabilityProvider.overrideWith(
@@ -169,9 +169,9 @@ void main() {
 
     testWidgets('out-of-stock variant shows "Out of stock" badge — no price',
         (tester) async {
-      final product = StoreProduct(id: 'p1', name: 'Widget A');
+      const product = StoreProduct(id: 'p1', name: 'Widget A');
       await tester.pumpWidget(_scope(
-        OfferPriceAdd(product: product),
+        const OfferPriceAdd(product: product),
         overrides: [
           _catalogConfig(),
           storefrontAvailabilityProvider.overrideWith(
@@ -189,9 +189,9 @@ void main() {
     testWidgets(
         'tapping add-to-cart stores unitPrice=0 and currency="" on the cart line',
         (tester) async {
-      final product = StoreProduct(id: 'p1', name: 'Widget A');
+      const product = StoreProduct(id: 'p1', name: 'Widget A');
       await tester.pumpWidget(_scope(
-        OfferPriceAdd(product: product),
+        const OfferPriceAdd(product: product),
         overrides: [
           _catalogConfig(),
           storefrontAvailabilityProvider.overrideWith(
@@ -229,7 +229,7 @@ void main() {
           _catalogConfig(),
           _failingDio(), // prevents any real network calls for other providers
           storefrontProductProvider(pid).overrideWith(
-              (ref) async => StoreProduct(id: pid, name: 'Test Product')),
+              (ref) async => const StoreProduct(id: pid, name: 'Test Product')),
           storefrontVariantsProvider(pid).overrideWith(
               (ref) async => [const StoreVariant(id: 'v1', sku: 'SKU-001')]),
           storefrontAvailabilityProvider.overrideWith(
@@ -333,10 +333,10 @@ void main() {
           // Prevent storefrontSuspendedProvider from attempting a Dio call
           storefrontSuspendedProvider.overrideWith((ref) async => false),
         ],
-        child: MaterialApp(
+        child: const MaterialApp(
           home: StorefrontShell(
             currentLocation: '/store/products',
-            child: const SizedBox.expand(),
+            child: SizedBox.expand(),
           ),
         ),
       ));
@@ -429,7 +429,7 @@ void main() {
     // Shared helper: sets up a catalog-mode cart screen with a recording Dio
     // interceptor, seeds the cart, triggers checkout, and returns the interceptor
     // for assertions.
-    Future<_RecordingInterceptor> _setupAndCheckout(
+    Future<_RecordingInterceptor> setupAndCheckout(
       WidgetTester tester,
       List<CartLine> lines,
     ) async {
@@ -457,7 +457,7 @@ void main() {
 
     testWidgets('checkout POST body sends unitPrice=0 for every cart item',
         (tester) async {
-      final interceptor = await _setupAndCheckout(tester, [
+      final interceptor = await setupAndCheckout(tester, [
         _catalogLine(variantId: 'v1', sku: 'SKU-001'),
         _catalogLine(variantId: 'v2', sku: 'SKU-002'),
         _catalogLine(variantId: 'v3', sku: 'SKU-003'),
@@ -480,7 +480,7 @@ void main() {
         (tester) async {
       // Catalog mode: CartLine.currency is '' (no price-resolve call is ever made)
       final interceptor =
-          await _setupAndCheckout(tester, [_catalogLine()]);
+          await setupAndCheckout(tester, [_catalogLine()]);
 
       expect(interceptor.orderPostPayload, isNotNull);
       expect(
@@ -495,7 +495,7 @@ void main() {
         'payment-svc endpoint is never called in catalog mode',
         (tester) async {
       final interceptor =
-          await _setupAndCheckout(tester, [_catalogLine()]);
+          await setupAndCheckout(tester, [_catalogLine()]);
 
       final paymentCalls =
           interceptor.paths.where((p) => p.contains('payment-svc')).toList();
@@ -510,7 +510,7 @@ void main() {
     testWidgets(
         'success dialog contains no price or currency text after catalog-mode order',
         (tester) async {
-      await _setupAndCheckout(tester, [_catalogLine()]);
+      await setupAndCheckout(tester, [_catalogLine()]);
 
       // The order-placed dialog must be visible
       expect(find.byType(AlertDialog), findsOneWidget);
