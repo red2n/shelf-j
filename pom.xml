@@ -56,7 +56,6 @@
         <module>shared/common-test</module>
         <module>platform/discovery</module>
         <module>shared/common-service</module>
-        <module>services/sample-svc</module>
         <module>services/iam-svc</module>
         <module>services/tenant-svc</module>
         <module>services/product-svc</module>
