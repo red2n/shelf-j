@@ -17,8 +17,10 @@ public final class Dtos {
 
   public record CreateCartRequest(
       @NotBlank String storeId,
-      String sessionId // null for authenticated customers; guest session token otherwise
-      ) {}
+      // null for authenticated customers. For guests, a previously server-minted token to RESUME an
+      // existing cart; when absent (or no cart matches it) the server mints a new high-entropy
+      // token and returns it in CartResponse.sessionId. A client-chosen value never creates a cart.
+      String sessionId) {}
 
   public record AddItemRequest(
       @NotBlank String cartId,

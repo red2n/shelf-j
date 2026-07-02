@@ -245,6 +245,35 @@ class CartServiceTest {
     service.addItem(ctx, rightSession); // must not throw
   }
 
+  @Test
+  void createCart_mintsHighEntropySessionForGuest() {
+    var ctx = ctx(TENANT, null); // guest: no customer identity
+    var req = new CreateCartRequest(STORE.toString(), null); // no client session supplied
+
+    var response = service.createOrGetCart(ctx, req);
+
+    // Server minted a session token (256-bit → 43-char base64url) and stored it on the cart.
+    assertThat(response.customerId(), is((String) null));
+    org.junit.jupiter.api.Assertions.assertNotNull(response.sessionId());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        response.sessionId().length() >= 40, "session token must be high-entropy");
+    assertThat(insertedCart.sessionId(), is(response.sessionId()));
+  }
+
+  @Test
+  void createCart_ignoresClientChosenSessionWhenCreatingNewGuestCart() {
+    var ctx = ctx(TENANT, null);
+    // A client tries to name its own (weak, guessable) session. No cart exists for it
+    // (stub findActiveBySession returns empty), so the server must NOT create one under
+    // that id — it mints its own instead.
+    var req = new CreateCartRequest(STORE.toString(), "weak-guessable-123");
+
+    var response = service.createOrGetCart(ctx, req);
+
+    org.junit.jupiter.api.Assertions.assertNotEquals("weak-guessable-123", response.sessionId());
+    org.junit.jupiter.api.Assertions.assertTrue(response.sessionId().length() >= 40);
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   private static TenantContext ctx(UUID tenantId, UUID userId) {

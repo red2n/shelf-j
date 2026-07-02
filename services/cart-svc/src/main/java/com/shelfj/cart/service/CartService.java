@@ -16,7 +16,9 @@ import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -34,6 +36,12 @@ public class CartService {
   /**
    * Returns the caller's existing ACTIVE cart, or creates a new one. Guest carts are identified by
    * sessionId; authenticated carts by customerId from the JWT.
+   *
+   * <p>The guest session token is <strong>minted server-side</strong> (high-entropy, from {@link
+   * SecureRandom}) whenever a new guest cart is created — a client-supplied value is only ever
+   * honoured to look up an <em>existing</em> cart, never to create one. Cart ownership rests on
+   * knowledge of this token ({@link #requireOwnership}), so allowing a client to choose it would
+   * let a caller create (and let others guess) a cart under a weak/sequential id.
    */
   public CartResponse createOrGetCart(TenantContext ctx, CreateCartRequest req) {
     UUID tenantId = ctx.requireTenantId();
@@ -43,18 +51,20 @@ public class CartService {
 
     // Prefer customerId (authenticated) over sessionId (guest).
     UUID customerId = ctx.userId() != null && !ctx.hasRole("GUEST") ? ctx.userId() : null;
-    String sessionId = customerId == null ? req.sessionId() : null;
 
-    if (customerId == null && (sessionId == null || sessionId.isBlank()))
-      throw ApiException.badRequest(
-          "CART_NO_IDENTITY", "sessionId required for unauthenticated cart access");
-
+    // Returning caller: a client-supplied guest session only resolves an EXISTING cart.
+    String suppliedSession = req.sessionId();
     Cart existing =
         customerId != null
             ? repo.findActiveByCustomer(tenantId, customerId).orElse(null)
-            : repo.findActiveBySession(tenantId, sessionId).orElse(null);
+            : (suppliedSession != null && !suppliedSession.isBlank())
+                ? repo.findActiveBySession(tenantId, suppliedSession).orElse(null)
+                : null;
 
     if (existing != null) return toResponse(existing);
+
+    // New cart: mint the guest session token here rather than trusting the client's.
+    String sessionId = customerId == null ? newSessionToken() : null;
 
     Cart cart =
         new Cart(
@@ -267,6 +277,15 @@ public class CartService {
           List.of(),
           e);
     }
+  }
+
+  private static final SecureRandom SESSION_RNG = new SecureRandom();
+
+  /** A new opaque, high-entropy (256-bit) guest cart session token. */
+  private static String newSessionToken() {
+    byte[] bytes = new byte[32];
+    SESSION_RNG.nextBytes(bytes);
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
   }
 
   private CartResponse toResponse(Cart c) {
