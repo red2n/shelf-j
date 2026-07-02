@@ -1,5 +1,7 @@
 package com.shelfj.pricing.api;
 
+import com.shelfj.pricing.dto.Dtos.ResolvePriceBatchRequest;
+import com.shelfj.pricing.dto.Dtos.ResolvePriceBatchResponse;
 import com.shelfj.pricing.dto.Dtos.ResolvePriceRequest;
 import com.shelfj.pricing.mapper.Mappers;
 import com.shelfj.pricing.service.PricingService;
@@ -30,5 +32,16 @@ public class PriceResolveResource {
   public Response resolve(ResolvePriceRequest req) {
     Validations.validate(req);
     return Response.ok(ApiResponse.ok(Mappers.toDto(svc.resolvePrice(req, ctx)))).build();
+  }
+
+  /**
+   * Batch form of {@link #resolve} — one call for every line in an order instead of one per line.
+   */
+  @POST
+  @Path("/resolve-batch")
+  public Response resolveBatch(ResolvePriceBatchRequest req) {
+    Validations.validate(req);
+    var results = svc.resolvePrices(req.lines(), ctx).stream().map(Mappers::toDto).toList();
+    return Response.ok(ApiResponse.ok(new ResolvePriceBatchResponse(results))).build();
   }
 }

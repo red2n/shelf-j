@@ -27,6 +27,15 @@ class StorageKeys {
 
   /// Device-local history of orders placed from the (guest) storefront.
   static const String storefrontOrders = 'sf_orders';
+
+  // Customer data-collection keys
+  static const String sfGender = 'sf_gender';
+  static const String sfGenderAsked = 'sf_gender_asked';
+  static const String sfPrefs = 'sf_cust_prefs';
+  static const String sfPrefsAsked = 'sf_prefs_asked';
+  static const String sfSurveys = 'sf_surveys';
+  static const String sfSurveyLastDate = 'sf_survey_last_date';
+  static const String sfFeedback = 'sf_feedback';
 }
 
 class UserRoles {

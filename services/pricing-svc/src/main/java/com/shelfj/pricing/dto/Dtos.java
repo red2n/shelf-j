@@ -1,10 +1,13 @@
 package com.shelfj.pricing.dto;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 /** All request and response DTOs for pricing-svc (records = immutable, no domain types). */
@@ -128,6 +131,15 @@ public final class Dtos {
       UUID priceListId,
       String promotionApplied) {}
 
+  /**
+   * Resolve many lines in one call instead of one HTTP round trip per line — order-svc's checkout
+   * was issuing one synchronous {@code /prices/resolve} call per order line.
+   */
+  public record ResolvePriceBatchRequest(@NotEmpty @Valid List<ResolvePriceRequest> lines) {}
+
+  /** Results are in the same order as the request's {@code lines}. */
+  public record ResolvePriceBatchResponse(List<ResolvedPriceResponse> results) {}
+
   // ── Promotions ────────────────────────────────────────────────────────────
 
   public record CreatePromotionRequest(
@@ -213,7 +225,7 @@ public final class Dtos {
       String orderId,
       @NotBlank String variantId,
       @NotBlank String storeId,
-      BigDecimal originalPrice,
+      @PositiveOrZero BigDecimal originalPrice,
       @NotNull @PositiveOrZero BigDecimal overridePrice,
       String overrideReason,
       String overriddenBy) {}

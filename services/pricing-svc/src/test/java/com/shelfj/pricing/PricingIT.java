@@ -92,6 +92,37 @@ class PricingIT {
   }
 
   @Test
+  void priceOverrideRejectsNegativeOriginalPrice() {
+    Response r =
+        post(
+            "/admin/price-overrides",
+            "{\"variantId\":\""
+                + V
+                + "\",\"storeId\":\""
+                + S
+                + "\",\"originalPrice\":-5.00,\"overridePrice\":10.00,"
+                + "\"overrideReason\":\"manager discretion\"}",
+            T);
+    assertThat(r.getStatus(), is(400));
+  }
+
+  @Test
+  void priceOverrideAcceptsValidRequest() {
+    Response r =
+        post(
+            "/admin/price-overrides",
+            "{\"variantId\":\""
+                + V
+                + "\",\"storeId\":\""
+                + S
+                + "\",\"originalPrice\":20.00,\"overridePrice\":10.00,"
+                + "\"overrideReason\":\"manager discretion\"}",
+            T);
+    assertThat(r.getStatus(), is(201));
+    assertThat(r.readEntity(String.class), containsString("10.00"));
+  }
+
+  @Test
   void vatRateCrudAndTenantIsolation() {
     // Create UK standard rate T1 = 20%
     Response r1 =
@@ -181,6 +212,25 @@ class PricingIT {
             "{\"variantId\":\"" + V + "\",\"channel\":\"ALL\",\"qty\":1}",
             "99999999-9999-9999-9999-999999999999");
     assertThat(rIso.getStatus(), is(404));
+
+    // Batch form: order-svc's checkout resolves every line in one call instead of one per line.
+    Response batchR =
+        post(
+            "/prices/resolve-batch",
+            "{\"lines\":["
+                + "{\"variantId\":\""
+                + V
+                + "\",\"channel\":\"ALL\",\"qty\":1},"
+                + "{\"variantId\":\""
+                + V
+                + "\",\"channel\":\"ALL\",\"qty\":2}"
+                + "]}",
+            T);
+    assertThat(batchR.getStatus(), is(200));
+    String batchBody = batchR.readEntity(String.class);
+    assertThat(batchBody, containsString("\"results\""));
+    // both lines resolved (two "unitPrice" entries in the results array)
+    assertThat(batchBody.split("\"unitPrice\"", -1).length - 1, is(2));
   }
 
   @Test

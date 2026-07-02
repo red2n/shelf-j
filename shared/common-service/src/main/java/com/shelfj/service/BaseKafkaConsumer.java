@@ -74,13 +74,20 @@ public abstract class BaseKafkaConsumer {
     try {
       loop = new KafkaEventLoop(consumerName(), bootstrap, groupId(), topics(), this::handle);
       loop.start();
+      KafkaConsumerRegistry.clear(consumerName());
     } catch (Exception e) {
-      log.log(Level.WARNING, "{0} failed to start: {1}", consumerName(), e.getMessage());
+      KafkaConsumerRegistry.markFailed(consumerName());
+      log.log(
+          Level.ERROR,
+          "{0} failed to start, readiness will report DOWN: {1}",
+          consumerName(),
+          e.getMessage());
     }
   }
 
   @PreDestroy
   final void stop() {
+    KafkaConsumerRegistry.clear(consumerName());
     if (loop != null) loop.close();
   }
 }

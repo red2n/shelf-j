@@ -188,17 +188,24 @@ public final class KafkaEventLoop implements AutoCloseable {
     }
   }
 
+  // Try-with-resources doesn't fit: the consumer must be closed with a bounded timeout only
+  // *after* the scheduler has been asked to stop and given a chance to terminate, and the
+  // producer is closed afterwards too — there's no single resource a TWR clause can own here.
+  @SuppressWarnings("PMD.UseTryWithResources")
   @Override
   public void close() {
     running = false;
     consumer.wakeup();
     scheduler.shutdownNow();
     try {
-      if (scheduler.awaitTermination(3, TimeUnit.SECONDS)) {
-        consumer.close(Duration.ofSeconds(2));
-      }
+      scheduler.awaitTermination(3, TimeUnit.SECONDS);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+    } finally {
+      // Always close the consumer (releasing its sockets and leaving the consumer group) even if
+      // the poll thread didn't terminate within the await window — otherwise a slow/blocked
+      // poll() leaks the consumer for the life of the JVM.
+      consumer.close(Duration.ofSeconds(2));
     }
     if (dlqProducer != null) {
       dlqProducer.close(Duration.ofSeconds(2));

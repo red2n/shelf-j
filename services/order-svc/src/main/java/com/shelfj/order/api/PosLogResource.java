@@ -3,6 +3,7 @@ package com.shelfj.order.api;
 import com.shelfj.order.mapper.Mappers;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
@@ -40,10 +41,16 @@ public class PosLogResource {
   }
 
   @GET
-  public Response list(@QueryParam("storeId") String storeId) {
-    var entries =
-        svc.listPosLog(ctx.requireTenantId(), storeId).stream().map(Mappers::toDto).toList();
-    return Response.ok(ApiResponse.ok(entries)).build();
+  public Response list(
+      @QueryParam("storeId") String storeId,
+      @QueryParam("after") String after,
+      @QueryParam("limit") Integer limit) {
+    int clamped = Cursor.clampLimit(limit);
+    var page = svc.listPosLog(ctx.requireTenantId(), storeId, after, clamped);
+    var entries = page.entries().stream().map(Mappers::toDto).toList();
+    return Response.ok(
+            ApiResponse.ok(entries, new ApiResponse.Meta(ctx.requestId(), page.nextCursor())))
+        .build();
   }
 
   @GET

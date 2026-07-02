@@ -93,8 +93,12 @@ class _VariantRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     final showPrices = ref.watch(storefrontShowPricesProvider);
-    final availMap = ref.watch(storefrontAvailabilityProvider).valueOrNull;
-    final inStock = availMap == null ? true : (availMap[variant.id] ?? false);
+    // .select() so this row only rebuilds when *its own* variant's availability changes,
+    // not on every store switch's whole-map refetch.
+    final inStock = ref.watch(storefrontAvailabilityProvider.select((async) {
+      final map = async.valueOrNull;
+      return map == null ? true : (map[variant.id] ?? false);
+    }));
 
     void addLine(double unitPrice, String currency) {
       ref.read(cartProvider.notifier).add(CartLine(

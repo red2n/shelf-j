@@ -161,7 +161,31 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
         );
       }),
     );
-    if (selected == null) return;
+    if (selected == null || !mounted) return;
+
+    final current = ref.read(posCartProvider);
+    if (current.isNotEmpty) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Discard current sale?'),
+          content: Text(
+              'The current sale has ${current.length} item'
+              '${current.length == 1 ? '' : 's'} that haven\'t been held or '
+              'charged. Resuming the held sale will discard them.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Discard & resume')),
+          ],
+        ),
+      );
+      if (discard != true) return;
+    }
+
     ref.read(posCartProvider.notifier).loadLines(selected.lines);
     try {
       await ref
@@ -404,35 +428,60 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     final categoriesAsync = ref.watch(posCategoriesProvider);
     final selectedCat = ref.watch(posSelectedCategoryProvider);
     final query = ref.watch(posSearchProvider);
+    final inStockOnly = ref.watch(posInStockOnlyProvider);
     final productsAsync =
         ref.watch(posCatalogProvider((categoryId: selectedCat, query: query)));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Search bar + in-stock toggle
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-          child: TextField(
-            controller: _searchCtrl,
-            decoration: InputDecoration(
-              isDense: true,
-              hintText: 'Search products…',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: query.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        ref.read(posSearchProvider.notifier).state = '';
-                      },
-                    ),
-            ),
-            onChanged: (v) =>
-                ref.read(posSearchProvider.notifier).state = v.trim(),
+          padding: const EdgeInsets.fromLTRB(12, 12, 4, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchCtrl,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Search products…',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: query.isEmpty
+                        ? null
+                        : IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              ref.read(posSearchProvider.notifier).state = '';
+                            },
+                          ),
+                  ),
+                  onChanged: (v) =>
+                      ref.read(posSearchProvider.notifier).state = v.trim(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilterChip(
+                avatar: Icon(
+                  Icons.inventory_2_outlined,
+                  size: 16,
+                  color: inStockOnly
+                      ? cs.onSecondaryContainer
+                      : cs.onSurfaceVariant,
+                ),
+                label: const Text('In stock'),
+                selected: inStockOnly,
+                visualDensity: VisualDensity.compact,
+                onSelected: (v) =>
+                    ref.read(posInStockOnlyProvider.notifier).state = v,
+              ),
+              const SizedBox(width: 8),
+            ],
           ),
         ),
         SizedBox(
@@ -478,8 +527,19 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
                     child: Text('Could not load products.\n$e',
                         textAlign: TextAlign.center))),
             data: (products) {
-              if (products.isEmpty) {
-                return const Center(child: Text('No POS-sellable products.'));
+              // Apply in-stock filter using lazy-resolved offer data.
+              // Products whose offer hasn't loaded yet are kept (show while loading).
+              List<ProductInfo> displayProducts = products;
+              if (inStockOnly) {
+                displayProducts = products.where((p) {
+                  final offer =
+                      ref.watch(posProductOfferProvider(p)).valueOrNull;
+                  return offer == null || offer.inStock;
+                }).toList();
+              }
+
+              if (displayProducts.isEmpty) {
+                return const Center(child: Text('No in-stock products.'));
               }
               return GridView.builder(
                 padding: const EdgeInsets.all(12),
@@ -489,9 +549,9 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
                   crossAxisSpacing: 10,
                   mainAxisSpacing: 10,
                 ),
-                itemCount: products.length,
+                itemCount: displayProducts.length,
                 itemBuilder: (_, i) =>
-                    _OfferTile(product: products[i], onPick: widget.onPick),
+                    _OfferTile(product: displayProducts[i], onPick: widget.onPick),
               );
             },
           ),
@@ -652,58 +712,120 @@ class _StoreSelector extends ConsumerWidget {
   }
 }
 
-/// Shows the customer attached to the sale (or a "walk-in" prompt to attach one).
-class _CustomerBar extends ConsumerWidget {
+/// Shows the customer attached to the sale. For walk-in sales a mandatory phone
+/// field is shown inline — the store needs a contact number for every order.
+class _CustomerBar extends ConsumerStatefulWidget {
   const _CustomerBar();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CustomerBar> createState() => _CustomerBarState();
+}
+
+class _CustomerBarState extends ConsumerState<_CustomerBar> {
+  late final TextEditingController _phoneCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _phoneCtrl =
+        TextEditingController(text: ref.read(posWalkInPhoneProvider));
+  }
+
+  @override
+  void dispose() {
+    _phoneCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final customer = ref.watch(posCustomerProvider);
     final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 4, 0),
-      child: Row(
-        children: [
-          Icon(Icons.person_outline, size: 18, color: cs.outline),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              customer == null
-                  ? 'Walk-in customer'
-                  : (customer.fullName.isEmpty
-                      ? customer.email
-                      : customer.fullName),
-              style: TextStyle(
-                color: customer == null ? cs.outline : cs.onSurface,
-                fontWeight:
-                    customer == null ? FontWeight.normal : FontWeight.w600,
+
+    // When a customer is attached, clear the walk-in phone so it doesn't linger.
+    if (customer != null &&
+        ref.read(posWalkInPhoneProvider).isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.read(posWalkInPhoneProvider.notifier).state = '';
+          _phoneCtrl.clear();
+        }
+      });
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 4, 0),
+          child: Row(
+            children: [
+              Icon(Icons.person_outline, size: 18, color: cs.outline),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  customer == null
+                      ? 'Walk-in customer'
+                      : (customer.fullName.isEmpty
+                          ? customer.email
+                          : customer.fullName),
+                  style: TextStyle(
+                    color: customer == null ? cs.outline : cs.onSurface,
+                    fontWeight: customer == null
+                        ? FontWeight.normal
+                        : FontWeight.w600,
+                  ),
+                ),
               ),
+              if (customer != null)
+                IconButton(
+                  icon: const Icon(Icons.close, size: 18),
+                  tooltip: 'Remove customer',
+                  onPressed: () =>
+                      ref.read(posCustomerProvider.notifier).state = null,
+                ),
+              TextButton.icon(
+                icon: Icon(
+                    customer == null ? Icons.person_add_alt : Icons.swap_horiz,
+                    size: 18),
+                label: Text(customer == null ? 'Add' : 'Change'),
+                onPressed: () async {
+                  final picked = await showDialog<Customer?>(
+                    context: context,
+                    builder: (_) => const _CustomerPickerDialog(),
+                  );
+                  if (picked != null) {
+                    ref.read(posCustomerProvider.notifier).state =
+                        picked.id.isEmpty ? null : picked;
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+        // Walk-in phone — mandatory when no customer account is linked.
+        if (customer == null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+            child: TextField(
+              controller: _phoneCtrl,
+              keyboardType: TextInputType.phone,
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: 'Customer phone *',
+                hintText: 'Required for all orders',
+                prefixIcon: const Icon(Icons.phone_outlined, size: 18),
+                suffixIcon: ref.watch(posWalkInPhoneProvider).isEmpty
+                    ? const Icon(Icons.warning_amber_outlined,
+                        size: 18, color: Colors.orange)
+                    : const Icon(Icons.check_circle_outline,
+                        size: 18, color: Colors.green),
+              ),
+              onChanged: (v) =>
+                  ref.read(posWalkInPhoneProvider.notifier).state = v.trim(),
             ),
           ),
-          if (customer != null)
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              tooltip: 'Remove customer',
-              onPressed: () =>
-                  ref.read(posCustomerProvider.notifier).state = null,
-            ),
-          TextButton.icon(
-            icon: Icon(customer == null ? Icons.person_add_alt : Icons.swap_horiz,
-                size: 18),
-            label: Text(customer == null ? 'Add' : 'Change'),
-            onPressed: () async {
-              final picked = await showDialog<Customer?>(
-                context: context,
-                builder: (_) => const _CustomerPickerDialog(),
-              );
-              if (picked != null) {
-                ref.read(posCustomerProvider.notifier).state =
-                    picked.id.isEmpty ? null : picked;
-              }
-            },
-          ),
-        ],
-      ),
+      ],
     );
   }
 }

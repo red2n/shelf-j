@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import 'storefront_providers.dart';
+import 'storefront_shell.dart' show StorefrontAuthDialog;
+import 'survey_widgets.dart';
 
 class StorefrontCartScreen extends ConsumerStatefulWidget {
   const StorefrontCartScreen({super.key});
@@ -15,6 +18,10 @@ class StorefrontCartScreen extends ConsumerStatefulWidget {
 
 class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   bool _placing = false;
+  // Re-entrancy guard distinct from [_placing]: set synchronously before the first await so a
+  // double-tap can't fire two concurrent checkouts while still on the pending-order lookup (which
+  // happens before [_placing] flips the button's loading spinner on).
+  bool _checkoutInFlight = false;
   String _fulfilment = 'PICKUP'; // PICKUP | DELIVERY
   bool _payNow = true; // only consulted when showPrices — catalog mode has no price to charge.
   final _addressFormKey = GlobalKey<FormState>();
@@ -24,6 +31,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   final _postalCtrl = TextEditingController();
   final _recipientNameCtrl = TextEditingController();
   final _recipientPhoneCtrl = TextEditingController();
+  final _contactPhoneCtrl = TextEditingController();
 
   @override
   void dispose() {
@@ -33,6 +41,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     _postalCtrl.dispose();
     _recipientNameCtrl.dispose();
     _recipientPhoneCtrl.dispose();
+    _contactPhoneCtrl.dispose();
     super.dispose();
   }
 
@@ -214,6 +223,19 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                       ),
                     ),
                   ],
+                  if (_fulfilment == 'PICKUP') ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _contactPhoneCtrl,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Contact phone *',
+                        hintText: 'We\'ll notify you when your order is ready',
+                        isDense: true,
+                        prefixIcon: Icon(Icons.phone_outlined),
+                      ),
+                    ),
+                  ],
                   if (showPrices) ...[
                     const SizedBox(height: 12),
                     SegmentedButton<bool>(
@@ -315,22 +337,80 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   Future<void> _checkout() async {
     final cart = ref.read(cartProvider);
     if (cart.isEmpty) return;
+
+    // Order placement requires a signed-in customer so the store has at least a
+    // phone number on file (mandatory for pay-later follow-up / delivery contact).
+    if (!ref.read(storefrontAuthProvider).isSignedIn) {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => const StorefrontAuthDialog(),
+      );
+      if (!mounted || !ref.read(storefrontAuthProvider).isSignedIn) return;
+    }
+
     final delivery = _fulfilment == 'DELIVERY';
     if (delivery && !(_addressFormKey.currentState?.validate() ?? false)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Please fill in all delivery address fields.'),
+      ));
       return;
     }
+    if (!delivery && _contactPhoneCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Please enter a contact phone number for collection.'),
+      ));
+      return;
+    }
+    // Re-entrancy guard, set synchronously before the first await: a double-tap landing while
+    // this call is still on the pending-order lookup below must not fire a second checkout. This
+    // is deliberately separate from [_placing] (which only flips once we commit to placing the
+    // order) so the button doesn't show a loading spinner for the whole pending-order-dialog
+    // detour — it just silently ignores the extra tap.
+    if (_checkoutInFlight) return;
+    _checkoutInFlight = true;
+    try {
+      await _doCheckout(cart, delivery);
+    } finally {
+      _checkoutInFlight = false;
+    }
+  }
+
+  Future<void> _doCheckout(List<CartLine> cart, bool delivery) async {
+    // Guard: if the customer already has a pending order, ask before firing another.
+    final pendingOrder = await _findPendingOrder();
+    if (!mounted) return;
+    if (pendingOrder != null) {
+      final action = await _showPendingOrderDialog(pendingOrder);
+      if (!mounted) return;
+      if (action == 'update') {
+        // Navigate to the orders screen so the customer can review/contact the store.
+        // When order-svc exposes a PATCH /orders/{id}/items endpoint this becomes
+        // a direct edit flow instead.
+        context.go('/store/orders');
+        return;
+      } else if (action != 'new') {
+        // null = dialog dismissed / cancelled — do nothing
+        return;
+      }
+      // action == 'new' → fall through and place a second order
+    }
+
     final showPrices = ref.read(storefrontShowPricesProvider);
     final storeName = ref.read(storefrontConfigProvider).value?.storeName ?? '-';
     // Catalog mode (store hides prices) has no known price to charge online, so payment is
     // always deferred there regardless of the on-screen toggle; priced shops let the customer
     // choose to pay now or defer to pickup/delivery.
     final payNow = showPrices && _payNow;
-    setState(() => _placing = true);
     final dio = ref.read(storefrontDioProvider);
     final storeId = ref.read(storefrontStoreProvider);
-    final currency = cart.first.currency;
+    // In catalog mode, CartLine.currency is '' (no price was ever fetched). Fall
+    // back to 'GBP' so the order-svc currency field is never an empty string,
+    // which would trigger a 400 validation error on the server.
+    final rawCurrency = cart.first.currency;
+    final currency = rawCurrency.isNotEmpty ? rawCurrency : 'GBP';
     final cartTotal = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final idemBase = 'sf-${DateTime.now().millisecondsSinceEpoch}';
+    setState(() => _placing = true);
     try {
       // 1. Place the order (created PENDING). In catalog mode we send no client price — the
       // server resolves it (when pricing enforcement is on).
@@ -348,6 +428,9 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
               // it's recorded as a 0-value request to be priced/fulfilled later.
               {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
           ],
+          'contactPhone': delivery
+              ? _recipientPhoneCtrl.text.trim()
+              : _contactPhoneCtrl.text.trim(),
           if (delivery) ...{
             'deliveryLine1': _line1Ctrl.text.trim(),
             if (_line2Ctrl.text.trim().isNotEmpty)
@@ -449,12 +532,21 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           ],
         ),
       );
+      // Show post-order survey at most once per day — after the dialog so the
+      // customer has a natural pause before the next prompt.
+      final capturedOrderId = orderId;
+      final shownToday =
+          await ref.read(customerPrefsProvider.notifier).wasSurveyShownToday();
+      if (mounted && !shownToday) {
+        showPostOrderSurveySheet(context, capturedOrderId);
+      }
       _line1Ctrl.clear();
       _line2Ctrl.clear();
       _cityCtrl.clear();
       _postalCtrl.clear();
       _recipientNameCtrl.clear();
       _recipientPhoneCtrl.clear();
+      _contactPhoneCtrl.clear();
       setState(() {
         _fulfilment = 'PICKUP';
         _payNow = true;
@@ -470,4 +562,100 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       );
     }
   }
+
+  // ── Pending-order guard ──────────────────────────────────────────────────
+
+  /// Returns the most recent pending order for this customer, or null if none.
+  ///
+  /// For signed-in customers: queries the server order list and looks for any
+  /// order whose status indicates it has not yet been fulfilled.
+  /// For guests: checks the device-local history and treats orders placed
+  /// within the last 4 hours as potentially still pending (no status available
+  /// for anonymous orders without a server call).
+  Future<_PendingOrder?> _findPendingOrder() async {
+    final auth = ref.read(storefrontAuthProvider);
+    if (auth.isSignedIn) {
+      try {
+        final orders = await ref.read(serverOrdersProvider.future);
+        if (orders == null || orders.isEmpty) return null;
+        const pendingStatuses = {
+          'PENDING', 'RECEIVED', 'CONFIRMED', 'PROCESSING'
+        };
+        final pending = orders
+            .where((o) => pendingStatuses.contains(o.status.toUpperCase()))
+            .toList()
+          ..sort((a, b) => b.placedAt.compareTo(a.placedAt));
+        if (pending.isEmpty) return null;
+        final o = pending.first;
+        return _PendingOrder(
+            orderId: o.id, placedAt: o.placedAt, status: o.status);
+      } catch (_) {
+        // Fail open — never block checkout if the status check errors.
+        return null;
+      }
+    } else {
+      final local = ref.read(storefrontOrdersProvider);
+      if (local.isEmpty) return null;
+      final recent = local.first; // list is newest-first
+      if (DateTime.now().difference(recent.placedAt).inHours < 4) {
+        return _PendingOrder(
+            orderId: recent.orderId,
+            placedAt: recent.placedAt,
+            status: 'pending');
+      }
+      return null;
+    }
+  }
+
+  Future<String?> _showPendingOrderDialog(_PendingOrder order) {
+    final shortId = order.orderId.length >= 8
+        ? order.orderId.substring(0, 8)
+        : order.orderId;
+    final placedStr = AppFormat.dateTime(order.placedAt.toIso8601String());
+    final cs = Theme.of(context).colorScheme;
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.pending_actions_outlined,
+            size: 40, color: cs.primary),
+        title: const Text('You have a pending order'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Order #$shortId placed at $placedStr is still being '
+                'processed by the store.'),
+            const SizedBox(height: 12),
+            const Text('Would you like to update that order, or go ahead '
+                'and place a new one?'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx, 'new'),
+            child: const Text('Place new order'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'update'),
+            child: const Text('View pending order'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+class _PendingOrder {
+  final String orderId;
+  final DateTime placedAt;
+  final String status;
+  const _PendingOrder(
+      {required this.orderId,
+      required this.placedAt,
+      required this.status});
 }

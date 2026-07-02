@@ -33,7 +33,11 @@ public class PaymentService {
   public PaymentTender recordTender(
       RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
     UUID tenantId = ctx.requireTenantId();
-    return capture(req, tenantId, UUID.fromString(req.orderId()), idempotencyKey, ctx);
+    UUID storeId = req.storeId() == null ? null : UUID.fromString(req.storeId());
+    if (storeId != null) {
+      ctx.requireStoreAccess(storeId);
+    }
+    return capture(req, tenantId, UUID.fromString(req.orderId()), storeId, idempotencyKey);
   }
 
   /**
@@ -51,6 +55,14 @@ public class PaymentService {
     if (!"ONLINE".equalsIgnoreCase(order.channel())) {
       throw ApiException.notFound("PAYMENT_ORDER_NOT_FOUND", "order " + orderId + " not found");
     }
+    // Only a PENDING order is awaiting payment — capturing against an order that's already
+    // confirmed (e.g. a split/earlier tender already covered it), cancelled, or otherwise
+    // resolved would record a stray/duplicate tender with no order-side effect to match it.
+    if (!"PENDING".equalsIgnoreCase(order.status())) {
+      throw ApiException.conflict(
+          "PAYMENT_ORDER_NOT_PAYABLE",
+          "order " + orderId + " is not awaiting payment (status: " + order.status() + ")");
+    }
     UUID callerId = ctx.userId();
     if (callerId != null
         && order.customerId() != null
@@ -63,15 +75,15 @@ public class PaymentService {
           "tendered amount " + req.amount() + " does not match order total " + order.total());
     }
 
-    return capture(req, tenantId, orderId, idempotencyKey, ctx);
+    // The order's own storeId is authoritative here, not the client-supplied req.storeId() — this
+    // endpoint has no staff role to trust, so an unverified store would let a guest attribute the
+    // payment to an arbitrary store and corrupt that store's Z-report/reporting.
+    UUID storeId = order.storeId() == null ? null : UUID.fromString(order.storeId());
+    return capture(req, tenantId, orderId, storeId, idempotencyKey);
   }
 
   private PaymentTender capture(
-      RecordTenderRequest req,
-      UUID tenantId,
-      UUID orderId,
-      String idempotencyKey,
-      TenantContext ctx) {
+      RecordTenderRequest req, UUID tenantId, UUID orderId, UUID storeId, String idempotencyKey) {
     String method = req.method().toUpperCase(Locale.ROOT);
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
@@ -79,10 +91,6 @@ public class PaymentService {
           "method must be one of CASH, CARD, GIFT_CARD, VOUCHER — got: " + req.method());
 
     UUID tenderId = UUID.randomUUID();
-    UUID storeId = req.storeId() == null ? null : UUID.fromString(req.storeId());
-    if (storeId != null) {
-      ctx.requireStoreAccess(storeId);
-    }
     PaymentTender tender =
         new PaymentTender(
             tenderId,

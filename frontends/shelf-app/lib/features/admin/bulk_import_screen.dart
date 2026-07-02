@@ -13,7 +13,8 @@ import 'providers/admin_providers.dart';
 //   Product ID, Category, Product Description, Quantity Type, Case Size, Price,
 //   Quantity, Favourite[, Store]
 //
-// A single import creates categories, products AND store-availability in one go.
+// One POST to product-svc creates categories, products, stock receipts and prices
+// all server-side. The client only uploads the CSV and picks a destination store.
 
 class BulkImportScreen extends ConsumerStatefulWidget {
   const BulkImportScreen({super.key});
@@ -34,10 +35,6 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
   Set<String> _storeNamesInCsv = {};
   bool _hasQtyColumn = false;
   bool _hasPriceColumn = false;
-  // Per-row {sku, qty, price} — mirrors the backend's exact column detection and
-  // auto-SKU-generation, so rows can be re-matched against the variants the import
-  // actually created (by SKU) to receive stock / set prices afterward.
-  List<_ParsedRow> _parsedRows = [];
 
   // Per-store-name override selected by the user (store name → store UUID)
   final Map<String, String?> _storeMapping = {};
@@ -47,7 +44,6 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
   String? _destinationStoreId;
 
   bool _loading = false;
-  String _loadingStage = '';
   String? _error;
   Map<String, dynamic>? _result;
 
@@ -100,7 +96,6 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
     // Same header names and matching order as ProductService.parseSupplierCsvToRequest, so a
     // row's parsed sku/qty/price here lines up with the variant the backend actually creates.
     final headers = _splitRow(lines[0]);
-    final idxId = _headerIdx(headers, ['product id', 'product_id', 'sku', 'item no']);
     final idxDesc = _headerIdx(headers, [
       'product description', 'description', 'product name', 'name',
     ]);
@@ -119,9 +114,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
     final products = <String>{};
     final cats = <String>{};
     final storeNames = <String>{};
-    final parsedRows = <_ParsedRow>[];
     int rows = 0;
-    int skuCounter = 0;
 
     for (var i = 1; i < lines.length; i++) {
       final cols = _splitRow(lines[i]);
@@ -137,34 +130,17 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
           cols[idxStore].isNotEmpty) {
         storeNames.add(cols[idxStore]);
       }
-
-      var sku = idxId >= 0 && idxId < cols.length ? cols[idxId].trim() : '';
-      if (sku.isEmpty) {
-        skuCounter++;
-        sku = 'IMP-$skuCounter';
-      }
-      final qtyRaw = idxQty >= 0 && idxQty < cols.length ? cols[idxQty].trim() : '';
-      final priceRaw = idxPrice >= 0 && idxPrice < cols.length ? cols[idxPrice].trim() : '';
-      final qty = qtyRaw.isEmpty
-          ? null
-          : double.tryParse(qtyRaw.replaceAll(RegExp(r'[^0-9.]'), ''));
-      final price = priceRaw.isEmpty
-          ? null
-          : double.tryParse(priceRaw.replaceAll('"', ''));
-      parsedRows.add(_ParsedRow(sku: sku, qty: qty, price: price));
     }
 
     setState(() {
       _rowCount = rows;
       _hasQtyColumn = idxQty >= 0;
       _hasPriceColumn = idxPrice >= 0;
-      _parsedRows = parsedRows;
       _productCount = products.length;
       _categoryNames = cats;
       _storeNamesInCsv = storeNames;
       _error = null;
       _result = null;
-      // Initialise mapping slots for any new store names.
       for (final sn in storeNames) {
         _storeMapping.putIfAbsent(sn, () => null);
       }
@@ -210,139 +186,43 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
       if (selected != null && selected.isNotEmpty) {
         storeNameToId[sn] = selected;
       } else {
-        // Exact name match (case-insensitive)
-        final match = stores.where(
-            (s) => s.name.toLowerCase() == sn.toLowerCase());
+        final match =
+            stores.where((s) => s.name.toLowerCase() == sn.toLowerCase());
         if (match.isNotEmpty) storeNameToId[sn] = match.first.id;
       }
     }
 
     setState(() {
       _loading = true;
-      _loadingStage = 'Importing products…';
       _error = null;
       _result = null;
     });
 
     final dio = ref.read(apiClientProvider).dio;
     try {
+      // Single server-side call: product-svc creates categories + products,
+      // then calls inventory-svc and pricing-svc internally.
       final resp = await dio.post(
         '/${ApiConstants.product}/admin/import/supplier-csv',
         data: {
           'csv': _csvContent,
           'mode': _mode,
           if (storeNameToId.isNotEmpty) 'storeNameToId': storeNameToId,
+          if (_destinationStoreId != null) 'storeId': _destinationStoreId,
+          'currency': 'GBP',
         },
-        // A large catalog import is processed synchronously upstream and can take well
-        // past the client's normal request timeout.
-        options: Options(receiveTimeout: const Duration(minutes: 3)),
+        options: Options(receiveTimeout: const Duration(minutes: 10)),
       );
-      ref.invalidate(productsProvider);
-      ref.invalidate(categoriesProvider);
-      final result = (resp.data['data'] as Map<String, dynamic>?) ?? {};
-
-      // Match each variant the backend just created/replaced (by SKU) back to its
-      // row's parsed qty/price, then receive stock and set prices for those rows.
-      final importedVariants =
-          (result['importedVariants'] as List?)?.cast<Map<String, dynamic>>() ??
-              [];
-      final bySku = <String, _ParsedRow>{for (final r in _parsedRows) r.sku: r};
-
-      int stockReceived = 0;
-      final stockErrors = <String>[];
-      final priceItems = <Map<String, dynamic>>[];
-      final toReceive = <(String variantId, double qty, String sku)>[];
-      for (final v in importedVariants) {
-        final sku = v['sku'] as String?;
-        final variantId = v['variantId'] as String?;
-        if (sku == null || variantId == null) continue;
-        final row = bySku[sku];
-        if (row == null) continue;
-        if (row.qty != null && row.qty! > 0 && _destinationStoreId != null) {
-          toReceive.add((variantId, row.qty!, sku));
-        }
-        if (row.price != null && row.price! > 0) {
-          priceItems.add({'variantId': variantId, 'price': row.price, 'minQty': 1});
-        }
-      }
-
-      // Bounded concurrency — inventory-svc has no batch-receive endpoint, and an
-      // import can be thousands of rows; sequential one-at-a-time calls would be far
-      // too slow. Kept below inventory-svc's DB pool size (shelfj.db.pool-max-size,
-      // default 10) — at concurrency 16 a large import reliably exhausted the pool
-      // and ~38% of receives failed with DB_ERROR. A couple of retries on top absorb
-      // any remaining transient contention (e.g. right after a fresh deploy) instead
-      // of silently dropping stock for that row.
-      if (toReceive.isNotEmpty) {
-        if (!mounted) return;
-        setState(() => _loadingStage =
-            'Receiving stock… 0/${toReceive.length}');
-        const concurrency = 8;
-        const maxAttempts = 3;
-        var done = 0;
-        for (var i = 0; i < toReceive.length; i += concurrency) {
-          final chunk = toReceive.skip(i).take(concurrency);
-          final outcomes = await Future.wait(chunk.map((t) async {
-            final (variantId, qty, sku) = t;
-            for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-              try {
-                await dio.post('/${ApiConstants.inventory}/admin/inventory/receive', data: {
-                  'storeId': _destinationStoreId,
-                  'variantId': variantId,
-                  'qty': qty,
-                });
-                return null;
-              } catch (e) {
-                if (attempt == maxAttempts) return '$sku: $e';
-                await Future.delayed(Duration(milliseconds: 200 * attempt));
-              }
-            }
-            return '$sku: unreachable';
-          }));
-          for (final o in outcomes) {
-            if (o == null) {
-              stockReceived++;
-            } else {
-              stockErrors.add(o);
-            }
-          }
-          done += outcomes.length;
-          if (!mounted) return;
-          setState(() =>
-              _loadingStage = 'Receiving stock… $done/${toReceive.length}');
-        }
-      }
-
-      int pricesSet = 0;
-      final priceErrors = <String>[];
-      if (priceItems.isNotEmpty) {
-        if (!mounted) return;
-        setState(() => _loadingStage = 'Setting prices…');
-        try {
-          final priceListId = await ref.read(defaultPriceListProvider.future);
-          final priceResp = await dio.post(
-            '/${ApiConstants.pricing}/price-lists/$priceListId/items/batch',
-            data: {'items': priceItems},
-          );
-          final pdata = priceResp.data['data'] as Map<String, dynamic>?;
-          pricesSet = pdata?['upserted'] as int? ?? 0;
-          priceErrors.addAll((pdata?['errors'] as List?)?.cast<String>() ?? []);
-        } catch (e) {
-          priceErrors.add('Failed to set prices: $e');
-        }
-        ref.invalidate(variantPricesProvider);
-      }
 
       if (!mounted) return;
+      ref.invalidate(productsProvider);
+      ref.invalidate(categoriesProvider);
+      ref.invalidate(variantPricesProvider);
+
+      final result = (resp.data['data'] as Map<String, dynamic>?) ?? {};
       setState(() {
         _loading = false;
-        _result = {
-          ...result,
-          'stockReceived': stockReceived,
-          'stockErrors': stockErrors,
-          'pricesSet': pricesSet,
-          'priceErrors': priceErrors,
-        };
+        _result = result;
       });
     } catch (e) {
       if (!mounted) return;
@@ -488,9 +368,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                           child: CircularProgressIndicator(
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.cloud_upload_outlined),
-                  label: Text(_loading
-                      ? _loadingStage
-                      : 'Import $_productCount products'),
+                  label: Text(_loading ? 'Importing…' : 'Import $_productCount products'),
                 ),
                 data: (stores) => FilledButton.icon(
                   onPressed: _loading ? null : () => _import(stores),
@@ -501,9 +379,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                           child: CircularProgressIndicator(
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.cloud_upload_outlined),
-                  label: Text(_loading
-                      ? _loadingStage
-                      : 'Import $_productCount products'),
+                  label: Text(_loading ? 'Importing…' : 'Import $_productCount products'),
                 ),
               ),
             ],
@@ -990,11 +866,3 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-// ── Per-row parse result ──────────────────────────────────────────────────────
-
-class _ParsedRow {
-  final String sku;
-  final double? qty;
-  final double? price;
-  const _ParsedRow({required this.sku, this.qty, this.price});
-}

@@ -13,8 +13,8 @@ import com.shelfj.order.domain.Domain.Order;
 import com.shelfj.order.dto.Dtos.OrderItemRequest;
 import com.shelfj.order.dto.Dtos.PlaceOrderRequest;
 import com.shelfj.order.repo.OrderRepository;
-import com.shelfj.order.repo.StoreStatusRepository;
-import com.shelfj.order.repo.TenantStatusRepository;
+import com.shelfj.service.StoreStatusRepository;
+import com.shelfj.service.TenantStatusRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import java.math.BigDecimal;
@@ -82,7 +82,8 @@ class OrderServiceDeliveryTest {
         city,
         postalCode,
         recipientName,
-        recipientPhone);
+        recipientPhone,
+        null);
   }
 
   @Test

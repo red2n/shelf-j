@@ -45,8 +45,8 @@ public class OrderRepository extends BaseOutboxRepository {
                       + " (id,tenant_id,store_id,customer_id,channel,fulfilment_type,status,"
                       + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
                       + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
-                      + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, order.id());
             ps.setObject(2, order.tenantId());
             ps.setObject(3, order.storeId());
@@ -69,6 +69,7 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setString(20, order.deliveryPostalCode());
             ps.setString(21, order.deliveryRecipientName());
             ps.setString(22, order.deliveryRecipientPhone());
+            ps.setString(23, order.contactPhone());
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -96,7 +97,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone"
                 + " FROM orders WHERE tenant_id=? AND idempotency_key=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -125,7 +126,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone"
                 + " FROM orders WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
@@ -164,7 +165,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone"
                 + " FROM orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -205,6 +206,78 @@ public class OrderRepository extends BaseOutboxRepository {
           return findOrderInTx(c, tenantId, orderId);
         },
         "transition order " + orderId);
+  }
+
+  /**
+   * Idempotently accumulates a captured payment toward an order's total, and confirms the order
+   * (PENDING -&gt; CONFIRMED) once {@code paid_amount} reaches {@code total}. A single full-amount
+   * tender confirms immediately, same as before; split tenders (e.g. POS cash+card, each below the
+   * order total individually) now accumulate instead of each being silently dropped. Redelivery of
+   * the same {@code paymentId} (golden rule #7) is a no-op via the unique key on {@code
+   * order_payment_events}.
+   */
+  public void applyPaymentCaptured(
+      UUID tenantId, UUID orderId, UUID paymentId, BigDecimal amount, OutboxRow confirmEvent) {
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO order_payment_events (tenant_id, payment_id, order_id, amount)"
+                      + " VALUES (?,?,?,?)")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, paymentId);
+            ps.setObject(3, orderId);
+            ps.setBigDecimal(4, amount);
+            ps.executeUpdate();
+          } catch (SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState())) {
+              return null; // already applied — event redelivery, no-op
+            }
+            throw sqle;
+          }
+
+          BigDecimal newPaid;
+          BigDecimal total;
+          String status;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET paid_amount = paid_amount + ?, updated_at = now()"
+                      + " WHERE tenant_id = ? AND id = ?"
+                      + " RETURNING paid_amount, total, status")) {
+            ps.setBigDecimal(1, amount);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next()) return null; // order not found
+              newPaid = rs.getBigDecimal("paid_amount");
+              total = rs.getBigDecimal("total");
+              status = rs.getString("status");
+            }
+          }
+
+          if (Order.STATUS_PENDING.equals(status) && newPaid.compareTo(total) >= 0) {
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE orders SET status='CONFIRMED', updated_at=now()"
+                        + " WHERE tenant_id=? AND id=? AND status='PENDING'")) {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, orderId);
+              if (ps.executeUpdate() > 0) {
+                appendStatusHistory(
+                    c,
+                    tenantId,
+                    orderId,
+                    Order.STATUS_PENDING,
+                    Order.STATUS_CONFIRMED,
+                    "payment captured",
+                    null);
+                insertOutbox(c, confirmEvent);
+              }
+            }
+          }
+          return null;
+        },
+        "apply payment captured");
   }
 
   public List<OrderItem> findOrderItems(UUID tenantId, UUID orderId) {
@@ -406,21 +479,36 @@ public class OrderRepository extends BaseOutboxRepository {
     return inTx(
         c -> {
           int rows;
+          // `AND balance >= ?` makes the overpayment check atomic with the update — without it a
+          // deposit larger than the remaining balance was accepted unconditionally, driving
+          // `balance` negative.
           try (PreparedStatement ps =
               c.prepareStatement(
                   "UPDATE layaways"
                       + " SET deposit_paid = deposit_paid + ?,"
                       + "     balance = balance - ?,"
                       + "     updated_at = now()"
-                      + " WHERE tenant_id=? AND id=? AND status='ACTIVE'")) {
+                      + " WHERE tenant_id=? AND id=? AND status='ACTIVE' AND balance >= ?")) {
             ps.setBigDecimal(1, deposit.amount());
             ps.setBigDecimal(2, deposit.amount());
             ps.setObject(3, tenantId);
             ps.setObject(4, layawayId);
+            ps.setBigDecimal(5, deposit.amount());
             rows = ps.executeUpdate();
           }
-          if (rows == 0)
-            throw ApiException.notFound("LAYAWAY_NOT_FOUND", "layaway not found or not active");
+          if (rows == 0) {
+            // findLayawayInTx throws LAYAWAY_NOT_FOUND itself if the id doesn't exist at all.
+            Layaway existing = findLayawayInTx(c, tenantId, layawayId);
+            if (!Layaway.STATUS_ACTIVE.equals(existing.status())) {
+              throw ApiException.notFound("LAYAWAY_NOT_FOUND", "layaway not found or not active");
+            }
+            throw ApiException.badRequest(
+                "LAYAWAY_DEPOSIT_EXCEEDS_BALANCE",
+                "deposit "
+                    + deposit.amount()
+                    + " exceeds outstanding balance "
+                    + existing.balance());
+          }
           insertLayawayDeposit(c, deposit);
           return findLayawayInTx(c, tenantId, layawayId);
         },
@@ -695,7 +783,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone"
                 + " FROM orders WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
@@ -851,7 +939,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getString("delivery_city"),
         rs.getString("delivery_postal_code"),
         rs.getString("delivery_recipient_name"),
-        rs.getString("delivery_recipient_phone"));
+        rs.getString("delivery_recipient_phone"),
+        rs.getString("contact_phone"));
   }
 
   private OrderItem mapOrderItem(ResultSet rs) throws SQLException {
@@ -1026,39 +1115,43 @@ public class OrderRepository extends BaseOutboxRepository {
         "create special order");
   }
 
-  public List<SpecialOrder> listSpecialOrders(UUID tenantId, UUID storeId, UUID customerId) {
-    if (storeId != null) {
-      return query(
-          "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
-              + " customer_email, delivery_address, requested_delivery_date, notes, status,"
-              + " subtotal, total, currency, idempotency_key, created_at, updated_at"
-              + " FROM special_orders WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
-          ps -> {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, storeId);
-          },
-          this::mapSpecialOrder,
-          "list special orders by store");
-    }
-    if (customerId != null) {
-      return query(
-          "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
-              + " customer_email, delivery_address, requested_delivery_date, notes, status,"
-              + " subtotal, total, currency, idempotency_key, created_at, updated_at"
-              + " FROM special_orders WHERE tenant_id=? AND customer_id=? ORDER BY created_at DESC",
-          ps -> {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, customerId);
-          },
-          this::mapSpecialOrder,
-          "list special orders by customer");
-    }
+  /**
+   * Keyset-paginated: {@code afterCreatedAt}/{@code afterId} are the last-seen row's sort key (null
+   * for the first page), and the caller fetches {@code limit + 1} rows to detect whether a further
+   * page exists. Previously the store/customer-filtered branches had no limit at all and the
+   * unfiltered branch was a flat {@code LIMIT 100} with no cursor — both silently truncated with no
+   * way to see the rest.
+   */
+  public List<SpecialOrder> listSpecialOrders(
+      UUID tenantId,
+      UUID storeId,
+      UUID customerId,
+      Instant afterCreatedAt,
+      UUID afterId,
+      int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
+                + " customer_email, delivery_address, requested_delivery_date, notes, status,"
+                + " subtotal, total, currency, idempotency_key, created_at, updated_at"
+                + " FROM special_orders WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (customerId != null) sql.append(" AND customer_id=?");
+    if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) < (?, ?)");
+    sql.append(" ORDER BY created_at DESC, id DESC LIMIT ?");
     return query(
-        "SELECT id, tenant_id, store_id, customer_id, customer_name, customer_phone,"
-            + " customer_email, delivery_address, requested_delivery_date, notes, status,"
-            + " subtotal, total, currency, idempotency_key, created_at, updated_at"
-            + " FROM special_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100",
-        ps -> ps.setObject(1, tenantId),
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (customerId != null) ps.setObject(i++, customerId);
+          if (afterCreatedAt != null && afterId != null) {
+            ps.setObject(i++, afterCreatedAt.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
+        },
         this::mapSpecialOrder,
         "list special orders");
   }
@@ -1248,26 +1341,35 @@ public class OrderRepository extends BaseOutboxRepository {
         "find pos log by order");
   }
 
-  public List<PosLogEntry> listPosLog(UUID tenantId, UUID storeId) {
-    if (storeId != null) {
-      return query(
-          "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
-              + " discount_amount, total, currency, tax_exempt, exempt_reason,"
-              + " transaction_ts, created_at"
-              + " FROM pos_log_entries WHERE tenant_id=? AND store_id=? ORDER BY transaction_ts DESC LIMIT 200",
-          ps -> {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, storeId);
-          },
-          this::mapPosLogEntry,
-          "list pos log by store");
+  /**
+   * Keyset-paginated on {@code (transaction_ts, id)}; previously a flat {@code LIMIT 200} with no
+   * cursor, silently truncating a busy store's log with no way to see the rest.
+   */
+  public List<PosLogEntry> listPosLog(
+      UUID tenantId, UUID storeId, Instant afterTransactionTs, UUID afterId, int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
+                + " discount_amount, total, currency, tax_exempt, exempt_reason,"
+                + " transaction_ts, created_at"
+                + " FROM pos_log_entries WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (afterTransactionTs != null && afterId != null) {
+      sql.append(" AND (transaction_ts, id) < (?, ?)");
     }
+    sql.append(" ORDER BY transaction_ts DESC, id DESC LIMIT ?");
     return query(
-        "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
-            + " discount_amount, total, currency, tax_exempt, exempt_reason,"
-            + " transaction_ts, created_at"
-            + " FROM pos_log_entries WHERE tenant_id=? ORDER BY transaction_ts DESC LIMIT 200",
-        ps -> ps.setObject(1, tenantId),
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (afterTransactionTs != null && afterId != null) {
+            ps.setObject(i++, afterTransactionTs.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
+        },
         this::mapPosLogEntry,
         "list pos log");
   }

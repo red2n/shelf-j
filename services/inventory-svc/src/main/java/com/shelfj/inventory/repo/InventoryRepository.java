@@ -154,55 +154,133 @@ public class InventoryRepository extends BaseOutboxRepository {
       BigDecimal delta,
       String reason,
       OutboxRow event) {
+    adjust(tenantId, storeId, variantId, delta, reason, event, null);
+  }
+
+  /**
+   * As {@link #adjust(UUID, UUID, UUID, BigDecimal, String, OutboxRow)}, but a retried call with
+   * the same {@code idempotencyKey} is a no-op instead of double-applying the delta — checked
+   * before the deduction is attempted, since a negative delta's FIFO deduction could otherwise fail
+   * with INSUFFICIENT_STOCK on retry (the original call already consumed that stock).
+   */
+  public void adjust(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal delta,
+      String reason,
+      OutboxRow event,
+      String idempotencyKey) {
     inTx(
         c -> {
-          if (delta.signum() >= 0) {
-            Batch b =
-                new Batch(
-                    UUID.randomUUID(),
-                    tenantId,
-                    storeId,
-                    variantId,
-                    "ADJ",
-                    delta,
-                    delta,
-                    null,
-                    null,
-                    Instant.now(),
-                    Batch.STATUS_ACTIVE,
-                    Batch.MATERIAL_AVAILABLE,
-                    null,
-                    null,
-                    null);
-            insertBatch(c, b);
-          } else {
-            deductFifo(
-                c,
-                tenantId,
-                storeId,
-                variantId,
-                delta.negate(),
-                MoveType.ADJUST,
-                "ADJUSTMENT",
-                null);
-            checkThresholdTx(c, tenantId, storeId, variantId);
+          if (idempotencyKey != null) {
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "INSERT INTO inventory_adjustment_events (tenant_id, idempotency_key)"
+                        + " VALUES (?,?)")) {
+              ps.setObject(1, tenantId);
+              ps.setString(2, idempotencyKey);
+              ps.executeUpdate();
+            } catch (SQLException sqle) {
+              if (UNIQUE_VIOLATION.equals(sqle.getSQLState())) {
+                return null; // already applied — retry, no-op
+              }
+              throw sqle;
+            }
           }
-          insertMovement(
-              c, tenantId, storeId, variantId, null, MoveType.ADJUST, delta, "ADJUSTMENT", null);
-          insertOutbox(c, event);
+          adjustTx(c, tenantId, storeId, variantId, delta, reason, event);
           return null;
         },
         "adjust stock");
   }
 
+  // `reason` is accepted from the API down to here but not yet persisted: stock_movements has no
+  // free-text column for it, and ref_type below is a fixed small tag set ("ORDER", "LOT_MERGE_IN",
+  // ...), not a place to put arbitrary caller-supplied text. Kept as a parameter (rather than
+  // dropped from the call chain) so a future migration adding a notes column has it ready to wire
+  // up instead of re-threading it back through every caller.
+  @SuppressWarnings("PMD.UnusedFormalParameter")
+  private void adjustTx(
+      Connection c,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal delta,
+      String reason,
+      OutboxRow event)
+      throws SQLException {
+    if (delta.signum() >= 0) {
+      Batch b =
+          new Batch(
+              UUID.randomUUID(),
+              tenantId,
+              storeId,
+              variantId,
+              "ADJ",
+              delta,
+              delta,
+              null,
+              null,
+              Instant.now(),
+              Batch.STATUS_ACTIVE,
+              Batch.MATERIAL_AVAILABLE,
+              null,
+              null,
+              null);
+      insertBatch(c, b);
+    } else {
+      deductFifo(
+          c, tenantId, storeId, variantId, delta.negate(), MoveType.ADJUST, "ADJUSTMENT", null);
+      checkThresholdTx(c, tenantId, storeId, variantId);
+    }
+    insertMovement(
+        c, tenantId, storeId, variantId, null, MoveType.ADJUST, delta, "ADJUSTMENT", null);
+    insertOutbox(c, event);
+  }
+
+  /**
+   * Lot merge: deduct {@code qty} from the source batch's (store, variant) and add it to the
+   * target's, in one transaction. The two legs used to be separate {@link #adjust} calls in
+   * separate transactions — a crash between them could silently lose stock with no compensating
+   * event. Doing both within a single {@code inTx} makes the merge all-or-nothing.
+   */
+  public void mergeLotAdjust(
+      UUID tenantId,
+      UUID sourceStoreId,
+      UUID sourceVariantId,
+      OutboxRow outEvent,
+      UUID targetStoreId,
+      UUID targetVariantId,
+      OutboxRow inEvent,
+      BigDecimal qty) {
+    inTx(
+        c -> {
+          adjustTx(
+              c, tenantId, sourceStoreId, sourceVariantId, qty.negate(), "LOT_MERGE_OUT", outEvent);
+          adjustTx(c, tenantId, targetStoreId, targetVariantId, qty, "LOT_MERGE_IN", inEvent);
+          return null;
+        },
+        "merge lot");
+  }
+
   // ---------------------------------------------------------------- reserve
   /**
    * Hold stock if available. Inserts a HELD reservation + RESERVE movement + outbox. Throws 409 if
-   * short.
+   * short. If {@code idempotencyKey} matches an already-held reservation, that reservation is
+   * returned unchanged (replay) — checked *before* the availability check, since the original
+   * hold's own qty is already counted against availability and would otherwise make a retry of a
+   * fully-successful reservation look like it's short on stock.
    */
-  public Reservation reserve(Reservation r, OutboxRow event) {
+  public Reservation reserve(Reservation r, OutboxRow event, String idempotencyKey) {
     return inTx(
         c -> {
+          if (idempotencyKey != null) {
+            Reservation existing =
+                findReservationByIdempotencyKeyTx(c, r.tenantId(), idempotencyKey);
+            if (existing != null) {
+              return existing;
+            }
+          }
           BigDecimal available = availableForUpdate(c, r.tenantId(), r.storeId(), r.variantId());
           if (available.compareTo(r.qty()) < 0) {
             throw ApiException.unprocessable(
@@ -212,7 +290,14 @@ public class InventoryRepository extends BaseOutboxRepository {
                     + " available, requested "
                     + r.qty().toPlainString());
           }
-          insertReservation(c, r);
+          try {
+            insertReservation(c, r, idempotencyKey);
+          } catch (SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+              throw new ApiException(
+                  409, "RESERVATION_DUPLICATE_KEY", "duplicate idempotency key", List.of(), sqle);
+            throw sqle;
+          }
           insertMovement(
               c,
               r.tenantId(),
@@ -564,6 +649,36 @@ public class InventoryRepository extends BaseOutboxRepository {
             InventoryRepository::mapReservation,
             "get reservation");
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  /** Look up a previously-held reservation by its idempotency key — used to replay a retry. */
+  public Optional<Reservation> findReservationByIdempotencyKey(
+      UUID tenantId, String idempotencyKey) {
+    var list =
+        query(
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+                + " created_at FROM reservations WHERE tenant_id = ? AND idempotency_key = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, idempotencyKey);
+            },
+            InventoryRepository::mapReservation,
+            "find reservation by idempotency key");
+    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  private static Reservation findReservationByIdempotencyKeyTx(
+      Connection c, UUID tenantId, String idempotencyKey) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+                + " created_at FROM reservations WHERE tenant_id = ? AND idempotency_key = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setString(2, idempotencyKey);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? mapReservation(rs) : null;
+      }
+    }
   }
 
   // ---------------------------------------------------------------- thresholds
@@ -1398,46 +1513,88 @@ public class InventoryRepository extends BaseOutboxRepository {
         "list safety stock params");
   }
 
-  public Optional<SafetyStockParams> updateSafetyStockQty(
-      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, Instant computedAt) {
-    List<SafetyStockParams> rows =
-        query(
-            "UPDATE safety_stock_params"
-                + " SET safety_stock_qty = ?, computed_at = ?"
-                + " WHERE tenant_id = ? AND store_id = ? AND variant_id = ?"
-                + " RETURNING id, tenant_id, store_id, variant_id, method, lead_time_days,"
-                + "   service_level_pct, user_defined_pct, safety_stock_qty,"
-                + "   computed_at, created_at",
-            ps -> {
-              ps.setBigDecimal(1, qty);
-              ps.setObject(2, computedAt.atOffset(ZoneOffset.UTC));
-              ps.setObject(3, tenantId);
-              ps.setObject(4, storeId);
-              ps.setObject(5, variantId);
-            },
-            InventoryRepository::mapSafetyStockParams,
-            "update safety stock qty");
-    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  /**
+   * Applies many safety-stock-qty updates in one connection via JDBC batching, instead of one
+   * {@code query()} call (and connection checkout) per row. Keyed the same way as {@link
+   * #demandBucketsBatch}: {@code storeId -> variantId -> newQty}.
+   */
+  public int updateSafetyStockQtyBatch(
+      UUID tenantId,
+      java.util.Map<UUID, java.util.Map<UUID, BigDecimal>> qtyByStoreThenVariant,
+      Instant computedAt) {
+    if (qtyByStoreThenVariant.isEmpty()) return 0;
+    return inTx(
+        c -> {
+          int batched = 0;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE safety_stock_params SET safety_stock_qty = ?, computed_at = ?"
+                      + " WHERE tenant_id = ? AND store_id = ? AND variant_id = ?")) {
+            for (var storeEntry : qtyByStoreThenVariant.entrySet()) {
+              for (var variantEntry : storeEntry.getValue().entrySet()) {
+                ps.setBigDecimal(1, variantEntry.getValue());
+                ps.setObject(2, computedAt.atOffset(ZoneOffset.UTC));
+                ps.setObject(3, tenantId);
+                ps.setObject(4, storeEntry.getKey());
+                ps.setObject(5, variantEntry.getKey());
+                ps.addBatch();
+                batched++;
+              }
+            }
+            ps.executeBatch();
+          }
+          return batched;
+        },
+        "update safety stock qty batch");
   }
 
-  /** Returns the last N daily demand buckets for a specific store + variant, oldest-first. */
-  public List<DemandBucket> demandBucketsForCompute(
-      UUID tenantId, UUID storeId, UUID variantId, int maxBuckets) {
-    return query(
-        "SELECT id, tenant_id, store_id, variant_id, bucket_date, bucket_type,"
-            + " demand_qty, movement_count, computed_at"
-            + " FROM demand_history"
-            + " WHERE tenant_id = ? AND store_id = ? AND variant_id = ?"
-            + " AND bucket_type = 'DAY'"
-            + " ORDER BY bucket_date DESC LIMIT ?",
-        ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, storeId);
-          ps.setObject(3, variantId);
-          ps.setInt(4, maxBuckets);
-        },
-        InventoryRepository::mapDemandBucket,
-        "demand buckets for safety stock");
+  /**
+   * Bulk fetch of the last {@code maxBuckets} daily demand buckets for many (store, variant) pairs
+   * in one round trip — avoids an N+1 query per row when {@link
+   * com.shelfj.inventory.service.InventoryService#computeSafetyStock} recomputes every row for a
+   * tenant. Keyed by {@code storeId} then {@code variantId}; each list is oldest-first like the
+   * single-pair method.
+   */
+  public java.util.Map<UUID, java.util.Map<UUID, List<DemandBucket>>> demandBucketsBatch(
+      UUID tenantId, List<SafetyStockParams> targets, int maxBuckets) {
+    java.util.Map<UUID, java.util.Map<UUID, List<DemandBucket>>> result = new java.util.HashMap<>();
+    if (targets.isEmpty()) return result;
+    UUID[] storeIds = new UUID[targets.size()];
+    UUID[] variantIds = new UUID[targets.size()];
+    for (int i = 0; i < targets.size(); i++) {
+      storeIds[i] = targets.get(i).storeId();
+      variantIds[i] = targets.get(i).variantId();
+    }
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement(
+                "SELECT store_id, variant_id, id, tenant_id, bucket_date, bucket_type,"
+                    + " demand_qty, movement_count, computed_at FROM ("
+                    + "  SELECT dh.*, ROW_NUMBER() OVER ("
+                    + "    PARTITION BY store_id, variant_id ORDER BY bucket_date DESC) AS rn"
+                    + "  FROM demand_history dh"
+                    + "  JOIN unnest(?::uuid[], ?::uuid[]) AS pairs(store_id, variant_id)"
+                    + "    USING (store_id, variant_id)"
+                    + "  WHERE dh.tenant_id = ? AND dh.bucket_type = 'DAY'"
+                    + ") x WHERE rn <= ?")) {
+      ps.setArray(1, c.createArrayOf("uuid", storeIds));
+      ps.setArray(2, c.createArrayOf("uuid", variantIds));
+      ps.setObject(3, tenantId);
+      ps.setInt(4, maxBuckets);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          UUID storeId = rs.getObject("store_id", UUID.class);
+          UUID variantId = rs.getObject("variant_id", UUID.class);
+          result
+              .computeIfAbsent(storeId, k -> new java.util.HashMap<>())
+              .computeIfAbsent(variantId, k -> new java.util.ArrayList<>())
+              .add(mapDemandBucket(rs));
+        }
+      }
+    } catch (SQLException e) {
+      throw dbError("demand buckets batch", e);
+    }
+    return result;
   }
 
   /** All (store, variant) pairs that have safety stock params for this tenant (optional store). */
@@ -1737,12 +1894,14 @@ public class InventoryRepository extends BaseOutboxRepository {
     }
   }
 
-  private void insertReservation(Connection c, Reservation r) throws SQLException {
+  private void insertReservation(Connection c, Reservation r, String idempotencyKey)
+      throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO reservations"
-                + " (id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at, created_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+                + " (id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+                + " created_at, idempotency_key)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, r.id());
       ps.setObject(2, r.tenantId());
       ps.setObject(3, r.storeId());
@@ -1752,6 +1911,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setString(7, r.status());
       ps.setObject(8, r.expiresAt() == null ? null : r.expiresAt().atOffset(ZoneOffset.UTC));
       ps.setObject(9, r.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setString(10, idempotencyKey);
       ps.executeUpdate();
     }
   }
@@ -3360,11 +3520,14 @@ public class InventoryRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
-  public List<PickingRule> listPickingRules(UUID tenantId) {
+  public List<PickingRule> listPickingRules(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,name,strategy,grade_preference,status,created_at,updated_at"
-            + " FROM picking_rules WHERE tenant_id=? AND status='ACTIVE' ORDER BY name",
-        ps -> ps.setObject(1, tenantId),
+            + " FROM picking_rules WHERE tenant_id=? AND status='ACTIVE' ORDER BY name LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setInt(2, limit);
+        },
         InventoryRepository::mapPickingRule,
         "list picking rules");
   }
@@ -3465,11 +3628,15 @@ public class InventoryRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
-  public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId) {
+  public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,rule_id,scope_type,scope_id,created_at"
-            + " FROM picking_rule_assignments WHERE tenant_id=? ORDER BY scope_type, scope_id",
-        ps -> ps.setObject(1, tenantId),
+            + " FROM picking_rule_assignments WHERE tenant_id=? ORDER BY scope_type, scope_id"
+            + " LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setInt(2, limit);
+        },
         InventoryRepository::mapPickingRuleAssignment,
         "list picking rule assignments");
   }

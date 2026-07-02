@@ -44,8 +44,7 @@ public class StorefrontResource {
       throw new ApiException(400, "INVALID_STORE", "store must be a UUID", java.util.List.of(), e);
     }
     Store s = service.getStore(tenantId, storeId);
-    return ApiResponse.ok(
-        new StorefrontConfigResponse(s.id().toString(), s.name(), s.status(), s.showPrices()));
+    return ApiResponse.ok(StorefrontResource.toStorefrontConfig(s));
   }
 
   /**
@@ -69,14 +68,24 @@ public class StorefrontResource {
   @Path("/stores")
   public ApiResponse<List<StorefrontConfigResponse>> stores() {
     UUID tenantId = ctx.requireTenantId();
-    var items =
+    List<StorefrontConfigResponse> items =
         service.listStores(tenantId).stream()
             .filter(s -> "ACTIVE".equalsIgnoreCase(s.status()))
-            .map(
-                s ->
-                    new StorefrontConfigResponse(
-                        s.id().toString(), s.name(), s.status(), s.showPrices()))
+            .map(StorefrontResource::toStorefrontConfig)
             .toList();
     return ApiResponse.ok(items);
+  }
+
+  private static StorefrontConfigResponse toStorefrontConfig(Store s) {
+    return new StorefrontConfigResponse(
+        s.id().toString(),
+        s.name(),
+        s.status(),
+        s.showPrices(),
+        s.line1(),
+        s.city(),
+        s.country(),
+        s.pincode(),
+        null);
   }
 }

@@ -42,7 +42,8 @@ public final class Dtos {
       String deliveryCity,
       String deliveryPostalCode,
       String deliveryRecipientName,
-      String deliveryRecipientPhone) {}
+      String deliveryRecipientPhone,
+      String contactPhone) {}
 
   public record OrderItemResponse(
       String id,
@@ -75,7 +76,8 @@ public final class Dtos {
       String deliveryCity,
       String deliveryPostalCode,
       String deliveryRecipientName,
-      String deliveryRecipientPhone) {}
+      String deliveryRecipientPhone,
+      String contactPhone) {}
 
   public record OrderStatusHistoryResponse(
       String id,

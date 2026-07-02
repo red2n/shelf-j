@@ -58,6 +58,22 @@ public class CustomerRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /** Connection-scoped read within an existing transaction; null (not Optional) if not found. */
+  private static Customer findById(Connection conn, UUID tenantId, UUID customerId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        conn.prepareStatement(
+            "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
+                + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " FROM customers WHERE tenant_id = ? AND id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? mapCustomer(rs) : null;
+      }
+    }
+  }
+
   public Optional<Customer> findByEmail(UUID tenantId, String email) {
     return query(
             "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
@@ -118,24 +134,40 @@ public class CustomerRepository extends BaseOutboxRepository {
   }
 
   public Customer updateCustomer(Customer c) {
-    exec(
-        "UPDATE customers SET phone=?, first_name=?, last_name=?, dob=?, gender=?,"
-            + " gdpr_consent_at=?, updated_at=? WHERE tenant_id=? AND id=?",
-        ps -> {
-          ps.setString(1, c.phone());
-          ps.setString(2, c.firstName());
-          ps.setString(3, c.lastName());
-          ps.setObject(4, c.dob() == null ? null : java.sql.Date.valueOf(c.dob()));
-          ps.setString(5, c.gender());
-          ps.setObject(
-              6, c.gdprConsentAt() == null ? null : c.gdprConsentAt().atOffset(ZoneOffset.UTC));
-          ps.setObject(7, c.updatedAt().atOffset(ZoneOffset.UTC));
-          ps.setObject(8, c.tenantId());
-          ps.setObject(9, c.id());
+    // `AND status != 'ANONYMIZED'` makes the guard atomic with the write — without it, a profile
+    // update racing a concurrent GDPR anonymize (or simply targeting an already-anonymized
+    // customer directly) would silently resurrect erased PII.
+    return inTx(
+        conn -> {
+          int rows;
+          try (PreparedStatement ps =
+              conn.prepareStatement(
+                  "UPDATE customers SET phone=?, first_name=?, last_name=?, dob=?, gender=?,"
+                      + " gdpr_consent_at=?, updated_at=? WHERE tenant_id=? AND id=?"
+                      + " AND status != 'ANONYMIZED'")) {
+            ps.setString(1, c.phone());
+            ps.setString(2, c.firstName());
+            ps.setString(3, c.lastName());
+            ps.setObject(4, c.dob() == null ? null : java.sql.Date.valueOf(c.dob()));
+            ps.setString(5, c.gender());
+            ps.setObject(
+                6, c.gdprConsentAt() == null ? null : c.gdprConsentAt().atOffset(ZoneOffset.UTC));
+            ps.setObject(7, c.updatedAt().atOffset(ZoneOffset.UTC));
+            ps.setObject(8, c.tenantId());
+            ps.setObject(9, c.id());
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) {
+            Customer existing = findById(conn, c.tenantId(), c.id());
+            if (existing == null) {
+              throw ApiException.notFound("CUSTOMER_NOT_FOUND", "Customer not found");
+            }
+            throw ApiException.conflict(
+                "CUSTOMER_ANONYMIZED", "Customer has been anonymized and can no longer be updated");
+          }
+          return findById(conn, c.tenantId(), c.id());
         },
         "update customer");
-    return findById(c.tenantId(), c.id())
-        .orElseThrow(() -> ApiException.notFound("CUSTOMER_NOT_FOUND", "Customer not found"));
   }
 
   public Customer anonymize(UUID tenantId, UUID customerId) {
@@ -192,7 +224,8 @@ public class CustomerRepository extends BaseOutboxRepository {
           exec(
               conn,
               "UPDATE customer_addresses SET type=?, line1=?, line2=?, city=?, state=?,"
-                  + " country=?, pincode=?, is_default=? WHERE tenant_id=? AND id=?",
+                  + " country=?, pincode=?, is_default=? WHERE tenant_id=? AND customer_id=? AND"
+                  + " id=?",
               ps -> {
                 ps.setString(1, a.type());
                 ps.setString(2, a.line1());
@@ -203,31 +236,34 @@ public class CustomerRepository extends BaseOutboxRepository {
                 ps.setString(7, a.pincode());
                 ps.setBoolean(8, a.isDefault());
                 ps.setObject(9, a.tenantId());
-                ps.setObject(10, a.id());
+                ps.setObject(10, a.customerId());
+                ps.setObject(11, a.id());
               });
-          return findAddress(conn, a.tenantId(), a.id());
+          return findAddress(conn, a.tenantId(), a.customerId(), a.id());
         },
         "update address tx");
   }
 
-  public void deleteAddress(UUID tenantId, UUID addressId) {
+  public void deleteAddress(UUID tenantId, UUID customerId, UUID addressId) {
     exec(
-        "DELETE FROM customer_addresses WHERE tenant_id = ? AND id = ?",
+        "DELETE FROM customer_addresses WHERE tenant_id = ? AND customer_id = ? AND id = ?",
         ps -> {
           ps.setObject(1, tenantId);
-          ps.setObject(2, addressId);
+          ps.setObject(2, customerId);
+          ps.setObject(3, addressId);
         },
         "delete address");
   }
 
-  public Optional<CustomerAddress> findAddress(UUID tenantId, UUID addressId) {
+  public Optional<CustomerAddress> findAddress(UUID tenantId, UUID customerId, UUID addressId) {
     return query(
             "SELECT id, tenant_id, customer_id, type, line1, line2, city, state, country,"
                 + " pincode, is_default, created_at"
-                + " FROM customer_addresses WHERE tenant_id = ? AND id = ?",
+                + " FROM customer_addresses WHERE tenant_id = ? AND customer_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
-              ps.setObject(2, addressId);
+              ps.setObject(2, customerId);
+              ps.setObject(3, addressId);
             },
             CustomerRepository::mapAddress,
             "find address")
@@ -534,15 +570,16 @@ public class CustomerRepository extends BaseOutboxRepository {
     }
   }
 
-  private CustomerAddress findAddress(Connection c, UUID tenantId, UUID addressId)
+  private CustomerAddress findAddress(Connection c, UUID tenantId, UUID customerId, UUID addressId)
       throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT id, tenant_id, customer_id, type, line1, line2, city, state, country,"
                 + " pincode, is_default, created_at"
-                + " FROM customer_addresses WHERE tenant_id = ? AND id = ?")) {
+                + " FROM customer_addresses WHERE tenant_id = ? AND customer_id = ? AND id = ?")) {
       ps.setObject(1, tenantId);
-      ps.setObject(2, addressId);
+      ps.setObject(2, customerId);
+      ps.setObject(3, addressId);
       try (ResultSet rs = ps.executeQuery()) {
         if (rs.next()) return mapAddress(rs);
         throw ApiException.notFound("ADDRESS_NOT_FOUND", "Address not found");

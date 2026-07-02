@@ -1,6 +1,5 @@
-package com.shelfj.cart.repo;
+package com.shelfj.service;
 
-import com.shelfj.service.BaseJdbcRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -9,8 +8,8 @@ import java.util.UUID;
 
 /**
  * Local projection of tenant operational status, fed by {@code TenantStatusChanged} Kafka events.
- * Used by {@link com.shelfj.cart.service.CartService} to guard cart operations without a
- * synchronous call to tenant-svc. Fail-open: missing row = ACTIVE.
+ * Services inject this to gate operations without a synchronous call to tenant-svc. Fail-open: a
+ * missing row is treated as ACTIVE.
  */
 @ApplicationScoped
 public class TenantStatusRepository extends BaseJdbcRepository {

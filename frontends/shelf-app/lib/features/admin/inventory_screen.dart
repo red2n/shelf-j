@@ -372,7 +372,9 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                         var filtered = batches.where((b) {
                           if (_zoneId != null && b.zoneId != _zoneId) return false;
                           if (_materialStatus != null &&
-                              b.materialStatus != _materialStatus) return false;
+                              b.materialStatus != _materialStatus) {
+                            return false;
+                          }
                           if (_search.isNotEmpty &&
                               !b.batchNo.toLowerCase().contains(_search.toLowerCase()) &&
                               !b.variantId.toLowerCase().contains(_search.toLowerCase())) {

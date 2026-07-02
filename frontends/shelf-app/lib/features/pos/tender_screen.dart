@@ -2,11 +2,15 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/theme.dart';
 import '../admin/customer_providers.dart';
+import '../admin/providers/admin_providers.dart';
 import 'pos_providers.dart';
+import 'pos_receipt.dart';
 import 'pos_session_providers.dart';
 
 /// Multi-tender payment screen: a sale can be split across cash, card, gift card
@@ -92,13 +96,19 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
   }
 
   Future<void> _complete() async {
+    if (_processing) return;
     final cart = ref.read(posCartProvider);
     final storeId = ref.read(posStoreProvider);
     final customer = ref.read(posCustomerProvider);
+    final walkInPhone = ref.read(posWalkInPhoneProvider);
     final discount = ref.read(posDiscountProvider).clamp(0, double.infinity).toDouble();
     if (cart.isEmpty) return;
     if (storeId == null) {
       _snack('Select a store before tendering.', error: true);
+      return;
+    }
+    if (customer == null && walkInPhone.isEmpty) {
+      _snack('Enter a contact phone number for this sale.', error: true);
       return;
     }
     if (_remaining > 0.001) {
@@ -120,6 +130,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           'currency': currency,
           if (discount > 0) 'discountAmount': discount,
           if (customer != null) 'customerId': customer.id,
+          'contactPhone': customer != null ? '' : walkInPhone,
           'items': [
             for (final l in cart)
               {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
@@ -161,20 +172,76 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
 
       // A completed sale is the strongest activity signal — keep the session alive.
       ref.read(posSessionProvider.notifier).touch();
+
+      // Capture everything needed for the receipt before clearing state.
+      final receiptData = _buildReceiptData(
+        orderId: orderId,
+        cartSnapshot: [...cart],
+        tenderSnapshot: [..._tenders],
+        discount: discount,
+        total: (order['total'] as num?)?.toDouble() ?? _due,
+        currency: currency,
+        customerName: customer?.fullName.isNotEmpty == true ? customer!.fullName : customer?.email,
+      );
+
       final change = _change;
       final email = customer?.email;
       ref.read(posCartProvider.notifier).clear();
       ref.read(posCustomerProvider.notifier).state = null;
       ref.read(posDiscountProvider.notifier).state = 0;
+      ref.read(posWalkInPhoneProvider.notifier).state = '';
       _tenders.clear();
       if (!mounted) return;
       setState(() => _processing = false);
-      await _showReceiptDialog(orderId, currency, change, email);
+
+      // Open print dialog automatically — cashier can dismiss or save as PDF.
+      openReceiptPrint(receiptData);
+
+      await _showReceiptDialog(orderId, currency, change, email, receiptData: receiptData);
     } catch (e) {
       if (!mounted) return;
       setState(() => _processing = false);
       _snack('Sale failed: $e', error: true);
     }
+  }
+
+  PosReceiptData _buildReceiptData({
+    required String orderId,
+    required List<PosLine> cartSnapshot,
+    required List<PosTender> tenderSnapshot,
+    required double discount,
+    required double total,
+    required String currency,
+    String? customerName,
+  }) {
+    final subtotal = cartSnapshot.fold<double>(0, (s, l) => s + l.lineTotal);
+    final storeId = ref.read(posStoreProvider);
+    final stores = ref.read(posStoresProvider).valueOrNull ?? [];
+    final store = stores.firstWhere((s) => s.id == storeId,
+        orElse: () => stores.isNotEmpty ? stores.first : _emptyStore());
+    final addressParts = [
+      if (store.line1 != null && store.line1!.isNotEmpty) store.line1!,
+      if (store.city != null && store.city!.isNotEmpty) store.city!,
+      if (store.pincode != null && store.pincode!.isNotEmpty) store.pincode!,
+      if (store.country != null && store.country!.isNotEmpty) store.country!,
+    ];
+    final authState = ref.read(authNotifierProvider).value;
+    final cashierEmail = authState is AuthAuthenticated ? authState.email : null;
+    return PosReceiptData(
+      orderId: orderId,
+      storeName: store.name,
+      storeAddress: addressParts.isNotEmpty ? addressParts.join(', ') : null,
+      dateTime: DateTime.now(),
+      cashierEmail: cashierEmail,
+      items: cartSnapshot,
+      subtotal: subtotal,
+      discount: discount,
+      total: total,
+      currency: currency,
+      tenders: tenderSnapshot,
+      change: tenderSnapshot.fold<double>(0, (s, t) => s + t.change),
+      customerName: customerName,
+    );
   }
 
   /// Record a printed or emailed receipt (best-effort — never blocks completion).
@@ -197,7 +264,8 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
   }
 
   Future<void> _showReceiptDialog(
-      String orderId, String currency, double change, String? customerEmail) {
+      String orderId, String currency, double change, String? customerEmail,
+      {required PosReceiptData receiptData}) {
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -208,7 +276,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Order #${orderId.length >= 8 ? orderId.substring(0, 8) : orderId}'),
+            Text('Order #${orderId.length >= 8 ? orderId.substring(0, 8).toUpperCase() : orderId}'),
             if (change > 0) ...[
               const SizedBox(height: 8),
               Text('Change due: $currency ${change.toStringAsFixed(2)}',
@@ -223,14 +291,16 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
               alignment: WrapAlignment.center,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () => _recordReceipt(orderId, 'SALE', null),
+                  onPressed: () {
+                    openReceiptPrint(receiptData);
+                    _recordReceipt(orderId, 'SALE', null);
+                  },
                   icon: const Icon(Icons.print_outlined, size: 18),
-                  label: const Text('Print'),
+                  label: const Text('Reprint'),
                 ),
                 if (customerEmail != null && customerEmail.isNotEmpty)
                   OutlinedButton.icon(
-                    onPressed: () =>
-                        _recordReceipt(orderId, 'EMAIL', customerEmail),
+                    onPressed: () => _recordReceipt(orderId, 'EMAIL', customerEmail),
                     icon: const Icon(Icons.email_outlined, size: 18),
                     label: const Text('Email'),
                   ),
@@ -312,9 +382,14 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     final cart = ref.read(posCartProvider);
     final storeId = ref.read(posStoreProvider);
     final customer = ref.read(posCustomerProvider);
+    final walkInPhone = ref.read(posWalkInPhoneProvider);
     if (cart.isEmpty) return;
     if (storeId == null) {
       _snack('Select a store before placing the order.', error: true);
+      return;
+    }
+    if (customer == null && walkInPhone.isEmpty) {
+      _snack('Enter a contact phone number for this sale.', error: true);
       return;
     }
     setState(() => _processing = true);
@@ -330,6 +405,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           'fulfilmentType': 'PICKUP',
           'currency': currency,
           if (customer != null) 'customerId': customer.id,
+          'contactPhone': customer != null ? '' : walkInPhone,
           'items': [
             for (final l in cart)
               {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
@@ -340,13 +416,24 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       final order = resp.data['data'] as Map<String, dynamic>;
       final orderId = order['id'] as String? ?? '';
       ref.read(posSessionProvider.notifier).touch();
+      final receiptData = _buildReceiptData(
+        orderId: orderId,
+        cartSnapshot: [...cart],
+        tenderSnapshot: const [],
+        discount: 0,
+        total: 0,
+        currency: currency,
+        customerName: customer?.fullName.isNotEmpty == true ? customer!.fullName : customer?.email,
+      );
       final email = customer?.email;
       ref.read(posCartProvider.notifier).clear();
       ref.read(posCustomerProvider.notifier).state = null;
       ref.read(posDiscountProvider.notifier).state = 0;
+      ref.read(posWalkInPhoneProvider.notifier).state = '';
       if (!mounted) return;
       setState(() => _processing = false);
-      await _showOrderPlacedDialog(orderId, email);
+      openReceiptPrint(receiptData);
+      await _showOrderPlacedDialog(orderId, email, receiptData: receiptData);
     } catch (e) {
       if (!mounted) return;
       setState(() => _processing = false);
@@ -354,7 +441,8 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     }
   }
 
-  Future<void> _showOrderPlacedDialog(String orderId, String? customerEmail) {
+  Future<void> _showOrderPlacedDialog(String orderId, String? customerEmail,
+      {required PosReceiptData receiptData}) {
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -365,21 +453,23 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Order #${orderId.length >= 8 ? orderId.substring(0, 8) : orderId}'),
+            Text('Order #${orderId.length >= 8 ? orderId.substring(0, 8).toUpperCase() : orderId}'),
             const SizedBox(height: 16),
             Wrap(
               spacing: 8,
               alignment: WrapAlignment.center,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () => _recordReceipt(orderId, 'SALE', null),
+                  onPressed: () {
+                    openReceiptPrint(receiptData);
+                    _recordReceipt(orderId, 'SALE', null);
+                  },
                   icon: const Icon(Icons.print_outlined, size: 18),
-                  label: const Text('Print'),
+                  label: const Text('Reprint'),
                 ),
                 if (customerEmail != null && customerEmail.isNotEmpty)
                   OutlinedButton.icon(
-                    onPressed: () =>
-                        _recordReceipt(orderId, 'EMAIL', customerEmail),
+                    onPressed: () => _recordReceipt(orderId, 'EMAIL', customerEmail),
                     icon: const Icon(Icons.email_outlined, size: 18),
                     label: const Text('Email'),
                   ),
@@ -864,3 +954,7 @@ class _StoreCreditTenderDialog extends ConsumerWidget {
     );
   }
 }
+
+// Fallback used when no matching store is found in posStoresProvider.
+StoreInfo _emptyStore() =>
+    const StoreInfo(id: '', name: 'Store', code: '', type: 'STORE', status: 'ACTIVE');

@@ -10,6 +10,7 @@ class StorefrontOrdersScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(storefrontAuthProvider);
+    final showPrices = ref.watch(storefrontShowPricesProvider);
 
     // Signed-in customers get their real, cross-device order history from the
     // server. Guests see only orders placed on this device.
@@ -36,7 +37,8 @@ class StorefrontOrdersScreen extends ConsumerWidget {
               separatorBuilder: (_, __) => const SizedBox(height: 4),
               itemBuilder: (_, i) => _ServerOrderTile(
                   order: list[i],
-                  storeName: storeNames[list[i].storeId] ?? list[i].storeId),
+                  storeName: storeNames[list[i].storeId] ?? list[i].storeId,
+                  showPrices: showPrices),
             );
           },
         ),
@@ -55,7 +57,8 @@ class StorefrontOrdersScreen extends ConsumerWidget {
                   padding: const EdgeInsets.all(16),
                   itemCount: orders.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 4),
-                  itemBuilder: (_, i) => _LocalOrderTile(order: orders[i]),
+                  itemBuilder: (_, i) =>
+                      _LocalOrderTile(order: orders[i], showPrices: showPrices),
                 ),
         ),
       ],
@@ -66,7 +69,9 @@ class StorefrontOrdersScreen extends ConsumerWidget {
 class _ServerOrderTile extends StatelessWidget {
   final ServerOrderSummary order;
   final String storeName;
-  const _ServerOrderTile({required this.order, required this.storeName});
+  final bool showPrices;
+  const _ServerOrderTile(
+      {required this.order, required this.storeName, required this.showPrices});
 
   @override
   Widget build(BuildContext context) {
@@ -87,8 +92,16 @@ class _ServerOrderTile extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Text('${order.currency} ${order.total.toStringAsFixed(2)}',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
+            if (showPrices)
+              Text('${order.currency} ${order.total.toStringAsFixed(2)}',
+                  style: const TextStyle(fontWeight: FontWeight.bold))
+            else
+              Text(
+                order.fulfilmentType == 'DELIVERY'
+                    ? 'Price on delivery'
+                    : 'Price in store',
+                style: TextStyle(color: cs.outline, fontSize: 12),
+              ),
             const SizedBox(height: 2),
             _StatusChip(status: order.status),
           ],
@@ -100,13 +113,15 @@ class _ServerOrderTile extends StatelessWidget {
 
 class _LocalOrderTile extends StatelessWidget {
   final StorefrontOrderRecord order;
-  const _LocalOrderTile({required this.order});
+  final bool showPrices;
+  const _LocalOrderTile({required this.order, required this.showPrices});
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final shortId =
         order.orderId.length >= 8 ? order.orderId.substring(0, 8) : order.orderId;
+    final hasKnownPrice = showPrices && order.currency.isNotEmpty;
     return Card(
       child: ListTile(
         leading: CircleAvatar(
@@ -118,8 +133,15 @@ class _LocalOrderTile extends StatelessWidget {
         subtitle: Text(
             '${order.fulfilmentType == 'DELIVERY' ? 'Deliver to home' : 'Collect from ${order.storeName}'}\n${order.itemCount} item${order.itemCount == 1 ? '' : 's'} · ${_fmtDate(order.placedAt)}'),
         isThreeLine: true,
-        trailing: Text('${order.currency} ${order.total.toStringAsFixed(2)}',
-            style: const TextStyle(fontWeight: FontWeight.bold)),
+        trailing: hasKnownPrice
+            ? Text('${order.currency} ${order.total.toStringAsFixed(2)}',
+                style: const TextStyle(fontWeight: FontWeight.bold))
+            : Text(
+                order.fulfilmentType == 'DELIVERY'
+                    ? 'Price on delivery'
+                    : 'Price in store',
+                style: TextStyle(color: cs.outline, fontSize: 12),
+              ),
       ),
     );
   }

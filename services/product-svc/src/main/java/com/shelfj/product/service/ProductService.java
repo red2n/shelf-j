@@ -61,6 +61,8 @@ import java.util.UUID;
 public class ProductService {
 
   @Inject ProductRepository repo;
+  @Inject com.shelfj.product.client.InventoryClient inventoryClient;
+  @Inject com.shelfj.product.client.PricingClient pricingClient;
 
   // ─────────────────────────────────────────────────────────────────── brands
 
@@ -212,8 +214,34 @@ public class ProductService {
     return repo.listProducts(tenantId, categoryId, onlineOnly, posOnly, storeId, limit);
   }
 
-  public List<Product> listProductsAdmin(UUID tenantId, UUID categoryId, String status, int limit) {
-    return repo.listProductsAdmin(tenantId, categoryId, status, limit);
+  /** One page of admin products plus the opaque cursor for the next page (null when exhausted). */
+  public record ProductPage(List<Product> products, String nextCursor) {}
+
+  public ProductPage listProductsAdmin(
+      UUID tenantId, UUID categoryId, String status, String afterCursor, int limit) {
+    Instant afterCreatedAt = null;
+    UUID afterId = null;
+    String rawKey = com.shelfj.web.Cursor.decode(afterCursor);
+    if (rawKey != null) {
+      int sep = rawKey.indexOf('|');
+      try {
+        if (sep < 0) throw new IllegalArgumentException("missing separator");
+        afterCreatedAt = Instant.parse(rawKey.substring(0, sep));
+        afterId = UUID.fromString(rawKey.substring(sep + 1));
+      } catch (RuntimeException e) {
+        throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
+      }
+    }
+    // Fetch one extra row to learn whether a further page exists without a second query.
+    List<Product> rows =
+        repo.listProductsAdmin(tenantId, categoryId, status, afterCreatedAt, afterId, limit + 1);
+    if (rows.size() <= limit) {
+      return new ProductPage(rows, null);
+    }
+    List<Product> page = rows.subList(0, limit);
+    Product last = page.get(page.size() - 1);
+    return new ProductPage(
+        page, com.shelfj.web.Cursor.encode(last.createdAt().toString() + "|" + last.id()));
   }
 
   public List<Product> searchProducts(
@@ -524,26 +552,38 @@ public class ProductService {
     // ADD (default) = create new (duplicate SKUs error).
     final boolean replace = req.mode() != null && "REPLACE".equalsIgnoreCase(req.mode());
 
+    // A CSV sheet typically has far fewer distinct category/brand names than product rows — cache
+    // resolved ids by name within this import so repeated rows for the same category/brand don't
+    // each cost a round trip.
+    var categoryIdByName = new java.util.HashMap<String, UUID>();
+    var brandIdByName = new java.util.HashMap<String, UUID>();
+
     // ── 1. categories ────────────────────────────────────────────────────────
     if (req.categories() != null) {
       for (var c : req.categories()) {
         try {
-          if (repo.findCategoryByName(tenantId, c.name().trim()).isPresent()) {
+          var existingCat = repo.findCategoryByName(tenantId, c.name().trim());
+          if (existingCat.isPresent()) {
+            categoryIdByName.put(c.name().trim(), existingCat.get().id());
             catSkipped++;
             continue;
           }
           UUID parentId = null;
           if (c.parentName() != null && !c.parentName().isBlank()) {
-            parentId =
-                repo.findCategoryByName(tenantId, c.parentName().trim())
-                    .map(cat -> cat.id())
-                    .orElseThrow(
-                        () ->
-                            ApiException.badRequest(
-                                "PARENT_NOT_FOUND",
-                                "parent category not found: " + c.parentName()));
+            String parentName = c.parentName().trim();
+            parentId = categoryIdByName.get(parentName);
+            if (parentId == null) {
+              parentId =
+                  repo.findCategoryByName(tenantId, parentName)
+                      .map(cat -> cat.id())
+                      .orElseThrow(
+                          () ->
+                              ApiException.badRequest(
+                                  "PARENT_NOT_FOUND", "parent category not found: " + parentName));
+            }
           }
-          repo.createCategory(tenantId, parentId, c.name().trim());
+          UUID newCategoryId = repo.createCategory(tenantId, parentId, c.name().trim()).id();
+          categoryIdByName.put(c.name().trim(), newCategoryId);
           catCreated++;
         } catch (ApiException ae) {
           errors.add(new BulkImportError("category:" + c.name(), ae.getMessage()));
@@ -562,19 +602,28 @@ public class ProductService {
             continue;
           }
 
-          UUID categoryId =
-              p.categoryName() != null && !p.categoryName().isBlank()
-                  ? repo.findCategoryByName(tenantId, p.categoryName().trim())
-                      .map(cat -> cat.id())
-                      .orElse(null)
-                  : null;
+          UUID categoryId = null;
+          if (p.categoryName() != null && !p.categoryName().isBlank()) {
+            String categoryName = p.categoryName().trim();
+            categoryId = categoryIdByName.get(categoryName);
+            if (categoryId == null) {
+              var found = repo.findCategoryByName(tenantId, categoryName);
+              categoryId = found.map(cat -> cat.id()).orElse(null);
+              if (categoryId != null) categoryIdByName.put(categoryName, categoryId);
+            }
+          }
 
           UUID brandId = null;
           if (p.brandName() != null && !p.brandName().isBlank()) {
-            brandId =
-                repo.findBrandByName(tenantId, p.brandName().trim())
-                    .map(b -> b.id())
-                    .orElseGet(() -> repo.createBrand(tenantId, p.brandName().trim()).id());
+            String brandName = p.brandName().trim();
+            brandId = brandIdByName.get(brandName);
+            if (brandId == null) {
+              brandId =
+                  repo.findBrandByName(tenantId, brandName)
+                      .map(b -> b.id())
+                      .orElseGet(() -> repo.createBrand(tenantId, brandName).id());
+              brandIdByName.put(brandName, brandId);
+            }
           }
 
           Instant now = Instant.now();
@@ -672,7 +721,16 @@ public class ProductService {
     }
 
     return new BulkImportResult(
-        catCreated, catSkipped, prodCreated, varCreated, errors, importedVariants);
+        catCreated,
+        catSkipped,
+        prodCreated,
+        varCreated,
+        errors,
+        importedVariants,
+        null,
+        null,
+        null,
+        null);
   }
 
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
@@ -1022,13 +1080,77 @@ public class ProductService {
    * outside it.
    */
   public BulkImportResult importSupplierCsv(
-      UUID tenantId, com.shelfj.product.dto.Dtos.SupplierCsvImportRequest req) {
-    var bulkReq =
-        parseSupplierCsvToRequest(
-            req.csv(),
-            req.mode(),
-            req.storeNameToId() != null ? req.storeNameToId() : java.util.Map.of());
-    return bulkImport(tenantId, bulkReq);
+      UUID tenantId, String rolesHeader, com.shelfj.product.dto.Dtos.SupplierCsvImportRequest req) {
+    var storeNameToId =
+        req.storeNameToId() != null ? req.storeNameToId() : java.util.Map.<String, String>of();
+    var parsed = parseCsvFull(req.csv(), req.mode(), storeNameToId);
+    var catalogResult = bulkImport(tenantId, parsed.request());
+
+    Integer stockReceived = null;
+    List<String> stockErrors = null;
+    if (req.storeId() != null
+        && !req.storeId().isBlank()
+        && !catalogResult.importedVariants().isEmpty()) {
+      var receiveItems =
+          catalogResult.importedVariants().stream()
+              .filter(v -> parsed.skuQty().containsKey(v.sku()))
+              .map(
+                  v ->
+                      new com.shelfj.product.client.InventoryClient.ReceiveItem(
+                          v.variantId(), parsed.skuQty().get(v.sku())))
+              .toList();
+      if (!receiveItems.isEmpty()) {
+        var r =
+            inventoryClient.batchReceive(
+                tenantId, UUID.fromString(req.storeId()), rolesHeader, receiveItems);
+        stockReceived = r.received();
+        stockErrors = r.errors().isEmpty() ? null : r.errors();
+      }
+    }
+
+    Integer pricesSet = null;
+    List<String> priceErrors = null;
+    if (!catalogResult.importedVariants().isEmpty()) {
+      var priceItems =
+          catalogResult.importedVariants().stream()
+              .filter(v -> parsed.skuPrice().containsKey(v.sku()))
+              .map(
+                  v ->
+                      new com.shelfj.product.client.PricingClient.PriceItem(
+                          v.variantId(), parsed.skuPrice().get(v.sku())))
+              .toList();
+      if (!priceItems.isEmpty()) {
+        String cur = (req.currency() != null && !req.currency().isBlank()) ? req.currency() : "GBP";
+        var r = pricingClient.batchSetPrices(tenantId, cur, rolesHeader, priceItems);
+        pricesSet = r.upserted();
+        priceErrors = r.errors().isEmpty() ? null : r.errors();
+      }
+    }
+
+    return new BulkImportResult(
+        catalogResult.categoriesCreated(),
+        catalogResult.categoriesSkipped(),
+        catalogResult.productsCreated(),
+        catalogResult.variantsCreated(),
+        catalogResult.errors(),
+        catalogResult.importedVariants(),
+        stockReceived,
+        stockErrors,
+        pricesSet,
+        priceErrors);
+  }
+
+  private record CsvParseResult(
+      BulkImportRequest request,
+      java.util.Map<String, BigDecimal> skuQty,
+      java.util.Map<String, BigDecimal> skuPrice) {}
+
+  private CsvParseResult parseCsvFull(
+      String csv, String mode, java.util.Map<String, String> storeNameToId) {
+    var skuQty = new java.util.HashMap<String, BigDecimal>();
+    var skuPrice = new java.util.HashMap<String, BigDecimal>();
+    var req = parseSupplierCsvToRequest(csv, mode, storeNameToId, skuQty, skuPrice);
+    return new CsvParseResult(req, skuQty, skuPrice);
   }
 
   private record ProductEntry(
@@ -1037,7 +1159,11 @@ public class ProductService {
       java.util.Set<String> storeIds) {}
 
   private BulkImportRequest parseSupplierCsvToRequest(
-      String csv, String mode, java.util.Map<String, String> storeNameToId) {
+      String csv,
+      String mode,
+      java.util.Map<String, String> storeNameToId,
+      java.util.Map<String, BigDecimal> outSkuQty,
+      java.util.Map<String, BigDecimal> outSkuPrice) {
     var lines =
         java.util.Arrays.asList(csv.split("\\r?\\n")).stream().filter(l -> !l.isBlank()).toList();
     if (lines.size() < 2) {
@@ -1080,11 +1206,25 @@ public class ProductService {
       }
 
       String category = idxCat >= 0 ? col(cols, idxCat).trim() : "";
+      String qtyStr = idxQty >= 0 ? col(cols, idxQty).trim() : "";
+      String priceStr = idxPrice >= 0 ? col(cols, idxPrice).trim() : "";
+
+      // Capture numeric qty / price for stock-receive and pricing steps.
+      if (!qtyStr.isEmpty() && outSkuQty != null) {
+        try {
+          outSkuQty.put(sku, new BigDecimal(qtyStr));
+        } catch (NumberFormatException ignored) {
+        }
+      }
+      if (!priceStr.isEmpty() && outSkuPrice != null) {
+        try {
+          outSkuPrice.put(sku, new BigDecimal(priceStr));
+        } catch (NumberFormatException ignored) {
+        }
+      }
+
       // Build attributes from whatever is present — no parsing/validation.
-      String attributes =
-          buildAttributes(
-              idxQty >= 0 ? col(cols, idxQty).trim() : "",
-              idxPrice >= 0 ? col(cols, idxPrice).trim() : "");
+      String attributes = buildAttributes(qtyStr, priceStr);
 
       var variant =
           new com.shelfj.product.dto.Dtos.ImportVariantRequest(sku, null, null, "CS", attributes);

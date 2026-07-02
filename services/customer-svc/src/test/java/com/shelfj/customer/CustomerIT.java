@@ -258,6 +258,56 @@ class CustomerIT {
   }
 
   @Test
+  void updateAfterAnonymizeIsRejectedNotResurrected() {
+    Response created =
+        post(
+            "/customers",
+            "{\"email\":\"helen@example.com\",\"firstName\":\"Helen\",\"lastName\":\"Lee\"}");
+    assertThat(created.getStatus(), is(201));
+    String id = field(created.readEntity(String.class), "id");
+
+    Response anonymized = delete("/customers/" + id);
+    assertThat(anonymized.getStatus(), is(204));
+
+    // A profile update after anonymize must be rejected, not silently resurrect the erased PII.
+    Response updated =
+        put("/customers/" + id, "{\"firstName\":\"Resurrected\",\"lastName\":\"Person\"}");
+    assertThat(updated.getStatus(), is(409));
+    assertThat(updated.readEntity(String.class), containsString("CUSTOMER_ANONYMIZED"));
+
+    String getBody =
+        target
+            .path("/customers/" + id)
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", TENANT)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    assertThat(getBody, not(containsString("Resurrected")));
+    assertThat(getBody, containsString("ANONYMIZED"));
+  }
+
+  @Test
+  void anonymizeRequiresManagementRole() {
+    Response created =
+        post(
+            "/customers",
+            "{\"email\":\"ivy@example.com\",\"firstName\":\"Ivy\",\"lastName\":\"Nguyen\"}");
+    assertThat(created.getStatus(), is(201));
+    String id = field(created.readEntity(String.class), "id");
+
+    // GDPR erasure is destructive — unlike loyalty/store-credit redemption, a CASHIER must not be
+    // able to perform it just by virtue of holding any staff role.
+    Response asCashier =
+        target
+            .path("/customers/" + id)
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", TENANT)
+            .header("X-Roles", "CASHIER")
+            .delete();
+    assertThat(asCashier.getStatus(), is(403));
+  }
+
+  @Test
   void archRules() {
     var classes = new ClassFileImporter().importPackages("com.shelfj.customer");
     ShelfJArchRules.API_DOES_NOT_CALL_REPO.check(classes);
@@ -273,6 +323,24 @@ class CustomerIT {
         .header("X-Tenant-Id", TENANT)
         .header("X-Roles", "OWNER")
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
+  private Response put(String path, String json) {
+    return target
+        .path(path)
+        .request(MediaType.APPLICATION_JSON)
+        .header("X-Tenant-Id", TENANT)
+        .header("X-Roles", "OWNER")
+        .put(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
+  private Response delete(String path) {
+    return target
+        .path(path)
+        .request(MediaType.APPLICATION_JSON)
+        .header("X-Tenant-Id", TENANT)
+        .header("X-Roles", "OWNER")
+        .delete();
   }
 
   private static String field(String json, String name) {

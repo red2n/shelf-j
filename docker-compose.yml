@@ -68,7 +68,7 @@ x-svc-env: &svc-env
   # Runtime app pool goes through PgBouncer (golden rule: don't orphan provisioned infra).
   # Flyway gets its own direct-to-Postgres URL below — its DDL migrations run as multi-statement
   # transactions that need full session affinity, which PgBouncer's transaction pool_mode breaks.
-  shelfj.db.url: jdbc:postgresql://pgbouncer:6432/${POSTGRES_DB:-shelfj}
+  shelfj.db.url: jdbc:postgresql://pgbouncer:6432/${POSTGRES_DB:-shelfj}?prepareThreshold=0
   shelfj.db.migration-url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-shelfj}
   shelfj.db.user: ${POSTGRES_USER:-shelfj}
   shelfj.db.password: ${POSTGRES_PASSWORD:-shelfj_dev_change_me}

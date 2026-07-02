@@ -315,9 +315,9 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
         _ => action,
       };
 
-  Future<String?> _promptReason(BuildContext context) {
+  Future<String?> _promptReason(BuildContext context) async {
     final ctrl = TextEditingController();
-    return showDialog<String>(
+    final reason = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Cancel order?'),
@@ -345,6 +345,8 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
         ],
       ),
     );
+    ctrl.dispose();
+    return reason;
   }
 }
 

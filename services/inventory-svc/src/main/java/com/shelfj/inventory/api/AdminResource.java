@@ -8,6 +8,8 @@ import com.shelfj.inventory.dto.Dtos.AddTagRequest;
 import com.shelfj.inventory.dto.Dtos.AdjustRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateRequest;
 import com.shelfj.inventory.dto.Dtos.AggregateResult;
+import com.shelfj.inventory.dto.Dtos.BatchReceiveRequest;
+import com.shelfj.inventory.dto.Dtos.BatchReceiveResult;
 import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.ComputeRopResult;
 import com.shelfj.inventory.dto.Dtos.ComputeSafetyStockRequest;
@@ -142,11 +144,44 @@ public class AdminResource {
         .build();
   }
 
+  @POST
+  @Path("/receive/batch")
+  public ApiResponse<BatchReceiveResult> receiveBatch(BatchReceiveRequest req) {
+    if (req == null || req.items() == null || req.items().isEmpty()) {
+      return ApiResponse.ok(new BatchReceiveResult(0, List.of()));
+    }
+    UUID tenantId = ctx.requireTenantId();
+    int received = 0;
+    var errors = new java.util.ArrayList<String>();
+    for (var item : req.items()) {
+      try {
+        service.receive(
+            tenantId,
+            uuid(item.storeId(), "storeId"),
+            uuid(item.variantId(), "variantId"),
+            item.qty(),
+            null,
+            null,
+            null,
+            "MANUAL",
+            null,
+            null,
+            null);
+        received++;
+      } catch (Exception e) {
+        errors.add(item.variantId() + ": " + e.getMessage());
+      }
+    }
+    return ApiResponse.ok(new BatchReceiveResult(received, errors));
+  }
+
   // ── adjust ───────────────────────────────────────────────────────────────
 
   @POST
   @Path("/adjust")
-  public ApiResponse<String> adjust(AdjustRequest req) {
+  public ApiResponse<String> adjust(
+      @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
+      AdjustRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     service.adjust(
@@ -154,7 +189,8 @@ public class AdminResource {
         uuid(req.storeId(), "storeId"),
         uuid(req.variantId(), "variantId"),
         req.delta(),
-        req.reason());
+        req.reason(),
+        idempotencyKey);
     return ApiResponse.ok("adjusted");
   }
 
@@ -735,7 +771,7 @@ public class AdminResource {
       @QueryParam("status") String status,
       @QueryParam("limit") Integer limit) {
     UUID tenantId = ctx.requireTenantId();
-    int lim = limit != null ? limit : 20;
+    int lim = limit == null || limit < 1 ? 20 : Math.min(limit, 100);
     var headers = service.listCycleCounts(tenantId, storeId, status, lim);
     var items =
         headers.stream().map(cwl -> Mappers.toCycleCountHeader(cwl.header(), cwl.lines())).toList();
@@ -1299,9 +1335,11 @@ public class AdminResource {
 
   @GET
   @Path("/picking-rules")
-  public ApiResponse<List<PickingRuleResponse>> listPickingRules() {
+  public ApiResponse<List<PickingRuleResponse>> listPickingRules(
+      @QueryParam("limit") Integer limitParam) {
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
     return ApiResponse.ok(
-        service.listPickingRules(ctx.requireTenantId()).stream()
+        service.listPickingRules(ctx.requireTenantId(), limit).stream()
             .map(Mappers::toPickingRule)
             .toList());
   }
@@ -1354,9 +1392,11 @@ public class AdminResource {
 
   @GET
   @Path("/picking-rule-assignments")
-  public ApiResponse<List<PickingRuleAssignmentResponse>> listPickingRuleAssignments() {
+  public ApiResponse<List<PickingRuleAssignmentResponse>> listPickingRuleAssignments(
+      @QueryParam("limit") Integer limitParam) {
+    int limit = limitParam == null || limitParam < 1 ? 20 : Math.min(limitParam, 100);
     return ApiResponse.ok(
-        service.listPickingRuleAssignments(ctx.requireTenantId()).stream()
+        service.listPickingRuleAssignments(ctx.requireTenantId(), limit).stream()
             .map(Mappers::toPickingRuleAssignment)
             .toList());
   }

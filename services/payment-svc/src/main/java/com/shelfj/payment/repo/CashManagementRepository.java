@@ -3,8 +3,10 @@ package com.shelfj.payment.repo;
 import com.shelfj.payment.domain.Domain.CashDrop;
 import com.shelfj.payment.domain.Domain.TillSession;
 import com.shelfj.service.BaseOutboxRepository;
+import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
@@ -119,17 +121,36 @@ public class CashManagementRepository extends BaseOutboxRepository {
 
   public TillSession closeTill(
       UUID tenantId, UUID sessionId, BigDecimal countedCash, BigDecimal overShort) {
-    exec(
-        "UPDATE till_sessions SET status = 'CLOSED', counted_cash = ?, over_short = ?,"
-            + " closed_at = now() WHERE tenant_id = ? AND id = ?",
-        ps -> {
-          ps.setBigDecimal(1, countedCash);
-          ps.setBigDecimal(2, overShort);
-          ps.setObject(3, tenantId);
-          ps.setObject(4, sessionId);
+    return inTx(
+        c -> {
+          int rows;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE till_sessions SET status = 'CLOSED', counted_cash = ?, over_short = ?,"
+                      + " closed_at = now() WHERE tenant_id = ? AND id = ? AND status = 'OPEN'")) {
+            ps.setBigDecimal(1, countedCash);
+            ps.setBigDecimal(2, overShort);
+            ps.setObject(3, tenantId);
+            ps.setObject(4, sessionId);
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) {
+            throw ApiException.conflict("TILL_ALREADY_CLOSED", "Till session is already closed");
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT id, tenant_id, store_id, opened_by, float_amount, status,"
+                      + " counted_cash, over_short, opened_at, closed_at"
+                      + " FROM till_sessions WHERE tenant_id = ? AND id = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, sessionId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (rs.next()) return mapSession(rs);
+              throw ApiException.conflict("TILL_ALREADY_CLOSED", "Till session is already closed");
+            }
+          }
         },
         "close till session");
-    return findSession(tenantId, sessionId).orElseThrow();
   }
 
   private static TillSession mapSession(ResultSet rs) throws SQLException {

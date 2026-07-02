@@ -4,30 +4,25 @@ import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.math.BigDecimal;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * Handles PaymentCaptured / PaymentFailed events; delegates to {@link OrderService}. Naturally
- * idempotent: the order transition is guarded on PENDING status, so redelivery is a no-op.
- * Malformed payloads and 4xx business conflicts (already transitioned) are skipped; transient
- * failures propagate so the consumer loop redelivers instead of losing the event.
+ * Handles PaymentCaptured / PaymentFailed events; delegates to {@link OrderService}.
+ * PaymentCaptured is idempotent via the {@code order_payment_events} ledger keyed on {@code
+ * paymentId} (golden rule #7), so redelivery of the same tender is a no-op. Malformed payloads and
+ * 4xx business conflicts are skipped; transient failures propagate so the consumer loop redelivers
+ * instead of losing the event.
  */
 @ApplicationScoped
 class PaymentEventHandler {
 
   private static final Logger LOG = System.getLogger(PaymentEventHandler.class.getName());
-  private static final Pattern EVENT_TYPE_PAT = Pattern.compile("\"eventType\"\\s*:\\s*\"(\\w+)\"");
-  private static final Pattern ORDER_ID_PAT =
-      Pattern.compile("\"orderId\"\\s*:\\s*\"([0-9a-fA-F-]{36})\"");
-  private static final Pattern TENANT_ID_PAT =
-      Pattern.compile("\"tenantId\"\\s*:\\s*\"([0-9a-fA-F-]{36})\"");
-  private static final Pattern AMOUNT_PAT =
-      Pattern.compile("\"amount\"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)");
 
   @Inject OrderService svc;
 
@@ -35,16 +30,22 @@ class PaymentEventHandler {
     String eventType;
     UUID orderId;
     UUID tenantId;
+    UUID paymentId;
     BigDecimal amount;
     try {
-      eventType = extract(EVENT_TYPE_PAT, payload);
-      String orderIdStr = extract(ORDER_ID_PAT, payload);
-      String tenantIdStr = extract(TENANT_ID_PAT, payload);
-      String amountStr = extract(AMOUNT_PAT, payload);
+      JsonObject obj = Json.createReader(new StringReader(payload)).readObject();
+      eventType = stringOrNull(obj, "eventType");
+      String orderIdStr = stringOrNull(obj, "orderId");
+      String tenantIdStr = stringOrNull(obj, "tenantId");
+      String paymentIdStr = stringOrNull(obj, "paymentId");
       if (orderIdStr == null || tenantIdStr == null) return;
       orderId = UUID.fromString(orderIdStr);
       tenantId = UUID.fromString(tenantIdStr);
-      amount = amountStr != null ? new BigDecimal(amountStr) : null;
+      paymentId = paymentIdStr != null ? UUID.fromString(paymentIdStr) : null;
+      amount =
+          obj.containsKey("amount") && !obj.isNull("amount")
+              ? obj.getJsonNumber("amount").bigDecimalValue()
+              : null;
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed payment event skipped: " + e.getMessage());
       return;
@@ -52,7 +53,7 @@ class PaymentEventHandler {
 
     try {
       if ("PaymentCaptured".equals(eventType)) {
-        svc.handlePaymentCaptured(tenantId, orderId, amount);
+        svc.handlePaymentCaptured(tenantId, orderId, paymentId, amount);
       } else if ("PaymentFailed".equals(eventType)) {
         svc.handlePaymentFailed(tenantId, orderId);
       }
@@ -65,9 +66,7 @@ class PaymentEventHandler {
     }
   }
 
-  private static String extract(Pattern p, String s) {
-    if (s == null) return null;
-    Matcher m = p.matcher(s);
-    return m.find() ? m.group(1) : null;
+  private static String stringOrNull(JsonObject o, String key) {
+    return o.containsKey(key) && !o.isNull(key) ? o.getString(key) : null;
   }
 }

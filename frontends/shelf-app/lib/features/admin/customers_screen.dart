@@ -5,13 +5,41 @@ import '../../core/network/api_client.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'customer_providers.dart';
+import 'providers/customers_pagination.dart';
 
-class CustomersScreen extends ConsumerWidget {
+class CustomersScreen extends ConsumerStatefulWidget {
   const CustomersScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(customersProvider);
+  ConsumerState<CustomersScreen> createState() => _CustomersScreenState();
+}
+
+class _CustomersScreenState extends ConsumerState<CustomersScreen> {
+  final _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  /// Fetch the next page once the user scrolls within 300px of the bottom.
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 300) {
+      ref.read(customersPaginationProvider.notifier).loadMore();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final page = ref.watch(customersPaginationProvider);
     final cs = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -32,66 +60,79 @@ class CustomersScreen extends ConsumerWidget {
               const SizedBox(width: 8),
               IconButton(
                 icon: const Icon(Icons.refresh),
-                onPressed: () => ref.invalidate(customersProvider),
+                onPressed: () =>
+                    ref.read(customersPaginationProvider.notifier).refresh(),
               ),
             ],
           ),
         ),
         const SizedBox(height: 16),
         Expanded(
-          child: async.when(
-            loading: () => const LoadingView(label: 'Loading customers…'),
-            error: (e, _) => ErrorView(
-              message: 'Could not load customers.\n$e',
-              onRetry: () => ref.invalidate(customersProvider),
-            ),
-            data: (customers) {
-              if (customers.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.people_outline,
-                          size: 64, color: cs.outlineVariant),
-                      const SizedBox(height: 12),
-                      const Text('No customers yet'),
-                    ],
+          child: Builder(builder: (context) {
+            if (page.isLoadingInitial) {
+              return const LoadingView(label: 'Loading customers…');
+            }
+            if (page.error != null && page.customers.isEmpty) {
+              return ErrorView(
+                message: 'Could not load customers.\n${page.error}',
+                onRetry: () =>
+                    ref.read(customersPaginationProvider.notifier).refresh(),
+              );
+            }
+            final customers = page.customers;
+            if (customers.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.people_outline,
+                        size: 64, color: cs.outlineVariant),
+                    const SizedBox(height: 12),
+                    const Text('No customers yet'),
+                  ],
+                ),
+              );
+            }
+            return ListView.separated(
+              controller: _scrollController,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              itemCount:
+                  customers.length + (page.hasMore || page.isLoadingMore ? 1 : 0),
+              separatorBuilder: (_, __) => const SizedBox(height: 4),
+              itemBuilder: (_, i) {
+                if (i >= customers.length) {
+                  return const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                final c = customers[i];
+                return Card(
+                  child: ListTile(
+                    onTap: () => showDialog(
+                      context: context,
+                      builder: (_) => _CustomerDetailDialog(customer: c),
+                    ),
+                    leading: CircleAvatar(
+                      backgroundColor: cs.primaryContainer,
+                      child: Text(
+                        (c.firstName.isNotEmpty ? c.firstName[0] : '?')
+                            .toUpperCase(),
+                        style: TextStyle(color: cs.onPrimaryContainer),
+                      ),
+                    ),
+                    title: Text(c.fullName,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text([
+                      c.email,
+                      if (c.phone != null && c.phone!.isNotEmpty) c.phone,
+                    ].whereType<String>().join(' · ')),
+                    trailing: const Icon(Icons.chevron_right),
                   ),
                 );
-              }
-              return ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                itemCount: customers.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
-                itemBuilder: (_, i) {
-                  final c = customers[i];
-                  return Card(
-                    child: ListTile(
-                      onTap: () => showDialog(
-                        context: context,
-                        builder: (_) => _CustomerDetailDialog(customer: c),
-                      ),
-                      leading: CircleAvatar(
-                        backgroundColor: cs.primaryContainer,
-                        child: Text(
-                          (c.firstName.isNotEmpty ? c.firstName[0] : '?')
-                              .toUpperCase(),
-                          style: TextStyle(color: cs.onPrimaryContainer),
-                        ),
-                      ),
-                      title: Text(c.fullName,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text([
-                        c.email,
-                        if (c.phone != null && c.phone!.isNotEmpty) c.phone,
-                      ].whereType<String>().join(' · ')),
-                      trailing: const Icon(Icons.chevron_right),
-                    ),
-                  );
-                },
-              );
-            },
-          ),
+              },
+            );
+          }),
         ),
       ],
     );
@@ -141,7 +182,7 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
         },
       );
       if (!mounted) return;
-      ref.invalidate(customersProvider);
+      ref.read(customersPaginationProvider.notifier).refresh();
       Navigator.pop(context);
     } catch (e) {
       setState(() {
@@ -434,7 +475,7 @@ class _CustomerDetailDialog extends ConsumerWidget {
           .read(apiClientProvider)
           .dio
           .delete('/${ApiConstants.customer}/customers/${customer.id}');
-      ref.invalidate(customersProvider);
+      ref.read(customersPaginationProvider.notifier).refresh();
       if (!context.mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -580,12 +621,20 @@ Future<_AmountReason?> _amountReason(
 
 // ── Addresses ────────────────────────────────────────────────────────────────
 
-class _AddressesSection extends ConsumerWidget {
+class _AddressesSection extends ConsumerStatefulWidget {
   final String customerId;
   const _AddressesSection({required this.customerId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_AddressesSection> createState() => _AddressesSectionState();
+}
+
+class _AddressesSectionState extends ConsumerState<_AddressesSection> {
+  final Set<String> _deleting = {};
+  String get customerId => widget.customerId;
+
+  @override
+  Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final async = ref.watch(customerAddressesProvider(customerId));
     return Column(
@@ -649,7 +698,9 @@ class _AddressesSection extends ConsumerWidget {
                             IconButton(
                               visualDensity: VisualDensity.compact,
                               icon: const Icon(Icons.delete_outline, size: 18),
-                              onPressed: () => _delete(context, ref, a.id),
+                              onPressed: _deleting.contains(a.id)
+                                  ? null
+                                  : () => _delete(a.id),
                             ),
                           ],
                         ),
@@ -661,16 +712,20 @@ class _AddressesSection extends ConsumerWidget {
     );
   }
 
-  Future<void> _delete(BuildContext context, WidgetRef ref, String addressId) async {
+  Future<void> _delete(String addressId) async {
+    if (_deleting.contains(addressId)) return;
+    setState(() => _deleting.add(addressId));
     try {
       await ref.read(apiClientProvider).dio.delete(
           '/${ApiConstants.customer}/customers/$customerId/addresses/$addressId');
       ref.invalidate(customerAddressesProvider(customerId));
     } catch (e) {
-      if (!context.mounted) return;
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not delete address: $e')),
       );
+    } finally {
+      if (mounted) setState(() => _deleting.remove(addressId));
     }
   }
 }
@@ -736,7 +791,7 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
         },
       );
       ref.invalidate(customerDetailProvider(widget.customer.id));
-      ref.invalidate(customersProvider);
+      ref.read(customersPaginationProvider.notifier).refresh();
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(

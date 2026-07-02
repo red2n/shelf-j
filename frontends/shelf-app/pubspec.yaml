@@ -28,6 +28,8 @@ dependencies:
   file_picker: ^8.1.0
   # camera barcode/QR scanning (Android, iOS, web via getUserMedia + BarcodeDetector/zxing)
   mobile_scanner: ^6.0.2
+  # open external URLs in the system browser
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:

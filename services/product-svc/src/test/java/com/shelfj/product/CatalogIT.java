@@ -71,6 +71,22 @@ class CatalogIT {
     return target.path(path).request().header("X-Tenant-Id", tenant).get(String.class);
   }
 
+  /** Like {@link #get} but for /admin/... paths, which require a staff role. */
+  private String getAdmin(String path, String tenant) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get(String.class);
+  }
+
+  private Response listProductsAdmin(String tenant, int limit, String after) {
+    WebTarget t = target.path("/admin/products").queryParam("limit", limit);
+    if (after != null) t = t.queryParam("after", after);
+    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get();
+  }
+
   private Response put(String path, String json, String tenant) {
     return target
         .path(path)
@@ -196,10 +212,99 @@ class CatalogIT {
   }
 
   @Test
+  void bulkImportSharedCategoryResolvesToOneRowAcrossProducts() {
+    // Two products in the same import sharing a category and brand — regression guard for the
+    // category/brand name-to-id caching in ProductService.bulkImport: both should resolve to the
+    // same category/brand row, not each trigger their own independent lookup gone wrong.
+    Response r =
+        post(
+            "/admin/import",
+            "{\"categories\":[{\"name\":\"Grocery\"}],"
+                + "\"products\":["
+                + "{\"name\":\"Rice\",\"categoryName\":\"Grocery\",\"brandName\":\"Acme\","
+                + "\"variants\":[{\"sku\":\"BULK-RICE\"}]},"
+                + "{\"name\":\"Pasta\",\"categoryName\":\"Grocery\",\"brandName\":\"Acme\","
+                + "\"variants\":[{\"sku\":\"BULK-PASTA\"}]}"
+                + "]}",
+            TENANT_A);
+    assertThat(r.getStatus(), is(200));
+    String body = r.readEntity(String.class);
+    assertThat(body, containsString("\"categoriesCreated\":1"));
+    assertThat(body, containsString("\"productsCreated\":2"));
+    assertThat(body, containsString("\"variantsCreated\":2"));
+    assertThat(body, containsString("\"errors\":[]"));
+
+    String riceProductId = fieldNear(body, "\"sku\":\"BULK-RICE\"", "productId");
+    String pastaProductId = fieldNear(body, "\"sku\":\"BULK-PASTA\"", "productId");
+
+    String riceCategoryId =
+        field(getAdmin("/admin/products/" + riceProductId, TENANT_A), "categoryId");
+    String pastaCategoryId =
+        field(getAdmin("/admin/products/" + pastaProductId, TENANT_A), "categoryId");
+    assertThat(riceCategoryId, is(pastaCategoryId));
+  }
+
+  @Test
   void blankNameIs400() {
     Response bad = post("/admin/products", "{\"name\":\"\"}", TENANT_A);
     assertThat(bad.getStatus(), is(400));
     assertThat(bad.readEntity(String.class), containsString("VALIDATION_FAILED"));
+  }
+
+  @Test
+  void listProductsAdminPaginatesWithCursor() {
+    // Dedicated tenant so products created by other tests never leak into these pages.
+    String tenant = "33333333-3333-3333-3333-333333333333";
+    var allIds = new java.util.HashSet<String>();
+    for (int i = 0; i < 3; i++) {
+      Response r = post("/admin/products", "{\"name\":\"Paginate " + i + "\"}", tenant);
+      assertThat(r.getStatus(), is(201));
+      allIds.add(field(r.readEntity(String.class), "id"));
+    }
+
+    Response p1 = listProductsAdmin(tenant, 2, null);
+    assertThat(p1.getStatus(), is(200));
+    String body1 = p1.readEntity(String.class);
+    java.util.Set<String> page1 = extractAllIds(body1);
+    assertThat(page1.size(), is(2));
+    String cursor = extractNextCursor(body1);
+    assertThat(cursor, org.hamcrest.Matchers.notNullValue());
+
+    Response p2 = listProductsAdmin(tenant, 2, cursor);
+    assertThat(p2.getStatus(), is(200));
+    String body2 = p2.readEntity(String.class);
+    java.util.Set<String> page2 = extractAllIds(body2);
+    assertThat(page2.size(), is(1));
+    assertThat(extractNextCursor(body2), org.hamcrest.Matchers.nullValue());
+
+    java.util.Set<String> seen = new java.util.HashSet<>(page1);
+    seen.addAll(page2);
+    assertThat(seen, is(allIds));
+  }
+
+  private static java.util.Set<String> extractAllIds(String json) {
+    var ids = new java.util.HashSet<String>();
+    int from = 0;
+    while (true) {
+      int start = json.indexOf("\"id\":\"", from);
+      if (start < 0) break;
+      start += 6;
+      int end = json.indexOf('"', start);
+      ids.add(json.substring(start, end));
+      from = end;
+    }
+    return ids;
+  }
+
+  /** Returns meta.nextCursor, or null when the field is absent/null (no further page). */
+  private static String extractNextCursor(String json) {
+    int key = json.indexOf("\"nextCursor\":");
+    if (key < 0) return null;
+    int valueStart = key + "\"nextCursor\":".length();
+    if (json.startsWith("null", valueStart)) return null;
+    int start = json.indexOf('"', valueStart) + 1;
+    int end = json.indexOf('"', start);
+    return json.substring(start, end);
   }
 
   private static String field(String json, String name) {
@@ -208,5 +313,19 @@ class CatalogIT {
     if (i < 0) throw new AssertionError(name + " not in " + json);
     int start = i + key.length();
     return json.substring(start, json.indexOf('"', start));
+  }
+
+  /**
+   * Find {@code name} in the JSON object that contains {@code marker}. JSON-B serialises record
+   * components alphabetically, so a field can appear before or after the marker within the same
+   * object — this extracts the enclosing object first rather than assuming a scan direction.
+   */
+  private static String fieldNear(String json, String marker, String name) {
+    int m = json.indexOf(marker);
+    if (m < 0) throw new AssertionError(marker + " not found in " + json);
+    int objStart = json.lastIndexOf('{', m);
+    int objEnd = json.indexOf('}', m);
+    String obj = json.substring(objStart, objEnd + 1);
+    return field(obj, name);
   }
 }

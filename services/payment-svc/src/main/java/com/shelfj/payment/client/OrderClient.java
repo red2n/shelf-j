@@ -50,7 +50,8 @@ public class OrderClient {
   }
 
   /** The order-svc fields needed to validate a payment claim against the order it targets. */
-  public record OrderInfo(String customerId, String channel, BigDecimal total, String status) {}
+  public record OrderInfo(
+      String customerId, String channel, BigDecimal total, String status, String storeId) {}
 
   /**
    * Throws 404 when the order doesn't exist in the tenant, 503 when order-svc cannot be reached.
@@ -89,7 +90,8 @@ public class OrderClient {
             data.isNull("customerId") ? null : data.getString("customerId"),
             data.getString("channel"),
             data.getJsonNumber("total").bigDecimalValue(),
-            data.getString("status"));
+            data.getString("status"),
+            data.getString("storeId"));
       } catch (RuntimeException e) {
         throw unavailable("malformed response from order-svc", e);
       }

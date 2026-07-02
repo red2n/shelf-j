@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.order.service.OrderService;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -11,6 +12,8 @@ import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.math.BigDecimal;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -41,6 +44,7 @@ class OrderIT {
   private static final String V = "33333333-3333-3333-3333-333333333333";
 
   @Inject WebTarget target;
+  @Inject OrderService orderService;
 
   @AfterAll
   static void stopDb() {
@@ -56,6 +60,20 @@ class OrderIT {
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
+  /**
+   * Like {@link #post(String, String, String)} but with an Idempotency-Key header — required by
+   * {@code POST /orders} now that the server rejects order placement without one.
+   */
+  private Response post(String path, String json, String tenant, String idempotencyKey) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .header("Idempotency-Key", idempotencyKey)
+        .post(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
   private Response get(String path, String tenant) {
     return target
         .path(path)
@@ -67,6 +85,18 @@ class OrderIT {
 
   private Response listOrders(String tenant, int limit, String after) {
     WebTarget t = target.path("/orders").queryParam("limit", limit);
+    if (after != null) t = t.queryParam("after", after);
+    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get();
+  }
+
+  private Response listSpecialOrders(String tenant, int limit, String after) {
+    WebTarget t = target.path("/admin/special-orders").queryParam("limit", limit);
+    if (after != null) t = t.queryParam("after", after);
+    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get();
+  }
+
+  private Response listPosLog(String tenant, int limit, String after) {
+    WebTarget t = target.path("/admin/pos-log").queryParam("limit", limit);
     if (after != null) t = t.queryParam("after", after);
     return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get();
   }
@@ -86,7 +116,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":2,\"unitPrice\":10.00}],"
                 + "\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-place-confirm-return");
     assertThat(r1.getStatus(), is(201));
     String body1 = r1.readEntity(String.class);
     assertThat(body1, containsString("PENDING"));
@@ -109,6 +140,79 @@ class OrderIT {
             T);
     assertThat(r3.getStatus(), is(201));
     assertThat(r3.readEntity(String.class), containsString("COMPLETED"));
+  }
+
+  /**
+   * Simulates what {@code PaymentEventHandler} does on each PaymentCaptured event — Kafka is
+   * disabled in this IT, so the events are driven directly through {@link OrderService} instead of
+   * a real consumer loop.
+   */
+  @Test
+  void splitTendersAccumulateAndConfirmOnlyOnceTotalIsCovered() {
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\","
+                + "\"channel\":\"POS\","
+                + "\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}],"
+                + "\"currency\":\"USD\"}",
+            T,
+            "it-split-tender");
+    assertThat(placed.getStatus(), is(201));
+    UUID orderId = UUID.fromString(extractId(placed.readEntity(String.class)));
+    UUID tenantId = UUID.fromString(T);
+
+    // First tender (cash, $4) — covers less than the $10 total: still PENDING.
+    orderService.handlePaymentCaptured(
+        tenantId, orderId, UUID.randomUUID(), new BigDecimal("4.00"));
+    Response afterFirst = get("/orders/" + orderId, T);
+    assertThat(afterFirst.readEntity(String.class), containsString("PENDING"));
+
+    // Second tender (card, $6) — the two together cover the total: now CONFIRMED.
+    orderService.handlePaymentCaptured(
+        tenantId, orderId, UUID.randomUUID(), new BigDecimal("6.00"));
+    Response afterSecond = get("/orders/" + orderId, T);
+    assertThat(afterSecond.readEntity(String.class), containsString("CONFIRMED"));
+  }
+
+  /**
+   * Redelivery of the same Kafka event (same paymentId) must not double-count toward paid_amount —
+   * verified on a second order where double-counting a single $6 tender (redelivered once) would
+   * incorrectly push paid_amount past the $10 total and confirm prematurely.
+   */
+  @Test
+  void redeliveredPaymentEventIsNotDoubleCounted() {
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\","
+                + "\"channel\":\"POS\","
+                + "\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}],"
+                + "\"currency\":\"USD\"}",
+            T,
+            "it-redelivery");
+    assertThat(placed.getStatus(), is(201));
+    UUID orderId = UUID.fromString(extractId(placed.readEntity(String.class)));
+    UUID tenantId = UUID.fromString(T);
+
+    UUID paymentId = UUID.randomUUID();
+    orderService.handlePaymentCaptured(tenantId, orderId, paymentId, new BigDecimal("6.00"));
+    // Same paymentId redelivered: if paid_amount were double-counted (6+6=12 >= 10) the order
+    // would wrongly confirm. The unique key on order_payment_events must make this a no-op.
+    orderService.handlePaymentCaptured(tenantId, orderId, paymentId, new BigDecimal("6.00"));
+
+    Response after = get("/orders/" + orderId, T);
+    assertThat(after.readEntity(String.class), containsString("PENDING"));
   }
 
   @Test
@@ -148,7 +252,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}],"
                 + "\"taxAmount\":-5.00,\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-neg-tax");
     assertThat(negTax.getStatus(), is(400));
 
     // discount larger than the subtotal must not drive the total negative
@@ -162,7 +267,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}],"
                 + "\"discountAmount\":50.00,\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-big-disc");
     assertThat(bigDisc.getStatus(), is(400));
     assertThat(bigDisc.readEntity(String.class), containsString("ORDER_DISCOUNT_EXCEEDS_SUBTOTAL"));
   }
@@ -185,7 +291,8 @@ class OrderIT {
                   + V
                   + "\",\"qty\":1,\"unitPrice\":1.00}],"
                   + "\"currency\":\"USD\"}",
-              tenant);
+              tenant,
+              "it-paginate-" + i);
       assertThat(r.getStatus(), is(201));
       allIds.add(extractId(r.readEntity(String.class)));
     }
@@ -220,6 +327,109 @@ class OrderIT {
   }
 
   @Test
+  void listSpecialOrdersPaginatesWithCursor() {
+    // Dedicated tenant so special orders created by other tests never leak into these pages.
+    String tenant = "55555555-5555-5555-5555-555555555555";
+    var allNames = new java.util.HashSet<String>();
+    for (int i = 0; i < 3; i++) {
+      String name = "Cust" + i;
+      Response r =
+          post(
+              "/admin/special-orders",
+              "{\"storeId\":\""
+                  + S
+                  + "\",\"customerName\":\""
+                  + name
+                  + "\",\"items\":[{\"variantId\":\""
+                  + V
+                  + "\",\"qty\":1,\"unitPrice\":1.00}]}",
+              tenant);
+      assertThat(r.getStatus(), is(201));
+      allNames.add(name);
+    }
+
+    // Each special order's own "id" plus its single item's "id" both match a naive "id":"..."
+    // scan, so page membership is checked via the per-order customerName instead (unique, and
+    // absent from the nested item objects).
+    Response p1 = listSpecialOrders(tenant, 2, null);
+    assertThat(p1.getStatus(), is(200));
+    String body1 = p1.readEntity(String.class);
+    java.util.Set<String> page1 = extractAllCustomerNames(body1);
+    assertThat(page1.size(), is(2));
+    String cursor = extractNextCursor(body1);
+    assertThat(cursor, org.hamcrest.Matchers.notNullValue());
+
+    Response p2 = listSpecialOrders(tenant, 2, cursor);
+    assertThat(p2.getStatus(), is(200));
+    String body2 = p2.readEntity(String.class);
+    java.util.Set<String> page2 = extractAllCustomerNames(body2);
+    assertThat(page2.size(), is(1));
+    assertThat(extractNextCursor(body2), org.hamcrest.Matchers.nullValue());
+
+    java.util.Set<String> seen = new java.util.HashSet<>(page1);
+    seen.addAll(page2);
+    assertThat(seen, is(allNames));
+  }
+
+  private static java.util.Set<String> extractAllCustomerNames(String json) {
+    var names = new java.util.HashSet<String>();
+    int from = 0;
+    while (true) {
+      int start = json.indexOf("\"customerName\":\"", from);
+      if (start < 0) break;
+      start += "\"customerName\":\"".length();
+      int end = json.indexOf('"', start);
+      names.add(json.substring(start, end));
+      from = end;
+    }
+    return names;
+  }
+
+  @Test
+  void listPosLogPaginatesWithCursor() {
+    // Dedicated tenant so POSLog entries created by other tests never leak into these pages.
+    String tenant = "66666666-6666-6666-6666-666666666666";
+    var allIds = new java.util.HashSet<String>();
+    for (int i = 0; i < 3; i++) {
+      Response placed =
+          post(
+              "/orders",
+              "{\"storeId\":\""
+                  + S
+                  + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                  + "\"items\":[{\"variantId\":\""
+                  + V
+                  + "\",\"qty\":1,\"unitPrice\":1.00}],\"currency\":\"USD\"}",
+              tenant,
+              "it-poslog-" + i);
+      assertThat(placed.getStatus(), is(201));
+      String orderId = extractId(placed.readEntity(String.class));
+      Response logged = post("/admin/pos-log/orders/" + orderId, "", tenant);
+      assertThat(logged.getStatus(), is(201));
+      allIds.add(extractId(logged.readEntity(String.class)));
+    }
+
+    Response p1 = listPosLog(tenant, 2, null);
+    assertThat(p1.getStatus(), is(200));
+    String body1 = p1.readEntity(String.class);
+    java.util.Set<String> page1 = extractAllIds(body1);
+    assertThat(page1.size(), is(2));
+    String cursor = extractNextCursor(body1);
+    assertThat(cursor, org.hamcrest.Matchers.notNullValue());
+
+    Response p2 = listPosLog(tenant, 2, cursor);
+    assertThat(p2.getStatus(), is(200));
+    String body2 = p2.readEntity(String.class);
+    java.util.Set<String> page2 = extractAllIds(body2);
+    assertThat(page2.size(), is(1));
+    assertThat(extractNextCursor(body2), org.hamcrest.Matchers.nullValue());
+
+    java.util.Set<String> seen = new java.util.HashSet<>(page1);
+    seen.addAll(page2);
+    assertThat(seen, is(allIds));
+  }
+
+  @Test
   void returnQuantityCannotExceedPurchased() {
     Response r1 =
         post(
@@ -233,7 +443,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":2,\"unitPrice\":10.00}],"
                 + "\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-return-qty");
     assertThat(r1.getStatus(), is(201));
     String orderId = extractId(r1.readEntity(String.class));
 
@@ -277,7 +488,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":5.00}],"
                 + "\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-pos-void");
     assertThat(r1.getStatus(), is(201));
     String orderId = extractId(r1.readEntity(String.class));
 
@@ -318,6 +530,41 @@ class OrderIT {
     Response r3 = post("/layaways/" + layawayId + "/complete", "{}", T);
     assertThat(r3.getStatus(), is(200));
     assertThat(r3.readEntity(String.class), containsString("COMPLETED"));
+  }
+
+  @Test
+  void layawayDepositCannotExceedOutstandingBalance() {
+    Response created =
+        post(
+            "/layaways",
+            "{\"storeId\":\""
+                + S
+                + "\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":100.00}],"
+                + "\"initialDeposit\":30.00,"
+                + "\"paymentMethod\":\"CASH\"}",
+            T);
+    assertThat(created.getStatus(), is(201));
+    String layawayId = extractLayawayId(created.readEntity(String.class));
+
+    // Outstanding balance is $70 — a $71 deposit must be rejected, not silently overpay.
+    Response overpay =
+        post(
+            "/layaways/" + layawayId + "/deposits",
+            "{\"amount\":71.00,\"paymentMethod\":\"CARD\"}",
+            T);
+    assertThat(overpay.getStatus(), is(400));
+    assertThat(overpay.readEntity(String.class), containsString("LAYAWAY_DEPOSIT_EXCEEDS_BALANCE"));
+
+    // The exact remaining balance is still accepted.
+    Response exact =
+        post(
+            "/layaways/" + layawayId + "/deposits",
+            "{\"amount\":70.00,\"paymentMethod\":\"CARD\"}",
+            T);
+    assertThat(exact.getStatus(), is(200));
   }
 
   @Test
@@ -363,7 +610,8 @@ class OrderIT {
                 + V
                 + "\",\"qty\":1,\"unitPrice\":5.00}],"
                 + "\"currency\":\"USD\"}",
-            T);
+            T,
+            "it-void-online");
     String orderId = extractId(r1.readEntity(String.class));
     Response rv = post("/orders/" + orderId + "/void", "{\"reason\":\"test\"}", T);
     assertThat(rv.getStatus(), is(409));

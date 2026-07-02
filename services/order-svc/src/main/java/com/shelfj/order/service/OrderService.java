@@ -26,8 +26,8 @@ import com.shelfj.order.dto.Dtos.RedeemGiftCardRequest;
 import com.shelfj.order.dto.Dtos.ReloadGiftCardRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
 import com.shelfj.order.repo.OrderRepository;
-import com.shelfj.order.repo.StoreStatusRepository;
-import com.shelfj.order.repo.TenantStatusRepository;
+import com.shelfj.service.StoreStatusRepository;
+import com.shelfj.service.TenantStatusRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
@@ -106,13 +106,29 @@ public class OrderService {
     List<OrderItem> items = new ArrayList<>();
     UUID orderId = UUID.randomUUID();
 
-    for (var ir : req.items()) {
-      UUID variantId = Parsing.uuid(ir.variantId(), "variantId");
-      // Gap #63: when enforcement is on, the price comes from pricing-svc — the client-supplied
-      // unitPrice is ignored. When off (local dev / unseeded rigs), the client price is trusted.
+    List<UUID> variantIds =
+        req.items().stream().map(ir -> Parsing.uuid(ir.variantId(), "variantId")).toList();
+    // Gap #63: when enforcement is on, the price comes from pricing-svc — the client-supplied
+    // unitPrice is ignored. When off (local dev / unseeded rigs), the client price is trusted.
+    // One batched call resolves every line instead of one cross-service HTTP call per line.
+    List<com.shelfj.order.client.PricingClient.ResolvedLine> resolvedLines = null;
+    if (enforcePricing) {
+      var lineRequests =
+          new ArrayList<com.shelfj.order.client.PricingClient.LineRequest>(variantIds.size());
+      for (int i = 0; i < variantIds.size(); i++) {
+        lineRequests.add(
+            new com.shelfj.order.client.PricingClient.LineRequest(
+                variantIds.get(i), req.items().get(i).qty()));
+      }
+      resolvedLines = pricing.resolveLines(tenantId, lineRequests, storeId, req.channel());
+    }
+
+    for (int i = 0; i < req.items().size(); i++) {
+      var ir = req.items().get(i);
+      UUID variantId = variantIds.get(i);
       BigDecimal unitPrice;
       if (enforcePricing) {
-        var resolved = pricing.resolveLine(tenantId, variantId, storeId, req.channel(), ir.qty());
+        var resolved = resolvedLines.get(i);
         unitPrice = resolved.unitPrice();
         serverTax = serverTax.add(resolved.vatAmount().multiply(ir.qty()));
       } else {
@@ -186,7 +202,8 @@ public class OrderService {
             delivery ? req.deliveryCity() : null,
             delivery ? req.deliveryPostalCode() : null,
             delivery ? req.deliveryRecipientName() : null,
-            delivery ? req.deliveryRecipientPhone() : null);
+            delivery ? req.deliveryRecipientPhone() : null,
+            req.contactPhone());
 
     try {
       return repo.createOrder(
@@ -397,7 +414,9 @@ public class OrderService {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest("LAYAWAY_NO_ITEMS", "layaway must have at least one item");
 
-    UUID tenantId = ctx.tenantId();
+    // requireTenantId (not the nullable tenantId()) so a request that somehow reached this
+    // financial write path without a tenant fails 401 instead of persisting a null-tenant row.
+    UUID tenantId = ctx.requireTenantId();
     UUID storeId = Parsing.uuid(req.storeId(), "storeId");
     ctx.requireStoreAccess(storeId);
     UUID customerId =
@@ -494,7 +513,9 @@ public class OrderService {
   // ── Gift cards ────────────────────────────────────────────────────────────
 
   public GiftCard issueGiftCard(IssueGiftCardRequest req, TenantContext ctx) {
-    UUID tenantId = ctx.tenantId();
+    // requireTenantId (not the nullable tenantId()) so issuing a gift card without a tenant in
+    // context fails 401 rather than minting stored value against a null-tenant row.
+    UUID tenantId = ctx.requireTenantId();
     UUID storeId = Parsing.uuid(req.storeId(), "storeId");
     ctx.requireStoreAccess(storeId);
     UUID gcId = UUID.randomUUID();
@@ -554,33 +575,25 @@ public class OrderService {
 
   // ── Payment event handlers (called by PaymentEventHandler) ───────────────
 
+  /**
+   * Accumulates a captured tender toward the order's total and confirms the order once tenders
+   * cover it. Split tenders (e.g. POS cash+card, each individually below the order total) each call
+   * this once and accumulate, instead of the order only confirming on a single full-amount tender.
+   */
   public void handlePaymentCaptured(
-      java.util.UUID tenantId, java.util.UUID orderId, java.math.BigDecimal amount) {
-    repo.findOrder(tenantId, orderId)
-        .ifPresent(
-            o -> {
-              if (!Order.STATUS_PENDING.equals(o.status())) return;
-              // Reject if the tendered amount is less than the order total.
-              // Split-payment support (accumulating paid_amount) is a separate feature; until
-              // then a single tender must cover the full balance.
-              if (amount == null || amount.compareTo(o.total()) < 0) {
-                LOG.log(
-                    java.lang.System.Logger.Level.WARNING,
-                    "PaymentCaptured for order {0} ignored: tendered {1} < order total {2}",
-                    orderId,
-                    amount,
-                    o.total());
-                return;
-              }
-              repo.transitionOrderStatus(
-                  tenantId,
-                  orderId,
-                  Order.STATUS_PENDING,
-                  Order.STATUS_CONFIRMED,
-                  "payment captured",
-                  null,
-                  Events.orderConfirmed(tenantId, orderId));
-            });
+      java.util.UUID tenantId,
+      java.util.UUID orderId,
+      java.util.UUID paymentId,
+      java.math.BigDecimal amount) {
+    if (amount == null || paymentId == null) {
+      LOG.log(
+          java.lang.System.Logger.Level.WARNING,
+          "PaymentCaptured for order {0} ignored: missing paymentId or amount",
+          orderId);
+      return;
+    }
+    repo.applyPaymentCaptured(
+        tenantId, orderId, paymentId, amount, Events.orderConfirmed(tenantId, orderId));
   }
 
   public void handlePaymentFailed(java.util.UUID tenantId, java.util.UUID orderId) {
@@ -659,11 +672,36 @@ public class OrderService {
     return repo.createSpecialOrder(so, items);
   }
 
-  public List<SpecialOrder> listSpecialOrders(
-      UUID tenantId, String storeIdStr, String customerIdStr) {
+  /** One page of special orders plus the opaque cursor for the next page (null when exhausted). */
+  public record SpecialOrderPage(List<SpecialOrder> orders, String nextCursor) {}
+
+  public SpecialOrderPage listSpecialOrders(
+      UUID tenantId, String storeIdStr, String customerIdStr, String afterCursor, int limit) {
     UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "storeId") : null;
     UUID customerId = customerIdStr != null ? Parsing.uuid(customerIdStr, "customerId") : null;
-    return repo.listSpecialOrders(tenantId, storeId, customerId);
+    Instant afterCreatedAt = null;
+    UUID afterId = null;
+    String rawKey = com.shelfj.web.Cursor.decode(afterCursor);
+    if (rawKey != null) {
+      int sep = rawKey.indexOf('|');
+      try {
+        if (sep < 0) throw new IllegalArgumentException("missing separator");
+        afterCreatedAt = Instant.parse(rawKey.substring(0, sep));
+        afterId = UUID.fromString(rawKey.substring(sep + 1));
+      } catch (RuntimeException e) {
+        throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
+      }
+    }
+    // Fetch one extra row to learn whether a further page exists without a second query.
+    List<SpecialOrder> rows =
+        repo.listSpecialOrders(tenantId, storeId, customerId, afterCreatedAt, afterId, limit + 1);
+    if (rows.size() <= limit) {
+      return new SpecialOrderPage(rows, null);
+    }
+    List<SpecialOrder> page = rows.subList(0, limit);
+    SpecialOrder last = page.get(page.size() - 1);
+    return new SpecialOrderPage(
+        page, com.shelfj.web.Cursor.encode(last.createdAt().toString() + "|" + last.id()));
   }
 
   public SpecialOrder getSpecialOrder(UUID tenantId, UUID id) {
@@ -733,9 +771,34 @@ public class OrderService {
     return repo.insertPosLogEntry(entry);
   }
 
-  public List<PosLogEntry> listPosLog(UUID tenantId, String storeIdStr) {
+  /** One page of POSLog entries plus the opaque cursor for the next page (null when exhausted). */
+  public record PosLogPage(List<PosLogEntry> entries, String nextCursor) {}
+
+  public PosLogPage listPosLog(UUID tenantId, String storeIdStr, String afterCursor, int limit) {
     UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "storeId") : null;
-    return repo.listPosLog(tenantId, storeId);
+    Instant afterTransactionTs = null;
+    UUID afterId = null;
+    String rawKey = com.shelfj.web.Cursor.decode(afterCursor);
+    if (rawKey != null) {
+      int sep = rawKey.indexOf('|');
+      try {
+        if (sep < 0) throw new IllegalArgumentException("missing separator");
+        afterTransactionTs = Instant.parse(rawKey.substring(0, sep));
+        afterId = UUID.fromString(rawKey.substring(sep + 1));
+      } catch (RuntimeException e) {
+        throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
+      }
+    }
+    // Fetch one extra row to learn whether a further page exists without a second query.
+    List<PosLogEntry> rows =
+        repo.listPosLog(tenantId, storeId, afterTransactionTs, afterId, limit + 1);
+    if (rows.size() <= limit) {
+      return new PosLogPage(rows, null);
+    }
+    List<PosLogEntry> page = rows.subList(0, limit);
+    PosLogEntry last = page.get(page.size() - 1);
+    return new PosLogPage(
+        page, com.shelfj.web.Cursor.encode(last.transactionTs().toString() + "|" + last.id()));
   }
 
   public List<PosLogEntry> getPosLogByOrder(UUID tenantId, UUID orderId) {

@@ -128,26 +128,28 @@ final posStoresProvider = FutureProvider.autoDispose<List<StoreInfo>>((ref) asyn
       type: 'STORE',
       status: m['status'] as String? ?? 'ACTIVE',
       showPrices: m['showPrices'] as bool? ?? true,
+      line1: m['line1'] as String?,
+      city: m['city'] as String?,
+      country: m['country'] as String?,
+      pincode: m['pincode'] as String?,
     );
   }).toList();
 });
 
-/// Whether the terminal's store shows prices. When false (catalog / show-stock-only
-/// mode) the POS hides every price and checkout becomes order-only (no tender).
-/// Defaults to true until the store list resolves.
-final posShowPricesProvider = Provider.autoDispose<bool>((ref) {
-  final storeId = ref.watch(posStoreProvider);
-  final stores = ref.watch(posStoresProvider).valueOrNull;
-  if (storeId == null || stores == null) return true;
-  for (final s in stores) {
-    if (s.id == storeId) return s.showPrices;
-  }
-  return true;
-});
+/// POS always shows prices — show_prices is a customer-facing storefront flag only.
+/// Staff at the till always need to see and charge the correct price.
+final posShowPricesProvider = Provider.autoDispose<bool>((ref) => true);
+
+/// Whether to show only in-stock products on the POS catalog pane.
+final posInStockOnlyProvider = StateProvider.autoDispose<bool>((ref) => false);
 
 /// The customer attached to the in-progress sale (null = walk-in). Lets POS
 /// attribute the order so loyalty / store-credit can apply.
 final posCustomerProvider = StateProvider<Customer?>((ref) => null);
+
+/// Contact phone for walk-in sales (used when no customer account is linked).
+/// Cleared automatically when the sale is completed or voided.
+final posWalkInPhoneProvider = StateProvider<String>((ref) => '');
 
 /// Order-level discount (absolute amount) applied to the in-progress sale.
 final posDiscountProvider = StateProvider<double>((ref) => 0);

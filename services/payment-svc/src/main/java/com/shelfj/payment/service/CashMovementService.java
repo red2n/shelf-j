@@ -21,7 +21,11 @@ public class CashMovementService {
   @Inject CashMovementRepository repo;
 
   public CashMovementResponse recordMovement(
-      UUID tenantId, UUID recordedBy, CashMovementRequest req, TenantContext ctx) {
+      UUID tenantId,
+      UUID recordedBy,
+      CashMovementRequest req,
+      TenantContext ctx,
+      String idempotencyKey) {
     if (!"PAY_IN".equals(req.direction()) && !"PAY_OUT".equals(req.direction())) {
       throw new ApiException(
           400, "INVALID_DIRECTION", "direction must be PAY_IN or PAY_OUT", List.of());
@@ -38,7 +42,8 @@ public class CashMovementService {
         req.amount(),
         req.reason(),
         authorisedBy,
-        recordedBy);
+        recordedBy,
+        idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : null);
   }
 
   public List<CashMovementResponse> listMovements(UUID tenantId, UUID tillSessionId) {

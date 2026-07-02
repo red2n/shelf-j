@@ -72,7 +72,13 @@ public final class Domain {
 
   // ── Goods Receipt (GRN) ───────────────────────────────────────────────────────
   public record GoodsReceipt(
-      UUID id, UUID tenantId, UUID poId, UUID storeId, Instant receivedAt, Instant createdAt) {}
+      UUID id,
+      UUID tenantId,
+      UUID poId,
+      UUID storeId,
+      Instant receivedAt,
+      Instant createdAt,
+      String idempotencyKey) {}
 
   public record GoodsReceiptLine(
       UUID id,

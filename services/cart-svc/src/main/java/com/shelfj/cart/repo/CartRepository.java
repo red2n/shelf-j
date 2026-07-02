@@ -264,21 +264,33 @@ public class CartRepository extends BaseJdbcRepository {
    * Marks the customer's ACTIVE cart at the given store as CHECKED_OUT. Called when an OrderPlaced
    * event arrives for a known customer. No-op if no matching cart exists.
    *
-   * <p>The target cart id isn't known to the caller (only customerId/storeId are), so the row cache
-   * can't be evicted directly here — it self-corrects within {@code CART_TTL_SECONDS}. The pointer
-   * cache, however, is keyed by customerId, so it is evicted eagerly to shrink that window.
+   * <p>{@code RETURNING id} gives us the affected cart's id (at most one, per the unique
+   * active-cart-per-customer index), so both the row cache and the items cache are evicted
+   * immediately instead of waiting out {@code CART_TTL_SECONDS}.
    */
   public void markCheckedOutByCustomerAndStore(UUID tenantId, UUID customerId, UUID storeId) {
-    exec(
-        "UPDATE carts SET status = 'CHECKED_OUT', updated_at = now()"
-            + " WHERE tenant_id = ? AND customer_id = ? AND store_id = ? AND status = 'ACTIVE'",
-        ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, customerId);
-          ps.setObject(3, storeId);
-        },
-        "mark cart checked out");
+    UUID cartId =
+        inTx(
+            c -> {
+              try (var ps =
+                  c.prepareStatement(
+                      "UPDATE carts SET status = 'CHECKED_OUT', updated_at = now()"
+                          + " WHERE tenant_id = ? AND customer_id = ? AND store_id = ?"
+                          + " AND status = 'ACTIVE' RETURNING id")) {
+                ps.setObject(1, tenantId);
+                ps.setObject(2, customerId);
+                ps.setObject(3, storeId);
+                try (var rs = ps.executeQuery()) {
+                  return rs.next() ? rs.getObject("id", UUID.class) : null;
+                }
+              }
+            },
+            "mark cart checked out");
     redis.del(activeByCustomerKey(tenantId, customerId));
+    if (cartId != null) {
+      evictCart(tenantId, cartId);
+      evictItems(tenantId, cartId);
+    }
   }
 
   // ── Items ─────────────────────────────────────────────────────────────────

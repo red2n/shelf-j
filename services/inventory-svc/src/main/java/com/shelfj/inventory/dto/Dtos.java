@@ -23,6 +23,13 @@ public final class Dtos {
       String grade,
       String zoneId) {}
 
+  public record BatchReceiveItem(
+      @NotBlank String storeId, @NotBlank String variantId, @NotNull @Positive BigDecimal qty) {}
+
+  public record BatchReceiveRequest(@NotNull List<BatchReceiveItem> items) {}
+
+  public record BatchReceiveResult(int received, List<String> errors) {}
+
   public record AdjustRequest(
       @NotBlank String storeId,
       @NotBlank String variantId,

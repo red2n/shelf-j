@@ -665,7 +665,7 @@ class _BusinessStoreForm extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _SectionLabel(label: 'Business', icon: Icons.business_outlined),
+            const _SectionLabel(label: 'Business', icon: Icons.business_outlined),
             const SizedBox(height: 10),
             TextFormField(
               controller: bizNameCtrl,
@@ -718,7 +718,7 @@ class _BusinessStoreForm extends StatelessWidget {
             const SizedBox(height: 20),
             Divider(color: cs.outlineVariant),
             const SizedBox(height: 8),
-            _SectionLabel(label: 'First Store', icon: Icons.store_outlined),
+            const _SectionLabel(label: 'First Store', icon: Icons.store_outlined),
             const SizedBox(height: 10),
             TextFormField(
               controller: storeNameCtrl,

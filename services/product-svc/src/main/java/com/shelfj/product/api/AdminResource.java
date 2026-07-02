@@ -167,20 +167,25 @@ public class AdminResource {
     return created(Mappers.toProduct(service.createProduct(ctx.requireTenantId(), req)));
   }
 
-  /** Admin list — returns all statuses; optional ?status= and ?category= filters. */
+  /**
+   * Admin list — returns all statuses; optional ?status= and ?category= filters.
+   * ?after=<cursor>&limit=1-100 (default 20) for pagination — previously capped at one page with no
+   * way to reach the rest of a tenant's catalog.
+   */
   @GET
   @Path("/products")
   public ApiResponse<List<ProductResponse>> listProductsAdmin(
       @QueryParam("category") String category,
       @QueryParam("status") String status,
+      @QueryParam("after") String after,
       @QueryParam("limit") Integer limit) {
     UUID tenantId = ctx.requireTenantId();
     UUID categoryId = parseOptional(category, "category");
     int clamped = Cursor.clampLimit(limit);
+    var page = service.listProductsAdmin(tenantId, categoryId, status, after, clamped);
     return ApiResponse.ok(
-        service.listProductsAdmin(tenantId, categoryId, status, clamped).stream()
-            .map(Mappers::toProduct)
-            .toList());
+        page.products().stream().map(Mappers::toProduct).toList(),
+        new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
   @GET
@@ -554,7 +559,8 @@ public class AdminResource {
       throw new com.shelfj.web.ApiException(
           400, "INVALID_BODY", "csv field is required", List.of(), null);
     }
-    return ApiResponse.ok(service.importSupplierCsv(ctx.requireTenantId(), req));
+    return ApiResponse.ok(
+        service.importSupplierCsv(ctx.requireTenantId(), String.join(",", ctx.roles()), req));
   }
 
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────

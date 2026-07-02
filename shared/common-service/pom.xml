@@ -91,6 +91,13 @@
             <version>3.7.1</version>
             <scope>provided</scope>
         </dependency>
+        <!-- JSON-P — provided by the Helidon MP runtime; declared here so the shared
+             status-changed handler classes can use Jakarta JSON APIs. -->
+        <dependency>
+            <groupId>jakarta.json</groupId>
+            <artifactId>jakarta.json-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>

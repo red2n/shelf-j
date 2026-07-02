@@ -1,6 +1,5 @@
-package com.shelfj.cart.messaging;
+package com.shelfj.service;
 
-import com.shelfj.cart.repo.TenantStatusRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -12,17 +11,18 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Upserts the local tenant-status projection so {@link com.shelfj.cart.service.CartService} can
- * block cart operations for suspended/blocked tenants without a cross-service call.
+ * Upserts the local tenant-status projection on receipt of a {@code TenantStatusChanged} event.
+ * Shared by every service that maintains a {@code tenant_status} table. Business logic lives here;
+ * the per-service consumer class only contributes its consumer-name and group-id.
  */
 @ApplicationScoped
-class TenantStatusChangedHandler {
+public class TenantStatusChangedHandler {
 
   private static final Logger LOG = System.getLogger(TenantStatusChangedHandler.class.getName());
 
   @Inject TenantStatusRepository tenantStatus;
 
-  void handle(String json) {
+  public void handle(String json) {
     UUID tenantId;
     String status;
     Instant occurredAt;

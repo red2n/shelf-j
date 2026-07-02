@@ -27,8 +27,9 @@ import java.util.Set;
  *       {@code CASHIER}) — i.e. not a plain {@code CUSTOMER}.
  *   <li>Open mutations (no staff role yet, or no role headers at all): the iam identity endpoints,
  *       tenant bootstrap ({@code POST /onboarding/tenants}, {@code POST /admin/tenant} — the caller
- *       only becomes OWNER via the TenantCreated event), and {@code POST /prices/resolve}
- *       (read-only price lookup order-svc performs service-to-service without identity headers).
+ *       only becomes OWNER via the TenantCreated event), and {@code POST /prices/resolve}/{@code
+ *       POST /prices/resolve-batch} (read-only price lookups order-svc performs service-to-service
+ *       without identity headers).
  * </ul>
  *
  * <p>Runs at {@link Priorities#AUTHORIZATION} (2000), after {@link TenantContextFilter} (1000) has
@@ -110,8 +111,10 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || "/onboarding/stores".equals(path)
         || "/admin/tenant".equals(path)
         // Internal read-only lookup: order-svc resolves prices service-to-service without
-        // identity headers (it POSTs a query payload, but mutates nothing).
+        // identity headers (it POSTs a query payload, but mutates nothing). The batch form is the
+        // same lookup for every order line in one call instead of one call per line.
         || "/prices/resolve".equals(path)
+        || "/prices/resolve-batch".equals(path)
         // Guest storefront checkout: an online shopper places an order with no staff role.
         // Reachable only via the gateway's storefront whitelist (tenant from X-Storefront-Tenant)
         // or by an authenticated customer. POS channel orders require a staff role — enforced
@@ -121,7 +124,8 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // own cart with no staff role. Object-level authorization (only the owning
         // customer/session,
         // or staff acting on a customer's behalf) is enforced inside CartService, not here.
-        || path.startsWith("/cart")
+        || "/cart".equals(path)
+        || path.startsWith("/cart/")
         // Guest storefront online payment (cashless). The staff cash-tender path is POST /payments,
         // which stays role-gated; this is the customer-facing online capture only.
         || "/payments/online".equals(path);
@@ -130,6 +134,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   private static boolean requiresManagement(String path, String method) {
     // Bootstrap carve-out — see isOpenMutation.
     if (path.endsWith("/admin/tenant") && "POST".equalsIgnoreCase(method)) return false;
+    // Receipt printing is a cashier action (logging a print event after completing a sale);
+    // it must not be locked behind management roles even though the path is under /admin/.
+    if (path.endsWith("/receipts") && "POST".equalsIgnoreCase(method)) return false;
     if (path.startsWith("/admin/")) return true;
     if (path.endsWith("/refunds") && "POST".equalsIgnoreCase(method)) return true;
     if (path.endsWith("/void") && "POST".equalsIgnoreCase(method)) return true;

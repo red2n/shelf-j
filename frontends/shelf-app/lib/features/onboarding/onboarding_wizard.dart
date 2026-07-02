@@ -16,9 +16,17 @@ class _OnboardingWizardState extends ConsumerState<OnboardingWizard> {
   // Step 1 fields
   final _bizNameCtrl = TextEditingController();
   final _legalNameCtrl = TextEditingController();
-  String _country = 'IN';
-  String _currency = 'INR';
+  String _country = 'GB';
+  String _currency = 'GBP';
   final _step1Key = GlobalKey<FormState>();
+
+  static const _countryCurrency = {
+    'GB': 'GBP',
+    'US': 'USD',
+    'IN': 'INR',
+    'SG': 'SGD',
+    'AE': 'AED',
+  };
 
   // Step 2 fields
   final _storeNameCtrl = TextEditingController();
@@ -26,8 +34,8 @@ class _OnboardingWizardState extends ConsumerState<OnboardingWizard> {
   final _line1Ctrl = TextEditingController();
   final _cityCtrl = TextEditingController();
   final _pincodeCtrl = TextEditingController();
-  String _storeCountry = 'IN';
-  String _timezone = 'Asia/Kolkata';
+  String _storeCountry = 'GB';
+  String _timezone = 'Europe/London';
   String _storeType = 'STORE';
   final _step2Key = GlobalKey<FormState>();
 
@@ -109,7 +117,10 @@ class _OnboardingWizardState extends ConsumerState<OnboardingWizard> {
                         legalNameCtrl: _legalNameCtrl,
                         country: _country,
                         currency: _currency,
-                        onCountryChanged: (v) => setState(() => _country = v!),
+                        onCountryChanged: (v) => setState(() {
+                          _country = v!;
+                          _currency = _countryCurrency[v] ?? _currency;
+                        }),
                         onCurrencyChanged: (v) => setState(() => _currency = v!),
                         loading: ob.loading,
                         onNext: () {

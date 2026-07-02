@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'storefront_providers.dart';
+import 'survey_widgets.dart';
 
 const _destinations = [
   AdaptiveNavDestination(
@@ -37,6 +38,17 @@ class StorefrontShell extends ConsumerWidget {
     // A deactivated tenant's shop is closed — show a friendly notice instead of
     // letting every product/price call fail with a raw 403.
     final suspended = ref.watch(storefrontSuspendedProvider).valueOrNull ?? false;
+
+    // Show the preferences sheet once after a customer first signs in or registers.
+    ref.listen<bool>(storefrontJustAuthenticatedProvider, (_, justAuth) {
+      if (!justAuth) return;
+      ref.read(storefrontJustAuthenticatedProvider.notifier).state = false;
+      final asked = ref.read(customerPrefsProvider).prefsAsked;
+      if (!asked) {
+        WidgetsBinding.instance.addPostFrameCallback(
+            (_) => showPreferencesSheet(context));
+      }
+    });
 
     return AdaptiveNavShell(
       title: 'Shop',
@@ -165,11 +177,21 @@ class _AccountAction extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(storefrontAuthProvider);
     if (!auth.isSignedIn) {
-      return TextButton.icon(
-        onPressed: () => showDialog(
-            context: context, builder: (_) => const StorefrontAuthDialog()),
+      return PopupMenuButton<String>(
         icon: const Icon(Icons.person_outline),
-        label: const Text('Sign in'),
+        tooltip: 'Account',
+        onSelected: (v) {
+          if (v == 'signin') {
+            showDialog(
+                context: context, builder: (_) => const StorefrontAuthDialog());
+          } else if (v == 'feedback') {
+            showFeedbackSheet(context);
+          }
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(value: 'signin', child: Text('Sign in')),
+          PopupMenuItem(value: 'feedback', child: Text('Send feedback')),
+        ],
       );
     }
     return PopupMenuButton<String>(
@@ -178,6 +200,10 @@ class _AccountAction extends ConsumerWidget {
       onSelected: (v) {
         if (v == 'orders') {
           context.go('/store/orders');
+        } else if (v == 'preferences') {
+          showPreferencesSheet(context);
+        } else if (v == 'feedback') {
+          showFeedbackSheet(context);
         } else if (v == 'logout') {
           ref.read(storefrontAuthProvider.notifier).logout();
         }
@@ -189,6 +215,8 @@ class _AccountAction extends ConsumerWidget {
               style: const TextStyle(fontWeight: FontWeight.bold)),
         ),
         const PopupMenuItem(value: 'orders', child: Text('My orders')),
+        const PopupMenuItem(value: 'preferences', child: Text('My preferences')),
+        const PopupMenuItem(value: 'feedback', child: Text('Send feedback')),
         const PopupMenuItem(value: 'logout', child: Text('Sign out')),
       ],
     );
@@ -240,6 +268,8 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_register ? 'Account created.' : 'Signed in.')),
       );
+      // Signal the shell to show the preferences sheet if not yet asked.
+      ref.read(storefrontJustAuthenticatedProvider.notifier).state = true;
     } catch (e) {
       setState(() {
         _loading = false;
@@ -299,8 +329,10 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
                   controller: _phoneCtrl,
                   keyboardType: TextInputType.phone,
                   decoration: const InputDecoration(
-                      labelText: 'Phone (optional)',
+                      labelText: 'Phone number',
                       prefixIcon: Icon(Icons.phone_outlined)),
+                  validator: (v) =>
+                      v == null || v.trim().isEmpty ? 'Phone number required' : null,
                 ),
               ],
               const SizedBox(height: 8),

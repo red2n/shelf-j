@@ -3,7 +3,7 @@ package com.shelfj.iam.service;
 import com.shelfj.iam.domain.PosSession;
 import com.shelfj.iam.dto.Dtos.StartPosSessionRequest;
 import com.shelfj.iam.repo.PosSessionRepository;
-import com.shelfj.iam.repo.StoreStatusRepository;
+import com.shelfj.service.StoreStatusRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;

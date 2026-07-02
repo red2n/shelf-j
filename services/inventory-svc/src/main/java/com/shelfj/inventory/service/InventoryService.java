@@ -247,7 +247,13 @@ public class InventoryService {
   }
 
   // ---- adjust ----
-  public void adjust(UUID tenantId, UUID storeId, UUID variantId, BigDecimal delta, String reason) {
+  public void adjust(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal delta,
+      String reason,
+      String idempotencyKey) {
     var event =
         new OutboxRow(
             "StockAdjusted",
@@ -255,12 +261,18 @@ public class InventoryService {
             tenantId,
             variantId,
             Events.stockAdjusted(tenantId, storeId, variantId, delta));
-    repo.adjust(tenantId, storeId, variantId, delta, reason, event);
+    repo.adjust(tenantId, storeId, variantId, delta, reason, event, idempotencyKey);
   }
 
   // ---- reserve ----
   public Reservation reserve(
-      UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId, Long ttlSeconds) {
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId,
+      Long ttlSeconds,
+      String idempotencyKey) {
     long ttl = ttlSeconds == null ? config.reservationTtlSeconds() : ttlSeconds;
     UUID id = UUID.randomUUID();
     var reservation =
@@ -281,7 +293,16 @@ public class InventoryService {
             tenantId,
             id,
             Events.stockReserved(tenantId, storeId, variantId, id, qty));
-    return repo.reserve(reservation, event);
+    try {
+      return repo.reserve(reservation, event, idempotencyKey);
+    } catch (ApiException e) {
+      // Idempotent replay: a retried reservation with the same key gets the original hold back
+      // instead of holding stock twice for one checkout attempt (golden rule #11).
+      if ("RESERVATION_DUPLICATE_KEY".equals(e.code()) && idempotencyKey != null) {
+        return repo.findReservationByIdempotencyKey(tenantId, idempotencyKey).orElseThrow(() -> e);
+      }
+      throw e;
+    }
   }
 
   // ---- consume (FIFO deduct) ----
@@ -1185,20 +1206,28 @@ public class InventoryService {
     } else {
       targets = repo.listSafetyStockParamsAll(tenantId, storeId);
     }
-    int updated = 0;
+    if (targets.isEmpty()) return 0;
+
+    // One batched read for every target's demand history, instead of one query per row.
+    var bucketsByStoreThenVariant = repo.demandBucketsBatch(tenantId, targets, 30);
     Instant now = Instant.now();
+    var qtyByStoreThenVariant = new java.util.HashMap<UUID, java.util.Map<UUID, BigDecimal>>();
     for (SafetyStockParams p : targets) {
-      BigDecimal qty = computeForOne(p);
-      repo.updateSafetyStockQty(p.tenantId(), p.storeId(), p.variantId(), qty, now);
-      updated++;
+      List<DemandBucket> buckets =
+          bucketsByStoreThenVariant
+              .getOrDefault(p.storeId(), java.util.Map.of())
+              .getOrDefault(p.variantId(), List.of());
+      BigDecimal qty = computeForOne(p, buckets);
+      qtyByStoreThenVariant
+          .computeIfAbsent(p.storeId(), k -> new java.util.HashMap<>())
+          .put(p.variantId(), qty);
     }
-    return updated;
+    // One batched write for every target, instead of one connection checkout per row.
+    return repo.updateSafetyStockQtyBatch(tenantId, qtyByStoreThenVariant, now);
   }
 
-  private BigDecimal computeForOne(SafetyStockParams p) {
-    // Fetch last 30 daily buckets (enough for meaningful MAD)
-    List<DemandBucket> buckets =
-        repo.demandBucketsForCompute(p.tenantId(), p.storeId(), p.variantId(), 30);
+  /** {@code buckets} is the last 30 daily buckets (enough for meaningful MAD), oldest-first. */
+  private BigDecimal computeForOne(SafetyStockParams p, List<DemandBucket> buckets) {
     if (buckets.isEmpty()) return BigDecimal.ZERO;
 
     int n = buckets.size();
@@ -1610,9 +1639,6 @@ public class InventoryService {
             tenantId,
             sourceBatchId,
             Events.lotMerge(tenantId, sourceBatchId, targetBatchId, qty));
-    // Deduct from source, add to target
-    repo.adjust(
-        tenantId, source.storeId(), source.variantId(), qty.negate(), "LOT_MERGE_OUT", mergeEvent);
     OutboxRow addEvent =
         new OutboxRow(
             "LotMergeIn",
@@ -1620,7 +1646,16 @@ public class InventoryService {
             tenantId,
             targetBatchId,
             Events.lotMerge(tenantId, sourceBatchId, targetBatchId, qty));
-    repo.adjust(tenantId, target.storeId(), target.variantId(), qty, "LOT_MERGE_IN", addEvent);
+    // Deduct from source and add to target atomically — see mergeLotAdjust's Javadoc.
+    repo.mergeLotAdjust(
+        tenantId,
+        source.storeId(),
+        source.variantId(),
+        mergeEvent,
+        target.storeId(),
+        target.variantId(),
+        addEvent,
+        qty);
     Batch updated =
         repo.getBatch(tenantId, targetBatchId)
             .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));
@@ -1722,7 +1757,8 @@ public class InventoryService {
         UUID storeId = UUID.fromString(req.storeId());
         UUID variantId = UUID.fromString(req.variantId());
         UUID orderId = req.orderId() != null ? UUID.fromString(req.orderId()) : null;
-        succeeded.add(reserve(tenantId, storeId, variantId, req.qty(), orderId, req.ttlSeconds()));
+        succeeded.add(
+            reserve(tenantId, storeId, variantId, req.qty(), orderId, req.ttlSeconds(), null));
       } catch (Exception ignored) {
         failed++;
       }
@@ -1775,8 +1811,8 @@ public class InventoryService {
             () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
   }
 
-  public List<PickingRule> listPickingRules(UUID tenantId) {
-    return repo.listPickingRules(tenantId);
+  public List<PickingRule> listPickingRules(UUID tenantId, int limit) {
+    return repo.listPickingRules(tenantId, limit);
   }
 
   public PickingRule deactivatePickingRule(UUID tenantId, UUID id) {
@@ -1829,8 +1865,8 @@ public class InventoryService {
     return repo.createPickingRuleAssignment(tenantId, ruleId, scopeType, scopeId);
   }
 
-  public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId) {
-    return repo.listPickingRuleAssignments(tenantId);
+  public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId, int limit) {
+    return repo.listPickingRuleAssignments(tenantId, limit);
   }
 
   public void deletePickingRuleAssignment(UUID tenantId, UUID id) {
