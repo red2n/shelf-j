@@ -31,6 +31,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   final _postalCtrl = TextEditingController();
   final _recipientNameCtrl = TextEditingController();
   final _recipientPhoneCtrl = TextEditingController();
+  final _contactPhoneCtrl = TextEditingController();
 
   @override
   void dispose() {
@@ -40,6 +41,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     _postalCtrl.dispose();
     _recipientNameCtrl.dispose();
     _recipientPhoneCtrl.dispose();
+    _contactPhoneCtrl.dispose();
     super.dispose();
   }
 
@@ -221,6 +223,19 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                       ),
                     ),
                   ],
+                  if (_fulfilment == 'PICKUP') ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _contactPhoneCtrl,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Contact phone *',
+                        hintText: 'We\'ll notify you when your order is ready',
+                        isDense: true,
+                        prefixIcon: Icon(Icons.phone_outlined),
+                      ),
+                    ),
+                  ],
                   if (showPrices) ...[
                     const SizedBox(height: 12),
                     SegmentedButton<bool>(
@@ -340,6 +355,12 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       ));
       return;
     }
+    if (!delivery && _contactPhoneCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Please enter a contact phone number for collection.'),
+      ));
+      return;
+    }
     // Re-entrancy guard, set synchronously before the first await: a double-tap landing while
     // this call is still on the pending-order lookup below must not fire a second checkout. This
     // is deliberately separate from [_placing] (which only flips once we commit to placing the
@@ -407,6 +428,9 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
               // it's recorded as a 0-value request to be priced/fulfilled later.
               {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
           ],
+          'contactPhone': delivery
+              ? _recipientPhoneCtrl.text.trim()
+              : _contactPhoneCtrl.text.trim(),
           if (delivery) ...{
             'deliveryLine1': _line1Ctrl.text.trim(),
             if (_line2Ctrl.text.trim().isNotEmpty)
@@ -522,6 +546,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       _postalCtrl.clear();
       _recipientNameCtrl.clear();
       _recipientPhoneCtrl.clear();
+      _contactPhoneCtrl.clear();
       setState(() {
         _fulfilment = 'PICKUP';
         _payNow = true;

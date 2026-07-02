@@ -202,7 +202,8 @@ public class OrderService {
             delivery ? req.deliveryCity() : null,
             delivery ? req.deliveryPostalCode() : null,
             delivery ? req.deliveryRecipientName() : null,
-            delivery ? req.deliveryRecipientPhone() : null);
+            delivery ? req.deliveryRecipientPhone() : null,
+            req.contactPhone());
 
     try {
       return repo.createOrder(

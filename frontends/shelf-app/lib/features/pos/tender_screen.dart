@@ -100,10 +100,15 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     final cart = ref.read(posCartProvider);
     final storeId = ref.read(posStoreProvider);
     final customer = ref.read(posCustomerProvider);
+    final walkInPhone = ref.read(posWalkInPhoneProvider);
     final discount = ref.read(posDiscountProvider).clamp(0, double.infinity).toDouble();
     if (cart.isEmpty) return;
     if (storeId == null) {
       _snack('Select a store before tendering.', error: true);
+      return;
+    }
+    if (customer == null && walkInPhone.isEmpty) {
+      _snack('Enter a contact phone number for this sale.', error: true);
       return;
     }
     if (_remaining > 0.001) {
@@ -125,6 +130,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           'currency': currency,
           if (discount > 0) 'discountAmount': discount,
           if (customer != null) 'customerId': customer.id,
+          'contactPhone': customer != null ? '' : walkInPhone,
           'items': [
             for (final l in cart)
               {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
@@ -183,6 +189,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       ref.read(posCartProvider.notifier).clear();
       ref.read(posCustomerProvider.notifier).state = null;
       ref.read(posDiscountProvider.notifier).state = 0;
+      ref.read(posWalkInPhoneProvider.notifier).state = '';
       _tenders.clear();
       if (!mounted) return;
       setState(() => _processing = false);
@@ -375,9 +382,14 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     final cart = ref.read(posCartProvider);
     final storeId = ref.read(posStoreProvider);
     final customer = ref.read(posCustomerProvider);
+    final walkInPhone = ref.read(posWalkInPhoneProvider);
     if (cart.isEmpty) return;
     if (storeId == null) {
       _snack('Select a store before placing the order.', error: true);
+      return;
+    }
+    if (customer == null && walkInPhone.isEmpty) {
+      _snack('Enter a contact phone number for this sale.', error: true);
       return;
     }
     setState(() => _processing = true);
@@ -393,6 +405,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           'fulfilmentType': 'PICKUP',
           'currency': currency,
           if (customer != null) 'customerId': customer.id,
+          'contactPhone': customer != null ? '' : walkInPhone,
           'items': [
             for (final l in cart)
               {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
@@ -416,6 +429,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       ref.read(posCartProvider.notifier).clear();
       ref.read(posCustomerProvider.notifier).state = null;
       ref.read(posDiscountProvider.notifier).state = 0;
+      ref.read(posWalkInPhoneProvider.notifier).state = '';
       if (!mounted) return;
       setState(() => _processing = false);
       openReceiptPrint(receiptData);

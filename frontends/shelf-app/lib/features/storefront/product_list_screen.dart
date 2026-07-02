@@ -30,6 +30,17 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Auto-select the first store when no ?store= URL override is given.
+      // This prevents a stale built-in default from making the availability
+      // endpoint return an empty map (which would show everything as out of stock).
+      if ((Uri.base.queryParameters['store'] ?? '').isEmpty) {
+        try {
+          final stores = await ref.read(storefrontStoresProvider.future);
+          if (stores.isNotEmpty && mounted) {
+            ref.read(storefrontStoreProvider.notifier).state = stores.first.id;
+          }
+        } catch (_) {}
+      }
       await Future.delayed(const Duration(milliseconds: 500));
       if (!mounted) return;
       final asked = ref.read(customerPrefsProvider).genderAsked;
@@ -43,6 +54,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     if (tenant == null) return const _NoStorefront();
 
     final selectedCategory = ref.watch(selectedStorefrontCategoryProvider);
+    final inStockOnly = ref.watch(storefrontInStockOnlyProvider);
     final productsAsync = ref.watch(
         storefrontProductsProvider((query: _query, categoryId: selectedCategory)));
     final width = MediaQuery.sizeOf(context).width;
@@ -74,8 +86,10 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
           ),
         ),
 
-        // Browse by category
-        const SliverToBoxAdapter(child: _CategoryChips()),
+        // Browse by category + in-stock filter
+        SliverToBoxAdapter(
+          child: _FilterRow(inStockOnly: inStockOnly),
+        ),
 
         // Products
         productsAsync.when(
@@ -91,15 +105,32 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
             ),
           ),
           data: (products) {
-            if (products.isEmpty) {
+            // Apply in-stock filter client-side using the availability map and
+            // first-variant lookup (both are lazy-cached per product).
+            List<StoreProduct> displayProducts = products;
+            if (inStockOnly) {
+              final availMap =
+                  ref.watch(storefrontAvailabilityProvider).valueOrNull ?? {};
+              if (availMap.isNotEmpty) {
+                displayProducts = products.where((p) {
+                  final variant =
+                      ref.watch(productFirstVariantProvider(p.id)).valueOrNull;
+                  if (variant == null) return true; // include while loading
+                  return availMap[variant.id] ?? true;
+                }).toList();
+              }
+            }
+
+            if (displayProducts.isEmpty) {
               return const SliverFillRemaining(
                 hasScrollBody: false,
                 child: _EmptyProducts(),
               );
             }
             // Inject one ad at a random position among the real products.
-            final adIndex = math.Random().nextInt(products.length + 1);
-            final items = <Object>[...products]..insert(adIndex, const _AdSlot());
+            final adIndex = math.Random().nextInt(displayProducts.length + 1);
+            final items = <Object>[...displayProducts]
+              ..insert(adIndex, const _AdSlot());
 
             if (cols == 1) {
               return SliverPadding(
@@ -352,38 +383,61 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
   }
 }
 
-/// Horizontal "All + categories" filter chips.
-class _CategoryChips extends ConsumerWidget {
-  const _CategoryChips();
+/// Horizontal filter row: category chips + "In stock only" toggle at the end.
+class _FilterRow extends ConsumerWidget {
+  final bool inStockOnly;
+  const _FilterRow({required this.inStockOnly});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final categoriesAsync = ref.watch(storefrontCategoriesProvider);
     final selected = ref.watch(selectedStorefrontCategoryProvider);
+    final cs = Theme.of(context).colorScheme;
 
-    return categoriesAsync.when(
-      loading: () => const SizedBox(height: 8),
-      error: (_, __) => const SizedBox(height: 8),
-      data: (categories) {
-        if (categories.isEmpty) return const SizedBox(height: 8);
-        return SizedBox(
-          height: 48,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            children: [
-              _chip(context, ref, label: 'All', value: null, selected: selected == null),
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        children: [
+          // Category chips
+          ...categoriesAsync.when(
+            loading: () => const [],
+            error: (_, __) => const [],
+            data: (categories) => [
+              _categoryChip(context, ref,
+                  label: 'All', value: null, selected: selected == null),
               for (final c in categories)
-                _chip(context, ref,
+                _categoryChip(context, ref,
                     label: c.name, value: c.id, selected: selected == c.id),
             ],
           ),
-        );
-      },
+          // Divider spacer
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+            child: VerticalDivider(width: 1, color: cs.outlineVariant),
+          ),
+          // In-stock toggle
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilterChip(
+              avatar: Icon(
+                Icons.inventory_2_outlined,
+                size: 16,
+                color: inStockOnly ? cs.onSecondaryContainer : cs.onSurfaceVariant,
+              ),
+              label: const Text('In stock'),
+              selected: inStockOnly,
+              onSelected: (v) =>
+                  ref.read(storefrontInStockOnlyProvider.notifier).state = v,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _chip(BuildContext context, WidgetRef ref,
+  Widget _categoryChip(BuildContext context, WidgetRef ref,
       {required String label, required String? value, required bool selected}) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),

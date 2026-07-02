@@ -14,13 +14,16 @@ final storefrontTenantProvider = StateProvider<String?>((ref) {
   return (t != null && t.isNotEmpty) ? t : null;
 });
 
-/// Store used for online order fulfilment. `?store=<id>` override; otherwise the
-/// seeded dev Main Store. (A real storefront would resolve this server-side.)
-const _devDefaultStore = '85aa2d24-157b-4986-8a3c-8c2002f5e0c0';
+/// Store used for online order fulfilment. `?store=<id>` override; otherwise
+/// resolved from the first store returned by the tenant's store list (set by
+/// ProductListScreen.initState after the stores API responds).
 final storefrontStoreProvider = StateProvider<String>((ref) {
   final s = Uri.base.queryParameters['store'];
-  return (s != null && s.isNotEmpty) ? s : _devDefaultStore;
+  return (s != null && s.isNotEmpty) ? s : '';
 });
+
+/// Whether to show only in-stock products on the storefront product list.
+final storefrontInStockOnlyProvider = StateProvider<bool>((ref) => false);
 
 /// A tokenless Dio that stamps the storefront tenant header on every request.
 final storefrontDioProvider = Provider<Dio>((ref) {
@@ -96,11 +99,38 @@ class StorefrontAuthNotifier extends StateNotifier<StorefrontAuthState> {
     final data = resp.data['data'] as Map<String, dynamic>;
     final access = data['accessToken'] as String?;
     final refresh = data['refreshToken'] as String?;
+
+    // Reject staff / admin accounts on the customer storefront. Decode the JWT
+    // payload (base64url) and check the `type` claim — only CUSTOMER tokens are
+    // allowed here. This is a UX guard; the server enforces authorisation anyway.
+    if (access != null) {
+      final type = _jwtType(access);
+      if (type != null && type != 'CUSTOMER') {
+        throw Exception(
+            'Staff accounts cannot sign in here. Please use the manager portal.');
+      }
+    }
+
     await _storage.write(key: _kAccess, value: access);
     await _storage.write(key: _kRefresh, value: refresh);
     await _storage.write(key: _kEmail, value: email);
     state = StorefrontAuthState(
         accessToken: access, refreshToken: refresh, email: email);
+  }
+
+  /// Decodes the `type` claim from a JWT payload without verifying the signature
+  /// (verification happens server-side). Returns null on any parse failure.
+  static String? _jwtType(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+      final payload = utf8.decode(
+          base64Url.decode(base64Url.normalize(parts[1])));
+      final claims = json.decode(payload) as Map<String, dynamic>;
+      return claims['type'] as String?;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> logout() async {
@@ -267,6 +297,7 @@ final storefrontAvailabilityProvider =
     FutureProvider.autoDispose<Map<String, bool>>((ref) async {
   final dio = ref.watch(storefrontDioProvider);
   final store = ref.watch(storefrontStoreProvider);
+  if (store.isEmpty) return {};
   final resp = await dio.get('/${ApiConstants.inventory}/inventory/availability',
       queryParameters: {'store': store});
   final data = (resp.data['data'] as List?) ?? [];

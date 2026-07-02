@@ -140,9 +140,16 @@ final posStoresProvider = FutureProvider.autoDispose<List<StoreInfo>>((ref) asyn
 /// Staff at the till always need to see and charge the correct price.
 final posShowPricesProvider = Provider.autoDispose<bool>((ref) => true);
 
+/// Whether to show only in-stock products on the POS catalog pane.
+final posInStockOnlyProvider = StateProvider.autoDispose<bool>((ref) => false);
+
 /// The customer attached to the in-progress sale (null = walk-in). Lets POS
 /// attribute the order so loyalty / store-credit can apply.
 final posCustomerProvider = StateProvider<Customer?>((ref) => null);
+
+/// Contact phone for walk-in sales (used when no customer account is linked).
+/// Cleared automatically when the sale is completed or voided.
+final posWalkInPhoneProvider = StateProvider<String>((ref) => '');
 
 /// Order-level discount (absolute amount) applied to the in-progress sale.
 final posDiscountProvider = StateProvider<double>((ref) => 0);

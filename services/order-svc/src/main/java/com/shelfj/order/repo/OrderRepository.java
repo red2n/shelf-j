@@ -45,8 +45,8 @@ public class OrderRepository extends BaseOutboxRepository {
                       + " (id,tenant_id,store_id,customer_id,channel,fulfilment_type,status,"
                       + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
                       + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
-                      + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, order.id());
             ps.setObject(2, order.tenantId());
             ps.setObject(3, order.storeId());
@@ -69,6 +69,7 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setString(20, order.deliveryPostalCode());
             ps.setString(21, order.deliveryRecipientName());
             ps.setString(22, order.deliveryRecipientPhone());
+            ps.setString(23, order.contactPhone());
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -96,7 +97,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone"
                 + " FROM orders WHERE tenant_id=? AND idempotency_key=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -125,7 +126,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone"
                 + " FROM orders WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
@@ -164,7 +165,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone"
                 + " FROM orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -782,7 +783,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " subtotal, tax_amount, discount_amount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
-                + " delivery_recipient_name, delivery_recipient_phone"
+                + " delivery_recipient_name, delivery_recipient_phone, contact_phone"
                 + " FROM orders WHERE tenant_id=? AND id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
@@ -938,7 +939,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getString("delivery_city"),
         rs.getString("delivery_postal_code"),
         rs.getString("delivery_recipient_name"),
-        rs.getString("delivery_recipient_phone"));
+        rs.getString("delivery_recipient_phone"),
+        rs.getString("contact_phone"));
   }
 
   private OrderItem mapOrderItem(ResultSet rs) throws SQLException {

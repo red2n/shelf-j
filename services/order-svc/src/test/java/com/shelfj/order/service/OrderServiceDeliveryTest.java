@@ -82,7 +82,8 @@ class OrderServiceDeliveryTest {
         city,
         postalCode,
         recipientName,
-        recipientPhone);
+        recipientPhone,
+        null);
   }
 
   @Test

@@ -68,7 +68,8 @@ public final class Mappers {
         o.deliveryCity(),
         o.deliveryPostalCode(),
         o.deliveryRecipientName(),
-        o.deliveryRecipientPhone());
+        o.deliveryRecipientPhone(),
+        o.contactPhone());
   }
 
   public static OrderSummaryResponse toSummary(Order o) {
