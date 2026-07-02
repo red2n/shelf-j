@@ -414,7 +414,9 @@ public class OrderService {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest("LAYAWAY_NO_ITEMS", "layaway must have at least one item");
 
-    UUID tenantId = ctx.tenantId();
+    // requireTenantId (not the nullable tenantId()) so a request that somehow reached this
+    // financial write path without a tenant fails 401 instead of persisting a null-tenant row.
+    UUID tenantId = ctx.requireTenantId();
     UUID storeId = Parsing.uuid(req.storeId(), "storeId");
     ctx.requireStoreAccess(storeId);
     UUID customerId =
@@ -511,7 +513,9 @@ public class OrderService {
   // ── Gift cards ────────────────────────────────────────────────────────────
 
   public GiftCard issueGiftCard(IssueGiftCardRequest req, TenantContext ctx) {
-    UUID tenantId = ctx.tenantId();
+    // requireTenantId (not the nullable tenantId()) so issuing a gift card without a tenant in
+    // context fails 401 rather than minting stored value against a null-tenant row.
+    UUID tenantId = ctx.requireTenantId();
     UUID storeId = Parsing.uuid(req.storeId(), "storeId");
     ctx.requireStoreAccess(storeId);
     UUID gcId = UUID.randomUUID();
