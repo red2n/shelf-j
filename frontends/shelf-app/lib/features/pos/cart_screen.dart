@@ -161,7 +161,31 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
         );
       }),
     );
-    if (selected == null) return;
+    if (selected == null || !mounted) return;
+
+    final current = ref.read(posCartProvider);
+    if (current.isNotEmpty) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Discard current sale?'),
+          content: Text(
+              'The current sale has ${current.length} item'
+              '${current.length == 1 ? '' : 's'} that haven\'t been held or '
+              'charged. Resuming the held sale will discard them.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Discard & resume')),
+          ],
+        ),
+      );
+      if (discard != true) return;
+    }
+
     ref.read(posCartProvider.notifier).loadLines(selected.lines);
     try {
       await ref

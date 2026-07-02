@@ -3,6 +3,7 @@ package com.shelfj.service;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.sql.Connection;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.eclipse.microprofile.health.HealthCheck;
 import org.eclipse.microprofile.health.HealthCheckResponse;
@@ -44,6 +45,28 @@ public final class HealthChecks {
             .withData("error", String.valueOf(e.getMessage()))
             .build();
       }
+    }
+  }
+
+  /**
+   * A consumer that fails to start (bad bootstrap config, broker unreachable, etc.) must not leave
+   * the service silently "ready" while it never processes another event — see {@link
+   * KafkaConsumerRegistry}.
+   */
+  @Readiness
+  @ApplicationScoped
+  public static class KafkaConsumerReadiness implements HealthCheck {
+
+    @Override
+    public HealthCheckResponse call() {
+      Set<String> failed = KafkaConsumerRegistry.failedConsumers();
+      if (failed.isEmpty()) {
+        return HealthCheckResponse.named("kafka-consumers").up().build();
+      }
+      return HealthCheckResponse.named("kafka-consumers")
+          .down()
+          .withData("failed", String.join(",", failed))
+          .build();
     }
   }
 }
