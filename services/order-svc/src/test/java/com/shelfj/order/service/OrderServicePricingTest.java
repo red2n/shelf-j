@@ -40,6 +40,7 @@ class OrderServicePricingTest {
   @Mock OrderRepository repo;
   @Mock ServiceConfig config;
   @Mock PricingClient pricing;
+  @Mock com.shelfj.order.client.InventoryClient inventory;
   @Mock TenantContext ctx;
   @Mock TenantStatusRepository tenantStatusRepo;
   @Mock StoreStatusRepository storeStatusRepo;
@@ -52,6 +53,7 @@ class OrderServicePricingTest {
     svc.repo = repo;
     svc.config = config;
     svc.pricing = pricing;
+    svc.inventory = inventory;
     svc.tenantStatusRepo = tenantStatusRepo;
     svc.storeStatusRepo = storeStatusRepo;
     when(ctx.requireTenantId()).thenReturn(TENANT);
@@ -69,6 +71,7 @@ class OrderServicePricingTest {
         null,
         discount,
         "USD",
+        null,
         null,
         null,
         null,

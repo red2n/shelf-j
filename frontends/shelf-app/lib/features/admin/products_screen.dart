@@ -1,3 +1,5 @@
+import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
@@ -184,6 +186,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                             _showVariantsDialog(context, ref, p),
                         onAssortment: (p) =>
                             _showAssortmentDialog(context, ref, p),
+                        onImage: (p) => _manageImage(context, ref, p),
                         onDelist: (p) => _delist(context, ref, p),
                       );
                     }
@@ -193,6 +196,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                       onViewVariants: (p) =>
                           _showVariantsDialog(context, ref, p),
                       onAssortment: (p) => _showAssortmentDialog(context, ref, p),
+                      onImage: (p) => _manageImage(context, ref, p),
                       onDelist: (p) => _delist(context, ref, p),
                     );
                   }),
@@ -254,6 +258,91 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     );
   }
 
+  /// Owner uploads (or removes) the product's storefront image. JPEG/PNG/WebP, max 512 KB —
+  /// matching product-svc's PUT /admin/products/{id}/image contract.
+  Future<void> _manageImage(
+      BuildContext context, WidgetRef ref, ProductInfo product) async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Image for "${product.name}"'),
+        content: const Text(
+            'Upload a JPEG, PNG or WebP up to 512 KB. It appears on the '
+            'storefront catalog and product page.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.pop(ctx, 'remove'),
+            icon: const Icon(Icons.delete_outline, size: 18),
+            label: const Text('Remove image'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(ctx, 'upload'),
+            icon: const Icon(Icons.upload_outlined, size: 18),
+            label: const Text('Choose file…'),
+          ),
+        ],
+      ),
+    );
+    if (action == null || !context.mounted) return;
+
+    final dio = ref.read(apiClientProvider).dio;
+    try {
+      if (action == 'remove') {
+        await dio.delete(
+            '/${ApiConstants.product}/admin/products/${product.id}/image');
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Product image removed.')));
+        }
+        return;
+      }
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
+        withData: true,
+      );
+      final file = picked?.files.firstOrNull;
+      final bytes = file?.bytes;
+      if (file == null || bytes == null) return;
+      if (bytes.length > 512 * 1024) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                'Image is ${(bytes.length / 1024).round()} KB — max is 512 KB. '
+                'Please resize it and try again.'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ));
+        }
+        return;
+      }
+      final ext = (file.extension ?? '').toLowerCase();
+      final contentType = switch (ext) {
+        'png' => 'image/png',
+        'webp' => 'image/webp',
+        _ => 'image/jpeg',
+      };
+      await dio.put(
+        '/${ApiConstants.product}/admin/products/${product.id}/image',
+        data: bytes,
+        options: Options(contentType: contentType),
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Product image uploaded.')));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Image update failed: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ));
+      }
+    }
+  }
+
   Future<void> _delist(
       BuildContext context, WidgetRef ref, ProductInfo product) async {
     final confirmed = await showDialog<bool>(
@@ -302,6 +391,7 @@ class _WideTable extends StatelessWidget {
   final Map<String, CategoryInfo> catById;
   final void Function(ProductInfo) onViewVariants;
   final void Function(ProductInfo) onAssortment;
+  final void Function(ProductInfo) onImage;
   final void Function(ProductInfo) onDelist;
 
   const _WideTable({
@@ -309,6 +399,7 @@ class _WideTable extends StatelessWidget {
     required this.catById,
     required this.onViewVariants,
     required this.onAssortment,
+    required this.onImage,
     required this.onDelist,
   });
 
@@ -397,6 +488,13 @@ class _WideTable extends StatelessWidget {
                               SizedBox(width: 8),
                               Text('Sold at stores'),
                             ])),
+                        const PopupMenuItem(
+                            value: 'image',
+                            child: Row(children: [
+                              Icon(Icons.image_outlined, size: 18),
+                              SizedBox(width: 8),
+                              Text('Product image'),
+                            ])),
                         if (active)
                           PopupMenuItem(
                               value: 'delist',
@@ -413,6 +511,8 @@ class _WideTable extends StatelessWidget {
                           onViewVariants(p);
                         } else if (v == 'stores') {
                           onAssortment(p);
+                        } else if (v == 'image') {
+                          onImage(p);
                         } else {
                           onDelist(p);
                         }
@@ -436,6 +536,7 @@ class _NarrowList extends StatelessWidget {
   final Map<String, CategoryInfo> catById;
   final void Function(ProductInfo) onViewVariants;
   final void Function(ProductInfo) onAssortment;
+  final void Function(ProductInfo) onImage;
   final void Function(ProductInfo) onDelist;
 
   const _NarrowList({
@@ -443,6 +544,7 @@ class _NarrowList extends StatelessWidget {
     required this.catById,
     required this.onViewVariants,
     required this.onAssortment,
+    required this.onImage,
     required this.onDelist,
   });
 
@@ -494,6 +596,13 @@ class _NarrowList extends StatelessWidget {
                           SizedBox(width: 8),
                           Text('Sold at stores'),
                         ])),
+                    const PopupMenuItem(
+                        value: 'image',
+                        child: Row(children: [
+                          Icon(Icons.image_outlined, size: 18),
+                          SizedBox(width: 8),
+                          Text('Product image'),
+                        ])),
                     if (active)
                       PopupMenuItem(
                           value: 'delist',
@@ -510,6 +619,8 @@ class _NarrowList extends StatelessWidget {
                       onViewVariants(p);
                     } else if (v == 'stores') {
                       onAssortment(p);
+                    } else if (v == 'image') {
+                      onImage(p);
                     } else {
                       onDelist(p);
                     }

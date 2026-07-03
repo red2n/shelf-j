@@ -58,6 +58,16 @@ class PaymentServiceTest {
     };
   }
 
+  /** Store settings unknown (null) → per-store method enforcement is skipped (fail-open). */
+  private static com.shelfj.payment.client.TenantStoreClient permissiveStoreClient() {
+    return new com.shelfj.payment.client.TenantStoreClient() {
+      @Override
+      public java.util.Set<String> enabledMethods(UUID tenantId, UUID storeId) {
+        return null;
+      }
+    };
+  }
+
   private static RecordTenderRequest req(UUID orderId, BigDecimal amount) {
     return new RecordTenderRequest(orderId.toString(), amount, "CARD", null, null, null, null);
   }
@@ -154,6 +164,7 @@ class PaymentServiceTest {
             new OrderClient.OrderInfo(
                 null, "ONLINE", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
     svc.repo = capturingRepo();
+    svc.storeClient = permissiveStoreClient();
 
     var tender =
         svc.recordOnlinePayment(
@@ -176,6 +187,7 @@ class PaymentServiceTest {
                 "PENDING",
                 UUID.randomUUID().toString()));
     svc.repo = capturingRepo();
+    svc.storeClient = permissiveStoreClient();
 
     var tender =
         svc.recordOnlinePayment(

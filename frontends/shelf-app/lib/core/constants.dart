@@ -36,6 +36,9 @@ class StorageKeys {
   static const String sfSurveys = 'sf_surveys';
   static const String sfSurveyLastDate = 'sf_survey_last_date';
   static const String sfFeedback = 'sf_feedback';
+
+  /// Last delivery address used at checkout — prefills the form on the next order.
+  static const String sfSavedAddress = 'sf_saved_address';
 }
 
 class UserRoles {

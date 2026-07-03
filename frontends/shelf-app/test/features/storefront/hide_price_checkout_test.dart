@@ -45,6 +45,17 @@ Override _configOverride({required bool showPrices, String storeName = 'Test Sto
     storefrontConfigProvider.overrideWith(
         (ref) async => StorefrontConfig(showPrices: showPrices, storeName: storeName));
 
+/// Signed-in customer so checkout reaches validation instead of the auth dialog.
+class _FakeAuthNotifier extends StorefrontAuthNotifier {
+  _FakeAuthNotifier() {
+    state = const StorefrontAuthState(
+        accessToken: 'tok', refreshToken: 'ref', email: 'test@example.com');
+  }
+}
+
+Override _signedIn() =>
+    storefrontAuthProvider.overrideWith((ref) => _FakeAuthNotifier());
+
 /// Override storefrontConfigProvider with a future that never completes,
 /// simulating the loading state.
 Override _configLoading() =>
@@ -80,9 +91,11 @@ void main() {
 
       // Total row visible
       expect(find.text('Total (incl. VAT)'), findsOneWidget);
-      // Price amounts visible in cart line subtitle and button
+      // Price amounts visible in cart line subtitle and total row
       expect(find.textContaining('9.99'), findsWidgets);
-      expect(find.textContaining('Pay GBP'), findsOneWidget);
+      // Priced mode offers pay-now tenders (store default CASH+CARD → Card chip).
+      expect(find.textContaining('Card'), findsOneWidget);
+      expect(find.text('Review order'), findsOneWidget);
     });
 
     testWidgets('hides all prices in catalog mode (showPrices = false)', (tester) async {
@@ -104,8 +117,8 @@ void main() {
       expect(find.text('Pay now'), findsNothing);
       expect(find.text('Pay later'), findsNothing);
 
-      // Checkout button must say "Place order", not "Pay GBP …"
-      expect(find.text('Place order'), findsOneWidget);
+      // Checkout CTA opens the review sheet in every mode
+      expect(find.text('Review order'), findsOneWidget);
     });
 
     testWidgets('hides price even when cart items carry a non-zero unitPrice',
@@ -121,7 +134,7 @@ void main() {
 
       expect(find.textContaining('19.99'), findsNothing);
       expect(find.text('Total (incl. VAT)'), findsNothing);
-      expect(find.text('Place order'), findsOneWidget);
+      expect(find.text('Review order'), findsOneWidget);
     });
   });
 
@@ -138,7 +151,7 @@ void main() {
 
       await tester.pumpWidget(_scope(
         const StorefrontCartScreen(),
-        overrides: [_configOverride(showPrices: false)],
+        overrides: [_configOverride(showPrices: false), _signedIn()],
       ));
       _seedCart(tester, [_catalogLine()]);
       await tester.pumpAndSettle();
@@ -151,9 +164,9 @@ void main() {
       expect(find.text('Address line 1'), findsOneWidget);
 
       // Scroll the checkout panel until the button is visible, then tap it.
-      await tester.ensureVisible(find.text('Place order'));
+      await tester.ensureVisible(find.text('Review order'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Place order'));
+      await tester.tap(find.text('Review order'));
       await tester.pumpAndSettle();
 
       // The "fill in address" snackbar must appear
@@ -215,7 +228,7 @@ void main() {
       expect(find.text('Address line 1'), findsNothing);
       expect(find.text('Recipient name'), findsNothing);
       // Checkout button is visible in collect mode.
-      expect(find.text('Place order'), findsOneWidget);
+      expect(find.text('Review order'), findsOneWidget);
     });
   });
 

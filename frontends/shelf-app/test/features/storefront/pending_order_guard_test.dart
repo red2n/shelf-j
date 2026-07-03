@@ -159,6 +159,18 @@ void _seedCart(WidgetTester tester, List<CartLine> lines) {
   }
 }
 
+
+/// Fills the mandatory pickup contact phone and taps the checkout CTA
+/// ("Review order"); the pending-order guard runs before the review sheet.
+Future<void> _tapCheckout(WidgetTester tester) async {
+  await tester.enterText(
+      find.widgetWithText(TextField, 'Contact phone *'), '07700900000');
+  await tester.pump();
+  await tester.ensureVisible(find.text('Review order'));
+  await tester.tap(find.text('Review order'));
+  await tester.pumpAndSettle();
+}
+
 /// Pumps the cart screen with a cart item and opens the pending-order dialog.
 /// Returns only once the dialog is visible.
 Future<void> _openDialog(
@@ -177,9 +189,7 @@ Future<void> _openDialog(
   _seedCart(tester, [_line()]);
   await tester.pumpAndSettle();
 
-  await tester.ensureVisible(find.text('Place order'));
-  await tester.tap(find.text('Place order'));
-  await tester.pumpAndSettle();
+  await _tapCheckout(tester);
 
   expect(find.byType(AlertDialog), findsOneWidget,
       reason: 'Dialog should be visible before exercising an action');
@@ -206,9 +216,7 @@ void main() {
       _seedCart(tester, [_line()]);
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('Place order'));
-      await tester.tap(find.text('Place order'));
-      await tester.pumpAndSettle();
+      await _tapCheckout(tester);
 
       expect(find.byType(AlertDialog), findsNothing);
     });
@@ -229,9 +237,7 @@ void main() {
       _seedCart(tester, [_line()]);
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('Place order'));
-      await tester.tap(find.text('Place order'));
-      await tester.pumpAndSettle();
+      await _tapCheckout(tester);
 
       expect(find.byType(AlertDialog), findsNothing);
     });
@@ -250,9 +256,7 @@ void main() {
         _seedCart(tester, [_line()]);
         await tester.pumpAndSettle();
 
-        await tester.ensureVisible(find.text('Place order'));
-        await tester.tap(find.text('Place order'));
-        await tester.pumpAndSettle();
+        await _tapCheckout(tester);
 
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.text('You have a pending order'), findsOneWidget);
@@ -271,9 +275,7 @@ void main() {
       _seedCart(tester, [_line()]);
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('Place order'));
-      await tester.tap(find.text('Place order'));
-      await tester.pumpAndSettle();
+      await _tapCheckout(tester);
 
       // Short ID shown in body text (e.g. "Order #abcd1234 placed at …")
       expect(find.textContaining('abcd1234'), findsOneWidget);
@@ -300,9 +302,7 @@ void main() {
       _seedCart(tester, [_line()]);
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('Place order'));
-      await tester.tap(find.text('Place order'));
-      await tester.pumpAndSettle();
+      await _tapCheckout(tester);
 
       expect(find.textContaining('new-orde'), findsOneWidget);
       expect(find.textContaining('old-orde'), findsNothing);
@@ -319,37 +319,21 @@ void main() {
       _seedCart(tester, [_line()]);
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('Place order'));
-      await tester.tap(find.text('Place order'));
-      await tester.pumpAndSettle();
+      await _tapCheckout(tester);
 
       // A status-check error must never block the customer from checking out.
       expect(find.byType(AlertDialog), findsNothing);
     });
   });
 
-  // ── Guest customer: device-local order recency check ──────────────────────
+  // ── Guest customer: sign-in gate ───────────────────────────────────────────
+  //
+  // Checkout requires a signed-in customer before the pending-order guard ever
+  // runs (the store needs a phone number on file), so a guest tapping checkout
+  // gets the sign-in dialog — never the pending-order dialog.
 
-  group('Pending order guard — guest, local order recency', () {
-    testWidgets('no dialog when local order history is empty', (tester) async {
-      _setViewport(tester);
-      await tester.pumpWidget(_scope([
-        _configOverride(),
-        _guest(),
-        _localOrders([]),
-        _failingDio(),
-      ]));
-      _seedCart(tester, [_line()]);
-      await tester.pumpAndSettle();
-
-      await tester.ensureVisible(find.text('Place order'));
-      await tester.tap(find.text('Place order'));
-      await tester.pumpAndSettle();
-
-      expect(find.byType(AlertDialog), findsNothing);
-    });
-
-    testWidgets('dialog shown for local order placed less than 4 hours ago',
+  group('Checkout sign-in gate — guest', () {
+    testWidgets('guest is prompted to sign in, not shown the pending guard',
         (tester) async {
       _setViewport(tester);
       await tester.pumpWidget(_scope([
@@ -361,75 +345,10 @@ void main() {
       _seedCart(tester, [_line()]);
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('Place order'));
-      await tester.tap(find.text('Place order'));
-      await tester.pumpAndSettle();
+      await _tapCheckout(tester);
 
-      expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.text('You have a pending order'), findsOneWidget);
-    });
-
-    testWidgets('boundary: no dialog for local order placed exactly 4 hours ago',
-        (tester) async {
-      _setViewport(tester);
-      await tester.pumpWidget(_scope([
-        _configOverride(),
-        _guest(),
-        _localOrders([_localOrder(ago: const Duration(hours: 4))]),
-        _failingDio(),
-      ]));
-      _seedCart(tester, [_line()]);
-      await tester.pumpAndSettle();
-
-      await tester.ensureVisible(find.text('Place order'));
-      await tester.tap(find.text('Place order'));
-      await tester.pumpAndSettle();
-
-      // Exactly 4 h is NOT within the window (condition is < 4 h).
-      expect(find.byType(AlertDialog), findsNothing);
-    });
-
-    testWidgets('no dialog for local order placed more than 4 hours ago',
-        (tester) async {
-      _setViewport(tester);
-      await tester.pumpWidget(_scope([
-        _configOverride(),
-        _guest(),
-        _localOrders([_localOrder(ago: const Duration(hours: 8))]),
-        _failingDio(),
-      ]));
-      _seedCart(tester, [_line()]);
-      await tester.pumpAndSettle();
-
-      await tester.ensureVisible(find.text('Place order'));
-      await tester.tap(find.text('Place order'));
-      await tester.pumpAndSettle();
-
-      expect(find.byType(AlertDialog), findsNothing);
-    });
-
-    testWidgets('only the most recent local order is evaluated', (tester) async {
-      _setViewport(tester);
-      // Two local orders: the newer one is within the window, older one is not.
-      // list.first = newest (storefrontOrdersProvider is newest-first).
-      await tester.pumpWidget(_scope([
-        _configOverride(),
-        _guest(),
-        _localOrders([
-          _localOrder(orderId: 'recent', ago: const Duration(hours: 2)),
-          _localOrder(orderId: 'stale', ago: const Duration(hours: 6)),
-        ]),
-        _failingDio(),
-      ]));
-      _seedCart(tester, [_line()]);
-      await tester.pumpAndSettle();
-
-      await tester.ensureVisible(find.text('Place order'));
-      await tester.tap(find.text('Place order'));
-      await tester.pumpAndSettle();
-
-      // Recent order is first → dialog shown.
-      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text('Sign in'), findsWidgets);
+      expect(find.text('You have a pending order'), findsNothing);
     });
   });
 
@@ -461,8 +380,12 @@ void main() {
       await tester.tap(find.text('Place new order'));
       await tester.pumpAndSettle();
 
-      // Dialog gone — checkout was attempted.
+      // Dialog gone — the review sheet is next. Confirm it to fire checkout.
       expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('Review your order'), findsOneWidget);
+      await tester.tap(find.text('Place order'));
+      await tester.pumpAndSettle();
+
       // Failing Dio → checkout error snackbar confirms the attempt was made.
       expect(find.textContaining('Checkout failed'), findsOneWidget);
     });
@@ -477,6 +400,9 @@ void main() {
 
       // Choose "Place new order" — the guard does NOT run again for this call.
       await tester.tap(find.text('Place new order'));
+      await tester.pumpAndSettle();
+      // Confirm the review sheet so the checkout attempt completes.
+      await tester.tap(find.text('Place order'));
       await tester.pumpAndSettle();
 
       // Only one dialog should have appeared throughout the interaction.

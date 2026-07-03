@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../core/format.dart';
@@ -23,7 +26,10 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   // happens before [_placing] flips the button's loading spinner on).
   bool _checkoutInFlight = false;
   String _fulfilment = 'PICKUP'; // PICKUP | DELIVERY
-  bool _payNow = true; // only consulted when showPrices — catalog mode has no price to charge.
+  // Selected payment option key: CARD | UPI | WALLET (pay online now) or CASH (pay in person at
+  // handover). '' = pay later with no declared method (only when the store disabled every online
+  // tender). Which keys are offered comes from the store's enabledPaymentMethods config.
+  String _payMethod = '';
   final _addressFormKey = GlobalKey<FormState>();
   final _line1Ctrl = TextEditingController();
   final _line2Ctrl = TextEditingController();
@@ -32,6 +38,61 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   final _recipientNameCtrl = TextEditingController();
   final _recipientPhoneCtrl = TextEditingController();
   final _contactPhoneCtrl = TextEditingController();
+
+  static const _addressStorage = FlutterSecureStorage();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedAddress();
+  }
+
+  /// Prefill the delivery form with the address used on the previous order, so a repeat
+  /// customer never retypes it (device-local; a server-side address book can replace this).
+  Future<void> _loadSavedAddress() async {
+    try {
+      final raw = await _addressStorage.read(key: StorageKeys.sfSavedAddress);
+      if (raw == null || raw.isEmpty || !mounted) return;
+      final j = jsonDecode(raw) as Map<String, dynamic>;
+      setState(() {
+        if (_line1Ctrl.text.isEmpty) _line1Ctrl.text = j['line1'] as String? ?? '';
+        if (_line2Ctrl.text.isEmpty) _line2Ctrl.text = j['line2'] as String? ?? '';
+        if (_cityCtrl.text.isEmpty) _cityCtrl.text = j['city'] as String? ?? '';
+        if (_postalCtrl.text.isEmpty) {
+          _postalCtrl.text = j['postalCode'] as String? ?? '';
+        }
+        if (_recipientNameCtrl.text.isEmpty) {
+          _recipientNameCtrl.text = j['recipientName'] as String? ?? '';
+        }
+        if (_recipientPhoneCtrl.text.isEmpty) {
+          _recipientPhoneCtrl.text = j['recipientPhone'] as String? ?? '';
+        }
+        if (_contactPhoneCtrl.text.isEmpty) {
+          _contactPhoneCtrl.text = j['recipientPhone'] as String? ?? '';
+        }
+      });
+    } catch (_) {
+      // Corrupt saved address is non-fatal — start with an empty form.
+    }
+  }
+
+  Future<void> _saveAddress() async {
+    try {
+      await _addressStorage.write(
+        key: StorageKeys.sfSavedAddress,
+        value: jsonEncode({
+          'line1': _line1Ctrl.text.trim(),
+          'line2': _line2Ctrl.text.trim(),
+          'city': _cityCtrl.text.trim(),
+          'postalCode': _postalCtrl.text.trim(),
+          'recipientName': _recipientNameCtrl.text.trim(),
+          'recipientPhone': _recipientPhoneCtrl.text.trim(),
+        }),
+      );
+    } catch (_) {
+      // Best effort only.
+    }
+  }
 
   @override
   void dispose() {
@@ -48,6 +109,37 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   static String? _requiredField(String? v) =>
       v == null || v.trim().isEmpty ? 'Required' : null;
 
+  /// The payment choices this store offers for the current fulfilment. Pay-now (online capture)
+  /// options exist only in priced shops; CASH is settled in person at handover, so it reads
+  /// "Cash on delivery" / "Cash at pickup". A store that disabled every applicable tender still
+  /// gets a generic pay-later option so checkout never dead-ends.
+  static List<_PayOption> _payOptions(
+      bool showPrices, List<String> enabled, bool delivery) {
+    final opts = <_PayOption>[
+      if (showPrices && enabled.contains('CARD'))
+        const _PayOption('CARD', true, 'Card', Icons.credit_card),
+      if (showPrices && enabled.contains('UPI'))
+        const _PayOption('UPI', true, 'UPI', Icons.qr_code_2),
+      if (showPrices && enabled.contains('WALLET'))
+        const _PayOption(
+            'WALLET', true, 'Wallet', Icons.account_balance_wallet_outlined),
+      if (enabled.contains('CASH'))
+        _PayOption('CASH', false,
+            delivery ? 'Cash on delivery' : 'Cash at pickup',
+            Icons.payments_outlined),
+    ];
+    if (opts.isEmpty) {
+      opts.add(_PayOption('', false,
+          delivery ? 'Pay on delivery' : 'Pay at pickup',
+          Icons.schedule_outlined));
+    }
+    return opts;
+  }
+
+  _PayOption _selectedOption(List<_PayOption> options) =>
+      options.firstWhere((o) => o.method == _payMethod,
+          orElse: () => options.first);
+
   @override
   Widget build(BuildContext context) {
     final cart = ref.watch(cartProvider);
@@ -58,6 +150,10 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     final storeName = configAsync.value?.storeName ?? '-';
     final currency = cart.isNotEmpty ? cart.first.currency : 'GBP';
     final total = cart.fold<double>(0, (s, l) => s + l.lineTotal);
+    final enabledMethods = ref.watch(storefrontPaymentMethodsProvider);
+    final payOptions =
+        _payOptions(showPrices, enabledMethods, _fulfilment == 'DELIVERY');
+    final selectedPay = _selectedOption(payOptions);
 
     if (cart.isEmpty) {
       return Center(
@@ -236,24 +332,35 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                       ),
                     ),
                   ],
-                  if (showPrices) ...[
-                    const SizedBox(height: 12),
-                    SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment(
-                            value: true,
-                            label: Text('Pay now'),
-                            icon: Icon(Icons.lock_outline)),
-                        ButtonSegment(
-                            value: false,
-                            label: Text('Pay later'),
-                            icon: Icon(Icons.schedule_outlined)),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Payment',
+                        style: Theme.of(context).textTheme.titleSmall),
+                  ),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        for (final o in payOptions)
+                          ChoiceChip(
+                            avatar: Icon(o.icon,
+                                size: 16,
+                                color: selectedPay.method == o.method
+                                    ? cs.onSecondaryContainer
+                                    : cs.onSurfaceVariant),
+                            label: Text(
+                                o.payNow ? '${o.label} · pay now' : o.label),
+                            selected: selectedPay.method == o.method,
+                            onSelected: (_) =>
+                                setState(() => _payMethod = o.method),
+                          ),
                       ],
-                      selected: {_payNow},
-                      onSelectionChanged: (s) =>
-                          setState(() => _payNow = s.first),
                     ),
-                  ],
+                  ),
                   const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
@@ -275,7 +382,8 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            _fulfilmentBannerText(showPrices, storeName, currency, total),
+                            _fulfilmentBannerText(
+                                showPrices, storeName, currency, total, selectedPay),
                             style: TextStyle(
                                 color: cs.onSecondaryContainer, fontSize: 12),
                           ),
@@ -293,16 +401,14 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                               width: 18,
                               child: CircularProgressIndicator(
                                   strokeWidth: 2, color: Colors.white))
-                          : Icon((showPrices && _payNow)
+                          : Icon(selectedPay.payNow
                               ? Icons.lock_outline
                               : Icons.receipt_long),
                       label: Text(_placing
-                          ? ((showPrices && _payNow)
+                          ? (selectedPay.payNow
                               ? 'Processing payment…'
                               : 'Placing order…')
-                          : ((showPrices && _payNow)
-                              ? 'Pay $currency ${total.toStringAsFixed(2)}'
-                              : 'Place order')),
+                          : 'Review order'),
                     ),
                   ),
                 ],
@@ -315,23 +421,20 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   }
 
   /// The bottom panel's fulfilment/payment summary line. Three independent axes: fulfilment
-  /// (pickup/delivery), whether a price is known (showPrices), and whether payment happens now
-  /// or later — catalog-mode stores have no known price, so "pay now" is never offered there.
-  String _fulfilmentBannerText(
-      bool showPrices, String storeName, String currency, double total) {
-    final payNow = showPrices && _payNow;
+  /// (pickup/delivery), whether a price is known (showPrices), and the selected payment option —
+  /// catalog-mode stores have no known price, so pay-now options are never offered there.
+  String _fulfilmentBannerText(bool showPrices, String storeName,
+      String currency, double total, _PayOption pay) {
     final where =
         _fulfilment == 'DELIVERY' ? 'Deliver to your address' : 'Collect from $storeName';
-    if (payNow) return where;
+    if (pay.payNow) return '$where · paid online by ${pay.label.toLowerCase()}';
     if (!showPrices) {
       return _fulfilment == 'DELIVERY'
           ? '$where · price & payment confirmed on delivery'
           : '$where · price & payment confirmed in store';
     }
     final amount = '$currency ${total.toStringAsFixed(2)}';
-    return _fulfilment == 'DELIVERY'
-        ? '$where · pay $amount on delivery'
-        : '$where · pay $amount at pickup';
+    return '$where · ${pay.label.toLowerCase()}: $amount';
   }
 
   Future<void> _checkout() async {
@@ -375,6 +478,83 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     }
   }
 
+  /// Order review sheet — the last look before money/stock moves. Returns true on confirm.
+  Future<bool> _confirmReviewSheet(
+      List<CartLine> cart, bool delivery, _PayOption pay) async {
+    final showPrices = ref.read(storefrontShowPricesProvider);
+    final storeName = ref.read(storefrontConfigProvider).value?.storeName ?? '-';
+    final currency = cart.first.currency.isNotEmpty ? cart.first.currency : 'GBP';
+    final total = cart.fold<double>(0, (s, l) => s + l.lineTotal);
+    final itemCount = cart.fold<int>(0, (s, l) => s + l.qty);
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        Widget row(IconData icon, String label, String value) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(icon, size: 18, color: cs.onSurfaceVariant),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                      width: 90,
+                      child: Text(label,
+                          style: TextStyle(color: cs.onSurfaceVariant))),
+                  Expanded(
+                      child: Text(value,
+                          style:
+                              const TextStyle(fontWeight: FontWeight.w600))),
+                ],
+              ),
+            );
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Review your order',
+                    style: Theme.of(ctx).textTheme.titleLarge),
+                const SizedBox(height: 12),
+                row(Icons.shopping_bag_outlined, 'Items',
+                    '$itemCount item${itemCount == 1 ? '' : 's'}'),
+                if (showPrices)
+                  row(Icons.receipt_long_outlined, 'Total',
+                      '$currency ${total.toStringAsFixed(2)} (incl. VAT)'),
+                row(
+                    delivery
+                        ? Icons.local_shipping_outlined
+                        : Icons.storefront_outlined,
+                    delivery ? 'Deliver to' : 'Collect at',
+                    delivery
+                        ? '${_line1Ctrl.text.trim()}, ${_cityCtrl.text.trim()} ${_postalCtrl.text.trim()}\n${_recipientNameCtrl.text.trim()} · ${_recipientPhoneCtrl.text.trim()}'
+                        : '$storeName\nWe\'ll call ${_contactPhoneCtrl.text.trim()} when it\'s ready'),
+                row(pay.icon, 'Payment',
+                    pay.payNow ? '${pay.label} — charged now' : pay.label),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  icon: Icon(pay.payNow ? Icons.lock_outline : Icons.check),
+                  label: Text(pay.payNow && showPrices
+                      ? 'Pay $currency ${total.toStringAsFixed(2)}'
+                      : 'Place order'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Back to cart'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    return confirmed == true;
+  }
+
   Future<void> _doCheckout(List<CartLine> cart, bool delivery) async {
     // Guard: if the customer already has a pending order, ask before firing another.
     final pendingOrder = await _findPendingOrder();
@@ -397,10 +577,17 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
 
     final showPrices = ref.read(storefrontShowPricesProvider);
     final storeName = ref.read(storefrontConfigProvider).value?.storeName ?? '-';
-    // Catalog mode (store hides prices) has no known price to charge online, so payment is
-    // always deferred there regardless of the on-screen toggle; priced shops let the customer
-    // choose to pay now or defer to pickup/delivery.
-    final payNow = showPrices && _payNow;
+    // Catalog mode (store hides prices) has no known price to charge online, so pay-now options
+    // are never offered there; priced shops offer the store's enabled online tenders plus cash
+    // at handover.
+    final enabledMethods = ref.read(storefrontPaymentMethodsProvider);
+    final pay = _selectedOption(_payOptions(showPrices, enabledMethods, delivery));
+    final payNow = pay.payNow;
+
+    // Last look before anything is committed: review sheet with items, destination and payment.
+    if (!await _confirmReviewSheet(cart, delivery, pay)) return;
+    if (!mounted) return;
+
     final dio = ref.read(storefrontDioProvider);
     final storeId = ref.read(storefrontStoreProvider);
     // In catalog mode, CartLine.currency is '' (no price was ever fetched). Fall
@@ -431,6 +618,10 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           'contactPhone': delivery
               ? _recipientPhoneCtrl.text.trim()
               : _contactPhoneCtrl.text.trim(),
+          // The customer's declared tender (CASH = settle in person at handover). Omitted when
+          // the store disabled every applicable method and checkout fell back to generic
+          // pay-later.
+          if (pay.method.isNotEmpty) 'paymentMethod': pay.method,
           if (delivery) ...{
             'deliveryLine1': _line1Ctrl.text.trim(),
             if (_line2Ctrl.text.trim().isNotEmpty)
@@ -456,12 +647,15 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           data: {
             'orderId': orderId,
             'amount': total,
-            'method': 'CARD',
+            'method': pay.method,
             'storeId': storeId,
           },
           options: Options(headers: {'Idempotency-Key': '$idemBase-pay'}),
         );
       }
+
+      // Remember the delivery address so the next checkout is prefilled.
+      if (delivery) await _saveAddress();
 
       // Remember this order on-device so it shows in "My orders" (guest fallback).
       await ref.read(storefrontOrdersProvider.notifier).add(
@@ -511,9 +705,13 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
               if (!payNow)
                 Text(
                     showPrices
-                        ? (delivery
-                            ? 'Pay $currency ${total.toStringAsFixed(2)} on delivery.'
-                            : 'Pay $currency ${total.toStringAsFixed(2)} at pickup.')
+                        ? (pay.method == 'CASH'
+                            ? (delivery
+                                ? 'Pay $currency ${total.toStringAsFixed(2)} in cash on delivery.'
+                                : 'Pay $currency ${total.toStringAsFixed(2)} in cash at pickup.')
+                            : (delivery
+                                ? 'Pay $currency ${total.toStringAsFixed(2)} on delivery.'
+                                : 'Pay $currency ${total.toStringAsFixed(2)} at pickup.'))
                         : (delivery
                             ? 'Price & payment will be confirmed on delivery.'
                             : 'Price & payment will be confirmed in store.'),
@@ -549,60 +747,67 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       _contactPhoneCtrl.clear();
       setState(() {
         _fulfilment = 'PICKUP';
-        _payNow = true;
+        _payMethod = '';
       });
+      // Refill the address form from the just-saved address so a follow-up
+      // delivery order in the same session starts prefilled too.
+      await _loadSavedAddress();
     } catch (e) {
       if (!mounted) return;
       setState(() => _placing = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Checkout failed: $e'),
+          content: Text(_checkoutErrorMessage(e)),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
     }
   }
 
+  /// Maps checkout failures to something a shopper can act on; falls back to the raw error.
+  static String _checkoutErrorMessage(Object e) {
+    if (e is DioException) {
+      final err = e.response?.data is Map
+          ? (e.response!.data as Map)['error'] as Map?
+          : null;
+      final code = err?['code'] as String?;
+      switch (code) {
+        case 'ORDER_INSUFFICIENT_STOCK':
+          return 'Sorry — some items in your cart just sold out. '
+              'Please adjust the quantities and try again.';
+        case 'ORDER_INVENTORY_UNAVAILABLE':
+          return 'We couldn\'t confirm stock right now. Please try again in a moment.';
+        case 'PAYMENT_METHOD_DISABLED':
+          return 'That payment method isn\'t available at this store any more. '
+              'Please pick another one.';
+        default:
+          if (err?['message'] is String) return 'Checkout failed: ${err!['message']}';
+      }
+    }
+    return 'Checkout failed: $e';
+  }
+
   // ── Pending-order guard ──────────────────────────────────────────────────
 
   /// Returns the most recent pending order for this customer, or null if none.
   ///
-  /// For signed-in customers: queries the server order list and looks for any
-  /// order whose status indicates it has not yet been fulfilled.
-  /// For guests: checks the device-local history and treats orders placed
-  /// within the last 4 hours as potentially still pending (no status available
-  /// for anonymous orders without a server call).
+  /// Queries the server order list for any order whose status indicates it has
+  /// not yet been fulfilled. Checkout enforces sign-in before this runs, so a
+  /// signed-in identity (and thus the server-backed list) is always available.
   Future<_PendingOrder?> _findPendingOrder() async {
-    final auth = ref.read(storefrontAuthProvider);
-    if (auth.isSignedIn) {
-      try {
-        final orders = await ref.read(serverOrdersProvider.future);
-        if (orders == null || orders.isEmpty) return null;
-        const pendingStatuses = {
-          'PENDING', 'RECEIVED', 'CONFIRMED', 'PROCESSING'
-        };
-        final pending = orders
-            .where((o) => pendingStatuses.contains(o.status.toUpperCase()))
-            .toList()
-          ..sort((a, b) => b.placedAt.compareTo(a.placedAt));
-        if (pending.isEmpty) return null;
-        final o = pending.first;
-        return _PendingOrder(
-            orderId: o.id, placedAt: o.placedAt, status: o.status);
-      } catch (_) {
-        // Fail open — never block checkout if the status check errors.
-        return null;
-      }
-    } else {
-      final local = ref.read(storefrontOrdersProvider);
-      if (local.isEmpty) return null;
-      final recent = local.first; // list is newest-first
-      if (DateTime.now().difference(recent.placedAt).inHours < 4) {
-        return _PendingOrder(
-            orderId: recent.orderId,
-            placedAt: recent.placedAt,
-            status: 'pending');
-      }
+    try {
+      final orders = await ref.read(serverOrdersProvider.future);
+      if (orders == null || orders.isEmpty) return null;
+      const pendingStatuses = {'PENDING', 'RECEIVED', 'CONFIRMED', 'PROCESSING'};
+      final pending = orders
+          .where((o) => pendingStatuses.contains(o.status.toUpperCase()))
+          .toList()
+        ..sort((a, b) => b.placedAt.compareTo(a.placedAt));
+      if (pending.isEmpty) return null;
+      final o = pending.first;
+      return _PendingOrder(orderId: o.id, placedAt: o.placedAt, status: o.status);
+    } catch (_) {
+      // Fail open — never block checkout if the status check errors.
       return null;
     }
   }
@@ -658,4 +863,14 @@ class _PendingOrder {
       {required this.orderId,
       required this.placedAt,
       required this.status});
+}
+
+/// One selectable payment option in checkout. [payNow] = captured online immediately via
+/// payment-svc; otherwise the tender is settled in person at pickup/delivery.
+class _PayOption {
+  final String method; // CASH | CARD | UPI | WALLET | '' (undeclared pay-later)
+  final bool payNow;
+  final String label;
+  final IconData icon;
+  const _PayOption(this.method, this.payNow, this.label, this.icon);
 }

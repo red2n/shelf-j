@@ -204,6 +204,45 @@ public class ProductService {
         .orElseThrow(() -> ApiException.notFound("PRODUCT_NOT_FOUND", "No such product"));
   }
 
+  // ── product image ─────────────────────────────────────────────────────────
+
+  /** Max upload size. Thumbnails only — the stack has no object store; bytes live in Postgres. */
+  public static final int MAX_IMAGE_BYTES = 512 * 1024;
+
+  private static final java.util.Set<String> IMAGE_CONTENT_TYPES =
+      java.util.Set.of("image/jpeg", "image/png", "image/webp");
+
+  public void uploadProductImage(UUID tenantId, UUID productId, String contentType, byte[] bytes) {
+    getProduct(tenantId, productId); // 404 before accepting bytes for a foreign/unknown product
+    String normalized =
+        contentType == null ? "" : contentType.trim().toLowerCase(java.util.Locale.ROOT);
+    // Strip any ;charset= suffix a client might send
+    int semi = normalized.indexOf(';');
+    if (semi > 0) normalized = normalized.substring(0, semi).trim();
+    if (!IMAGE_CONTENT_TYPES.contains(normalized))
+      throw ApiException.badRequest(
+          "PRODUCT_IMAGE_TYPE_INVALID",
+          "Content-Type must be image/jpeg, image/png or image/webp — got: " + contentType);
+    if (bytes == null || bytes.length == 0)
+      throw ApiException.badRequest("PRODUCT_IMAGE_EMPTY", "image body is empty");
+    if (bytes.length > MAX_IMAGE_BYTES)
+      throw ApiException.badRequest(
+          "PRODUCT_IMAGE_TOO_LARGE",
+          "image is " + bytes.length + " bytes; max is " + MAX_IMAGE_BYTES + " (512 KB)");
+    repo.upsertProductImage(tenantId, productId, normalized, bytes);
+  }
+
+  public com.shelfj.product.domain.Domain.ProductImage getProductImage(
+      UUID tenantId, UUID productId) {
+    return repo.findProductImage(tenantId, productId)
+        .orElseThrow(() -> ApiException.notFound("PRODUCT_IMAGE_NOT_FOUND", "no image"));
+  }
+
+  public void deleteProductImage(UUID tenantId, UUID productId) {
+    getProduct(tenantId, productId);
+    repo.deleteProductImage(tenantId, productId);
+  }
+
   public List<Product> listProducts(
       UUID tenantId,
       UUID categoryId,

@@ -48,8 +48,15 @@ public final class Mappers {
         s.timezone(),
         s.businessHours(),
         s.showPrices(),
+        paymentMethodsList(s.enabledPaymentMethods()),
         ts(s.createdAt()),
         ts(s.updatedAt()));
+  }
+
+  /** CSV column → JSON list; a null/blank column (pre-migration row) falls back to the default. */
+  public static java.util.List<String> paymentMethodsList(String csv) {
+    String effective = csv == null || csv.isBlank() ? Store.DEFAULT_PAYMENT_METHODS : csv;
+    return java.util.Arrays.stream(effective.split(",")).map(String::trim).toList();
   }
 
   public static ZoneResponse toZone(Zone z) {

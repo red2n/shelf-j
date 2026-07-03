@@ -36,7 +36,8 @@ public final class Domain {
       String deliveryPostalCode,
       String deliveryRecipientName,
       String deliveryRecipientPhone,
-      String contactPhone) {
+      String contactPhone,
+      String paymentMethod) {
     public static final String CHANNEL_ONLINE = "ONLINE";
     public static final String CHANNEL_POS = "POS";
     public static final String FULFILMENT_PICKUP = "PICKUP";

@@ -69,7 +69,8 @@ public final class Mappers {
         o.deliveryPostalCode(),
         o.deliveryRecipientName(),
         o.deliveryRecipientPhone(),
-        o.contactPhone());
+        o.contactPhone(),
+        o.paymentMethod());
   }
 
   public static OrderSummaryResponse toSummary(Order o) {
@@ -86,7 +87,8 @@ public final class Mappers {
         o.total(),
         o.currency(),
         ts(o.createdAt()),
-        ts(o.updatedAt()));
+        ts(o.updatedAt()),
+        o.paymentMethod());
   }
 
   public static OrderStatusHistoryResponse toDto(OrderStatusHistory h) {

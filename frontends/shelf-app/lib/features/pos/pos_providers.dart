@@ -128,12 +128,30 @@ final posStoresProvider = FutureProvider.autoDispose<List<StoreInfo>>((ref) asyn
       type: 'STORE',
       status: m['status'] as String? ?? 'ACTIVE',
       showPrices: m['showPrices'] as bool? ?? true,
+      enabledPaymentMethods: (m['enabledPaymentMethods'] as List?)
+              ?.map((e) => e.toString().toUpperCase())
+              .toList() ??
+          const ['CASH', 'CARD'],
       line1: m['line1'] as String?,
       city: m['city'] as String?,
       country: m['country'] as String?,
       pincode: m['pincode'] as String?,
     );
   }).toList();
+});
+
+/// Tenders the owner enabled for the till's current store — drives which tender
+/// buttons the tender screen offers (gift card / store credit are store-issued
+/// instruments and always available). Falls back to CASH+CARD while loading so
+/// the till is never left without a tender.
+final posEnabledPaymentMethodsProvider = Provider.autoDispose<List<String>>((ref) {
+  final storeId = ref.watch(posStoreProvider);
+  final stores = ref.watch(posStoresProvider).valueOrNull;
+  if (storeId == null || stores == null) return const ['CASH', 'CARD'];
+  for (final s in stores) {
+    if (s.id == storeId) return s.enabledPaymentMethods;
+  }
+  return const ['CASH', 'CARD'];
 });
 
 /// POS always shows prices — show_prices is a customer-facing storefront flag only.
@@ -157,7 +175,7 @@ final posDiscountProvider = StateProvider<double>((ref) => 0);
 /// A single tender (part-payment) staged against the sale before completion.
 /// POS supports splitting one sale across several tenders of different methods.
 class PosTender {
-  final String method; // CASH | CARD | GIFT_CARD | STORE_CREDIT
+  final String method; // CASH | CARD | UPI | WALLET | GIFT_CARD | STORE_CREDIT
   final double amount; // amount applied to the balance
   final double cashGiven; // for CASH: what the customer handed over (for change)
   final String? giftCardCode; // for GIFT_CARD
@@ -177,6 +195,8 @@ class PosTender {
   String get label => switch (method) {
         'CASH' => 'Cash',
         'CARD' => 'Card',
+        'UPI' => 'UPI',
+        'WALLET' => 'Wallet',
         'GIFT_CARD' => 'Gift card',
         'STORE_CREDIT' => 'Store credit',
         _ => method,

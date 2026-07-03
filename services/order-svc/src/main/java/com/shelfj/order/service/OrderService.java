@@ -51,6 +51,7 @@ public class OrderService {
   @Inject StoreStatusRepository storeStatusRepo;
   @Inject com.shelfj.order.config.ServiceConfig config;
   @Inject com.shelfj.order.client.PricingClient pricing;
+  @Inject com.shelfj.order.client.InventoryClient inventory;
 
   // ── Orders ────────────────────────────────────────────────────────────────
 
@@ -99,6 +100,15 @@ public class OrderService {
             "deliveryLine1, deliveryCity, deliveryPostalCode, deliveryRecipientName and"
                 + " deliveryRecipientPhone are required when fulfilmentType is DELIVERY");
     }
+    String paymentMethod = null;
+    if (req.paymentMethod() != null && !req.paymentMethod().isBlank()) {
+      paymentMethod = req.paymentMethod().trim().toUpperCase(java.util.Locale.ROOT);
+      if (!java.util.Set.of("CASH", "CARD", "UPI", "WALLET").contains(paymentMethod))
+        throw ApiException.badRequest(
+            "ORDER_PAYMENT_METHOD_INVALID",
+            "paymentMethod must be one of CASH, CARD, UPI, WALLET — got: " + req.paymentMethod());
+    }
+
     boolean enforcePricing = config.pricingEnforce();
 
     BigDecimal subtotal = BigDecimal.ZERO;
@@ -149,6 +159,26 @@ public class OrderService {
               unitPrice,
               line,
               ir.notes()));
+    }
+
+    // Hold stock for ONLINE orders before persisting, so a short line rejects the checkout with
+    // 409 instead of accepting an order the store can't fulfil (industry-standard reserve →
+    // consume-at-fulfilment → release-on-cancel). POS is exempt: it places and fulfils within
+    // seconds, and its fulfilment deducts stock directly. Holds are idempotent per line on the
+    // client Idempotency-Key, so a retried placement replays the original holds; if createOrder
+    // fails below, the holds are released (best effort — the TTL sweeper is the backstop).
+    List<UUID> heldReservations = List.of();
+    if (Order.CHANNEL_ONLINE.equals(req.channel()) && config.reserveEnforce()) {
+      var reserveLines =
+          new ArrayList<com.shelfj.order.client.InventoryClient.ReserveLine>(items.size());
+      for (OrderItem it : items) {
+        reserveLines.add(
+            new com.shelfj.order.client.InventoryClient.ReserveLine(it.variantId(), it.qty()));
+      }
+      String idemBase = idempotencyKey != null ? idempotencyKey : orderId.toString();
+      heldReservations =
+          inventory.reserveForOrder(
+              tenantId, orderId, storeId, reserveLines, config.reservationTtlSeconds(), idemBase);
     }
 
     boolean staff = ctx.hasRole("CASHIER") || ctx.hasRole("MANAGER") || ctx.hasRole("OWNER");
@@ -203,17 +233,23 @@ public class OrderService {
             delivery ? req.deliveryPostalCode() : null,
             delivery ? req.deliveryRecipientName() : null,
             delivery ? req.deliveryRecipientPhone() : null,
-            req.contactPhone());
+            req.contactPhone(),
+            paymentMethod);
 
     try {
       return repo.createOrder(
           order, items, Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId));
     } catch (ApiException e) {
       // Idempotent replay: a retried checkout with the same key gets the original order back
-      // instead of an error (golden rule #11).
+      // instead of an error (golden rule #11). The stock holds are NOT released here — the
+      // reservation replay above already returned the original order's holds, not new ones.
       if ("ORDER_DUPLICATE_KEY".equals(e.code()) && idempotencyKey != null) {
         return repo.findOrderByIdempotencyKey(tenantId, idempotencyKey).orElseThrow(() -> e);
       }
+      inventory.releaseQuietly(tenantId, heldReservations);
+      throw e;
+    } catch (RuntimeException e) {
+      inventory.releaseQuietly(tenantId, heldReservations);
       throw e;
     }
   }
@@ -298,10 +334,17 @@ public class OrderService {
   }
 
   public Order cancelOrder(UUID tenantId, UUID orderId, String reason, UUID userId) {
+    // PENDING covers pay-later online orders awaiting confirmation; both states must be
+    // cancellable so their stock holds get released (inventory-svc reacts to OrderCancelled).
+    Order order = getOrder(tenantId, orderId);
+    if (!Order.STATUS_PENDING.equals(order.status())
+        && !Order.STATUS_CONFIRMED.equals(order.status()))
+      throw ApiException.conflict(
+          "ORDER_CANNOT_CANCEL", "only PENDING or CONFIRMED orders can be cancelled");
     return repo.transitionOrderStatus(
         tenantId,
         orderId,
-        Order.STATUS_CONFIRMED,
+        order.status(),
         Order.STATUS_CANCELLED,
         reason,
         userId,

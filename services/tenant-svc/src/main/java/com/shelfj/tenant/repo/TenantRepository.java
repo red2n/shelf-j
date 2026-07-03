@@ -167,7 +167,7 @@ public class TenantRepository extends BaseOutboxRepository {
   public List<Store> listStores(UUID tenantId) {
     return many(
         "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
-            + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices, created_at, updated_at"
+            + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices, enabled_payment_methods, created_at, updated_at"
             + " FROM stores WHERE tenant_id = ? ORDER BY created_at",
         tenantId,
         TenantRepository::mapStore);
@@ -176,7 +176,7 @@ public class TenantRepository extends BaseOutboxRepository {
   public Optional<Store> findStore(UUID tenantId, UUID storeId) {
     return query(
             "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
-                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices, created_at, updated_at"
+                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices, enabled_payment_methods, created_at, updated_at"
                 + " FROM stores WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -202,11 +202,13 @@ public class TenantRepository extends BaseOutboxRepository {
       BigDecimal geoLng,
       String timezone,
       String businessHours,
-      boolean showPrices) {
+      boolean showPrices,
+      String enabledPaymentMethods) {
     Instant now = Instant.now();
     exec(
         "UPDATE stores SET name=?, line1=?, line2=?, city=?, state=?, country=?, pincode=?,"
-            + " geo_lat=?, geo_lng=?, timezone=?, business_hours=?, show_prices=?, updated_at=?"
+            + " geo_lat=?, geo_lng=?, timezone=?, business_hours=?, show_prices=?,"
+            + " enabled_payment_methods=?, updated_at=?"
             + " WHERE tenant_id=? AND id=?",
         ps -> {
           ps.setString(1, name);
@@ -221,9 +223,10 @@ public class TenantRepository extends BaseOutboxRepository {
           ps.setString(10, timezone);
           ps.setString(11, businessHours);
           ps.setBoolean(12, showPrices);
-          ps.setObject(13, now.atOffset(ZoneOffset.UTC));
-          ps.setObject(14, tenantId);
-          ps.setObject(15, storeId);
+          ps.setString(13, enabledPaymentMethods);
+          ps.setObject(14, now.atOffset(ZoneOffset.UTC));
+          ps.setObject(15, tenantId);
+          ps.setObject(16, storeId);
         },
         "update store");
     return findStore(tenantId, storeId)
@@ -392,7 +395,8 @@ public class TenantRepository extends BaseOutboxRepository {
             "INSERT INTO stores"
                 + " (id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
                 + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices,"
-                + " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " enabled_payment_methods, created_at, updated_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, s.id());
       ps.setObject(2, s.tenantId());
       ps.setString(3, s.name());
@@ -411,8 +415,9 @@ public class TenantRepository extends BaseOutboxRepository {
       ps.setString(16, s.status());
       ps.setBoolean(17, s.isDefault());
       ps.setBoolean(18, s.showPrices());
-      ps.setObject(19, s.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setString(19, s.enabledPaymentMethods());
       ps.setObject(20, s.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(21, s.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -509,6 +514,7 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getString("status"),
         rs.getBoolean("is_default"),
         rs.getBoolean("show_prices"),
+        rs.getString("enabled_payment_methods"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }

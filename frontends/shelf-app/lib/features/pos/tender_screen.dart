@@ -49,7 +49,12 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     final result = await showDialog<({double amount, double given})>(
       context: context,
       builder: (_) => _AmountDialog(
-        title: method == 'CASH' ? 'Cash' : 'Card',
+        title: switch (method) {
+          'CASH' => 'Cash',
+          'UPI' => 'UPI',
+          'WALLET' => 'Wallet',
+          _ => 'Card',
+        },
         currency: _currency,
         remaining: _remaining,
         allowOverpay: method == 'CASH',
@@ -545,28 +550,53 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           const SizedBox(height: 16),
           Text('Add payment', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _TenderButton(
-                  icon: Icons.payments_outlined,
-                  label: 'Cash',
-                  onTap: _processing || settled ? null : () => _addCashOrCard('CASH')),
-              _TenderButton(
-                  icon: Icons.credit_card,
-                  label: 'Card',
-                  onTap: _processing || settled ? null : () => _addCashOrCard('CARD')),
-              _TenderButton(
-                  icon: Icons.card_giftcard,
-                  label: 'Gift card',
-                  onTap: _processing || settled ? null : _addGiftCard),
-              _TenderButton(
-                  icon: Icons.account_balance_wallet_outlined,
-                  label: 'Store credit',
-                  onTap: _processing || settled ? null : _addStoreCredit),
-            ],
-          ),
+          Builder(builder: (context) {
+            // Only the tenders the owner enabled for this store (gift card and
+            // store credit are store-issued instruments — always available).
+            final enabled = ref.watch(posEnabledPaymentMethodsProvider);
+            return Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (enabled.contains('CASH'))
+                  _TenderButton(
+                      icon: Icons.payments_outlined,
+                      label: 'Cash',
+                      onTap: _processing || settled
+                          ? null
+                          : () => _addCashOrCard('CASH')),
+                if (enabled.contains('CARD'))
+                  _TenderButton(
+                      icon: Icons.credit_card,
+                      label: 'Card',
+                      onTap: _processing || settled
+                          ? null
+                          : () => _addCashOrCard('CARD')),
+                if (enabled.contains('UPI'))
+                  _TenderButton(
+                      icon: Icons.qr_code_2,
+                      label: 'UPI',
+                      onTap: _processing || settled
+                          ? null
+                          : () => _addCashOrCard('UPI')),
+                if (enabled.contains('WALLET'))
+                  _TenderButton(
+                      icon: Icons.wallet_outlined,
+                      label: 'Wallet',
+                      onTap: _processing || settled
+                          ? null
+                          : () => _addCashOrCard('WALLET')),
+                _TenderButton(
+                    icon: Icons.card_giftcard,
+                    label: 'Gift card',
+                    onTap: _processing || settled ? null : _addGiftCard),
+                _TenderButton(
+                    icon: Icons.account_balance_wallet_outlined,
+                    label: 'Store credit',
+                    onTap: _processing || settled ? null : _addStoreCredit),
+              ],
+            );
+          }),
           const SizedBox(height: 16),
           Expanded(
             child: _tenders.isEmpty

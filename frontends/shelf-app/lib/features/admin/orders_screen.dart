@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
@@ -195,6 +196,11 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                             ),
                             const SizedBox(width: 8),
                             _ChannelBadge(o.channel),
+                            if (o.paymentMethod != null) ...[
+                              const SizedBox(width: 6),
+                              _PaymentMethodBadge(
+                                  o.paymentMethod!, o.fulfilmentType),
+                            ],
                           ],
                         ),
                         subtitle: Text(AppFormat.dateTime(o.createdAt)),
@@ -233,6 +239,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                               ),
                             _OrderActionsMenu(
                               status: o.status,
+                              paymentMethod: o.paymentMethod,
                               onAction: (a) => _action(o, a),
                             ),
                           ],
@@ -249,6 +256,19 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
   }
 
   Future<void> _action(OrderSummary o, String action) async {
+    if (action == 'collect') {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => _CollectPaymentDialog(
+          order: o,
+          onDone: () {
+            ref.read(ordersPaginationProvider(_filter).notifier).refresh();
+            ref.invalidate(recentOrdersProvider);
+          },
+        ),
+      );
+      return;
+    }
     if (action == 'return') {
       await showDialog<void>(
         context: context,
@@ -680,8 +700,10 @@ class _ReturnLineRow extends StatelessWidget {
 /// Per-order action menu — options depend on the current status.
 class _OrderActionsMenu extends StatelessWidget {
   final String status;
+  final String? paymentMethod;
   final void Function(String action) onAction;
-  const _OrderActionsMenu({required this.status, required this.onAction});
+  const _OrderActionsMenu(
+      {required this.status, this.paymentMethod, required this.onAction});
 
   @override
   Widget build(BuildContext context) {
@@ -703,6 +725,18 @@ class _OrderActionsMenu extends StatelessWidget {
             Icon(Icons.local_shipping_outlined, size: 18),
             SizedBox(width: 8),
             Text('Mark fulfilled'),
+          ])));
+    }
+    // COD / pay-at-pickup settlement: record the tender when the goods change hands. Shown for
+    // any live order — the dialog itself computes what's still outstanding and refuses
+    // double-collection.
+    if (s == 'PENDING' || s == 'CONFIRMED' || s == 'FULFILLED') {
+      items.add(const PopupMenuItem(
+          value: 'collect',
+          child: Row(children: [
+            Icon(Icons.point_of_sale_outlined, size: 18),
+            SizedBox(width: 8),
+            Text('Collect payment'),
           ])));
     }
     if (s == 'PENDING' || s == 'CONFIRMED') {
@@ -813,6 +847,204 @@ class _StatusBadge extends StatelessWidget {
       child: Text(status,
           style: TextStyle(
               fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
+    );
+  }
+}
+
+/// How the customer said they'd pay, contextualised by fulfilment: CASH + DELIVERY reads
+/// "COD", CASH + PICKUP reads "Cash at pickup", online tenders read as themselves.
+class _PaymentMethodBadge extends StatelessWidget {
+  final String method;
+  final String fulfilmentType;
+  const _PaymentMethodBadge(this.method, this.fulfilmentType);
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final m = method.toUpperCase();
+    final label = m == 'CASH'
+        ? (fulfilmentType.toUpperCase() == 'DELIVERY' ? 'COD' : 'CASH')
+        : m;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: cs.secondaryContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(label,
+          style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: cs.onSecondaryContainer)),
+    );
+  }
+}
+
+/// Settle a pay-later (COD / pay-at-pickup) order at handover: shows what's already been
+/// captured, and records one tender for the outstanding balance via payment-svc. The captured
+/// tender emits PaymentCaptured, which confirms a PENDING order automatically.
+class _CollectPaymentDialog extends ConsumerStatefulWidget {
+  final OrderSummary order;
+  final VoidCallback onDone;
+  const _CollectPaymentDialog({required this.order, required this.onDone});
+
+  @override
+  ConsumerState<_CollectPaymentDialog> createState() =>
+      _CollectPaymentDialogState();
+}
+
+class _CollectPaymentDialogState extends ConsumerState<_CollectPaymentDialog> {
+  double? _paid; // null while loading
+  late String _method;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final declared = widget.order.paymentMethod?.toUpperCase();
+    _method = const ['CASH', 'CARD', 'UPI', 'WALLET'].contains(declared)
+        ? declared!
+        : 'CASH';
+    _loadPaid();
+  }
+
+  Future<void> _loadPaid() async {
+    try {
+      final resp = await ref.read(apiClientProvider).dio.get(
+          '/${ApiConstants.payment}/payments/by-order/${widget.order.id}');
+      final data = (resp.data['data'] as List?) ?? [];
+      double paid = 0;
+      for (final t in data) {
+        final m = t as Map<String, dynamic>;
+        final status = (m['status'] as String? ?? '').toUpperCase();
+        if (status == 'CAPTURED' || status.isEmpty) {
+          paid += (m['amount'] as num?)?.toDouble() ?? 0;
+        }
+      }
+      if (mounted) setState(() => _paid = paid);
+    } catch (_) {
+      // Payment history unavailable — assume nothing collected; the server-side
+      // idempotency key still prevents double capture on retry.
+      if (mounted) setState(() => _paid = 0);
+    }
+  }
+
+  Future<void> _collect(double outstanding) async {
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.payment}/payments',
+        data: {
+          'orderId': widget.order.id,
+          if (widget.order.storeId.isNotEmpty) 'storeId': widget.order.storeId,
+          'amount': outstanding,
+          'method': _method,
+          'reference': 'ORDER_HANDOVER',
+        },
+        options: Options(headers: {
+          'Idempotency-Key':
+              'collect-${widget.order.id}-${outstanding.toStringAsFixed(2)}'
+        }),
+      );
+      if (!mounted) return;
+      widget.onDone();
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              '${AppFormat.money(outstanding, currencyCode: widget.order.currency)} collected by $_method.')));
+    } catch (e) {
+      setState(() {
+        _submitting = false;
+        _error = 'Could not record payment: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final o = widget.order;
+    final shortId = o.id.length >= 8 ? o.id.substring(0, 8) : o.id;
+    final paid = _paid;
+    final outstanding = paid == null ? null : (o.total - paid);
+    return AlertDialog(
+      title: Text('Collect payment · #$shortId'),
+      content: SizedBox(
+        width: 380,
+        child: paid == null
+            ? const SizedBox(
+                height: 80, child: Center(child: CircularProgressIndicator()))
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_error != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: cs.errorContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(_error!,
+                          style: TextStyle(color: cs.onErrorContainer)),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  Text('Order total: '
+                      '${AppFormat.money(o.total, currencyCode: o.currency)}'),
+                  if (paid > 0)
+                    Text('Already collected: '
+                        '${AppFormat.money(paid, currencyCode: o.currency)}'),
+                  const SizedBox(height: 8),
+                  if (outstanding! <= 0)
+                    Row(children: [
+                      Icon(Icons.check_circle_outline, color: cs.primary),
+                      const SizedBox(width: 8),
+                      const Text('This order is already paid in full.'),
+                    ])
+                  else ...[
+                    Text(
+                        'Outstanding: ${AppFormat.money(outstanding, currencyCode: o.currency)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final m in const ['CASH', 'CARD', 'UPI', 'WALLET'])
+                          ChoiceChip(
+                            label: Text(m),
+                            selected: _method == m,
+                            onSelected: (_) => setState(() => _method = m),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _submitting ? null : () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+        if (outstanding != null && outstanding > 0)
+          FilledButton.icon(
+            onPressed: _submitting ? null : () => _collect(outstanding),
+            icon: _submitting
+                ? const SizedBox(
+                    height: 16,
+                    width: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.point_of_sale_outlined),
+            label: Text(
+                'Collect ${AppFormat.money(outstanding, currencyCode: o.currency)}'),
+          ),
+      ],
     );
   }
 }

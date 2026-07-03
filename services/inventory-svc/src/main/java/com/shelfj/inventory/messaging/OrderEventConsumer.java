@@ -7,9 +7,10 @@ import java.util.List;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Polls OrderFulfilled and OrderReturned events from order-svc and dispatches each to {@link
- * OrderEventHandler} to update inventory positions. Consumer lifecycle is inherited from {@link
- * BaseKafkaConsumer}; all business logic lives in the handler (SRP).
+ * Polls OrderFulfilled, OrderReturned and OrderCancelled events from order-svc and dispatches each
+ * to {@link OrderEventHandler} to update inventory positions and checkout stock holds. Consumer
+ * lifecycle is inherited from {@link BaseKafkaConsumer}; all business logic lives in the handler
+ * (SRP).
  */
 @ApplicationScoped
 class OrderEventConsumer extends BaseKafkaConsumer {
@@ -28,9 +29,15 @@ class OrderEventConsumer extends BaseKafkaConsumer {
       defaultValue = "shelfj.order.order-returned")
   String returnedTopic;
 
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.kafka.topics.order-cancelled",
+      defaultValue = "shelfj.order.order-cancelled")
+  String cancelledTopic;
+
   @Override
   protected List<String> topics() {
-    return List.of(fulfilledTopic, returnedTopic);
+    return List.of(fulfilledTopic, returnedTopic, cancelledTopic);
   }
 
   @Override
