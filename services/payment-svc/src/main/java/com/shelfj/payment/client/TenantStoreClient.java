@@ -89,7 +89,8 @@ public class TenantStoreClient {
       }
       try (HttpClientResponse res =
           webClient
-              .get(instance.baseUri() + "/storefront/config?store=" + storeId)
+              .get(instance.baseUri() + "/storefront/config")
+              .queryParam("store", storeId.toString())
               .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
               .request()) {
         if (res.status().code() != 200) {
