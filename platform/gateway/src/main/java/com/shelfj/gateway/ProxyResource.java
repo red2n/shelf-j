@@ -73,14 +73,14 @@ public class ProxyResource {
 
   @POST
   @Path("/{service}/{path: .*}")
-  @Consumes(MediaType.APPLICATION_JSON)
+  @Consumes(MediaType.WILDCARD)
   @Produces(MediaType.APPLICATION_JSON)
   public Response proxyPost(
       @PathParam("service") String rawService,
       @PathParam("path") String rawPath,
       @Context UriInfo uriInfo,
       @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders,
-      String body) {
+      byte[] body) {
     Route route = Route.of(rawService, rawPath);
     String service = route.service();
     String path = route.path();
@@ -92,25 +92,26 @@ public class ProxyResource {
               var req =
                   webClient
                       .post(instance.baseUri() + "/" + path)
-                      .header(io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId)
-                      .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
+                      .header(
+                          io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId);
+              forwardContentType(req, inboundHeaders);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(() -> req.submit(body == null ? "" : body), service, requestId);
+              return relay(() -> req.submit(body == null ? new byte[0] : body), service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
 
   @PUT
   @Path("/{service}/{path: .*}")
-  @Consumes(MediaType.APPLICATION_JSON)
+  @Consumes(MediaType.WILDCARD)
   @Produces(MediaType.APPLICATION_JSON)
   public Response proxyPut(
       @PathParam("service") String rawService,
       @PathParam("path") String rawPath,
       @Context UriInfo uriInfo,
       @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders,
-      String body) {
+      byte[] body) {
     Route route = Route.of(rawService, rawPath);
     String service = route.service();
     String path = route.path();
@@ -122,25 +123,26 @@ public class ProxyResource {
               var req =
                   webClient
                       .put(instance.baseUri() + "/" + path)
-                      .header(io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId)
-                      .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
+                      .header(
+                          io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId);
+              forwardContentType(req, inboundHeaders);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(() -> req.submit(body == null ? "" : body), service, requestId);
+              return relay(() -> req.submit(body == null ? new byte[0] : body), service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
 
   @jakarta.ws.rs.PATCH
   @Path("/{service}/{path: .*}")
-  @Consumes(MediaType.APPLICATION_JSON)
+  @Consumes(MediaType.WILDCARD)
   @Produces(MediaType.APPLICATION_JSON)
   public Response proxyPatch(
       @PathParam("service") String rawService,
       @PathParam("path") String rawPath,
       @Context UriInfo uriInfo,
       @Context jakarta.ws.rs.core.HttpHeaders inboundHeaders,
-      String body) {
+      byte[] body) {
     Route route = Route.of(rawService, rawPath);
     String service = route.service();
     String path = route.path();
@@ -152,11 +154,12 @@ public class ProxyResource {
               var req =
                   webClient
                       .patch(instance.baseUri() + "/" + path)
-                      .header(io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId)
-                      .header(io.helidon.http.HeaderNames.CONTENT_TYPE, MediaType.APPLICATION_JSON);
+                      .header(
+                          io.helidon.http.HeaderNames.create(HttpHeaders.REQUEST_ID), requestId);
+              forwardContentType(req, inboundHeaders);
               addQueryParams(req, uriInfo);
               stampIdentity(req, inboundHeaders);
-              return relay(() -> req.submit(body == null ? "" : body), service, requestId);
+              return relay(() -> req.submit(body == null ? new byte[0] : body), service, requestId);
             })
         .orElseGet(() -> serviceUnavailable(service));
   }
@@ -249,6 +252,19 @@ public class ProxyResource {
   }
 
   /**
+   * Forwards the client's real Content-Type so a binary body (e.g. an uploaded product image)
+   * reaches the upstream service labelled correctly instead of being coerced to JSON. Defaults to
+   * JSON when the client didn't set one, matching every existing JSON-only caller's behavior.
+   */
+  private void forwardContentType(
+      io.helidon.webclient.api.HttpClientRequest req, jakarta.ws.rs.core.HttpHeaders inbound) {
+    String contentType = inbound.getHeaderString(jakarta.ws.rs.core.HttpHeaders.CONTENT_TYPE);
+    req.header(
+        io.helidon.http.HeaderNames.CONTENT_TYPE,
+        contentType == null || contentType.isBlank() ? MediaType.APPLICATION_JSON : contentType);
+  }
+
+  /**
    * Executes the upstream call and copies status + body back. The call is passed as a supplier so
    * connect/read failures (including the WebClient timeouts configured in {@link GatewayBeans})
    * surface as 504/502 envelopes instead of leaking as container 500s.
@@ -287,7 +303,22 @@ public class ProxyResource {
       // HttpClientResponse.as(String.class) throws IllegalStateException — not an empty string —
       // for a truly absent entity, so probe hasEntity() first instead of relying on status alone.
       if (status != 204 && status != 205 && status != 304 && upstream.entity().hasEntity()) {
-        rb.type(MediaType.APPLICATION_JSON).entity(upstream.as(String.class));
+        // Read as raw bytes (not .as(String.class)) so a binary body — e.g. a served product
+        // image — round-trips intact instead of being mangled by string decode/re-encode, and
+        // forward the upstream's own Content-Type instead of hardcoding JSON.
+        byte[] bytes;
+        try {
+          bytes = upstream.entity().inputStream().readAllBytes();
+        } catch (java.io.IOException e) {
+          throw new java.io.UncheckedIOException(e);
+        }
+        String contentType =
+            upstream
+                .headers()
+                .contentType()
+                .map(Object::toString)
+                .orElse(MediaType.APPLICATION_JSON);
+        rb.type(contentType).entity(bytes);
       }
       return rb.build();
     }

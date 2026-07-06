@@ -321,48 +321,69 @@ public class InventoryRepository extends BaseOutboxRepository {
   public void consume(UUID tenantId, UUID reservationId) {
     inTx(
         c -> {
-          Reservation r = loadReservationForUpdate(c, tenantId, reservationId);
-          if (!Reservation.HELD.equals(r.status())) {
-            throw ApiException.unprocessable(
-                "RESERVATION_NOT_HELD", "Reservation is " + r.status());
-          }
-          Optional<PickingRule> rule = resolvePickingRule(tenantId, r.storeId(), r.variantId());
-          List<UUID> zonePriorities =
-              rule.filter(rr -> PickingRule.ZONE_PRIORITY.equals(rr.strategy()))
-                  .map(
-                      rr ->
-                          listZonePriorities(tenantId, rr.id()).stream()
-                              .map(PickingRuleZonePriority::zoneId)
-                              .toList())
-                  .orElse(null);
-          deductBatches(
-              c,
-              tenantId,
-              r.storeId(),
-              r.variantId(),
-              r.qty(),
-              MoveType.SALE,
-              "ORDER",
-              r.orderId(),
-              rule.map(PickingRule::strategy).orElse(null),
-              rule.map(PickingRule::gradePreference).orElse(null),
-              zonePriorities);
-          checkThresholdTx(c, tenantId, r.storeId(), r.variantId());
-          setReservationStatus(c, reservationId, Reservation.CONSUMED);
-          // Event built here (not in service layer) because storeId/variantId/qty are only
-          // known after loading the reservation inside this transaction.
-          insertOutbox(
-              c,
-              new OutboxRow(
-                  "StockDeducted",
-                  "shelfj.inventory.stock-deducted",
-                  tenantId,
-                  reservationId,
-                  com.shelfj.inventory.service.Events.stockDeducted(
-                      tenantId, r.storeId(), r.variantId(), reservationId, r.qty())));
+          consumeTx(c, tenantId, reservationId);
           return null;
         },
         "consume reservation");
+  }
+
+  /**
+   * {@link #consume} deduped on {@code dedupeId}: mark + consume commit in ONE transaction (see
+   * {@link #receiveOnce}). Returns false if already processed. Used by the OrderFulfilled consumer
+   * so a redelivered event can't double-deduct a line whose reservation was already consumed.
+   */
+  public boolean consumeOnce(
+      UUID dedupeId, String consumerName, UUID tenantId, UUID reservationId) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
+            return false;
+          }
+          consumeTx(c, tenantId, reservationId);
+          return true;
+        },
+        "consume reservation (deduped)");
+  }
+
+  private void consumeTx(Connection c, UUID tenantId, UUID reservationId) throws SQLException {
+    Reservation r = loadReservationForUpdate(c, tenantId, reservationId);
+    if (!Reservation.HELD.equals(r.status())) {
+      throw ApiException.unprocessable("RESERVATION_NOT_HELD", "Reservation is " + r.status());
+    }
+    Optional<PickingRule> rule = resolvePickingRule(tenantId, r.storeId(), r.variantId());
+    List<UUID> zonePriorities =
+        rule.filter(rr -> PickingRule.ZONE_PRIORITY.equals(rr.strategy()))
+            .map(
+                rr ->
+                    listZonePriorities(tenantId, rr.id()).stream()
+                        .map(PickingRuleZonePriority::zoneId)
+                        .toList())
+            .orElse(null);
+    deductBatches(
+        c,
+        tenantId,
+        r.storeId(),
+        r.variantId(),
+        r.qty(),
+        MoveType.SALE,
+        "ORDER",
+        r.orderId(),
+        rule.map(PickingRule::strategy).orElse(null),
+        rule.map(PickingRule::gradePreference).orElse(null),
+        zonePriorities);
+    checkThresholdTx(c, tenantId, r.storeId(), r.variantId());
+    setReservationStatus(c, reservationId, Reservation.CONSUMED);
+    // Event built here (not in service layer) because storeId/variantId/qty are only
+    // known after loading the reservation inside this transaction.
+    insertOutbox(
+        c,
+        new OutboxRow(
+            "StockDeducted",
+            "shelfj.inventory.stock-deducted",
+            tenantId,
+            reservationId,
+            com.shelfj.inventory.service.Events.stockDeducted(
+                tenantId, r.storeId(), r.variantId(), reservationId, r.qty())));
   }
 
   // ---------------------------------------------------------------- deductSale (Gap #50 POS→SIM)
@@ -635,6 +656,23 @@ public class InventoryRepository extends BaseOutboxRepository {
         },
         InventoryRepository::mapReservation,
         "list reservations");
+  }
+
+  /**
+   * The HELD reservations placed for one order at checkout — consumed at fulfilment, released on
+   * cancellation (both driven by order-svc events).
+   */
+  public List<Reservation> heldReservationsByOrder(UUID tenantId, UUID orderId) {
+    return query(
+        "SELECT id, tenant_id, store_id, variant_id, qty, order_id, status, expires_at,"
+            + " created_at FROM reservations WHERE tenant_id = ? AND order_id = ?"
+            + " AND status = 'HELD'",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, orderId);
+        },
+        InventoryRepository::mapReservation,
+        "held reservations by order");
   }
 
   public Optional<Reservation> findReservation(UUID tenantId, UUID reservationId) {

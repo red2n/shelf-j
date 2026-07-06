@@ -350,6 +350,54 @@ public class ProductRepository extends BaseOutboxRepository {
     return fresh;
   }
 
+  // ── product image (one primary image per product, BYTEA) ──────────────────
+
+  public void upsertProductImage(UUID tenantId, UUID productId, String contentType, byte[] bytes) {
+    exec(
+        "INSERT INTO product_images (product_id, tenant_id, content_type, bytes, updated_at)"
+            + " VALUES (?,?,?,?,now())"
+            + " ON CONFLICT (product_id)"
+            + " DO UPDATE SET content_type = EXCLUDED.content_type, bytes = EXCLUDED.bytes,"
+            + " updated_at = now()"
+            + " WHERE product_images.tenant_id = EXCLUDED.tenant_id",
+        ps -> {
+          ps.setObject(1, productId);
+          ps.setObject(2, tenantId);
+          ps.setString(3, contentType);
+          ps.setBytes(4, bytes);
+        },
+        "upsert product image");
+  }
+
+  public Optional<com.shelfj.product.domain.Domain.ProductImage> findProductImage(
+      UUID tenantId, UUID productId) {
+    return query(
+            "SELECT product_id, content_type, bytes FROM product_images"
+                + " WHERE tenant_id = ? AND product_id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, productId);
+            },
+            rs ->
+                new com.shelfj.product.domain.Domain.ProductImage(
+                    rs.getObject("product_id", UUID.class),
+                    rs.getString("content_type"),
+                    rs.getBytes("bytes")),
+            "find product image")
+        .stream()
+        .findFirst();
+  }
+
+  public void deleteProductImage(UUID tenantId, UUID productId) {
+    exec(
+        "DELETE FROM product_images WHERE tenant_id = ? AND product_id = ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, productId);
+        },
+        "delete product image");
+  }
+
   /**
    * Find an ACTIVE product by name within a category scope — used by bulk-import REPLACE to reuse
    * (rather than duplicate) an existing product. {@code categoryId} null matches uncategorised.

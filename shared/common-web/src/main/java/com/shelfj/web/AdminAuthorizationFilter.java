@@ -128,7 +128,14 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || path.startsWith("/cart/")
         // Guest storefront online payment (cashless). The staff cash-tender path is POST /payments,
         // which stays role-gated; this is the customer-facing online capture only.
-        || "/payments/online".equals(path);
+        || "/payments/online".equals(path)
+        // Internal checkout stock hold: order-svc calls inventory-svc service-to-service (only
+        // X-Tenant-Id, no staff role) to hold stock when ANY caller places an ONLINE order —
+        // mirrors /prices/resolve. A customer with no staff role can already tie up stock for the
+        // hold TTL via POST /orders itself (an existing open mutation), so this carve-out grants no
+        // capability beyond what placing an order already permits.
+        || "/inventory/reservations".equals(path)
+        || (path.startsWith("/inventory/reservations/") && path.endsWith("/release"));
   }
 
   private static boolean requiresManagement(String path, String method) {

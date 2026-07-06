@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -225,7 +226,16 @@ class StoreCategory {
 class StorefrontConfig {
   final bool showPrices;
   final String storeName;
-  const StorefrontConfig({required this.showPrices, this.storeName = '-'});
+
+  /// Tenders the store owner enabled (subset of CASH, CARD, UPI, WALLET).
+  /// Drives which payment options checkout offers.
+  final List<String> enabledPaymentMethods;
+
+  const StorefrontConfig({
+    required this.showPrices,
+    this.storeName = '-',
+    this.enabledPaymentMethods = const ['CASH', 'CARD'],
+  });
 }
 
 /// A tenant store, for the storefront's store switcher.
@@ -286,11 +296,21 @@ final storefrontConfigProvider =
     return StorefrontConfig(
       showPrices: d['showPrices'] as bool? ?? true,
       storeName: d['storeName'] as String? ?? '-',
+      enabledPaymentMethods: (d['enabledPaymentMethods'] as List?)
+              ?.map((e) => e.toString().toUpperCase())
+              .toList() ??
+          const ['CASH', 'CARD'],
     );
   } catch (_) {
     return const StorefrontConfig(showPrices: true);
   }
 });
+
+/// The tenders the current store accepts. Falls back to CASH+CARD while loading
+/// so checkout is never left with zero options on a slow config fetch.
+final storefrontPaymentMethodsProvider = Provider<List<String>>((ref) =>
+    ref.watch(storefrontConfigProvider).valueOrNull?.enabledPaymentMethods ??
+    const ['CASH', 'CARD']);
 
 /// variantId → in-stock at the current store (real inventory). Empty/failed = treat as available.
 final storefrontAvailabilityProvider =
@@ -397,6 +417,29 @@ final storefrontProductsProvider =
     list = list.where((p) => p.categoryId == f.categoryId).toList();
   }
   return list;
+});
+
+/// The product's uploaded image bytes, or null when it has none (the UI then renders the
+/// deterministic colour tile). Fetched through Dio (not Image.network) so the storefront tenant
+/// header rides along — a plain browser <img> request can't carry it on web. Not autoDispose:
+/// bytes are cached for the session so scrolling the catalog doesn't refetch images.
+final productImageProvider =
+    FutureProvider.family<Uint8List?, String>((ref, productId) async {
+  final dio = ref.watch(storefrontDioProvider);
+  try {
+    final resp = await dio.get(
+      '/${ApiConstants.product}/catalog/products/$productId/image',
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final data = resp.data;
+    if (data is List<int> && data.isNotEmpty) {
+      return Uint8List.fromList(data);
+    }
+    return null;
+  } catch (_) {
+    // 404 (no image) and transient failures both fall back to the colour tile.
+    return null;
+  }
 });
 
 final storefrontProductProvider =

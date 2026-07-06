@@ -37,6 +37,8 @@ class OrderIT {
     System.setProperty("shelfj.kafka.enabled", "false");
     // Disable server-side pricing enforcement so tests don't need a live pricing-svc.
     System.setProperty("shelfj.order.pricing.enforce", "false");
+    // Disable checkout stock holds so ONLINE orders don't need a live inventory-svc.
+    System.setProperty("shelfj.order.inventory.reserve-enforce", "false");
   }
 
   private static final String T = "11111111-1111-1111-1111-111111111111";

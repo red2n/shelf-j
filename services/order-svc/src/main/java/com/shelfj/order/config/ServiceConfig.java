@@ -39,6 +39,32 @@ public class ServiceConfig extends BaseServiceConfig {
   }
 
   /**
+   * When true, placeOrder holds stock in inventory-svc for every ONLINE order line and rejects the
+   * order when stock is short or inventory-svc is unreachable (fail-closed). Override to false only
+   * in local dev rigs with no seeded inventory.
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.order.inventory.reserve-enforce", defaultValue = "true")
+  boolean reserveEnforce;
+
+  public boolean reserveEnforce() {
+    return reserveEnforce;
+  }
+
+  /**
+   * Lifetime of the stock holds placed at ONLINE checkout. Long by design: a pay-later order can
+   * sit PENDING for hours before staff confirm it. Expired holds are reclaimed by inventory-svc's
+   * reservation sweeper; the order itself stays valid (it just loses its hold).
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.order.inventory.reservation-ttl-seconds", defaultValue = "172800")
+  long reservationTtlSeconds;
+
+  public long reservationTtlSeconds() {
+    return reservationTtlSeconds;
+  }
+
+  /**
    * Fires on every boot so a non-dev environment that inherits docker-compose's pricing.enforce=
    * false override (no seeded price catalogue) cannot silently trust client-supplied prices, tax,
    * and discounts without it showing up in the startup log.
@@ -52,6 +78,13 @@ public class ServiceConfig extends BaseServiceConfig {
               + " unitPrice/taxAmount/discountAmount instead of resolving them from pricing-svc."
               + " This is only safe for local dev with no seeded price catalogue; it must never be"
               + " set in a staging or production environment.");
+    }
+    if (!reserveEnforce) {
+      LOG.log(
+          Level.WARNING,
+          "shelfj.order.inventory.reserve-enforce=false — ONLINE orders are placed WITHOUT holding"
+              + " stock, so concurrent checkouts can oversell. This is only safe for local dev"
+              + " with no seeded inventory; it must never be set in staging or production.");
     }
   }
 

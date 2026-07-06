@@ -43,7 +43,10 @@ public final class Dtos {
       String deliveryPostalCode,
       String deliveryRecipientName,
       String deliveryRecipientPhone,
-      String contactPhone) {}
+      String contactPhone,
+      // How the customer intends to pay: CASH | CARD | UPI | WALLET. With a pay-later flow,
+      // CASH + DELIVERY is cash-on-delivery; settlement itself is recorded by payment-svc.
+      String paymentMethod) {}
 
   public record OrderItemResponse(
       String id,
@@ -77,7 +80,8 @@ public final class Dtos {
       String deliveryPostalCode,
       String deliveryRecipientName,
       String deliveryRecipientPhone,
-      String contactPhone) {}
+      String contactPhone,
+      String paymentMethod) {}
 
   public record OrderStatusHistoryResponse(
       String id,
@@ -128,7 +132,8 @@ public final class Dtos {
       BigDecimal total,
       String currency,
       String createdAt,
-      String updatedAt) {}
+      String updatedAt,
+      String paymentMethod) {}
 
   public record VoidRequest(@NotBlank String reason) {}
 

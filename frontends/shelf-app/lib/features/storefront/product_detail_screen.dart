@@ -36,8 +36,8 @@ class ProductDetailScreen extends ConsumerWidget {
           children: [
             SizedBox(
               height: 220,
-              child: ProductThumb(
-                seed: product.id,
+              child: ProductImageThumb(
+                productId: product.id,
                 label: product.name,
                 fontSize: 72,
                 borderRadius: BorderRadius.circular(12),

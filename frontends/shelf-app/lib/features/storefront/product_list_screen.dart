@@ -487,8 +487,8 @@ class _ProductCard extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
-              child: ProductThumb(
-                  seed: product.id, label: product.name, fontSize: 36),
+              child: ProductImageThumb(
+                  productId: product.id, label: product.name, fontSize: 36),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 6, 6),
@@ -531,8 +531,8 @@ class _ProductRow extends ConsumerWidget {
               SizedBox(
                 width: 72,
                 height: 72,
-                child: ProductThumb(
-                  seed: product.id,
+                child: ProductImageThumb(
+                  productId: product.id,
                   label: product.name,
                   fontSize: 24,
                   borderRadius: BorderRadius.circular(8),

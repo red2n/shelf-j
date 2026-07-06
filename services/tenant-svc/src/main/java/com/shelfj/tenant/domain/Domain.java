@@ -43,10 +43,15 @@ public final class Domain {
       String status,
       boolean isDefault,
       boolean showPrices,
+      // CSV subset of PAYMENT_METHODS, e.g. "CASH,CARD,UPI" — the tenders this store accepts.
+      String enabledPaymentMethods,
       Instant createdAt,
       Instant updatedAt) {
     public static final String TYPE_STORE = "STORE";
     public static final String TYPE_WAREHOUSE = "WAREHOUSE";
+    public static final java.util.List<String> PAYMENT_METHODS =
+        java.util.List.of("CASH", "CARD", "UPI", "WALLET");
+    public static final String DEFAULT_PAYMENT_METHODS = "CASH,CARD";
   }
 
   public record Zone(

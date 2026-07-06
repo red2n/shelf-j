@@ -440,6 +440,10 @@ void main() {
         overrides: [
           _catalogConfig(),
           _recordingDio(interceptor),
+          // Checkout requires a signed-in customer; empty server history keeps
+          // the pending-order guard quiet.
+          _signedIn(),
+          _serverOrders([]),
           // Prevent StorefrontOrdersNotifier._persist() from calling
           // FlutterSecureStorage.write(), which hangs in headless tests.
           _localOrders([]),
@@ -448,7 +452,15 @@ void main() {
       _seedCart(tester, lines);
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('Place order'));
+      // Pickup checkout requires a contact phone before anything else fires.
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Contact phone *'), '07700900000');
+      await tester.pump();
+
+      // New checkout flow: Review order → review sheet → Place order.
+      await tester.ensureVisible(find.text('Review order'));
+      await tester.tap(find.text('Review order'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Place order'));
       await tester.pumpAndSettle();
 

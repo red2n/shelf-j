@@ -105,6 +105,20 @@ public class CatalogResource {
   }
 
   /**
+   * The product's primary image bytes (owner-uploaded). 404 when the product has no image — the
+   * storefront/admin renders its colour-tile placeholder instead. Cached briefly so catalog pages
+   * don't re-download on every visit but a replaced image shows up within a minute.
+   */
+  @GET
+  @Path("/products/{id}/image")
+  public jakarta.ws.rs.core.Response image(@PathParam("id") UUID id) {
+    var img = service.getProductImage(requireTenant(), id);
+    return jakarta.ws.rs.core.Response.ok(img.bytes(), img.contentType())
+        .header("Cache-Control", "public, max-age=60")
+        .build();
+  }
+
+  /**
    * POS barcode-scan lookup. Returns the variant and its parent product in a single response so the
    * terminal does not need a second round-trip. Returns 404 when no active variant matches.
    */

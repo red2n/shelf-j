@@ -116,6 +116,7 @@ public class TenantService {
             null,
             req.storeTimezone() == null ? "UTC" : req.storeTimezone(),
             null,
+            null,
             null);
     StoreWithZone storeWithZone = createDefaultStore(tenant.id(), storeReq);
     return new TenantWithStore(tenant, storeWithZone.store());
@@ -157,6 +158,7 @@ public class TenantService {
             "ACTIVE",
             isDefault,
             req.showPrices() == null || req.showPrices(),
+            normalizePaymentMethods(req.enabledPaymentMethods(), Store.DEFAULT_PAYMENT_METHODS),
             nowStore,
             nowStore);
 
@@ -313,7 +315,34 @@ public class TenantService {
         req.timezone() == null ? "UTC" : req.timezone(),
         req.businessHours(),
         // keep current value when the client omits the flag
-        req.showPrices() == null ? existing.showPrices() : req.showPrices());
+        req.showPrices() == null ? existing.showPrices() : req.showPrices(),
+        normalizePaymentMethods(req.enabledPaymentMethods(), existing.enabledPaymentMethods()));
+  }
+
+  /**
+   * Validates and canonicalises the owner-selected tender list ({@code null} keeps {@code
+   * fallback}). At least one method must remain enabled — a store that accepts no tender at all
+   * cannot sell — and each must be a known method code.
+   */
+  private static String normalizePaymentMethods(java.util.List<String> methods, String fallback) {
+    if (methods == null) return fallback;
+    var canonical = new java.util.LinkedHashSet<String>();
+    for (String m : methods) {
+      if (m == null || m.isBlank()) continue;
+      String upper = m.trim().toUpperCase(Locale.ROOT);
+      if (!Store.PAYMENT_METHODS.contains(upper))
+        throw ApiException.badRequest(
+            "STORE_PAYMENT_METHOD_INVALID",
+            "enabledPaymentMethods entries must be one of "
+                + Store.PAYMENT_METHODS
+                + " — got: "
+                + m);
+      canonical.add(upper);
+    }
+    if (canonical.isEmpty())
+      throw ApiException.badRequest(
+          "STORE_PAYMENT_METHODS_EMPTY", "at least one payment method must be enabled");
+    return String.join(",", canonical);
   }
 
   public Store patchStoreStatus(UUID tenantId, UUID storeId, PatchStatusRequest req) {

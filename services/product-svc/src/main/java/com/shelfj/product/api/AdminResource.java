@@ -208,6 +208,30 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toProduct(service.delistProduct(ctx.requireTenantId(), id)));
   }
 
+  // ── product image ──────────────────────────────────────────────────────────
+
+  /**
+   * Upload/replace the product's primary image. Raw body (not multipart): the admin app PUTs the
+   * bytes with the image's own Content-Type (image/jpeg | image/png | image/webp), max 512 KB.
+   */
+  @PUT
+  @Path("/products/{id}/image")
+  @Consumes({"image/jpeg", "image/png", "image/webp"})
+  public ApiResponse<String> uploadProductImage(
+      @PathParam("id") UUID id,
+      @jakarta.ws.rs.HeaderParam("Content-Type") String contentType,
+      byte[] body) {
+    service.uploadProductImage(ctx.requireTenantId(), id, contentType, body);
+    return ApiResponse.ok("uploaded");
+  }
+
+  @DELETE
+  @Path("/products/{id}/image")
+  public ApiResponse<String> deleteProductImage(@PathParam("id") UUID id) {
+    service.deleteProductImage(ctx.requireTenantId(), id);
+    return ApiResponse.ok("deleted");
+  }
+
   // ── per-store assortment ───────────────────────────────────────────────────
 
   /** Store ids this product is sold at. Empty list = sold at all stores. */

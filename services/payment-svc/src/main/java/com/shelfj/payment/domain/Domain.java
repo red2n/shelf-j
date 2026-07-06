@@ -23,6 +23,8 @@ public final class Domain {
 
     public static final String METHOD_CASH = "CASH";
     public static final String METHOD_CARD = "CARD";
+    public static final String METHOD_UPI = "UPI";
+    public static final String METHOD_WALLET = "WALLET";
     public static final String METHOD_GIFT_CARD = "GIFT_CARD";
     public static final String METHOD_VOUCHER = "VOUCHER";
 

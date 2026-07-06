@@ -533,6 +533,7 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
   late final TextEditingController _pincodeCtrl;
   late final TextEditingController _timezoneCtrl;
   late bool _showPrices;
+  late List<String> _payMethods;
   bool _loading = false;
   String? _error;
 
@@ -548,6 +549,7 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
     _pincodeCtrl = TextEditingController(text: s.pincode ?? '');
     _timezoneCtrl = TextEditingController(text: s.timezone ?? 'UTC');
     _showPrices = s.showPrices;
+    _payMethods = [...s.enabledPaymentMethods];
   }
 
   @override
@@ -588,6 +590,7 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
           'timezone': _orNull(_timezoneCtrl.text) ?? 'UTC',
           'businessHours': s.businessHours,
           'showPrices': _showPrices,
+          'enabledPaymentMethods': _payMethods,
         },
       );
       if (!mounted) return;
@@ -721,6 +724,11 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
                     style: TextStyle(color: cs.outline, fontSize: 12),
                   ),
                 ),
+                const SizedBox(height: 8),
+                PaymentMethodsPicker(
+                  selected: _payMethods,
+                  onChanged: (v) => setState(() => _payMethods = v),
+                ),
               ],
             ),
           ),
@@ -746,6 +754,68 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
   }
 }
 
+/// Owner-facing tender toggles (requirement: cash only / cash+card / cash+card+UPI+wallet …).
+/// At least one method must stay selected — a store that accepts nothing can't sell.
+class PaymentMethodsPicker extends StatelessWidget {
+  final List<String> selected;
+  final ValueChanged<List<String>> onChanged;
+  const PaymentMethodsPicker(
+      {super.key, required this.selected, required this.onChanged});
+
+  static const _all = [
+    ('CASH', 'Cash', Icons.payments_outlined),
+    ('CARD', 'Card', Icons.credit_card),
+    ('UPI', 'UPI', Icons.qr_code_2),
+    ('WALLET', 'Wallet', Icons.account_balance_wallet_outlined),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Accepted payment methods',
+            style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Text(
+          'Shown to customers at checkout and on the POS tender screen. '
+          'Payments with a disabled method are rejected.',
+          style: TextStyle(color: cs.outline, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final (code, label, icon) in _all)
+              FilterChip(
+                avatar: Icon(icon, size: 16),
+                label: Text(label),
+                selected: selected.contains(code),
+                onSelected: (on) {
+                  final next = [...selected];
+                  if (on) {
+                    if (!next.contains(code)) next.add(code);
+                  } else {
+                    next.remove(code);
+                    if (next.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content:
+                              Text('At least one payment method must stay enabled.')));
+                      return;
+                    }
+                  }
+                  onChanged(next);
+                },
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 class _AddStoreDialog extends ConsumerStatefulWidget {
   final VoidCallback onCreated;
   const _AddStoreDialog({required this.onCreated});
@@ -765,6 +835,7 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
   String _country = 'IN';
   String _timezone = 'Asia/Kolkata';
   bool _showPrices = true;
+  List<String> _payMethods = ['CASH', 'CARD'];
   bool _loading = false;
   String? _error;
 
@@ -797,6 +868,7 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
           if (_pincodeCtrl.text.trim().isNotEmpty) 'pincode': _pincodeCtrl.text.trim(),
           'timezone': _timezone,
           'showPrices': _showPrices,
+          'enabledPaymentMethods': _payMethods,
         },
       );
       if (!mounted) return;
@@ -966,6 +1038,11 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                             'Customers can still order.',
                     style: TextStyle(color: cs.outline, fontSize: 12),
                   ),
+                ),
+                const SizedBox(height: 8),
+                PaymentMethodsPicker(
+                  selected: _payMethods,
+                  onChanged: (v) => setState(() => _payMethods = v),
                 ),
               ],
             ),

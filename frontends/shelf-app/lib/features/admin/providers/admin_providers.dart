@@ -6,28 +6,40 @@ import '../../../core/network/api_client.dart';
 
 class OrderSummary {
   final String id;
+  final String storeId;
   final String channel;
+  final String fulfilmentType;
   final String status;
   final double total;
   final String currency;
   final String createdAt;
 
+  /// The tender the customer declared at checkout (CASH/CARD/UPI/WALLET); null for
+  /// legacy orders and POS split-tender sales.
+  final String? paymentMethod;
+
   const OrderSummary({
     required this.id,
+    this.storeId = '',
     required this.channel,
+    this.fulfilmentType = 'INSTORE',
     required this.status,
     required this.total,
     required this.currency,
     required this.createdAt,
+    this.paymentMethod,
   });
 
   factory OrderSummary.fromJson(Map<String, dynamic> j) => OrderSummary(
         id: j['id'] as String? ?? '',
+        storeId: j['storeId'] as String? ?? '',
         channel: j['channel'] as String? ?? '-',
+        fulfilmentType: j['fulfilmentType'] as String? ?? 'INSTORE',
         status: j['status'] as String? ?? '-',
         total: (j['total'] as num?)?.toDouble() ?? 0,
         currency: j['currency'] as String? ?? 'INR',
         createdAt: j['createdAt'] as String? ?? '',
+        paymentMethod: j['paymentMethod'] as String?,
       );
 }
 
@@ -99,6 +111,9 @@ class StoreInfo {
   final String? businessHours;
   final bool showPrices;
 
+  /// Tenders the owner enabled for this store (subset of CASH, CARD, UPI, WALLET).
+  final List<String> enabledPaymentMethods;
+
   const StoreInfo({
     required this.id,
     required this.name,
@@ -116,6 +131,7 @@ class StoreInfo {
     this.timezone,
     this.businessHours,
     this.showPrices = true,
+    this.enabledPaymentMethods = const ['CASH', 'CARD'],
   });
 
   factory StoreInfo.fromJson(Map<String, dynamic> j) => StoreInfo(
@@ -135,6 +151,10 @@ class StoreInfo {
         timezone: j['timezone'] as String?,
         businessHours: j['businessHours'] as String?,
         showPrices: j['showPrices'] as bool? ?? true,
+        enabledPaymentMethods: (j['enabledPaymentMethods'] as List?)
+                ?.map((e) => e.toString().toUpperCase())
+                .toList() ??
+            const ['CASH', 'CARD'],
       );
 }
 

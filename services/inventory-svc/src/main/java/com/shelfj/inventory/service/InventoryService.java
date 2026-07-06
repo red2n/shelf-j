@@ -310,6 +310,21 @@ public class InventoryService {
     repo.consume(tenantId, reservationId);
   }
 
+  /**
+   * {@link #consume} deduped on {@code dedupeId} — used by the OrderFulfilled consumer so the
+   * dedupe mark and the consumption commit atomically (a redelivered event line is skipped, a
+   * crashed one retried).
+   */
+  public boolean consumeOnce(
+      UUID dedupeId, String consumerName, UUID tenantId, UUID reservationId) {
+    return repo.consumeOnce(dedupeId, consumerName, tenantId, reservationId);
+  }
+
+  /** The HELD reservations placed for one order at checkout. */
+  public List<Reservation> heldReservationsByOrder(UUID tenantId, UUID orderId) {
+    return repo.heldReservationsByOrder(tenantId, orderId);
+  }
+
   // ---- release ----
   public boolean release(UUID tenantId, UUID reservationId) {
     var event =

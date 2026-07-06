@@ -38,7 +38,9 @@ public final class Dtos {
       String timezone,
       String businessHours,
       // null → defaults to true (show prices). false = availability-only storefront.
-      Boolean showPrices) {}
+      Boolean showPrices,
+      // null → defaults to CASH,CARD. Subset of CASH, CARD, UPI, WALLET.
+      List<String> enabledPaymentMethods) {}
 
   public record UpdateStoreRequest(
       @NotBlank String name,
@@ -52,7 +54,9 @@ public final class Dtos {
       BigDecimal geoLng,
       String timezone,
       String businessHours,
-      Boolean showPrices) {}
+      Boolean showPrices,
+      // null → keep current. Subset of CASH, CARD, UPI, WALLET; must not be empty.
+      List<String> enabledPaymentMethods) {}
 
   public record PatchStatusRequest(@NotBlank String status) {}
 
@@ -93,6 +97,7 @@ public final class Dtos {
       String timezone,
       String businessHours,
       boolean showPrices,
+      List<String> enabledPaymentMethods,
       String createdAt,
       String updatedAt) {}
 
@@ -102,6 +107,7 @@ public final class Dtos {
       String storeName,
       String status,
       boolean showPrices,
+      List<String> enabledPaymentMethods,
       String line1,
       String city,
       String country,

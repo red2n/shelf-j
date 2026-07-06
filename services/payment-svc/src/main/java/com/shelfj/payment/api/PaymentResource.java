@@ -57,7 +57,9 @@ public class PaymentResource {
     Validations.validate(req);
     if (req.method() != null && "CASH".equalsIgnoreCase(req.method())) {
       throw com.shelfj.web.ApiException.badRequest(
-          "PAYMENT_ONLINE_CASHLESS", "Online payments must be cashless (card/wallet)");
+          "PAYMENT_ONLINE_CASHLESS",
+          "Online payments must be cashless (CARD, UPI or WALLET); cash is settled in person"
+              + " at pickup/delivery");
     }
     var tender =
         svc.recordOnlinePayment(req, ctx, effectiveKey(idempotencyKey, req.idempotencyKey()));

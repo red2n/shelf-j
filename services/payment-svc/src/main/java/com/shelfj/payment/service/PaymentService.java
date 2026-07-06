@@ -13,6 +13,7 @@ import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -23,11 +24,26 @@ public class PaymentService {
       Set.of(
           PaymentTender.METHOD_CASH,
           PaymentTender.METHOD_CARD,
+          PaymentTender.METHOD_UPI,
+          PaymentTender.METHOD_WALLET,
           PaymentTender.METHOD_GIFT_CARD,
           PaymentTender.METHOD_VOUCHER);
 
+  /**
+   * The methods the store owner can turn on/off per store (tenant-svc {@code
+   * enabledPaymentMethods}). GIFT_CARD and VOUCHER are store-issued instruments, not tenders the
+   * owner disables, so they're exempt from the per-store toggle.
+   */
+  private static final Set<String> STORE_TOGGLEABLE_METHODS =
+      Set.of(
+          PaymentTender.METHOD_CASH,
+          PaymentTender.METHOD_CARD,
+          PaymentTender.METHOD_UPI,
+          PaymentTender.METHOD_WALLET);
+
   @Inject PaymentRepository repo;
   @Inject OrderClient orderClient;
+  @Inject com.shelfj.payment.client.TenantStoreClient storeClient;
 
   /** Staff-recorded tender (POS/back-office) — the caller's role is the trust boundary. */
   public PaymentTender recordTender(
@@ -88,7 +104,9 @@ public class PaymentService {
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
           "PAYMENT_INVALID_METHOD",
-          "method must be one of CASH, CARD, GIFT_CARD, VOUCHER — got: " + req.method());
+          "method must be one of CASH, CARD, UPI, WALLET, GIFT_CARD, VOUCHER — got: "
+              + req.method());
+    requireMethodEnabledForStore(tenantId, storeId, method);
 
     UUID tenderId = UUID.randomUUID();
     PaymentTender tender =
@@ -109,6 +127,20 @@ public class PaymentService {
         tender, Events.paymentCaptured(tenantId, tenderId, orderId, req.amount()));
   }
 
+  /**
+   * Rejects a tender whose method the store owner has switched off (tenant-svc store setting).
+   * Fails open when the setting can't be read right now: a briefly unreachable tenant-svc must not
+   * stop every sale in the shop.
+   */
+  private void requireMethodEnabledForStore(UUID tenantId, UUID storeId, String method) {
+    if (storeId == null || !STORE_TOGGLEABLE_METHODS.contains(method)) return;
+    Optional<Set<String>> enabled = storeClient.enabledMethods(tenantId, storeId);
+    if (enabled.isPresent() && !enabled.get().contains(method))
+      throw ApiException.unprocessable(
+          "PAYMENT_METHOD_DISABLED",
+          method + " payments are not enabled for this store (enabled: " + enabled.get() + ")");
+  }
+
   public PaymentTender getTender(UUID tenantId, UUID tenderId) {
     return repo.findTender(tenantId, tenderId)
         .orElseThrow(() -> ApiException.notFound("PAYMENT_NOT_FOUND", "payment tender not found"));
@@ -124,7 +156,8 @@ public class PaymentService {
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
           "PAYMENT_INVALID_METHOD",
-          "method must be one of CASH, CARD, GIFT_CARD, VOUCHER — got: " + req.method());
+          "method must be one of CASH, CARD, UPI, WALLET, GIFT_CARD, VOUCHER — got: "
+              + req.method());
 
     UUID refundId = UUID.randomUUID();
     RefundTender refund =

@@ -634,6 +634,9 @@ services:
       SHELFJ_ADVERTISE_HOST: order-svc
       # Gap #63 — set to true to make order-svc resolve prices from pricing-svc (ignore client prices)
       shelfj.order.pricing.enforce: ${SHELFJ_ORDER_PRICING_ENFORCE:-false}
+      # Checkout stock holds for ONLINE orders. Defaults to false in this dev rig (mirrors
+      # pricing.enforce): with no seeded inventory every online checkout would 409 on stock.
+      shelfj.order.inventory.reserve-enforce: ${SHELFJ_ORDER_RESERVE_ENFORCE:-false}
     mem_limit: ${ORDER_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     depends_on: *svc-depends

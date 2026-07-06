@@ -82,6 +82,7 @@ public class StorefrontResource {
         s.name(),
         s.status(),
         s.showPrices(),
+        com.shelfj.tenant.mapper.Mappers.paymentMethodsList(s.enabledPaymentMethods()),
         s.line1(),
         s.city(),
         s.country(),

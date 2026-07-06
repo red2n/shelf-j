@@ -66,6 +66,45 @@ class ProductThumb extends StatelessWidget {
   }
 }
 
+/// The product's real image when the owner uploaded one, falling back to the
+/// [ProductThumb] colour tile while loading or when there is none.
+class ProductImageThumb extends ConsumerWidget {
+  final String productId;
+  final String label;
+  final double fontSize;
+  final BorderRadius borderRadius;
+
+  const ProductImageThumb({
+    super.key,
+    required this.productId,
+    required this.label,
+    this.fontSize = 28,
+    this.borderRadius = BorderRadius.zero,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final fallback = ProductThumb(
+      seed: productId,
+      label: label,
+      fontSize: fontSize,
+      borderRadius: borderRadius,
+    );
+    final bytes = ref.watch(productImageProvider(productId)).valueOrNull;
+    if (bytes == null) return fallback;
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (_, __, ___) => fallback,
+      ),
+    );
+  }
+}
+
 /// Price + inline add-to-cart for a listing card. Shows the resolved price and
 /// either an "add" button or a − qty + stepper once the item is in the cart, so
 /// shoppers can build an order without opening every product.
