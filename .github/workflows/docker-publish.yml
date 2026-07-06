@@ -149,7 +149,11 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.29.0'
+          # Must match the Flutter SDK devs build against locally: flutter_localizations
+          # pins an exact intl version per-SDK, and pubspec.yaml's intl constraint is set
+          # for the dev-machine SDK. A CI/dev version mismatch makes `pub get` unsolvable
+          # (two different exact intl pins) — bump this together with local Flutter upgrades.
+          flutter-version: '3.44.2'
           channel: stable
           cache: true
 
