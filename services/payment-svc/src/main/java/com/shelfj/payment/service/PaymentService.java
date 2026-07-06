@@ -13,6 +13,7 @@ import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -133,11 +134,11 @@ public class PaymentService {
    */
   private void requireMethodEnabledForStore(UUID tenantId, UUID storeId, String method) {
     if (storeId == null || !STORE_TOGGLEABLE_METHODS.contains(method)) return;
-    Set<String> enabled = storeClient.enabledMethods(tenantId, storeId);
-    if (enabled != null && !enabled.contains(method))
+    Optional<Set<String>> enabled = storeClient.enabledMethods(tenantId, storeId);
+    if (enabled.isPresent() && !enabled.get().contains(method))
       throw ApiException.unprocessable(
           "PAYMENT_METHOD_DISABLED",
-          method + " payments are not enabled for this store (enabled: " + enabled + ")");
+          method + " payments are not enabled for this store (enabled: " + enabled.get() + ")");
   }
 
   public PaymentTender getTender(UUID tenantId, UUID tenderId) {

@@ -20,9 +20,11 @@ import java.lang.System.Logger.Level;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Sync client for tenant-svc's public {@code GET /storefront/config?store=} — used to learn which
@@ -47,7 +49,7 @@ public class TenantStoreClient {
 
   private record CacheEntry(Set<String> methods, long fetchedAt) {}
 
-  private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
+  private final ConcurrentMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
   @PostConstruct
   void init() {
@@ -60,32 +62,32 @@ public class TenantStoreClient {
   }
 
   /**
-   * The enabled payment-method codes for a store, or {@code null} when they can't be determined
-   * right now (tenant-svc unreachable / unexpected response) — callers treat null as "don't
-   * enforce".
+   * The enabled payment-method codes for a store, or {@code Optional.empty()} when they can't be
+   * determined right now (tenant-svc unreachable / unexpected response) — callers treat an empty
+   * Optional as "don't enforce".
    */
-  public Set<String> enabledMethods(UUID tenantId, UUID storeId) {
+  public Optional<Set<String>> enabledMethods(UUID tenantId, UUID storeId) {
     String key = tenantId + ":" + storeId;
     CacheEntry cached = cache.get(key);
     long now = System.currentTimeMillis();
     if (cached != null && now - cached.fetchedAt() < CACHE_TTL_MILLIS) {
-      return cached.methods();
+      return Optional.of(cached.methods());
     }
-    Set<String> fetched = fetch(tenantId, storeId);
-    if (fetched != null) {
-      cache.put(key, new CacheEntry(fetched, now));
+    Optional<Set<String>> fetched = fetch(tenantId, storeId);
+    if (fetched.isPresent()) {
+      cache.put(key, new CacheEntry(fetched.get(), now));
       return fetched;
     }
     // Serve stale over nothing: an expired entry still reflects the owner's last-known intent.
-    return cached != null ? cached.methods() : null;
+    return cached != null ? Optional.of(cached.methods()) : Optional.empty();
   }
 
-  private Set<String> fetch(UUID tenantId, UUID storeId) {
+  private Optional<Set<String>> fetch(UUID tenantId, UUID storeId) {
     try {
       ServiceInstance instance = registry.resolve(TENANT_SERVICE).orElse(null);
       if (instance == null) {
         LOG.log(Level.WARNING, "no healthy tenant-svc instance — skipping method enforcement");
-        return null;
+        return Optional.empty();
       }
       try (HttpClientResponse res =
           webClient
@@ -98,18 +100,18 @@ public class TenantStoreClient {
               Level.WARNING,
               "tenant-svc store config returned HTTP {0} — skipping method enforcement",
               res.status().code());
-          return null;
+          return Optional.empty();
         }
         String body = res.as(String.class);
         try (JsonReader reader = Json.createReader(new StringReader(body))) {
           JsonObject data = reader.readObject().getJsonObject("data");
           var arr = data.getJsonArray("enabledPaymentMethods");
-          if (arr == null) return null;
+          if (arr == null) return Optional.empty();
           List<String> methods = new ArrayList<>(arr.size());
           for (int i = 0; i < arr.size(); i++) {
             methods.add(arr.getString(i));
           }
-          return Set.copyOf(methods);
+          return Optional.of(Set.copyOf(methods));
         }
       }
     } catch (RuntimeException e) {
@@ -117,7 +119,7 @@ public class TenantStoreClient {
           Level.WARNING,
           "tenant-svc store config lookup failed ({0}) — skipping method enforcement",
           e.getMessage());
-      return null;
+      return Optional.empty();
     }
   }
 }

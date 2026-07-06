@@ -2,13 +2,17 @@
 # ghcr-prune.sh — manual backup for the CI `cleanup` job in
 # .github/workflows/docker-publish.yml.
 #
-# Keeps the N newest TAGGED versions of each Shelf-J GHCR package and deletes
-# everything older, plus ALL untagged versions. This mirrors what
-# dataaxiom/ghcr-cleanup-action does in CI (keep-n-tagged + delete-untagged) —
-# run it from your machine if that job ever fails (e.g. a token-permission
-# hiccup), then re-run the GitHub Action.
+# Two modes:
+#   prune (default) — keeps the N newest TAGGED versions of each Shelf-J GHCR
+#     package and deletes everything older, plus ALL untagged versions. This
+#     mirrors what dataaxiom/ghcr-cleanup-action does in CI (keep-n-tagged +
+#     delete-untagged) — run it from your machine if that job ever fails
+#     (e.g. a token-permission hiccup), then re-run the GitHub Action.
+#   nuke (--nuke)  — deletes entire packages outright: every version plus the
+#     package listing itself. Use this for a full reset, not routine cleanup —
+#     GitHub recreates the package fresh the next time docker-publish.yml pushes.
 #
-# Why this is needed: pushing an image never deletes the old one. The latest/
+# Why pruning is needed: pushing an image never deletes the old one. The latest/
 # main tags just move; the previous version lingers (still carrying its unique
 # sha-<commit> tag) and piles up one-per-merge forever. This prunes the pile.
 #
@@ -19,6 +23,11 @@
 #   ./scripts/ghcr-prune.sh --apply gateway web   # only these (suffix after shelf-j-)
 #   OWNER=red2n ./scripts/ghcr-prune.sh     # override owner (default: red2n)
 #
+#   ./scripts/ghcr-prune.sh --nuke                # DRY RUN nuke: whole packages that would go
+#   ./scripts/ghcr-prune.sh --nuke --apply        # delete entire packages (asks to confirm)
+#   ./scripts/ghcr-prune.sh --nuke --apply sample-svc   # nuke just one package
+#   NUKE_CONFIRM=red2n ./scripts/ghcr-prune.sh --nuke --apply   # non-interactive confirm
+#
 # Requires: gh CLI + jq, with a token that has read:packages + delete:packages.
 # If the scope check below fails, run:
 #   gh auth refresh -h github.com -s read:packages,delete:packages
@@ -27,6 +36,7 @@ set -euo pipefail
 OWNER="${OWNER:-red2n}"
 KEEP="${KEEP:-2}"
 APPLY=false
+NUKE=false
 
 # Must stay in sync with the matrix in docker-publish.yml.
 PACKAGES=(
@@ -43,6 +53,7 @@ for a in "$@"; do
   case "$a" in
     --apply)   APPLY=true ;;
     --dry-run) APPLY=false ;;
+    --nuke)    NUKE=true ;;
     -h|--help) grep '^#' "$0" | sed 's/^#\!.*//; s/^# \?//'; exit 0 ;;
     -*)        echo "unknown flag: $a" >&2; exit 2 ;;
     *)         filter+=("shelf-j-${a#shelf-j-}") ;;  # accept 'gateway' or 'shelf-j-gateway'
@@ -68,12 +79,59 @@ fi
 owner_type=$(gh api "/users/$OWNER" --jq '.type' 2>/dev/null || echo User)
 if [[ "$owner_type" == "Organization" ]]; then base="/orgs/$OWNER"; else base="/users/$OWNER"; fi
 
-mode="DRY RUN (no deletes — pass --apply to delete)"; $APPLY && mode="APPLYING DELETES"
-echo "owner=$OWNER ($owner_type)  keep=$KEEP newest tagged  packages=${#PACKAGES[@]}"
+if $NUKE; then
+  mode="DRY RUN nuke (no deletes — pass --apply to delete)"; $APPLY && mode="APPLYING FULL PACKAGE DELETES"
+  echo "owner=$OWNER ($owner_type)  mode=NUKE (entire packages)  packages=${#PACKAGES[@]}"
+else
+  mode="DRY RUN (no deletes — pass --apply to delete)"; $APPLY && mode="APPLYING DELETES"
+  echo "owner=$OWNER ($owner_type)  keep=$KEEP newest tagged  packages=${#PACKAGES[@]}"
+fi
 echo ">>> $mode"
 echo
 
 total_deleted=0
+
+if $NUKE && $APPLY; then
+  echo "This PERMANENTLY deletes ${#PACKAGES[@]} entire package(s) — every version, not just old ones:"
+  printf '  - %s\n' "${PACKAGES[@]}"
+  echo
+  if [[ -t 0 ]]; then
+    read -r -p "Type the owner name ($OWNER) to confirm: " confirm
+    [[ "$confirm" == "$OWNER" ]] || { echo "confirmation mismatch — aborting, nothing deleted." >&2; exit 1; }
+  else
+    [[ "${NUKE_CONFIRM:-}" == "$OWNER" ]] || { echo "non-interactive nuke needs NUKE_CONFIRM=$OWNER — aborting." >&2; exit 1; }
+  fi
+  echo
+fi
+
+if $NUKE; then
+  # ── whole-package delete ─────────────────────────────────────────────────
+  for pkg in "${PACKAGES[@]}"; do
+    if ! info=$(gh api "$base/packages/container/$pkg" 2>/dev/null); then
+      echo "── $pkg — not found / no access — skipping"
+      continue
+    fi
+    count=$(jq -r '.version_count // "?"' <<<"$info")
+    if $APPLY; then
+      if err=$(gh api -X DELETE "$base/packages/container/$pkg" 2>&1 >/dev/null); then
+        echo "── $pkg — deleted entire package (had $count version(s))"
+        total_deleted=$((total_deleted + 1))
+      else
+        echo "── $pkg — FAILED — ${err:-unknown error}" >&2
+      fi
+    else
+      echo "── $pkg — would delete entire package ($count version(s))"
+    fi
+  done
+  echo
+  if $APPLY; then
+    echo ">>> done — deleted $total_deleted package(s) entirely."
+  else
+    echo ">>> dry run complete — re-run with --nuke --apply to delete the packages listed above."
+  fi
+  exit 0
+fi
+
 # ── per package ───────────────────────────────────────────────────────────
 for pkg in "${PACKAGES[@]}"; do
   echo "── $pkg ──────────────────────────────────────────"
@@ -107,11 +165,11 @@ for pkg in "${PACKAGES[@]}"; do
     label=$(jq -r --argjson id "$id" '.[] | select(.id==$id)
       | (.metadata.container.tags // []) | if length==0 then "<untagged>" else join(", ") end' <<<"$all")
     if $APPLY; then
-      if gh api -X DELETE "$base/packages/container/$pkg/versions/$id" >/dev/null 2>&1; then
+      if err=$(gh api -X DELETE "$base/packages/container/$pkg/versions/$id" 2>&1 >/dev/null); then
         echo "  deleted $id  [$label]"
         total_deleted=$((total_deleted + 1))
       else
-        echo "  FAILED  $id  [$label]  — check token has delete:packages and owns the package" >&2
+        echo "  FAILED  $id  [$label]  — ${err:-unknown error}" >&2
       fi
     else
       echo "  would delete $id  [$label]"

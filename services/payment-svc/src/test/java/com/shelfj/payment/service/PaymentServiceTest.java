@@ -58,12 +58,12 @@ class PaymentServiceTest {
     };
   }
 
-  /** Store settings unknown (null) → per-store method enforcement is skipped (fail-open). */
+  /** Store settings unknown (empty) → per-store method enforcement is skipped (fail-open). */
   private static com.shelfj.payment.client.TenantStoreClient permissiveStoreClient() {
     return new com.shelfj.payment.client.TenantStoreClient() {
       @Override
-      public java.util.Set<String> enabledMethods(UUID tenantId, UUID storeId) {
-        return null;
+      public java.util.Optional<java.util.Set<String>> enabledMethods(UUID tenantId, UUID storeId) {
+        return java.util.Optional.empty();
       }
     };
   }
