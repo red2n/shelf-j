@@ -3,6 +3,7 @@ package com.shelfj.order;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 
 import com.shelfj.order.service.OrderService;
 import com.shelfj.test.PostgresSupport;
@@ -142,6 +143,49 @@ class OrderIT {
             T);
     assertThat(r3.getStatus(), is(201));
     assertThat(r3.readEntity(String.class), containsString("COMPLETED"));
+  }
+
+  @Test
+  void paymentRefundedFlipsOrderToPartiallyThenFullyRefunded() {
+    // place + confirm a POS order (total = 2 × 10.00 = 20.00)
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":2,\"unitPrice\":10.00}],\"currency\":\"GBP\"}",
+            T,
+            "it-refund-status");
+    assertThat(placed.getStatus(), is(201));
+    String orderId = extractId(placed.readEntity(String.class));
+    assertThat(post("/orders/" + orderId + "/confirm", "{}", T).getStatus(), is(200));
+
+    UUID tenant = UUID.fromString(T);
+    UUID order = UUID.fromString(orderId);
+
+    // A 12.00 refund on a 20.00 order → PARTIALLY_REFUNDED (as PaymentEventHandler would call it).
+    UUID e1 = UUID.randomUUID();
+    orderService.applyRefund(e1, tenant, order, new java.math.BigDecimal("12.00"));
+    assertThat(
+        get("/orders/" + orderId, T).readEntity(String.class),
+        containsString("PARTIALLY_REFUNDED"));
+
+    // Redelivery of the SAME refund event must not add again — a broken dedupe would push
+    // cumulative to 24 ≥ 20 and prematurely show REFUNDED.
+    orderService.applyRefund(e1, tenant, order, new java.math.BigDecimal("12.00"));
+    assertThat(
+        get("/orders/" + orderId, T).readEntity(String.class),
+        containsString("PARTIALLY_REFUNDED"));
+
+    // The remaining 8.00 (distinct event) → cumulative 20.00 = total → REFUNDED.
+    orderService.applyRefund(UUID.randomUUID(), tenant, order, new java.math.BigDecimal("8.00"));
+    String finalBody = get("/orders/" + orderId, T).readEntity(String.class);
+    // REFUNDED present and PARTIALLY_REFUNDED absent together prove the status is exactly REFUNDED.
+    assertThat(finalBody, containsString("REFUNDED"));
+    assertThat(finalBody, not(containsString("PARTIALLY_REFUNDED")));
   }
 
   /**

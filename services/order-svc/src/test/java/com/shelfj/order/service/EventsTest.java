@@ -72,10 +72,15 @@ class EventsTest {
     var item =
         new ReturnItem(
             UUID.randomUUID(), TENANT, RETURN, VARIANT, BigDecimal.ONE, BigDecimal.TEN, null);
-    var row = Events.orderReturned(TENANT, ORDER, RETURN, STORE, List.of(item));
+    var row =
+        Events.orderReturned(
+            TENANT, ORDER, RETURN, STORE, List.of(item), BigDecimal.TEN, "ORIGINAL", "GBP");
 
     JsonObject json = Json.createReader(new StringReader(row.payload())).readObject();
     assertDoesNotThrow(() -> UUID.fromString(json.getString("eventId")));
     assertEquals("OrderReturned", json.getString("eventType"));
+    // payment-svc reverses the captured payment from these fields for ORIGINAL-tender returns.
+    assertEquals("ORIGINAL", json.getString("refundMethod"));
+    assertEquals(0, BigDecimal.TEN.compareTo(json.getJsonNumber("refundAmount").bigDecimalValue()));
   }
 }

@@ -23,7 +23,7 @@
 
 The platform is a working, sizeable system, and the **cross-cutting foundation is now genuinely strong** (see below). The correctness/security class of problems from the previous audit is largely closed. **The headline finding has shifted:** the remaining risk is no longer per-request correctness — it is **half-wired features**. Several capabilities that exist as endpoints, tables, and published events are **not connected end-to-end**: notifications are never actually sent, customer loyalty never auto-accrues, refunds never propagate to the order, sales analytics don't exist, and the central config service is deployed but unused.
 
-**Blocking-for-credible-launch items (this revision):** N1 (notifications never delivered), N5 (refunds don't propagate), N6 (config-svc unused → violates the external-config golden rule), N10 (payment provider still mocked). ~~N2~~ resolved 2026-07-08.
+**Blocking-for-credible-launch items (this revision):** N1 (notifications never delivered), N6 (config-svc unused → violates the external-config golden rule), N10 (payment provider still mocked). ~~N2~~, ~~N5~~ resolved 2026-07-08.
 
 ---
 
@@ -64,12 +64,14 @@ The platform is a working, sizeable system, and the **cross-cutting foundation i
 - **Impact:** **no revenue / margin / tax / "what sold" reporting**, although `OrderConfirmed`/`PaymentCaptured` events are already on the bus. The admin **Reports/Sales** surface is backed purely by on-hand + supply-demand netting (`reports_screen.dart` only reads `supplyDemandReportProvider`).
 - **Fix:** add `OrderConfirmed`/`PaymentCaptured` consumers and a sales projection; expose sales/revenue report endpoints and wire the Sales screen to them.
 
-### N5 — refunds neither propagate to the order nor auto-trigger 🟠
-Two disconnected halves:
-- `payment-svc` **consumes nothing** → `OrderReturned`/`OrderCancelled` do **not** auto-issue refunds; refunds are manual API calls only.
-- `payment-svc` publishes `PaymentRefunded` but **no service consumes it** → a refunded order's status **never changes** (it stays `FULFILLED`/`COMPLETED`).
-- **Impact:** returns require an out-of-band manual refund, and even then the order record misrepresents its financial state.
-- **Fix:** `payment-svc` consumes `OrderReturned`/`OrderCancelled` to issue refunds idempotently; `order-svc` consumes `PaymentRefunded` to transition status → `REFUNDED`/`PARTIALLY_REFUNDED`.
+### N5 — refunds neither propagate to the order nor auto-trigger ✅ RESOLVED (2026-07-08)
+`payment-svc` consumed nothing (returns/cancels never auto-refunded) and `PaymentRefunded` had no consumer (a refunded order's status never changed).
+
+> **Resolved.** The refund loop is now closed on both sides:
+> - **payment-svc** gains an `OrderEventConsumer` on `shelfj.order.order-returned` + `shelfj.order.order-cancelled`. `OrderReturned` refunds the return amount **only for ORIGINAL-tender returns** (STORE_CREDIT/GIFT_CARD are settled elsewhere); `OrderCancelled` refunds whatever is still captured (unpaid pay-later cancels are a no-op — this also keeps the payment-failed→cancel saga path clean). `PaymentRepository.refundOrderOnce` is idempotent on the order event's `eventId`, caps at the remaining captured total, and **allocates across the order's captured tenders** so the per-tender cap holds for split-tender sales — all in one `FOR UPDATE` transaction. New `processed_events` table (V6).
+> - **order-svc** enriches `PaymentRefunded` with `eventId` + `amount` and consumes it (extending the existing `PaymentEventConsumer`). `OrderRepository.applyRefundOnce` accumulates a new `orders.refunded_amount` column (V10, mirroring `paid_amount`) and flips a sold order to `PARTIALLY_REFUNDED` / `REFUNDED` (new status constants) once refunds reach the total — idempotent on `eventId`. The manual `/refunds` endpoint now propagates to order status too (same event).
+> - `OrderReturned` gained `refundAmount`/`refundMethod`/`currency`; `OrderCancelled` gained `eventId` (existing inventory-svc hold-release consumer ignores the extra field).
+> - **Tests:** `PaymentRefundIT` (Testcontainers: cap, dedupe, split-tender allocation, unpaid no-op) + `OrderEventHandlerTest` (ORIGINAL vs store-credit vs cancel vs malformed) on the payment side; `OrderIT.paymentRefundedFlipsOrderToPartiallyThenFullyRefunded` (partial→full + dedupe) + `EventsTest` on the order side. payment-svc (16) + order-svc (51) suites green.
 
 ### N6 — config-svc is deployed but unused 🟠
 `platform/config` is built, health-checked, and gated on in `docker-compose.yml`, but **no service fetches configuration from it** — there is no MicroProfile `ConfigSource` SPI file and no startup fetch; a repo-wide search finds zero references to its URL / `:8888` / `/config/{service}` from any service. Every service reads its own local `META-INF/microprofile-config.properties`.
@@ -120,7 +122,7 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 |---|---|---|---|---|---|
 | N1 | Deliver notifications (or descope + de-promise in UI) | Backend | 🔴 | M–L | Touches OTP, order confirmations, receipts |
 | ~~N2~~ | ~~Event-wire customer-svc (loyalty on order)~~ | Backend | ✅ | — | Done 2026-07-08 — OrderConfirmed consumer + idempotent accrual |
-| N5 | Close the refund loop (auto-refund + status propagation) | Backend | 🟠 | M | payment-svc consume returns; order-svc consume `PaymentRefunded` |
+| ~~N5~~ | ~~Close the refund loop (auto-refund + status propagation)~~ | Backend | ✅ | — | Done 2026-07-08 — order-event refund consumer + `refunded_amount` status flip |
 | N6 | Wire or delete config-svc | Platform | 🟠 | S–M | Enforces golden rule #5 either way |
 | N10 | Integrate a real payment PSP + webhook verification | Backend | 🔴 | L | Blocks real revenue |
 | N4 | Sales projection + revenue/tax reporting in reporting-svc | Backend | 🟠 | M | Consume order/payment events; back the Sales screen |

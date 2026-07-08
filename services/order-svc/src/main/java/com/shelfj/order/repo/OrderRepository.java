@@ -34,6 +34,9 @@ import java.util.UUID;
 @ApplicationScoped
 public class OrderRepository extends BaseOutboxRepository {
 
+  /** processed_events key for the PaymentRefunded → order status/accumulation path (dedupe). */
+  private static final String REFUND_CONSUMER = "order-svc/payment-refunded";
+
   // ── Orders ────────────────────────────────────────────────────────────────
 
   public Order createOrder(Order order, List<OrderItem> items, OutboxRow event) {
@@ -280,6 +283,63 @@ public class OrderRepository extends BaseOutboxRepository {
           return null;
         },
         "apply payment captured");
+  }
+
+  /**
+   * Apply a PaymentRefunded event to the order, idempotently on {@code eventId}: accumulate {@code
+   * refunded_amount} and move a sold order (CONFIRMED/FULFILLED, or a prior PARTIALLY_REFUNDED) to
+   * REFUNDED once refunds reach the total, else PARTIALLY_REFUNDED. Cancelled/voided/pending orders
+   * keep their status but still record the refunded amount. The dedupe mark, the update and the
+   * status-history row commit in one transaction (golden rule #7).
+   */
+  public void applyRefundOnce(UUID eventId, UUID tenantId, UUID orderId, BigDecimal amount) {
+    inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, REFUND_CONSUMER)) {
+            return null; // this refund event already applied
+          }
+          String status;
+          BigDecimal total;
+          BigDecimal refunded;
+          try (var ps =
+              c.prepareStatement(
+                  "SELECT status, total, refunded_amount FROM orders"
+                      + " WHERE tenant_id=? AND id=? FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (var rs = ps.executeQuery()) {
+              if (!rs.next()) return null; // unknown order — nothing to apply
+              status = rs.getString("status");
+              total = rs.getBigDecimal("total");
+              refunded = rs.getBigDecimal("refunded_amount");
+            }
+          }
+          BigDecimal newRefunded = refunded.add(amount);
+          String newStatus = status;
+          if (Order.STATUS_CONFIRMED.equals(status)
+              || Order.STATUS_FULFILLED.equals(status)
+              || Order.STATUS_PARTIALLY_REFUNDED.equals(status)) {
+            newStatus =
+                newRefunded.compareTo(total) >= 0
+                    ? Order.STATUS_REFUNDED
+                    : Order.STATUS_PARTIALLY_REFUNDED;
+          }
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE orders SET refunded_amount=?, status=?, updated_at=now()"
+                      + " WHERE tenant_id=? AND id=?")) {
+            ps.setBigDecimal(1, newRefunded);
+            ps.setString(2, newStatus);
+            ps.setObject(3, tenantId);
+            ps.setObject(4, orderId);
+            ps.executeUpdate();
+          }
+          if (!newStatus.equals(status)) {
+            appendStatusHistory(c, tenantId, orderId, status, newStatus, "refund", null);
+          }
+          return null;
+        },
+        "apply refund");
   }
 
   public List<OrderItem> findOrderItems(UUID tenantId, UUID orderId) {

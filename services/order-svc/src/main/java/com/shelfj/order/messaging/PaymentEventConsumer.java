@@ -7,7 +7,7 @@ import java.util.List;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Polls payment-captured and payment-failed events and dispatches each to {@link
+ * Polls payment-captured, payment-failed and payment-refunded events and dispatches each to {@link
  * PaymentEventHandler}. Consumer lifecycle is inherited from {@link BaseKafkaConsumer}; all
  * business logic lives in the handler (SRP).
  */
@@ -28,9 +28,15 @@ class PaymentEventConsumer extends BaseKafkaConsumer {
       defaultValue = "shelfj.payment.payment-failed")
   String failedTopic;
 
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.kafka.topics.payment-refunded",
+      defaultValue = "shelfj.payment.payment-refunded")
+  String refundedTopic;
+
   @Override
   protected List<String> topics() {
-    return List.of(capturedTopic, failedTopic);
+    return List.of(capturedTopic, failedTopic, refundedTopic);
   }
 
   @Override

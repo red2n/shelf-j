@@ -72,14 +72,17 @@ final class Events {
   }
 
   static OutboxRow orderCancelled(UUID tenantId, UUID orderId, String reason) {
+    // eventId lets payment-svc dedupe the automatic refund of a cancelled (paid) order; existing
+    // consumers (inventory-svc hold release) ignore the extra field.
     return new OutboxRow(
         "OrderCancelled",
         "shelfj.order.order-cancelled",
         tenantId,
         orderId,
         String.format(
-            "{\"eventType\":\"OrderCancelled\",\"tenantId\":\"%s\",\"orderId\":\"%s\",\"reason\":\"%s\"}",
-            tenantId, orderId, esc(reason)));
+            "{\"eventId\":\"%s\",\"eventType\":\"OrderCancelled\",\"tenantId\":\"%s\","
+                + "\"orderId\":\"%s\",\"reason\":\"%s\"}",
+            UUID.randomUUID(), tenantId, orderId, esc(reason)));
   }
 
   static OutboxRow orderFulfilled(
@@ -110,9 +113,17 @@ final class Events {
   }
 
   static OutboxRow orderReturned(
-      UUID tenantId, UUID orderId, UUID returnId, UUID storeId, List<ReturnItem> items) {
-    // eventId is required by inventory-svc's OrderEventHandler for per-line dedupe — without it,
-    // every OrderReturned is dropped as a malformed event and stock is never restocked.
+      UUID tenantId,
+      UUID orderId,
+      UUID returnId,
+      UUID storeId,
+      List<ReturnItem> items,
+      BigDecimal refundAmount,
+      String refundMethod,
+      String currency) {
+    // eventId is required by inventory-svc's OrderEventHandler for per-line dedupe — without it
+    // every OrderReturned is dropped as malformed and stock is never restocked. refundAmount +
+    // refundMethod let payment-svc reverse the captured payment for ORIGINAL-tender returns.
     StringBuilder sb = new StringBuilder();
     sb.append("{\"eventId\":\"")
         .append(UUID.randomUUID())
@@ -124,6 +135,12 @@ final class Events {
         .append(returnId)
         .append("\",\"storeId\":\"")
         .append(storeId)
+        .append("\",\"refundAmount\":")
+        .append(refundAmount != null ? refundAmount.toPlainString() : "0")
+        .append(",\"refundMethod\":\"")
+        .append(esc(refundMethod))
+        .append("\",\"currency\":\"")
+        .append(esc(currency))
         .append("\",\"items\":[");
     for (int i = 0; i < items.size(); i++) {
       if (i > 0) sb.append(',');

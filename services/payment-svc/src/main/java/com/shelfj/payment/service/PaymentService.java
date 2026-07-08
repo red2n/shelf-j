@@ -10,6 +10,7 @@ import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
@@ -176,10 +177,38 @@ public class PaymentService {
     // Existence, order-match, and the cumulative refund cap are all enforced inside ONE
     // transaction with the payment row locked — checking them here first would be a TOCTOU race
     // letting two concurrent refunds together exceed the original payment.
-    return repo.createRefundGuarded(refund, Events.paymentRefunded(tenantId, refundId, orderId));
+    return repo.createRefundGuarded(
+        refund, Events.paymentRefunded(tenantId, refundId, orderId, req.amount()));
   }
 
   public List<RefundTender> listRefundsByOrder(UUID tenantId, UUID orderId) {
     return repo.findRefundsByOrder(tenantId, orderId);
+  }
+
+  /**
+   * Automatically refund a captured order in response to an order event. Driven by {@code
+   * OrderReturned} (refund the return amount) and {@code OrderCancelled} (refund whatever is still
+   * captured), idempotent on the order event's {@code eventId}. {@code requestedAmount == null}
+   * means "refund all remaining captured" (cancellation); otherwise the amount is capped at the
+   * remaining captured total. Orders with nothing captured (e.g. unpaid pay-later cancellations)
+   * are a no-op. Distributes the refund across the order's captured tenders so the per-tender cap
+   * invariant holds even for split-tender sales.
+   */
+  public void refundForOrderEvent(
+      UUID eventId,
+      String consumer,
+      UUID tenantId,
+      UUID orderId,
+      BigDecimal requestedAmount,
+      String reason) {
+    UUID refundBatchId = UUID.randomUUID();
+    repo.refundOrderOnce(
+        eventId,
+        consumer,
+        tenantId,
+        orderId,
+        requestedAmount,
+        reason,
+        amt -> Events.paymentRefunded(tenantId, refundBatchId, orderId, amt));
   }
 }

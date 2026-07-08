@@ -425,7 +425,15 @@ public class OrderService {
     return repo.createReturn(
         ret,
         returnItems,
-        Events.orderReturned(tenantId, orderId, returnId, order.storeId(), returnItems));
+        Events.orderReturned(
+            tenantId,
+            orderId,
+            returnId,
+            order.storeId(),
+            returnItems,
+            totalRefund,
+            method,
+            order.currency()));
   }
 
   public List<Return> getReturns(UUID tenantId, UUID orderId) {
@@ -673,6 +681,22 @@ public class OrderService {
                     Events.orderCancelled(tenantId, orderId, "payment failed"));
               }
             });
+  }
+
+  /**
+   * Apply a refund reported by payment-svc (PaymentRefunded) to the order: accumulate the refunded
+   * total and flip a sold order (CONFIRMED/FULFILLED) to PARTIALLY_REFUNDED / REFUNDED. Idempotent
+   * on the payment event's {@code eventId}.
+   */
+  public void applyRefund(
+      java.util.UUID eventId,
+      java.util.UUID tenantId,
+      java.util.UUID orderId,
+      java.math.BigDecimal amount) {
+    if (eventId == null || amount == null || amount.signum() <= 0) {
+      return;
+    }
+    repo.applyRefundOnce(eventId, tenantId, orderId, amount);
   }
 
   // ── Gap #42: Special orders ───────────────────────────────────────────────
