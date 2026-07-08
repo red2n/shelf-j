@@ -23,7 +23,7 @@
 
 The platform is a working, sizeable system, and the **cross-cutting foundation is now genuinely strong** (see below). The correctness/security class of problems from the previous audit is largely closed. **The headline finding has shifted:** the remaining risk is no longer per-request correctness — it is **half-wired features**. Several capabilities that exist as endpoints, tables, and published events are **not connected end-to-end**: notifications are never actually sent, customer loyalty never auto-accrues, refunds never propagate to the order, sales analytics don't exist, and the central config service is deployed but unused.
 
-**Blocking-for-credible-launch items (this revision):** N1 (notifications never delivered), N2 (customer-svc consumes no events → no loyalty/profile automation), N5 (refunds don't propagate), N6 (config-svc unused → violates the external-config golden rule), N10 (payment provider still mocked).
+**Blocking-for-credible-launch items (this revision):** N1 (notifications never delivered), N5 (refunds don't propagate), N6 (config-svc unused → violates the external-config golden rule), N10 (payment provider still mocked). ~~N2~~ resolved 2026-07-08.
 
 ---
 
@@ -44,10 +44,15 @@ The platform is a working, sizeable system, and the **cross-cutting foundation i
 - **Impact:** a customer-facing SaaS with no outbound comms; OTP-based flows and transactional email are non-functional.
 - **Fix:** either (a) implement an outbound-channel abstraction (SMTP/SES + SMS/push providers) and consume `UserRegistered`, `OrderConfirmed`, `OrderFulfilled`, receipt, and `StockBelowThreshold` events idempotently; or (b) explicitly descope notifications in the PRD and remove the "email receipt" affordances from POS/storefront so the UI doesn't promise delivery it can't make.
 
-### N2 — customer-svc consumes zero events → no loyalty/profile automation 🔴 (blocking)
-`customer-svc` has **no `messaging/` package at all** — it publishes events but subscribes to none.
-- **Impact:** loyalty points and store credit accrue **only** through manual admin endpoints (`/{id}/loyalty/earn`, `/{id}/store-credit/issue`); there is **no automatic accrual on `OrderPlaced`/`OrderConfirmed`**, and **no customer profile is auto-created on `UserRegistered`**. The "loyalty accrues when a customer buys" flow described in the docs is not wired.
-- **Fix:** add idempotent consumers — `UserRegistered` → create profile; `OrderConfirmed` (or `OrderFulfilled`) → accrue loyalty — backed by a `processed_events` table (which the service currently lacks).
+### N2 — customer-svc consumes zero events → no loyalty automation ✅ RESOLVED (2026-07-08)
+`customer-svc` had **no `messaging/` package** — it published events but subscribed to none, so loyalty accrued only through the manual `/{id}/loyalty/earn` endpoint.
+
+> **Resolved.** customer-svc now consumes `shelfj.order.order-confirmed` and accrues loyalty for the buyer automatically:
+> - **order-svc** enriches `OrderConfirmed` with `eventId` + `customerId` + `total` + `currency` (`Events.orderConfirmed`, both confirm paths — staff confirm and payment-captured). Emitted exactly once, at full payment.
+> - **customer-svc** adds a `processed_events` table (V2 migration), an `OrderConfirmedConsumer` + `OrderConfirmedHandler`, and `CustomerService.accrueLoyaltyFromOrder` → `CustomerRepository.accrueFromOrderOnce`. Points = `total × shelfj.customer.loyalty.points-per-unit` (default 1, rounded down). The dedupe mark + accrual + `LoyaltyEarned` outbox event commit in **one transaction**, so a redelivered event accrues at most once. Guest orders (`customerId:null`) and unknown/anonymized customers are skipped without looping.
+> - **Tests:** `OrderConfirmedHandlerTest` (4: real buyer / guest / legacy-missing-field / malformed) + `CustomerIT.loyaltyAccruesFromOrderOnceAndDedupesOnEventId` (Testcontainers: single accrual under redelivery). order-svc (50) + customer-svc (20) suites green.
+>
+> **Design decision — profile-on-register intentionally *not* implemented.** `customers` is per-tenant (`tenant_id NOT NULL`, required first/last name, `UNIQUE(tenant_id,email)`), but `UserRegistered` carries a **null tenant and no name** (a customer isn't bound to a tenant at registration). A profile is correctly created at transaction time via `POST /customers`. Auto-creating a tenant-less/nameless profile from `UserRegistered` would violate the schema; the honest fix is to leave profile creation where it is. If a global (cross-tenant) customer identity is ever wanted, that's a separate model change, tracked separately.
 
 ### N3 — loyalty / store-credit can't be used as tender at checkout 🟠
 `order-svc` has synchronous clients for **inventory and pricing only** (`order-svc/.../client/{InventoryClient,PricingClient}.java`); it never calls `customer-svc`. Gift cards are the one exception (order-svc owns that table itself).
@@ -114,7 +119,7 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 | # | Item | Layer | Severity | Effort | Notes |
 |---|---|---|---|---|---|
 | N1 | Deliver notifications (or descope + de-promise in UI) | Backend | 🔴 | M–L | Touches OTP, order confirmations, receipts |
-| N2 | Event-wire customer-svc (profile on register, loyalty on order) | Backend | 🔴 | M | Add `processed_events` + consumers |
+| ~~N2~~ | ~~Event-wire customer-svc (loyalty on order)~~ | Backend | ✅ | — | Done 2026-07-08 — OrderConfirmed consumer + idempotent accrual |
 | N5 | Close the refund loop (auto-refund + status propagation) | Backend | 🟠 | M | payment-svc consume returns; order-svc consume `PaymentRefunded` |
 | N6 | Wire or delete config-svc | Platform | 🟠 | S–M | Enforces golden rule #5 either way |
 | N10 | Integrate a real payment PSP + webhook verification | Backend | 🔴 | L | Blocks real revenue |

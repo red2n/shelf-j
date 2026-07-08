@@ -307,6 +307,67 @@ public class CustomerRepository extends BaseOutboxRepository {
         "earn loyalty points");
   }
 
+  /**
+   * Accrue loyalty points from a confirmed order — idempotently. The processed_events mark and the
+   * accrual commit in one transaction (golden rule #7), so a redelivered OrderConfirmed accrues at
+   * most once. Returns {@code null} when the event was already processed, or when the order's
+   * customer is unknown to this service (e.g. since anonymized) — the dedupe mark still stands so
+   * the consumer does not loop; otherwise the updated account.
+   */
+  public LoyaltyAccount accrueFromOrderOnce(
+      UUID eventId,
+      String consumerName,
+      UUID tenantId,
+      UUID customerId,
+      UUID orderId,
+      BigDecimal points,
+      String reason,
+      OutboxRow event) {
+    return inTx(
+        conn -> {
+          if (!markProcessedIfNewTx(conn, eventId, consumerName)) {
+            return null; // already accrued for this event
+          }
+          if (!customerExists(conn, tenantId, customerId)) {
+            return null; // order referenced a customer this service doesn't hold — skip, no loop
+          }
+          LoyaltyAccount account = getOrCreateLoyaltyAccount(conn, tenantId, customerId);
+          BigDecimal newBalance = account.pointsBalance().add(points);
+          BigDecimal newLifetime = account.lifetimePoints().add(points);
+          String newTier = LoyaltyAccount.tierFor(newLifetime);
+          LoyaltyAccount updated =
+              updateLoyaltyAccount(conn, tenantId, customerId, newBalance, newLifetime, newTier);
+          insertLedgerEntry(
+              conn,
+              new LoyaltyLedgerEntry(
+                  UUID.randomUUID(),
+                  tenantId,
+                  customerId,
+                  LoyaltyLedgerEntry.TYPE_EARN,
+                  points,
+                  newBalance,
+                  orderId,
+                  reason,
+                  Instant.now()));
+          insertOutbox(conn, event);
+          return updated;
+        },
+        "accrue loyalty from order");
+  }
+
+  private static boolean customerExists(Connection c, UUID tenantId, UUID customerId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT 1 FROM customers WHERE tenant_id = ? AND id = ? AND status <> 'ANONYMIZED'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
+  }
+
   public LoyaltyAccount redeemPoints(
       UUID tenantId,
       UUID customerId,

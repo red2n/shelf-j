@@ -20,11 +20,13 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Core logic for customer profiles, loyalty, and store credit. All writes publish events via the
@@ -33,7 +35,15 @@ import java.util.UUID;
 @ApplicationScoped
 public class CustomerService {
 
+  /** processed_events consumer key for the order-confirmed → loyalty accrual path (dedupe). */
+  public static final String ORDER_CONFIRMED_CONSUMER = "customer-svc/order-confirmed";
+
   @Inject CustomerRepository repo;
+
+  /** Points awarded per unit of order currency spent (e.g. 1 → 1 point per £1). */
+  @Inject
+  @ConfigProperty(name = "shelfj.customer.loyalty.points-per-unit", defaultValue = "1")
+  String pointsPerUnitRaw;
 
   // ── customer profile ──────────────────────────────────────────────────────
 
@@ -212,6 +222,48 @@ public class CustomerService {
         new OutboxRow(
             "LoyaltyEarned", "shelfj.customer.loyalty-earned", tenantId, customerId, payload);
     return repo.earnPoints(tenantId, customerId, req.points(), orderId, req.reason(), event);
+  }
+
+  /**
+   * Accrue loyalty points for a confirmed order, driven by the {@code OrderConfirmed} event and
+   * idempotent on its {@code eventId}. Points = order total × {@code
+   * shelfj.customer.loyalty.points-per-unit}, rounded down so we never over-award. Zero/negative
+   * awards are a no-op; guest orders (no customerId) are filtered out before this is called.
+   */
+  public void accrueLoyaltyFromOrder(
+      UUID eventId, UUID tenantId, UUID customerId, UUID orderId, BigDecimal total) {
+    BigDecimal points = total.multiply(pointsPerUnit()).setScale(2, RoundingMode.DOWN);
+    if (points.signum() <= 0) {
+      return; // nothing to award
+    }
+    String payload =
+        Json.createObjectBuilder()
+            .add("customerId", customerId.toString())
+            .add("tenantId", tenantId.toString())
+            .add("orderId", orderId.toString())
+            .add("points", points)
+            .build()
+            .toString();
+    var event =
+        new OutboxRow(
+            "LoyaltyEarned", "shelfj.customer.loyalty-earned", tenantId, customerId, payload);
+    repo.accrueFromOrderOnce(
+        eventId,
+        ORDER_CONFIRMED_CONSUMER,
+        tenantId,
+        customerId,
+        orderId,
+        points,
+        "Loyalty for order " + orderId,
+        event);
+  }
+
+  private BigDecimal pointsPerUnit() {
+    try {
+      return new BigDecimal(pointsPerUnitRaw.trim());
+    } catch (NumberFormatException e) {
+      return BigDecimal.ONE; // misconfiguration falls back to 1 point per unit rather than failing
+    }
   }
 
   public LoyaltyAccount redeemPoints(UUID tenantId, UUID customerId, RedeemPointsRequest req) {

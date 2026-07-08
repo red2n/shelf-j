@@ -42,6 +42,9 @@ class CustomerIT {
 
   @Inject WebTarget target;
 
+  // Kafka is disabled in-test, so drive the loyalty accrual path directly (as the consumer would).
+  @Inject com.shelfj.customer.service.CustomerService loyalty;
+
   @AfterAll
   static void stopDb() {
     PG.stop();
@@ -305,6 +308,43 @@ class CustomerIT {
             .header("X-Roles", "CASHIER")
             .delete();
     assertThat(asCashier.getStatus(), is(403));
+  }
+
+  @Test
+  void loyaltyAccruesFromOrderOnceAndDedupesOnEventId() {
+    Response r =
+        post(
+            "/customers",
+            "{\"email\":\"jill@example.com\",\"firstName\":\"Jill\",\"lastName\":\"Reed\"}");
+    String id = field(r.readEntity(String.class), "id");
+    java.util.UUID tenant = java.util.UUID.fromString(TENANT);
+    java.util.UUID customerId = java.util.UUID.fromString(id);
+    java.util.UUID eventA = java.util.UUID.randomUUID();
+
+    // Order A: £40 spent → 40 points at the default 1-point-per-unit rate.
+    loyalty.accrueLoyaltyFromOrder(
+        eventA, tenant, customerId, java.util.UUID.randomUUID(), new java.math.BigDecimal("40.00"));
+    // Redelivery of the SAME event must not accrue again (dedupe on eventId).
+    loyalty.accrueLoyaltyFromOrder(
+        eventA, tenant, customerId, java.util.UUID.randomUUID(), new java.math.BigDecimal("40.00"));
+    // A genuinely different order (new eventId) accrues normally → 50.
+    loyalty.accrueLoyaltyFromOrder(
+        java.util.UUID.randomUUID(),
+        tenant,
+        customerId,
+        java.util.UUID.randomUUID(),
+        new java.math.BigDecimal("10.00"));
+
+    String acct =
+        target
+            .path("/customers/" + id + "/loyalty")
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", TENANT)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    // 40 (once, not twice) + 10 = 50. Double-accrual would show 90.
+    assertThat(acct, containsString("\"pointsBalance\":50.00"));
+    assertThat(acct, not(containsString("\"pointsBalance\":90")));
   }
 
   @Test

@@ -5,6 +5,7 @@ import static com.shelfj.events.EventPayload.esc;
 import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.domain.Domain.ReturnItem;
 import com.shelfj.service.OutboxRow;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,15 +39,36 @@ final class Events {
             + "}");
   }
 
-  static OutboxRow orderConfirmed(UUID tenantId, UUID orderId) {
+  /**
+   * OrderConfirmed carries an {@code eventId} (consumer dedupe) plus the buyer and settled amount
+   * so downstream consumers can react to the sale without a callback to order-svc — customer-svc
+   * accrues loyalty from {@code customerId}/{@code total} (guest orders send {@code
+   * customerId:null} and earn nothing). Emitted exactly once, at full payment (see
+   * OrderRepository.applyPaymentCaptured).
+   */
+  static OutboxRow orderConfirmed(
+      UUID tenantId, UUID orderId, UUID customerId, BigDecimal total, String currency) {
+    String customerPart = customerId != null ? "\"" + customerId + "\"" : "null";
+    String amount = total != null ? total.toPlainString() : "0";
+    String cur = currency != null ? currency : "GBP";
     return new OutboxRow(
         "OrderConfirmed",
         "shelfj.order.order-confirmed",
         tenantId,
         orderId,
-        String.format(
-            "{\"eventType\":\"OrderConfirmed\",\"tenantId\":\"%s\",\"orderId\":\"%s\"}",
-            tenantId, orderId));
+        "{\"eventId\":\""
+            + UUID.randomUUID()
+            + "\",\"eventType\":\"OrderConfirmed\",\"tenantId\":\""
+            + tenantId
+            + "\",\"orderId\":\""
+            + orderId
+            + "\",\"customerId\":"
+            + customerPart
+            + ",\"total\":"
+            + amount
+            + ",\"currency\":\""
+            + esc(cur)
+            + "\"}");
   }
 
   static OutboxRow orderCancelled(UUID tenantId, UUID orderId, String reason) {

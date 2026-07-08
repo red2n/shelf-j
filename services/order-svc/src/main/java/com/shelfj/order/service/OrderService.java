@@ -323,6 +323,8 @@ public class OrderService {
   }
 
   public Order confirmOrder(UUID tenantId, UUID orderId, UUID userId) {
+    // Load the order so OrderConfirmed can carry the buyer + settled amount (loyalty accrual).
+    Order order = getOrder(tenantId, orderId);
     return repo.transitionOrderStatus(
         tenantId,
         orderId,
@@ -330,7 +332,8 @@ public class OrderService {
         Order.STATUS_CONFIRMED,
         "confirmed",
         userId,
-        Events.orderConfirmed(tenantId, orderId));
+        Events.orderConfirmed(
+            tenantId, orderId, order.customerId(), order.total(), order.currency()));
   }
 
   public Order cancelOrder(UUID tenantId, UUID orderId, String reason, UUID userId) {
@@ -635,8 +638,24 @@ public class OrderService {
           orderId);
       return;
     }
+    // Load the order so OrderConfirmed can carry the buyer + settled amount (loyalty accrual). The
+    // event is only written when this capture fully covers the total (applyPaymentCaptured), so a
+    // partial split-tender builds the row but never emits it.
+    Order order = repo.findOrder(tenantId, orderId).orElse(null);
+    if (order == null) {
+      LOG.log(
+          java.lang.System.Logger.Level.WARNING,
+          "PaymentCaptured for order {0} ignored: order not found",
+          orderId);
+      return;
+    }
     repo.applyPaymentCaptured(
-        tenantId, orderId, paymentId, amount, Events.orderConfirmed(tenantId, orderId));
+        tenantId,
+        orderId,
+        paymentId,
+        amount,
+        Events.orderConfirmed(
+            tenantId, orderId, order.customerId(), order.total(), order.currency()));
   }
 
   public void handlePaymentFailed(java.util.UUID tenantId, java.util.UUID orderId) {
