@@ -188,6 +188,32 @@ class OrderIT {
     assertThat(finalBody, not(containsString("PARTIALLY_REFUNDED")));
   }
 
+  @Test
+  void sweeperCancelsExpiredPendingOrdersButNotConfirmedOnes() {
+    String orderJson =
+        "{\"storeId\":\""
+            + S
+            + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+            + "\"items\":[{\"variantId\":\""
+            + V
+            + "\",\"qty\":1,\"unitPrice\":10.00}],\"currency\":\"GBP\"}";
+
+    // A: placed, left PENDING (client never paid).
+    String aId = extractId(post("/orders", orderJson, T, "it-sweep-a").readEntity(String.class));
+    // B: placed then confirmed.
+    String bId = extractId(post("/orders", orderJson, T, "it-sweep-b").readEntity(String.class));
+    assertThat(post("/orders/" + bId + "/confirm", "{}", T).getStatus(), is(200));
+
+    // TTL of 0h → every still-PENDING order is expired. B is CONFIRMED so the status guard skips
+    // it.
+    orderService.sweepExpiredPendingOrders(0, 200);
+
+    assertThat(get("/orders/" + aId, T).readEntity(String.class), containsString("CANCELLED"));
+    String bBody = get("/orders/" + bId, T).readEntity(String.class);
+    assertThat(bBody, containsString("CONFIRMED"));
+    assertThat(bBody, not(containsString("CANCELLED")));
+  }
+
   /**
    * Simulates what {@code PaymentEventHandler} does on each PaymentCaptured event — Kafka is
    * disabled in this IT, so the events are driven directly through {@link OrderService} instead of

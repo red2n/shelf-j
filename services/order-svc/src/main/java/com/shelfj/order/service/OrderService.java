@@ -699,6 +699,38 @@ public class OrderService {
     repo.applyRefundOnce(eventId, tenantId, orderId, amount);
   }
 
+  /**
+   * Cancel PENDING orders older than {@code ttlHours} — stranded pay-later orders that were never
+   * paid (a paid one would have confirmed). Each cancellation emits OrderCancelled, which releases
+   * the inventory hold (inventory-svc) and is a payment no-op (nothing captured). An order
+   * confirmed concurrently between the scan and the update is left alone. Returns the count
+   * cancelled. Driven by {@code PendingOrderSweeper}.
+   */
+  public int sweepExpiredPendingOrders(int ttlHours, int batchLimit) {
+    int cancelled = 0;
+    for (var ref : repo.findExpiredPendingOrders(ttlHours, batchLimit)) {
+      try {
+        repo.transitionOrderStatus(
+            ref.tenantId(),
+            ref.orderId(),
+            Order.STATUS_PENDING,
+            Order.STATUS_CANCELLED,
+            "expired: payment not received",
+            null,
+            Events.orderCancelled(ref.tenantId(), ref.orderId(), "expired: payment not received"));
+        cancelled++;
+      } catch (ApiException e) {
+        // Confirmed/cancelled concurrently between the scan and the conditional update — leave it.
+        LOG.log(
+            java.lang.System.Logger.Level.DEBUG,
+            "Skipped expiring order {0}: {1}",
+            ref.orderId(),
+            e.getMessage());
+      }
+    }
+    return cancelled;
+  }
+
   // ── Gap #42: Special orders ───────────────────────────────────────────────
 
   public SpecialOrder createSpecialOrder(

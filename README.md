@@ -71,7 +71,7 @@ You don't need prior microservices experience, but these ideas are load-bearing 
 - **Service discovery (Consul)** — services register themselves on boot; callers resolve `pricing-svc` → a live address at call time instead of hardcoding `host:port`.
 - **Centralized config** — settings live in a config service, not baked into images; secrets come from the environment/secret store at deploy time.
 - **Events & Kafka** — two ways services talk: **REST** ("I need the answer now") and **events** ("something happened, react if you care"). Every service publishes state changes via a transactional **outbox** (DB write + event write are atomic) so a crash between the two is impossible.
-- **Saga** — a workflow spread across services (e.g. checkout = quote → reserve stock → capture payment → confirm). If a later step fails, earlier steps are **compensated** (e.g. release the stock reservation). `order-svc` is the checkout saga coordinator.
+- **Saga** — a workflow spread across services (e.g. checkout = quote → reserve stock → *pay* → confirm). If a later step fails, earlier steps are **compensated** (e.g. release the stock reservation). `order-svc` coordinates placement (quote + reserve) synchronously; payment is client-initiated against payment-svc and order-svc confirms on the resulting `PaymentCaptured` event (choreography, not a call) — see [§12](#12-key-workflows).
 - **Multi-tenancy** — `tenant_id` always comes from the verified JWT, never the request body/query/path. Every tenant-owned query filters by `tenant_id` first.
 
 ---
@@ -386,10 +386,17 @@ tenant-svc   ──REST──►  iam-svc         (verify user on staff assignme
 **Online checkout (storefront):**
 ```
 Browse (public catalog) → add to cart → view live price (pricing-svc) → POST /orders (Idempotency-Key)
-  order-svc saga: quote (pricing) → reserve stock (inventory) → capture payment (payment) → confirm
-  async: inventory consumes confirm → deducts stock; customer-svc accrues loyalty; reporting records the sale
-  compensation: payment fails → release reservation, order CANCELLED
+  order-svc on placement: quote (pricing-svc) → reserve stock (inventory-svc) → order PENDING
+  client then captures payment directly against payment-svc (pay-now = /payments/online)
+  payment-svc emits PaymentCaptured → order-svc confirms the order (once tenders cover the total)
+  async on confirm: inventory deducts held stock; customer-svc accrues loyalty; reporting records the sale
+  payment fails → PaymentFailed → order CANCELLED (reservation released)
+  never paid → PendingOrderSweeper cancels the stranded PENDING order after a TTL (releases the hold)
 ```
+> **Note on the "saga".** order-svc orchestrates the *placement* half (quote + reserve) synchronously,
+> but payment is **client-initiated** against payment-svc and order-svc reacts to `PaymentCaptured`/
+> `PaymentFailed` events — it does not call payment-svc itself. The stranded-order sweeper is the
+> backstop for a client that places an order and then never pays.
 
 **POS sale (cashier):**
 ```

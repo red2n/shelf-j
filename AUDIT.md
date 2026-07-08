@@ -78,10 +78,14 @@ The platform is a working, sizeable system, and the **cross-cutting foundation i
 - **Impact:** directly contradicts golden rule #5 ("config is external") and the advertised centralized-config architecture; it is dead infrastructure that still consumes a container and a startup gate.
 - **Fix:** either wire a `ConfigSource` that pulls `{service}/{profile}` from config-svc at boot with a local fallback, or remove config-svc from the compose stack and the architecture docs.
 
-### N7 — payment is client-choreographed; stranded PENDING orders are never cleaned up 🟡
-The frontend calls `payment-svc` **directly** (`pos/tender_screen.dart:153` → `/payments`; `storefront/cart_screen.dart:646` → `/payments/online`); `order-svc` only orchestrates quote + reserve and then reacts to the `PaymentCaptured` event. `order-svc/.../config/ServiceConfig.java:56-57` documents that an order "can sit PENDING for hours … the order itself stays valid (it just loses its hold)" via the inventory TTL sweeper.
-- **Impact:** the browser decides whether/when to capture, so a client that dies after order-create **strands the order in PENDING forever** (only the stock hold is reclaimed; nothing cancels the order). The documented "order-svc runs the full checkout saga including payment capture" is not the actual flow.
-- **Fix:** add a PENDING-order expiry sweeper (cancel + release, mirroring the reservation sweeper), or move payment capture into an order-svc-orchestrated saga step; then reconcile PRD/README to describe the real choreography.
+### N7 — payment is client-choreographed; stranded PENDING orders are never cleaned up ✅ RESOLVED (2026-07-08)
+The frontend calls `payment-svc` directly and `order-svc` only orchestrates quote + reserve, reacting to `PaymentCaptured` — so a client that died after order-create stranded the order in PENDING forever (only the stock hold was reclaimed).
+
+> **Resolved.** Added `PendingOrderSweeper` (order-svc) — a daemon `ScheduledExecutorService` mirroring inventory-svc's `ReservationSweeper`. Every `shelfj.order.pending-sweeper.interval-seconds` (default 300) it cancels PENDING orders older than `…ttl-hours` (default 24) via `OrderService.sweepExpiredPendingOrders` → `OrderRepository.findExpiredPendingOrders` (cross-tenant scan) + the existing conditional `transitionOrderStatus` (PENDING→CANCELLED, so a concurrent confirm is safely skipped). Each cancellation emits `OrderCancelled`, which releases any remaining inventory hold and is a payment no-op (nothing captured). Enable flag + interval + TTL are configurable; batch capped at 200.
+> - **Docs reconciled:** README §2 (Saga) and §12 (checkout flow) now describe the real choreography — order-svc orchestrates placement (quote + reserve) synchronously, payment is **client-initiated** against payment-svc, and order-svc confirms on the `PaymentCaptured` event rather than calling payment-svc. The sweeper is documented as the stranded-order backstop.
+> - **Tests:** `OrderIT.sweeperCancelsExpiredPendingOrdersButNotConfirmedOnes` (expired PENDING → CANCELLED; CONFIRMED left untouched). order-svc (52) green.
+>
+> Note: this keeps the client-choreographed payment model (it works and split-tender POS relies on it) and adds the missing backstop, rather than moving capture into an order-svc-orchestrated step.
 
 ### N8 — many published events have no consumer 🟢 (observation)
 Published-but-unconsumed today: `AccountingPeriod*`, `Kanban*`, `Serial*`, `Lot*`, `MoveOrder*`, `PriceChanged`, `PromotionActivated`, `Product*`, `VariantCreated`, `PurchaseOrderCreated`, `IntercompanyInvoiceRaised`, `StoreCredit*`, `Loyalty*`, `ZoneCreated`, `UserRoleGranted`, `OrderConfirmed`, `OrderVoided`, `PaymentRefunded`.
@@ -127,7 +131,7 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 | N10 | Integrate a real payment PSP + webhook verification | Backend | 🔴 | L | Blocks real revenue |
 | N4 | Sales projection + revenue/tax reporting in reporting-svc | Backend | 🟠 | M | Consume order/payment events; back the Sales screen |
 | N3 | Loyalty / store-credit redeemable as tender at checkout | Backend | 🟠 | M | order-svc → customer-svc client + saga step |
-| N7 | Stranded-PENDING-order sweeper; reconcile saga docs | Backend | 🟡 | S | Mirror the reservation TTL sweeper |
+| ~~N7~~ | ~~Stranded-PENDING-order sweeper; reconcile saga docs~~ | Backend | ✅ | — | Done 2026-07-08 — PendingOrderSweeper + README saga reconciled |
 | U2 | Server-side pagination roll-out | UI | 🔴@scale | L | +paginated `/admin/inventory/levels` endpoint |
 | A5 | Continue god-file split | API | 🟠 | L | Per-aggregate repos extending `BaseOutboxRepository` |
 | U4/U5/U6/U7/U8 | UI polish roll-outs | UI | 🟠 | M–L | Mechanical continuation of proven templates |

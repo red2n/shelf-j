@@ -213,6 +213,28 @@ public class OrderRepository extends BaseOutboxRepository {
         "transition order " + orderId);
   }
 
+  public record PendingOrderRef(UUID tenantId, UUID orderId) {}
+
+  /**
+   * PENDING orders older than {@code ttlHours}, oldest first — stranded pay-later orders that were
+   * never paid (a paid one would have confirmed). Cross-tenant scan for the background sweeper
+   * (each row carries its tenant), mirroring inventory-svc's reservation sweeper.
+   */
+  public List<PendingOrderRef> findExpiredPendingOrders(int ttlHours, int limit) {
+    return query(
+        "SELECT tenant_id, id FROM orders"
+            + " WHERE status = 'PENDING' AND created_at < now() - make_interval(hours => ?)"
+            + " ORDER BY created_at ASC LIMIT ?",
+        ps -> {
+          ps.setInt(1, ttlHours);
+          ps.setInt(2, limit);
+        },
+        rs ->
+            new PendingOrderRef(
+                rs.getObject("tenant_id", UUID.class), rs.getObject("id", UUID.class)),
+        "find expired pending orders");
+  }
+
   /**
    * Idempotently accumulates a captured payment toward an order's total, and confirms the order
    * (PENDING -&gt; CONFIRMED) once {@code paid_amount} reaches {@code total}. A single full-amount
