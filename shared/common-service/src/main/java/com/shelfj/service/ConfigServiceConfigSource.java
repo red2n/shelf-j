@@ -67,8 +67,7 @@ public final class ConfigServiceConfigSource implements ConfigSource {
     String profile = orDefault(bootstrap("shelfj.config.profile"), "default");
     String token = orDefault(bootstrap("shelfj.config.token"), "");
     String endpoint = stripTrailingSlash(url) + "/config/" + service + "/" + profile;
-    try {
-      HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
+    try (HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build()) {
       HttpRequest req =
           HttpRequest.newBuilder(URI.create(endpoint))
               .timeout(TIMEOUT)
@@ -109,7 +108,9 @@ public final class ConfigServiceConfigSource implements ConfigSource {
     }
   }
 
-  /** Extracts the {@code data} object of the config-svc response envelope into a flat string map. */
+  /**
+   * Extracts the {@code data} object of the config-svc response envelope into a flat string map.
+   */
   private static Map<String, String> parseData(String body) {
     Map<String, String> out = new HashMap<>();
     try (var reader = Json.createReader(new StringReader(body))) {
@@ -118,9 +119,7 @@ public final class ConfigServiceConfigSource implements ConfigSource {
       if (data instanceof JsonObject obj) {
         for (var entry : obj.entrySet()) {
           JsonValue v = entry.getValue();
-          out.put(
-              entry.getKey(),
-              v instanceof JsonString s ? s.getString() : v.toString());
+          out.put(entry.getKey(), v instanceof JsonString s ? s.getString() : v.toString());
         }
       }
     }
@@ -128,9 +127,9 @@ public final class ConfigServiceConfigSource implements ConfigSource {
   }
 
   /**
-   * Resolve a bootstrap value before MP Config exists: system property → dotted env var (how compose
-   * sets keys) → UPPER_SNAKE env var → the bundled {@code microprofile-config.properties} (source of
-   * {@code shelfj.service.name}). Returns {@code null} if unset everywhere.
+   * Resolve a bootstrap value before MP Config exists: system property → dotted env var (how
+   * compose sets keys) → UPPER_SNAKE env var → the bundled {@code microprofile-config.properties}
+   * (source of {@code shelfj.service.name}). Returns {@code null} if unset everywhere.
    */
   private String bootstrap(String key) {
     String v = System.getProperty(key);
@@ -146,11 +145,12 @@ public final class ConfigServiceConfigSource implements ConfigSource {
     if (classpathDefaults == null) {
       Properties p = new Properties();
       ClassLoader cl = Thread.currentThread().getContextClassLoader();
-      if (cl == null) cl = ConfigServiceConfigSource.class.getClassLoader();
-      try (var in = cl.getResourceAsStream("META-INF/microprofile-config.properties")) {
-        if (in != null) p.load(in);
-      } catch (Exception e) {
-        // best-effort bootstrap only — ignore
+      if (cl != null) {
+        try (var in = cl.getResourceAsStream("META-INF/microprofile-config.properties")) {
+          if (in != null) p.load(in);
+        } catch (java.io.IOException e) {
+          LOG.log(Level.DEBUG, "Could not read bundled config defaults: {0}", e.getMessage());
+        }
       }
       classpathDefaults = p;
     }

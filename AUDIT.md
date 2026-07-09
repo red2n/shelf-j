@@ -23,7 +23,7 @@
 
 The platform is a working, sizeable system, and the **cross-cutting foundation is now genuinely strong** (see below). The correctness/security class of problems from the previous audit is largely closed. **The headline finding has shifted:** the remaining risk is no longer per-request correctness — it is **half-wired features**. Several capabilities that exist as endpoints, tables, and published events are **not connected end-to-end**: notifications are never actually sent, customer loyalty never auto-accrues, refunds never propagate to the order, sales analytics don't exist, and the central config service is deployed but unused.
 
-**Blocking-for-credible-launch items (this revision):** N1 (notifications never delivered), N6 (config-svc unused → violates the external-config golden rule), N10 (payment provider still mocked). ~~N2~~, ~~N5~~ resolved 2026-07-08.
+**Blocking-for-credible-launch items (this revision):** N1 (notifications never delivered), N10 (payment provider still mocked). ~~N2~~, ~~N5~~, ~~N6~~, ~~N7~~ resolved 2026-07-08.
 
 ---
 
@@ -73,10 +73,13 @@ The platform is a working, sizeable system, and the **cross-cutting foundation i
 > - `OrderReturned` gained `refundAmount`/`refundMethod`/`currency`; `OrderCancelled` gained `eventId` (existing inventory-svc hold-release consumer ignores the extra field).
 > - **Tests:** `PaymentRefundIT` (Testcontainers: cap, dedupe, split-tender allocation, unpaid no-op) + `OrderEventHandlerTest` (ORIGINAL vs store-credit vs cancel vs malformed) on the payment side; `OrderIT.paymentRefundedFlipsOrderToPartiallyThenFullyRefunded` (partial→full + dedupe) + `EventsTest` on the order side. payment-svc (16) + order-svc (51) suites green.
 
-### N6 — config-svc is deployed but unused 🟠
-`platform/config` is built, health-checked, and gated on in `docker-compose.yml`, but **no service fetches configuration from it** — there is no MicroProfile `ConfigSource` SPI file and no startup fetch; a repo-wide search finds zero references to its URL / `:8888` / `/config/{service}` from any service. Every service reads its own local `META-INF/microprofile-config.properties`.
-- **Impact:** directly contradicts golden rule #5 ("config is external") and the advertised centralized-config architecture; it is dead infrastructure that still consumes a container and a startup gate.
-- **Fix:** either wire a `ConfigSource` that pulls `{service}/{profile}` from config-svc at boot with a local fallback, or remove config-svc from the compose stack and the architecture docs.
+### N6 — config-svc is deployed but unused ✅ RESOLVED (2026-07-08, wired)
+`platform/config` was built, health-gated, and waited on, but no service fetched from it — dead infra that contradicted golden rule #5.
+
+> **Resolved by wiring it in** (chosen over deletion, to make the documented centralized-config architecture real). Added `common-service`'s `ConfigServiceConfigSource` — a MicroProfile `ConfigSource` (registered via `META-INF/services/...ConfigSource`) that at startup fetches `GET /config/{service}/{profile}` from config-svc (authenticated with the shared `X-Config-Token`) and layers the returned values at **ordinal 150** — above the local `microprofile-config.properties` (100) but below env vars (300) / system properties (400). So config-svc overrides baked defaults while deploy-time env/secrets still win.
+> - **Resilient + opt-in:** activates only when `shelfj.config.url` is set (compose sets it on all 12 services via the `*svc-env` anchor, profile `docker`). Unset → empty no-op, so local dev and every existing `@HelidonTest` run unchanged. A 404 (no config for the service) or an unreachable config-svc degrades to empty — the service still boots on local defaults, preserving "start in any order". Secrets never travel this path.
+> - **Repo made usable:** `platform/config/.../config-repo/README.md` documents the file-naming + precedence model so ops can drop `{service}[-{profile}].properties` overrides in (empty today → every service 404s → identical behavior, but the plumbing is live).
+> - **Tests:** `ConfigServiceConfigSourceTest` (no-op when unset, layers remote values + sends the token, 404 → empty, unreachable → empty) — common-service (20) green; iam-svc `@HelidonTest` (17) confirms clean boot with the SPI source on the classpath. SpotBugs + PMD gates pass.
 
 ### N7 — payment is client-choreographed; stranded PENDING orders are never cleaned up ✅ RESOLVED (2026-07-08)
 The frontend calls `payment-svc` directly and `order-svc` only orchestrates quote + reserve, reacting to `PaymentCaptured` — so a client that died after order-create stranded the order in PENDING forever (only the stock hold was reclaimed).
@@ -127,7 +130,7 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 | N1 | Deliver notifications (or descope + de-promise in UI) | Backend | 🔴 | M–L | Touches OTP, order confirmations, receipts |
 | ~~N2~~ | ~~Event-wire customer-svc (loyalty on order)~~ | Backend | ✅ | — | Done 2026-07-08 — OrderConfirmed consumer + idempotent accrual |
 | ~~N5~~ | ~~Close the refund loop (auto-refund + status propagation)~~ | Backend | ✅ | — | Done 2026-07-08 — order-event refund consumer + `refunded_amount` status flip |
-| N6 | Wire or delete config-svc | Platform | 🟠 | S–M | Enforces golden rule #5 either way |
+| ~~N6~~ | ~~Wire or delete config-svc~~ | Platform | ✅ | — | Done 2026-07-08 — wired via ConfigServiceConfigSource (ordinal 150, resilient) |
 | N10 | Integrate a real payment PSP + webhook verification | Backend | 🔴 | L | Blocks real revenue |
 | N4 | Sales projection + revenue/tax reporting in reporting-svc | Backend | 🟠 | M | Consume order/payment events; back the Sales screen |
 | N3 | Loyalty / store-credit redeemable as tender at checkout | Backend | 🟠 | M | order-svc → customer-svc client + saga step |

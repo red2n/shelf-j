@@ -248,7 +248,9 @@ Single `ProxyResource` (`/api/{service}/{path}`) in front of a Consul-resolved a
 `ConsulClient implements ServiceRegistry` (a 1-method interface — the DIP seam so the gateway never depends on Consul directly). Handles self-register with an HTTP health check, deregistration, and a 3s in-memory TTL cache on `healthyInstances()` lookups (avoids hammering Consul on every proxied request, including caching "nothing found" to avoid retry storms when a service is down).
 
 ### `platform/config` — centralized non-secret config
-`GET /config/{service}/{profile}` merges `{service}.properties` (base) with `{service}-{profile}.properties` (overlay) from a config-repo directory. Strict name validation (`[A-Za-z0-9_-]{1,64}`) blocks path traversal. Explicitly **not** for secrets — those come from the environment/secret store at deploy time. Each service also carries its own `META-INF/microprofile-config.properties` for local defaults.
+`GET /config/{service}/{profile}` (guarded by a shared `X-Config-Token`) merges `{service}.properties` (base) with `{service}-{profile}.properties` (overlay) from a config-repo directory. Strict name validation (`[A-Za-z0-9_-]{1,64}`) blocks path traversal. Explicitly **not** for secrets — those come from the environment/secret store at deploy time.
+
+Every service pulls from it at startup via `common-service`'s **`ConfigServiceConfigSource`** (a MicroProfile `ConfigSource`, active when `shelfj.config.url` is set). Fetched values layer at **ordinal 150** — above the service's baked `META-INF/microprofile-config.properties` (100) but below env vars (300) / system properties (400) — so config-svc overrides image defaults while deploy-time env still wins. If config-svc is unreachable or has no entry for the service, it degrades to the local defaults, so services still start in any order.
 
 ---
 
