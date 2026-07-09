@@ -75,6 +75,11 @@ x-svc-env: &svc-env
   shelfj.consul.host: consul
   shelfj.consul.port: "8500"
   shelfj.kafka.bootstrap: kafka:29092
+  # Central config: each service pulls non-secret overrides from config-svc at startup and layers
+  # them over its baked defaults (falls back to local defaults if config-svc is unreachable).
+  shelfj.config.url: http://config:8080
+  shelfj.config.profile: docker
+  shelfj.config.token: ${SHELFJ_CONFIG_TOKEN:?SHELFJ_CONFIG_TOKEN must be set (>= 32 chars) - see .env.example}
   otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
 
 x-svc-depends: &svc-depends
