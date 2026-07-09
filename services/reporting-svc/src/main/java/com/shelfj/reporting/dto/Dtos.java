@@ -36,4 +36,21 @@ public final class Dtos {
       BigDecimal net) {}
 
   public record MovementStatsReport(List<MovementStatRow> rows) {}
+
+  // ── N4: Sales reporting ──────────────────────────────────────────────────
+
+  public record SalesSummaryRow(
+      String currency, long orders, BigDecimal gross, BigDecimal refunded, BigDecimal net) {}
+
+  public record SalesSummaryReport(List<SalesSummaryRow> rows) {}
+
+  public record SalesDayRow(
+      String day,
+      String currency,
+      long orders,
+      BigDecimal gross,
+      BigDecimal refunded,
+      BigDecimal net) {}
+
+  public record SalesByDayReport(List<SalesDayRow> rows) {}
 }

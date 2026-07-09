@@ -1,13 +1,17 @@
 package com.shelfj.reporting;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.reporting.service.ReportingService;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.Response;
+import java.math.BigDecimal;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -35,6 +39,10 @@ class ReportingIT {
   private static final String OTHER = "99999999-9999-9999-9999-999999999999";
 
   @Inject WebTarget target;
+
+  // Kafka is disabled in-test, so drive the sales projection directly (as SalesEventDispatcher
+  // would).
+  @Inject ReportingService reporting;
 
   @AfterAll
   static void stopDb() {
@@ -85,5 +93,48 @@ class ReportingIT {
     Response r2 = get("/admin/reports/inventory/on-hand", OTHER);
     assertThat(r1.getStatus(), is(200));
     assertThat(r2.getStatus(), is(200));
+  }
+
+  /**
+   * N4: a confirmed order + refund surface as gross/refunded/net; a redelivered refund is deduped.
+   */
+  @Test
+  void salesSummaryReflectsGrossRefundedNetWithRefundDedupe() {
+    UUID tenant = UUID.randomUUID(); // fresh tenant → this test's sales only
+    UUID order = UUID.randomUUID();
+    reporting.recordSale(
+        tenant,
+        order,
+        UUID.randomUUID(),
+        "ONLINE",
+        UUID.randomUUID(),
+        new BigDecimal("100.00"),
+        "GBP");
+    UUID refundEvent = UUID.randomUUID();
+    reporting.applySalesRefund(refundEvent, "test", tenant, order, new BigDecimal("25.00"));
+    // Redelivery of the same PaymentRefunded event must not double-count.
+    reporting.applySalesRefund(refundEvent, "test", tenant, order, new BigDecimal("25.00"));
+
+    String body = get("/admin/reports/sales/summary", tenant.toString()).readEntity(String.class);
+    assertThat(body, containsString("\"currency\":\"GBP\""));
+    assertThat(body, containsString("\"gross\":100.00"));
+    assertThat(body, containsString("\"refunded\":25.00"));
+    assertThat(body, containsString("\"net\":75.00"));
+  }
+
+  /** N4: OrderConfirmed is projected once per order (natural PK idempotency). */
+  @Test
+  void recordSaleIsIdempotentOnOrderId() {
+    UUID tenant = UUID.randomUUID();
+    UUID order = UUID.randomUUID();
+    reporting.recordSale(
+        tenant, order, UUID.randomUUID(), "POS", null, new BigDecimal("40.00"), "GBP");
+    // Redelivered OrderConfirmed for the same order → no second row / no doubled gross.
+    reporting.recordSale(
+        tenant, order, UUID.randomUUID(), "POS", null, new BigDecimal("40.00"), "GBP");
+
+    String body = get("/admin/reports/sales/by-day", tenant.toString()).readEntity(String.class);
+    assertThat(body, containsString("\"orders\":1"));
+    assertThat(body, containsString("\"gross\":40.00"));
   }
 }

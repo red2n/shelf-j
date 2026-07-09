@@ -35,4 +35,19 @@ public final class Domain {
   /** Aggregated movement stat for one (store, variant, bucket). */
   public record MovementStat(
       UUID storeId, UUID variantId, String bucket, BigDecimal totalIn, BigDecimal totalOut) {}
+
+  /** Sales totals for one currency over the queried window/filters. net = gross − refunded. */
+  public record SalesSummary(String currency, long orders, BigDecimal gross, BigDecimal refunded) {
+    public BigDecimal net() {
+      return gross.subtract(refunded);
+    }
+  }
+
+  /** Sales totals bucketed by day (and currency). net = gross − refunded. */
+  public record SalesDayStat(
+      String day, String currency, long orders, BigDecimal gross, BigDecimal refunded) {
+    public BigDecimal net() {
+      return gross.subtract(refunded);
+    }
+  }
 }

@@ -843,3 +843,40 @@ final movementStatsReportProvider =
   final rows = (resp.data['data']?['rows'] as List?) ?? [];
   return rows.map((e) => MovementStatRow.fromJson(e as Map<String, dynamic>)).toList();
 });
+
+/// One currency's sales totals (gross/refunded/net + order count) — from reporting-svc's
+/// order/payment projection (N4).
+class SalesSummaryRow {
+  final String currency;
+  final int orders;
+  final double gross;
+  final double refunded;
+  final double net;
+
+  const SalesSummaryRow({
+    required this.currency,
+    required this.orders,
+    required this.gross,
+    required this.refunded,
+    required this.net,
+  });
+
+  factory SalesSummaryRow.fromJson(Map<String, dynamic> j) => SalesSummaryRow(
+        currency: j['currency'] as String? ?? '-',
+        orders: (j['orders'] as num?)?.toInt() ?? 0,
+        gross: (j['gross'] as num?)?.toDouble() ?? 0,
+        refunded: (j['refunded'] as num?)?.toDouble() ?? 0,
+        net: (j['net'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// Sales revenue report grouped by currency.
+final salesSummaryReportProvider =
+    FutureProvider.autoDispose<List<SalesSummaryRow>>((ref) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.reporting}/admin/reports/sales/summary');
+  final rows = (resp.data['data']?['rows'] as List?) ?? [];
+  return rows.map((e) => SalesSummaryRow.fromJson(e as Map<String, dynamic>)).toList();
+});

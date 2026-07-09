@@ -59,10 +59,17 @@ The platform is a working, sizeable system, and the **cross-cutting foundation i
 - **Impact:** the loyalty and store-credit ledgers exist but **cannot be redeemed during a sale** — a core retail expectation is missing from the tender flow.
 - **Fix:** add a `customer-svc` client + a redeem step in the tender/checkout path (as a compensating saga step: reserve/redeem on confirm, refund the ledger on cancel).
 
-### N4 — reporting-svc is inventory-only; no sales analytics exist 🟠
-`StockEventConsumer` subscribes only to inventory/transfer events (`stock-received/deducted/adjusted`, `transfer-order-shipped/received`); the tables are `inventory_projection`, `movement_events`, `open_supply_lines`. There is **no `sales_facts`** and no consumption of order/payment events.
-- **Impact:** **no revenue / margin / tax / "what sold" reporting**, although `OrderConfirmed`/`PaymentCaptured` events are already on the bus. The admin **Reports/Sales** surface is backed purely by on-hand + supply-demand netting (`reports_screen.dart` only reads `supplyDemandReportProvider`).
-- **Fix:** add `OrderConfirmed`/`PaymentCaptured` consumers and a sales projection; expose sales/revenue report endpoints and wire the Sales screen to them.
+### N4 — reporting-svc is inventory-only; no sales analytics exist ✅ RESOLVED (2026-07-08)
+reporting-svc consumed only inventory/transfer events; there was no `sales_facts` and no revenue reporting despite `OrderConfirmed`/`PaymentRefunded` being on the bus.
+
+> **Resolved.** Added a sales read-model (CQRS projection) driven by order/payment events:
+> - **order-svc** enriches `OrderConfirmed` with `storeId` + `channel` (on top of the N2 `customerId`/`total`/`currency`), so a sale fact needs no callback.
+> - **reporting-svc** adds `sales_facts` (V2), a `SalesEventConsumer` (own group `reporting-svc-sales`) + `SalesEventDispatcher`: `OrderConfirmed` → `recordSaleOnce` (naturally idempotent on the `(tenant, order)` PK via `ON CONFLICT DO NOTHING`); `PaymentRefunded` → `applySalesRefundOnce` (accumulates the refund, deduped on the event's `eventId`). So net = gross − refunded, and both manual and automatic (N5) refunds are reflected.
+> - **Endpoints:** `GET /admin/reports/sales/summary` (gross/refunded/net + order count grouped by currency) and `/by-day` (daily buckets), with optional `from`/`to` (inclusive ISO dates), `storeId`, `channel` filters; tenant from JWT.
+> - **Frontend:** a **Sales Revenue** tab in the admin Reports screen (`salesSummaryReportProvider` + `_SalesReport` table) — `flutter analyze` clean.
+> - **Tests:** `SalesEventDispatcherTest` (routing/guards) + `ReportingIT` (gross/refunded/net with refund dedupe; sale idempotent on order id). reporting-svc (10) + order-svc (52) green; SpotBugs/PMD pass.
+>
+> Note: revenue is order-total based (per-line/product breakdown and tax splits are a later enrichment); `confirmed_at` uses the projection time (the event carries no timestamp), accurate to within processing latency.
 
 ### N5 — refunds neither propagate to the order nor auto-trigger ✅ RESOLVED (2026-07-08)
 `payment-svc` consumed nothing (returns/cancels never auto-refunded) and `PaymentRefunded` had no consumer (a refunded order's status never changed).
@@ -132,7 +139,7 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 | ~~N5~~ | ~~Close the refund loop (auto-refund + status propagation)~~ | Backend | ✅ | — | Done 2026-07-08 — order-event refund consumer + `refunded_amount` status flip |
 | ~~N6~~ | ~~Wire or delete config-svc~~ | Platform | ✅ | — | Done 2026-07-08 — wired via ConfigServiceConfigSource (ordinal 150, resilient) |
 | N10 | Integrate a real payment PSP + webhook verification | Backend | 🔴 | L | Blocks real revenue |
-| N4 | Sales projection + revenue/tax reporting in reporting-svc | Backend | 🟠 | M | Consume order/payment events; back the Sales screen |
+| ~~N4~~ | ~~Sales projection + revenue reporting in reporting-svc~~ | Backend | ✅ | — | Done 2026-07-08 — sales_facts projection + summary/by-day endpoints + admin tab |
 | N3 | Loyalty / store-credit redeemable as tender at checkout | Backend | 🟠 | M | order-svc → customer-svc client + saga step |
 | ~~N7~~ | ~~Stranded-PENDING-order sweeper; reconcile saga docs~~ | Backend | ✅ | — | Done 2026-07-08 — PendingOrderSweeper + README saga reconciled |
 | U2 | Server-side pagination roll-out | UI | 🔴@scale | L | +paginated `/admin/inventory/levels` endpoint |

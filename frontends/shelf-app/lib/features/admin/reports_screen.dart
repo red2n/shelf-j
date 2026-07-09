@@ -4,7 +4,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 
-enum _ReportType { onHand, supplyDemand, movements }
+enum _ReportType { sales, onHand, supplyDemand, movements }
 
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
@@ -126,6 +126,8 @@ class _ReportContent extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     switch (type) {
+      case _ReportType.sales:
+        return _SalesReport();
       case _ReportType.onHand:
         return _OnHandReport();
       case _ReportType.supplyDemand:
@@ -226,6 +228,64 @@ class _SupplyDemandReport extends ConsumerWidget {
                               DataCell(
                                   Text(r.supplyInTransit.toStringAsFixed(0))),
                               DataCell(Text(r.netAvailable.toStringAsFixed(0))),
+                            ]))
+                        .toList(),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SalesReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final async = ref.watch(salesSummaryReportProvider);
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading sales…'),
+      error: (e, _) => ErrorView(
+        message: 'Could not load sales report.\n$e',
+        onRetry: () => ref.invalidate(salesSummaryReportProvider),
+      ),
+      data: (rows) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ReportHeader(
+            title: 'Sales Revenue',
+            subtitle: 'Gross / refunded / net revenue by currency',
+            onRefresh: () => ref.invalidate(salesSummaryReportProvider),
+          ),
+          if (rows.isEmpty)
+            const Expanded(child: Center(child: Text('No sales yet.')))
+          else
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Card(
+                  child: DataTable(
+                    headingRowColor:
+                        WidgetStatePropertyAll(cs.surfaceContainerHigh),
+                    columnSpacing: 24,
+                    columns: const [
+                      DataColumn(label: Text('Currency')),
+                      DataColumn(label: Text('Orders'), numeric: true),
+                      DataColumn(label: Text('Gross'), numeric: true),
+                      DataColumn(label: Text('Refunded'), numeric: true),
+                      DataColumn(label: Text('Net'), numeric: true),
+                    ],
+                    rows: rows
+                        .map((r) => DataRow(cells: [
+                              DataCell(Text(r.currency)),
+                              DataCell(Text('${r.orders}')),
+                              DataCell(Text(r.gross.toStringAsFixed(2))),
+                              DataCell(Text(r.refunded.toStringAsFixed(2))),
+                              DataCell(Text(r.net.toStringAsFixed(2),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold))),
                             ]))
                         .toList(),
                   ),
@@ -412,6 +472,8 @@ class _OnHandReport extends ConsumerWidget {
 
 String _reportLabel(_ReportType r) {
   switch (r) {
+    case _ReportType.sales:
+      return 'Sales Revenue';
     case _ReportType.onHand:
       return 'On-Hand Inventory';
     case _ReportType.supplyDemand:
@@ -423,6 +485,8 @@ String _reportLabel(_ReportType r) {
 
 IconData _reportIcon(_ReportType r) {
   switch (r) {
+    case _ReportType.sales:
+      return Icons.payments_outlined;
     case _ReportType.onHand:
       return Icons.inventory_2_outlined;
     case _ReportType.supplyDemand:

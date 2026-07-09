@@ -3,10 +3,13 @@ package com.shelfj.reporting.service;
 import com.shelfj.reporting.domain.Domain.InventoryProjection;
 import com.shelfj.reporting.domain.Domain.MovementStat;
 import com.shelfj.reporting.domain.Domain.OpenSupplyLine;
+import com.shelfj.reporting.domain.Domain.SalesDayStat;
+import com.shelfj.reporting.domain.Domain.SalesSummary;
 import com.shelfj.reporting.repo.ReportingRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -79,5 +82,35 @@ public class ReportingService {
 
   public void applyTransferReceived(UUID eventId) {
     repo.deleteSupplyLinesByEvent(eventId);
+  }
+
+  // ── N4: Sales reporting ──────────────────────────────────────────────────
+
+  /** Project a confirmed order into the sales facts (idempotent on the order PK). */
+  public void recordSale(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      String channel,
+      UUID customerId,
+      BigDecimal gross,
+      String currency) {
+    repo.recordSaleOnce(tenantId, orderId, storeId, channel, customerId, gross, currency);
+  }
+
+  /** Add a refund to a sale's projected total, deduped on the payment event's eventId. */
+  public void applySalesRefund(
+      UUID eventId, String consumer, UUID tenantId, UUID orderId, BigDecimal amount) {
+    repo.applySalesRefundOnce(eventId, consumer, tenantId, orderId, amount);
+  }
+
+  public List<SalesSummary> salesSummary(
+      UUID tenantId, Instant from, Instant to, UUID storeId, String channel) {
+    return repo.salesSummary(tenantId, from, to, storeId, channel);
+  }
+
+  public List<SalesDayStat> salesByDay(
+      UUID tenantId, Instant from, Instant to, UUID storeId, String channel) {
+    return repo.salesByDay(tenantId, from, to, storeId, channel);
   }
 }

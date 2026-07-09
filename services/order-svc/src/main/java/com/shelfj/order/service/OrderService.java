@@ -333,7 +333,13 @@ public class OrderService {
         "confirmed",
         userId,
         Events.orderConfirmed(
-            tenantId, orderId, order.customerId(), order.total(), order.currency()));
+            tenantId,
+            orderId,
+            order.storeId(),
+            order.channel(),
+            order.customerId(),
+            order.total(),
+            order.currency()));
   }
 
   public Order cancelOrder(UUID tenantId, UUID orderId, String reason, UUID userId) {
@@ -663,7 +669,13 @@ public class OrderService {
         paymentId,
         amount,
         Events.orderConfirmed(
-            tenantId, orderId, order.customerId(), order.total(), order.currency()));
+            tenantId,
+            orderId,
+            order.storeId(),
+            order.channel(),
+            order.customerId(),
+            order.total(),
+            order.currency()));
   }
 
   public void handlePaymentFailed(java.util.UUID tenantId, java.util.UUID orderId) {

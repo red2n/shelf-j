@@ -47,7 +47,13 @@ final class Events {
    * OrderRepository.applyPaymentCaptured).
    */
   static OutboxRow orderConfirmed(
-      UUID tenantId, UUID orderId, UUID customerId, BigDecimal total, String currency) {
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      String channel,
+      UUID customerId,
+      BigDecimal total,
+      String currency) {
     String customerPart = customerId != null ? "\"" + customerId + "\"" : "null";
     String amount = total != null ? total.toPlainString() : "0";
     String cur = currency != null ? currency : "GBP";
@@ -62,6 +68,10 @@ final class Events {
             + tenantId
             + "\",\"orderId\":\""
             + orderId
+            + "\",\"storeId\":\""
+            + storeId
+            + "\",\"channel\":\""
+            + esc(channel)
             + "\",\"customerId\":"
             + customerPart
             + ",\"total\":"
