@@ -1,15 +1,15 @@
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../constants.dart';
 import '../network/api_client.dart';
+import '../storage/app_storage.dart';
 import 'auth_state.dart';
 
 final authNotifierProvider =
     AsyncNotifierProvider<AuthNotifier, AuthState>(AuthNotifier.new);
 
 class AuthNotifier extends AsyncNotifier<AuthState> {
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AppStorage _storage = const AppStorage();
 
   @override
   Future<AuthState> build() => _restoreFromStorage();

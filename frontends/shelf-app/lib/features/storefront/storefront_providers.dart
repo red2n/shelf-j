@@ -3,8 +3,8 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../core/constants.dart';
+import '../../core/storage/app_storage.dart';
 
 /// Dev seam for "subdomain → tenant". In production the gateway derives the
 /// tenant from the storefront's domain; here we read `?tenant=<id>` from the URL
@@ -66,7 +66,7 @@ class StorefrontAuthNotifier extends StateNotifier<StorefrontAuthState> {
     _load();
   }
 
-  static const _storage = FlutterSecureStorage();
+  static const _storage = AppStorage();
   static const _kAccess = 'sf_cust_access';
   static const _kRefresh = 'sf_cust_refresh';
   static const _kEmail = 'sf_cust_email';
@@ -633,7 +633,7 @@ class StorefrontOrdersNotifier
     _load();
   }
 
-  static const _storage = FlutterSecureStorage();
+  static const _storage = AppStorage();
 
   Future<void> _load() async {
     try {
@@ -865,7 +865,7 @@ class CustomerPreferencesNotifier
     _load();
   }
 
-  static const _storage = FlutterSecureStorage();
+  static const _storage = AppStorage();
 
   Future<void> _load() async {
     final genderAsked =

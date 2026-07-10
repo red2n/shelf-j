@@ -3,10 +3,10 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../core/format.dart';
+import '../../core/storage/app_storage.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
 import 'survey_widgets.dart';
@@ -39,7 +39,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   final _recipientPhoneCtrl = TextEditingController();
   final _contactPhoneCtrl = TextEditingController();
 
-  static const _addressStorage = FlutterSecureStorage();
+  static const _addressStorage = AppStorage();
 
   @override
   void initState() {
