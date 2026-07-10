@@ -69,7 +69,8 @@ class PaymentServiceTest {
   }
 
   private static RecordTenderRequest req(UUID orderId, BigDecimal amount) {
-    return new RecordTenderRequest(orderId.toString(), amount, "CARD", null, null, null, null);
+    return new RecordTenderRequest(
+        orderId.toString(), amount, "CARD", null, null, null, null, null, null);
   }
 
   @Test
@@ -205,5 +206,129 @@ class PaymentServiceTest {
     var tender =
         svc.recordTender(req(orderId, new BigDecimal("99.99")), ctx(UUID.randomUUID(), null), null);
     assertEquals(orderId, tender.orderId());
+  }
+
+  // ── N3: store credit as tender ──────────────────────────────────────────────
+
+  private static final class RecordingCustomerClient
+      extends com.shelfj.payment.client.CustomerClient {
+    int redeems;
+    UUID customerId;
+    BigDecimal amount;
+    String currency;
+    UUID orderId;
+
+    @Override
+    public void redeemStoreCredit(
+        UUID tenantId, UUID customerId, BigDecimal amount, String currency, UUID orderId) {
+      this.redeems++;
+      this.customerId = customerId;
+      this.amount = amount;
+      this.currency = currency;
+      this.orderId = orderId;
+    }
+  }
+
+  /** Capturing repo with no pre-existing store-credit tender (first-time capture path). */
+  private static PaymentRepository storeCreditRepo() {
+    return new PaymentRepository() {
+      @Override
+      public PaymentTender createTender(PaymentTender t, OutboxRow event) {
+        return t;
+      }
+
+      @Override
+      public java.util.Optional<PaymentTender> findTenderByKey(UUID tenantId, String key) {
+        return java.util.Optional.empty();
+      }
+    };
+  }
+
+  private static RecordTenderRequest storeCreditReq(UUID orderId, UUID customerId, String amount) {
+    return new RecordTenderRequest(
+        orderId.toString(),
+        new BigDecimal(amount),
+        "STORE_CREDIT",
+        null,
+        null,
+        null,
+        null,
+        customerId == null ? null : customerId.toString(),
+        "GBP");
+  }
+
+  @Test
+  void storeCreditTender_redeemsThenRecordsTheTender() {
+    PaymentService svc = new PaymentService();
+    svc.repo = storeCreditRepo();
+    var cust = new RecordingCustomerClient();
+    svc.customerClient = cust;
+    UUID orderId = UUID.randomUUID();
+    UUID customerId = UUID.randomUUID();
+
+    var tender =
+        svc.recordTender(
+            storeCreditReq(orderId, customerId, "15.00"), ctx(UUID.randomUUID(), null), "k1");
+
+    assertEquals("STORE_CREDIT", tender.method());
+    assertEquals(new BigDecimal("15.00"), tender.amount());
+    assertEquals(1, cust.redeems);
+    assertEquals(customerId, cust.customerId);
+    assertEquals(orderId, cust.orderId);
+    assertEquals(new BigDecimal("15.00"), cust.amount);
+    assertEquals("GBP", cust.currency);
+  }
+
+  @Test
+  void storeCreditTender_requiresCustomerId() {
+    PaymentService svc = new PaymentService();
+    svc.repo = storeCreditRepo();
+    svc.customerClient = new RecordingCustomerClient();
+
+    var ex =
+        assertThrows(
+            ApiException.class,
+            () ->
+                svc.recordTender(
+                    storeCreditReq(UUID.randomUUID(), null, "15.00"),
+                    ctx(UUID.randomUUID(), null),
+                    null));
+    assertEquals("PAYMENT_CUSTOMER_REQUIRED", ex.code());
+  }
+
+  @Test
+  void storeCreditTender_isIdempotentWhenTenderAlreadyExists() {
+    PaymentService svc = new PaymentService();
+    UUID orderId = UUID.randomUUID();
+    UUID customerId = UUID.randomUUID();
+    var existing =
+        new PaymentTender(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            orderId,
+            new BigDecimal("15.00"),
+            "STORE_CREDIT",
+            null,
+            "sc:" + orderId,
+            "CAPTURED",
+            null,
+            java.time.Instant.now(),
+            null);
+    svc.repo =
+        new PaymentRepository() {
+          @Override
+          public java.util.Optional<PaymentTender> findTenderByKey(UUID tenantId, String key) {
+            return java.util.Optional.of(existing); // replay: the tender for this order exists
+          }
+        };
+    var cust = new RecordingCustomerClient();
+    svc.customerClient = cust;
+
+    var tender =
+        svc.recordTender(
+            storeCreditReq(orderId, customerId, "15.00"), ctx(UUID.randomUUID(), null), null);
+
+    assertEquals(existing.id(), tender.id());
+    assertEquals(0, cust.redeems, "a replayed store-credit tender must not redeem again");
   }
 }

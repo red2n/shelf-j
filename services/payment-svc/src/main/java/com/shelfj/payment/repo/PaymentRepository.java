@@ -325,6 +325,24 @@ public class PaymentRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Find a captured tender by its idempotency key (used to make store-credit tenders idempotent).
+   */
+  public Optional<PaymentTender> findTenderByKey(UUID tenantId, String idempotencyKey) {
+    var rows =
+        query(
+            "SELECT id, tenant_id, order_id, amount, method, reference,"
+                + " idempotency_key, status, notes, created_at, store_id"
+                + " FROM payment_tenders WHERE tenant_id=? AND idempotency_key=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, idempotencyKey);
+            },
+            this::mapTender,
+            "find tender by key");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
   public List<PaymentTender> findTendersByOrder(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, amount, method, reference,"

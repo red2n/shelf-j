@@ -146,7 +146,9 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       final order = orderResp.data['data'] as Map<String, dynamic>;
       final orderId = order['id'] as String? ?? '';
 
-      // 2. Record each tender against the order; redeem gift card / store credit.
+      // 2. Record each tender against the order. STORE_CREDIT redemption is done server-side by
+      // payment-svc (it redeems the customer's balance as part of capturing the tender), so the
+      // client no longer redeems directly — it just supplies the customer + currency.
       for (var i = 0; i < _tenders.length; i++) {
         final t = _tenders[i];
         await dio.post(
@@ -158,6 +160,8 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
             'storeId': storeId,
             if (t.method == 'GIFT_CARD') 'reference': t.giftCardCode,
             if (t.method == 'STORE_CREDIT') 'reference': 'STORE_CREDIT',
+            if (t.method == 'STORE_CREDIT') 'customerId': t.customerId,
+            if (t.method == 'STORE_CREDIT') 'currency': currency,
           },
           options: Options(headers: {'Idempotency-Key': '$idemBase-pay$i'}),
         );
@@ -165,12 +169,6 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           await dio.post(
             '/${ApiConstants.order}/gift-cards/${t.giftCardCode}/redeem',
             data: {'amount': t.amount, 'orderId': orderId},
-          );
-        }
-        if (t.method == 'STORE_CREDIT' && t.customerId != null) {
-          await dio.post(
-            '/${ApiConstants.customer}/customers/${t.customerId}/store-credit/redeem',
-            data: {'amount': t.amount, 'currency': currency, 'orderId': orderId},
           );
         }
       }

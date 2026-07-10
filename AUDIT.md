@@ -54,10 +54,16 @@ The platform is a working, sizeable system, and the **cross-cutting foundation i
 >
 > **Design decision — profile-on-register intentionally *not* implemented.** `customers` is per-tenant (`tenant_id NOT NULL`, required first/last name, `UNIQUE(tenant_id,email)`), but `UserRegistered` carries a **null tenant and no name** (a customer isn't bound to a tenant at registration). A profile is correctly created at transaction time via `POST /customers`. Auto-creating a tenant-less/nameless profile from `UserRegistered` would violate the schema; the honest fix is to leave profile creation where it is. If a global (cross-tenant) customer identity is ever wanted, that's a separate model change, tracked separately.
 
-### N3 — loyalty / store-credit can't be used as tender at checkout 🟠
-`order-svc` has synchronous clients for **inventory and pricing only** (`order-svc/.../client/{InventoryClient,PricingClient}.java`); it never calls `customer-svc`. Gift cards are the one exception (order-svc owns that table itself).
-- **Impact:** the loyalty and store-credit ledgers exist but **cannot be redeemed during a sale** — a core retail expectation is missing from the tender flow.
-- **Fix:** add a `customer-svc` client + a redeem step in the tender/checkout path (as a compensating saga step: reserve/redeem on confirm, refund the ledger on cancel).
+### N3 — store credit can't be used as tender at checkout ✅ RESOLVED (2026-07-08, store credit)
+The POS tender screen already offered a "Store Credit" tender, but payment-svc **rejected `STORE_CREDIT` as an invalid method**, and the Flutter client was redeeming the balance **itself** (client-side orchestration) — so the redemption was neither server-authoritative nor reflected as a captured tender (the store-credit portion never accumulated into `paid_amount`).
+
+> **Resolved (store credit).** Redemption is now server-side in the tender path:
+> - **payment-svc** gains a `CustomerClient` (Consul-resolved, fault-tolerant) and accepts `STORE_CREDIT` as a tender method. `capture()` → `captureStoreCredit()` redeems the customer's balance via customer-svc **before** recording the tender (an insufficient balance → 422, so `paid_amount` is never inflated), then records a `STORE_CREDIT` `PaymentTender` → `PaymentCaptured` accumulates it like any other tender. Keyed idempotently on `"sc:"+orderId` (belt-and-suspenders with the customer-svc guard below), so a retried capture neither double-redeems nor double-tenders. The internal call stamps a trusted `X-Roles: CASHIER` for customer-svc's `AdminAuthorizationFilter`.
+> - **customer-svc** `redeemStoreCredit` is now **idempotent per order** (a REDEEM already recorded for `(customer, order)` is a no-op), making the cross-service redeem retry-safe.
+> - **Frontend** now sends `customerId`/`currency` on the `STORE_CREDIT` tender and **drops its own client-side redeem** — payment-svc is authoritative.
+> - **Tests:** payment-svc unit (redeem-then-record, customerId required, idempotent replay) + customer-svc IT (per-order redeem idempotency). payment-svc (19) + customer-svc (21) green; `flutter analyze` clean; SpotBugs/PMD pass.
+>
+> **Follow-ups (tracked):** (1) **loyalty points as tender** — needs a points→currency redemption-rate decision (config); the manual `/loyalty/redeem` endpoint still exists. (2) **refund re-credit** — refunding a store-credit-tendered order (N5) should re-issue the credit; today the refund records a `STORE_CREDIT` refund tender but doesn't call customer-svc to re-credit.
 
 ### N4 — reporting-svc is inventory-only; no sales analytics exist ✅ RESOLVED (2026-07-08)
 reporting-svc consumed only inventory/transfer events; there was no `sales_facts` and no revenue reporting despite `OrderConfirmed`/`PaymentRefunded` being on the bus.
@@ -140,7 +146,7 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 | ~~N6~~ | ~~Wire or delete config-svc~~ | Platform | ✅ | — | Done 2026-07-08 — wired via ConfigServiceConfigSource (ordinal 150, resilient) |
 | N10 | Integrate a real payment PSP + webhook verification | Backend | 🔴 | L | Blocks real revenue |
 | ~~N4~~ | ~~Sales projection + revenue reporting in reporting-svc~~ | Backend | ✅ | — | Done 2026-07-08 — sales_facts projection + summary/by-day endpoints + admin tab |
-| N3 | Loyalty / store-credit redeemable as tender at checkout | Backend | 🟠 | M | order-svc → customer-svc client + saga step |
+| ~~N3~~ | ~~Store credit redeemable as tender at checkout~~ | Backend | ✅ | — | Done 2026-07-08 — payment-svc CustomerClient + STORE_CREDIT tender (loyalty-as-tender follow-up) |
 | ~~N7~~ | ~~Stranded-PENDING-order sweeper; reconcile saga docs~~ | Backend | ✅ | — | Done 2026-07-08 — PendingOrderSweeper + README saga reconciled |
 | U2 | Server-side pagination roll-out | UI | 🔴@scale | L | +paginated `/admin/inventory/levels` endpoint |
 | A5 | Continue god-file split | API | 🟠 | L | Per-aggregate repos extending `BaseOutboxRepository` |

@@ -27,6 +27,8 @@ public final class Domain {
     public static final String METHOD_WALLET = "WALLET";
     public static final String METHOD_GIFT_CARD = "GIFT_CARD";
     public static final String METHOD_VOUCHER = "VOUCHER";
+    // Redeems the customer's store-credit balance (customer-svc) as tender toward the order.
+    public static final String METHOD_STORE_CREDIT = "STORE_CREDIT";
 
     public static final String STATUS_CAPTURED = "CAPTURED";
     public static final String STATUS_FAILED = "FAILED";

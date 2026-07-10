@@ -516,6 +516,12 @@ public class CustomerRepository extends BaseOutboxRepository {
         conn -> {
           StoreCreditAccount account =
               getOrCreateStoreCreditAccount(conn, tenantId, customerId, currency);
+          // Idempotent per order: a store-credit tender against an order may be retried by
+          // payment-svc; a REDEEM already recorded for this order is a no-op, not a second
+          // deduction.
+          if (orderId != null && storeCreditRedeemExistsTx(conn, tenantId, customerId, orderId)) {
+            return account;
+          }
           if (account.balance().compareTo(amount) < 0) {
             throw new ApiException(
                 422, "STORE_CREDIT_INSUFFICIENT", "Insufficient store credit", java.util.List.of());
@@ -540,6 +546,21 @@ public class CustomerRepository extends BaseOutboxRepository {
           return updated;
         },
         "redeem store credit");
+  }
+
+  private static boolean storeCreditRedeemExistsTx(
+      java.sql.Connection c, UUID tenantId, UUID customerId, UUID orderId) throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "SELECT 1 FROM store_credit_ledger"
+                + " WHERE tenant_id = ? AND customer_id = ? AND order_id = ? AND type = 'REDEEM'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.setObject(3, orderId);
+      try (var rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
   }
 
   public Optional<StoreCreditAccount> findStoreCreditAccount(

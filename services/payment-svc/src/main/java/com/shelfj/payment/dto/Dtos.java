@@ -21,7 +21,11 @@ public final class Dtos {
       String reference,
       String idempotencyKey,
       String notes,
-      String storeId) {}
+      String storeId,
+      // Required only for STORE_CREDIT tenders: the customer whose balance is redeemed, and the
+      // currency of that balance (defaults to GBP).
+      String customerId,
+      String currency) {}
 
   public record RecordRefundRequest(
       @NotBlank String paymentId,

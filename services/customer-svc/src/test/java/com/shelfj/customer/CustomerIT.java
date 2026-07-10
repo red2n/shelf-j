@@ -348,6 +348,37 @@ class CustomerIT {
   }
 
   @Test
+  void storeCreditRedeemIsIdempotentPerOrder() {
+    Response r =
+        post(
+            "/customers",
+            "{\"email\":\"kate@example.com\",\"firstName\":\"Kate\",\"lastName\":\"Ng\"}");
+    String id = field(r.readEntity(String.class), "id");
+    assertThat(
+        post("/customers/" + id + "/store-credit/issue", "{\"amount\":100.00,\"reason\":\"seed\"}")
+            .getStatus(),
+        is(200));
+
+    // payment-svc may retry the same store-credit tender for an order; keyed on orderId, the second
+    // redeem must be a no-op (not a second deduction).
+    String order = java.util.UUID.randomUUID().toString();
+    String body = "{\"amount\":30.00,\"orderId\":\"" + order + "\",\"reason\":\"tender\"}";
+    assertThat(post("/customers/" + id + "/store-credit/redeem", body).getStatus(), is(200));
+    assertThat(post("/customers/" + id + "/store-credit/redeem", body).getStatus(), is(200));
+
+    String credit =
+        target
+            .path("/customers/" + id + "/store-credit")
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", TENANT)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    // 100 − 30 (once, not twice) = 70. A double redeem would show 40.
+    assertThat(credit, containsString("\"balance\":70.00"));
+    assertThat(credit, not(containsString("\"balance\":40")));
+  }
+
+  @Test
   void archRules() {
     var classes = new ClassFileImporter().importPackages("com.shelfj.customer");
     ShelfJArchRules.API_DOES_NOT_CALL_REPO.check(classes);
