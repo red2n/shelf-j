@@ -40,4 +40,17 @@ public class AdminResource {
     var dtos = alerts.stream().map(Mappers::toDto).toList();
     return ApiResponse.ok(dtos);
   }
+
+  /** In-app notifications feed (welcome / order-confirmation / …) for the tenant, newest first. */
+  @GET
+  public ApiResponse<Object> listNotifications(
+      @QueryParam("recipient") String recipient,
+      @QueryParam("limit") @DefaultValue("20") int limit) {
+    UUID tenantId = ctx.requireTenantId();
+    int effectiveLimit = (limit < 1 || limit > 100) ? 20 : limit;
+    var notifications =
+        service.listNotifications(
+            tenantId, recipient != null && !recipient.isBlank() ? recipient : null, effectiveLimit);
+    return ApiResponse.ok(notifications.stream().map(Mappers::toDto).toList());
+  }
 }

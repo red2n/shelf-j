@@ -1,5 +1,6 @@
 package com.shelfj.notification.service;
 
+import com.shelfj.notification.domain.Domain.NotificationLog;
 import com.shelfj.notification.domain.Domain.ShortageAlert;
 import com.shelfj.notification.repo.NotificationRepository;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -44,5 +45,11 @@ public class NotificationService {
   public List<ShortageAlert> listAlertsByVariant(UUID tenantId, UUID variantId, int limit) {
     int cap = Math.min(limit, 100);
     return repo.listAlertsByVariant(tenantId, variantId, cap);
+  }
+
+  /** In-app notifications feed for a tenant, newest first (optionally filtered by recipient). */
+  public List<NotificationLog> listNotifications(UUID tenantId, String recipient, int limit) {
+    int cap = Math.min(limit, 100);
+    return repo.listRecent(tenantId, recipient, cap);
   }
 }

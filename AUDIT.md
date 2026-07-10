@@ -23,7 +23,7 @@
 
 The platform is a working, sizeable system, and the **cross-cutting foundation is now genuinely strong** (see below). The correctness/security class of problems from the previous audit is largely closed. **The headline finding has shifted:** the remaining risk is no longer per-request correctness — it is **half-wired features**. Several capabilities that exist as endpoints, tables, and published events are **not connected end-to-end**: notifications are never actually sent, customer loyalty never auto-accrues, refunds never propagate to the order, sales analytics don't exist, and the central config service is deployed but unused.
 
-**Blocking-for-credible-launch items (this revision):** N1 (notifications never delivered), N10 (payment provider still mocked). ~~N2~~, ~~N5~~, ~~N6~~, ~~N7~~ resolved 2026-07-08.
+**Blocking-for-credible-launch items (this revision):** N10 (payment provider still mocked). ~~N1~~, ~~N2~~, ~~N3~~, ~~N4~~, ~~N5~~, ~~N6~~, ~~N7~~ resolved 2026-07-08.
 
 ---
 
@@ -39,10 +39,16 @@ The platform is a working, sizeable system, and the **cross-cutting foundation i
 
 # NEW FINDINGS — integration & wiring (2026-07-08)
 
-### N1 — notification-svc is a stub; nothing is ever actually sent 🔴 (blocking)
-`notification-svc` contains a single consumer (`ShortageAlertConsumer`) that reacts to `StockBelowThreshold` by writing a `shortage_alerts` row. There is **no SMTP / mail / SMS / push / webhook code anywhere** in the module (its only tables are `shortage_alerts` + `processed_events`). Consequently **order confirmations, welcome emails, OTP delivery, low-stock emails, and receipt emails are never delivered** — the POS "email receipt" and storefront flows record intent but dispatch nothing.
-- **Impact:** a customer-facing SaaS with no outbound comms; OTP-based flows and transactional email are non-functional.
-- **Fix:** either (a) implement an outbound-channel abstraction (SMTP/SES + SMS/push providers) and consume `UserRegistered`, `OrderConfirmed`, `OrderFulfilled`, receipt, and `StockBelowThreshold` events idempotently; or (b) explicitly descope notifications in the PRD and remove the "email receipt" affordances from POS/storefront so the UI doesn't promise delivery it can't make.
+### N1 — notification-svc is a stub; nothing is ever actually sent ✅ RESOLVED (2026-07-08)
+`notification-svc` only wrote `shortage_alerts` rows and had no outbound channel — welcome/order-confirmation notifications were never delivered.
+
+> **Resolved — a real, pluggable notification pipeline.** notification-svc now consumes user/order events and delivers each through a channel, recording every send in a new `notification_log` (V2), idempotent per `(event_id, type)` so a redelivered event never re-notifies.
+> - **Channels** (`NotificationChannel` + `NotificationChannelProducer`, selected by `shelfj.notification.channel`): **`app` — the default in-app notification** (the `notification_log` row *is* the delivery, surfaced via a feed endpoint — no external push); **`email`** — real SMTP via Jakarta Mail (Angus), credentials from env/secret store. SMS/push are future channels added the same way (no consumer changes).
+> - **Consumers:** `UserRegisteredConsumer` → welcome (recipient email is on the event); `OrderConfirmedConsumer` → order confirmation (buyer email resolved best-effort from customer-svc via a new `CustomerClient`; guest orders / missing email are skipped). Each has its own consumer group; failures propagate for retry, successes dedupe.
+> - **Feed:** `GET /admin/notifications` (tenant-scoped, newest first, optional `recipient` filter) makes the in-app notifications retrievable.
+> - **Tests:** `NotifierTest` (send-once / skip-when-notified / no-recipient / failure-not-recorded), `UserRegisteredHandlerTest` (parse+route), and `NotificationIT` (record + idempotency + feed). notification-svc (11) green; SpotBugs/PMD pass.
+>
+> **Follow-ups:** surface the feed in the app UI (a notifications bell/list); order **receipt** email and OTP delivery (OTP has no event yet); wire real SMTP creds for `channel=email` in prod.
 
 ### N2 — customer-svc consumes zero events → no loyalty automation ✅ RESOLVED (2026-07-08)
 `customer-svc` had **no `messaging/` package** — it published events but subscribed to none, so loyalty accrued only through the manual `/{id}/loyalty/earn` endpoint.
@@ -140,7 +146,7 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 
 | # | Item | Layer | Severity | Effort | Notes |
 |---|---|---|---|---|---|
-| N1 | Deliver notifications (or descope + de-promise in UI) | Backend | 🔴 | M–L | Touches OTP, order confirmations, receipts |
+| ~~N1~~ | ~~Deliver notifications (channels + welcome/order-confirmation)~~ | Backend | ✅ | — | Done 2026-07-08 — app (default)/email channels + notification_log + feed |
 | ~~N2~~ | ~~Event-wire customer-svc (loyalty on order)~~ | Backend | ✅ | — | Done 2026-07-08 — OrderConfirmed consumer + idempotent accrual |
 | ~~N5~~ | ~~Close the refund loop (auto-refund + status propagation)~~ | Backend | ✅ | — | Done 2026-07-08 — order-event refund consumer + `refunded_amount` status flip |
 | ~~N6~~ | ~~Wire or delete config-svc~~ | Platform | ✅ | — | Done 2026-07-08 — wired via ConfigServiceConfigSource (ordinal 150, resilient) |

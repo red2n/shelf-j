@@ -1,5 +1,6 @@
 package com.shelfj.notification.repo;
 
+import com.shelfj.notification.domain.Domain.NotificationLog;
 import com.shelfj.notification.domain.Domain.ShortageAlert;
 import com.shelfj.service.BaseJdbcRepository;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -72,6 +73,90 @@ public class NotificationRepository extends BaseJdbcRepository {
         },
         NotificationRepository::mapAlert,
         "list shortage alerts by variant");
+  }
+
+  // ── Outbound notification log (N1) ────────────────────────────────────────
+
+  /** True if this event already produced a notification of this type (send-once guard). */
+  public boolean alreadyNotified(UUID eventId, String type) {
+    return !query(
+            "SELECT 1 FROM notification_log WHERE event_id = ? AND type = ?",
+            ps -> {
+              ps.setObject(1, eventId);
+              ps.setString(2, type);
+            },
+            rs -> Boolean.TRUE,
+            "check notification log")
+        .isEmpty();
+  }
+
+  /**
+   * Record a delivered notification. {@code ON CONFLICT (event_id, type) DO NOTHING} makes a
+   * concurrent/redelivered send a no-op even if the {@link #alreadyNotified} pre-check raced.
+   */
+  public void recordNotification(
+      UUID tenantId,
+      UUID eventId,
+      String type,
+      String channel,
+      String recipient,
+      String subject,
+      String body,
+      String status) {
+    exec(
+        "INSERT INTO notification_log"
+            + " (id, tenant_id, event_id, type, channel, recipient, subject, body, status)"
+            + " VALUES (?,?,?,?,?,?,?,?,?)"
+            + " ON CONFLICT (event_id, type) DO NOTHING",
+        ps -> {
+          ps.setObject(1, UUID.randomUUID());
+          ps.setObject(2, tenantId);
+          ps.setObject(3, eventId);
+          ps.setString(4, type);
+          ps.setString(5, channel);
+          ps.setString(6, recipient);
+          ps.setString(7, subject);
+          ps.setString(8, body);
+          ps.setString(9, status);
+        },
+        "record notification");
+  }
+
+  /** Recent in-app notifications for a tenant, newest first, optionally filtered by recipient. */
+  public List<NotificationLog> listRecent(UUID tenantId, String recipient, int limit) {
+    StringBuilder sb =
+        new StringBuilder(
+            "SELECT id, tenant_id, event_id, type, channel, recipient, subject, body, status,"
+                + " created_at FROM notification_log WHERE tenant_id = ?");
+    if (recipient != null) sb.append(" AND recipient = ?");
+    sb.append(" ORDER BY created_at DESC LIMIT ?");
+    return query(
+        sb.toString(),
+        ps -> {
+          ps.setObject(1, tenantId);
+          if (recipient != null) {
+            ps.setString(2, recipient);
+            ps.setInt(3, limit);
+          } else {
+            ps.setInt(2, limit);
+          }
+        },
+        NotificationRepository::mapNotification,
+        "list notifications");
+  }
+
+  private static NotificationLog mapNotification(ResultSet rs) throws SQLException {
+    return new NotificationLog(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("event_id", UUID.class),
+        rs.getString("type"),
+        rs.getString("channel"),
+        rs.getString("recipient"),
+        rs.getString("subject"),
+        rs.getString("body"),
+        rs.getString("status"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
   private static ShortageAlert mapAlert(ResultSet rs) throws SQLException {

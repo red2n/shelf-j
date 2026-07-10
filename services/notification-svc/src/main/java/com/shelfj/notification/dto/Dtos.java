@@ -19,4 +19,15 @@ public final class Dtos {
       Instant alertedAt) {}
 
   public record ShortageAlertListResponse(List<ShortageAlertDto> data) {}
+
+  /** One in-app notification for the notifications feed. */
+  public record NotificationDto(
+      String id,
+      String type,
+      String channel,
+      String recipient,
+      String subject,
+      String body,
+      String status,
+      Instant createdAt) {}
 }
