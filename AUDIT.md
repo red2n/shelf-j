@@ -23,7 +23,7 @@
 
 The platform is a working, sizeable system, and the **cross-cutting foundation is now genuinely strong** (see below). The correctness/security class of problems from the previous audit is largely closed. **The headline finding has shifted:** the remaining risk is no longer per-request correctness — it is **half-wired features**. Several capabilities that exist as endpoints, tables, and published events are **not connected end-to-end**: notifications are never actually sent, customer loyalty never auto-accrues, refunds never propagate to the order, sales analytics don't exist, and the central config service is deployed but unused.
 
-**Blocking-for-credible-launch items (this revision):** N10 (payment provider still mocked). ~~N1~~, ~~N2~~, ~~N3~~, ~~N4~~, ~~N5~~, ~~N6~~, ~~N7~~ resolved 2026-07-08.
+**Blocking-for-credible-launch items (this revision):** all resolved 2026-07-08 (~~N1~~, ~~N2~~, ~~N3~~, ~~N4~~, ~~N5~~, ~~N6~~, ~~N7~~) except **N10** (real payment PSP), which is **deferred** — payments are being disabled app-wide for now.
 
 ---
 
@@ -119,10 +119,10 @@ Published-but-unconsumed today: `AccountingPeriod*`, `Kanban*`, `Serial*`, `Lot*
 - **Impact:** correct today, but inconsistent with the pattern used everywhere else and fragile if a non-idempotent consumer is ever added.
 - **Fix:** add the dedupe table when/if a non-idempotent consumer is introduced; otherwise document the reliance on natural idempotency.
 
-### N10 — payment provider is still mocked 🟡 (carry-over, now explicit)
-`payment-svc/.../api/PaymentResource.java:49` carries a "Hardening TODO: integrate a real payment provider." CASH/CARD/UPI/WALLET tenders are **recorded**, not captured through a PSP, and there is no webhook signature verification.
-- **Impact:** no real money moves; fine for demo, blocking for launch.
-- **Fix:** integrate a real PSP behind a provider interface; verify webhook signatures; preserve the existing idempotency-key handling.
+### N10 — payment provider is still mocked ⏸️ DEFERRED (2026-07-08)
+`payment-svc/.../api/PaymentResource.java` self-attests that money moved: CASH/CARD/UPI/WALLET tenders are **recorded**, not captured through a real PSP, and there is no webhook signature verification.
+- **Impact:** no real money moves; fine for demo, blocking for real revenue.
+- **Decision (2026-07-08):** deferred — **payment services are being disabled app-wide for now**, so a real PSP integration (Stripe/other) is out of scope until payments are re-enabled. When that happens, integrate a real PSP behind a provider interface, verify webhook signatures, and preserve the existing idempotency-key handling.
 
 ---
 
@@ -150,7 +150,7 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 | ~~N2~~ | ~~Event-wire customer-svc (loyalty on order)~~ | Backend | ✅ | — | Done 2026-07-08 — OrderConfirmed consumer + idempotent accrual |
 | ~~N5~~ | ~~Close the refund loop (auto-refund + status propagation)~~ | Backend | ✅ | — | Done 2026-07-08 — order-event refund consumer + `refunded_amount` status flip |
 | ~~N6~~ | ~~Wire or delete config-svc~~ | Platform | ✅ | — | Done 2026-07-08 — wired via ConfigServiceConfigSource (ordinal 150, resilient) |
-| N10 | Integrate a real payment PSP + webhook verification | Backend | 🔴 | L | Blocks real revenue |
+| N10 | Integrate a real payment PSP + webhook verification | Backend | ⏸️ | L | Deferred — payments being disabled app-wide |
 | ~~N4~~ | ~~Sales projection + revenue reporting in reporting-svc~~ | Backend | ✅ | — | Done 2026-07-08 — sales_facts projection + summary/by-day endpoints + admin tab |
 | ~~N3~~ | ~~Store credit redeemable as tender at checkout~~ | Backend | ✅ | — | Done 2026-07-08 — payment-svc CustomerClient + STORE_CREDIT tender (loyalty-as-tender follow-up) |
 | ~~N7~~ | ~~Stranded-PENDING-order sweeper; reconcile saga docs~~ | Backend | ✅ | — | Done 2026-07-08 — PendingOrderSweeper + README saga reconciled |
