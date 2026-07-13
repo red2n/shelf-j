@@ -112,7 +112,7 @@ public class OrderResource {
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") String id) {
-    var order = svc.getOrder(ctx.tenantId(), Parsing.uuid(id, "id"));
+    var order = svc.getOrder(ctx.tenantId(), Parsing.uuid(id, "id"), ctx);
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
@@ -149,7 +149,7 @@ public class OrderResource {
   @GET
   @Path("/{id}/history")
   public Response history(@PathParam("id") String id) {
-    var hist = svc.getOrderHistory(ctx.tenantId(), Parsing.uuid(id, "id"));
+    var hist = svc.getOrderHistory(ctx.tenantId(), Parsing.uuid(id, "id"), ctx);
     return Response.ok(ApiResponse.ok(hist.stream().map(Mappers::toDto).toList())).build();
   }
 
@@ -183,7 +183,7 @@ public class OrderResource {
   @GET
   @Path("/{id}/returns")
   public Response listReturns(@PathParam("id") String id) {
-    var returns = svc.getReturns(ctx.tenantId(), Parsing.uuid(id, "id"));
+    var returns = svc.getReturns(ctx.tenantId(), Parsing.uuid(id, "id"), ctx);
     var dtos =
         returns.stream()
             .map(

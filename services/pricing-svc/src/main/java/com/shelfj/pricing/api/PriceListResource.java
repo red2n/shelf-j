@@ -7,6 +7,7 @@ import com.shelfj.pricing.dto.Dtos.UpsertPriceListItemRequest;
 import com.shelfj.pricing.mapper.Mappers;
 import com.shelfj.pricing.service.PricingService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.ErrorBody;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
@@ -18,6 +19,7 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
@@ -41,10 +43,14 @@ public class PriceListResource {
         .build();
   }
 
+  /** List price lists. Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
   @GET
-  public Response list() {
+  public Response list(@QueryParam("after") String after, @QueryParam("limit") Integer limit) {
+    var page = svc.listPriceLists(ctx, after, Cursor.clampLimit(limit));
     return Response.ok(
-            ApiResponse.ok(svc.listPriceLists(ctx).stream().map(Mappers::toDto).toList()))
+            ApiResponse.ok(
+                page.items().stream().map(Mappers::toDto).toList(),
+                new ApiResponse.Meta(ctx.requestId(), page.nextCursor())))
         .build();
   }
 

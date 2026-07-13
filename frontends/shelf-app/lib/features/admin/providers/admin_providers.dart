@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/constants.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/paged.dart';
 
 // ── Models ──────────────────────────────────────────────────────────────────
 
@@ -330,22 +331,18 @@ final tenantInfoProvider = FutureProvider.autoDispose<TenantInfo>((ref) async {
   return TenantInfo.fromJson(resp.data['data'] as Map<String, dynamic>);
 });
 
-/// All stores for the tenant.
+/// All stores for the tenant (walks the cursor-paginated admin list).
 final storesProvider = FutureProvider.autoDispose<List<StoreInfo>>((ref) async {
-  final resp =
-      await ref.read(apiClientProvider).dio.get('/${ApiConstants.tenant}/admin/stores');
-  final data = (resp.data['data'] as List?) ?? [];
+  final data = await fetchAllPages(
+      ref.read(apiClientProvider).dio, '/${ApiConstants.tenant}/admin/stores');
   return data.map((e) => StoreInfo.fromJson(e as Map<String, dynamic>)).toList();
 });
 
 /// Zones (aisles/racks) within a store. Stock batches live in a (store, zone).
 final zonesProvider =
     FutureProvider.autoDispose.family<List<ZoneInfo>, String>((ref, storeId) async {
-  final resp = await ref
-      .read(apiClientProvider)
-      .dio
-      .get('/${ApiConstants.tenant}/admin/stores/$storeId/zones');
-  final data = (resp.data['data'] as List?) ?? [];
+  final data = await fetchAllPages(ref.read(apiClientProvider).dio,
+      '/${ApiConstants.tenant}/admin/stores/$storeId/zones');
   return data.map((e) => ZoneInfo.fromJson(e as Map<String, dynamic>)).toList();
 });
 
@@ -394,11 +391,10 @@ class StaffMember {
       );
 }
 
-/// All staff assignments for the tenant (GET /tenant-svc/admin/staff).
+/// All staff assignments for the tenant (walks the cursor-paginated admin list).
 final staffProvider = FutureProvider.autoDispose<List<StaffMember>>((ref) async {
-  final resp =
-      await ref.read(apiClientProvider).dio.get('/${ApiConstants.tenant}/admin/staff');
-  final data = (resp.data['data'] as List?) ?? [];
+  final data = await fetchAllPages(
+      ref.read(apiClientProvider).dio, '/${ApiConstants.tenant}/admin/staff');
   return data.map((e) => StaffMember.fromJson(e as Map<String, dynamic>)).toList();
 });
 
@@ -568,8 +564,8 @@ final productVariantsProvider =
 /// included), so one default list is enough to make products sellable.
 final defaultPriceListProvider = FutureProvider.autoDispose<String>((ref) async {
   final dio = ref.read(apiClientProvider).dio;
-  final resp = await dio.get('/${ApiConstants.pricing}/price-lists');
-  final lists = (resp.data['data'] as List?) ?? [];
+  final lists =
+      await fetchAllPages(dio, '/${ApiConstants.pricing}/price-lists');
 
   Map<String, dynamic>? chosen;
   for (final l in lists) {

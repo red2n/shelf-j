@@ -1,10 +1,8 @@
-# Shelf-J — Industry-Standard Deep-Dive Audit
+# Shelf-J — Independent Deep-Dive Audit
 
-**Scope:** Independent assessment of the *actual* codebase (not the spec docs). This revision focuses on **service-to-service wiring and event topology** — which advertised flows are actually connected end-to-end — on top of the earlier API-design / UI-UX quality pass.
-**Method:** Mapped every Kafka publisher against every consumer, traced the checkout/return/refund and loyalty/notification paths through code, and verified each claim with targeted greps and file reads.
-**Date:** 2026-07-08 · **Branch:** `main`
-
-> **Revision note (2026-07-08):** the original API/UI findings (A1–A4, U1, U3) are resolved and have been removed from this document along with their implementation logs. Items still carrying real remaining scope are condensed in [§Carry-over open items](#carry-over-open-items-from-the-api--ui-pass). The bulk of this revision is the new **integration/wiring findings (N1–N10)**.
+**Scope:** A fresh, from-scratch assessment of the *actual* code on disk — no prior audit or its finding IDs were consulted. Every claim below was verified by reading the referenced file(s), not inferred from docs.
+**Method:** Traced the trust boundary (gateway → services), object- and role-level authorization on every reachable path, SQL/locking/money handling, the Kafka publisher↔consumer map, list-endpoint pagination, inter-service client resilience, and the Flutter client's storage + error surfaces.
+**Date:** 2026-07-13 · **Branch:** `feat/close-audit-findings` · **HEAD:** `c3bbe1c`
 
 ---
 
@@ -12,133 +10,81 @@
 
 | Area | Reality on disk |
 |---|---|
-| Backend | 12 Helidon MP services, ~360 endpoint annotations, 228 main Java files, 146 Flyway migrations |
-| Frontend | Flutter app, 4 shells (admin / POS / storefront / platform), 74 Dart files, Riverpod + go_router + dio |
-| Platform | gateway (JWT/CORS/rate-limit/brute-force + `/v1` alias), Consul, PgBouncer, Kafka outbox **with DLQ**, config-svc, k6 load tests |
-| Tests | 45 backend test files (Testcontainers) + **11 frontend test files** (was 0 at the prior audit) |
+| Backend | 12 Helidon MP services + 3 platform modules (gateway/discovery/config), **251 main Java files**, **369 endpoint annotations**, **156 Flyway migrations** |
+| Frontend | One Flutter app (admin / POS / storefront / platform shells), **98 Dart files**, Riverpod + go_router + dio |
+| Shared | `common-web` (envelope, filters, tenant context), `common-service` (JDBC/outbox/Kafka loop), `events-contract`, `common-test` |
+| Tests | **49 backend test files** (Testcontainers; 2–8 per service, order-svc 8), **11 Flutter test files** |
+| Ops | docker-compose with healthchecks; only the **gateway (8090)** and **UI (8088)** bind host ports — every business service + infra store is internal or `127.0.0.1`-bound |
 
 ---
 
 ## Executive verdict
 
-The platform is a working, sizeable system, and the **cross-cutting foundation is now genuinely strong** (see below). The correctness/security class of problems from the previous audit is largely closed. **The headline finding has shifted:** the remaining risk is no longer per-request correctness — it is **half-wired features**. Several capabilities that exist as endpoints, tables, and published events are **not connected end-to-end**: notifications are never actually sent, customer loyalty never auto-accrues, refunds never propagate to the order, sales analytics don't exist, and the central config service is deployed but unused.
+The cross-cutting foundation is genuinely solid: the gateway is the single public door, it **strips client-supplied identity headers and re-stamps only JWT-verified ones**, refuses to boot on a weak JWT secret, and services take `tenant_id` exclusively from those verified headers. Writes are **default-deny** by role, money is `BigDecimal`/`NUMERIC`, and inter-service clients carry timeouts (mostly with retry/circuit-breaker). This is a well-built system.
 
-**Blocking-for-credible-launch items (this revision):** all resolved 2026-07-08 (~~N1~~, ~~N2~~, ~~N3~~, ~~N4~~, ~~N5~~, ~~N6~~, ~~N7~~) except **N10** (real payment PSP), which is **deferred** — payments are being disabled app-wide for now.
-
----
-
-## Verified-solid foundation (re-checked fresh, not gaps) ✅
-
-- **Security boundary.** `platform/gateway/.../filters/JwtAuthFilter.java` strips client-supplied identity headers before stamping verified ones, fails closed, refuses to boot on a weak JWT secret; brute-force / rate-limit / CORS filters exist with tests. `tenant_id` is only ever taken from the verified JWT.
-- **Messaging reliability.** `shared/common-service/.../KafkaEventLoop.java` does **manual offset commit with seek-back** and a real **dead-letter after `MAX_ATTEMPTS = 5`**; consumers gate readiness on a healthy loop (`KafkaConsumerRegistry`). Idempotent consumers dedupe via `processed_events`.
-- **Money & concurrency.** `BigDecimal`/`NUMERIC` throughout; refund caps, layaway overpayment, and return-quantity caps are enforced inside locked transactions; inventory reserve/deduct locks rows `FOR UPDATE`; checkout is idempotent (replay returns the original).
-- **Input & error hygiene.** `UuidParseExceptionMapper` turns malformed UUIDs into `400` (the old A3 500-bug), DTOs carry Bean Validation enforced via `Validations.validate`, sanitized 500s never leak SQL, cursors are opaque base64 keysets.
-- **Contract.** Single response envelope, stable machine error codes, OpenAPI served at `/openapi` on all 14 modules, `/v1` gateway alias with RFC 8594 deprecation header on the unversioned form.
+**The one finding that rises above "quality debt" is [F1]** — a broken **object-level** authorization on order reads: role-based (tenant/write) checks are strong, but a per-record ownership check was missing, so an authenticated customer could read another customer's order in their tenant — including its delivery address and contact phone — by ID. **F1 is now fixed** (`OrderService.requireReadAccess`, see the finding for details). Everything else is maintainability / scale-tail / consistency work.
 
 ---
 
-# NEW FINDINGS — integration & wiring (2026-07-08)
+## Verified-strong foundation (re-checked fresh, not gaps) ✅
 
-### N1 — notification-svc is a stub; nothing is ever actually sent ✅ RESOLVED (2026-07-08)
-`notification-svc` only wrote `shortage_alerts` rows and had no outbound channel — welcome/order-confirmation notifications were never delivered.
-
-> **Resolved — a real, pluggable notification pipeline.** notification-svc now consumes user/order events and delivers each through a channel, recording every send in a new `notification_log` (V2), idempotent per `(event_id, type)` so a redelivered event never re-notifies.
-> - **Channels** (`NotificationChannel` + `NotificationChannelProducer`, selected by `shelfj.notification.channel`): **`app` — the default in-app notification** (the `notification_log` row *is* the delivery, surfaced via a feed endpoint — no external push); **`email`** — real SMTP via Jakarta Mail (Angus), credentials from env/secret store. SMS/push are future channels added the same way (no consumer changes).
-> - **Consumers:** `UserRegisteredConsumer` → welcome (recipient email is on the event); `OrderConfirmedConsumer` → order confirmation (buyer email resolved best-effort from customer-svc via a new `CustomerClient`; guest orders / missing email are skipped). Each has its own consumer group; failures propagate for retry, successes dedupe.
-> - **Feed:** `GET /admin/notifications` (tenant-scoped, newest first, optional `recipient` filter) makes the in-app notifications retrievable.
-> - **Tests:** `NotifierTest` (send-once / skip-when-notified / no-recipient / failure-not-recorded), `UserRegisteredHandlerTest` (parse+route), and `NotificationIT` (record + idempotency + feed). notification-svc (11) green; SpotBugs/PMD pass.
->
-> **Follow-ups:** surface the feed in the app UI (a notifications bell/list); order **receipt** email and OTP delivery (OTP has no event yet); wire real SMTP creds for `channel=email` in prod.
-
-### N2 — customer-svc consumes zero events → no loyalty automation ✅ RESOLVED (2026-07-08)
-`customer-svc` had **no `messaging/` package** — it published events but subscribed to none, so loyalty accrued only through the manual `/{id}/loyalty/earn` endpoint.
-
-> **Resolved.** customer-svc now consumes `shelfj.order.order-confirmed` and accrues loyalty for the buyer automatically:
-> - **order-svc** enriches `OrderConfirmed` with `eventId` + `customerId` + `total` + `currency` (`Events.orderConfirmed`, both confirm paths — staff confirm and payment-captured). Emitted exactly once, at full payment.
-> - **customer-svc** adds a `processed_events` table (V2 migration), an `OrderConfirmedConsumer` + `OrderConfirmedHandler`, and `CustomerService.accrueLoyaltyFromOrder` → `CustomerRepository.accrueFromOrderOnce`. Points = `total × shelfj.customer.loyalty.points-per-unit` (default 1, rounded down). The dedupe mark + accrual + `LoyaltyEarned` outbox event commit in **one transaction**, so a redelivered event accrues at most once. Guest orders (`customerId:null`) and unknown/anonymized customers are skipped without looping.
-> - **Tests:** `OrderConfirmedHandlerTest` (4: real buyer / guest / legacy-missing-field / malformed) + `CustomerIT.loyaltyAccruesFromOrderOnceAndDedupesOnEventId` (Testcontainers: single accrual under redelivery). order-svc (50) + customer-svc (20) suites green.
->
-> **Design decision — profile-on-register intentionally *not* implemented.** `customers` is per-tenant (`tenant_id NOT NULL`, required first/last name, `UNIQUE(tenant_id,email)`), but `UserRegistered` carries a **null tenant and no name** (a customer isn't bound to a tenant at registration). A profile is correctly created at transaction time via `POST /customers`. Auto-creating a tenant-less/nameless profile from `UserRegistered` would violate the schema; the honest fix is to leave profile creation where it is. If a global (cross-tenant) customer identity is ever wanted, that's a separate model change, tracked separately.
-
-### N3 — store credit can't be used as tender at checkout ✅ RESOLVED (2026-07-08, store credit)
-The POS tender screen already offered a "Store Credit" tender, but payment-svc **rejected `STORE_CREDIT` as an invalid method**, and the Flutter client was redeeming the balance **itself** (client-side orchestration) — so the redemption was neither server-authoritative nor reflected as a captured tender (the store-credit portion never accumulated into `paid_amount`).
-
-> **Resolved (store credit).** Redemption is now server-side in the tender path:
-> - **payment-svc** gains a `CustomerClient` (Consul-resolved, fault-tolerant) and accepts `STORE_CREDIT` as a tender method. `capture()` → `captureStoreCredit()` redeems the customer's balance via customer-svc **before** recording the tender (an insufficient balance → 422, so `paid_amount` is never inflated), then records a `STORE_CREDIT` `PaymentTender` → `PaymentCaptured` accumulates it like any other tender. Keyed idempotently on `"sc:"+orderId` (belt-and-suspenders with the customer-svc guard below), so a retried capture neither double-redeems nor double-tenders. The internal call stamps a trusted `X-Roles: CASHIER` for customer-svc's `AdminAuthorizationFilter`.
-> - **customer-svc** `redeemStoreCredit` is now **idempotent per order** (a REDEEM already recorded for `(customer, order)` is a no-op), making the cross-service redeem retry-safe.
-> - **Frontend** now sends `customerId`/`currency` on the `STORE_CREDIT` tender and **drops its own client-side redeem** — payment-svc is authoritative.
-> - **Tests:** payment-svc unit (redeem-then-record, customerId required, idempotent replay) + customer-svc IT (per-order redeem idempotency). payment-svc (19) + customer-svc (21) green; `flutter analyze` clean; SpotBugs/PMD pass.
->
-> **Follow-ups (tracked):** (1) **loyalty points as tender** — needs a points→currency redemption-rate decision (config); the manual `/loyalty/redeem` endpoint still exists. (2) **refund re-credit** — refunding a store-credit-tendered order (N5) should re-issue the credit; today the refund records a `STORE_CREDIT` refund tender but doesn't call customer-svc to re-credit.
-
-### N4 — reporting-svc is inventory-only; no sales analytics exist ✅ RESOLVED (2026-07-08)
-reporting-svc consumed only inventory/transfer events; there was no `sales_facts` and no revenue reporting despite `OrderConfirmed`/`PaymentRefunded` being on the bus.
-
-> **Resolved.** Added a sales read-model (CQRS projection) driven by order/payment events:
-> - **order-svc** enriches `OrderConfirmed` with `storeId` + `channel` (on top of the N2 `customerId`/`total`/`currency`), so a sale fact needs no callback.
-> - **reporting-svc** adds `sales_facts` (V2), a `SalesEventConsumer` (own group `reporting-svc-sales`) + `SalesEventDispatcher`: `OrderConfirmed` → `recordSaleOnce` (naturally idempotent on the `(tenant, order)` PK via `ON CONFLICT DO NOTHING`); `PaymentRefunded` → `applySalesRefundOnce` (accumulates the refund, deduped on the event's `eventId`). So net = gross − refunded, and both manual and automatic (N5) refunds are reflected.
-> - **Endpoints:** `GET /admin/reports/sales/summary` (gross/refunded/net + order count grouped by currency) and `/by-day` (daily buckets), with optional `from`/`to` (inclusive ISO dates), `storeId`, `channel` filters; tenant from JWT.
-> - **Frontend:** a **Sales Revenue** tab in the admin Reports screen (`salesSummaryReportProvider` + `_SalesReport` table) — `flutter analyze` clean.
-> - **Tests:** `SalesEventDispatcherTest` (routing/guards) + `ReportingIT` (gross/refunded/net with refund dedupe; sale idempotent on order id). reporting-svc (10) + order-svc (52) green; SpotBugs/PMD pass.
->
-> Note: revenue is order-total based (per-line/product breakdown and tax splits are a later enrichment); `confirmed_at` uses the projection time (the event carries no timestamp), accurate to within processing latency.
-
-### N5 — refunds neither propagate to the order nor auto-trigger ✅ RESOLVED (2026-07-08)
-`payment-svc` consumed nothing (returns/cancels never auto-refunded) and `PaymentRefunded` had no consumer (a refunded order's status never changed).
-
-> **Resolved.** The refund loop is now closed on both sides:
-> - **payment-svc** gains an `OrderEventConsumer` on `shelfj.order.order-returned` + `shelfj.order.order-cancelled`. `OrderReturned` refunds the return amount **only for ORIGINAL-tender returns** (STORE_CREDIT/GIFT_CARD are settled elsewhere); `OrderCancelled` refunds whatever is still captured (unpaid pay-later cancels are a no-op — this also keeps the payment-failed→cancel saga path clean). `PaymentRepository.refundOrderOnce` is idempotent on the order event's `eventId`, caps at the remaining captured total, and **allocates across the order's captured tenders** so the per-tender cap holds for split-tender sales — all in one `FOR UPDATE` transaction. New `processed_events` table (V6).
-> - **order-svc** enriches `PaymentRefunded` with `eventId` + `amount` and consumes it (extending the existing `PaymentEventConsumer`). `OrderRepository.applyRefundOnce` accumulates a new `orders.refunded_amount` column (V10, mirroring `paid_amount`) and flips a sold order to `PARTIALLY_REFUNDED` / `REFUNDED` (new status constants) once refunds reach the total — idempotent on `eventId`. The manual `/refunds` endpoint now propagates to order status too (same event).
-> - `OrderReturned` gained `refundAmount`/`refundMethod`/`currency`; `OrderCancelled` gained `eventId` (existing inventory-svc hold-release consumer ignores the extra field).
-> - **Tests:** `PaymentRefundIT` (Testcontainers: cap, dedupe, split-tender allocation, unpaid no-op) + `OrderEventHandlerTest` (ORIGINAL vs store-credit vs cancel vs malformed) on the payment side; `OrderIT.paymentRefundedFlipsOrderToPartiallyThenFullyRefunded` (partial→full + dedupe) + `EventsTest` on the order side. payment-svc (16) + order-svc (51) suites green.
-
-### N6 — config-svc is deployed but unused ✅ RESOLVED (2026-07-08, wired)
-`platform/config` was built, health-gated, and waited on, but no service fetched from it — dead infra that contradicted golden rule #5.
-
-> **Resolved by wiring it in** (chosen over deletion, to make the documented centralized-config architecture real). Added `common-service`'s `ConfigServiceConfigSource` — a MicroProfile `ConfigSource` (registered via `META-INF/services/...ConfigSource`) that at startup fetches `GET /config/{service}/{profile}` from config-svc (authenticated with the shared `X-Config-Token`) and layers the returned values at **ordinal 150** — above the local `microprofile-config.properties` (100) but below env vars (300) / system properties (400). So config-svc overrides baked defaults while deploy-time env/secrets still win.
-> - **Resilient + opt-in:** activates only when `shelfj.config.url` is set (compose sets it on all 12 services via the `*svc-env` anchor, profile `docker`). Unset → empty no-op, so local dev and every existing `@HelidonTest` run unchanged. A 404 (no config for the service) or an unreachable config-svc degrades to empty — the service still boots on local defaults, preserving "start in any order". Secrets never travel this path.
-> - **Repo made usable:** `platform/config/.../config-repo/README.md` documents the file-naming + precedence model so ops can drop `{service}[-{profile}].properties` overrides in (empty today → every service 404s → identical behavior, but the plumbing is live).
-> - **Tests:** `ConfigServiceConfigSourceTest` (no-op when unset, layers remote values + sends the token, 404 → empty, unreachable → empty) — common-service (20) green; iam-svc `@HelidonTest` (17) confirms clean boot with the SPI source on the classpath. SpotBugs + PMD gates pass.
-
-### N7 — payment is client-choreographed; stranded PENDING orders are never cleaned up ✅ RESOLVED (2026-07-08)
-The frontend calls `payment-svc` directly and `order-svc` only orchestrates quote + reserve, reacting to `PaymentCaptured` — so a client that died after order-create stranded the order in PENDING forever (only the stock hold was reclaimed).
-
-> **Resolved.** Added `PendingOrderSweeper` (order-svc) — a daemon `ScheduledExecutorService` mirroring inventory-svc's `ReservationSweeper`. Every `shelfj.order.pending-sweeper.interval-seconds` (default 300) it cancels PENDING orders older than `…ttl-hours` (default 24) via `OrderService.sweepExpiredPendingOrders` → `OrderRepository.findExpiredPendingOrders` (cross-tenant scan) + the existing conditional `transitionOrderStatus` (PENDING→CANCELLED, so a concurrent confirm is safely skipped). Each cancellation emits `OrderCancelled`, which releases any remaining inventory hold and is a payment no-op (nothing captured). Enable flag + interval + TTL are configurable; batch capped at 200.
-> - **Docs reconciled:** README §2 (Saga) and §12 (checkout flow) now describe the real choreography — order-svc orchestrates placement (quote + reserve) synchronously, payment is **client-initiated** against payment-svc, and order-svc confirms on the `PaymentCaptured` event rather than calling payment-svc. The sweeper is documented as the stranded-order backstop.
-> - **Tests:** `OrderIT.sweeperCancelsExpiredPendingOrdersButNotConfirmedOnes` (expired PENDING → CANCELLED; CONFIRMED left untouched). order-svc (52) green.
->
-> Note: this keeps the client-choreographed payment model (it works and split-tender POS relies on it) and adds the missing backstop, rather than moving capture into an order-svc-orchestrated step.
-
-### N8 — many published events have no consumer 🟢 (observation)
-Published-but-unconsumed today: `AccountingPeriod*`, `Kanban*`, `Serial*`, `Lot*`, `MoveOrder*`, `PriceChanged`, `PromotionActivated`, `Product*`, `VariantCreated`, `PurchaseOrderCreated`, `IntercompanyInvoiceRaised`, `StoreCredit*`, `Loyalty*`, `ZoneCreated`, `UserRoleGranted`, `OrderConfirmed`, `OrderVoided`, `PaymentRefunded`.
-- **Impact:** mostly fine as future/audit hooks, but it means several "publish" side-effects are **end-to-end no-ops** and add outbox/Kafka traffic for nobody. Note the overlap: `OrderConfirmed` (N2/N4), `PaymentRefunded` (N5) and the loyalty events **should** be consumed.
-- **Fix:** no action required for the genuine future-hooks; treat the N2/N4/N5 ones as the missing half of those findings; optionally document intent so they aren't mistaken for bugs.
-
-### N9 — cart-svc consumes events without a processed_events dedupe table 🟢 (minor)
-`cart-svc` has consumers (`OrderPlaced`, tenant/store status) but **no `processed_events` table**; it relies on natural idempotency (closing an already-closed cart / last-write-wins status is a no-op).
-- **Impact:** correct today, but inconsistent with the pattern used everywhere else and fragile if a non-idempotent consumer is ever added.
-- **Fix:** add the dedupe table when/if a non-idempotent consumer is introduced; otherwise document the reliance on natural idempotency.
-
-### N10 — payment provider is still mocked ⏸️ DEFERRED (2026-07-08)
-`payment-svc/.../api/PaymentResource.java` self-attests that money moved: CASH/CARD/UPI/WALLET tenders are **recorded**, not captured through a real PSP, and there is no webhook signature verification.
-- **Impact:** no real money moves; fine for demo, blocking for real revenue.
-- **Decision (2026-07-08):** deferred — **payment services are being disabled app-wide for now**, so a real PSP integration (Stripe/other) is out of scope until payments are re-enabled. When that happens, integrate a real PSP behind a provider interface, verify webhook signatures, and preserve the existing idempotency-key handling.
+- **Trust boundary.** `platform/gateway/.../filters/JwtAuthFilter.java` strips any inbound `X-Tenant-Id`/`X-User-Id`/`X-Roles`, validates the Bearer JWT (HMAC256 + issuer), and re-injects identity from claims only; it throws on a `< 32`-char secret at `@PostConstruct`. Guest storefront access is a tight path whitelist keyed off `X-Storefront-Tenant`.
+- **Authorization default-deny (writes).** `shared/common-web/.../AdminAuthorizationFilter.java` denies every mutating request without a staff role unless the path is on an explicit bootstrap/identity/guest allowlist; `/admin/**` and `.../refunds`/`.../void` require a management role. New write endpoints ship protected.
+- **No direct service exposure.** In `docker-compose.yml` only `gateway` and the UI publish host ports; Postgres/Kafka/Consul/Redis are internal or loopback-bound.
+- **Money & concurrency.** `BigDecimal`/`NUMERIC` throughout; reserve/deduct locks rows `FOR UPDATE`; checkout is idempotency-key gated.
+- **Client resilience.** Every `*/client/*.java` sets a request `@Timeout`; the order/payment clients add `@Retry` + `@CircuitBreaker`/`@Fallback`.
 
 ---
 
-# Carry-over open items (from the API / UI pass)
+# Findings
 
-These remain genuinely incomplete (core landed, real scope left). Full implementation history for the *closed* items was removed in this revision.
+### F1 — Broken object-level authorization on order reads (IDOR, PII leak) 🔴 High — ✅ FIXED
+`GET /orders/{id}`, `GET /orders/{id}/history`, and `GET /orders/{id}/returns` scoped **only by tenant**, with no ownership check and no role gate (reads aren't covered by the write-only default-deny filter).
 
-| # | Item | Layer | Severity | State |
-|---|---|---|---|---|
-| A5 | Split god-files per aggregate (`InventoryRepository` ~3.6k lines, `ProductRepository` ~2.1k, bundled `Dtos.java`/`Domain.java`) | API | 🟠 | In progress — 2 repos extracted; pattern proven; bulk remaining |
-| U2 | Server-side pagination + search across list screens | UI | ✅ (2026-07-13) | All list screens paginate server-side now: orders (cursor infinite-scroll), customers + products (cursor + Load-more), and inventory-levels — the last one landed 2026-07-13 with a new keyset-paginated `/admin/inventory/levels` (`?after=&limit=`) plus a cheap `/admin/inventory/levels/summary` aggregate so the dashboard KPI tiles no longer fetch the full list. Free-text search stays a client-side filter over loaded pages (consistent with products). |
-| U4 | Consume structured `error.code` on every screen | UI | 🟠 | `api_error.dart` helper + a few screens done; ~12 screens still `$e` snackbars |
-| U5 | Accessibility (Semantics, non-colour status, ≥14px table text) | UI | 🟠 | Template slice done; app-wide roll-out pending |
-| U6 | i18n string coverage (money/date formatting already locale-aware) | UI | 🟠 | Pipeline live (gen-l10n, en+pl); remaining screens still inline English; pl/ro/pa/ur/bn/gu/ar translations to commission |
-| U7 | Design tokens (typography/spacing/semantic colours) | UI | 🟠 | Tokens established; magic-number sweep pending |
-| U8 | Broaden frontend test coverage | UI | 🟠 | Harness + 11 test files live; main-screen golden/widget + provider integration tests pending |
+- **Evidence:** `services/order-svc/.../api/OrderResource.java:114` — `svc.getOrder(ctx.tenantId(), uuid(id))` → `OrderService.getOrder(UUID tenantId, UUID orderId)` (`service/OrderService.java:306`) filtered by tenant + id **only**. Compare `GET /orders/mine` (`OrderResource.java:77`) which correctly restricts to `customerId = ctx.userId()` — showing per-customer isolation is the intended model, and `/{id}` bypassed it.
+- **Exposure:** the returned DTO carries `deliveryAddress`, `contactPhone`, `customerName`, `customerId` (`order-svc/.../dto/Dtos.java:46,228,231`). An authenticated `CUSTOMER` of a tenant could read another customer's order details by ID.
+- **Mitigating factors:** order IDs are random UUIDv4 (not enumerable) and the leak is within a single tenant; a guest (no JWT) is blocked at the gateway. Exploitability was further narrowed by the token model: customer JWTs carry no tenant claim (`tenantId = null`), and the gateway strips client-supplied `X-Tenant-Id`, so a plain customer reaching `/{id}` resolved no tenant and got 404. The unguarded reads were still wrong as a standing invariant — safety rested on distant gateway/token details, not on the endpoint.
+- **Fix (applied):** `OrderService.requireReadAccess` (mirrors `CartService.requireOwnership`): staff roles read any order in their tenant; a caller with a principal but no staff role must own the order (`order.customerId == ctx.userId()`), with denial as **404** (no existence oracle); a call with no principal at all (only `X-Tenant-Id`) is the service-to-service shape used by payment-svc's `OrderClient` and stays tenant-scoped. Enforced on all three reads via authorized service methods; covered by `OrderIT.orderByIdReadsAreObjectLevelAuthorized` (owner 200 / other customer 404 / staff 200 / s2s 200).
+
+### F2 — God-files concentrate many aggregates in one class 🟠 Medium (maintainability)
+A handful of classes carry disproportionate size, mixing many aggregates and making review/merge risky.
+
+- **Evidence:** `inventory-svc/.../repo/InventoryRepository.java` **3,935 lines**, `product-svc/.../repo/ProductRepository.java` **2,230**, `inventory-svc/.../service/InventoryService.java` **1,973**, `inventory-svc/.../api/AdminResource.java` **1,440**; bundled `Dtos.java`/`Domain.java` per service hold dozens of records.
+- **Impact:** SRP erosion, hard to reason about locking/transaction scope, high merge-conflict surface. Not a runtime bug.
+- **Fix:** split per aggregate into repositories extending the shared `BaseOutboxRepository` (batches / levels / planning / serials / lots …), and split `AdminResource` by sub-domain path group.
+
+### F3 — Residual fetch-all on low-cardinality admin lists 🟠 Medium-Low (scale-tail / consistency) — ✅ FIXED
+The high-cardinality lists (orders, customers, products, inventory-levels) were cursor-paginated, but several admin lists returned the whole set with no `after`/`limit`.
+
+- **Evidence (no cursor params):** `tenant-svc/.../api/AdminResource.java` `/staff` & `/stores` (and per-store `/zones`), `pricing-svc/.../api/PriceListResource.java` `/price-lists`.
+- **Impact:** fine today (few stores/staff/price-lists per tenant) but inconsistent with the documented cursor convention and unbounded if a tenant grows large.
+- **Fix (applied):** all four lists now use the standard keyset cursor (`(created_at, id)` ascending, `?after=&limit=`, `meta.nextCursor`), via new shared helpers in `common-web` `Cursor` (`decodeCreatedAtId` + generic `Page` builder) so the boilerplate isn't stamped per service. Consumers updated: the Flutter master-data providers (stores/zones/staff/price-lists) walk pages to completion through a new `core/network/paged.dart` helper (dropdown UX unchanged); product-svc's `PricingClient` default-list scan requests `limit=100`. The public `GET /storefront/stores` list is unchanged (separate surface). Covered by `OnboardingIT.adminListsAreCursorPaginated` (page walk, no duplicates, 400 on malformed cursor) and `PricingIT.priceListsAreCursorPaginated`.
+
+### F4 — Inconsistent error surfacing in the Flutter client 🟠 Low
+Structured API errors (`error.code`) are consumed by only a few screens; most still show the raw exception.
+
+- **Evidence:** ~**36** raw `$e` / `.toString()` interpolations inside SnackBar/`Text` error paths across `lib/`, vs **4** files referencing the `api_error.dart` helper.
+- **Impact:** users see framework/exception text; no machine-code-driven messaging or retry affordances; harder i18n.
+- **Fix:** route all catch → snackbar paths through the `api_error.dart` helper (map `error.code` → localized message).
+
+### F5 — Web build stores the auth token in plaintext localStorage 🟡 Low (accepted trade-off, worth hardening)
+`lib/core/storage/app_storage.dart` uses OS Keychain/Keystore on native but **SharedPreferences (plain `localStorage`) on web** — a deliberate, well-documented choice (flutter_secure_storage's web backend needs a secure context and is itself plaintext under the hood).
+
+- **Impact:** on the web shell the JWT is readable by any script in the origin → XSS becomes token theft. Acceptable given the constraint, but the risk should be bounded.
+- **Fix:** pair with a strict CSP on the served UI, keep access-token TTL short with refresh rotation (a single-flight refresh already exists), and avoid persisting refresh tokens on web if feasible.
+
+### F6 — Many published domain events have no consumer 🟢 Low (observation)
+The outbox publishes a broad set of events; a large subset has no subscriber today.
+
+- **Evidence:** consumers exist for user-registered, order confirmed/fulfilled/returned/cancelled, payment captured/failed/refunded, stock + sales events, tenant-created, staff-assigned, goods-received, order-placed, shortage-alert. **Unconsumed** include `kanban-*`, `lot-*`, `serial-*`, `move-order-*`, `accounting-period-*`, `price-changed`, `promotion-*`, `product-*`/`variant-created`, `store-credit-*`, `loyalty-*`, `zone-created`, `user-role-granted`.
+- **Impact:** these are mostly legitimate future/audit hooks, but they add outbox+Kafka traffic for no reader. No correctness issue.
+- **Fix:** none required; optionally annotate intent so they aren't mistaken for half-wired features.
+
+### F7 — Frontend test coverage is thin 🟢 Low
+Backend has a reasonable Testcontainers spread (49 files, 2–8 per service); the Flutter app has **11 test files for 98 Dart files**, concentrated on storefront checkout/catalog logic.
+
+- **Impact:** admin/POS screens and most providers have no widget/golden/provider tests; regressions in those surfaces ship unguarded.
+- **Fix:** add provider-level tests for the paginated list notifiers and golden/widget tests for the main admin & POS screens (the harness already exists).
 
 ---
 
@@ -146,25 +92,20 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 
 | # | Item | Layer | Severity | Effort | Notes |
 |---|---|---|---|---|---|
-| ~~N1~~ | ~~Deliver notifications (channels + welcome/order-confirmation)~~ | Backend | ✅ | — | Done 2026-07-08 — app (default)/email channels + notification_log + feed |
-| ~~N2~~ | ~~Event-wire customer-svc (loyalty on order)~~ | Backend | ✅ | — | Done 2026-07-08 — OrderConfirmed consumer + idempotent accrual |
-| ~~N5~~ | ~~Close the refund loop (auto-refund + status propagation)~~ | Backend | ✅ | — | Done 2026-07-08 — order-event refund consumer + `refunded_amount` status flip |
-| ~~N6~~ | ~~Wire or delete config-svc~~ | Platform | ✅ | — | Done 2026-07-08 — wired via ConfigServiceConfigSource (ordinal 150, resilient) |
-| N10 | Integrate a real payment PSP + webhook verification | Backend | ⏸️ | L | Deferred — payments being disabled app-wide |
-| ~~N4~~ | ~~Sales projection + revenue reporting in reporting-svc~~ | Backend | ✅ | — | Done 2026-07-08 — sales_facts projection + summary/by-day endpoints + admin tab |
-| ~~N3~~ | ~~Store credit redeemable as tender at checkout~~ | Backend | ✅ | — | Done 2026-07-08 — payment-svc CustomerClient + STORE_CREDIT tender (loyalty-as-tender follow-up) |
-| ~~N7~~ | ~~Stranded-PENDING-order sweeper; reconcile saga docs~~ | Backend | ✅ | — | Done 2026-07-08 — PendingOrderSweeper + README saga reconciled |
-| ~~U2~~ | ~~Server-side pagination roll-out~~ | UI | ✅ | — | Done 2026-07-13 — inventory-levels keyset endpoint + `/levels/summary`; all list screens now paginate |
-| A5 | Continue god-file split | API | 🟠 | L | Per-aggregate repos extending `BaseOutboxRepository` |
-| U4/U5/U6/U7/U8 | UI polish roll-outs | UI | 🟠 | M–L | Mechanical continuation of proven templates |
-| N8/N9 | Prune/document orphan events; cart-svc dedupe if needed | Backend | 🟢 | S | Low priority |
+| F1 | ✅ Done — order ownership enforced on `GET /orders/{id}` + `/history` + `/returns` | Backend | 🔴 High | S | `OrderService.requireReadAccess`; denial is 404; s2s (tenant-only) shape preserved |
+| F2 | Split god-files per aggregate (repos → `BaseOutboxRepository`, `AdminResource` by path group) | Backend | 🟠 Med | L | Pure refactor; reduces merge/locking risk |
+| F3 | ✅ Done — residual admin lists cursor-paginated (tenant staff/stores/zones, price-lists) | Backend | 🟠 Med-Low | M | Shared `Cursor.Page` helper; Flutter providers walk pages |
+| F4 | Route all client error snackbars through `api_error.dart` | UI | 🟠 Low | M | Mechanical, per-screen |
+| F5 | CSP + short token TTL to bound the web plaintext-token risk | UI/Ops | 🟡 Low | S | Trade-off already documented in `AppStorage` |
+| F6 | Document orphan-event intent (or prune) | Backend | 🟢 Low | S | No action strictly required |
+| F7 | Provider + golden/widget tests for admin/POS + paginated notifiers | UI | 🟢 Low | M | Harness exists |
 
 ---
 
-## Reference
-- Event loop / DLQ: `shared/common-service/src/main/java/com/shelfj/service/KafkaEventLoop.java`
-- Security boundary: `platform/gateway/src/main/java/com/shelfj/gateway/filters/JwtAuthFilter.java`
-- Checkout orchestration: `services/order-svc/src/main/java/com/shelfj/order/service/OrderService.java` + `client/`
-- Stock deduction on order events: `services/inventory-svc/src/main/java/com/shelfj/inventory/messaging/OrderEventHandler.java`
-- Notification stub: `services/notification-svc/src/main/java/com/shelfj/notification/messaging/ShortageAlertConsumer.java`
-- Unused config service: `platform/config/` (served) vs. no consumer in `services/*`
+## Reference (verified anchors)
+- Trust boundary / header stripping: `platform/gateway/src/main/java/com/shelfj/gateway/filters/JwtAuthFilter.java`
+- Write default-deny + role model: `shared/common-web/src/main/java/com/shelfj/web/AdminAuthorizationFilter.java`
+- **F1** order read (owner check now in): `services/order-svc/src/main/java/com/shelfj/order/api/OrderResource.java:114` · `service/OrderService.java` (`requireReadAccess`)
+- Owner-scoped counter-example: `services/order-svc/.../api/OrderResource.java:77` (`/orders/mine`)
+- **F5** web token storage: `frontends/shelf-app/lib/core/storage/app_storage.dart`
+- Kafka event loop / DLQ: `shared/common-service/src/main/java/com/shelfj/service/KafkaEventLoop.java`

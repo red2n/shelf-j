@@ -257,11 +257,26 @@ public class PricingRepository extends BaseOutboxRepository {
         "create price list");
   }
 
-  public List<PriceList> findPriceLists(UUID tenantId) {
+  /** Keyset page of price lists: rows strictly after the cursor in (created_at, id) order. */
+  public List<PriceList> findPriceLists(
+      UUID tenantId, Instant afterCreatedAt, UUID afterId, int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id,tenant_id,name,channel,currency,effective_from,effective_to,active,"
+                + "created_at FROM price_lists WHERE tenant_id=?");
+    if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) > (?, ?)");
+    sql.append(" ORDER BY created_at, id LIMIT ?");
     return query(
-        "SELECT id,tenant_id,name,channel,currency,effective_from,effective_to,active,created_at"
-            + " FROM price_lists WHERE tenant_id=? ORDER BY name",
-        ps -> ps.setObject(1, tenantId),
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (afterCreatedAt != null && afterId != null) {
+            ps.setObject(i++, afterCreatedAt.atOffset(ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
+        },
         this::mapPriceList,
         "list price lists");
   }

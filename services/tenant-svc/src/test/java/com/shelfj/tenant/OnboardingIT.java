@@ -223,6 +223,74 @@ class OnboardingIT {
     assertThat(dup.getStatus(), is(409));
   }
 
+  @Test
+  void adminListsAreCursorPaginated() {
+    Response tr =
+        post(
+            "/onboarding/tenants",
+            "{\"businessName\":\"PageCo\",\"country\":\"in\",\"currency\":\"inr\"}",
+            "X-User-Id",
+            OWNER);
+    String tenantId = field(tr.readEntity(String.class), "id");
+
+    // 5 stores: the first via onboarding (default), the rest via the admin endpoint.
+    post(
+        "/onboarding/stores",
+        "{\"name\":\"Page Store 1\",\"code\":\"PG1\"}",
+        "X-Tenant-Id",
+        tenantId,
+        "X-Roles",
+        "OWNER");
+    for (int i = 2; i <= 5; i++) {
+      Response r =
+          post(
+              "/admin/stores",
+              "{\"name\":\"Page Store " + i + "\",\"code\":\"PG" + i + "\"}",
+              "X-Tenant-Id",
+              tenantId,
+              "X-Roles",
+              "OWNER");
+      assertThat(r.getStatus(), is(201));
+    }
+
+    // Walk /admin/stores with limit=2: pages of 2,2,1 and every store seen exactly once.
+    java.util.Set<String> seen = new java.util.HashSet<>();
+    String cursor = null;
+    int pages = 0;
+    do {
+      WebTarget t = target.path("/admin/stores").queryParam("limit", 2);
+      if (cursor != null) t = t.queryParam("after", cursor);
+      String body =
+          t.request()
+              .header("X-Tenant-Id", tenantId)
+              .header("X-Roles", "OWNER")
+              .get(String.class);
+      pages++;
+      for (int i = 1; i <= 5; i++) {
+        String code = "\"code\":\"PG" + i + "\"";
+        if (body.contains(code)) {
+          assertThat("store PG" + i + " served twice", seen.add(code), is(true));
+        }
+      }
+      int c = body.indexOf("\"nextCursor\":\"");
+      cursor = c < 0 ? null : body.substring(c + 14, body.indexOf('"', c + 14));
+    } while (cursor != null);
+    assertThat(pages, is(3));
+    assertThat(seen.size(), is(5));
+
+    // A malformed cursor is rejected with 400 INVALID_CURSOR, not a 500.
+    Response bad =
+        target
+            .path("/admin/stores")
+            .queryParam("after", "not-base64-%%%")
+            .request()
+            .header("X-Tenant-Id", tenantId)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(bad.getStatus(), is(400));
+    assertThat(bad.readEntity(String.class), containsString("INVALID_CURSOR"));
+  }
+
   private static String field(String json, String name) {
     String key = "\"" + name + "\":\"";
     int i = json.indexOf(key);

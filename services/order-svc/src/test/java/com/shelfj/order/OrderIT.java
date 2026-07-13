@@ -689,7 +689,65 @@ class OrderIT {
     assertThat(rv.getStatus(), is(409));
   }
 
+  @Test
+  void orderByIdReadsAreObjectLevelAuthorized() {
+    String owningCustomer = UUID.randomUUID().toString();
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"customerId\":\""
+                + owningCustomer
+                + "\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":5.00}],\"currency\":\"USD\"}",
+            T,
+            "it-idor-guard");
+    assertThat(placed.getStatus(), is(201));
+    String orderId = extractId(placed.readEntity(String.class));
+
+    // The owning customer may read their order, its history and its returns.
+    assertThat(getAs("/orders/" + orderId, T, owningCustomer, "CUSTOMER").getStatus(), is(200));
+    assertThat(
+        getAs("/orders/" + orderId + "/history", T, owningCustomer, "CUSTOMER").getStatus(),
+        is(200));
+    assertThat(
+        getAs("/orders/" + orderId + "/returns", T, owningCustomer, "CUSTOMER").getStatus(),
+        is(200));
+
+    // Another authenticated customer in the same tenant gets 404 (not 403 — no existence oracle).
+    String otherCustomer = UUID.randomUUID().toString();
+    assertThat(getAs("/orders/" + orderId, T, otherCustomer, "CUSTOMER").getStatus(), is(404));
+    assertThat(
+        getAs("/orders/" + orderId + "/history", T, otherCustomer, "CUSTOMER").getStatus(),
+        is(404));
+    assertThat(
+        getAs("/orders/" + orderId + "/returns", T, otherCustomer, "CUSTOMER").getStatus(),
+        is(404));
+
+    // Staff read any order in the tenant.
+    assertThat(get("/orders/" + orderId, T).getStatus(), is(200));
+
+    // A service-to-service lookup (X-Tenant-Id only, no principal) keeps working — payment-svc
+    // verifies online payment claims through this exact shape (see payment-svc OrderClient).
+    Response s2s = target.path("/orders/" + orderId).request().header("X-Tenant-Id", T).get();
+    assertThat(s2s.getStatus(), is(200));
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────
+
+  private Response getAs(String path, String tenant, String userId, String roles) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-User-Id", userId)
+        .header("X-Roles", roles)
+        .get();
+  }
 
   private static String extractId(String json) {
     int start = json.indexOf("\"id\":\"") + 6;

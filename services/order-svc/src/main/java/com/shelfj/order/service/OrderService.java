@@ -308,6 +308,37 @@ public class OrderService {
         .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
   }
 
+  /** Order-by-id read for the API: tenant scope plus object-level authorization. */
+  public Order getOrder(UUID tenantId, UUID orderId, TenantContext ctx) {
+    Order order = getOrder(tenantId, orderId);
+    requireReadAccess(order, ctx);
+    return order;
+  }
+
+  /**
+   * Object-level authorization for order-by-id reads (mirrors CartService.requireOwnership): an
+   * order id alone is not proof of ownership. Staff may read any order in their tenant; an
+   * authenticated customer may only read an order placed against their own customerId. Denials are
+   * 404 (not 403) so order ids can't be probed for existence. A caller with no principal at all (no
+   * userId, no roles — only X-Tenant-Id) is a service-to-service lookup (e.g. payment-svc verifying
+   * an online payment claim); the gateway never forwards a tenant to these paths without a verified
+   * user, so that shape cannot originate from outside.
+   */
+  private static void requireReadAccess(Order order, TenantContext ctx) {
+    if (isStaff(ctx)) return;
+    if (ctx.userId() == null && ctx.roles().isEmpty()) return;
+    if (order.customerId() == null || !order.customerId().equals(ctx.userId()))
+      throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
+  }
+
+  private static boolean isStaff(TenantContext ctx) {
+    return ctx.hasRole("PLATFORM_ADMIN")
+        || ctx.hasRole("OWNER")
+        || ctx.hasRole("MANAGER")
+        || ctx.hasRole("STOREKEEPER")
+        || ctx.hasRole("CASHIER");
+  }
+
   /** SIM↔POS projection rows for POS screens (gap #50). */
   public List<com.shelfj.order.domain.Domain.PosStockPosition> listStockPositions(
       UUID tenantId, UUID storeId, UUID variantId, int limit) {
@@ -318,7 +349,8 @@ public class OrderService {
     return repo.findOrderItems(tenantId, orderId);
   }
 
-  public List<OrderStatusHistory> getOrderHistory(UUID tenantId, UUID orderId) {
+  public List<OrderStatusHistory> getOrderHistory(UUID tenantId, UUID orderId, TenantContext ctx) {
+    requireReadAccess(getOrder(tenantId, orderId), ctx);
     return repo.findOrderHistory(tenantId, orderId);
   }
 
@@ -442,7 +474,8 @@ public class OrderService {
             order.currency()));
   }
 
-  public List<Return> getReturns(UUID tenantId, UUID orderId) {
+  public List<Return> getReturns(UUID tenantId, UUID orderId, TenantContext ctx) {
+    requireReadAccess(getOrder(tenantId, orderId), ctx);
     return repo.findReturns(tenantId, orderId);
   }
 
