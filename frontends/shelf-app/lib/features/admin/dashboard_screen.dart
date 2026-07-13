@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../shared/widgets/error_view.dart';
 import 'providers/admin_providers.dart';
+import 'providers/inventory_levels_pagination.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -10,14 +11,14 @@ class DashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ordersAsync = ref.watch(recentOrdersProvider);
-    final inventoryAsync = ref.watch(inventoryLevelsProvider);
+    final inventoryAsync = ref.watch(inventoryLevelsSummaryProvider);
     final tenantAsync = ref.watch(tenantInfoProvider);
     final alertsAsync = ref.watch(shortageAlertsProvider);
 
     return RefreshIndicator(
       onRefresh: () async {
         ref.invalidate(recentOrdersProvider);
-        ref.invalidate(inventoryLevelsProvider);
+        ref.invalidate(inventoryLevelsSummaryProvider);
         ref.invalidate(tenantInfoProvider);
         ref.invalidate(shortageAlertsProvider);
       },
@@ -72,9 +73,10 @@ class DashboardScreen extends ConsumerWidget {
             LayoutBuilder(builder: (context, bc) {
               final cols = bc.maxWidth >= 720 ? 4 : 2;
               final orders = ordersAsync.valueOrNull ?? [];
-              final levels = inventoryAsync.valueOrNull ?? [];
+              final summary = inventoryAsync.valueOrNull;
               final revenue = orders.fold<double>(0, (s, o) => s + o.total);
-              final lowStock = levels.where((l) => l.isLow).length;
+              final lowStock = summary?.lowStockCount ?? 0;
+              final skuCount = summary?.skuCount ?? 0;
 
               return GridView.count(
                 crossAxisCount: cols,
@@ -107,7 +109,7 @@ class DashboardScreen extends ConsumerWidget {
                   ),
                   _StatCard(
                     label: 'SKUs',
-                    value: inventoryAsync.isLoading ? '…' : '${levels.length}',
+                    value: inventoryAsync.isLoading ? '…' : '$skuCount',
                     icon: Icons.inventory_2_outlined,
                     loading: inventoryAsync.isLoading,
                   ),

@@ -10,6 +10,7 @@ import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import 'providers/inventory_levels_pagination.dart';
 
 class InventoryScreen extends ConsumerStatefulWidget {
   const InventoryScreen({super.key});
@@ -65,7 +66,10 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
     showDialog(
       context: context,
       builder: (_) => _ReceiveStockDialog(
-        onReceived: () => ref.invalidate(inventoryLevelsProvider),
+        onReceived: () {
+          ref.read(inventoryLevelsPaginationProvider.notifier).refresh();
+          ref.invalidate(inventoryLevelsSummaryProvider);
+        },
       ),
     );
   }
@@ -84,7 +88,8 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final levelsAsync = ref.watch(inventoryLevelsProvider);
+    final page = ref.watch(inventoryLevelsPaginationProvider);
+    final summaryAsync = ref.watch(inventoryLevelsSummaryProvider);
     final labels = ref.watch(inventoryVariantLabelsProvider).valueOrNull ??
         const <String, VariantLabel>{};
     final cs = Theme.of(context).colorScheme;
@@ -121,32 +126,35 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
               IconButton(
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Refresh inventory',
-                onPressed: () => ref.invalidate(inventoryLevelsProvider),
+                onPressed: () {
+                  ref.read(inventoryLevelsPaginationProvider.notifier).refresh();
+                  ref.invalidate(inventoryLevelsSummaryProvider);
+                },
               ),
             ],
           ),
         ),
         const SizedBox(height: 16),
 
-        // Summary strip
-        levelsAsync.when(
+        // Summary strip — tenant-wide totals from the server-side aggregate, so
+        // the counts stay accurate regardless of how many pages are loaded.
+        summaryAsync.when(
           loading: () => const SizedBox.shrink(),
           error: (_, __) => const SizedBox.shrink(),
-          data: (levels) {
-            final low = levels.where((l) => l.isLow).length;
+          data: (summary) {
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Row(
                 children: [
                   _SummaryChip(
                       icon: Icons.inventory_2_outlined,
-                      label: '${levels.length} SKUs',
+                      label: '${summary.skuCount} SKUs',
                       color: cs.secondaryContainer),
                   const SizedBox(width: 8),
-                  if (low > 0)
+                  if (summary.lowStockCount > 0)
                     _SummaryChip(
                         icon: Icons.warning_amber_outlined,
-                        label: '$low low stock',
+                        label: '${summary.lowStockCount} low stock',
                         color: cs.errorContainer),
                 ],
               ),
@@ -155,57 +163,102 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
         ),
         const SizedBox(height: 12),
 
-        // Table
+        // Table — one cursor page at a time; free-text search / low-stock filtering
+        // stays a client-side filter over the rows loaded so far.
         Expanded(
-          child: levelsAsync.when(
-            loading: () => const LoadingView(label: 'Loading inventory…'),
-            error: (e, _) => ErrorView(
-              message: 'Could not load inventory levels.',
-              onRetry: () => ref.invalidate(inventoryLevelsProvider),
-            ),
-            data: (levels) {
-              var filtered = levels.where((l) {
-                if (_lowOnly && !l.isLow) return false;
-                if (_search.isNotEmpty) {
-                  final label = labels[l.variantId];
-                  final hay =
-                      '${label?.productName ?? ''} ${label?.sku ?? ''} ${l.variantId}'
-                          .toLowerCase();
-                  if (!hay.contains(_search.toLowerCase())) return false;
-                }
-                return true;
-              }).toList();
+          child: Builder(builder: (context) {
+            if (page.isLoadingInitial) {
+              return const LoadingView(label: 'Loading inventory…');
+            }
+            if (page.error != null && page.levels.isEmpty) {
+              return ErrorView(
+                message: 'Could not load inventory levels.',
+                onRetry: () => ref
+                    .read(inventoryLevelsPaginationProvider.notifier)
+                    .refresh(),
+              );
+            }
 
-              if (filtered.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.inventory_2_outlined,
-                          size: 64, color: cs.outlineVariant),
-                      const SizedBox(height: 16),
-                      Text('No items found',
-                          style: Theme.of(context).textTheme.titleMedium),
-                      if (_search.isNotEmpty || _lowOnly)
-                        TextButton(
-                          onPressed: () =>
-                              setState(() { _search = ''; _lowOnly = false; }),
-                          child: const Text('Clear filters'),
-                        ),
-                    ],
-                  ),
-                );
+            final filtered = page.levels.where((l) {
+              if (_lowOnly && !l.isLow) return false;
+              if (_search.isNotEmpty) {
+                final label = labels[l.variantId];
+                final hay =
+                    '${label?.productName ?? ''} ${label?.sku ?? ''} ${l.variantId}'
+                        .toLowerCase();
+                if (!hay.contains(_search.toLowerCase())) return false;
               }
+              return true;
+            }).toList();
 
-              return LayoutBuilder(builder: (context, bc) {
-                final wide = bc.maxWidth >= 600;
-                if (wide) {
-                  return _WideTable(levels: filtered, labels: labels);
-                }
-                return _NarrowList(levels: filtered, labels: labels);
-              });
-            },
-          ),
+            final loadMore = (page.hasMore || page.isLoadingMore)
+                ? Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: page.isLoadingMore
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child:
+                                CircularProgressIndicator(strokeWidth: 2))
+                        : OutlinedButton(
+                            onPressed: () => ref
+                                .read(inventoryLevelsPaginationProvider
+                                    .notifier)
+                                .loadMore(),
+                            child: const Text('Load more'),
+                          ),
+                  )
+                : null;
+
+            if (filtered.isEmpty) {
+              final filtering = _search.isNotEmpty || _lowOnly;
+              return Column(
+                children: [
+                  Expanded(
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.inventory_2_outlined,
+                              size: 64, color: cs.outlineVariant),
+                          const SizedBox(height: 16),
+                          Text(
+                              filtering
+                                  ? 'No matches on loaded items'
+                                  : 'No items found',
+                              style: Theme.of(context).textTheme.titleMedium),
+                          if (filtering)
+                            TextButton(
+                              onPressed: () => setState(() {
+                                _search = '';
+                                _lowOnly = false;
+                              }),
+                              child: const Text('Clear filters'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (loadMore != null) loadMore,
+                ],
+              );
+            }
+
+            return Column(
+              children: [
+                Expanded(
+                  child: LayoutBuilder(builder: (context, bc) {
+                    final wide = bc.maxWidth >= 600;
+                    if (wide) {
+                      return _WideTable(levels: filtered, labels: labels);
+                    }
+                    return _NarrowList(levels: filtered, labels: labels);
+                  }),
+                ),
+                if (loadMore != null) loadMore,
+              ],
+            );
+          }),
         ),
       ],
     );

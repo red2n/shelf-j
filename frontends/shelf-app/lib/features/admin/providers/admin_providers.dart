@@ -265,16 +265,10 @@ final recentOrdersProvider = FutureProvider.autoDispose<List<OrderSummary>>((ref
 // Paginated orders now live in orders_pagination.dart (ordersPaginationProvider) —
 // server-side channel/status filtering + cursor infinite scroll, replacing the old
 // "fetch 50 and filter in Dart" ordersProvider.
-
-/// All inventory levels for the tenant (across all stores).
-final inventoryLevelsProvider = FutureProvider.autoDispose<List<InventoryLevel>>((ref) async {
-  final resp = await ref
-      .read(apiClientProvider)
-      .dio
-      .get('/${ApiConstants.inventory}/admin/inventory/levels');
-  final data = (resp.data['data'] as List?) ?? [];
-  return data.map((e) => InventoryLevel.fromJson(e as Map<String, dynamic>)).toList();
-});
+//
+// Paginated inventory levels + the dashboard summary KPIs live in
+// inventory_levels_pagination.dart (inventoryLevelsPaginationProvider /
+// inventoryLevelsSummaryProvider), replacing the old fetch-all inventoryLevelsProvider.
 
 /// A human-readable label for a variant — so screens show a name + SKU instead of
 /// the raw variant UUID the inventory/order APIs return.
@@ -327,14 +321,6 @@ final variantLabelsProvider = FutureProvider.autoDispose
     );
   }
   return map;
-});
-
-/// Variant labels for the variants currently on the inventory-levels page.
-final inventoryVariantLabelsProvider =
-    FutureProvider.autoDispose<Map<String, VariantLabel>>((ref) async {
-  final levels = await ref.watch(inventoryLevelsProvider.future);
-  return ref
-      .watch(variantLabelsProvider(variantIdsKey(levels.map((l) => l.variantId))).future);
 });
 
 /// Current tenant info (name, currency, status).

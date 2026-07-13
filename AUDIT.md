@@ -133,7 +133,7 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 | # | Item | Layer | Severity | State |
 |---|---|---|---|---|
 | A5 | Split god-files per aggregate (`InventoryRepository` ~3.6k lines, `ProductRepository` ~2.1k, bundled `Dtos.java`/`Domain.java`) | API | 🟠 | In progress — 2 repos extracted; pattern proven; bulk remaining |
-| U2 | Server-side pagination + search across list screens | UI | 🔴 (at scale) | Orders list done (cursor infinite-scroll); customers/products/inventory-levels still fetch-all client-side (inventory-levels also needs a paginated backend endpoint) |
+| U2 | Server-side pagination + search across list screens | UI | ✅ (2026-07-13) | All list screens paginate server-side now: orders (cursor infinite-scroll), customers + products (cursor + Load-more), and inventory-levels — the last one landed 2026-07-13 with a new keyset-paginated `/admin/inventory/levels` (`?after=&limit=`) plus a cheap `/admin/inventory/levels/summary` aggregate so the dashboard KPI tiles no longer fetch the full list. Free-text search stays a client-side filter over loaded pages (consistent with products). |
 | U4 | Consume structured `error.code` on every screen | UI | 🟠 | `api_error.dart` helper + a few screens done; ~12 screens still `$e` snackbars |
 | U5 | Accessibility (Semantics, non-colour status, ≥14px table text) | UI | 🟠 | Template slice done; app-wide roll-out pending |
 | U6 | i18n string coverage (money/date formatting already locale-aware) | UI | 🟠 | Pipeline live (gen-l10n, en+pl); remaining screens still inline English; pl/ro/pa/ur/bn/gu/ar translations to commission |
@@ -154,7 +154,7 @@ These remain genuinely incomplete (core landed, real scope left). Full implement
 | ~~N4~~ | ~~Sales projection + revenue reporting in reporting-svc~~ | Backend | ✅ | — | Done 2026-07-08 — sales_facts projection + summary/by-day endpoints + admin tab |
 | ~~N3~~ | ~~Store credit redeemable as tender at checkout~~ | Backend | ✅ | — | Done 2026-07-08 — payment-svc CustomerClient + STORE_CREDIT tender (loyalty-as-tender follow-up) |
 | ~~N7~~ | ~~Stranded-PENDING-order sweeper; reconcile saga docs~~ | Backend | ✅ | — | Done 2026-07-08 — PendingOrderSweeper + README saga reconciled |
-| U2 | Server-side pagination roll-out | UI | 🔴@scale | L | +paginated `/admin/inventory/levels` endpoint |
+| ~~U2~~ | ~~Server-side pagination roll-out~~ | UI | ✅ | — | Done 2026-07-13 — inventory-levels keyset endpoint + `/levels/summary`; all list screens now paginate |
 | A5 | Continue god-file split | API | 🟠 | L | Per-aggregate repos extending `BaseOutboxRepository` |
 | U4/U5/U6/U7/U8 | UI polish roll-outs | UI | 🟠 | M–L | Mechanical continuation of proven templates |
 | N8/N9 | Prune/document orphan events; cart-svc dedupe if needed | Backend | 🟢 | S | Low priority |

@@ -10,6 +10,7 @@ import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LevelSummary;
 import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.LotUomConversion;
@@ -45,6 +46,7 @@ import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.ExpiringBatchResponse;
 import com.shelfj.inventory.dto.Dtos.KanbanCardResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
+import com.shelfj.inventory.dto.Dtos.LevelSummaryResponse;
 import com.shelfj.inventory.dto.Dtos.LotActionResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
 import com.shelfj.inventory.dto.Dtos.LotUomConversionResponse;
@@ -77,6 +79,10 @@ import java.util.List;
 public final class Mappers {
 
   private Mappers() {}
+
+  public static LevelSummaryResponse toLevelSummary(LevelSummary s) {
+    return new LevelSummaryResponse(s.skuCount(), s.lowStockCount());
+  }
 
   public static LevelResponse toLevel(Level l) {
     return new LevelResponse(

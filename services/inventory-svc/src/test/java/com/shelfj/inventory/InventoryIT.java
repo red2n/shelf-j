@@ -46,6 +46,13 @@ class InventoryIT {
   /** Dedicated variant for the FIFO test so tier-1 stock doesn't pollute its level assertions. */
   private static final String V_FIFO = "44444444-4444-4444-4444-444444444444";
 
+  /** Dedicated store + variants (id-ordered) for the levels pagination / summary test. */
+  private static final String S_PAGE = "55555555-5555-5555-5555-555555555555";
+
+  private static final String VP1 = "a0000001-0000-0000-0000-000000000000";
+  private static final String VP2 = "a0000002-0000-0000-0000-000000000000";
+  private static final String VP3 = "a0000003-0000-0000-0000-000000000000";
+
   @Inject WebTarget target;
 
   @AfterAll
@@ -151,6 +158,62 @@ class InventoryIT {
 
     // tenant isolation
     assertThat(get("/admin/inventory/levels", OTHER), not(containsString(V_FIFO)));
+  }
+
+  @Test
+  void levelsPaginateAndSummarize() {
+    // Three SKUs in a dedicated store: two low (available <= 5), one healthy.
+    receive(S_PAGE, VP1, 3);
+    receive(S_PAGE, VP2, 10);
+    receive(S_PAGE, VP3, 2);
+
+    // Summary is a server-side aggregate — 3 distinct SKUs, 2 of them low.
+    String summary =
+        target
+            .path("/admin/inventory/levels/summary")
+            .queryParam("store", S_PAGE)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    assertThat(summary, containsString("\"skuCount\":3"));
+    assertThat(summary, containsString("\"lowStockCount\":2"));
+
+    // Page 1 (limit 2): the first two SKUs by (store, variant) order, plus a cursor.
+    String page1 = levelsPage(S_PAGE, 2, null);
+    assertThat(page1, containsString(VP1));
+    assertThat(page1, containsString(VP2));
+    assertThat(page1, not(containsString(VP3)));
+    String cursor = field(page1, "nextCursor");
+
+    // Page 2: the remaining SKU only — the cursor advances past page 1 with no overlap.
+    String page2 = levelsPage(S_PAGE, 2, cursor);
+    assertThat(page2, containsString(VP3));
+    assertThat(page2, not(containsString(VP1)));
+    assertThat(page2, not(containsString(VP2)));
+    // Exhausted: no further (non-null) cursor — a null nextCursor is omitted by JSON-B.
+    assertThat(page2, not(containsString("\"nextCursor\":\"")));
+  }
+
+  private void receive(String store, String variant, int qty) {
+    Response r =
+        post(
+            "/admin/inventory/receive",
+            "{\"storeId\":\"" + store + "\",\"variantId\":\"" + variant + "\",\"qty\":" + qty + "}",
+            T);
+    assertThat(r.getStatus(), is(201));
+  }
+
+  private String levelsPage(String store, int limit, String after) {
+    var t =
+        target
+            .path("/admin/inventory/levels")
+            .queryParam("store", store)
+            .queryParam("limit", limit);
+    if (after != null) {
+      t = t.queryParam("after", after);
+    }
+    return t.request().header("X-Tenant-Id", T).header("X-Roles", "OWNER").get(String.class);
   }
 
   // ── Tier-1 Gap #21: Reason codes ─────────────────────────────────────────
