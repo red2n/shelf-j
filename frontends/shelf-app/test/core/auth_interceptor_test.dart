@@ -1,9 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shelf_app/core/constants.dart';
 import 'package:shelf_app/core/network/api_client.dart';
+import 'package:shelf_app/core/storage/app_storage.dart';
 
 /// In-memory stand-in for the flutter_secure_storage platform channel so the
 /// interceptor's token reads/writes work in a pure Dart unit test.
@@ -86,11 +86,11 @@ class _FakeAdapter implements HttpClientAdapter {
 }
 
 void main() {
-  late FlutterSecureStorage storage;
+  late AppStorage storage;
 
   setUp(() async {
     _FakeSecureStorage().install();
-    storage = const FlutterSecureStorage();
+    storage = const AppStorage();
     // Seed an expired access token + a valid refresh token.
     await storage.write(key: StorageKeys.accessToken, value: 'EXPIRED');
     await storage.write(key: StorageKeys.refreshToken, value: 'R-OLD');

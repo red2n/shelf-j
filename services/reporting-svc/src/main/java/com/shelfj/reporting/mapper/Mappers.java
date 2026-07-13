@@ -3,12 +3,18 @@ package com.shelfj.reporting.mapper;
 import com.shelfj.reporting.domain.Domain.InventoryProjection;
 import com.shelfj.reporting.domain.Domain.MovementStat;
 import com.shelfj.reporting.domain.Domain.OpenSupplyLine;
+import com.shelfj.reporting.domain.Domain.SalesDayStat;
+import com.shelfj.reporting.domain.Domain.SalesSummary;
 import com.shelfj.reporting.dto.Dtos.MovementStatRow;
 import com.shelfj.reporting.dto.Dtos.MovementStatsReport;
 import com.shelfj.reporting.dto.Dtos.NettingReport;
 import com.shelfj.reporting.dto.Dtos.NettingRow;
 import com.shelfj.reporting.dto.Dtos.OnHandReport;
 import com.shelfj.reporting.dto.Dtos.OnHandRow;
+import com.shelfj.reporting.dto.Dtos.SalesByDayReport;
+import com.shelfj.reporting.dto.Dtos.SalesDayRow;
+import com.shelfj.reporting.dto.Dtos.SalesSummaryReport;
+import com.shelfj.reporting.dto.Dtos.SalesSummaryRow;
 import com.shelfj.reporting.service.ReportingService.NettingResult;
 import java.math.BigDecimal;
 import java.util.List;
@@ -75,6 +81,27 @@ public final class Mappers {
                         s.totalIn().subtract(s.totalOut())))
             .toList();
     return new MovementStatsReport(rows);
+  }
+
+  public static SalesSummaryReport toSalesSummaryReport(List<SalesSummary> rows) {
+    var dtoRows =
+        rows.stream()
+            .map(
+                s ->
+                    new SalesSummaryRow(s.currency(), s.orders(), s.gross(), s.refunded(), s.net()))
+            .toList();
+    return new SalesSummaryReport(dtoRows);
+  }
+
+  public static SalesByDayReport toSalesByDayReport(List<SalesDayStat> rows) {
+    var dtoRows =
+        rows.stream()
+            .map(
+                s ->
+                    new SalesDayRow(
+                        s.day(), s.currency(), s.orders(), s.gross(), s.refunded(), s.net()))
+            .toList();
+    return new SalesByDayReport(dtoRows);
   }
 
   private static String key(UUID storeId, UUID variantId) {

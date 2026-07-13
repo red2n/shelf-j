@@ -1,0 +1,3 @@
+# Pulls non-secret config from the central config service (config-svc) at startup and layers it
+# over local microprofile-config.properties defaults. No-op unless shelfj.config.url is set.
+com.shelfj.service.ConfigServiceConfigSource

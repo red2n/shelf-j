@@ -1,0 +1,28 @@
+package com.shelfj.notification.channel;
+
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+
+/**
+ * Default channel: in-app notifications. The message is persisted to {@code notification_log} by
+ * the {@link com.shelfj.notification.service.Notifier} and surfaced to the user in the app (see the
+ * notifications feed endpoint) — no external push. Email ({@link SmtpChannel}) and, later, SMS are
+ * additional channels selected via {@code shelfj.notification.channel}. {@code send} is a no-op
+ * here because the persisted record IS the delivery; it logs at debug for observability.
+ */
+public final class AppChannel implements NotificationChannel {
+
+  private static final Logger LOG = System.getLogger(AppChannel.class.getName());
+
+  @Override
+  public String name() {
+    return "APP";
+  }
+
+  @Override
+  public void send(String recipient, String subject, String body) {
+    // In-app delivery is the notification_log record itself (written by the Notifier); nothing is
+    // pushed out of band. Logged so the message is visible in dev without a feed reader.
+    LOG.log(Level.DEBUG, "[in-app → {0}] {1}", recipient, subject);
+  }
+}

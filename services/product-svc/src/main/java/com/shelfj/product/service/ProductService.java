@@ -45,6 +45,8 @@ import com.shelfj.product.dto.Dtos.UpdateCategoryRequest;
 import com.shelfj.product.dto.Dtos.UpdateCategorySetRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
 import com.shelfj.product.dto.Dtos.UpdateVariantRequest;
+import com.shelfj.product.repo.BrandRepository;
+import com.shelfj.product.repo.CategoryRepository;
 import com.shelfj.product.repo.ProductRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -61,59 +63,63 @@ import java.util.UUID;
 public class ProductService {
 
   @Inject ProductRepository repo;
+  @Inject BrandRepository brandRepo;
+  @Inject CategoryRepository categoryRepo;
   @Inject com.shelfj.product.client.InventoryClient inventoryClient;
   @Inject com.shelfj.product.client.PricingClient pricingClient;
 
   // ─────────────────────────────────────────────────────────────────── brands
 
   public Brand createBrand(UUID tenantId, CreateBrandRequest req) {
-    return repo.createBrand(tenantId, req.name().trim());
+    return brandRepo.createBrand(tenantId, req.name().trim());
   }
 
   public Brand getBrand(UUID tenantId, UUID id) {
-    return repo.findBrand(tenantId, id)
+    return brandRepo
+        .findBrand(tenantId, id)
         .orElseThrow(() -> ApiException.notFound("BRAND_NOT_FOUND", "Brand not found"));
   }
 
   public List<Brand> listBrands(UUID tenantId) {
-    return repo.listBrands(tenantId);
+    return brandRepo.listBrands(tenantId);
   }
 
   public Brand renameBrand(UUID tenantId, UUID id, UpdateBrandRequest req) {
     getBrand(tenantId, id);
-    return repo.updateBrand(tenantId, id, req.name().trim());
+    return brandRepo.updateBrand(tenantId, id, req.name().trim());
   }
 
   public Brand deactivateBrand(UUID tenantId, UUID id) {
     getBrand(tenantId, id);
-    return repo.deactivateBrand(tenantId, id);
+    return brandRepo.deactivateBrand(tenantId, id);
   }
 
   // ──────────────────────────────────────────────────────────────── categories
 
   public Category createCategory(UUID tenantId, CreateCategoryRequest req) {
     UUID parentId = parseOptionalUuid(req.parentId(), "parentId");
-    return repo.createCategory(tenantId, parentId, req.name().trim());
+    return categoryRepo.createCategory(tenantId, parentId, req.name().trim());
   }
 
   public Category getCategory(UUID tenantId, UUID id) {
-    return repo.findCategory(tenantId, id)
+    return categoryRepo
+        .findCategory(tenantId, id)
         .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
   }
 
   public List<Category> listCategories(UUID tenantId) {
-    return repo.listCategories(tenantId);
+    return categoryRepo.listCategories(tenantId);
   }
 
   public Category updateCategory(UUID tenantId, UUID id, UpdateCategoryRequest req) {
     getCategory(tenantId, id);
     UUID parentId = parseOptionalUuid(req.parentId(), "parentId");
-    return repo.updateCategory(tenantId, id, req.name().trim(), parentId);
+    return categoryRepo.updateCategory(tenantId, id, req.name().trim(), parentId);
   }
 
   public Category deactivateCategory(UUID tenantId, UUID id) {
     getCategory(tenantId, id);
-    return repo.deactivateCategory(tenantId, id);
+    return categoryRepo.deactivateCategory(tenantId, id);
   }
 
   // ──────────────────────────────────────────────────────────────── products
@@ -601,7 +607,7 @@ public class ProductService {
     if (req.categories() != null) {
       for (var c : req.categories()) {
         try {
-          var existingCat = repo.findCategoryByName(tenantId, c.name().trim());
+          var existingCat = categoryRepo.findCategoryByName(tenantId, c.name().trim());
           if (existingCat.isPresent()) {
             categoryIdByName.put(c.name().trim(), existingCat.get().id());
             catSkipped++;
@@ -613,7 +619,8 @@ public class ProductService {
             parentId = categoryIdByName.get(parentName);
             if (parentId == null) {
               parentId =
-                  repo.findCategoryByName(tenantId, parentName)
+                  categoryRepo
+                      .findCategoryByName(tenantId, parentName)
                       .map(cat -> cat.id())
                       .orElseThrow(
                           () ->
@@ -621,7 +628,8 @@ public class ProductService {
                                   "PARENT_NOT_FOUND", "parent category not found: " + parentName));
             }
           }
-          UUID newCategoryId = repo.createCategory(tenantId, parentId, c.name().trim()).id();
+          UUID newCategoryId =
+              categoryRepo.createCategory(tenantId, parentId, c.name().trim()).id();
           categoryIdByName.put(c.name().trim(), newCategoryId);
           catCreated++;
         } catch (ApiException ae) {
@@ -646,7 +654,7 @@ public class ProductService {
             String categoryName = p.categoryName().trim();
             categoryId = categoryIdByName.get(categoryName);
             if (categoryId == null) {
-              var found = repo.findCategoryByName(tenantId, categoryName);
+              var found = categoryRepo.findCategoryByName(tenantId, categoryName);
               categoryId = found.map(cat -> cat.id()).orElse(null);
               if (categoryId != null) categoryIdByName.put(categoryName, categoryId);
             }
@@ -658,9 +666,10 @@ public class ProductService {
             brandId = brandIdByName.get(brandName);
             if (brandId == null) {
               brandId =
-                  repo.findBrandByName(tenantId, brandName)
+                  brandRepo
+                      .findBrandByName(tenantId, brandName)
                       .map(b -> b.id())
-                      .orElseGet(() -> repo.createBrand(tenantId, brandName).id());
+                      .orElseGet(() -> brandRepo.createBrand(tenantId, brandName).id());
               brandIdByName.put(brandName, brandId);
             }
           }
@@ -1046,7 +1055,8 @@ public class ProductService {
       UUID tenantId, UUID setId, AddCategorySetMemberRequest req) {
     getCategorySet(tenantId, setId);
     UUID catId = UUID.fromString(req.categoryId());
-    repo.findCategory(tenantId, catId)
+    categoryRepo
+        .findCategory(tenantId, catId)
         .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
     return repo.addCategorySetMember(
         new CategorySetMember(UUID.randomUUID(), tenantId, setId, catId, null));

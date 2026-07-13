@@ -61,6 +61,8 @@ public final class Dtos {
       BigDecimal reserved,
       BigDecimal available) {}
 
+  public record LevelSummaryResponse(long skuCount, long lowStockCount) {}
+
   public record BatchResponse(
       String id,
       String storeId,

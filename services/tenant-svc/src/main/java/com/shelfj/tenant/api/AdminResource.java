@@ -15,6 +15,7 @@ import com.shelfj.tenant.mapper.Mappers;
 import com.shelfj.tenant.service.TenantService;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -61,11 +62,14 @@ public class AdminResource {
 
   // ── stores ───────────────────────────────────────────────────────────────
 
+  /** List this tenant's stores. Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
   @GET
   @Path("/stores")
-  public ApiResponse<List<StoreResponse>> listStores() {
-    var stores = service.listStores(ctx.requireTenantId()).stream().map(Mappers::toStore).toList();
-    return ApiResponse.ok(stores, ApiResponse.Meta.of(ctx.requestId()));
+  public ApiResponse<List<StoreResponse>> listStores(
+      @QueryParam("after") String after, @QueryParam("limit") Integer limit) {
+    var page = service.listStores(ctx.requireTenantId(), after, Cursor.clampLimit(limit));
+    var stores = page.items().stream().map(Mappers::toStore).toList();
+    return ApiResponse.ok(stores, new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
   @POST
@@ -104,12 +108,16 @@ public class AdminResource {
 
   // ── zones ────────────────────────────────────────────────────────────────
 
+  /** List a store's zones. Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
   @GET
   @Path("/stores/{storeId}/zones")
-  public ApiResponse<List<ZoneResponse>> listZones(@PathParam("storeId") UUID storeId) {
-    var zones =
-        service.listZones(ctx.requireTenantId(), storeId).stream().map(Mappers::toZone).toList();
-    return ApiResponse.ok(zones, ApiResponse.Meta.of(ctx.requestId()));
+  public ApiResponse<List<ZoneResponse>> listZones(
+      @PathParam("storeId") UUID storeId,
+      @QueryParam("after") String after,
+      @QueryParam("limit") Integer limit) {
+    var page = service.listZones(ctx.requireTenantId(), storeId, after, Cursor.clampLimit(limit));
+    var zones = page.items().stream().map(Mappers::toZone).toList();
+    return ApiResponse.ok(zones, new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
   @POST
@@ -158,11 +166,15 @@ public class AdminResource {
     return Response.status(Response.Status.CREATED).entity(ApiResponse.ok("assigned")).build();
   }
 
+  /** List staff assignments. Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
   @GET
   @Path("/staff")
-  public ApiResponse<List<StaffResponse>> listStaff() {
+  public ApiResponse<List<StaffResponse>> listStaff(
+      @QueryParam("after") String after, @QueryParam("limit") Integer limit) {
+    var page = service.listStaff(ctx.requireTenantId(), after, Cursor.clampLimit(limit));
     return ApiResponse.ok(
-        service.listStaff(ctx.requireTenantId()).stream().map(Mappers::toStaff).toList());
+        page.items().stream().map(Mappers::toStaff).toList(),
+        new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
   @DELETE

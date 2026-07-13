@@ -31,14 +31,22 @@ final class Events {
             tenantId, paymentId, orderId));
   }
 
-  static OutboxRow paymentRefunded(UUID tenantId, UUID refundId, UUID orderId) {
+  /**
+   * PaymentRefunded carries an {@code eventId} (consumer dedupe) and the refunded {@code amount} so
+   * order-svc can accumulate it against the order total and flip the order to REFUNDED /
+   * PARTIALLY_REFUNDED without a callback. Emitted by both the manual refund endpoint and the
+   * automatic order-event refund path.
+   */
+  static OutboxRow paymentRefunded(
+      UUID tenantId, UUID refundId, UUID orderId, java.math.BigDecimal amount) {
     return new OutboxRow(
         "PaymentRefunded",
         "shelfj.payment.payment-refunded",
         tenantId,
         refundId,
         String.format(
-            "{\"eventType\":\"PaymentRefunded\",\"tenantId\":\"%s\",\"refundId\":\"%s\",\"orderId\":\"%s\"}",
-            tenantId, refundId, orderId));
+            "{\"eventId\":\"%s\",\"eventType\":\"PaymentRefunded\",\"tenantId\":\"%s\","
+                + "\"refundId\":\"%s\",\"orderId\":\"%s\",\"amount\":%s}",
+            UUID.randomUUID(), tenantId, refundId, orderId, amount.toPlainString()));
   }
 }

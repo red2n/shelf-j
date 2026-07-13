@@ -1,13 +1,13 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../constants.dart';
+import '../storage/app_storage.dart';
 
 final apiClientProvider = Provider<ApiClient>((ref) => ApiClient());
 
 class ApiClient {
   late final Dio dio;
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AppStorage _storage = const AppStorage();
 
   ApiClient() {
     dio = Dio(BaseOptions(
@@ -24,7 +24,7 @@ class ApiClient {
 /// the refresh-coordination behaviour can be exercised in tests.
 class AuthInterceptor extends Interceptor {
   final Dio _dio;
-  final FlutterSecureStorage _storage;
+  final AppStorage _storage;
 
   /// Single-flight token refresh. When an access token expires, several in-flight
   /// requests 401 at nearly the same instant; without a shared future the first

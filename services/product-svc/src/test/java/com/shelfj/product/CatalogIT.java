@@ -251,6 +251,83 @@ class CatalogIT {
     assertThat(bad.readEntity(String.class), containsString("VALIDATION_FAILED"));
   }
 
+  /**
+   * Characterization coverage for {@code BrandRepository} (extracted from {@code ProductRepository}
+   * — F2, AUDIT.md) — pins down current CRUD + tenant-isolation behavior since these endpoints
+   * previously had none beyond the incidental exercise inside bulk-import.
+   */
+  @Test
+  void brandsCrudAndTenantIsolation() {
+    Response created = post("/admin/brands", "{\"name\":\"Acme\"}", TENANT_A);
+    assertThat(created.getStatus(), is(201));
+    String brandId = field(created.readEntity(String.class), "id");
+
+    assertThat(getAdmin("/admin/brands", TENANT_A), containsString("Acme"));
+    assertThat(getAdmin("/admin/brands", TENANT_B), not(containsString("Acme")));
+
+    Response renamed = put("/admin/brands/" + brandId, "{\"name\":\"Acme Renamed\"}", TENANT_A);
+    assertThat(renamed.getStatus(), is(200));
+    assertThat(getAdmin("/admin/brands/" + brandId, TENANT_A), containsString("Acme Renamed"));
+
+    Response deactivated = delete("/admin/brands/" + brandId, TENANT_A);
+    assertThat(deactivated.getStatus(), is(200));
+    assertThat(getAdmin("/admin/brands", TENANT_A), not(containsString("Acme Renamed")));
+  }
+
+  /**
+   * Characterization coverage for {@code CategoryRepository} (extracted from {@code
+   * ProductRepository} — F2, AUDIT.md): parent/child linkage, tenant isolation, bad-parent 400, and
+   * rename/deactivate — previously uncovered beyond bulk-import's incidental exercise.
+   */
+  @Test
+  void categoriesCrudWithParentAndTenantIsolation() {
+    Response parent = post("/admin/categories", "{\"name\":\"Beverages\"}", TENANT_A);
+    assertThat(parent.getStatus(), is(201));
+    String parentId = field(parent.readEntity(String.class), "id");
+
+    Response child =
+        post(
+            "/admin/categories",
+            "{\"name\":\"Soft Drinks\",\"parentId\":\"" + parentId + "\"}",
+            TENANT_A);
+    assertThat(child.getStatus(), is(201));
+    String childBody = child.readEntity(String.class);
+    String childId = field(childBody, "id");
+    assertThat(field(childBody, "parentId"), is(parentId));
+
+    assertThat(getAdmin("/admin/categories", TENANT_A), containsString("Soft Drinks"));
+    assertThat(getAdmin("/admin/categories", TENANT_B), not(containsString("Soft Drinks")));
+
+    // Unknown parentId is a 400 (PARENT_NOT_FOUND), not a 500.
+    Response badParent =
+        post(
+            "/admin/categories",
+            "{\"name\":\"Orphan\",\"parentId\":\"99999999-9999-9999-9999-999999999999\"}",
+            TENANT_A);
+    assertThat(badParent.getStatus(), is(400));
+
+    Response renamed =
+        put(
+            "/admin/categories/" + childId,
+            "{\"name\":\"Fizzy Drinks\",\"parentId\":\"" + parentId + "\"}",
+            TENANT_A);
+    assertThat(renamed.getStatus(), is(200));
+    assertThat(getAdmin("/admin/categories/" + childId, TENANT_A), containsString("Fizzy Drinks"));
+
+    Response deactivated = delete("/admin/categories/" + childId, TENANT_A);
+    assertThat(deactivated.getStatus(), is(200));
+    assertThat(getAdmin("/admin/categories", TENANT_A), not(containsString("Fizzy Drinks")));
+  }
+
+  private Response delete(String path, String tenant) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .delete();
+  }
+
   @Test
   void listProductsAdminPaginatesWithCursor() {
     // Dedicated tenant so products created by other tests never leak into these pages.

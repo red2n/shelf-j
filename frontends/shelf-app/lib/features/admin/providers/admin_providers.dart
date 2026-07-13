@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/constants.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/paged.dart';
 
 // ── Models ──────────────────────────────────────────────────────────────────
 
@@ -265,16 +266,10 @@ final recentOrdersProvider = FutureProvider.autoDispose<List<OrderSummary>>((ref
 // Paginated orders now live in orders_pagination.dart (ordersPaginationProvider) —
 // server-side channel/status filtering + cursor infinite scroll, replacing the old
 // "fetch 50 and filter in Dart" ordersProvider.
-
-/// All inventory levels for the tenant (across all stores).
-final inventoryLevelsProvider = FutureProvider.autoDispose<List<InventoryLevel>>((ref) async {
-  final resp = await ref
-      .read(apiClientProvider)
-      .dio
-      .get('/${ApiConstants.inventory}/admin/inventory/levels');
-  final data = (resp.data['data'] as List?) ?? [];
-  return data.map((e) => InventoryLevel.fromJson(e as Map<String, dynamic>)).toList();
-});
+//
+// Paginated inventory levels + the dashboard summary KPIs live in
+// inventory_levels_pagination.dart (inventoryLevelsPaginationProvider /
+// inventoryLevelsSummaryProvider), replacing the old fetch-all inventoryLevelsProvider.
 
 /// A human-readable label for a variant — so screens show a name + SKU instead of
 /// the raw variant UUID the inventory/order APIs return.
@@ -329,14 +324,6 @@ final variantLabelsProvider = FutureProvider.autoDispose
   return map;
 });
 
-/// Variant labels for the variants currently on the inventory-levels page.
-final inventoryVariantLabelsProvider =
-    FutureProvider.autoDispose<Map<String, VariantLabel>>((ref) async {
-  final levels = await ref.watch(inventoryLevelsProvider.future);
-  return ref
-      .watch(variantLabelsProvider(variantIdsKey(levels.map((l) => l.variantId))).future);
-});
-
 /// Current tenant info (name, currency, status).
 final tenantInfoProvider = FutureProvider.autoDispose<TenantInfo>((ref) async {
   final resp =
@@ -344,22 +331,18 @@ final tenantInfoProvider = FutureProvider.autoDispose<TenantInfo>((ref) async {
   return TenantInfo.fromJson(resp.data['data'] as Map<String, dynamic>);
 });
 
-/// All stores for the tenant.
+/// All stores for the tenant (walks the cursor-paginated admin list).
 final storesProvider = FutureProvider.autoDispose<List<StoreInfo>>((ref) async {
-  final resp =
-      await ref.read(apiClientProvider).dio.get('/${ApiConstants.tenant}/admin/stores');
-  final data = (resp.data['data'] as List?) ?? [];
+  final data = await fetchAllPages(
+      ref.read(apiClientProvider).dio, '/${ApiConstants.tenant}/admin/stores');
   return data.map((e) => StoreInfo.fromJson(e as Map<String, dynamic>)).toList();
 });
 
 /// Zones (aisles/racks) within a store. Stock batches live in a (store, zone).
 final zonesProvider =
     FutureProvider.autoDispose.family<List<ZoneInfo>, String>((ref, storeId) async {
-  final resp = await ref
-      .read(apiClientProvider)
-      .dio
-      .get('/${ApiConstants.tenant}/admin/stores/$storeId/zones');
-  final data = (resp.data['data'] as List?) ?? [];
+  final data = await fetchAllPages(ref.read(apiClientProvider).dio,
+      '/${ApiConstants.tenant}/admin/stores/$storeId/zones');
   return data.map((e) => ZoneInfo.fromJson(e as Map<String, dynamic>)).toList();
 });
 
@@ -408,11 +391,10 @@ class StaffMember {
       );
 }
 
-/// All staff assignments for the tenant (GET /tenant-svc/admin/staff).
+/// All staff assignments for the tenant (walks the cursor-paginated admin list).
 final staffProvider = FutureProvider.autoDispose<List<StaffMember>>((ref) async {
-  final resp =
-      await ref.read(apiClientProvider).dio.get('/${ApiConstants.tenant}/admin/staff');
-  final data = (resp.data['data'] as List?) ?? [];
+  final data = await fetchAllPages(
+      ref.read(apiClientProvider).dio, '/${ApiConstants.tenant}/admin/staff');
   return data.map((e) => StaffMember.fromJson(e as Map<String, dynamic>)).toList();
 });
 
@@ -582,8 +564,8 @@ final productVariantsProvider =
 /// included), so one default list is enough to make products sellable.
 final defaultPriceListProvider = FutureProvider.autoDispose<String>((ref) async {
   final dio = ref.read(apiClientProvider).dio;
-  final resp = await dio.get('/${ApiConstants.pricing}/price-lists');
-  final lists = (resp.data['data'] as List?) ?? [];
+  final lists =
+      await fetchAllPages(dio, '/${ApiConstants.pricing}/price-lists');
 
   Map<String, dynamic>? chosen;
   for (final l in lists) {
@@ -842,4 +824,41 @@ final movementStatsReportProvider =
       .get('/${ApiConstants.reporting}/admin/reports/inventory/movement-stats');
   final rows = (resp.data['data']?['rows'] as List?) ?? [];
   return rows.map((e) => MovementStatRow.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+/// One currency's sales totals (gross/refunded/net + order count) — from reporting-svc's
+/// order/payment projection (N4).
+class SalesSummaryRow {
+  final String currency;
+  final int orders;
+  final double gross;
+  final double refunded;
+  final double net;
+
+  const SalesSummaryRow({
+    required this.currency,
+    required this.orders,
+    required this.gross,
+    required this.refunded,
+    required this.net,
+  });
+
+  factory SalesSummaryRow.fromJson(Map<String, dynamic> j) => SalesSummaryRow(
+        currency: j['currency'] as String? ?? '-',
+        orders: (j['orders'] as num?)?.toInt() ?? 0,
+        gross: (j['gross'] as num?)?.toDouble() ?? 0,
+        refunded: (j['refunded'] as num?)?.toDouble() ?? 0,
+        net: (j['net'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// Sales revenue report grouped by currency.
+final salesSummaryReportProvider =
+    FutureProvider.autoDispose<List<SalesSummaryRow>>((ref) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.reporting}/admin/reports/sales/summary');
+  final rows = (resp.data['data']?['rows'] as List?) ?? [];
+  return rows.map((e) => SalesSummaryRow.fromJson(e as Map<String, dynamic>)).toList();
 });

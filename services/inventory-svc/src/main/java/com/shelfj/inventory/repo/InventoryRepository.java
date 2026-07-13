@@ -10,6 +10,7 @@ import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LevelSummary;
 import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
@@ -493,46 +494,108 @@ public class InventoryRepository extends BaseOutboxRepository {
   }
 
   // ---------------------------------------------------------------- levels
+
   /**
-   * On-hand (sum remaining batches), reserved (sum HELD), available = on-hand − reserved, per
-   * (store,variant).
+   * Per-(store,variant) aggregation shared by the paginated list and the summary count: on-hand
+   * (sum remaining batches), reserved (sum HELD). Binds two params — {@code tenant_id} for
+   * reservations then {@code tenant_id} for batches. Callers append store/cursor filters + GROUP BY
+   * / ORDER BY / LIMIT, or wrap it for aggregate counts.
+   */
+  private static final String LEVELS_CORE =
+      """
+      SELECT b.store_id, b.variant_id,
+             COALESCE(SUM(b.remaining_qty),0) AS on_hand,
+             COALESCE(MAX(res.reserved),0) AS reserved
+      FROM inventory_batches b
+      LEFT JOIN (
+          SELECT store_id, variant_id, SUM(qty) AS reserved
+          FROM reservations WHERE tenant_id = ? AND status = 'HELD'
+          GROUP BY store_id, variant_id
+      ) res ON res.store_id = b.store_id AND res.variant_id = b.variant_id
+      WHERE b.tenant_id = ? AND b.material_status = 'AVAILABLE'""";
+
+  /**
+   * On-hand / reserved / available per (store,variant). Unbounded — for internal callers (min/max
+   * planning, storefront) that need every SKU. Paginated reads use {@link #levelsPage}.
    */
   public List<Level> levels(UUID tenantId, UUID storeId) {
-    String sql =
-        """
-                SELECT b.store_id, b.variant_id,
-                       COALESCE(SUM(b.remaining_qty),0) AS on_hand,
-                       COALESCE(MAX(res.reserved),0) AS reserved
-                FROM inventory_batches b
-                LEFT JOIN (
-                    SELECT store_id, variant_id, SUM(qty) AS reserved
-                    FROM reservations WHERE tenant_id = ? AND status = 'HELD'
-                    GROUP BY store_id, variant_id
-                ) res ON res.store_id = b.store_id AND res.variant_id = b.variant_id
-                WHERE b.tenant_id = ? AND b.material_status = 'AVAILABLE'"""
-            + (storeId != null ? " AND b.store_id = ?" : "")
-            + """
+    return levelsPage(tenantId, storeId, null, null, Integer.MAX_VALUE);
+  }
 
-                GROUP BY b.store_id, b.variant_id
-                ORDER BY b.store_id, b.variant_id""";
+  /**
+   * One keyset page of levels, ordered by {@code (store_id, variant_id)} and starting strictly
+   * after the {@code (afterStoreId, afterVariantId)} cursor when both are supplied. {@code limit}
+   * caps the returned rows so the caller can request {@code limit + 1} to detect a further page.
+   */
+  public List<Level> levelsPage(
+      UUID tenantId, UUID storeId, UUID afterStoreId, UUID afterVariantId, int limit) {
+    boolean hasStore = storeId != null;
+    boolean hasCursor = afterStoreId != null && afterVariantId != null;
+    String sql =
+        LEVELS_CORE
+            + (hasStore ? " AND b.store_id = ?" : "")
+            + (hasCursor ? " AND (b.store_id, b.variant_id) > (?, ?)" : "")
+            + " GROUP BY b.store_id, b.variant_id"
+            + " ORDER BY b.store_id, b.variant_id"
+            + " LIMIT ?";
     return query(
         sql,
         ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, tenantId);
-          if (storeId != null) ps.setObject(3, storeId);
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          ps.setObject(i++, tenantId);
+          if (hasStore) {
+            ps.setObject(i++, storeId);
+          }
+          if (hasCursor) {
+            ps.setObject(i++, afterStoreId);
+            ps.setObject(i++, afterVariantId);
+          }
+          ps.setInt(i, limit);
         },
-        rs -> {
-          BigDecimal onHand = rs.getBigDecimal("on_hand");
-          BigDecimal reserved = rs.getBigDecimal("reserved");
-          return new Level(
-              rs.getObject("store_id", UUID.class),
-              rs.getObject("variant_id", UUID.class),
-              onHand,
-              reserved,
-              onHand.subtract(reserved));
-        },
+        InventoryRepository::mapLevel,
         "load levels");
+  }
+
+  /**
+   * Aggregate counts over the same per-(store,variant) levels: total distinct SKUs and how many are
+   * at or below {@code lowThreshold} available. A single query that never materializes the full
+   * list — backs the admin dashboard KPI tiles.
+   */
+  public LevelSummary levelsSummary(UUID tenantId, UUID storeId, BigDecimal lowThreshold) {
+    boolean hasStore = storeId != null;
+    String sql =
+        "SELECT COUNT(*) AS sku_count,"
+            + " COUNT(*) FILTER (WHERE lv.on_hand - lv.reserved <= ?) AS low_count FROM ("
+            + LEVELS_CORE
+            + (hasStore ? " AND b.store_id = ?" : "")
+            + " GROUP BY b.store_id, b.variant_id) lv";
+    List<LevelSummary> rows =
+        query(
+            sql,
+            ps -> {
+              int i = 1;
+              ps.setBigDecimal(i++, lowThreshold);
+              ps.setObject(i++, tenantId);
+              ps.setObject(i++, tenantId);
+              if (hasStore) {
+                ps.setObject(i, storeId);
+              }
+            },
+            rs -> new LevelSummary(rs.getLong("sku_count"), rs.getLong("low_count")),
+            "load levels summary");
+    return rows.isEmpty() ? new LevelSummary(0, 0) : rows.get(0);
+  }
+
+  private static Level mapLevel(ResultSet rs) throws SQLException {
+    BigDecimal onHand = rs.getBigDecimal("on_hand");
+    BigDecimal reserved = rs.getBigDecimal("reserved");
+    return new Level(
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        onHand,
+        reserved,
+        onHand.subtract(reserved));
   }
 
   // ---------------------------------------------------------------- batches (read)

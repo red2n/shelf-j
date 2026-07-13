@@ -11,6 +11,7 @@ import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
+import com.shelfj.inventory.domain.Domain.LevelSummary;
 import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.LotUomConversion;
@@ -340,6 +341,51 @@ public class InventoryService {
   // ---- reads ----
   public List<Level> levels(UUID tenantId, UUID storeId) {
     return repo.levels(tenantId, storeId);
+  }
+
+  /** One page of stock levels plus the opaque cursor for the next page (null when exhausted). */
+  public record LevelPage(List<Level> levels, String nextCursor) {}
+
+  /**
+   * Cursor-paginated levels. The cursor wraps the last row's {@code storeId|variantId} keyset; a
+   * fresh call (null cursor) starts at the first row. Fetches one extra row to learn whether a
+   * further page exists without a second query.
+   */
+  public LevelPage levelsPage(UUID tenantId, UUID storeId, String afterCursor, int limit) {
+    UUID afterStoreId = null;
+    UUID afterVariantId = null;
+    String rawKey = com.shelfj.web.Cursor.decode(afterCursor);
+    if (rawKey != null) {
+      int sep = rawKey.indexOf('|');
+      try {
+        if (sep < 0) {
+          throw new IllegalArgumentException("missing separator");
+        }
+        afterStoreId = UUID.fromString(rawKey.substring(0, sep));
+        afterVariantId = UUID.fromString(rawKey.substring(sep + 1));
+      } catch (RuntimeException e) {
+        throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
+      }
+    }
+    List<Level> rows = repo.levelsPage(tenantId, storeId, afterStoreId, afterVariantId, limit + 1);
+    if (rows.size() <= limit) {
+      return new LevelPage(rows, null);
+    }
+    List<Level> page = rows.subList(0, limit);
+    Level last = page.get(page.size() - 1);
+    return new LevelPage(
+        page, com.shelfj.web.Cursor.encode(last.storeId() + "|" + last.variantId()));
+  }
+
+  /**
+   * SKUs with available quantity at or below this count as "low stock" for the dashboard summary,
+   * mirroring the client's {@code InventoryLevel.isLow} heuristic (available &lt;= 5).
+   */
+  private static final BigDecimal LOW_STOCK_THRESHOLD = new BigDecimal("5");
+
+  /** Aggregate SKU / low-stock counts for the dashboard, without materializing the full list. */
+  public LevelSummary levelsSummary(UUID tenantId, UUID storeId) {
+    return repo.levelsSummary(tenantId, storeId, LOW_STOCK_THRESHOLD);
   }
 
   public List<Batch> listBatches(

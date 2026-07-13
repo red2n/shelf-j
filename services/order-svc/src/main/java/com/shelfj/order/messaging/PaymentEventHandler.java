@@ -31,6 +31,7 @@ class PaymentEventHandler {
     UUID orderId;
     UUID tenantId;
     UUID paymentId;
+    UUID eventId;
     BigDecimal amount;
     try {
       JsonObject obj = Json.createReader(new StringReader(payload)).readObject();
@@ -38,10 +39,12 @@ class PaymentEventHandler {
       String orderIdStr = stringOrNull(obj, "orderId");
       String tenantIdStr = stringOrNull(obj, "tenantId");
       String paymentIdStr = stringOrNull(obj, "paymentId");
+      String eventIdStr = stringOrNull(obj, "eventId");
       if (orderIdStr == null || tenantIdStr == null) return;
       orderId = UUID.fromString(orderIdStr);
       tenantId = UUID.fromString(tenantIdStr);
       paymentId = paymentIdStr != null ? UUID.fromString(paymentIdStr) : null;
+      eventId = eventIdStr != null ? UUID.fromString(eventIdStr) : null;
       amount =
           obj.containsKey("amount") && !obj.isNull("amount")
               ? obj.getJsonNumber("amount").bigDecimalValue()
@@ -56,6 +59,8 @@ class PaymentEventHandler {
         svc.handlePaymentCaptured(tenantId, orderId, paymentId, amount);
       } else if ("PaymentFailed".equals(eventType)) {
         svc.handlePaymentFailed(tenantId, orderId);
+      } else if ("PaymentRefunded".equals(eventType)) {
+        svc.applyRefund(eventId, tenantId, orderId, amount);
       }
     } catch (ApiException e) {
       if (e.status() >= 500) {

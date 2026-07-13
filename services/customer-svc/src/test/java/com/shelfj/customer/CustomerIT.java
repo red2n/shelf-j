@@ -42,6 +42,9 @@ class CustomerIT {
 
   @Inject WebTarget target;
 
+  // Kafka is disabled in-test, so drive the loyalty accrual path directly (as the consumer would).
+  @Inject com.shelfj.customer.service.CustomerService loyalty;
+
   @AfterAll
   static void stopDb() {
     PG.stop();
@@ -305,6 +308,74 @@ class CustomerIT {
             .header("X-Roles", "CASHIER")
             .delete();
     assertThat(asCashier.getStatus(), is(403));
+  }
+
+  @Test
+  void loyaltyAccruesFromOrderOnceAndDedupesOnEventId() {
+    Response r =
+        post(
+            "/customers",
+            "{\"email\":\"jill@example.com\",\"firstName\":\"Jill\",\"lastName\":\"Reed\"}");
+    String id = field(r.readEntity(String.class), "id");
+    java.util.UUID tenant = java.util.UUID.fromString(TENANT);
+    java.util.UUID customerId = java.util.UUID.fromString(id);
+    java.util.UUID eventA = java.util.UUID.randomUUID();
+
+    // Order A: £40 spent → 40 points at the default 1-point-per-unit rate.
+    loyalty.accrueLoyaltyFromOrder(
+        eventA, tenant, customerId, java.util.UUID.randomUUID(), new java.math.BigDecimal("40.00"));
+    // Redelivery of the SAME event must not accrue again (dedupe on eventId).
+    loyalty.accrueLoyaltyFromOrder(
+        eventA, tenant, customerId, java.util.UUID.randomUUID(), new java.math.BigDecimal("40.00"));
+    // A genuinely different order (new eventId) accrues normally → 50.
+    loyalty.accrueLoyaltyFromOrder(
+        java.util.UUID.randomUUID(),
+        tenant,
+        customerId,
+        java.util.UUID.randomUUID(),
+        new java.math.BigDecimal("10.00"));
+
+    String acct =
+        target
+            .path("/customers/" + id + "/loyalty")
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", TENANT)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    // 40 (once, not twice) + 10 = 50. Double-accrual would show 90.
+    assertThat(acct, containsString("\"pointsBalance\":50.00"));
+    assertThat(acct, not(containsString("\"pointsBalance\":90")));
+  }
+
+  @Test
+  void storeCreditRedeemIsIdempotentPerOrder() {
+    Response r =
+        post(
+            "/customers",
+            "{\"email\":\"kate@example.com\",\"firstName\":\"Kate\",\"lastName\":\"Ng\"}");
+    String id = field(r.readEntity(String.class), "id");
+    assertThat(
+        post("/customers/" + id + "/store-credit/issue", "{\"amount\":100.00,\"reason\":\"seed\"}")
+            .getStatus(),
+        is(200));
+
+    // payment-svc may retry the same store-credit tender for an order; keyed on orderId, the second
+    // redeem must be a no-op (not a second deduction).
+    String order = java.util.UUID.randomUUID().toString();
+    String body = "{\"amount\":30.00,\"orderId\":\"" + order + "\",\"reason\":\"tender\"}";
+    assertThat(post("/customers/" + id + "/store-credit/redeem", body).getStatus(), is(200));
+    assertThat(post("/customers/" + id + "/store-credit/redeem", body).getStatus(), is(200));
+
+    String credit =
+        target
+            .path("/customers/" + id + "/store-credit")
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", TENANT)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    // 100 − 30 (once, not twice) = 70. A double redeem would show 40.
+    assertThat(credit, containsString("\"balance\":70.00"));
+    assertThat(credit, not(containsString("\"balance\":40")));
   }
 
   @Test

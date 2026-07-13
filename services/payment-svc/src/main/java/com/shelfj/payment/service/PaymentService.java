@@ -10,6 +10,7 @@ import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
@@ -27,7 +28,8 @@ public class PaymentService {
           PaymentTender.METHOD_UPI,
           PaymentTender.METHOD_WALLET,
           PaymentTender.METHOD_GIFT_CARD,
-          PaymentTender.METHOD_VOUCHER);
+          PaymentTender.METHOD_VOUCHER,
+          PaymentTender.METHOD_STORE_CREDIT);
 
   /**
    * The methods the store owner can turn on/off per store (tenant-svc {@code
@@ -44,6 +46,7 @@ public class PaymentService {
   @Inject PaymentRepository repo;
   @Inject OrderClient orderClient;
   @Inject com.shelfj.payment.client.TenantStoreClient storeClient;
+  @Inject com.shelfj.payment.client.CustomerClient customerClient;
 
   /** Staff-recorded tender (POS/back-office) — the caller's role is the trust boundary. */
   public PaymentTender recordTender(
@@ -104,9 +107,13 @@ public class PaymentService {
     if (!VALID_METHODS.contains(method))
       throw ApiException.badRequest(
           "PAYMENT_INVALID_METHOD",
-          "method must be one of CASH, CARD, UPI, WALLET, GIFT_CARD, VOUCHER — got: "
+          "method must be one of CASH, CARD, UPI, WALLET, GIFT_CARD, VOUCHER, STORE_CREDIT — got: "
               + req.method());
     requireMethodEnabledForStore(tenantId, storeId, method);
+
+    if (PaymentTender.METHOD_STORE_CREDIT.equals(method)) {
+      return captureStoreCredit(req, tenantId, orderId, storeId);
+    }
 
     UUID tenderId = UUID.randomUUID();
     PaymentTender tender =
@@ -118,6 +125,51 @@ public class PaymentService {
             method,
             req.reference(),
             idempotencyKey,
+            PaymentTender.STATUS_CAPTURED,
+            req.notes(),
+            Instant.now(),
+            storeId);
+
+    return repo.createTender(
+        tender, Events.paymentCaptured(tenantId, tenderId, orderId, req.amount()));
+  }
+
+  /**
+   * Redeem store credit as tender toward the order. Keyed idempotently on {@code "sc:"+orderId}: a
+   * repeat store-credit tender for the same order returns the existing tender without redeeming
+   * again (belt-and-suspenders with customer-svc's own per-order redeem idempotency). The redeem
+   * happens BEFORE the tender is recorded, so an insufficient balance (422) or an unreachable
+   * customer-svc (503) rejects the tender rather than inflating {@code paid_amount}.
+   */
+  private PaymentTender captureStoreCredit(
+      RecordTenderRequest req, UUID tenantId, UUID orderId, UUID storeId) {
+    if (req.customerId() == null || req.customerId().isBlank())
+      throw ApiException.badRequest(
+          "PAYMENT_CUSTOMER_REQUIRED", "customerId is required for a STORE_CREDIT tender");
+    UUID customerId = UUID.fromString(req.customerId());
+    String currency =
+        req.currency() == null || req.currency().isBlank()
+            ? "GBP"
+            : req.currency().toUpperCase(Locale.ROOT);
+    String key = "sc:" + orderId;
+
+    Optional<PaymentTender> existing = repo.findTenderByKey(tenantId, key);
+    if (existing.isPresent()) {
+      return existing.get();
+    }
+
+    customerClient.redeemStoreCredit(tenantId, customerId, req.amount(), currency, orderId);
+
+    UUID tenderId = UUID.randomUUID();
+    PaymentTender tender =
+        new PaymentTender(
+            tenderId,
+            tenantId,
+            orderId,
+            req.amount(),
+            PaymentTender.METHOD_STORE_CREDIT,
+            req.reference(),
+            key,
             PaymentTender.STATUS_CAPTURED,
             req.notes(),
             Instant.now(),
@@ -176,10 +228,38 @@ public class PaymentService {
     // Existence, order-match, and the cumulative refund cap are all enforced inside ONE
     // transaction with the payment row locked — checking them here first would be a TOCTOU race
     // letting two concurrent refunds together exceed the original payment.
-    return repo.createRefundGuarded(refund, Events.paymentRefunded(tenantId, refundId, orderId));
+    return repo.createRefundGuarded(
+        refund, Events.paymentRefunded(tenantId, refundId, orderId, req.amount()));
   }
 
   public List<RefundTender> listRefundsByOrder(UUID tenantId, UUID orderId) {
     return repo.findRefundsByOrder(tenantId, orderId);
+  }
+
+  /**
+   * Automatically refund a captured order in response to an order event. Driven by {@code
+   * OrderReturned} (refund the return amount) and {@code OrderCancelled} (refund whatever is still
+   * captured), idempotent on the order event's {@code eventId}. {@code requestedAmount == null}
+   * means "refund all remaining captured" (cancellation); otherwise the amount is capped at the
+   * remaining captured total. Orders with nothing captured (e.g. unpaid pay-later cancellations)
+   * are a no-op. Distributes the refund across the order's captured tenders so the per-tender cap
+   * invariant holds even for split-tender sales.
+   */
+  public void refundForOrderEvent(
+      UUID eventId,
+      String consumer,
+      UUID tenantId,
+      UUID orderId,
+      BigDecimal requestedAmount,
+      String reason) {
+    UUID refundBatchId = UUID.randomUUID();
+    repo.refundOrderOnce(
+        eventId,
+        consumer,
+        tenantId,
+        orderId,
+        requestedAmount,
+        reason,
+        amt -> Events.paymentRefunded(tenantId, refundBatchId, orderId, amt));
   }
 }

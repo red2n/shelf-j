@@ -173,6 +173,31 @@ public class TenantRepository extends BaseOutboxRepository {
         TenantRepository::mapStore);
   }
 
+  /** Keyset page of stores: rows strictly after the cursor in (created_at, id) order. */
+  public List<Store> listStores(UUID tenantId, Instant afterCreatedAt, UUID afterId, int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
+                + " geo_lat, geo_lng, timezone, business_hours, status, is_default, show_prices,"
+                + " enabled_payment_methods, created_at, updated_at"
+                + " FROM stores WHERE tenant_id = ?");
+    if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) > (?, ?)");
+    sql.append(" ORDER BY created_at, id LIMIT ?");
+    return query(
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (afterCreatedAt != null && afterId != null) {
+            ps.setObject(i++, afterCreatedAt.atOffset(ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
+        },
+        TenantRepository::mapStore,
+        "list stores page");
+  }
+
   public Optional<Store> findStore(UUID tenantId, UUID storeId) {
     return query(
             "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
@@ -287,16 +312,29 @@ public class TenantRepository extends BaseOutboxRepository {
 
   // ──────────────────────────────────────────────────────── zone reads/writes
 
-  public List<Zone> listZones(UUID tenantId, UUID storeId) {
+  /** Keyset page of a store's zones: rows strictly after the cursor in (created_at, id) order. */
+  public List<Zone> listZones(
+      UUID tenantId, UUID storeId, Instant afterCreatedAt, UUID afterId, int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, name, code, type, status, created_at, updated_at"
+                + " FROM zones WHERE tenant_id = ? AND store_id = ?");
+    if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) > (?, ?)");
+    sql.append(" ORDER BY created_at, id LIMIT ?");
     return query(
-        "SELECT id, tenant_id, store_id, name, code, type, status, created_at, updated_at"
-            + " FROM zones WHERE tenant_id = ? AND store_id = ? ORDER BY created_at",
+        sql.toString(),
         ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, storeId);
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          ps.setObject(i++, storeId);
+          if (afterCreatedAt != null && afterId != null) {
+            ps.setObject(i++, afterCreatedAt.atOffset(ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
         },
         TenantRepository::mapZone,
-        "list zones");
+        "list zones page");
   }
 
   public Optional<Zone> findZone(UUID tenantId, UUID zoneId) {
@@ -348,12 +386,28 @@ public class TenantRepository extends BaseOutboxRepository {
 
   // ──────────────────────────────────────────────────────── staff reads/writes
 
-  public List<StaffAssignment> listStaff(UUID tenantId) {
-    return many(
-        "SELECT id, tenant_id, user_id, store_id, role, created_at"
-            + " FROM staff_assignments WHERE tenant_id = ? ORDER BY created_at",
-        tenantId,
-        TenantRepository::mapStaff);
+  /** Keyset page of staff assignments: rows strictly after the cursor in (created_at, id) order. */
+  public List<StaffAssignment> listStaff(
+      UUID tenantId, Instant afterCreatedAt, UUID afterId, int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, user_id, store_id, role, created_at"
+                + " FROM staff_assignments WHERE tenant_id = ?");
+    if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) > (?, ?)");
+    sql.append(" ORDER BY created_at, id LIMIT ?");
+    return query(
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (afterCreatedAt != null && afterId != null) {
+            ps.setObject(i++, afterCreatedAt.atOffset(ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
+        },
+        TenantRepository::mapStaff,
+        "list staff page");
   }
 
   public void removeStaff(UUID tenantId, UUID userId, UUID storeId) {

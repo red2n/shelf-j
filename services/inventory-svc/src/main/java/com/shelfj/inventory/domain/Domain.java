@@ -41,6 +41,11 @@ public final class Domain {
   public record Level(
       UUID storeId, UUID variantId, BigDecimal onHand, BigDecimal reserved, BigDecimal available) {}
 
+  /**
+   * Aggregate counts over levels: total distinct SKUs and how many are at/below the low threshold.
+   */
+  public record LevelSummary(long skuCount, long lowStockCount) {}
+
   public record Reservation(
       UUID id,
       UUID tenantId,

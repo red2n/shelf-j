@@ -331,6 +331,41 @@ class PricingIT {
     assertThat(res, containsString("90.00"));
   }
 
+  @Test
+  void priceListsAreCursorPaginated() {
+    for (int i = 1; i <= 5; i++) {
+      Response r =
+          post(
+              "/price-lists",
+              "{\"name\":\"List "
+                  + i
+                  + "\",\"channel\":\"ALL\",\"currency\":\"GBP\","
+                  + "\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+              T);
+      assertThat(r.getStatus(), is(201));
+    }
+
+    // Walk with limit=2: pages of 2,2,1 and every list seen exactly once.
+    java.util.Set<String> seen = new java.util.HashSet<>();
+    String cursor = null;
+    int pages = 0;
+    do {
+      String path = "/price-lists?limit=2" + (cursor == null ? "" : "&after=" + cursor);
+      String body = get(path, T).readEntity(String.class);
+      pages++;
+      for (int i = 1; i <= 5; i++) {
+        String name = "\"name\":\"List " + i + "\"";
+        if (body.contains(name)) {
+          assertThat("price list " + i + " served twice", seen.add(name), is(true));
+        }
+      }
+      int c = body.indexOf("\"nextCursor\":\"");
+      cursor = c < 0 ? null : body.substring(c + 14, body.indexOf('"', c + 14));
+    } while (cursor != null);
+    assertThat(pages, is(3));
+    assertThat(seen.size(), is(5));
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────
 
   private static String extractId(String json) {

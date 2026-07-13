@@ -120,9 +120,12 @@ public class PricingClient {
   /** Returns an existing ALL-channel price list id, or creates one. */
   private String resolveDefaultPriceList(
       UUID tenantId, String currency, String baseUri, String rolesHeader) {
+    // The list endpoint is cursor-paginated (default 20); ask for the max page. The Default
+    // ALL-channel list is created at onboarding, so it sorts first (created_at ASC) — one page
+    // is always enough to find it.
     try (HttpClientResponse res =
         webClient
-            .get(baseUri + "/price-lists")
+            .get(baseUri + "/price-lists?limit=100")
             .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
             .header(HeaderNames.create(HttpHeaders.ROLES), rolesHeader)
             .request()) {

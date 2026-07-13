@@ -6,12 +6,16 @@ import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 
 @ApplicationScoped
 public class PaymentRepository extends BaseOutboxRepository {
@@ -177,6 +181,120 @@ public class PaymentRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Refund a captured order in response to an order event (return/cancel), idempotently on {@code
+   * eventId}. The dedupe mark, the refund tender rows, and the {@code PaymentRefunded} outbox event
+   * all commit in one transaction with the order's captured tenders locked {@code FOR UPDATE}, so a
+   * concurrent manual refund cannot push the cumulative refund past what was captured.
+   *
+   * <p>{@code requestedAmount == null} refunds all remaining captured (cancellation); otherwise the
+   * amount is capped at the remaining. Nothing captured / already fully refunded is a clean no-op.
+   * The refund is spread across the order's tenders by residual capacity so split-tender sales stay
+   * within each tender's cap. The event is built from the actually-refunded total via {@code
+   * eventBuilder} so downstream sees the real amount.
+   */
+  public void refundOrderOnce(
+      UUID eventId,
+      String consumer,
+      UUID tenantId,
+      UUID orderId,
+      BigDecimal requestedAmount,
+      String reason,
+      Function<BigDecimal, OutboxRow> eventBuilder) {
+    inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumer)) {
+            return null; // this order event already produced its refund
+          }
+          List<PaymentTender> captured = capturedTendersForUpdateTx(c, tenantId, orderId);
+          BigDecimal capturedTotal = BigDecimal.ZERO;
+          for (PaymentTender t : captured) {
+            capturedTotal = capturedTotal.add(t.amount());
+          }
+          BigDecimal remaining = capturedTotal.subtract(sumRefundsByOrderTx(c, tenantId, orderId));
+          if (remaining.signum() <= 0) {
+            return null; // unpaid (e.g. pay-later cancel) or already fully refunded — no-op
+          }
+          BigDecimal toRefund =
+              requestedAmount == null ? remaining : requestedAmount.min(remaining);
+          if (toRefund.signum() <= 0) {
+            return null;
+          }
+          BigDecimal left = toRefund;
+          for (PaymentTender t : captured) {
+            if (left.signum() <= 0) break;
+            BigDecimal residual = t.amount().subtract(sumRefundsTx(c, tenantId, t.id()));
+            if (residual.signum() <= 0) continue;
+            BigDecimal alloc = left.min(residual);
+            insertRefundTenderTx(c, tenantId, orderId, t.id(), alloc, t.method(), reason);
+            left = left.subtract(alloc);
+          }
+          insertOutbox(c, eventBuilder.apply(toRefund));
+          return null;
+        },
+        "refund order from event");
+  }
+
+  private List<PaymentTender> capturedTendersForUpdateTx(Connection c, UUID tenantId, UUID orderId)
+      throws SQLException {
+    List<PaymentTender> out = new ArrayList<>();
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, order_id, amount, method, reference,"
+                + " idempotency_key, status, notes, created_at, store_id"
+                + " FROM payment_tenders"
+                + " WHERE tenant_id=? AND order_id=? AND status='CAPTURED'"
+                + " ORDER BY created_at ASC FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          out.add(mapTender(rs));
+        }
+      }
+    }
+    return out;
+  }
+
+  private static BigDecimal sumRefundsByOrderTx(Connection c, UUID tenantId, UUID orderId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT COALESCE(SUM(amount), 0) AS total"
+                + " FROM refund_tenders WHERE tenant_id=? AND order_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? rs.getBigDecimal("total") : BigDecimal.ZERO;
+      }
+    }
+  }
+
+  private static void insertRefundTenderTx(
+      Connection c,
+      UUID tenantId,
+      UUID orderId,
+      UUID paymentId,
+      BigDecimal amount,
+      String method,
+      String reason)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO refund_tenders"
+                + " (id, tenant_id, order_id, payment_id, amount, method, reason, created_at)"
+                + " VALUES (?,?,?,?,?,?,?, now())")) {
+      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(2, tenantId);
+      ps.setObject(3, orderId);
+      ps.setObject(4, paymentId);
+      ps.setBigDecimal(5, amount);
+      ps.setString(6, method);
+      ps.setString(7, reason);
+      ps.executeUpdate();
+    }
+  }
+
   private static BigDecimal sumRefundsTx(java.sql.Connection c, UUID tenantId, UUID paymentId)
       throws SQLException {
     try (var ps =
@@ -204,6 +322,24 @@ public class PaymentRepository extends BaseOutboxRepository {
             },
             this::mapTender,
             "find tender");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /**
+   * Find a captured tender by its idempotency key (used to make store-credit tenders idempotent).
+   */
+  public Optional<PaymentTender> findTenderByKey(UUID tenantId, String idempotencyKey) {
+    var rows =
+        query(
+            "SELECT id, tenant_id, order_id, amount, method, reference,"
+                + " idempotency_key, status, notes, created_at, store_id"
+                + " FROM payment_tenders WHERE tenant_id=? AND idempotency_key=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, idempotencyKey);
+            },
+            this::mapTender,
+            "find tender by key");
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 

@@ -23,6 +23,7 @@ import com.shelfj.tenant.dto.Dtos.UpsertInventoryConfigRequest;
 import com.shelfj.tenant.mapper.Mappers;
 import com.shelfj.tenant.repo.TenantRepository;
 import com.shelfj.web.ApiException;
+import com.shelfj.web.Cursor;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Instant;
@@ -250,11 +251,32 @@ public class TenantService {
     return repo.listStores(tenantId);
   }
 
-  public List<Zone> listZones(UUID tenantId, UUID storeId) {
+  /** Cursor-paginated stores (admin list). The cursor wraps the last row's created_at|id keyset. */
+  public Cursor.Page<Store> listStores(UUID tenantId, String after, int limit) {
+    Cursor.CreatedAtId key = Cursor.decodeCreatedAtId(after);
+    List<Store> rows =
+        repo.listStores(
+            tenantId,
+            key == null ? null : key.createdAt(),
+            key == null ? null : key.id(),
+            limit + 1);
+    return Cursor.page(rows, limit, s -> s.createdAt() + "|" + s.id());
+  }
+
+  /** Cursor-paginated zones of one store (admin list). */
+  public Cursor.Page<Zone> listZones(UUID tenantId, UUID storeId, String after, int limit) {
     repo.findStore(tenantId, storeId)
         .orElseThrow(
             () -> ApiException.notFound("STORE_NOT_FOUND", "No such store in this tenant"));
-    return repo.listZones(tenantId, storeId);
+    Cursor.CreatedAtId key = Cursor.decodeCreatedAtId(after);
+    List<Zone> rows =
+        repo.listZones(
+            tenantId,
+            storeId,
+            key == null ? null : key.createdAt(),
+            key == null ? null : key.id(),
+            limit + 1);
+    return Cursor.page(rows, limit, z -> z.createdAt() + "|" + z.id());
   }
 
   public OnboardingStatus onboardingStatus(UUID tenantId) {
@@ -375,8 +397,17 @@ public class TenantService {
     return repo.updateZoneStatus(tenantId, zoneId, req.status());
   }
 
-  public List<com.shelfj.tenant.domain.Domain.StaffAssignment> listStaff(UUID tenantId) {
-    return repo.listStaff(tenantId);
+  /** Cursor-paginated staff assignments (admin list). */
+  public Cursor.Page<com.shelfj.tenant.domain.Domain.StaffAssignment> listStaff(
+      UUID tenantId, String after, int limit) {
+    Cursor.CreatedAtId key = Cursor.decodeCreatedAtId(after);
+    var rows =
+        repo.listStaff(
+            tenantId,
+            key == null ? null : key.createdAt(),
+            key == null ? null : key.id(),
+            limit + 1);
+    return Cursor.page(rows, limit, s -> s.createdAt() + "|" + s.id());
   }
 
   public void removeStaff(UUID tenantId, UUID userId, UUID storeId) {

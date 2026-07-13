@@ -308,6 +308,37 @@ public class OrderService {
         .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
   }
 
+  /** Order-by-id read for the API: tenant scope plus object-level authorization. */
+  public Order getOrder(UUID tenantId, UUID orderId, TenantContext ctx) {
+    Order order = getOrder(tenantId, orderId);
+    requireReadAccess(order, ctx);
+    return order;
+  }
+
+  /**
+   * Object-level authorization for order-by-id reads (mirrors CartService.requireOwnership): an
+   * order id alone is not proof of ownership. Staff may read any order in their tenant; an
+   * authenticated customer may only read an order placed against their own customerId. Denials are
+   * 404 (not 403) so order ids can't be probed for existence. A caller with no principal at all (no
+   * userId, no roles — only X-Tenant-Id) is a service-to-service lookup (e.g. payment-svc verifying
+   * an online payment claim); the gateway never forwards a tenant to these paths without a verified
+   * user, so that shape cannot originate from outside.
+   */
+  private static void requireReadAccess(Order order, TenantContext ctx) {
+    if (isStaff(ctx)) return;
+    if (ctx.userId() == null && ctx.roles().isEmpty()) return;
+    if (order.customerId() == null || !order.customerId().equals(ctx.userId()))
+      throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
+  }
+
+  private static boolean isStaff(TenantContext ctx) {
+    return ctx.hasRole("PLATFORM_ADMIN")
+        || ctx.hasRole("OWNER")
+        || ctx.hasRole("MANAGER")
+        || ctx.hasRole("STOREKEEPER")
+        || ctx.hasRole("CASHIER");
+  }
+
   /** SIM↔POS projection rows for POS screens (gap #50). */
   public List<com.shelfj.order.domain.Domain.PosStockPosition> listStockPositions(
       UUID tenantId, UUID storeId, UUID variantId, int limit) {
@@ -318,11 +349,14 @@ public class OrderService {
     return repo.findOrderItems(tenantId, orderId);
   }
 
-  public List<OrderStatusHistory> getOrderHistory(UUID tenantId, UUID orderId) {
+  public List<OrderStatusHistory> getOrderHistory(UUID tenantId, UUID orderId, TenantContext ctx) {
+    requireReadAccess(getOrder(tenantId, orderId), ctx);
     return repo.findOrderHistory(tenantId, orderId);
   }
 
   public Order confirmOrder(UUID tenantId, UUID orderId, UUID userId) {
+    // Load the order so OrderConfirmed can carry the buyer + settled amount (loyalty accrual).
+    Order order = getOrder(tenantId, orderId);
     return repo.transitionOrderStatus(
         tenantId,
         orderId,
@@ -330,7 +364,14 @@ public class OrderService {
         Order.STATUS_CONFIRMED,
         "confirmed",
         userId,
-        Events.orderConfirmed(tenantId, orderId));
+        Events.orderConfirmed(
+            tenantId,
+            orderId,
+            order.storeId(),
+            order.channel(),
+            order.customerId(),
+            order.total(),
+            order.currency()));
   }
 
   public Order cancelOrder(UUID tenantId, UUID orderId, String reason, UUID userId) {
@@ -422,10 +463,19 @@ public class OrderService {
     return repo.createReturn(
         ret,
         returnItems,
-        Events.orderReturned(tenantId, orderId, returnId, order.storeId(), returnItems));
+        Events.orderReturned(
+            tenantId,
+            orderId,
+            returnId,
+            order.storeId(),
+            returnItems,
+            totalRefund,
+            method,
+            order.currency()));
   }
 
-  public List<Return> getReturns(UUID tenantId, UUID orderId) {
+  public List<Return> getReturns(UUID tenantId, UUID orderId, TenantContext ctx) {
+    requireReadAccess(getOrder(tenantId, orderId), ctx);
     return repo.findReturns(tenantId, orderId);
   }
 
@@ -635,8 +685,30 @@ public class OrderService {
           orderId);
       return;
     }
+    // Load the order so OrderConfirmed can carry the buyer + settled amount (loyalty accrual). The
+    // event is only written when this capture fully covers the total (applyPaymentCaptured), so a
+    // partial split-tender builds the row but never emits it.
+    Order order = repo.findOrder(tenantId, orderId).orElse(null);
+    if (order == null) {
+      LOG.log(
+          java.lang.System.Logger.Level.WARNING,
+          "PaymentCaptured for order {0} ignored: order not found",
+          orderId);
+      return;
+    }
     repo.applyPaymentCaptured(
-        tenantId, orderId, paymentId, amount, Events.orderConfirmed(tenantId, orderId));
+        tenantId,
+        orderId,
+        paymentId,
+        amount,
+        Events.orderConfirmed(
+            tenantId,
+            orderId,
+            order.storeId(),
+            order.channel(),
+            order.customerId(),
+            order.total(),
+            order.currency()));
   }
 
   public void handlePaymentFailed(java.util.UUID tenantId, java.util.UUID orderId) {
@@ -654,6 +726,54 @@ public class OrderService {
                     Events.orderCancelled(tenantId, orderId, "payment failed"));
               }
             });
+  }
+
+  /**
+   * Apply a refund reported by payment-svc (PaymentRefunded) to the order: accumulate the refunded
+   * total and flip a sold order (CONFIRMED/FULFILLED) to PARTIALLY_REFUNDED / REFUNDED. Idempotent
+   * on the payment event's {@code eventId}.
+   */
+  public void applyRefund(
+      java.util.UUID eventId,
+      java.util.UUID tenantId,
+      java.util.UUID orderId,
+      java.math.BigDecimal amount) {
+    if (eventId == null || amount == null || amount.signum() <= 0) {
+      return;
+    }
+    repo.applyRefundOnce(eventId, tenantId, orderId, amount);
+  }
+
+  /**
+   * Cancel PENDING orders older than {@code ttlHours} — stranded pay-later orders that were never
+   * paid (a paid one would have confirmed). Each cancellation emits OrderCancelled, which releases
+   * the inventory hold (inventory-svc) and is a payment no-op (nothing captured). An order
+   * confirmed concurrently between the scan and the update is left alone. Returns the count
+   * cancelled. Driven by {@code PendingOrderSweeper}.
+   */
+  public int sweepExpiredPendingOrders(int ttlHours, int batchLimit) {
+    int cancelled = 0;
+    for (var ref : repo.findExpiredPendingOrders(ttlHours, batchLimit)) {
+      try {
+        repo.transitionOrderStatus(
+            ref.tenantId(),
+            ref.orderId(),
+            Order.STATUS_PENDING,
+            Order.STATUS_CANCELLED,
+            "expired: payment not received",
+            null,
+            Events.orderCancelled(ref.tenantId(), ref.orderId(), "expired: payment not received"));
+        cancelled++;
+      } catch (ApiException e) {
+        // Confirmed/cancelled concurrently between the scan and the conditional update — leave it.
+        LOG.log(
+            java.lang.System.Logger.Level.DEBUG,
+            "Skipped expiring order {0}: {1}",
+            ref.orderId(),
+            e.getMessage());
+      }
+    }
+    return cancelled;
   }
 
   // ── Gap #42: Special orders ───────────────────────────────────────────────

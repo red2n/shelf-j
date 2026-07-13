@@ -35,6 +35,7 @@ import com.shelfj.inventory.dto.Dtos.EnterCountRequest;
 import com.shelfj.inventory.dto.Dtos.ExpiringBatchResponse;
 import com.shelfj.inventory.dto.Dtos.KanbanCardResponse;
 import com.shelfj.inventory.dto.Dtos.LevelResponse;
+import com.shelfj.inventory.dto.Dtos.LevelSummaryResponse;
 import com.shelfj.inventory.dto.Dtos.LotActionResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyTreeResponse;
@@ -84,6 +85,7 @@ import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -198,12 +200,27 @@ public class AdminResource {
 
   @GET
   @Path("/levels")
-  public ApiResponse<List<LevelResponse>> levels(@QueryParam("store") String store) {
+  public ApiResponse<List<LevelResponse>> levels(
+      @QueryParam("store") String store,
+      @QueryParam("after") String after,
+      @QueryParam("limit") Integer limit) {
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
-    List<LevelResponse> items =
-        service.levels(tenantId, storeId).stream().map(Mappers::toLevel).toList();
-    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+    int clamped = Cursor.clampLimit(limit);
+    var page = service.levelsPage(tenantId, storeId, after, clamped);
+    List<LevelResponse> items = page.levels().stream().map(Mappers::toLevel).toList();
+    return ApiResponse.ok(items, new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
+  }
+
+  /** Aggregate KPI counts (total SKUs + low-stock) without paging the full levels list. */
+  @GET
+  @Path("/levels/summary")
+  public ApiResponse<LevelSummaryResponse> levelsSummary(@QueryParam("store") String store) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = store == null || store.isBlank() ? null : uuid(store, "store");
+    return ApiResponse.ok(
+        Mappers.toLevelSummary(service.levelsSummary(tenantId, storeId)),
+        ApiResponse.Meta.of(ctx.requestId()));
   }
 
   // ── batches ──────────────────────────────────────────────────────────────

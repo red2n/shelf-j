@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/paged.dart';
 
 // ── Models ───────────────────────────────────────────────────────────────────
 
@@ -121,11 +122,8 @@ class VatRate {
 // ── Providers ────────────────────────────────────────────────────────────────
 
 final priceListsProvider = FutureProvider.autoDispose<List<PriceList>>((ref) async {
-  final resp = await ref
-      .read(apiClientProvider)
-      .dio
-      .get('/${ApiConstants.pricing}/price-lists');
-  final data = (resp.data['data'] as List?) ?? [];
+  final data = await fetchAllPages(
+      ref.read(apiClientProvider).dio, '/${ApiConstants.pricing}/price-lists');
   return data.map((e) => PriceList.fromJson(e as Map<String, dynamic>)).toList();
 });
 

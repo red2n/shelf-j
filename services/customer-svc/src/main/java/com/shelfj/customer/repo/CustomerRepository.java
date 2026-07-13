@@ -307,6 +307,67 @@ public class CustomerRepository extends BaseOutboxRepository {
         "earn loyalty points");
   }
 
+  /**
+   * Accrue loyalty points from a confirmed order — idempotently. The processed_events mark and the
+   * accrual commit in one transaction (golden rule #7), so a redelivered OrderConfirmed accrues at
+   * most once. Returns {@code null} when the event was already processed, or when the order's
+   * customer is unknown to this service (e.g. since anonymized) — the dedupe mark still stands so
+   * the consumer does not loop; otherwise the updated account.
+   */
+  public LoyaltyAccount accrueFromOrderOnce(
+      UUID eventId,
+      String consumerName,
+      UUID tenantId,
+      UUID customerId,
+      UUID orderId,
+      BigDecimal points,
+      String reason,
+      OutboxRow event) {
+    return inTx(
+        conn -> {
+          if (!markProcessedIfNewTx(conn, eventId, consumerName)) {
+            return null; // already accrued for this event
+          }
+          if (!customerExists(conn, tenantId, customerId)) {
+            return null; // order referenced a customer this service doesn't hold — skip, no loop
+          }
+          LoyaltyAccount account = getOrCreateLoyaltyAccount(conn, tenantId, customerId);
+          BigDecimal newBalance = account.pointsBalance().add(points);
+          BigDecimal newLifetime = account.lifetimePoints().add(points);
+          String newTier = LoyaltyAccount.tierFor(newLifetime);
+          LoyaltyAccount updated =
+              updateLoyaltyAccount(conn, tenantId, customerId, newBalance, newLifetime, newTier);
+          insertLedgerEntry(
+              conn,
+              new LoyaltyLedgerEntry(
+                  UUID.randomUUID(),
+                  tenantId,
+                  customerId,
+                  LoyaltyLedgerEntry.TYPE_EARN,
+                  points,
+                  newBalance,
+                  orderId,
+                  reason,
+                  Instant.now()));
+          insertOutbox(conn, event);
+          return updated;
+        },
+        "accrue loyalty from order");
+  }
+
+  private static boolean customerExists(Connection c, UUID tenantId, UUID customerId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT 1 FROM customers WHERE tenant_id = ? AND id = ? AND status <> 'ANONYMIZED'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
+  }
+
   public LoyaltyAccount redeemPoints(
       UUID tenantId,
       UUID customerId,
@@ -455,6 +516,12 @@ public class CustomerRepository extends BaseOutboxRepository {
         conn -> {
           StoreCreditAccount account =
               getOrCreateStoreCreditAccount(conn, tenantId, customerId, currency);
+          // Idempotent per order: a store-credit tender against an order may be retried by
+          // payment-svc; a REDEEM already recorded for this order is a no-op, not a second
+          // deduction.
+          if (orderId != null && storeCreditRedeemExistsTx(conn, tenantId, customerId, orderId)) {
+            return account;
+          }
           if (account.balance().compareTo(amount) < 0) {
             throw new ApiException(
                 422, "STORE_CREDIT_INSUFFICIENT", "Insufficient store credit", java.util.List.of());
@@ -479,6 +546,21 @@ public class CustomerRepository extends BaseOutboxRepository {
           return updated;
         },
         "redeem store credit");
+  }
+
+  private static boolean storeCreditRedeemExistsTx(
+      java.sql.Connection c, UUID tenantId, UUID customerId, UUID orderId) throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "SELECT 1 FROM store_credit_ledger"
+                + " WHERE tenant_id = ? AND customer_id = ? AND order_id = ? AND type = 'REDEEM'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.setObject(3, orderId);
+      try (var rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
   }
 
   public Optional<StoreCreditAccount> findStoreCreditAccount(

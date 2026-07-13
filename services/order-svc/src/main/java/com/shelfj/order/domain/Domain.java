@@ -48,6 +48,9 @@ public final class Domain {
     public static final String STATUS_FULFILLED = "FULFILLED";
     public static final String STATUS_CANCELLED = "CANCELLED";
     public static final String STATUS_VOIDED = "VOIDED";
+    // Set when payment-svc reports a refund (PaymentRefunded) against a sold order.
+    public static final String STATUS_PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED";
+    public static final String STATUS_REFUNDED = "REFUNDED";
   }
 
   public record OrderItem(

@@ -3,6 +3,7 @@ package com.shelfj.order;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 
 import com.shelfj.order.service.OrderService;
 import com.shelfj.test.PostgresSupport;
@@ -142,6 +143,75 @@ class OrderIT {
             T);
     assertThat(r3.getStatus(), is(201));
     assertThat(r3.readEntity(String.class), containsString("COMPLETED"));
+  }
+
+  @Test
+  void paymentRefundedFlipsOrderToPartiallyThenFullyRefunded() {
+    // place + confirm a POS order (total = 2 × 10.00 = 20.00)
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":2,\"unitPrice\":10.00}],\"currency\":\"GBP\"}",
+            T,
+            "it-refund-status");
+    assertThat(placed.getStatus(), is(201));
+    String orderId = extractId(placed.readEntity(String.class));
+    assertThat(post("/orders/" + orderId + "/confirm", "{}", T).getStatus(), is(200));
+
+    UUID tenant = UUID.fromString(T);
+    UUID order = UUID.fromString(orderId);
+
+    // A 12.00 refund on a 20.00 order → PARTIALLY_REFUNDED (as PaymentEventHandler would call it).
+    UUID e1 = UUID.randomUUID();
+    orderService.applyRefund(e1, tenant, order, new java.math.BigDecimal("12.00"));
+    assertThat(
+        get("/orders/" + orderId, T).readEntity(String.class),
+        containsString("PARTIALLY_REFUNDED"));
+
+    // Redelivery of the SAME refund event must not add again — a broken dedupe would push
+    // cumulative to 24 ≥ 20 and prematurely show REFUNDED.
+    orderService.applyRefund(e1, tenant, order, new java.math.BigDecimal("12.00"));
+    assertThat(
+        get("/orders/" + orderId, T).readEntity(String.class),
+        containsString("PARTIALLY_REFUNDED"));
+
+    // The remaining 8.00 (distinct event) → cumulative 20.00 = total → REFUNDED.
+    orderService.applyRefund(UUID.randomUUID(), tenant, order, new java.math.BigDecimal("8.00"));
+    String finalBody = get("/orders/" + orderId, T).readEntity(String.class);
+    // REFUNDED present and PARTIALLY_REFUNDED absent together prove the status is exactly REFUNDED.
+    assertThat(finalBody, containsString("REFUNDED"));
+    assertThat(finalBody, not(containsString("PARTIALLY_REFUNDED")));
+  }
+
+  @Test
+  void sweeperCancelsExpiredPendingOrdersButNotConfirmedOnes() {
+    String orderJson =
+        "{\"storeId\":\""
+            + S
+            + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+            + "\"items\":[{\"variantId\":\""
+            + V
+            + "\",\"qty\":1,\"unitPrice\":10.00}],\"currency\":\"GBP\"}";
+
+    // A: placed, left PENDING (client never paid).
+    String aId = extractId(post("/orders", orderJson, T, "it-sweep-a").readEntity(String.class));
+    // B: placed then confirmed.
+    String bId = extractId(post("/orders", orderJson, T, "it-sweep-b").readEntity(String.class));
+    assertThat(post("/orders/" + bId + "/confirm", "{}", T).getStatus(), is(200));
+
+    // TTL of 0h → every still-PENDING order is expired. B is CONFIRMED so the status guard skips
+    // it.
+    orderService.sweepExpiredPendingOrders(0, 200);
+
+    assertThat(get("/orders/" + aId, T).readEntity(String.class), containsString("CANCELLED"));
+    String bBody = get("/orders/" + bId, T).readEntity(String.class);
+    assertThat(bBody, containsString("CONFIRMED"));
+    assertThat(bBody, not(containsString("CANCELLED")));
   }
 
   /**
@@ -619,7 +689,65 @@ class OrderIT {
     assertThat(rv.getStatus(), is(409));
   }
 
+  @Test
+  void orderByIdReadsAreObjectLevelAuthorized() {
+    String owningCustomer = UUID.randomUUID().toString();
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"customerId\":\""
+                + owningCustomer
+                + "\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":5.00}],\"currency\":\"USD\"}",
+            T,
+            "it-idor-guard");
+    assertThat(placed.getStatus(), is(201));
+    String orderId = extractId(placed.readEntity(String.class));
+
+    // The owning customer may read their order, its history and its returns.
+    assertThat(getAs("/orders/" + orderId, T, owningCustomer, "CUSTOMER").getStatus(), is(200));
+    assertThat(
+        getAs("/orders/" + orderId + "/history", T, owningCustomer, "CUSTOMER").getStatus(),
+        is(200));
+    assertThat(
+        getAs("/orders/" + orderId + "/returns", T, owningCustomer, "CUSTOMER").getStatus(),
+        is(200));
+
+    // Another authenticated customer in the same tenant gets 404 (not 403 — no existence oracle).
+    String otherCustomer = UUID.randomUUID().toString();
+    assertThat(getAs("/orders/" + orderId, T, otherCustomer, "CUSTOMER").getStatus(), is(404));
+    assertThat(
+        getAs("/orders/" + orderId + "/history", T, otherCustomer, "CUSTOMER").getStatus(),
+        is(404));
+    assertThat(
+        getAs("/orders/" + orderId + "/returns", T, otherCustomer, "CUSTOMER").getStatus(),
+        is(404));
+
+    // Staff read any order in the tenant.
+    assertThat(get("/orders/" + orderId, T).getStatus(), is(200));
+
+    // A service-to-service lookup (X-Tenant-Id only, no principal) keeps working — payment-svc
+    // verifies online payment claims through this exact shape (see payment-svc OrderClient).
+    Response s2s = target.path("/orders/" + orderId).request().header("X-Tenant-Id", T).get();
+    assertThat(s2s.getStatus(), is(200));
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────
+
+  private Response getAs(String path, String tenant, String userId, String roles) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-User-Id", userId)
+        .header("X-Roles", roles)
+        .get();
+  }
 
   private static String extractId(String json) {
     int start = json.indexOf("\"id\":\"") + 6;

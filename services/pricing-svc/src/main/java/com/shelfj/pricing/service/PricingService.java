@@ -25,6 +25,7 @@ import com.shelfj.pricing.dto.Dtos.UpsertPriceListItemRequest;
 import com.shelfj.pricing.dto.Dtos.UpsertProductVatCategoryRequest;
 import com.shelfj.pricing.repo.PricingRepository;
 import com.shelfj.web.ApiException;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -166,8 +167,16 @@ public class PricingService {
     return repo.createPriceList(pl);
   }
 
-  public List<PriceList> listPriceLists(TenantContext ctx) {
-    return repo.findPriceLists(ctx.tenantId());
+  /** Cursor-paginated price lists. The cursor wraps the last row's created_at|id keyset. */
+  public Cursor.Page<PriceList> listPriceLists(TenantContext ctx, String after, int limit) {
+    Cursor.CreatedAtId key = Cursor.decodeCreatedAtId(after);
+    List<PriceList> rows =
+        repo.findPriceLists(
+            ctx.tenantId(),
+            key == null ? null : key.createdAt(),
+            key == null ? null : key.id(),
+            limit + 1);
+    return Cursor.page(rows, limit, pl -> pl.createdAt() + "|" + pl.id());
   }
 
   public PriceList getPriceList(TenantContext ctx, UUID id) {
