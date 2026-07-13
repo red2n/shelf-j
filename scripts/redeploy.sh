@@ -51,6 +51,10 @@ export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/temurin-21-jdk-amd64}"
 
 cyan() { printf '\033[1;36m%s\033[0m\n' "$*"; }
 red()  { printf '\033[1;31m%s\033[0m\n' "$*"; }
+# Source IP the kernel would use to reach the outside world — a reliable way to
+# find "this machine's LAN IP" without depending on interface names (wlan0/eth0/
+# enp*s* all differ by box). Doesn't send any traffic, just a routing-table lookup.
+lan_ip() { ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}'; }
 
 # ── 0. Bootstrap .env + required secrets ─────────────────────────────────────
 # On a brand-new checkout (fresh VPS, CI runner, etc.) there is no .env at all, and
@@ -231,4 +235,23 @@ echo "  Prometheus               http://localhost:${PROM}"
 echo "  Zipkin                   http://localhost:${ZIPKIN_P}"
 echo "  Postgres (psql/SQL)      localhost:${PG}"
 echo "  Redis (redis-cli)        localhost:${REDIS_P}"
+
+LAN_IP="$(lan_ip)"
+if [ -n "$LAN_IP" ]; then
+  echo
+  cyan "Over Wi-Fi / LAN (phone, tablet, another PC on the same network):"
+  echo "  Web UI (all logins)      http://${LAN_IP}:${UI:-8088}/#/login"
+  echo "  Gateway (API)            http://${LAN_IP}:${GW:-8090}/api"
+  echo "  (only these two ports are LAN-reachable — everything else above is 127.0.0.1-only)"
+  BAKED_BASE="${UI_API_BASE:-http://localhost:8090/api}"
+  case "$BAKED_BASE" in
+    *localhost*|*127.0.0.1*)
+      red "  ! Web UI was built with API base '${BAKED_BASE}' — a phone can't resolve"
+      red "    'localhost' to this machine, so it won't be able to log in over Wi-Fi."
+      red "    Rebuild with: UI_API_BASE=http://${LAN_IP}:${GW:-8090}/api ./scripts/redeploy.sh"
+      ;;
+  esac
+else
+  red "Could not detect a LAN IP (no default route) — skipping Wi-Fi connection info."
+fi
 cyan "Done."
