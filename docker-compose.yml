@@ -18,10 +18,13 @@
 #   8081  kafka-ui                        9411  zipkin
 #   8082  swagger-ui (API docs)           9090  prometheus
 #   5432  postgres (direct SQL access)    6379  redis (redis-cli)
+#   4317  otel-collector (OTLP/gRPC — lets a service run outside docker, against the
+#         dockerized stack, still ship traces+logs)
 #
-# Ports intentionally NOT exposed (internal only — use Grafana for observability):
-#   otel-collector (4317/4318), loki (3100), tempo (3200), node/postgres/redis
-#   exporters (9100/9187/9121), pgbouncer (6432), config-svc (8080)
+# Every service exports telemetry via OTLP only (traces + logs); there is no separate
+# log-scraping pipeline. Ports intentionally NOT exposed (internal only — use Grafana):
+#   loki (3100), tempo (3200), node/postgres/redis exporters (9100/9187/9121),
+#   pgbouncer (6432), config-svc (8080)
 
 name: shelf-j
 
@@ -80,7 +83,8 @@ x-svc-env: &svc-env
   shelfj.config.url: http://config:8080
   shelfj.config.profile: docker
   shelfj.config.token: ${SHELFJ_CONFIG_TOKEN:?SHELFJ_CONFIG_TOKEN must be set (>= 32 chars) - see .env.example}
-  otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+  # OTLP is the only telemetry path — traces AND logs, to the collector (no Promtail/Zipkin-direct).
+  otel.exporter.otlp.endpoint: http://otel-collector:4317
 
 x-svc-depends: &svc-depends
   postgres:  { condition: service_healthy }
@@ -359,7 +363,9 @@ services:
       timeout: 5s
       retries: 12
 
-  # OTEL Collector — receives OTLP traces+logs; exports traces → Tempo+Zipkin, logs → Loki.
+  # OTEL Collector — every service's only telemetry sink (OTLP traces+logs); exports
+  # traces → Tempo+Zipkin, logs → Loki. Host-exposed so a service run outside docker
+  # (against the rest of the dockerized stack) can still ship via OTLP.
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.104.0
     container_name: shelfj-otel-collector
@@ -367,6 +373,7 @@ services:
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./infra/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports: ["127.0.0.1:4317:4317"]
     depends_on:
       zipkin: { condition: service_healthy }
       loki:   { condition: service_healthy }
@@ -504,21 +511,6 @@ services:
       retries: 12
       start_period: 20s
 
-  # Promtail — scrapes Docker container logs and ships to Loki.
-  promtail:
-    image: grafana/promtail:3.1.0
-    container_name: shelfj-promtail
-    restart: unless-stopped
-    command: -config.file=/etc/promtail/promtail-config.yaml
-    volumes:
-      - ./infra/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    mem_limit: ${PROMTAIL_MEM_LIMIT:-256m}
-    networks: [shelfj_network]
-    depends_on:
-      loki: { condition: service_healthy }
-
   # Tempo — distributed tracing backend (internal; access via Grafana Explore).
   tempo:
     image: grafana/tempo:2.5.0
@@ -552,6 +544,7 @@ services:
       server.port: "8080"
       JAVA_TOOL_OPTIONS: "${CONFIG_JAVA_OPTS:--Xms64m -Xmx256m -XX:+UseG1GC}"
       SHELFJ_CONFIG_TOKEN: ${SHELFJ_CONFIG_TOKEN:?SHELFJ_CONFIG_TOKEN must be set (>= 32 chars) - see .env.example}
+      otel.exporter.otlp.endpoint: http://otel-collector:4317
     mem_limit: ${CONFIG_MEM_LIMIT:-384m}
     networks: [shelfj_network]
     depends_on:
@@ -832,7 +825,7 @@ services:
       # well above 10k/min; 10k caused mid-run 429 cascades. Local-dev/load-test value only.
       shelfj.gateway.rate-limit.requests-per-minute: "30000"
       shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
-      otel.exporter.zipkin.endpoint: http://zipkin:9411/api/v2/spans
+      otel.exporter.otlp.endpoint: http://otel-collector:4317
       shelfj.gateway.cors.allowed-origins: "*"
       # Bulk admin operations (e.g. CSV catalog import) process thousands of rows
       # synchronously upstream; the 10s code default is tuned for normal request/response

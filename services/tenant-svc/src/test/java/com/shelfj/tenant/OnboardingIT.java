@@ -261,10 +261,7 @@ class OnboardingIT {
       WebTarget t = target.path("/admin/stores").queryParam("limit", 2);
       if (cursor != null) t = t.queryParam("after", cursor);
       String body =
-          t.request()
-              .header("X-Tenant-Id", tenantId)
-              .header("X-Roles", "OWNER")
-              .get(String.class);
+          t.request().header("X-Tenant-Id", tenantId).header("X-Roles", "OWNER").get(String.class);
       pages++;
       for (int i = 1; i <= 5; i++) {
         String code = "\"code\":\"PG" + i + "\"";

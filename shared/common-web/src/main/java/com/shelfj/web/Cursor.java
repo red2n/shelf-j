@@ -76,7 +76,11 @@ public final class Cursor {
   }
 
   /** One page of rows plus the opaque cursor for the next page (null when exhausted). */
-  public record Page<T>(List<T> items, String nextCursor) {}
+  public record Page<T>(List<T> items, String nextCursor) {
+    public Page {
+      items = List.copyOf(items);
+    }
+  }
 
   /**
    * Build a page from a query that fetched {@code limit + 1} rows — the extra row only proves a

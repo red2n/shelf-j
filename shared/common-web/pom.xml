@@ -42,6 +42,18 @@
             <artifactId>jakarta.validation-api</artifactId>
             <scope>provided</scope>
         </dependency>
+        <!-- OTel Logs bridge (OtelLoggingBridge): API only, provided by helidon-microprofile-telemetry
+             at runtime in every module that actually wants log/trace export. -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-context</artifactId>
+            <scope>provided</scope>
+        </dependency>
         <!-- Jersey SPI for ExtendedExceptionMapper (GenericExceptionMapper must decline
              WebApplicationException or it shadows Helidon's /health and /metrics routes).
              Provided by the Helidon MP runtime; 3.1.11 matches Helidon 4.4.1's Jersey. -->
