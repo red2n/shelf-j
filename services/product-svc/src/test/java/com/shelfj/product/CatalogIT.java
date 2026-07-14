@@ -359,6 +359,31 @@ class CatalogIT {
     assertThat(seen, is(allIds));
   }
 
+  @Test
+  void categorySetMemberAndAssignmentEndpointsRejectBlankIds() {
+    Response csR =
+        post(
+            "/admin/category-sets",
+            "{\"name\":\"Seasonal\",\"purpose\":\"MERCHANDISING\",\"controlled\":false}",
+            TENANT_A);
+    assertThat(csR.getStatus(), is(201));
+    String setId = field(csR.readEntity(String.class), "id");
+
+    // AddCategorySetMemberRequest.categoryId is @NotBlank — an empty string must be rejected.
+    Response memberR =
+        post("/admin/category-sets/" + setId + "/members", "{\"categoryId\":\"\"}", TENANT_A);
+    assertThat(memberR.getStatus(), is(400));
+
+    // AssignVariantCategorySetRequest.setId/categoryId are @NotBlank.
+    String variantId = "99999999-8888-7777-6666-555555555555";
+    Response assignR =
+        post(
+            "/admin/products/variants/" + variantId + "/category-set-assignments",
+            "{\"setId\":\"\",\"categoryId\":\"\"}",
+            TENANT_A);
+    assertThat(assignR.getStatus(), is(400));
+  }
+
   private static java.util.Set<String> extractAllIds(String json) {
     var ids = new java.util.HashSet<String>();
     int from = 0;

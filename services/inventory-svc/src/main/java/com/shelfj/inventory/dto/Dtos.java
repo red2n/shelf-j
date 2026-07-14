@@ -1,5 +1,6 @@
 package com.shelfj.inventory.dto;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -26,7 +27,7 @@ public final class Dtos {
   public record BatchReceiveItem(
       @NotBlank String storeId, @NotBlank String variantId, @NotNull @Positive BigDecimal qty) {}
 
-  public record BatchReceiveRequest(@NotNull List<BatchReceiveItem> items) {}
+  public record BatchReceiveRequest(@NotNull @Valid List<BatchReceiveItem> items) {}
 
   public record BatchReceiveResult(int received, List<String> errors) {}
 
@@ -158,7 +159,7 @@ public final class Dtos {
       String fromZone,
       String toZone,
       String notes,
-      @NotNull List<MoveOrderLineRequest> lines) {}
+      @NotNull @Valid List<MoveOrderLineRequest> lines) {}
 
   public record MoveOrderLineResponse(
       String id, String variantId, BigDecimal requestedQty, BigDecimal pickedQty) {}
@@ -185,7 +186,7 @@ public final class Dtos {
       @NotBlank String toStoreId,
       String transferType,
       String notes,
-      @NotNull List<TransferOrderLineRequest> lines) {}
+      @NotNull @Valid List<TransferOrderLineRequest> lines) {}
 
   public record TransferOrderLineResponse(
       String id,
@@ -519,7 +520,7 @@ public final class Dtos {
 
   // ── Tier-1 Gap #29: Batch reservations ────────────────────────────────────
 
-  public record BatchReserveRequest(@NotNull List<ReserveRequest> reservations) {}
+  public record BatchReserveRequest(@NotNull @Valid List<ReserveRequest> reservations) {}
 
   public record BatchReserveResponse(
       int succeeded, int failed, List<ReservationResponse> results) {}
@@ -558,7 +559,7 @@ public final class Dtos {
       String createdAt,
       String updatedAt) {}
 
-  public record SetZonePrioritiesRequest(@NotNull List<ZonePriorityEntry> zonePriorities) {
+  public record SetZonePrioritiesRequest(@NotNull @Valid List<ZonePriorityEntry> zonePriorities) {
     public record ZonePriorityEntry(@NotBlank String zoneId, int priority) {}
   }
 

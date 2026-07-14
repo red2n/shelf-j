@@ -16,6 +16,7 @@ import com.shelfj.customer.dto.Dtos.UpdateCustomerRequest;
 import com.shelfj.customer.repo.CustomerRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
+import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -85,6 +86,37 @@ public class CustomerService {
   public Customer get(UUID tenantId, UUID customerId) {
     return repo.findById(tenantId, customerId)
         .orElseThrow(() -> ApiException.notFound("CUSTOMER_NOT_FOUND", "Customer not found"));
+  }
+
+  /** Customer-by-id read for the API: tenant scope plus object-level authorization. */
+  public Customer get(UUID tenantId, UUID customerId, TenantContext ctx) {
+    requireReadAccess(customerId, ctx);
+    return get(tenantId, customerId);
+  }
+
+  /**
+   * Object-level authorization for customer-scoped reads (mirrors OrderService.requireReadAccess):
+   * a customer id in the path is not proof of ownership. Staff may read any customer in their
+   * tenant; an authenticated customer may only read their own record. Denials are 404 (not 403) so
+   * customer ids can't be probed for existence. A caller with no principal at all (no userId, no
+   * roles — only X-Tenant-Id) is a service-to-service lookup (e.g. notification-svc resolving an
+   * email, payment-svc redeeming store credit); the gateway never forwards a tenant to customer-svc
+   * paths without a verified user or an internal service call, so that shape cannot originate from
+   * an external caller impersonating another customer.
+   */
+  private static void requireReadAccess(UUID customerId, TenantContext ctx) {
+    if (isStaff(ctx)) return;
+    if (ctx.userId() == null && ctx.roles().isEmpty()) return;
+    if (!customerId.equals(ctx.userId()))
+      throw ApiException.notFound("CUSTOMER_NOT_FOUND", "Customer not found");
+  }
+
+  private static boolean isStaff(TenantContext ctx) {
+    return ctx.hasRole("PLATFORM_ADMIN")
+        || ctx.hasRole("OWNER")
+        || ctx.hasRole("MANAGER")
+        || ctx.hasRole("STOREKEEPER")
+        || ctx.hasRole("CASHIER");
   }
 
   public List<Customer> list(UUID tenantId, String afterId, int limit) {
@@ -163,6 +195,11 @@ public class CustomerService {
     return repo.listAddresses(tenantId, customerId);
   }
 
+  public List<CustomerAddress> listAddresses(UUID tenantId, UUID customerId, TenantContext ctx) {
+    requireReadAccess(customerId, ctx);
+    return listAddresses(tenantId, customerId);
+  }
+
   public CustomerAddress updateAddress(
       UUID tenantId, UUID customerId, UUID addressId, AddAddressRequest req) {
     repo.findAddress(tenantId, customerId, addressId)
@@ -206,6 +243,11 @@ public class CustomerService {
                     LoyaltyAccount.TIER_BRONZE,
                     Instant.now(),
                     Instant.now()));
+  }
+
+  public LoyaltyAccount getLoyaltyAccount(UUID tenantId, UUID customerId, TenantContext ctx) {
+    requireReadAccess(customerId, ctx);
+    return getLoyaltyAccount(tenantId, customerId);
   }
 
   public LoyaltyAccount earnPoints(UUID tenantId, UUID customerId, EarnPointsRequest req) {
@@ -302,6 +344,12 @@ public class CustomerService {
     return repo.listLedger(tenantId, customerId, Math.min(limit, 100));
   }
 
+  public List<LoyaltyLedgerEntry> getLedger(
+      UUID tenantId, UUID customerId, int limit, TenantContext ctx) {
+    requireReadAccess(customerId, ctx);
+    return getLedger(tenantId, customerId, limit);
+  }
+
   // ── store credit ──────────────────────────────────────────────────────────
 
   public StoreCreditAccount getStoreCredit(UUID tenantId, UUID customerId, String currency) {
@@ -318,6 +366,12 @@ public class CustomerService {
                     cur,
                     Instant.now(),
                     Instant.now()));
+  }
+
+  public StoreCreditAccount getStoreCredit(
+      UUID tenantId, UUID customerId, String currency, TenantContext ctx) {
+    requireReadAccess(customerId, ctx);
+    return getStoreCredit(tenantId, customerId, currency);
   }
 
   public StoreCreditAccount issueStoreCredit(

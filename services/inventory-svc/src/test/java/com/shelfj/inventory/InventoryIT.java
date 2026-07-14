@@ -811,6 +811,14 @@ class InventoryIT {
     assertThat(row, containsString("\"onHand\":6.000"));
   }
 
+  @Test
+  void batchReceiveRejectsNonPositiveItemQty() {
+    // BatchReceiveRequest.items is @NotNull @Valid — a zero qty item must be rejected by
+    // cascading Bean Validation instead of silently receiving zero stock.
+    String body = "{\"items\":[{\"storeId\":\"" + S + "\",\"variantId\":\"" + V + "\",\"qty\":0}]}";
+    assertThat(post("/admin/inventory/receive/batch", body, T).getStatus(), is(400));
+  }
+
   private Response postWithIdempotencyKey(String path, String json, String tenant, String key) {
     return target
         .path(path)

@@ -1,5 +1,6 @@
 package com.shelfj.purchase.dto;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -73,7 +74,9 @@ public final class Dtos {
 
   // ── Goods Receipt ─────────────────────────────────────────────────────────────
   public record CreateGoodsReceiptRequest(
-      @NotNull UUID poId, @NotNull UUID storeId, @NotNull List<GoodsReceiptLineRequest> lines) {}
+      @NotNull UUID poId,
+      @NotNull UUID storeId,
+      @NotNull @Valid List<GoodsReceiptLineRequest> lines) {}
 
   public record GoodsReceiptLineRequest(
       @NotNull UUID variantId, @NotNull @DecimalMin("0.001") BigDecimal qtyReceived) {}

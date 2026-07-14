@@ -69,7 +69,7 @@ public class PaymentResource {
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") UUID id) {
-    var tender = svc.getTender(ctx.requireTenantId(), id);
+    var tender = svc.getTender(ctx.requireTenantId(), id, ctx);
     return Response.ok(ApiResponse.ok(Mappers.toDto(tender))).build();
   }
 
@@ -77,7 +77,7 @@ public class PaymentResource {
   @GET
   @Path("/by-order/{orderId}")
   public Response listByOrder(@PathParam("orderId") UUID orderId) {
-    var tenders = svc.listTendersByOrder(ctx.requireTenantId(), orderId);
+    var tenders = svc.listTendersByOrder(ctx.requireTenantId(), orderId, ctx);
     return Response.ok(ApiResponse.ok(tenders.stream().map(Mappers::toDto).toList())).build();
   }
 
@@ -108,7 +108,7 @@ public class PaymentResource {
   @GET
   @Path("/by-order/{orderId}/refunds")
   public Response listRefunds(@PathParam("orderId") UUID orderId) {
-    var refunds = svc.listRefundsByOrder(ctx.requireTenantId(), orderId);
+    var refunds = svc.listRefundsByOrder(ctx.requireTenantId(), orderId, ctx);
     return Response.ok(ApiResponse.ok(refunds.stream().map(Mappers::toDto).toList())).build();
   }
 }

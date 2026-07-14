@@ -72,6 +72,11 @@ public class LayawayResource {
   @POST
   @Path("/{id}/cancel")
   public Response cancel(@PathParam("id") String id, VoidRequest req) {
+    // A cancel with no body at all is allowed (no reason given); a body that IS sent must satisfy
+    // VoidRequest's @NotBlank reason rather than silently passing an empty one through.
+    if (req != null) {
+      Validations.validate(req);
+    }
     var layaway =
         svc.cancelLayaway(
             ctx.tenantId(), Parsing.uuid(id, "id"), req != null ? req.reason() : null, ctx);

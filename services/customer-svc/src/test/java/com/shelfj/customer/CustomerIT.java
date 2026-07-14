@@ -379,6 +379,64 @@ class CustomerIT {
   }
 
   @Test
+  void customerReadsAreObjectLevelAuthorized() {
+    Response created =
+        post(
+            "/customers",
+            "{\"email\":\"liam@example.com\",\"firstName\":\"Liam\",\"lastName\":\"Ortiz\"}");
+    assertThat(created.getStatus(), is(201));
+    String id = field(created.readEntity(String.class), "id");
+
+    // Wire up loyalty/store-credit balances so the reads below have something to check.
+    assertThat(
+        post("/customers/" + id + "/loyalty/earn", "{\"points\":10,\"reason\":\"seed\"}")
+            .getStatus(),
+        is(200));
+    assertThat(
+        post("/customers/" + id + "/store-credit/issue", "{\"amount\":5.00,\"reason\":\"seed\"}")
+            .getStatus(),
+        is(200));
+
+    // The customer themself (X-User-Id == the customer's own id) may read their own record.
+    assertThat(getAs("/customers/" + id, id, "CUSTOMER").getStatus(), is(200));
+    assertThat(getAs("/customers/" + id + "/addresses", id, "CUSTOMER").getStatus(), is(200));
+    assertThat(getAs("/customers/" + id + "/loyalty", id, "CUSTOMER").getStatus(), is(200));
+    assertThat(getAs("/customers/" + id + "/loyalty/ledger", id, "CUSTOMER").getStatus(), is(200));
+    assertThat(getAs("/customers/" + id + "/store-credit", id, "CUSTOMER").getStatus(), is(200));
+
+    // A different authenticated customer in the same tenant gets 404 (not 403 — no existence
+    // oracle), even though the id is otherwise a valid path parameter.
+    String otherCustomer = java.util.UUID.randomUUID().toString();
+    assertThat(getAs("/customers/" + id, otherCustomer, "CUSTOMER").getStatus(), is(404));
+    assertThat(
+        getAs("/customers/" + id + "/addresses", otherCustomer, "CUSTOMER").getStatus(), is(404));
+    assertThat(
+        getAs("/customers/" + id + "/loyalty", otherCustomer, "CUSTOMER").getStatus(), is(404));
+    assertThat(
+        getAs("/customers/" + id + "/loyalty/ledger", otherCustomer, "CUSTOMER").getStatus(),
+        is(404));
+    assertThat(
+        getAs("/customers/" + id + "/store-credit", otherCustomer, "CUSTOMER").getStatus(),
+        is(404));
+
+    // Staff read any customer in their tenant.
+    assertThat(
+        target
+            .path("/customers/" + id)
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", TENANT)
+            .header("X-Roles", "CASHIER")
+            .get()
+            .getStatus(),
+        is(200));
+
+    // A service-to-service lookup (X-Tenant-Id only, no principal) keeps working — notification-svc
+    // resolves emails and payment-svc redeems store credit through this exact shape.
+    Response s2s = target.path("/customers/" + id).request().header("X-Tenant-Id", TENANT).get();
+    assertThat(s2s.getStatus(), is(200));
+  }
+
+  @Test
   void archRules() {
     var classes = new ClassFileImporter().importPackages("com.shelfj.customer");
     ShelfJArchRules.API_DOES_NOT_CALL_REPO.check(classes);
@@ -412,6 +470,16 @@ class CustomerIT {
         .header("X-Tenant-Id", TENANT)
         .header("X-Roles", "OWNER")
         .delete();
+  }
+
+  private Response getAs(String path, String userId, String roles) {
+    return target
+        .path(path)
+        .request(MediaType.APPLICATION_JSON)
+        .header("X-Tenant-Id", TENANT)
+        .header("X-User-Id", userId)
+        .header("X-Roles", roles)
+        .get();
   }
 
   private static String field(String json, String name) {

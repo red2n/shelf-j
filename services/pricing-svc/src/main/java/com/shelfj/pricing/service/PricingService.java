@@ -210,6 +210,7 @@ public class PricingService {
     var errors = new java.util.ArrayList<String>();
     for (var r : req.items()) {
       try {
+        com.shelfj.web.Validations.validate(r);
         upsertPriceListItem(ctx, priceListId, r);
         upserted++;
       } catch (Exception e) {
