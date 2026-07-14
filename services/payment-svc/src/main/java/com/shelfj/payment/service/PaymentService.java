@@ -198,8 +198,45 @@ public class PaymentService {
         .orElseThrow(() -> ApiException.notFound("PAYMENT_NOT_FOUND", "payment tender not found"));
   }
 
+  /** Payment-by-id read for the API: tenant scope plus object-level authorization. */
+  public PaymentTender getTender(UUID tenantId, UUID tenderId, TenantContext ctx) {
+    PaymentTender tender = getTender(tenantId, tenderId);
+    requireReadAccess(tenantId, tender.orderId(), ctx);
+    return tender;
+  }
+
   public List<PaymentTender> listTendersByOrder(UUID tenantId, UUID orderId) {
     return repo.findTendersByOrder(tenantId, orderId);
+  }
+
+  public List<PaymentTender> listTendersByOrder(UUID tenantId, UUID orderId, TenantContext ctx) {
+    requireReadAccess(tenantId, orderId, ctx);
+    return listTendersByOrder(tenantId, orderId);
+  }
+
+  /**
+   * Object-level authorization for payment reads (mirrors OrderService/CustomerService
+   * requireReadAccess). A payment tender doesn't carry the buyer's identity directly — only the
+   * order it was captured against — so ownership is resolved one hop away via order-svc (golden
+   * rule #1: never trust a caller-supplied customerId, ask the owning service). Staff may read any
+   * payment in their tenant; an authenticated customer may only read payments on their own order.
+   * Denials are 404 (not 403) so tender/order ids can't be probed for existence. A caller with no
+   * principal at all (only X-Tenant-Id) is a service-to-service shape and stays tenant-scoped.
+   */
+  private void requireReadAccess(UUID tenantId, UUID orderId, TenantContext ctx) {
+    if (isStaff(ctx)) return;
+    if (ctx.userId() == null && ctx.roles().isEmpty()) return;
+    OrderClient.OrderInfo order = orderClient.getOrder(tenantId, orderId);
+    if (order.customerId() == null || !order.customerId().equals(ctx.userId().toString()))
+      throw ApiException.notFound("PAYMENT_NOT_FOUND", "payment tender not found");
+  }
+
+  private static boolean isStaff(TenantContext ctx) {
+    return ctx.hasRole("PLATFORM_ADMIN")
+        || ctx.hasRole("OWNER")
+        || ctx.hasRole("MANAGER")
+        || ctx.hasRole("STOREKEEPER")
+        || ctx.hasRole("CASHIER");
   }
 
   public RefundTender recordRefund(
@@ -234,6 +271,11 @@ public class PaymentService {
 
   public List<RefundTender> listRefundsByOrder(UUID tenantId, UUID orderId) {
     return repo.findRefundsByOrder(tenantId, orderId);
+  }
+
+  public List<RefundTender> listRefundsByOrder(UUID tenantId, UUID orderId, TenantContext ctx) {
+    requireReadAccess(tenantId, orderId, ctx);
+    return listRefundsByOrder(tenantId, orderId);
   }
 
   /**

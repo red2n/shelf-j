@@ -36,9 +36,16 @@ public class CustomerVatStatusResource {
         .build();
   }
 
+  /**
+   * Staff-only: B2B VAT status has no self-service caller (no storefront path resolves a tenant
+   * here for a customer JWT today), but reads aren't covered by the write-only default-deny filter
+   * ({@link com.shelfj.web.AdminAuthorizationFilter}), so this needs its own gate rather than
+   * relying on that distant routing detail to stay true.
+   */
   @GET
   @Path("/{customerId}")
   public Response get(@PathParam("customerId") UUID customerId) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
     return Response.ok(ApiResponse.ok(Mappers.toDto(svc.getCustomerVatStatus(ctx, customerId))))
         .build();
   }

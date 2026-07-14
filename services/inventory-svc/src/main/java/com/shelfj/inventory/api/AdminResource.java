@@ -152,6 +152,7 @@ public class AdminResource {
     if (req == null || req.items() == null || req.items().isEmpty()) {
       return ApiResponse.ok(new BatchReceiveResult(0, List.of()));
     }
+    Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     int received = 0;
     var errors = new java.util.ArrayList<String>();

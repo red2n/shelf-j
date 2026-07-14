@@ -877,6 +877,7 @@ public class AdminResource {
   @Path("/category-sets/{id}/members")
   public Response addCategorySetMember(
       @PathParam("id") UUID setId, AddCategorySetMemberRequest req) {
+    Validations.validate(req);
     var m = service.addCategorySetMember(ctx.requireTenantId(), setId, req);
     return created(Mappers.toCategorySetMember(m));
   }
@@ -904,6 +905,7 @@ public class AdminResource {
   @Path("/products/variants/{variantId}/category-set-assignments")
   public Response assignVariantCategorySet(
       @PathParam("variantId") UUID variantId, AssignVariantCategorySetRequest req) {
+    Validations.validate(req);
     var a = service.assignVariantCategorySet(ctx.requireTenantId(), variantId, req);
     return created(Mappers.toVariantCategorySetAssignment(a));
   }

@@ -5,12 +5,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.shelfj.payment.client.OrderClient;
 import com.shelfj.payment.domain.Domain.PaymentTender;
+import com.shelfj.payment.domain.Domain.RefundTender;
 import com.shelfj.payment.dto.Dtos.RecordTenderRequest;
 import com.shelfj.payment.repo.PaymentRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -40,6 +44,30 @@ class PaymentServiceTest {
     };
   }
 
+  private static TenantContext staffCtx(UUID tenantId) {
+    return new TenantContext() {
+      @Override
+      public UUID requireTenantId() {
+        return tenantId;
+      }
+
+      @Override
+      public UUID tenantId() {
+        return tenantId;
+      }
+
+      @Override
+      public UUID userId() {
+        return UUID.randomUUID();
+      }
+
+      @Override
+      public boolean hasRole(String role) {
+        return "CASHIER".equals(role);
+      }
+    };
+  }
+
   private static OrderClient fakeOrderClient(OrderClient.OrderInfo info) {
     return new OrderClient() {
       @Override
@@ -47,6 +75,21 @@ class PaymentServiceTest {
         return info;
       }
     };
+  }
+
+  private static PaymentTender tender(UUID id, UUID tenantId, UUID orderId) {
+    return new PaymentTender(
+        id,
+        tenantId,
+        orderId,
+        new BigDecimal("10.00"),
+        "CARD",
+        null,
+        null,
+        "CAPTURED",
+        null,
+        Instant.now(),
+        null);
   }
 
   private static PaymentRepository capturingRepo() {
@@ -330,5 +373,161 @@ class PaymentServiceTest {
 
     assertEquals(existing.id(), tender.id());
     assertEquals(0, cust.redeems, "a replayed store-credit tender must not redeem again");
+  }
+
+  // ── F8-shape: object-level authorization on payment reads ──────────────────────
+
+  @Test
+  void getTender_ownerCanReadAPaymentOnTheirOwnOrder() {
+    PaymentService svc = new PaymentService();
+    UUID tenantId = UUID.randomUUID();
+    UUID orderId = UUID.randomUUID();
+    UUID customerId = UUID.randomUUID();
+    UUID tenderId = UUID.randomUUID();
+    svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
+    svc.orderClient =
+        fakeOrderClient(
+            new OrderClient.OrderInfo(
+                customerId.toString(),
+                "ONLINE",
+                new BigDecimal("10.00"),
+                "CONFIRMED",
+                UUID.randomUUID().toString()));
+
+    var result = svc.getTender(tenantId, tenderId, ctx(tenantId, customerId));
+    assertEquals(tenderId, result.id());
+  }
+
+  @Test
+  void getTender_nonOwningCustomerGets404NotTheirOrder() {
+    PaymentService svc = new PaymentService();
+    UUID tenantId = UUID.randomUUID();
+    UUID orderId = UUID.randomUUID();
+    UUID ownerId = UUID.randomUUID();
+    UUID tenderId = UUID.randomUUID();
+    svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
+    svc.orderClient =
+        fakeOrderClient(
+            new OrderClient.OrderInfo(
+                ownerId.toString(),
+                "ONLINE",
+                new BigDecimal("10.00"),
+                "CONFIRMED",
+                UUID.randomUUID().toString()));
+
+    var ex =
+        assertThrows(
+            ApiException.class,
+            () -> svc.getTender(tenantId, tenderId, ctx(tenantId, UUID.randomUUID())));
+    assertEquals("PAYMENT_NOT_FOUND", ex.code());
+  }
+
+  @Test
+  void getTender_staffReadsAnyPaymentWithoutOrderVerification() {
+    PaymentService svc = new PaymentService();
+    UUID tenantId = UUID.randomUUID();
+    UUID orderId = UUID.randomUUID();
+    UUID tenderId = UUID.randomUUID();
+    svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
+    // orderClient deliberately left null — a staff read must never touch it.
+
+    var result = svc.getTender(tenantId, tenderId, staffCtx(tenantId));
+    assertEquals(tenderId, result.id());
+  }
+
+  @Test
+  void getTender_serviceToServiceCallSkipsOrderVerification() {
+    PaymentService svc = new PaymentService();
+    UUID tenantId = UUID.randomUUID();
+    UUID orderId = UUID.randomUUID();
+    UUID tenderId = UUID.randomUUID();
+    svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
+    // orderClient deliberately left null — a no-principal (tenant-only) caller must never touch it.
+
+    var result = svc.getTender(tenantId, tenderId, ctx(tenantId, null));
+    assertEquals(tenderId, result.id());
+  }
+
+  @Test
+  void listTendersByOrder_enforcesTheSameOwnershipCheck() {
+    PaymentService svc = new PaymentService();
+    UUID tenantId = UUID.randomUUID();
+    UUID orderId = UUID.randomUUID();
+    UUID ownerId = UUID.randomUUID();
+    svc.repo = findableRepo(tender(UUID.randomUUID(), tenantId, orderId));
+    svc.orderClient =
+        fakeOrderClient(
+            new OrderClient.OrderInfo(
+                ownerId.toString(),
+                "ONLINE",
+                new BigDecimal("10.00"),
+                "CONFIRMED",
+                UUID.randomUUID().toString()));
+
+    assertEquals(1, svc.listTendersByOrder(tenantId, orderId, ctx(tenantId, ownerId)).size());
+    var ex =
+        assertThrows(
+            ApiException.class,
+            () -> svc.listTendersByOrder(tenantId, orderId, ctx(tenantId, UUID.randomUUID())));
+    assertEquals("PAYMENT_NOT_FOUND", ex.code());
+  }
+
+  @Test
+  void listRefundsByOrder_enforcesTheSameOwnershipCheck() {
+    PaymentService svc = new PaymentService();
+    UUID tenantId = UUID.randomUUID();
+    UUID orderId = UUID.randomUUID();
+    UUID ownerId = UUID.randomUUID();
+    var refund =
+        new RefundTender(
+            UUID.randomUUID(),
+            tenantId,
+            orderId,
+            UUID.randomUUID(),
+            new BigDecimal("5.00"),
+            "CARD",
+            null,
+            null,
+            "return",
+            Instant.now());
+    svc.repo = findableRefundsRepo(refund);
+    svc.orderClient =
+        fakeOrderClient(
+            new OrderClient.OrderInfo(
+                ownerId.toString(),
+                "ONLINE",
+                new BigDecimal("10.00"),
+                "CONFIRMED",
+                UUID.randomUUID().toString()));
+
+    assertEquals(1, svc.listRefundsByOrder(tenantId, orderId, ctx(tenantId, ownerId)).size());
+    var ex =
+        assertThrows(
+            ApiException.class,
+            () -> svc.listRefundsByOrder(tenantId, orderId, ctx(tenantId, UUID.randomUUID())));
+    assertEquals("PAYMENT_NOT_FOUND", ex.code());
+  }
+
+  private static PaymentRepository findableRepo(PaymentTender tender) {
+    return new PaymentRepository() {
+      @Override
+      public Optional<PaymentTender> findTender(UUID tenantId, UUID tenderId) {
+        return Optional.of(tender);
+      }
+
+      @Override
+      public List<PaymentTender> findTendersByOrder(UUID tenantId, UUID orderId) {
+        return List.of(tender);
+      }
+    };
+  }
+
+  private static PaymentRepository findableRefundsRepo(RefundTender refund) {
+    return new PaymentRepository() {
+      @Override
+      public List<RefundTender> findRefundsByOrder(UUID tenantId, UUID orderId) {
+        return List.of(refund);
+      }
+    };
   }
 }

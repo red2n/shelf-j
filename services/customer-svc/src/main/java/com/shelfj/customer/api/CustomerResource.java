@@ -82,7 +82,7 @@ public class CustomerResource {
   public ApiResponse<?> get(@PathParam("id") UUID id) {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
-        Mappers.toCustomer(service.get(tenantId, id)), ApiResponse.Meta.of(ctx.requestId()));
+        Mappers.toCustomer(service.get(tenantId, id, ctx)), ApiResponse.Meta.of(ctx.requestId()));
   }
 
   @PUT
@@ -129,7 +129,7 @@ public class CustomerResource {
   public ApiResponse<?> listAddresses(@PathParam("id") UUID customerId) {
     UUID tenantId = ctx.requireTenantId();
     var addresses =
-        service.listAddresses(tenantId, customerId).stream()
+        service.listAddresses(tenantId, customerId, ctx).stream()
             .map(Mappers::toAddress)
             .collect(Collectors.toList());
     return ApiResponse.ok(addresses, ApiResponse.Meta.of(ctx.requestId()));
@@ -163,7 +163,7 @@ public class CustomerResource {
   public ApiResponse<?> getLoyalty(@PathParam("id") UUID customerId) {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
-        Mappers.toLoyalty(service.getLoyaltyAccount(tenantId, customerId)),
+        Mappers.toLoyalty(service.getLoyaltyAccount(tenantId, customerId, ctx)),
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
@@ -203,7 +203,7 @@ public class CustomerResource {
       @PathParam("id") UUID customerId, @QueryParam("limit") @DefaultValue("50") int limit) {
     UUID tenantId = ctx.requireTenantId();
     var entries =
-        service.getLedger(tenantId, customerId, limit).stream()
+        service.getLedger(tenantId, customerId, limit, ctx).stream()
             .map(Mappers::toLedgerEntry)
             .collect(Collectors.toList());
     return ApiResponse.ok(entries, ApiResponse.Meta.of(ctx.requestId()));
@@ -218,7 +218,7 @@ public class CustomerResource {
       @QueryParam("currency") @DefaultValue("GBP") String currency) {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
-        Mappers.toStoreCredit(service.getStoreCredit(tenantId, customerId, currency)),
+        Mappers.toStoreCredit(service.getStoreCredit(tenantId, customerId, currency, ctx)),
         ApiResponse.Meta.of(ctx.requestId()));
   }
 

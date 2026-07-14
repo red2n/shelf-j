@@ -1,5 +1,6 @@
 package com.shelfj.order.dto;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -27,7 +28,7 @@ public final class Dtos {
       String customerId,
       @NotBlank String channel,
       String fulfilmentType,
-      @NotNull List<OrderItemRequest> items,
+      @NotNull @Valid List<OrderItemRequest> items,
       @PositiveOrZero BigDecimal taxAmount,
       @PositiveOrZero BigDecimal discountAmount,
       String currency,
@@ -98,7 +99,9 @@ public final class Dtos {
       @NotBlank String variantId, @NotNull @Positive BigDecimal qty, String condition) {}
 
   public record CreateReturnRequest(
-      @NotBlank String reason, String refundMethod, @NotNull List<ReturnItemRequest> items) {}
+      @NotBlank String reason,
+      String refundMethod,
+      @NotNull @Valid List<ReturnItemRequest> items) {}
 
   public record ReturnItemResponse(
       String id, String variantId, BigDecimal qty, BigDecimal refundAmount, String condition) {}
@@ -149,7 +152,7 @@ public final class Dtos {
   public record CreateLayawayRequest(
       @NotBlank String storeId,
       String customerId,
-      @NotNull List<LayawayItemRequest> items,
+      @NotNull @Valid List<LayawayItemRequest> items,
       @NotNull @Positive BigDecimal initialDeposit,
       String paymentMethod,
       String dueDate,
@@ -231,7 +234,7 @@ public final class Dtos {
       String deliveryAddress,
       String requestedDeliveryDate,
       String notes,
-      @NotNull List<SpecialOrderItemRequest> items,
+      @NotNull @Valid List<SpecialOrderItemRequest> items,
       String currency,
       String idempotencyKey) {}
 

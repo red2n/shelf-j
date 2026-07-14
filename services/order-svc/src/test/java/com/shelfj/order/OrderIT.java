@@ -737,6 +737,51 @@ class OrderIT {
     assertThat(s2s.getStatus(), is(200));
   }
 
+  @Test
+  void placeOrderRejectsNonPositiveItemQty() {
+    // items is @NotNull @Valid — a zero qty must be rejected by cascading Bean Validation instead
+    // of silently placing an order for nothing.
+    Response r =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":0,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
+            T,
+            "it-reject-zero-qty");
+    assertThat(r.getStatus(), is(400));
+  }
+
+  @Test
+  void cancelRejectsABlankReason() {
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
+            T,
+            "it-cancel-validation");
+    assertThat(placed.getStatus(), is(201));
+    String orderId = extractId(placed.readEntity(String.class));
+
+    // A body with a blank reason violates VoidRequest's @NotBlank and must be rejected — this
+    // constraint previously went unenforced because the resource never called Validations.validate.
+    assertThat(post("/orders/" + orderId + "/cancel", "{\"reason\":\"\"}", T).getStatus(), is(400));
+
+    // A body with a real reason still works.
+    assertThat(
+        post("/orders/" + orderId + "/cancel", "{\"reason\":\"customer changed mind\"}", T)
+            .getStatus(),
+        is(200));
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────
 
   private Response getAs(String path, String tenant, String userId, String roles) {

@@ -366,6 +366,68 @@ class PricingIT {
     assertThat(seen.size(), is(5));
   }
 
+  @Test
+  void batchUpsertItemsRejectsAnInvalidItemButStillUpsertsTheRest() {
+    Response plR =
+        post(
+            "/price-lists",
+            "{\"name\":\"Batch Test\",\"channel\":\"ALL\","
+                + "\"currency\":\"GBP\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            T);
+    assertThat(plR.getStatus(), is(201));
+    String plId = extractId(plR.readEntity(String.class));
+
+    String goodVariant = java.util.UUID.randomUUID().toString();
+    String badVariant = java.util.UUID.randomUUID().toString();
+    // One valid item (price 10.00) and one violating @Positive price (-5.00) — the endpoint's
+    // contract is "never 4xx on partial failure", so this must stay 200 with the bad item
+    // reported in errors and NOT counted as upserted (previously it silently succeeded since
+    // nothing validated items inside the batch loop).
+    String body =
+        "{\"items\":["
+            + "{\"variantId\":\""
+            + goodVariant
+            + "\",\"price\":10.00,\"minQty\":1},"
+            + "{\"variantId\":\""
+            + badVariant
+            + "\",\"price\":-5.00,\"minQty\":1}"
+            + "]}";
+    Response r = post("/price-lists/" + plId + "/items/batch", body, T);
+    assertThat(r.getStatus(), is(200));
+    String result = r.readEntity(String.class);
+    assertThat(result, containsString("\"upserted\":1"));
+    assertThat(result, containsString(badVariant));
+  }
+
+  @Test
+  void customerVatStatusReadRequiresAStaffRole() {
+    String customerId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+    Response created =
+        post(
+            "/customer-vat-status",
+            "{\"customerId\":\""
+                + customerId
+                + "\",\"vatNumber\":\"GB123456789\",\"vatRegistered\":true,"
+                + "\"reverseChargeEligible\":false,\"countryCode\":\"GB\"}",
+            T);
+    assertThat(created.getStatus(), is(200));
+
+    // No role at all (only X-Tenant-Id) — not covered by the write-only default-deny filter, so
+    // this read needs its own gate.
+    assertThat(get("/customer-vat-status/" + customerId, T).getStatus(), is(403));
+
+    // A staff role can read it.
+    Response asStaff =
+        target
+            .path("/customer-vat-status/" + customerId)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CASHIER")
+            .get();
+    assertThat(asStaff.getStatus(), is(200));
+    assertThat(asStaff.readEntity(String.class), containsString("GB123456789"));
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────
 
   private static String extractId(String json) {
