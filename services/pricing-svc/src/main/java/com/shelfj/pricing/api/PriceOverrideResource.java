@@ -4,6 +4,7 @@ import com.shelfj.pricing.dto.Dtos.CreatePriceOverrideRequest;
 import com.shelfj.pricing.mapper.Mappers;
 import com.shelfj.pricing.service.PricingService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.RequestScoped;
@@ -37,11 +38,17 @@ public class PriceOverrideResource {
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(override))).build();
   }
 
+  /** Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
   @GET
   public Response list(
-      @QueryParam("storeId") String storeId, @QueryParam("variantId") String variantId) {
-    var overrides =
-        svc.listPriceOverrides(ctx, storeId, variantId).stream().map(Mappers::toDto).toList();
-    return Response.ok(ApiResponse.ok(overrides)).build();
+      @QueryParam("storeId") String storeId,
+      @QueryParam("variantId") String variantId,
+      @QueryParam("after") String after,
+      @QueryParam("limit") Integer limit) {
+    var page = svc.listPriceOverrides(ctx, storeId, variantId, after, Cursor.clampLimit(limit));
+    var overrides = page.items().stream().map(Mappers::toDto).toList();
+    return Response.ok(
+            ApiResponse.ok(overrides, new ApiResponse.Meta(ctx.requestId(), page.nextCursor())))
+        .build();
   }
 }

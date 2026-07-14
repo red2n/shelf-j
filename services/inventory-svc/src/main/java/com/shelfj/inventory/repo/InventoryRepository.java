@@ -497,11 +497,20 @@ public class InventoryRepository extends BaseOutboxRepository {
       WHERE b.tenant_id = ? AND b.material_status = 'AVAILABLE'""";
 
   /**
-   * On-hand / reserved / available per (store,variant). Unbounded — for internal callers (min/max
-   * planning, storefront) that need every SKU. Paginated reads use {@link #levelsPage}.
+   * DB-load safety valve for {@link #levels}: internal callers (min/max planning, storefront
+   * availability) legitimately want every SKU in one call, not a client-paginated page, but nothing
+   * upstream caps how large a tenant's catalog can grow. This bounds the worst case instead of
+   * leaving the query truly unbounded.
+   */
+  private static final int LEVELS_SAFETY_CAP = 20_000;
+
+  /**
+   * On-hand / reserved / available per (store,variant) — every SKU, for internal callers (min/max
+   * planning, storefront) that need the full set rather than a client-paginated page. Capped at
+   * {@link #LEVELS_SAFETY_CAP} as a DB-load safety valve. Paginated reads use {@link #levelsPage}.
    */
   public List<Level> levels(UUID tenantId, UUID storeId) {
-    return levelsPage(tenantId, storeId, null, null, Integer.MAX_VALUE);
+    return levelsPage(tenantId, storeId, null, null, LEVELS_SAFETY_CAP);
   }
 
   /**

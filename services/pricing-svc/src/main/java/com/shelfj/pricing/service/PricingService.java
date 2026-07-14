@@ -400,12 +400,22 @@ public class PricingService {
     return repo.insertPriceOverride(override);
   }
 
-  public java.util.List<PriceOverride> listPriceOverrides(
-      TenantContext ctx, String storeIdStr, String variantIdStr) {
+  /** Cursor-paginated price overrides (admin audit log). */
+  public Cursor.Page<PriceOverride> listPriceOverrides(
+      TenantContext ctx, String storeIdStr, String variantIdStr, String after, int limit) {
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
     UUID variantId = variantIdStr != null ? UUID.fromString(variantIdStr) : null;
-    return repo.listPriceOverrides(tenantId, storeId, variantId);
+    Cursor.CreatedAtId key = Cursor.decodeCreatedAtId(after);
+    List<PriceOverride> rows =
+        repo.listPriceOverrides(
+            tenantId,
+            storeId,
+            variantId,
+            key == null ? null : key.createdAt(),
+            key == null ? null : key.id(),
+            limit + 1);
+    return Cursor.page(rows, limit, o -> o.createdAt() + "|" + o.id());
   }
 
   public VatReturn computeVatReturn(TenantContext ctx, String fromStr, String toStr) {

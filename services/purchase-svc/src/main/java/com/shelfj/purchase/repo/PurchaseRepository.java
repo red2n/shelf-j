@@ -512,8 +512,23 @@ public class PurchaseRepository extends BaseOutboxRepository {
 
   // ── Nominal Ledger ────────────────────────────────────────────────────────────
 
+  /**
+   * Keyset page of the nominal ledger, ordered by {@code (entry_date, created_at, id)} ascending
+   * (chronological journal order). {@code from}/{@code to} were previously the only bound, and both
+   * are optional — a caller omitting them (a legitimate "since inception" trial-balance query) got
+   * a fully unbounded scan of the ledger. Now paginated instead of relying on the date filter
+   * alone.
+   */
   public List<NominalLedgerEntry> findNominalLedger(
-      UUID tenantId, String nominalCode, LocalDate from, LocalDate to) {
+      UUID tenantId,
+      String nominalCode,
+      LocalDate from,
+      LocalDate to,
+      LocalDate afterEntryDate,
+      Instant afterCreatedAt,
+      UUID afterId,
+      int limit) {
+    boolean hasCursor = afterEntryDate != null && afterCreatedAt != null && afterId != null;
     return query(
         "SELECT id,tenant_id,entry_date,nominal_code,nominal_name,debit,credit,"
             + "description,source_ref,created_at"
@@ -522,13 +537,20 @@ public class PurchaseRepository extends BaseOutboxRepository {
             + (nominalCode != null ? " AND nominal_code=?" : "")
             + (from != null ? " AND entry_date >= ?" : "")
             + (to != null ? " AND entry_date <= ?" : "")
-            + " ORDER BY entry_date, created_at",
+            + (hasCursor ? " AND (entry_date, created_at, id) > (?, ?, ?)" : "")
+            + " ORDER BY entry_date, created_at, id LIMIT ?",
         ps -> {
           int i = 1;
           ps.setObject(i++, tenantId);
           if (nominalCode != null) ps.setString(i++, nominalCode);
           if (from != null) ps.setObject(i++, from);
-          if (to != null) ps.setObject(i, to);
+          if (to != null) ps.setObject(i++, to);
+          if (hasCursor) {
+            ps.setObject(i++, afterEntryDate);
+            ps.setObject(i++, afterCreatedAt.atOffset(ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
         },
         this::mapNominalEntry,
         "find nominal ledger");

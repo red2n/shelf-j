@@ -3,6 +3,7 @@ package com.shelfj.purchase.api;
 import com.shelfj.purchase.mapper.Mappers;
 import com.shelfj.purchase.service.PurchaseService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Cursor;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
@@ -22,14 +23,18 @@ public class NominalLedgerResource {
   @Inject PurchaseService svc;
   @Inject TenantContext ctx;
 
+  /** Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
   @GET
   public Response list(
       @QueryParam("code") String code,
       @QueryParam("from") String from,
-      @QueryParam("to") String to) {
+      @QueryParam("to") String to,
+      @QueryParam("after") String after,
+      @QueryParam("limit") Integer limit) {
+    var page = svc.getNominalLedger(ctx, code, from, to, after, Cursor.clampLimit(limit));
+    var entries = page.items().stream().map(Mappers::toDto).toList();
     return Response.ok(
-            ApiResponse.ok(
-                svc.getNominalLedger(ctx, code, from, to).stream().map(Mappers::toDto).toList()))
+            ApiResponse.ok(entries, new ApiResponse.Meta(ctx.requestId(), page.nextCursor())))
         .build();
   }
 }

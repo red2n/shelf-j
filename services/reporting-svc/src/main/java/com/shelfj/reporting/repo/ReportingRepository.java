@@ -101,6 +101,14 @@ public class ReportingRepository extends BaseJdbcRepository {
 
   // ── Queries ───────────────────────────────────────────────────────────────
 
+  /**
+   * DB-load safety valve for the tenant-wide aggregate reads below: none of them are
+   * client-paginated (callers want the whole result to aggregate/display in one shot), but nothing
+   * upstream caps how large a tenant's catalog or event history can grow. This bounds the worst
+   * case instead of leaving the query truly unbounded.
+   */
+  private static final int REPORTING_SAFETY_CAP = 20_000;
+
   /** Gap #47: cross-store on-hand. Optionally filtered by storeId or variantId. */
   public List<InventoryProjection> queryOnHand(UUID tenantId, UUID storeId, UUID variantId) {
     StringBuilder sb =
@@ -109,14 +117,15 @@ public class ReportingRepository extends BaseJdbcRepository {
                 + " FROM inventory_projection WHERE tenant_id = ?");
     if (storeId != null) sb.append(" AND store_id = ?");
     if (variantId != null) sb.append(" AND variant_id = ?");
-    sb.append(" ORDER BY store_id, variant_id");
+    sb.append(" ORDER BY store_id, variant_id LIMIT ?");
     return query(
         sb.toString(),
         ps -> {
           ps.setObject(1, tenantId);
           int i = 2;
           if (storeId != null) ps.setObject(i++, storeId);
-          if (variantId != null) ps.setObject(i, variantId);
+          if (variantId != null) ps.setObject(i++, variantId);
+          ps.setInt(i, REPORTING_SAFETY_CAP);
         },
         ReportingRepository::mapProjection,
         "query on-hand");
@@ -160,14 +169,17 @@ public class ReportingRepository extends BaseJdbcRepository {
                 + " FROM movement_events WHERE tenant_id = ?");
     if (storeId != null) sb.append(" AND store_id = ?");
     if (variantId != null) sb.append(" AND variant_id = ?");
-    sb.append(" GROUP BY store_id, variant_id, bucket ORDER BY bucket DESC, store_id, variant_id");
+    sb.append(
+        " GROUP BY store_id, variant_id, bucket ORDER BY bucket DESC, store_id, variant_id"
+            + " LIMIT ?");
     return query(
         sb.toString(),
         ps -> {
           ps.setObject(1, tenantId);
           int i = 2;
           if (storeId != null) ps.setObject(i++, storeId);
-          if (variantId != null) ps.setObject(i, variantId);
+          if (variantId != null) ps.setObject(i++, variantId);
+          ps.setInt(i, REPORTING_SAFETY_CAP);
         },
         ReportingRepository::mapMovementStat,
         "query movement stats");
@@ -264,10 +276,12 @@ public class ReportingRepository extends BaseJdbcRepository {
                 + " COALESCE(SUM(refunded_amount),0) AS refunded"
                 + " FROM sales_facts WHERE tenant_id = ?");
     appendSalesFilters(sb, from, to, storeId, channel);
-    sb.append(" GROUP BY day, currency ORDER BY day DESC, currency");
+    sb.append(" GROUP BY day, currency ORDER BY day DESC, currency LIMIT ?");
     return query(
         sb.toString(),
-        ps -> bindSalesFilters(ps, tenantId, from, to, storeId, channel),
+        ps ->
+            ps.setInt(
+                bindSalesFilters(ps, tenantId, from, to, storeId, channel), REPORTING_SAFETY_CAP),
         ReportingRepository::mapSalesDay,
         "sales by day");
   }
@@ -280,7 +294,8 @@ public class ReportingRepository extends BaseJdbcRepository {
     if (channel != null) sb.append(" AND channel = ?");
   }
 
-  private static void bindSalesFilters(
+  /** Binds the shared filters and returns the next free parameter index for the caller to use. */
+  private static int bindSalesFilters(
       PreparedStatement ps, UUID tenantId, Instant from, Instant to, UUID storeId, String channel)
       throws SQLException {
     ps.setObject(1, tenantId);
@@ -288,7 +303,8 @@ public class ReportingRepository extends BaseJdbcRepository {
     if (from != null) ps.setObject(i++, OffsetDateTime.ofInstant(from, ZoneOffset.UTC));
     if (to != null) ps.setObject(i++, OffsetDateTime.ofInstant(to, ZoneOffset.UTC));
     if (storeId != null) ps.setObject(i++, storeId);
-    if (channel != null) ps.setObject(i, channel);
+    if (channel != null) ps.setObject(i++, channel);
+    return i;
   }
 
   private static SalesSummary mapSalesSummary(ResultSet rs) throws SQLException {
