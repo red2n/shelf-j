@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'storefront_providers.dart';
@@ -100,7 +101,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
           error: (e, _) => SliverFillRemaining(
             hasScrollBody: false,
             child: ErrorView(
-              message: 'Could not load products.\n$e',
+              message: friendlyError(e, fallback: 'Could not load products.'),
               onRetry: () => ref.invalidate(storefrontProductsProvider),
             ),
           ),

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import 'providers/admin_providers.dart';
 
 // ── Supplier Catalogue CSV import ─────────────────────────────────────────────
@@ -228,7 +229,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Import failed: $e';
+        _error = friendlyError(e, fallback: 'Import failed.');
       });
     }
   }

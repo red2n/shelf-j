@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -194,7 +195,8 @@ class CategoriesScreen extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Failed: $e'),
+          content: Text(
+              friendlyError(e, fallback: 'Could not deactivate category.')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ));
       }
@@ -550,7 +552,7 @@ class _CategoryDialogState extends State<_CategoryDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = friendlyError(e, fallback: 'Could not save category.');
       });
     }
   }

@@ -1,9 +1,11 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'providers/admin_providers.dart';
 
@@ -184,9 +186,10 @@ class _ChangePasswordDialogState extends ConsumerState<ChangePasswordDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = e.toString().contains('401') || e.toString().contains('400')
+        final status = e is DioException ? e.response?.statusCode : null;
+        _error = (status == 401 || status == 400)
             ? 'Current password is incorrect.'
-            : 'Could not change password: $e';
+            : friendlyError(e, fallback: 'Could not change password.');
       });
     }
   }

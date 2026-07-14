@@ -244,6 +244,67 @@ class CatalogIT {
     assertThat(riceCategoryId, is(pastaCategoryId));
   }
 
+  /**
+   * F12 follow-up (AUDIT.md): {@code ProductService.bulkImport} never called {@code
+   * Validations.validate()} per-item, so per-item constraints (e.g. {@code
+   * ImportCategoryRequest.name @NotBlank}) were dead code — a blank category name would silently
+   * create a blank-named category instead of failing. Proves the fix without breaking the
+   * documented partial-success contract: the bad category lands in {@code errors}, but the
+   * well-formed product in the same request still imports.
+   */
+  @Test
+  void bulkImportRejectsAnInvalidItemButStillImportsTheRest() {
+    Response r =
+        post(
+            "/admin/import",
+            "{\"categories\":[{\"name\":\"\"}],"
+                + "\"products\":["
+                + "{\"name\":\"Good Product\",\"variants\":[{\"sku\":\"BULK-GOOD-SKU\"}]}"
+                + "]}",
+            TENANT_A);
+    assertThat(r.getStatus(), is(200));
+    String body = r.readEntity(String.class);
+    assertThat(body, containsString("\"categoriesCreated\":0"));
+    assertThat(body, containsString("\"productsCreated\":1"));
+    assertThat(body, containsString("\"variantsCreated\":1"));
+    assertThat(body, not(containsString("\"errors\":[]")));
+    assertThat(body, containsString("\"item\":\"category:\""));
+    assertThat(body, containsString("Request validation failed"));
+
+    // The blank-named category was never created — not silently persisted as "".
+    assertThat(getAdmin("/admin/categories", TENANT_A), not(containsString("\"name\":\"\"")));
+  }
+
+  /**
+   * Same F12 follow-up, at the nested variant level: {@code ImportVariantRequest.sku @NotBlank} was
+   * equally dead code inside the products loop's inner variant loop. {@code
+   * ImportProductRequest.variants} already carries {@code @Valid} (prior F12 fix), so validating
+   * the whole product cascades into its variants — a product with a blank-SKU variant fails as one
+   * whole item (neither the product nor any of its variants are created), but a separate,
+   * well-formed product in the same batch still imports. That is the granularity the
+   * partial-success contract actually promises at this layer: whole-item isolation, not
+   * per-sibling-variant isolation within a single bad product.
+   */
+  @Test
+  void bulkImportRejectsAnInvalidVariantAndStillImportsOtherProducts() {
+    Response r =
+        post(
+            "/admin/import",
+            "{\"products\":["
+                + "{\"name\":\"Bad Product\",\"variants\":[{\"sku\":\"\"}]},"
+                + "{\"name\":\"Good Product\",\"variants\":[{\"sku\":\"BULK-SIBLING-SKU\"}]}"
+                + "]}",
+            TENANT_A);
+    assertThat(r.getStatus(), is(200));
+    String body = r.readEntity(String.class);
+    assertThat(body, containsString("\"productsCreated\":1"));
+    assertThat(body, containsString("\"variantsCreated\":1"));
+    assertThat(body, containsString("BULK-SIBLING-SKU"));
+    assertThat(body, not(containsString("\"errors\":[]")));
+    assertThat(body, containsString("\"item\":\"product:Bad Product\""));
+    assertThat(body, containsString("Request validation failed"));
+  }
+
   @Test
   void blankNameIs400() {
     Response bad = post("/admin/products", "{\"name\":\"\"}", TENANT_A);

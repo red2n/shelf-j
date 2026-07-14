@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'pricing_providers.dart';
@@ -77,7 +78,8 @@ class _PriceListsTab extends ConsumerWidget {
           child: async.when(
             loading: () => const LoadingView(label: 'Loading price lists…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load price lists.\n$e',
+              message:
+                  friendlyError(e, fallback: 'Could not load price lists.'),
               onRetry: () => ref.invalidate(priceListsProvider),
             ),
             data: (lists) {
@@ -167,7 +169,7 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not create price list: $e';
+        _error = friendlyError(e, fallback: 'Could not create price list.');
       });
     }
   }
@@ -249,7 +251,7 @@ class _PriceListItemsDialog extends ConsumerWidget {
         child: async.when(
           loading: () => const LoadingView(label: 'Loading items…'),
           error: (e, _) => ErrorView(
-            message: 'Could not load items.\n$e',
+            message: friendlyError(e, fallback: 'Could not load items.'),
             onRetry: () => ref.invalidate(priceListItemsProvider(priceList.id)),
           ),
           data: (items) {
@@ -339,7 +341,7 @@ class _PriceListItemDialogState extends ConsumerState<_PriceListItemDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not add item: $e';
+        _error = friendlyError(e, fallback: 'Could not add item.');
       });
     }
   }
@@ -410,7 +412,7 @@ class _PromotionsTab extends ConsumerWidget {
           child: async.when(
             loading: () => const LoadingView(label: 'Loading promotions…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load promotions.\n$e',
+              message: friendlyError(e, fallback: 'Could not load promotions.'),
               onRetry: () => ref.invalidate(promotionsProvider),
             ),
             data: (promos) {
@@ -520,7 +522,7 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not create promotion: $e';
+        _error = friendlyError(e, fallback: 'Could not create promotion.');
       });
     }
   }
@@ -626,7 +628,7 @@ class _VatRatesTab extends ConsumerWidget {
           child: async.when(
             loading: () => const LoadingView(label: 'Loading VAT rates…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load VAT rates.\n$e',
+              message: friendlyError(e, fallback: 'Could not load VAT rates.'),
               onRetry: () => ref.invalidate(vatRatesProvider),
             ),
             data: (rates) {
@@ -741,7 +743,7 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not save VAT rate: $e';
+        _error = friendlyError(e, fallback: 'Could not save VAT rate.');
       });
     }
   }

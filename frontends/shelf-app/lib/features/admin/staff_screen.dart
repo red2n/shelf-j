@@ -1,8 +1,10 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -44,7 +46,7 @@ class StaffScreen extends ConsumerWidget {
           child: staffAsync.when(
             loading: () => const LoadingView(label: 'Loading staff…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load staff.\n$e',
+              message: friendlyError(e, fallback: 'Could not load staff.'),
               onRetry: () => ref.invalidate(staffProvider),
             ),
             data: (staff) {
@@ -167,7 +169,8 @@ class StaffScreen extends ConsumerWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to remove: $e'),
+            content: Text(
+                friendlyError(e, fallback: 'Could not remove staff member.')),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
@@ -302,13 +305,14 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
   }
 
   String _friendly(Object e) {
-    final s = e.toString();
-    if (s.contains('EMAIL_IN_OTHER_TENANT') || s.contains('409')) {
+    final code = apiErrorCode(e);
+    final status = e is DioException ? e.response?.statusCode : null;
+    if (code == 'EMAIL_IN_OTHER_TENANT' || status == 409) {
       return 'That email already belongs to another business, or the user '
           'already has that role at this store.';
     }
-    if (s.contains('400')) return 'Check the email is valid.';
-    return 'Could not assign staff: $s';
+    if (status == 400) return 'Check the email is valid.';
+    return friendlyError(e, fallback: 'Could not assign staff.');
   }
 
   @override
@@ -382,7 +386,8 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
               const SizedBox(height: 12),
               storesAsync.when(
                 loading: () => const LinearProgressIndicator(),
-                error: (e, _) => Text('Could not load stores: $e',
+                error: (e, _) => Text(
+                    friendlyError(e, fallback: 'Could not load stores.'),
                     style: TextStyle(color: cs.error)),
                 data: (stores) => DropdownButtonFormField<String>(
                   value: _storeId,

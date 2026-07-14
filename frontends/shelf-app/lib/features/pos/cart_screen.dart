@@ -136,8 +136,10 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
             width: 380,
             child: async.when(
               loading: () => const SizedBox(
-                  height: 80, child: Center(child: CircularProgressIndicator())),
-              error: (e, _) => Text('Failed: $e'),
+                  height: 80,
+                  child: Center(child: CircularProgressIndicator())),
+              error: (e, _) => Text(
+                  friendlyError(e, fallback: 'Could not load held sales.')),
               data: (sales) => sales.isEmpty
                   ? const Text('No held sales.')
                   : Column(
@@ -524,7 +526,8 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
             error: (e, _) => Center(
                 child: Padding(
                     padding: const EdgeInsets.all(24),
-                    child: Text('Could not load products.\n$e',
+                    child: Text(
+                        friendlyError(e, fallback: 'Could not load products.'),
                         textAlign: TextAlign.center))),
             data: (products) {
               // Apply in-stock filter using lazy-resolved offer data.
@@ -1043,7 +1046,8 @@ class _CustomerPickerDialogState extends ConsumerState<_CustomerPickerDialog> {
               child: async.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (e, _) => Center(
-                    child: Text('Could not load customers.\n$e',
+                    child: Text(
+                        friendlyError(e, fallback: 'Could not load customers.'),
                         textAlign: TextAlign.center)),
                 data: (all) {
                   final list = _query.isEmpty

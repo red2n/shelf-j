@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'storefront_providers.dart';
@@ -28,7 +29,7 @@ class ProductDetailScreen extends ConsumerWidget {
       body: productAsync.when(
         loading: () => const LoadingView(label: 'Loading…'),
         error: (e, _) => ErrorView(
-          message: 'Could not load product.\n$e',
+          message: friendlyError(e, fallback: 'Could not load product.'),
           onRetry: () => ref.invalidate(storefrontProductProvider(productId)),
         ),
         data: (product) => ListView(
@@ -63,7 +64,8 @@ class ProductDetailScreen extends ConsumerWidget {
                 padding: EdgeInsets.all(16),
                 child: Center(child: CircularProgressIndicator()),
               ),
-              error: (e, _) => Text('Could not load options: $e',
+              error: (e, _) => Text(
+                  friendlyError(e, fallback: 'Could not load options.'),
                   style: TextStyle(color: cs.error)),
               data: (variants) {
                 if (variants.isEmpty) {

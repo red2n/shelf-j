@@ -1,7 +1,9 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -41,7 +43,7 @@ class StoresScreen extends ConsumerWidget {
           child: storesAsync.when(
             loading: () => const LoadingView(label: 'Loading stores…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load stores.\n$e',
+              message: friendlyError(e, fallback: 'Could not load stores.'),
               onRetry: () => ref.invalidate(storesProvider),
             ),
             data: (stores) {
@@ -215,7 +217,9 @@ class StoresScreen extends ConsumerWidget {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not update store status: $e')),
+        SnackBar(
+            content: Text(
+                friendlyError(e, fallback: 'Could not update store status.'))),
       );
     }
   }
@@ -248,7 +252,7 @@ class _ZonesDialog extends ConsumerWidget {
         child: zonesAsync.when(
           loading: () => const LoadingView(label: 'Loading zones…'),
           error: (e, _) => ErrorView(
-            message: 'Could not load zones.\n$e',
+            message: friendlyError(e, fallback: 'Could not load zones.'),
             onRetry: () => ref.invalidate(zonesProvider(store.id)),
           ),
           data: (zones) {
@@ -343,7 +347,9 @@ class _ZonesDialog extends ConsumerWidget {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not update zone status: $e')),
+        SnackBar(
+            content: Text(
+                friendlyError(e, fallback: 'Could not update zone status.'))),
       );
     }
   }
@@ -427,12 +433,12 @@ class _ZoneFormDialogState extends ConsumerState<_ZoneFormDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        final s = e.toString();
-        _error = s.contains('409')
+        final status = e is DioException ? e.response?.statusCode : null;
+        _error = status == 409
             ? 'A zone with this code already exists in this store.'
-            : s.contains('400')
+            : status == 400
                 ? 'Please check the fields and try again.'
-                : 'Could not save zone: $s';
+                : friendlyError(e, fallback: 'Could not save zone.');
       });
     }
   }
@@ -602,9 +608,9 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = e.toString().contains('400')
+        _error = (e is DioException && e.response?.statusCode == 400)
             ? 'Please check the fields and try again.'
-            : 'Could not update store: $e';
+            : friendlyError(e, fallback: 'Could not update store.');
       });
     }
   }
@@ -886,10 +892,12 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
   }
 
   String _friendly(Object e) {
-    final s = e.toString();
-    if (s.contains('409')) return 'A store with this code already exists.';
-    if (s.contains('400')) return 'Please check the fields and try again.';
-    return 'Could not create store: $s';
+    if (e is DioException) {
+      final status = e.response?.statusCode;
+      if (status == 409) return 'A store with this code already exists.';
+      if (status == 400) return 'Please check the fields and try again.';
+    }
+    return friendlyError(e, fallback: 'Could not create store.');
   }
 
   @override

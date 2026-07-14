@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
@@ -336,7 +337,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Image update failed: $e'),
+          content: Text(friendlyError(e, fallback: 'Image update failed.')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ));
       }
@@ -376,7 +377,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Failed: $e'),
+          content:
+              Text(friendlyError(e, fallback: 'Could not delist product.')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ));
       }
@@ -834,7 +836,7 @@ class _ProductDialogState extends State<_ProductDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = friendlyError(e, fallback: 'Could not save product.');
       });
     }
   }
@@ -912,8 +914,9 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                 child: variantsAsync.when(
                   loading: () =>
                       const Center(child: CircularProgressIndicator()),
-                  error: (e, _) =>
-                      Center(child: Text('Error: $e')),
+                  error: (e, _) => Center(
+                      child: Text(friendlyError(e,
+                          fallback: 'Could not load variants.'))),
                   data: (variants) {
                     if (variants.isEmpty && !_showAddForm) {
                       return Center(
@@ -1176,7 +1179,8 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                       } catch (e) {
                         setLocal(() {
                           saving = false;
-                          error = '$e';
+                          error = friendlyError(e,
+                              fallback: 'Could not save price.');
                         });
                       }
                     },
@@ -1226,7 +1230,7 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
     } catch (e) {
       setState(() {
         _saving = false;
-        _saveError = e.toString();
+        _saveError = friendlyError(e, fallback: 'Could not save variant.');
       });
     }
   }
@@ -1290,7 +1294,7 @@ class _AssortmentDialogState extends ConsumerState<_AssortmentDialog> {
     } catch (e) {
       setState(() {
         _saving = false;
-        _error = 'Could not save: $e';
+        _error = friendlyError(e, fallback: 'Could not save.');
       });
     }
   }
@@ -1342,7 +1346,9 @@ class _AssortmentDialogState extends ConsumerState<_AssortmentDialog> {
                           padding: EdgeInsets.all(16),
                           child: Center(child: CircularProgressIndicator()),
                         ),
-                        error: (e, _) => Text('Could not load stores: $e',
+                        error: (e, _) => Text(
+                            friendlyError(e,
+                                fallback: 'Could not load stores.'),
                             style: TextStyle(color: cs.error)),
                         data: (stores) => SingleChildScrollView(
                           child: Column(

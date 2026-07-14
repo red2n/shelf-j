@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import '../../core/format.dart';
@@ -295,7 +296,8 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
       } catch (e) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not generate receipt: $e'),
+          content:
+              Text(friendlyError(e, fallback: 'Could not generate receipt.')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ));
       }
@@ -321,7 +323,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Could not $action order: $e'),
+          content: Text(friendlyError(e, fallback: 'Could not $action order.')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
@@ -493,10 +495,12 @@ class _ReturnDialogState extends ConsumerState<_ReturnDialog> {
   }
 
   String _friendly(Object e) {
-    final s = e.toString();
-    if (s.contains('409')) return 'Refund exceeds the captured payment.';
-    if (s.contains('404')) return 'Order or item not found.';
-    return 'Could not process return: $s';
+    if (e is DioException) {
+      final status = e.response?.statusCode;
+      if (status == 409) return 'Refund exceeds the captured payment.';
+      if (status == 404) return 'Order or item not found.';
+    }
+    return friendlyError(e, fallback: 'Could not process return.');
   }
 
   @override
@@ -515,8 +519,9 @@ class _ReturnDialogState extends ConsumerState<_ReturnDialog> {
           error: (e, _) => SizedBox(
             height: 160,
             child: ErrorView(
-              message: 'Could not load order.\n$e',
-              onRetry: () => ref.invalidate(orderDetailProvider(widget.orderId)),
+              message: friendlyError(e, fallback: 'Could not load order.'),
+              onRetry: () =>
+                  ref.invalidate(orderDetailProvider(widget.orderId)),
             ),
           ),
           data: (order) {
@@ -959,7 +964,7 @@ class _CollectPaymentDialogState extends ConsumerState<_CollectPaymentDialog> {
     } catch (e) {
       setState(() {
         _submitting = false;
-        _error = 'Could not record payment: $e';
+        _error = friendlyError(e, fallback: 'Could not record payment.');
       });
     }
   }

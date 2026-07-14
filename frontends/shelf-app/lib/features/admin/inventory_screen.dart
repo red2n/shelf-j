@@ -423,7 +423,9 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                       ),
                       data: (batches) {
                         var filtered = batches.where((b) {
-                          if (_zoneId != null && b.zoneId != _zoneId) return false;
+                          if (_zoneId != null && b.zoneId != _zoneId) {
+                            return false;
+                          }
                           if (_materialStatus != null &&
                               b.materialStatus != _materialStatus) {
                             return false;
@@ -570,7 +572,9 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
   String _friendly(Object e) {
     // Read the backend's structured error; fall back to a screen-specific hint.
     final code = apiErrorCode(e);
-    if (code == 'INVALID_UUID') return 'Check the variant ID (UUID) and quantity.';
+    if (code == 'INVALID_UUID') {
+      return 'Check the variant ID (UUID) and quantity.';
+    }
     if (e is DioException && e.response?.statusCode == 404) {
       return 'No variant with that ID exists.';
     }
@@ -606,7 +610,8 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                 ],
                 storesAsync.when(
                   loading: () => const LinearProgressIndicator(),
-                  error: (e, _) => Text('Could not load stores: $e',
+                  error: (e, _) => Text(
+                      friendlyError(e, fallback: 'Could not load stores.'),
                       style: TextStyle(color: cs.error)),
                   data: (stores) => DropdownButtonFormField<String>(
                     value: _storeId,

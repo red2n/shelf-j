@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/network/api_error.dart';
 import '../providers/admin_providers.dart';
 
 /// Cascading product → variant picker, reusing the admin catalog providers.
@@ -26,8 +27,9 @@ class VariantPicker extends ConsumerWidget {
       children: [
         productsAsync.when(
           loading: () => const LinearProgressIndicator(),
-          error: (e, _) =>
-              Text('Products failed: $e', style: TextStyle(color: cs.error)),
+          error: (e, _) => Text(
+              friendlyError(e, fallback: 'Could not load products.'),
+              style: TextStyle(color: cs.error)),
           data: (products) => DropdownButtonFormField<String>(
             value: productId,
             isExpanded: true,
@@ -46,7 +48,8 @@ class VariantPicker extends ConsumerWidget {
               final variantsAsync = ref.watch(productVariantsProvider(productId!));
               return variantsAsync.when(
                 loading: () => const LinearProgressIndicator(),
-                error: (e, _) => Text('Variants failed: $e',
+                error: (e, _) => Text(
+                    friendlyError(e, fallback: 'Could not load variants.'),
                     style: TextStyle(color: cs.error)),
                 data: (variants) => DropdownButtonFormField<String>(
                   value: variantId,

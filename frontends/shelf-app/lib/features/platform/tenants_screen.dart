@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../admin/providers/admin_providers.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'tenant_onboarding_notifier.dart';
@@ -67,7 +68,7 @@ class TenantsScreen extends ConsumerWidget {
           child: tenantsAsync.when(
             loading: () => const LoadingView(label: 'Loading tenants…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load tenants.\n${e.toString()}',
+              message: friendlyError(e, fallback: 'Could not load tenants.'),
               onRetry: () => ref.invalidate(allTenantsProvider),
             ),
             data: (tenants) {
@@ -165,7 +166,8 @@ class TenantsScreen extends ConsumerWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to $label tenant: $e'),
+            content: Text(friendlyError(e,
+                fallback: 'Failed to ${label.toLowerCase()} tenant.')),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );

@@ -1,6 +1,8 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'storefront_providers.dart';
 import 'survey_widgets.dart';
@@ -273,11 +275,14 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = e.toString().contains('401')
+        final status = e is DioException ? e.response?.statusCode : null;
+        _error = status == 401
             ? 'Incorrect email or password.'
-            : e.toString().contains('409')
+            : status == 409
                 ? 'An account with this email already exists.'
-                : 'Could not ${_register ? 'register' : 'sign in'}: $e';
+                : friendlyError(e,
+                    fallback:
+                        'Could not ${_register ? 'register' : 'sign in'}.');
       });
     }
   }

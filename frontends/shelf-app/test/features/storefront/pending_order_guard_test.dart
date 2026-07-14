@@ -386,8 +386,9 @@ void main() {
       await tester.tap(find.text('Place order'));
       await tester.pumpAndSettle();
 
-      // Failing Dio → checkout error snackbar confirms the attempt was made.
-      expect(find.textContaining('Checkout failed'), findsOneWidget);
+      // Failing Dio (connection error) → checkout error snackbar confirms the
+      // attempt was made, routed through friendlyError's network-error copy.
+      expect(find.textContaining("Can't reach the server"), findsOneWidget);
     });
 
     testWidgets('does not re-show the dialog on the second checkout attempt',

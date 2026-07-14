@@ -46,8 +46,17 @@ import com.shelfj.product.dto.Dtos.UpdateCategorySetRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
 import com.shelfj.product.dto.Dtos.UpdateVariantRequest;
 import com.shelfj.product.repo.BrandRepository;
+import com.shelfj.product.repo.CatalogGroupRepository;
 import com.shelfj.product.repo.CategoryRepository;
+import com.shelfj.product.repo.CategorySetRepository;
+import com.shelfj.product.repo.ContainerTypeRepository;
+import com.shelfj.product.repo.ItemAttributeGroupRepository;
+import com.shelfj.product.repo.ItemCrossReferenceRepository;
+import com.shelfj.product.repo.ItemRelationshipRepository;
+import com.shelfj.product.repo.ItemRevisionRepository;
+import com.shelfj.product.repo.ItemTemplateRepository;
 import com.shelfj.product.repo.ProductRepository;
+import com.shelfj.product.repo.UomRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -65,6 +74,15 @@ public class ProductService {
   @Inject ProductRepository repo;
   @Inject BrandRepository brandRepo;
   @Inject CategoryRepository categoryRepo;
+  @Inject UomRepository uomRepo;
+  @Inject ItemRevisionRepository itemRevisionRepo;
+  @Inject ItemCrossReferenceRepository crossReferenceRepo;
+  @Inject ItemRelationshipRepository itemRelationshipRepo;
+  @Inject ItemTemplateRepository itemTemplateRepo;
+  @Inject CatalogGroupRepository catalogGroupRepo;
+  @Inject ContainerTypeRepository containerTypeRepo;
+  @Inject ItemAttributeGroupRepository itemAttributeGroupRepo;
+  @Inject CategorySetRepository categorySetRepo;
   @Inject com.shelfj.product.client.InventoryClient inventoryClient;
   @Inject com.shelfj.product.client.PricingClient pricingClient;
 
@@ -395,7 +413,7 @@ public class ProductService {
     }
     UUID partyId = com.shelfj.web.Parsing.uuid(req.partyId(), "partyId");
     getVariant(tenantId, variantId);
-    return repo.createCrossReference(
+    return crossReferenceRepo.createCrossReference(
         new ItemCrossReference(
             UUID.randomUUID(),
             tenantId,
@@ -411,11 +429,11 @@ public class ProductService {
       UUID tenantId, UUID variantId, String partyType) {
     getVariant(tenantId, variantId);
     String type = partyType != null ? partyType.toUpperCase(java.util.Locale.ROOT) : null;
-    return repo.listCrossReferences(tenantId, variantId, type);
+    return crossReferenceRepo.listCrossReferences(tenantId, variantId, type);
   }
 
   public void deleteCrossReference(UUID tenantId, UUID id) {
-    if (!repo.deleteCrossReference(tenantId, id)) {
+    if (!crossReferenceRepo.deleteCrossReference(tenantId, id)) {
       throw ApiException.notFound("CROSS_REF_NOT_FOUND", "Cross reference not found");
     }
   }
@@ -435,18 +453,18 @@ public class ProductService {
     }
     getVariant(tenantId, variantId);
     getVariant(tenantId, relatedId);
-    return repo.createRelationship(
+    return itemRelationshipRepo.createRelationship(
         new ItemRelationship(
             UUID.randomUUID(), tenantId, variantId, relatedId, type, Instant.now()));
   }
 
   public List<ItemRelationship> listRelationships(UUID tenantId, UUID variantId) {
     getVariant(tenantId, variantId);
-    return repo.listRelationships(tenantId, variantId);
+    return itemRelationshipRepo.listRelationships(tenantId, variantId);
   }
 
   public void deleteRelationship(UUID tenantId, UUID id) {
-    if (!repo.deleteRelationship(tenantId, id)) {
+    if (!itemRelationshipRepo.deleteRelationship(tenantId, id)) {
       throw ApiException.notFound("RELATIONSHIP_NOT_FOUND", "Item relationship not found");
     }
   }
@@ -454,25 +472,25 @@ public class ProductService {
   // ---- UOM (Gap #2) ----
 
   public List<UomClass> listUomClasses() {
-    return repo.listUomClasses();
+    return uomRepo.listUomClasses();
   }
 
   public List<UomDefinition> listUomDefinitions(String classCode) {
-    return repo.listUomDefinitions(classCode);
+    return uomRepo.listUomDefinitions(classCode);
   }
 
   public UomItemConversion upsertItemConversion(
       UUID tenantId, UUID variantId, String fromUom, String toUom, BigDecimal factor) {
-    return repo.upsertItemConversion(
+    return uomRepo.upsertItemConversion(
         new UomItemConversion(UUID.randomUUID(), tenantId, variantId, fromUom, toUom, factor));
   }
 
   public List<UomItemConversion> listItemConversions(UUID tenantId, UUID variantId) {
-    return repo.listItemConversions(tenantId, variantId);
+    return uomRepo.listItemConversions(tenantId, variantId);
   }
 
   public boolean deleteItemConversion(UUID tenantId, UUID id) {
-    return repo.deleteItemConversion(tenantId, id);
+    return uomRepo.deleteItemConversion(tenantId, id);
   }
 
   public ConvertResult convert(
@@ -481,13 +499,13 @@ public class ProductService {
       return new ConvertResult(fromUom, toUom, qty, qty, BigDecimal.ONE, "IDENTITY");
     }
     if (variantId != null) {
-      var itemFactor = repo.findItemConversionFactor(tenantId, variantId, fromUom, toUom);
+      var itemFactor = uomRepo.findItemConversionFactor(tenantId, variantId, fromUom, toUom);
       if (itemFactor.isPresent()) {
         BigDecimal f = itemFactor.get();
         return new ConvertResult(fromUom, toUom, qty, qty.multiply(f), f, "ITEM");
       }
     }
-    var stdFactor = repo.findStandardConversionFactor(fromUom, toUom);
+    var stdFactor = uomRepo.findStandardConversionFactor(fromUom, toUom);
     if (stdFactor.isPresent()) {
       BigDecimal f = stdFactor.get();
       return new ConvertResult(fromUom, toUom, qty, qty.multiply(f), f, "STANDARD");
@@ -515,21 +533,22 @@ public class ProductService {
             tenantId,
             id,
             Events.itemTemplateCreated(tenantId, id, name));
-    return repo.createTemplate(tpl, event);
+    return itemTemplateRepo.createTemplate(tpl, event);
   }
 
   public ItemTemplate getTemplate(UUID tenantId, UUID id) {
-    return repo.findTemplate(tenantId, id)
+    return itemTemplateRepo
+        .findTemplate(tenantId, id)
         .orElseThrow(() -> ApiException.notFound("TEMPLATE_NOT_FOUND", "Template not found"));
   }
 
   public List<ItemTemplate> listTemplates(UUID tenantId) {
-    return repo.listTemplates(tenantId);
+    return itemTemplateRepo.listTemplates(tenantId);
   }
 
   public ItemTemplate deactivateTemplate(UUID tenantId, UUID id) {
     getTemplate(tenantId, id);
-    return repo.deactivateTemplate(tenantId, id);
+    return itemTemplateRepo.deactivateTemplate(tenantId, id);
   }
 
   public ItemTemplateApplication applyTemplate(UUID tenantId, UUID variantId, UUID templateId) {
@@ -540,7 +559,7 @@ public class ProductService {
             tenantId,
             variantId,
             Events.itemTemplateApplied(tenantId, variantId, templateId));
-    return repo.applyTemplate(tenantId, variantId, templateId, event);
+    return itemTemplateRepo.applyTemplate(tenantId, variantId, templateId, event);
   }
 
   // ── Item Revisions (Gap #12) ──────────────────────────────────────────────
@@ -565,22 +584,24 @@ public class ProductService {
             tenantId,
             id,
             Events.itemRevisionCreated(tenantId, variantId, id, revision));
-    return repo.createRevisionWithOutbox(rev, event);
+    return itemRevisionRepo.createRevisionWithOutbox(rev, event);
   }
 
   public List<ItemRevision> listRevisions(UUID tenantId, UUID variantId) {
-    return repo.listRevisions(tenantId, variantId);
+    return itemRevisionRepo.listRevisions(tenantId, variantId);
   }
 
   public ItemRevision currentRevision(UUID tenantId, UUID variantId) {
-    return repo.currentRevision(tenantId, variantId)
+    return itemRevisionRepo
+        .currentRevision(tenantId, variantId)
         .orElseThrow(
             () ->
                 ApiException.notFound("REVISION_NOT_FOUND", "No active revision for this variant"));
   }
 
   public ItemRevision getRevision(UUID tenantId, UUID revisionId) {
-    return repo.findRevision(tenantId, revisionId)
+    return itemRevisionRepo
+        .findRevision(tenantId, revisionId)
         .orElseThrow(() -> ApiException.notFound("REVISION_NOT_FOUND", "No such revision"));
   }
 
@@ -607,6 +628,7 @@ public class ProductService {
     if (req.categories() != null) {
       for (var c : req.categories()) {
         try {
+          com.shelfj.web.Validations.validate(c);
           var existingCat = categoryRepo.findCategoryByName(tenantId, c.name().trim());
           if (existingCat.isPresent()) {
             categoryIdByName.put(c.name().trim(), existingCat.get().id());
@@ -644,6 +666,7 @@ public class ProductService {
     if (req.products() != null) {
       for (var p : req.products()) {
         try {
+          com.shelfj.web.Validations.validate(p);
           if (p.variants() == null || p.variants().isEmpty()) {
             errors.add(new BulkImportError("product:" + p.name(), "at least one variant required"));
             continue;
@@ -722,6 +745,7 @@ public class ProductService {
 
           for (var v : p.variants()) {
             try {
+              com.shelfj.web.Validations.validate(v);
               // REPLACE: drop any existing variant with this SKU first, so the sheet wins.
               if (replace) repo.deleteVariantBySku(tenantId, v.sku().trim());
               UUID variantId = UUID.randomUUID();
@@ -784,22 +808,23 @@ public class ProductService {
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
 
   public CatalogGroup createCatalogGroup(UUID tenantId, CreateCatalogGroupRequest req) {
-    return repo.createCatalogGroup(tenantId, req.name().trim(), req.description());
+    return catalogGroupRepo.createCatalogGroup(tenantId, req.name().trim(), req.description());
   }
 
   public CatalogGroup getCatalogGroup(UUID tenantId, UUID id) {
-    return repo.findCatalogGroup(tenantId, id)
+    return catalogGroupRepo
+        .findCatalogGroup(tenantId, id)
         .orElseThrow(
             () -> ApiException.notFound("CATALOG_GROUP_NOT_FOUND", "Catalog group not found"));
   }
 
   public List<CatalogGroup> listCatalogGroups(UUID tenantId) {
-    return repo.listCatalogGroups(tenantId);
+    return catalogGroupRepo.listCatalogGroups(tenantId);
   }
 
   public CatalogGroup deactivateCatalogGroup(UUID tenantId, UUID id) {
     getCatalogGroup(tenantId, id);
-    return repo.deactivateCatalogGroup(tenantId, id);
+    return catalogGroupRepo.deactivateCatalogGroup(tenantId, id);
   }
 
   public CatalogGroupElement createCatalogGroupElement(
@@ -813,7 +838,7 @@ public class ProductService {
       throw ApiException.badRequest(
           "INVALID_DATA_TYPE", "dataType must be TEXT, NUMBER, BOOLEAN or DATE");
     }
-    return repo.createCatalogGroupElement(
+    return catalogGroupRepo.createCatalogGroupElement(
         new CatalogGroupElement(
             UUID.randomUUID(),
             tenantId,
@@ -827,11 +852,11 @@ public class ProductService {
   }
 
   public List<CatalogGroupElement> listCatalogGroupElements(UUID tenantId, UUID groupId) {
-    return repo.listCatalogGroupElements(tenantId, groupId);
+    return catalogGroupRepo.listCatalogGroupElements(tenantId, groupId);
   }
 
   public void deleteCatalogGroupElement(UUID tenantId, UUID elementId) {
-    if (!repo.deleteCatalogGroupElement(tenantId, elementId)) {
+    if (!catalogGroupRepo.deleteCatalogGroupElement(tenantId, elementId)) {
       throw ApiException.notFound("ELEMENT_NOT_FOUND", "Catalog group element not found");
     }
   }
@@ -842,7 +867,7 @@ public class ProductService {
     UUID groupId = parseOptionalUuid(req.groupId(), "groupId");
     if (groupId == null) throw ApiException.badRequest("INVALID_GROUP_ID", "groupId is required");
     getCatalogGroup(tenantId, groupId);
-    return repo.createCatalogAssignment(
+    return catalogGroupRepo.createCatalogAssignment(
         new VariantCatalogAssignment(
             UUID.randomUUID(),
             tenantId,
@@ -854,7 +879,8 @@ public class ProductService {
   }
 
   public VariantCatalogAssignment getCatalogAssignment(UUID tenantId, UUID variantId) {
-    return repo.findCatalogAssignment(tenantId, variantId)
+    return catalogGroupRepo
+        .findCatalogAssignment(tenantId, variantId)
         .orElseThrow(
             () ->
                 ApiException.notFound(
@@ -863,11 +889,11 @@ public class ProductService {
 
   public VariantCatalogAssignment updateCatalogAssignment(
       UUID tenantId, UUID variantId, UpdateCatalogAssignmentRequest req) {
-    return repo.updateCatalogAssignment(tenantId, variantId, req.elementVals());
+    return catalogGroupRepo.updateCatalogAssignment(tenantId, variantId, req.elementVals());
   }
 
   public void deleteCatalogAssignment(UUID tenantId, UUID variantId) {
-    if (!repo.deleteCatalogAssignment(tenantId, variantId)) {
+    if (!catalogGroupRepo.deleteCatalogAssignment(tenantId, variantId)) {
       throw ApiException.notFound("ASSIGNMENT_NOT_FOUND", "No catalog assignment for this variant");
     }
   }
@@ -876,7 +902,7 @@ public class ProductService {
 
   public ContainerType createContainerType(
       UUID tenantId, com.shelfj.product.dto.Dtos.CreateContainerTypeRequest req) {
-    return repo.createContainerType(
+    return containerTypeRepo.createContainerType(
         tenantId,
         req.code().trim(),
         req.name().trim(),
@@ -890,19 +916,20 @@ public class ProductService {
   }
 
   public ContainerType getContainerType(UUID tenantId, UUID id) {
-    return repo.findContainerType(tenantId, id)
+    return containerTypeRepo
+        .findContainerType(tenantId, id)
         .orElseThrow(
             () -> ApiException.notFound("CONTAINER_TYPE_NOT_FOUND", "Container type not found"));
   }
 
   public List<ContainerType> listContainerTypes(UUID tenantId) {
-    return repo.listContainerTypes(tenantId);
+    return containerTypeRepo.listContainerTypes(tenantId);
   }
 
   public ContainerType updateContainerType(
       UUID tenantId, UUID id, com.shelfj.product.dto.Dtos.UpdateContainerTypeRequest req) {
     getContainerType(tenantId, id);
-    return repo.updateContainerType(
+    return containerTypeRepo.updateContainerType(
         tenantId,
         id,
         req.name().trim(),
@@ -917,7 +944,7 @@ public class ProductService {
 
   public ContainerType deactivateContainerType(UUID tenantId, UUID id) {
     getContainerType(tenantId, id);
-    return repo.deactivateContainerType(tenantId, id);
+    return containerTypeRepo.deactivateContainerType(tenantId, id);
   }
 
   public VariantContainerLink createVariantContainerLink(
@@ -927,7 +954,7 @@ public class ProductService {
     requireVariant(tenantId, variantId);
     UUID containerTypeId = UUID.fromString(req.containerTypeId());
     getContainerType(tenantId, containerTypeId);
-    return repo.createVariantContainerLink(
+    return containerTypeRepo.createVariantContainerLink(
         tenantId,
         variantId,
         containerTypeId,
@@ -937,11 +964,11 @@ public class ProductService {
 
   public List<VariantContainerLink> listVariantContainerLinks(UUID tenantId, UUID variantId) {
     requireVariant(tenantId, variantId);
-    return repo.listVariantContainerLinks(tenantId, variantId);
+    return containerTypeRepo.listVariantContainerLinks(tenantId, variantId);
   }
 
   public void deleteVariantContainerLink(UUID tenantId, UUID id) {
-    if (!repo.deleteVariantContainerLink(tenantId, id)) {
+    if (!containerTypeRepo.deleteVariantContainerLink(tenantId, id)) {
       throw ApiException.notFound("CONTAINER_LINK_NOT_FOUND", "Container link not found");
     }
   }
@@ -949,11 +976,12 @@ public class ProductService {
   // ── Item Attribute Groups (Gap #36) ─────────────────────────────────────
 
   public List<ItemAttributeGroup> listAttributeGroups() {
-    return repo.listAttributeGroups();
+    return itemAttributeGroupRepo.listAttributeGroups();
   }
 
   public ItemAttributeGroup getAttributeGroup(String groupCode) {
-    return repo.findAttributeGroup(groupCode.toUpperCase(java.util.Locale.ROOT))
+    return itemAttributeGroupRepo
+        .findAttributeGroup(groupCode.toUpperCase(java.util.Locale.ROOT))
         .orElseThrow(
             () ->
                 ApiException.notFound(
@@ -961,26 +989,30 @@ public class ProductService {
   }
 
   public List<ItemAttributeGroupField> listAttributeGroupFields(String groupCode) {
-    return repo.listAttributeGroupFields(groupCode.toUpperCase(java.util.Locale.ROOT));
+    return itemAttributeGroupRepo.listAttributeGroupFields(
+        groupCode.toUpperCase(java.util.Locale.ROOT));
   }
 
   public VariantAttributeGroupValues upsertVariantAttributeGroupValues(
       UUID tenantId, UUID variantId, String groupCode, String values) {
     String code = groupCode.toUpperCase(java.util.Locale.ROOT);
-    repo.findAttributeGroup(code)
+    itemAttributeGroupRepo
+        .findAttributeGroup(code)
         .orElseThrow(
             () ->
                 ApiException.notFound(
                     "ATTRIBUTE_GROUP_NOT_FOUND", "Unknown attribute group: " + groupCode));
     requireVariant(tenantId, variantId);
-    return repo.upsertVariantAttributeGroupValues(tenantId, variantId, code, values);
+    return itemAttributeGroupRepo.upsertVariantAttributeGroupValues(
+        tenantId, variantId, code, values);
   }
 
   public VariantAttributeGroupValues getVariantAttributeGroupValues(
       UUID tenantId, UUID variantId, String groupCode) {
     String code = groupCode.toUpperCase(java.util.Locale.ROOT);
     requireVariant(tenantId, variantId);
-    return repo.findVariantAttributeGroupValues(tenantId, variantId, code)
+    return itemAttributeGroupRepo
+        .findVariantAttributeGroupValues(tenantId, variantId, code)
         .orElseThrow(
             () ->
                 ApiException.notFound(
@@ -991,12 +1023,12 @@ public class ProductService {
   public List<VariantAttributeGroupValues> listVariantAttributeGroupValues(
       UUID tenantId, UUID variantId) {
     requireVariant(tenantId, variantId);
-    return repo.listVariantAttributeGroupValues(tenantId, variantId);
+    return itemAttributeGroupRepo.listVariantAttributeGroupValues(tenantId, variantId);
   }
 
   public void deleteVariantAttributeGroupValues(UUID tenantId, UUID variantId, String groupCode) {
     String code = groupCode.toUpperCase(java.util.Locale.ROOT);
-    if (!repo.deleteVariantAttributeGroupValues(tenantId, variantId, code)) {
+    if (!itemAttributeGroupRepo.deleteVariantAttributeGroupValues(tenantId, variantId, code)) {
       throw ApiException.notFound(
           "ATTRIBUTE_GROUP_VALUES_NOT_FOUND",
           "No attribute group values for group " + groupCode + " on this variant");
@@ -1007,7 +1039,7 @@ public class ProductService {
 
   public CategorySet createCategorySet(UUID tenantId, CreateCategorySetRequest req) {
     UUID defCat = parseOptionalUuid(req.defaultCatId(), "defaultCatId");
-    return repo.createCategorySet(
+    return categorySetRepo.createCategorySet(
         new CategorySet(
             UUID.randomUUID(),
             tenantId,
@@ -1022,11 +1054,12 @@ public class ProductService {
   }
 
   public List<CategorySet> listCategorySets(UUID tenantId) {
-    return repo.listCategorySets(tenantId);
+    return categorySetRepo.listCategorySets(tenantId);
   }
 
   public CategorySet getCategorySet(UUID tenantId, UUID id) {
-    return repo.findCategorySet(tenantId, id)
+    return categorySetRepo
+        .findCategorySet(tenantId, id)
         .orElseThrow(
             () -> ApiException.notFound("CATEGORY_SET_NOT_FOUND", "Category set not found"));
   }
@@ -1034,7 +1067,7 @@ public class ProductService {
   public CategorySet updateCategorySet(UUID tenantId, UUID id, UpdateCategorySetRequest req) {
     getCategorySet(tenantId, id);
     UUID defCat = parseOptionalUuid(req.defaultCatId(), "defaultCatId");
-    return repo.updateCategorySet(
+    return categorySetRepo.updateCategorySet(
         tenantId,
         id,
         req.name(),
@@ -1046,7 +1079,7 @@ public class ProductService {
   }
 
   public void deleteCategorySet(UUID tenantId, UUID id) {
-    if (!repo.deleteCategorySet(tenantId, id)) {
+    if (!categorySetRepo.deleteCategorySet(tenantId, id)) {
       throw ApiException.notFound("CATEGORY_SET_NOT_FOUND", "Category set not found");
     }
   }
@@ -1058,17 +1091,17 @@ public class ProductService {
     categoryRepo
         .findCategory(tenantId, catId)
         .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
-    return repo.addCategorySetMember(
+    return categorySetRepo.addCategorySetMember(
         new CategorySetMember(UUID.randomUUID(), tenantId, setId, catId, null));
   }
 
   public List<CategorySetMember> listCategorySetMembers(UUID tenantId, UUID setId) {
     getCategorySet(tenantId, setId);
-    return repo.listCategorySetMembers(tenantId, setId);
+    return categorySetRepo.listCategorySetMembers(tenantId, setId);
   }
 
   public void deleteCategorySetMember(UUID tenantId, UUID setId, UUID categoryId) {
-    if (!repo.deleteCategorySetMember(tenantId, setId, categoryId)) {
+    if (!categorySetRepo.deleteCategorySetMember(tenantId, setId, categoryId)) {
       throw ApiException.notFound(
           "CATEGORY_SET_MEMBER_NOT_FOUND", "Category not a member of this set");
     }
@@ -1080,7 +1113,7 @@ public class ProductService {
     UUID setId = UUID.fromString(req.setId());
     UUID catId = UUID.fromString(req.categoryId());
     getCategorySet(tenantId, setId);
-    return repo.upsertVariantCategorySetAssignment(
+    return categorySetRepo.upsertVariantCategorySetAssignment(
         new VariantCategorySetAssignment(
             UUID.randomUUID(), tenantId, variantId, setId, catId, null, null));
   }
@@ -1088,11 +1121,11 @@ public class ProductService {
   public List<VariantCategorySetAssignment> listVariantCategorySetAssignments(
       UUID tenantId, UUID variantId) {
     requireVariant(tenantId, variantId);
-    return repo.listVariantCategorySetAssignments(tenantId, variantId);
+    return categorySetRepo.listVariantCategorySetAssignments(tenantId, variantId);
   }
 
   public void deleteVariantCategorySetAssignment(UUID tenantId, UUID variantId, UUID setId) {
-    if (!repo.deleteVariantCategorySetAssignment(tenantId, variantId, setId)) {
+    if (!categorySetRepo.deleteVariantCategorySetAssignment(tenantId, variantId, setId)) {
       throw ApiException.notFound(
           "CATEGORY_SET_ASSIGNMENT_NOT_FOUND", "Category set assignment not found");
     }

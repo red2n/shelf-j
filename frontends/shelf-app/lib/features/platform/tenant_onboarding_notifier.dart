@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
+import '../../core/network/api_error.dart';
 
 class TenantOnboardingState {
   final int step; // 0=account, 1=business+store, 2=done
@@ -133,12 +134,12 @@ class TenantOnboardingNotifier extends StateNotifier<TenantOnboardingState> {
   void reset() => state = const TenantOnboardingState();
 
   String _friendly(Object e) {
-    final s = e.toString();
-    if (s.contains('409')) return 'An account with this email already exists.';
-    if (s.contains('SocketException') || s.contains('Failed host')) {
-      return 'Cannot reach the server. Is the backend running?';
+    if (e is DioException) {
+      final status = e.response?.statusCode;
+      if (status == 409) return 'An account with this email already exists.';
+      if (status == 401) return 'Authentication failed. Try again.';
     }
-    if (s.contains('401')) return 'Authentication failed. Try again.';
-    return 'Something went wrong: $s';
+    return friendlyError(e,
+        fallback: 'Something went wrong. Please try again.');
   }
 }

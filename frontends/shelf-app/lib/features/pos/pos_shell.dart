@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_notifier.dart';
+import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'pos_providers.dart';
@@ -144,7 +145,8 @@ class _ClockInViewState extends ConsumerState<_ClockInView> {
     try {
       await ref.read(posSessionProvider.notifier).clockIn(_storeId!);
     } catch (e) {
-      setState(() => _error = 'Could not clock in: $e');
+      setState(
+          () => _error = friendlyError(e, fallback: 'Could not clock in.'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -182,7 +184,8 @@ class _ClockInViewState extends ConsumerState<_ClockInView> {
                       child: Padding(
                           padding: EdgeInsets.all(8),
                           child: CircularProgressIndicator())),
-                  error: (e, _) => Text('Could not load stores: $e',
+                  error: (e, _) => Text(
+                      friendlyError(e, fallback: 'Could not load stores.'),
                       style: TextStyle(color: cs.error)),
                   data: (stores) {
                     if (stores.isEmpty) {
