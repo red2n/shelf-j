@@ -41,7 +41,7 @@
     -->
     <Match>
         <Bug pattern="SQL_PREPARED_STATEMENT_GENERATED_FROM_NONCONSTANT_STRING"/>
-        <Class name="com.shelfj.inventory.repo.InventoryRepository"/>
+        <Class name="com.shelfj.inventory.repo.DemandHistoryRepository"/>
         <Method name="aggregateDemand"/>
     </Match>
 
