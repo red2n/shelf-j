@@ -36,10 +36,25 @@ import com.shelfj.inventory.domain.Domain.TransactionSourceType;
 import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
 import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
+import com.shelfj.inventory.repo.AbcAnalysisRepository;
+import com.shelfj.inventory.repo.CostingRepository;
+import com.shelfj.inventory.repo.CycleCountRepository;
+import com.shelfj.inventory.repo.DemandHistoryRepository;
 import com.shelfj.inventory.repo.InventoryRepository;
+import com.shelfj.inventory.repo.KanbanRepository;
+import com.shelfj.inventory.repo.LotActionRepository;
+import com.shelfj.inventory.repo.LotGenealogyRepository;
+import com.shelfj.inventory.repo.MovementArchiveRepository;
+import com.shelfj.inventory.repo.MovementRepository;
+import com.shelfj.inventory.repo.PhysicalInventoryRepository;
+import com.shelfj.inventory.repo.PickingRuleRepository;
 import com.shelfj.inventory.repo.PlanningConfigRepository;
 import com.shelfj.inventory.repo.ReferenceDataRepository;
+import com.shelfj.inventory.repo.ReorderPointRepository;
+import com.shelfj.inventory.repo.SafetyStockRepository;
 import com.shelfj.inventory.repo.SerialRepository;
+import com.shelfj.inventory.repo.SuggestionRepository;
+import com.shelfj.inventory.repo.ThresholdRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -60,6 +75,21 @@ public class InventoryService {
 
   @Inject ServiceConfig config;
   @Inject InventoryRepository repo;
+  @Inject LotGenealogyRepository lotGenealogyRepo;
+  @Inject ThresholdRepository thresholdRepo;
+  @Inject SuggestionRepository suggestionRepo;
+  @Inject DemandHistoryRepository demandHistoryRepo;
+  @Inject CycleCountRepository cycleCountRepo;
+  @Inject AbcAnalysisRepository abcRepo;
+  @Inject SafetyStockRepository safetyStockRepo;
+  @Inject MovementRepository movementRepo;
+  @Inject PhysicalInventoryRepository physicalInventoryRepo;
+  @Inject ReorderPointRepository ropRepo;
+  @Inject KanbanRepository kanbanRepo;
+  @Inject CostingRepository costingRepo;
+  @Inject LotActionRepository lotActionRepo;
+  @Inject MovementArchiveRepository movementArchiveRepo;
+  @Inject PickingRuleRepository pickingRuleRepo;
   @Inject SerialRepository serialRepo;
   @Inject ReferenceDataRepository refData;
   @Inject PlanningConfigRepository planningConfig;
@@ -426,7 +456,7 @@ public class InventoryService {
 
   public List<Movement> listMovements(
       UUID tenantId, UUID storeId, UUID variantId, String type, int limit) {
-    return repo.listMovements(tenantId, storeId, variantId, type, limit);
+    return movementRepo.listMovements(tenantId, storeId, variantId, type, limit);
   }
 
   public List<Reservation> listReservations(UUID tenantId, UUID storeId, String status, int limit) {
@@ -440,12 +470,12 @@ public class InventoryService {
 
   public Threshold setThreshold(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal threshold, BigDecimal maxQty) {
-    return repo.upsertThreshold(
+    return thresholdRepo.upsertThreshold(
         new Threshold(UUID.randomUUID(), tenantId, storeId, variantId, threshold, maxQty));
   }
 
   public List<Threshold> listThresholds(UUID tenantId, UUID storeId) {
-    return repo.listThresholds(tenantId, storeId);
+    return thresholdRepo.listThresholds(tenantId, storeId);
   }
 
   // ---- min-max planning engine ----
@@ -462,7 +492,7 @@ public class InventoryService {
       avail.put(l.storeId() + ":" + l.variantId(), l.available());
     }
 
-    List<Threshold> thresholds = repo.listThresholds(tenantId, storeId);
+    List<Threshold> thresholds = thresholdRepo.listThresholds(tenantId, storeId);
     List<Suggestion> created = new ArrayList<>();
     for (Threshold t : thresholds) {
       BigDecimal available = avail.getOrDefault(t.storeId() + ":" + t.variantId(), BigDecimal.ZERO);
@@ -493,13 +523,13 @@ public class InventoryService {
               suggId,
               Events.replenishmentSuggested(
                   tenantId, suggId, t.storeId(), t.variantId(), suggestedQty));
-      repo.insertSuggestionIfAbsent(sugg, event).ifPresent(created::add);
+      suggestionRepo.insertSuggestionIfAbsent(sugg, event).ifPresent(created::add);
     }
     return created;
   }
 
   public List<Suggestion> listSuggestions(UUID tenantId, UUID storeId, String status, int limit) {
-    return repo.listSuggestions(tenantId, storeId, status, limit);
+    return suggestionRepo.listSuggestions(tenantId, storeId, status, limit);
   }
 
   public Suggestion resolveSuggestion(UUID tenantId, UUID suggId, String newStatus) {
@@ -514,7 +544,8 @@ public class InventoryService {
             tenantId,
             suggId,
             Events.replenishmentResolved(tenantId, suggId, newStatus));
-    return repo.resolveSuggestion(tenantId, suggId, newStatus, event)
+    return suggestionRepo
+        .resolveSuggestion(tenantId, suggId, newStatus, event)
         .orElseThrow(
             () -> ApiException.notFound("SUGGESTION_NOT_FOUND", "No open suggestion with that id"));
   }
@@ -639,13 +670,13 @@ public class InventoryService {
       throw new ApiException(
           400, "INVALID_BUCKET_TYPE", "bucketType must be DAY, WEEK, or MONTH", List.of(), null);
     }
-    return repo.aggregateDemand(tenantId, storeId, bt, since);
+    return demandHistoryRepo.aggregateDemand(tenantId, storeId, bt, since);
   }
 
   public List<DemandBucket> listDemandHistory(
       UUID tenantId, UUID storeId, UUID variantId, String bucketType, int limit) {
     String bt = bucketType == null ? null : bucketType.toUpperCase(Locale.ROOT);
-    return repo.listDemandHistory(tenantId, storeId, variantId, bt, limit);
+    return demandHistoryRepo.listDemandHistory(tenantId, storeId, variantId, bt, limit);
   }
 
   // ---- move orders (Gap #5) ----
@@ -890,14 +921,15 @@ public class InventoryService {
 
     // Generate lines from ABC assignments that match requested classes
     List<String> requestedClasses = List.of(classes.split(","));
-    List<AbcAssignment> assignments = repo.listAbcAssignments(tenantId, storeId, null, 1000);
+    List<AbcAssignment> assignments = abcRepo.listAbcAssignments(tenantId, storeId, null, 1000);
     // Fetch all on-hand quantities in one query instead of one per variant (avoids N+1).
     List<UUID> matchingVariantIds =
         assignments.stream()
             .filter(a -> requestedClasses.contains(a.abcClass()))
             .map(AbcAssignment::variantId)
             .toList();
-    Map<UUID, BigDecimal> onHandMap = repo.onHandQtyBatch(tenantId, storeId, matchingVariantIds);
+    Map<UUID, BigDecimal> onHandMap =
+        cycleCountRepo.onHandQtyBatch(tenantId, storeId, matchingVariantIds);
     List<CycleCountLine> lines = new ArrayList<>();
     for (AbcAssignment a : assignments) {
       if (!requestedClasses.contains(a.abcClass())) continue;
@@ -917,15 +949,17 @@ public class InventoryService {
               null));
     }
 
-    repo.createCycleCountHeader(header, lines);
+    cycleCountRepo.createCycleCountHeader(header, lines);
     return new CycleCountWithLines(header, lines);
   }
 
   public List<CycleCountWithLines> listCycleCounts(
       UUID tenantId, UUID storeId, String status, int limit) {
-    List<CycleCountHeader> headers = repo.listCycleCountHeaders(tenantId, storeId, status, limit);
+    List<CycleCountHeader> headers =
+        cycleCountRepo.listCycleCountHeaders(tenantId, storeId, status, limit);
     List<UUID> headerIds = headers.stream().map(CycleCountHeader::id).toList();
-    Map<UUID, List<CycleCountLine>> linesByHeader = repo.listCycleCountLinesByHeaders(headerIds);
+    Map<UUID, List<CycleCountLine>> linesByHeader =
+        cycleCountRepo.listCycleCountLinesByHeaders(headerIds);
     return headers.stream()
         .map(h -> new CycleCountWithLines(h, linesByHeader.getOrDefault(h.id(), List.of())))
         .toList();
@@ -933,10 +967,11 @@ public class InventoryService {
 
   public CycleCountWithLines getCycleCount(UUID tenantId, UUID headerId) {
     CycleCountHeader header =
-        repo.findCycleCountHeader(tenantId, headerId)
+        cycleCountRepo
+            .findCycleCountHeader(tenantId, headerId)
             .orElseThrow(
                 () -> ApiException.notFound("CYCLE_COUNT_NOT_FOUND", "No such cycle count"));
-    return new CycleCountWithLines(header, repo.listCycleCountLines(headerId));
+    return new CycleCountWithLines(header, cycleCountRepo.listCycleCountLines(headerId));
   }
 
   /** Record the physically counted qty for one line; computes variance. */
@@ -947,7 +982,8 @@ public class InventoryService {
     }
     // Verify line belongs to this header + tenant
     CycleCountLine existing =
-        repo.findCycleCountLine(tenantId, lineId)
+        cycleCountRepo
+            .findCycleCountLine(tenantId, lineId)
             .orElseThrow(() -> ApiException.notFound("COUNT_LINE_NOT_FOUND", "No such count line"));
     if (!existing.headerId().equals(headerId)) {
       throw new ApiException(
@@ -963,15 +999,17 @@ public class InventoryService {
                 .multiply(BigDecimal.valueOf(100));
 
     // Advance header to IN_PROGRESS if still OPEN
-    repo.findCycleCountHeader(tenantId, headerId)
+    cycleCountRepo
+        .findCycleCountHeader(tenantId, headerId)
         .ifPresent(
             h -> {
               if (CycleCountHeader.OPEN.equals(h.status())) {
-                repo.updateHeaderStatus(tenantId, headerId, CycleCountHeader.IN_PROGRESS);
+                cycleCountRepo.updateHeaderStatus(tenantId, headerId, CycleCountHeader.IN_PROGRESS);
               }
             });
 
-    return repo.enterCount(tenantId, lineId, countedQty, variance, variancePct)
+    return cycleCountRepo
+        .enterCount(tenantId, lineId, countedQty, variance, variancePct)
         .orElseThrow(
             () ->
                 ApiException.unprocessable(
@@ -987,7 +1025,8 @@ public class InventoryService {
    */
   public ApproveResult approveWithTolerance(UUID tenantId, UUID headerId) {
     CycleCountHeader header =
-        repo.findCycleCountHeader(tenantId, headerId)
+        cycleCountRepo
+            .findCycleCountHeader(tenantId, headerId)
             .orElseThrow(
                 () -> ApiException.notFound("CYCLE_COUNT_NOT_FOUND", "No such cycle count"));
     if (CycleCountHeader.ADJUSTED.equals(header.status())
@@ -996,7 +1035,7 @@ public class InventoryService {
           422, "CYCLE_COUNT_CLOSED", "Cycle count is already " + header.status(), List.of(), null);
     }
 
-    List<CycleCountLine> lines = repo.listCycleCountLines(headerId);
+    List<CycleCountLine> lines = cycleCountRepo.listCycleCountLines(headerId);
     List<UUID> toApprove = new ArrayList<>();
     List<UUID> toFlag = new ArrayList<>();
     for (CycleCountLine l : lines) {
@@ -1005,19 +1044,20 @@ public class InventoryService {
       if (absPct.compareTo(header.tolerancePct()) <= 0) toApprove.add(l.id());
       else toFlag.add(l.id());
     }
-    repo.bulkUpdateLineStatus(headerId, toApprove, CycleCountLine.APPROVED);
-    repo.bulkUpdateLineStatus(headerId, toFlag, CycleCountLine.REJECTED);
+    cycleCountRepo.bulkUpdateLineStatus(headerId, toApprove, CycleCountLine.APPROVED);
+    cycleCountRepo.bulkUpdateLineStatus(headerId, toFlag, CycleCountLine.REJECTED);
 
     String newHeaderStatus =
         toFlag.isEmpty() ? CycleCountHeader.IN_PROGRESS : CycleCountHeader.PENDING_APPROVAL;
-    repo.updateHeaderStatus(tenantId, headerId, newHeaderStatus);
+    cycleCountRepo.updateHeaderStatus(tenantId, headerId, newHeaderStatus);
     return new ApproveResult(toApprove.size(), toFlag.size());
   }
 
   /** Apply stock adjustments for all APPROVED lines, then close the count header. */
   public int adjustCycleCount(UUID tenantId, UUID headerId) {
     CycleCountHeader header =
-        repo.findCycleCountHeader(tenantId, headerId)
+        cycleCountRepo
+            .findCycleCountHeader(tenantId, headerId)
             .orElseThrow(
                 () -> ApiException.notFound("CYCLE_COUNT_NOT_FOUND", "No such cycle count"));
     if (CycleCountHeader.ADJUSTED.equals(header.status())
@@ -1065,19 +1105,19 @@ public class InventoryService {
             type,
             notes,
             Instant.now());
-    return repo.createLotLink(link);
+    return lotGenealogyRepo.createLotLink(link);
   }
 
   public List<LotGenealogyLink> findAncestors(UUID tenantId, UUID batchId) {
-    return repo.findAncestors(tenantId, batchId);
+    return lotGenealogyRepo.findAncestors(tenantId, batchId);
   }
 
   public List<LotGenealogyLink> findDescendants(UUID tenantId, UUID batchId) {
-    return repo.findDescendants(tenantId, batchId);
+    return lotGenealogyRepo.findDescendants(tenantId, batchId);
   }
 
   public List<LotGenealogyLink> findDirectLinks(UUID tenantId, UUID batchId) {
-    return repo.findDirectLinks(tenantId, batchId);
+    return lotGenealogyRepo.findDirectLinks(tenantId, batchId);
   }
 
   // ---- ABC analysis (Gap #9) ----
@@ -1112,12 +1152,12 @@ public class InventoryService {
           400, "INVALID_ABC_THRESHOLDS", "0 < thresholdA < thresholdAB < 100", List.of(), null);
     }
 
-    List<Object[]> raw = repo.abcScoringData(tenantId, storeId);
+    List<Object[]> raw = abcRepo.abcScoringData(tenantId, storeId);
     if (raw.isEmpty()) {
       UUID runId = UUID.randomUUID();
       AbcCompileRun emptyRun =
           new AbcCompileRun(runId, tenantId, storeId, crit, tA, tAB, 0, Instant.now());
-      repo.persistAbcRun(emptyRun, List.of());
+      abcRepo.persistAbcRun(emptyRun, List.of());
       return new AbcCompileResult(emptyRun, List.of());
     }
 
@@ -1173,7 +1213,7 @@ public class InventoryService {
 
     AbcCompileRun run =
         new AbcCompileRun(runId, tenantId, storeId, crit, tA, tAB, assignments.size(), now);
-    repo.persistAbcRun(run, assignments);
+    abcRepo.persistAbcRun(run, assignments);
     return new AbcCompileResult(run, assignments);
   }
 
@@ -1183,11 +1223,12 @@ public class InventoryService {
     if (cls != null && !List.of("A", "B", "C").contains(cls)) {
       throw new ApiException(400, "INVALID_ABC_CLASS", "class must be A, B, or C", List.of(), null);
     }
-    return repo.listAbcAssignments(tenantId, storeId, cls, limit);
+    return abcRepo.listAbcAssignments(tenantId, storeId, cls, limit);
   }
 
   public AbcAssignment getAbcAssignment(UUID tenantId, UUID storeId, UUID variantId) {
-    return repo.findAbcAssignment(tenantId, storeId, variantId)
+    return abcRepo
+        .findAbcAssignment(tenantId, storeId, variantId)
         .orElseThrow(
             () ->
                 ApiException.notFound(
@@ -1239,11 +1280,12 @@ public class InventoryService {
             null,
             null,
             Instant.now());
-    return repo.upsertSafetyStockParams(params);
+    return safetyStockRepo.upsertSafetyStockParams(params);
   }
 
   public SafetyStockParams getSafetyStockParams(UUID tenantId, UUID storeId, UUID variantId) {
-    return repo.findSafetyStockParams(tenantId, storeId, variantId)
+    return safetyStockRepo
+        .findSafetyStockParams(tenantId, storeId, variantId)
         .orElseThrow(
             () ->
                 ApiException.notFound(
@@ -1251,7 +1293,7 @@ public class InventoryService {
   }
 
   public List<SafetyStockParams> listSafetyStockParams(UUID tenantId, UUID storeId, int limit) {
-    return repo.listSafetyStockParams(tenantId, storeId, limit);
+    return safetyStockRepo.listSafetyStockParams(tenantId, storeId, limit);
   }
 
   /**
@@ -1263,14 +1305,17 @@ public class InventoryService {
     List<SafetyStockParams> targets;
     if (variantId != null && storeId != null) {
       targets =
-          repo.findSafetyStockParams(tenantId, storeId, variantId).map(List::of).orElse(List.of());
+          safetyStockRepo
+              .findSafetyStockParams(tenantId, storeId, variantId)
+              .map(List::of)
+              .orElse(List.of());
     } else {
-      targets = repo.listSafetyStockParamsAll(tenantId, storeId);
+      targets = safetyStockRepo.listSafetyStockParamsAll(tenantId, storeId);
     }
     if (targets.isEmpty()) return 0;
 
     // One batched read for every target's demand history, instead of one query per row.
-    var bucketsByStoreThenVariant = repo.demandBucketsBatch(tenantId, targets, 30);
+    var bucketsByStoreThenVariant = demandHistoryRepo.demandBucketsBatch(tenantId, targets, 30);
     Instant now = Instant.now();
     var qtyByStoreThenVariant = new java.util.HashMap<UUID, java.util.Map<UUID, BigDecimal>>();
     for (SafetyStockParams p : targets) {
@@ -1284,7 +1329,7 @@ public class InventoryService {
           .put(p.variantId(), qty);
     }
     // One batched write for every target, instead of one connection checkout per row.
-    return repo.updateSafetyStockQtyBatch(tenantId, qtyByStoreThenVariant, now);
+    return safetyStockRepo.updateSafetyStockQtyBatch(tenantId, qtyByStoreThenVariant, now);
   }
 
   /** {@code buckets} is the last 30 daily buckets (enough for meaningful MAD), oldest-first. */
@@ -1355,17 +1400,18 @@ public class InventoryService {
             tenantId,
             id,
             Events.physicalInventoryCreated(tenantId, id, storeId));
-    return repo.createPhysicalInventory(pi, event);
+    return physicalInventoryRepo.createPhysicalInventory(pi, event);
   }
 
   public PhysicalInventory getPhysicalInventory(UUID tenantId, UUID id) {
-    return repo.findPhysicalInventory(tenantId, id)
+    return physicalInventoryRepo
+        .findPhysicalInventory(tenantId, id)
         .orElseThrow(() -> ApiException.notFound("PI_NOT_FOUND", "Physical inventory not found"));
   }
 
   public List<PhysicalInventory> listPhysicalInventories(UUID tenantId, String storeId) {
     UUID storeUuid = storeId != null ? parseUuid(storeId, "storeId") : null;
-    return repo.listPhysicalInventories(tenantId, storeUuid);
+    return physicalInventoryRepo.listPhysicalInventories(tenantId, storeUuid);
   }
 
   public PhysicalInventoryTag addTag(
@@ -1383,12 +1429,12 @@ public class InventoryService {
             null,
             PhysicalInventoryTag.OPEN,
             null);
-    return repo.addTag(tag);
+    return physicalInventoryRepo.addTag(tag);
   }
 
   public PhysicalInventoryTag countTag(
       UUID tenantId, UUID piId, UUID tagId, BigDecimal countedQty) {
-    return repo.countTag(tenantId, piId, tagId, countedQty);
+    return physicalInventoryRepo.countTag(tenantId, piId, tagId, countedQty);
   }
 
   public PhysicalInventory completePhysicalInventory(UUID tenantId, UUID piId) {
@@ -1400,11 +1446,11 @@ public class InventoryService {
             tenantId,
             piId,
             Events.physicalInventoryCompleted(tenantId, piId));
-    return repo.completePhysicalInventory(tenantId, piId, event);
+    return physicalInventoryRepo.completePhysicalInventory(tenantId, piId, event);
   }
 
   public List<PhysicalInventoryTag> listTags(UUID tenantId, UUID piId) {
-    return repo.listTags(tenantId, piId);
+    return physicalInventoryRepo.listTags(tenantId, piId);
   }
 
   // ── Gap #19: Reorder Point + EOQ ─────────────────────────────────────────────
@@ -1442,20 +1488,21 @@ public class InventoryService {
             tenantId,
             variantId,
             Events.ropPlanUpdated(tenantId, storeId, variantId));
-    return repo.upsertRopPlan(plan, event);
+    return ropRepo.upsertRopPlan(plan, event);
   }
 
   public ReorderPointPlan getRopPlan(UUID tenantId, UUID storeId, UUID variantId) {
-    return repo.findRopPlan(tenantId, storeId, variantId)
+    return ropRepo
+        .findRopPlan(tenantId, storeId, variantId)
         .orElseThrow(() -> ApiException.notFound("ROP_NOT_FOUND", "ROP plan not found"));
   }
 
   public List<ReorderPointPlan> listRopPlans(UUID tenantId, UUID storeId) {
-    return repo.listRopPlans(tenantId, storeId);
+    return ropRepo.listRopPlans(tenantId, storeId);
   }
 
   public int computeRopPlans(UUID tenantId, UUID storeId) {
-    return repo.computeRopPlans(tenantId, storeId);
+    return ropRepo.computeRopPlans(tenantId, storeId);
   }
 
   // ── Gap #18: Kanban Replenishment ────────────────────────────────────────────
@@ -1502,12 +1549,13 @@ public class InventoryService {
             tenantId,
             cardId,
             Events.kanbanCreated(tenantId, cardId, storeId, variantId, kanbanType));
-    return repo.createKanbanCard(card, event);
+    return kanbanRepo.createKanbanCard(card, event);
   }
 
   public KanbanCard triggerKanbanCard(UUID tenantId, UUID cardId, String notes) {
     KanbanCard card =
-        repo.findKanbanCard(tenantId, cardId)
+        kanbanRepo
+            .findKanbanCard(tenantId, cardId)
             .orElseThrow(() -> ApiException.notFound("KANBAN_NOT_FOUND", "kanban card not found"));
     var event =
         new OutboxRow(
@@ -1516,12 +1564,13 @@ public class InventoryService {
             tenantId,
             cardId,
             Events.kanbanTriggered(tenantId, cardId, card.storeId(), card.variantId()));
-    return repo.triggerKanbanCard(tenantId, cardId, notes, event);
+    return kanbanRepo.triggerKanbanCard(tenantId, cardId, notes, event);
   }
 
   public KanbanCard replenishKanbanCard(UUID tenantId, UUID cardId) {
     KanbanCard card =
-        repo.findKanbanCard(tenantId, cardId)
+        kanbanRepo
+            .findKanbanCard(tenantId, cardId)
             .orElseThrow(() -> ApiException.notFound("KANBAN_NOT_FOUND", "kanban card not found"));
     var event =
         new OutboxRow(
@@ -1530,16 +1579,17 @@ public class InventoryService {
             tenantId,
             cardId,
             Events.kanbanReplenished(tenantId, cardId, card.storeId(), card.variantId()));
-    return repo.replenishKanbanCard(tenantId, cardId, event);
+    return kanbanRepo.replenishKanbanCard(tenantId, cardId, event);
   }
 
   public KanbanCard getKanbanCard(UUID tenantId, UUID cardId) {
-    return repo.findKanbanCard(tenantId, cardId)
+    return kanbanRepo
+        .findKanbanCard(tenantId, cardId)
         .orElseThrow(() -> ApiException.notFound("KANBAN_NOT_FOUND", "kanban card not found"));
   }
 
   public List<KanbanCard> listKanbanCards(UUID tenantId, UUID storeId, String status) {
-    return repo.listKanbanCards(tenantId, storeId, status);
+    return kanbanRepo.listKanbanCards(tenantId, storeId, status);
   }
 
   // ── Gap #17: Costing Methods ────────────────────────────────────────────────
@@ -1556,17 +1606,18 @@ public class InventoryService {
             tenantId,
             variantId,
             Events.costingMethodUpdated(tenantId, storeId, variantId, method));
-    return repo.upsertCostingMethod(tenantId, storeId, variantId, method, event);
+    return costingRepo.upsertCostingMethod(tenantId, storeId, variantId, method, event);
   }
 
   public CostingMethod getCostingMethod(UUID tenantId, UUID storeId, UUID variantId) {
-    return repo.findCostingMethod(tenantId, storeId, variantId)
+    return costingRepo
+        .findCostingMethod(tenantId, storeId, variantId)
         .orElseThrow(
             () -> ApiException.notFound("COSTING_METHOD_NOT_FOUND", "costing method not found"));
   }
 
   public List<CostingMethod> listCostingMethods(UUID tenantId, UUID storeId) {
-    return repo.listCostingMethods(tenantId, storeId);
+    return costingRepo.listCostingMethods(tenantId, storeId);
   }
 
   public AccountingPeriod openPeriod(
@@ -1579,7 +1630,7 @@ public class InventoryService {
             tenantId,
             storeId,
             Events.accountingPeriodOpened(tenantId, storeId, periodName, periodDate));
-    return repo.openPeriod(tenantId, storeId, periodName, date, event);
+    return costingRepo.openPeriod(tenantId, storeId, periodName, date, event);
   }
 
   public AccountingPeriod closePeriod(UUID tenantId, UUID periodId) {
@@ -1590,17 +1641,18 @@ public class InventoryService {
             tenantId,
             periodId,
             Events.accountingPeriodClosed(tenantId, periodId));
-    return repo.closePeriod(tenantId, periodId, event);
+    return costingRepo.closePeriod(tenantId, periodId, event);
   }
 
   public AccountingPeriod getPeriod(UUID tenantId, UUID periodId) {
-    return repo.findPeriod(tenantId, periodId)
+    return costingRepo
+        .findPeriod(tenantId, periodId)
         .orElseThrow(
             () -> ApiException.notFound("PERIOD_NOT_FOUND", "accounting period not found"));
   }
 
   public List<AccountingPeriod> listPeriods(UUID tenantId, UUID storeId) {
-    return repo.listPeriods(tenantId, storeId);
+    return costingRepo.listPeriods(tenantId, storeId);
   }
 
   // ── Tier-1 Gap #21: Transaction reason codes ─────────────────────────────
@@ -1675,7 +1727,8 @@ public class InventoryService {
             Events.lotSplit(tenantId, sourceBatchId, newBatchId, qty));
     Batch newBatch = repo.receive(splitBatch, "LOT_SPLIT", sourceBatchId, splitEvent, null);
     LotAction action =
-        repo.insertLotAction(tenantId, LotAction.SPLIT, sourceBatchId, newBatch.id(), qty, notes);
+        lotActionRepo.insertLotAction(
+            tenantId, LotAction.SPLIT, sourceBatchId, newBatch.id(), qty, notes);
     return new LotSplitResult(newBatch, action);
   }
 
@@ -1721,12 +1774,13 @@ public class InventoryService {
         repo.getBatch(tenantId, targetBatchId)
             .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));
     LotAction action =
-        repo.insertLotAction(tenantId, LotAction.MERGE, sourceBatchId, targetBatchId, qty, notes);
+        lotActionRepo.insertLotAction(
+            tenantId, LotAction.MERGE, sourceBatchId, targetBatchId, qty, notes);
     return new LotMergeResult(updated, action);
   }
 
   public List<LotAction> listLotActions(UUID tenantId, UUID batchId) {
-    return repo.listLotActions(tenantId, batchId);
+    return lotActionRepo.listLotActions(tenantId, batchId);
   }
 
   // ── Tier-1 Gap #24: Expiry alert query ────────────────────────────────────
@@ -1797,12 +1851,12 @@ public class InventoryService {
 
   public ReorderPointPlan updateRopOrderModifiers(
       UUID tenantId, UUID ropId, BigDecimal min, BigDecimal max, BigDecimal lotMult) {
-    return repo.updateRopOrderModifiers(tenantId, ropId, min, max, lotMult);
+    return ropRepo.updateRopOrderModifiers(tenantId, ropId, min, max, lotMult);
   }
 
   public KanbanCard updateKanbanOrderModifiers(
       UUID tenantId, UUID cardId, BigDecimal min, BigDecimal max, BigDecimal lotMult) {
-    return repo.updateKanbanOrderModifiers(tenantId, cardId, min, max, lotMult);
+    return kanbanRepo.updateKanbanOrderModifiers(tenantId, cardId, min, max, lotMult);
   }
 
   // ── Tier-1 Gap #29: Batch (bulk) reservations ─────────────────────────────
@@ -1835,7 +1889,7 @@ public class InventoryService {
       throw ApiException.badRequest(
           "PURGE_TOO_RECENT", "Cannot purge movements less than 90 days old");
     }
-    return repo.purgeMovementsBefore(tenantId, before);
+    return movementArchiveRepo.purgeMovementsBefore(tenantId, before);
   }
 
   // ── Tier-1 Gap #31: Zone GL mappings ─────────────────────────────────────
@@ -1863,22 +1917,24 @@ public class InventoryService {
           List.of(),
           null);
     }
-    return repo.createPickingRule(tenantId, req.name().trim(), strategy, req.gradePreference());
+    return pickingRuleRepo.createPickingRule(
+        tenantId, req.name().trim(), strategy, req.gradePreference());
   }
 
   public PickingRule getPickingRule(UUID tenantId, UUID id) {
-    return repo.findPickingRule(tenantId, id)
+    return pickingRuleRepo
+        .findPickingRule(tenantId, id)
         .orElseThrow(
             () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
   }
 
   public List<PickingRule> listPickingRules(UUID tenantId, int limit) {
-    return repo.listPickingRules(tenantId, limit);
+    return pickingRuleRepo.listPickingRules(tenantId, limit);
   }
 
   public PickingRule deactivatePickingRule(UUID tenantId, UUID id) {
     getPickingRule(tenantId, id);
-    return repo.deactivatePickingRule(tenantId, id);
+    return pickingRuleRepo.deactivatePickingRule(tenantId, id);
   }
 
   public List<PickingRuleZonePriority> setZonePriorities(
@@ -1891,13 +1947,13 @@ public class InventoryService {
                     new PickingRuleZonePriority(
                         null, tenantId, ruleId, UUID.fromString(e.zoneId()), e.priority()))
             .toList();
-    repo.replaceZonePriorities(tenantId, ruleId, items);
-    return repo.listZonePriorities(tenantId, ruleId);
+    pickingRuleRepo.replaceZonePriorities(tenantId, ruleId, items);
+    return pickingRuleRepo.listZonePriorities(tenantId, ruleId);
   }
 
   public List<PickingRuleZonePriority> listZonePriorities(UUID tenantId, UUID ruleId) {
     getPickingRule(tenantId, ruleId);
-    return repo.listZonePriorities(tenantId, ruleId);
+    return pickingRuleRepo.listZonePriorities(tenantId, ruleId);
   }
 
   public PickingRuleAssignment createPickingRuleAssignment(
@@ -1923,27 +1979,27 @@ public class InventoryService {
           List.of(),
           null);
     }
-    return repo.createPickingRuleAssignment(tenantId, ruleId, scopeType, scopeId);
+    return pickingRuleRepo.createPickingRuleAssignment(tenantId, ruleId, scopeType, scopeId);
   }
 
   public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId, int limit) {
-    return repo.listPickingRuleAssignments(tenantId, limit);
+    return pickingRuleRepo.listPickingRuleAssignments(tenantId, limit);
   }
 
   public void deletePickingRuleAssignment(UUID tenantId, UUID id) {
-    if (!repo.deletePickingRuleAssignment(tenantId, id)) {
+    if (!pickingRuleRepo.deletePickingRuleAssignment(tenantId, id)) {
       throw ApiException.notFound("ASSIGNMENT_NOT_FOUND", "Picking rule assignment not found");
     }
   }
 
   public com.shelfj.inventory.dto.Dtos.PickingRuleResolveResponse resolvePickingRule(
       UUID tenantId, UUID storeId, UUID variantId) {
-    var rule = repo.resolvePickingRule(tenantId, storeId, variantId).orElse(null);
+    var rule = pickingRuleRepo.resolvePickingRule(tenantId, storeId, variantId).orElse(null);
     String strategy = rule != null ? rule.strategy() : PickingRule.FEFO;
     String gradePreference = rule != null ? rule.gradePreference() : null;
     List<UUID> zonePriorityOrder =
         (rule != null && PickingRule.ZONE_PRIORITY.equals(strategy))
-            ? repo.listZonePriorities(tenantId, rule.id()).stream()
+            ? pickingRuleRepo.listZonePriorities(tenantId, rule.id()).stream()
                 .map(PickingRuleZonePriority::zoneId)
                 .toList()
             : null;
