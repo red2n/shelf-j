@@ -31,7 +31,7 @@ class CategoriesScreen extends ConsumerWidget {
                   ),
                   catsAsync.when(
                     loading: () => const SizedBox.shrink(),
-                    error: (_, __) => const SizedBox.shrink(),
+                    error: (_, _) => const SizedBox.shrink(),
                     data: (list) => Chip(
                       label: Text('${list.length} categories'),
                       backgroundColor: cs.secondaryContainer,
@@ -137,7 +137,7 @@ class CategoriesScreen extends ConsumerWidget {
           );
           ref.invalidate(categoriesProvider);
         },
-        availableParents: ref.read(categoriesProvider).valueOrNull ?? [],
+        availableParents: ref.read(categoriesProvider).value ?? [],
       ),
     );
   }
@@ -327,7 +327,7 @@ class _NarrowList extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: cats.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 4),
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
       itemBuilder: (context, i) {
         final cat = cats[i];
         final cs = Theme.of(context).colorScheme;
@@ -500,7 +500,7 @@ class _CategoryDialogState extends State<_CategoryDialog> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
-                  value: _parentId,
+                  initialValue: _parentId,
                   decoration:
                       const InputDecoration(labelText: 'Parent category'),
                   items: [

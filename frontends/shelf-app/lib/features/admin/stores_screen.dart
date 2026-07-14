@@ -75,7 +75,7 @@ class StoresScreen extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 itemCount: stores.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (context, i) {
                   final s = stores[i];
                   final isWarehouse = s.type.toUpperCase() == 'WAREHOUSE';
@@ -275,7 +275,7 @@ class _ZonesDialog extends ConsumerWidget {
             }
             return ListView.separated(
               itemCount: zones.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
+              separatorBuilder: (_, _) => const Divider(height: 1),
               itemBuilder: (_, i) {
                 final z = zones[i];
                 final active = z.status.toUpperCase() == 'ACTIVE';
@@ -489,7 +489,7 @@ class _ZoneFormDialogState extends ConsumerState<_ZoneFormDialog> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: _type,
+                initialValue: _type,
                 decoration: const InputDecoration(labelText: 'Type'),
                 items: _types
                     .map((t) => DropdownMenuItem(
@@ -956,7 +956,7 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _type,
+                        initialValue: _type,
                         decoration: const InputDecoration(labelText: 'Type'),
                         items: const [
                           DropdownMenuItem(value: 'STORE', child: Text('Retail Store')),
@@ -1002,7 +1002,7 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _country,
+                        initialValue: _country,
                         decoration: const InputDecoration(labelText: 'Country'),
                         items: const [
                           DropdownMenuItem(value: 'IN', child: Text('India')),
@@ -1017,7 +1017,7 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _timezone,
+                        initialValue: _timezone,
                         decoration: const InputDecoration(labelText: 'Timezone'),
                         items: const [
                           DropdownMenuItem(value: 'Asia/Kolkata', child: Text('IST')),

@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
@@ -42,7 +43,7 @@ class PosSessionNotifier extends StateNotifier<PosSession?> {
   Future<void> restore() async {
     if (_restored) return;
     _restored = true;
-    final auth = _ref.read(authNotifierProvider).valueOrNull;
+    final auth = _ref.read(authNotifierProvider).value;
     final userId = auth is AuthAuthenticated ? auth.userId : null;
     if (userId == null) return;
     try {

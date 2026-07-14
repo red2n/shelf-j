@@ -39,7 +39,7 @@ class StorefrontShell extends ConsumerWidget {
     final count = ref.watch(cartProvider).fold<int>(0, (s, l) => s + l.qty);
     // A deactivated tenant's shop is closed — show a friendly notice instead of
     // letting every product/price call fail with a raw 403.
-    final suspended = ref.watch(storefrontSuspendedProvider).valueOrNull ?? false;
+    final suspended = ref.watch(storefrontSuspendedProvider).value ?? false;
 
     // Show the preferences sheet once after a customer first signs in or registers.
     ref.listen<bool>(storefrontJustAuthenticatedProvider, (_, justAuth) {

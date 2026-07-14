@@ -51,7 +51,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     state = await AsyncValue.guard(() async {
       final resp = await ref.read(apiClientProvider).dio.post(
         '/${ApiConstants.iam}/auth/register',
-        data: {'email': email, 'password': password, if (phone != null) 'phone': phone},
+        data: {'email': email, 'password': password, 'phone': ?phone},
       );
       return _saveAndDecode(resp.data['data'] as Map<String, dynamic>);
     });

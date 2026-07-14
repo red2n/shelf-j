@@ -301,7 +301,7 @@ class _IssueGiftCardDialogState extends ConsumerState<_IssueGiftCardDialog> {
               error: (e, _) =>
                   Text(friendlyError(e, fallback: 'Could not load stores.')),
               data: (stores) => DropdownButtonFormField<String>(
-                value: _storeId,
+                initialValue: _storeId,
                 isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Store *'),
                 items: [
@@ -325,7 +325,7 @@ class _IssueGiftCardDialogState extends ConsumerState<_IssueGiftCardDialog> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _currency,
+                    initialValue: _currency,
                     decoration: const InputDecoration(labelText: 'Currency'),
                     items: const [
                       DropdownMenuItem(value: 'INR', child: Text('INR')),
@@ -565,7 +565,7 @@ class _CreateLayawayDialogState extends ConsumerState<_CreateLayawayDialog> {
                 error: (e, _) =>
                     Text(friendlyError(e, fallback: 'Could not load stores.')),
                 data: (stores) => DropdownButtonFormField<String>(
-                  value: _storeId,
+                  initialValue: _storeId,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Store *'),
                   items: [
@@ -646,7 +646,7 @@ class _SpecialOrdersTab extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: orders.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
                   final o = orders[i];
                   return Card(
@@ -791,7 +791,7 @@ class _CreateSpecialOrderDialogState
                 error: (e, _) =>
                     Text(friendlyError(e, fallback: 'Could not load stores.')),
                 data: (stores) => DropdownButtonFormField<String>(
-                  value: _storeId,
+                  initialValue: _storeId,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Store *'),
                   items: [

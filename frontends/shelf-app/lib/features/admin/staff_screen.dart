@@ -81,7 +81,7 @@ class StaffScreen extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 itemCount: staff.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (context, i) {
                   final m = staff[i];
                   return Card(
@@ -390,7 +390,7 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
                     friendlyError(e, fallback: 'Could not load stores.'),
                     style: TextStyle(color: cs.error)),
                 data: (stores) => DropdownButtonFormField<String>(
-                  value: _storeId,
+                  initialValue: _storeId,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Store *',
@@ -409,7 +409,7 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: _role,
+                initialValue: _role,
                 decoration: const InputDecoration(
                   labelText: 'Role *',
                   prefixIcon: Icon(Icons.shield_outlined),

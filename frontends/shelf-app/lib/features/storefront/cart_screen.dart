@@ -185,7 +185,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           child: ListView.separated(
             padding: const EdgeInsets.all(16),
             itemCount: cart.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
+            separatorBuilder: (_, _) => const Divider(height: 1),
             itemBuilder: (_, i) {
               final l = cart[i];
               return ListTile(

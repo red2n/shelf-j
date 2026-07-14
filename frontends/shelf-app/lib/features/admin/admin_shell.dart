@@ -99,7 +99,7 @@ class AdminShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tenantAsync = ref.watch(tenantInfoProvider);
-    final tenantName = tenantAsync.valueOrNull?.name ?? '';
+    final tenantName = tenantAsync.value?.name ?? '';
 
     return AdaptiveNavShell(
       title: tenantName,

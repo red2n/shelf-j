@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
@@ -94,11 +95,11 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
           'name': name,
           'code': code,
           'type': type,
-          if (line1 != null) 'line1': line1,
-          if (city != null) 'city': city,
-          if (country != null) 'country': country,
-          if (pincode != null) 'pincode': pincode,
-          if (timezone != null) 'timezone': timezone,
+          'line1': ?line1,
+          'city': ?city,
+          'country': ?country,
+          'pincode': ?pincode,
+          'timezone': ?timezone,
         },
       );
       // Refresh once more so JWT reflects the completed tenant
@@ -117,7 +118,7 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
   }) async {
     for (var i = 0; i < maxAttempts; i++) {
       await _ref.read(authNotifierProvider.notifier).refresh();
-      final auth = _ref.read(authNotifierProvider).valueOrNull;
+      final auth = _ref.read(authNotifierProvider).value;
       if (auth is AuthAuthenticated && auth.tenantId != null) return;
       if (i < maxAttempts - 1) await Future.delayed(delay);
     }

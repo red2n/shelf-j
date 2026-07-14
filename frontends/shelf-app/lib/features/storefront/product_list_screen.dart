@@ -111,11 +111,11 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
             List<StoreProduct> displayProducts = products;
             if (inStockOnly) {
               final availMap =
-                  ref.watch(storefrontAvailabilityProvider).valueOrNull ?? {};
+                  ref.watch(storefrontAvailabilityProvider).value ?? {};
               if (availMap.isNotEmpty) {
                 displayProducts = products.where((p) {
                   final variant =
-                      ref.watch(productFirstVariantProvider(p.id)).valueOrNull;
+                      ref.watch(productFirstVariantProvider(p.id)).value;
                   if (variant == null) return true; // include while loading
                   return availMap[variant.id] ?? true;
                 }).toList();
@@ -138,7 +138,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                 padding: const EdgeInsets.all(16),
                 sliver: SliverList.separated(
                   itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  separatorBuilder: (_, _) => const SizedBox(height: 12),
                   itemBuilder: (_, i) {
                     final item = items[i];
                     return item is _AdSlot
@@ -306,7 +306,7 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
 
   @override
   Widget build(BuildContext context) {
-    final promos = ref.watch(storefrontPromotionsProvider).valueOrNull ?? const [];
+    final promos = ref.watch(storefrontPromotionsProvider).value ?? const [];
     _offers = _offersFrom(promos);
     if (_page >= _offers.length) _page = 0;
     return Column(
@@ -404,7 +404,7 @@ class _FilterRow extends ConsumerWidget {
           // Category chips
           ...categoriesAsync.when(
             loading: () => const [],
-            error: (_, __) => const [],
+            error: (_, _) => const [],
             data: (categories) => [
               _categoryChip(context, ref,
                   label: 'All', value: null, selected: selected == null),

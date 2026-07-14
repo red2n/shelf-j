@@ -8,7 +8,7 @@ class PlatformDashboardScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final auth = ref.watch(authNotifierProvider).valueOrNull;
+    final auth = ref.watch(authNotifierProvider).value;
     final email = auth is AuthAuthenticated ? (auth.email ?? 'Platform Admin') : 'Platform Admin';
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;

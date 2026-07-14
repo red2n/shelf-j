@@ -31,7 +31,7 @@ class VariantPicker extends ConsumerWidget {
               friendlyError(e, fallback: 'Could not load products.'),
               style: TextStyle(color: cs.error)),
           data: (products) => DropdownButtonFormField<String>(
-            value: productId,
+            initialValue: productId,
             isExpanded: true,
             decoration: const InputDecoration(labelText: 'Product *'),
             items: [
@@ -52,7 +52,7 @@ class VariantPicker extends ConsumerWidget {
                     friendlyError(e, fallback: 'Could not load variants.'),
                     style: TextStyle(color: cs.error)),
                 data: (variants) => DropdownButtonFormField<String>(
-                  value: variantId,
+                  initialValue: variantId,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Variant *'),
                   items: [

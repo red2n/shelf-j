@@ -28,7 +28,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     final catsAsync = ref.watch(categoriesProvider);
     final cs = Theme.of(context).colorScheme;
 
-    final cats = catsAsync.valueOrNull ?? [];
+    final cats = catsAsync.value ?? [];
     final catById = {for (var c in cats) c.id: c};
 
     return Column(
@@ -300,7 +300,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
         }
         return;
       }
-      final picked = await FilePicker.platform.pickFiles(
+      final picked = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
         withData: true,
@@ -555,7 +555,7 @@ class _NarrowList extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: products.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 4),
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
       itemBuilder: (context, i) {
         final p = products[i];
         final cs = Theme.of(context).colorScheme;
@@ -750,7 +750,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String?>(
-                    value: _categoryId,
+                    initialValue: _categoryId,
                     decoration:
                         const InputDecoration(labelText: 'Category'),
                     items: [
@@ -941,7 +941,7 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                     return ListView(
                       children: [
                         ...variants.map((v) {
-                          final price = pricesAsync.valueOrNull?[v.id];
+                          final price = pricesAsync.value?[v.id];
                           return Card(
                             child: ListTile(
                               leading: const Icon(Icons.label_outline),

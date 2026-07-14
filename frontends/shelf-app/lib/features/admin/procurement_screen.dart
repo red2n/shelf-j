@@ -97,7 +97,7 @@ class _SuppliersTab extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: suppliers.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
                   final s = suppliers[i];
                   return Card(
@@ -224,7 +224,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _country,
+                        initialValue: _country,
                         decoration: const InputDecoration(labelText: 'Country'),
                         items: const [
                           DropdownMenuItem(value: 'IN', child: Text('India')),
@@ -239,7 +239,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _currency,
+                        initialValue: _currency,
                         decoration: const InputDecoration(labelText: 'Currency'),
                         items: const [
                           DropdownMenuItem(value: 'INR', child: Text('INR')),
@@ -351,7 +351,7 @@ class _PurchaseOrdersTab extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: pos.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
                   final po = pos[i];
                   return Card(
@@ -475,7 +475,7 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
                   friendlyError(e, fallback: 'Could not load suppliers.'),
                   style: TextStyle(color: cs.error)),
               data: (suppliers) => DropdownButtonFormField<String>(
-                value: _supplierId,
+                initialValue: _supplierId,
                 isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Supplier *'),
                 items: [
@@ -496,7 +496,7 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
                   friendlyError(e, fallback: 'Could not load stores.'),
                   style: TextStyle(color: cs.error)),
               data: (stores) => DropdownButtonFormField<String>(
-                value: _storeId,
+                initialValue: _storeId,
                 isExpanded: true,
                 decoration:
                     const InputDecoration(labelText: 'Deliver to store *'),
@@ -509,7 +509,7 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _currency,
+              initialValue: _currency,
               decoration: const InputDecoration(labelText: 'Currency'),
               items: const [
                 DropdownMenuItem(value: 'INR', child: Text('INR')),
@@ -828,7 +828,7 @@ class _AddPoLineDialogState extends ConsumerState<_AddPoLineDialog> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _vatCode,
+              initialValue: _vatCode,
               decoration: const InputDecoration(labelText: 'VAT code'),
               items: const [
                 DropdownMenuItem(value: 'STANDARD', child: Text('Standard')),

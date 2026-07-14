@@ -90,7 +90,7 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
   Widget build(BuildContext context) {
     final page = ref.watch(inventoryLevelsPaginationProvider);
     final summaryAsync = ref.watch(inventoryLevelsSummaryProvider);
-    final labels = ref.watch(inventoryVariantLabelsProvider).valueOrNull ??
+    final labels = ref.watch(inventoryVariantLabelsProvider).value ??
         const <String, VariantLabel>{};
     final cs = Theme.of(context).colorScheme;
 
@@ -140,7 +140,7 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
         // the counts stay accurate regardless of how many pages are loaded.
         summaryAsync.when(
           loading: () => const SizedBox.shrink(),
-          error: (_, __) => const SizedBox.shrink(),
+          error: (_, _) => const SizedBox.shrink(),
           data: (summary) {
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -239,7 +239,7 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
                       ),
                     ),
                   ),
-                  if (loadMore != null) loadMore,
+                  ?loadMore,
                 ],
               );
             }
@@ -255,7 +255,7 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
                     return _NarrowList(levels: filtered, labels: labels);
                   }),
                 ),
-                if (loadMore != null) loadMore,
+                ?loadMore,
               ],
             );
           }),
@@ -300,7 +300,7 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                   error: (e, _) => Text('Could not load stores',
                       style: TextStyle(color: cs.error)),
                   data: (stores) => DropdownButtonFormField<String>(
-                    value: _storeId,
+                    initialValue: _storeId,
                     isExpanded: true,
                     decoration: const InputDecoration(
                       labelText: 'Store',
@@ -329,9 +329,9 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                       final zonesAsync = ref.watch(zonesProvider(_storeId!));
                       return zonesAsync.when(
                         loading: () => const LinearProgressIndicator(),
-                        error: (_, __) => const SizedBox.shrink(),
+                        error: (_, _) => const SizedBox.shrink(),
                         data: (zones) => DropdownButtonFormField<String?>(
-                          value: _zoneId,
+                          initialValue: _zoneId,
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Zone',
@@ -356,7 +356,7 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
               SizedBox(
                 width: 190,
                 child: DropdownButtonFormField<String?>(
-                  value: _materialStatus,
+                  initialValue: _materialStatus,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Material status',
@@ -614,7 +614,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                       friendlyError(e, fallback: 'Could not load stores.'),
                       style: TextStyle(color: cs.error)),
                   data: (stores) => DropdownButtonFormField<String>(
-                    value: _storeId,
+                    initialValue: _storeId,
                     isExpanded: true,
                     decoration: const InputDecoration(
                       labelText: 'Store *',
@@ -645,7 +645,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                         data: (zones) => zones.isEmpty
                             ? const SizedBox.shrink()
                             : DropdownButtonFormField<String>(
-                                value: _zoneId,
+                                initialValue: _zoneId,
                                 isExpanded: true,
                                 decoration: const InputDecoration(
                                   labelText: 'Zone / aisle',
@@ -880,7 +880,7 @@ class _NarrowList extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: levels.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 4),
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
       itemBuilder: (context, i) {
         final l = levels[i];
         final cs = Theme.of(context).colorScheme;
@@ -976,7 +976,7 @@ class _BatchNarrowList extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: batches.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 4),
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
       itemBuilder: (context, i) {
         final b = batches[i];
         return Card(

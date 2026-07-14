@@ -32,7 +32,7 @@ class DashboardScreen extends ConsumerWidget {
             tenantAsync.when(
               loading: () => Text('Dashboard',
                   style: Theme.of(context).textTheme.headlineMedium),
-              error: (_, __) => Text('Dashboard',
+              error: (_, _) => Text('Dashboard',
                   style: Theme.of(context).textTheme.headlineMedium),
               data: (t) => Row(
                 children: [
@@ -72,8 +72,8 @@ class DashboardScreen extends ConsumerWidget {
             // Stat cards — responsive 2-col on mobile, 4-col on wide
             LayoutBuilder(builder: (context, bc) {
               final cols = bc.maxWidth >= 720 ? 4 : 2;
-              final orders = ordersAsync.valueOrNull ?? [];
-              final summary = inventoryAsync.valueOrNull;
+              final orders = ordersAsync.value ?? [];
+              final summary = inventoryAsync.value;
               final revenue = orders.fold<double>(0, (s, o) => s + o.total);
               final lowStock = summary?.lowStockCount ?? 0;
               final skuCount = summary?.skuCount ?? 0;
@@ -90,7 +90,7 @@ class DashboardScreen extends ConsumerWidget {
                     label: 'Revenue',
                     value: ordersAsync.isLoading
                         ? '…'
-                        : '${_currencySymbol(tenantAsync.valueOrNull?.currency)}${revenue.toStringAsFixed(0)}',
+                        : '${_currencySymbol(tenantAsync.value?.currency)}${revenue.toStringAsFixed(0)}',
                     icon: Icons.attach_money,
                     loading: ordersAsync.isLoading,
                   ),
@@ -153,7 +153,7 @@ class DashboardScreen extends ConsumerWidget {
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
                         itemCount: orders.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        separatorBuilder: (_, _) => const Divider(height: 1),
                         itemBuilder: (context, i) {
                           final o = orders[i];
                           return ListTile(
@@ -203,7 +203,7 @@ class DashboardScreen extends ConsumerWidget {
     final storesAsync = ref.watch(storesProvider);
     return storesAsync.when(
       loading: () => const SizedBox.shrink(),
-      error: (_, __) => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
       data: (stores) {
         if (stores.isEmpty) return const SizedBox.shrink();
         return Column(
@@ -216,7 +216,7 @@ class DashboardScreen extends ConsumerWidget {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: stores.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
                 itemBuilder: (context, i) {
                   final s = stores[i];
                   final cs = Theme.of(context).colorScheme;

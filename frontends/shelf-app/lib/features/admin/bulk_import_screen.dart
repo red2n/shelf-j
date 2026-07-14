@@ -151,7 +151,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
   // ── File pick ────────────────────────────────────────────────────────────────
 
   Future<void> _pickFile() async {
-    final r = await FilePicker.platform.pickFiles(
+    final r = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['csv'],
       withData: true,
@@ -328,7 +328,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                 const SizedBox(height: 16),
                 storesAsync.when(
                   loading: () => const LinearProgressIndicator(),
-                  error: (_, __) =>
+                  error: (_, _) =>
                       const Text('Could not load stores — store mapping skipped.'),
                   data: (stores) => _StoreMappingCard(
                     storeNamesInCsv: _storeNamesInCsv,
@@ -345,7 +345,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                 const SizedBox(height: 16),
                 storesAsync.when(
                   loading: () => const LinearProgressIndicator(),
-                  error: (_, __) => const Text(
+                  error: (_, _) => const Text(
                       'Could not load stores — stock cannot be received.'),
                   data: (stores) => _DestinationStoreCard(
                     stores: stores,
@@ -360,7 +360,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
               const SizedBox(height: 20),
               storesAsync.when(
                 loading: () => const SizedBox.shrink(),
-                error: (_, __) => FilledButton.icon(
+                error: (_, _) => FilledButton.icon(
                   onPressed: _loading ? null : () => _import([]),
                   icon: _loading
                       ? const SizedBox(
@@ -602,7 +602,7 @@ class _StoreMappingCard extends StatelessWidget {
                   Expanded(
                     flex: 3,
                     child: DropdownButtonFormField<String>(
-                      value: mapping[sn],
+                      initialValue: mapping[sn],
                       decoration: const InputDecoration(
                           isDense: true,
                           contentPadding: EdgeInsets.symmetric(
@@ -673,7 +673,7 @@ class _DestinationStoreCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: selected,
+              initialValue: selected,
               decoration: const InputDecoration(
                   isDense: true,
                   contentPadding:

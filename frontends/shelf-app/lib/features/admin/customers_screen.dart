@@ -100,7 +100,7 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               itemCount:
                   customers.length + (page.hasMore || page.isLoadingMore ? 1 : 0),
-              separatorBuilder: (_, __) => const SizedBox(height: 4),
+              separatorBuilder: (_, _) => const SizedBox(height: 4),
               itemBuilder: (_, i) {
                 if (i >= customers.length) {
                   return const Padding(
@@ -291,7 +291,7 @@ class _CustomerDetailDialog extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     // Watch the detail provider so an in-place edit refreshes name/phone/etc.
-    final c = ref.watch(customerDetailProvider(customer.id)).valueOrNull ?? customer;
+    final c = ref.watch(customerDetailProvider(customer.id)).value ?? customer;
     final loyaltyAsync = ref.watch(customerLoyaltyProvider(customer.id));
     final creditAsync = ref.watch(customerStoreCreditProvider(customer.id));
     final ledgerAsync = ref.watch(customerLoyaltyLedgerProvider(customer.id));
@@ -855,7 +855,7 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _gender,
+                initialValue: _gender,
                 decoration: const InputDecoration(labelText: 'Gender'),
                 items: const [
                   DropdownMenuItem(value: 'MALE', child: Text('Male')),
@@ -976,7 +976,7 @@ class _AddressFormDialogState extends ConsumerState<_AddressFormDialog> {
                   const SizedBox(height: 8),
                 ],
                 DropdownButtonFormField<String>(
-                  value: _type,
+                  initialValue: _type,
                   decoration: const InputDecoration(labelText: 'Type'),
                   items: const [
                     DropdownMenuItem(value: 'HOME', child: Text('Home')),

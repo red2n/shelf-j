@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import '../../core/constants.dart';
 import '../../core/storage/app_storage.dart';
 
@@ -309,7 +310,7 @@ final storefrontConfigProvider =
 /// The tenders the current store accepts. Falls back to CASH+CARD while loading
 /// so checkout is never left with zero options on a slow config fetch.
 final storefrontPaymentMethodsProvider = Provider<List<String>>((ref) =>
-    ref.watch(storefrontConfigProvider).valueOrNull?.enabledPaymentMethods ??
+    ref.watch(storefrontConfigProvider).value?.enabledPaymentMethods ??
     const ['CASH', 'CARD']);
 
 /// variantId → in-stock at the current store (real inventory). Empty/failed = treat as available.
@@ -464,7 +465,7 @@ final storefrontVariantsProvider =
 /// which would let prices flash and let price-resolve calls fire prematurely.
 /// Not autoDispose: must survive navigation alongside storefrontConfigProvider.
 final storefrontShowPricesProvider = Provider<bool>(
-    (ref) => ref.watch(storefrontConfigProvider).valueOrNull?.showPrices ?? false);
+    (ref) => ref.watch(storefrontConfigProvider).value?.showPrices ?? false);
 
 /// First sellable variant of a product (no price) — used to add to cart in
 /// catalog mode without ever resolving a price.

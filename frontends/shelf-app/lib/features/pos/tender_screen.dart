@@ -220,7 +220,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
   }) {
     final subtotal = cartSnapshot.fold<double>(0, (s, l) => s + l.lineTotal);
     final storeId = ref.read(posStoreProvider);
-    final stores = ref.read(posStoresProvider).valueOrNull ?? [];
+    final stores = ref.read(posStoresProvider).value ?? [];
     final store = stores.firstWhere((s) => s.id == storeId,
         orElse: () => stores.isNotEmpty ? stores.first : _emptyStore());
     final addressParts = [
@@ -343,7 +343,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           Expanded(
             child: ListView.separated(
               itemCount: cart.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
+              separatorBuilder: (_, _) => const Divider(height: 1),
               itemBuilder: (_, i) {
                 final l = cart[i];
                 return ListTile(
@@ -605,7 +605,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
                         style: TextStyle(color: cs.outline)))
                 : ListView.separated(
                     itemCount: _tenders.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (_, i) {
                       final t = _tenders[i];
                       return ListTile(

@@ -162,7 +162,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   itemCount:
                       orders.length + (page.hasMore || page.isLoadingMore ? 1 : 0),
-                  separatorBuilder: (_, __) => const SizedBox(height: 4),
+                  separatorBuilder: (_, _) => const SizedBox(height: 4),
                   itemBuilder: (context, i) {
                     if (i >= orders.length) {
                       return const Padding(
@@ -476,7 +476,7 @@ class _ReturnDialogState extends ConsumerState<_ReturnDialog> {
   }
 
   /// First captured tender id for the order, to refund against.
-  Future<String?> _findPaymentId(dio) async {
+  Future<String?> _findPaymentId(Dio dio) async {
     try {
       final resp = await dio
           .get('/${ApiConstants.payment}/payments/by-order/${widget.orderId}');
@@ -529,7 +529,7 @@ class _ReturnDialogState extends ConsumerState<_ReturnDialog> {
             final labels = ref
                     .watch(variantLabelsProvider(
                         variantIdsKey(order.items.map((l) => l.variantId))))
-                    .valueOrNull ??
+                    .value ??
                 const <String, VariantLabel>{};
             return SingleChildScrollView(
               child: Column(
@@ -597,7 +597,7 @@ class _ReturnDialogState extends ConsumerState<_ReturnDialog> {
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    value: _method,
+                    initialValue: _method,
                     decoration: const InputDecoration(labelText: 'Refund method'),
                     items: _methods
                         .map((m) => DropdownMenuItem(

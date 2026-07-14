@@ -90,7 +90,7 @@ class ProductImageThumb extends ConsumerWidget {
       fontSize: fontSize,
       borderRadius: borderRadius,
     );
-    final bytes = ref.watch(productImageProvider(productId)).valueOrNull;
+    final bytes = ref.watch(productImageProvider(productId)).value;
     if (bytes == null) return fallback;
     return ClipRRect(
       borderRadius: borderRadius,
@@ -99,7 +99,7 @@ class ProductImageThumb extends ConsumerWidget {
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
-        errorBuilder: (_, __, ___) => fallback,
+        errorBuilder: (_, _, _) => fallback,
       ),
     );
   }
@@ -143,7 +143,7 @@ class OfferPriceAdd extends ConsumerWidget {
           ),
         ],
       ),
-      error: (_, __) => Text('—', style: TextStyle(color: cs.outline)),
+      error: (_, _) => Text('—', style: TextStyle(color: cs.outline)),
       data: (offer) {
         if (offer == null) {
           return Text('Unpriced', style: TextStyle(color: cs.outline));
@@ -152,7 +152,7 @@ class OfferPriceAdd extends ConsumerWidget {
         // not on every store switch's whole-map refetch.
         final (inStock, hasAvailData) =
             ref.watch(storefrontAvailabilityProvider.select((async) {
-          final map = async.valueOrNull;
+          final map = async.value;
           return (map == null ? true : (map[offer.variant.id] ?? false), map != null);
         }));
 
@@ -230,7 +230,7 @@ class _CatalogAdd extends ConsumerWidget {
     final variantAsync = ref.watch(productFirstVariantProvider(product.id));
     return variantAsync.when(
       loading: () => Text('…', style: TextStyle(color: cs.outline)),
-      error: (_, __) => Text('—', style: TextStyle(color: cs.outline)),
+      error: (_, _) => Text('—', style: TextStyle(color: cs.outline)),
       data: (variant) {
         if (variant == null) {
           return Text('Unavailable', style: TextStyle(color: cs.outline));
@@ -238,7 +238,7 @@ class _CatalogAdd extends ConsumerWidget {
         // .select() so this tile only rebuilds when *its own* variant's availability changes,
         // not on every store switch's whole-map refetch.
         final inStock = ref.watch(storefrontAvailabilityProvider.select((async) {
-          final map = async.valueOrNull;
+          final map = async.value;
           return map == null ? true : (map[variant.id] ?? false);
         }));
         final cart = ref.watch(cartProvider);

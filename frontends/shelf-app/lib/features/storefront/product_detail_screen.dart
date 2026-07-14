@@ -98,7 +98,7 @@ class _VariantRow extends ConsumerWidget {
     // .select() so this row only rebuilds when *its own* variant's availability changes,
     // not on every store switch's whole-map refetch.
     final inStock = ref.watch(storefrontAvailabilityProvider.select((async) {
-      final map = async.valueOrNull;
+      final map = async.value;
       return map == null ? true : (map[variant.id] ?? false);
     }));
 
@@ -155,7 +155,7 @@ class _VariantRow extends ConsumerWidget {
         trailing: priceAsync.when(
           loading: () => const SizedBox(
               height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)),
-          error: (_, __) => Text('Unavailable',
+          error: (_, _) => Text('Unavailable',
               style: TextStyle(color: cs.outline, fontSize: 12)),
           data: (p) {
             return Row(
