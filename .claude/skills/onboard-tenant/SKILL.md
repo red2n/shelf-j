@@ -7,7 +7,7 @@ description: Implement or walk through Shelf-J client (tenant) onboarding and th
 
 Use when implementing or reasoning about how a **new business (tenant)** gets set up and how **physical locations** are modeled. This flow shapes data in many services, so keep it consistent.
 
-> **Authoritative design:** [docs/onboarding-and-locations.md](../../../docs/onboarding-and-locations.md). Read it before changing the model. Also: [CLAUDE.md location model](../../../CLAUDE.md), tenant-svc/iam-svc specs in [README §9](../../../README.md#9-the-business-services--full-catalog).
+> **Authoritative design:** [docs/onboarding-and-locations.md](../../../docs/onboarding-and-locations.md). Read it before changing the model. Also: [CLAUDE.md location model](../../../CLAUDE.md), tenant-svc/iam-svc specs in [docs/API-GUIDE.md](../../../docs/API-GUIDE.md).
 
 ## The model (don't deviate without updating downstream)
 

@@ -1,591 +1,320 @@
-# Shelf-J — Developer & AI Build Guide
+# Shelf-J
 
-> **Read this first.** This is the single source of truth for how Shelf-J is built. The companion [PRD.md](PRD.md) explains *what* we're building and *why*; this file explains *how* — the concepts, the rules, the architecture, and a per-service map of what actually exists in the repo today.
+**The platform for running a retail business — stock, stores, and sales, online and in person, for as many independent businesses as want to use it.**
 
-**Shelf-J** is a **multi-tenant SaaS stock & store management platform** that also lets **customers buy products** — online (storefront) and in-store (POS) — built as **strict microservices** on **Helidon MP (Java 21)**, behind an **API gateway**, with **Consul** discovery, a **central config service**, and **Kafka** events.
+> This document is a product tour: what Shelf-J does and how someone actually uses it, top to bottom. It deliberately says nothing about how it's built. For that side, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (engineering reference), [docs/API-GUIDE.md](docs/API-GUIDE.md) (the full API surface by business capability), and [docs/UI-GUIDE.md](docs/UI-GUIDE.md) (the full screen-by-screen UI tour). Product requirements and roadmap live in [PRD.md](PRD.md).
 
-## Status
-
-This is **not** a design-phase repo — it's a working platform. Backend: **12 business services + gateway/discovery/config**, ~290 REST endpoints, 70+ Flyway migrations, full outbox/event pipeline. Frontend: one Flutter app with **4 shells** (storefront, POS, admin console, platform/super-admin). Everything runs together via `docker-compose.yml` with a real observability stack (Prometheus/Grafana/Zipkin/Tempo/Loki). Two independent deep-dive audits ([AUDIT.md](AUDIT.md), [fable-finding.md](fable-finding.md)) found the codebase **mature and well-hardened**, with prior findings fixed and tracked — see [§18 Security posture](#18-security--hardening-posture).
+---
 
 ## Table of contents
 
-1. [What Shelf-J does](#1-what-shelf-j-does)
-2. [Core concepts](#2-core-concepts)
-3. [System architecture](#3-system-architecture)
-4. [Technology stack](#4-technology-stack)
-5. [Repository layout](#5-repository-layout)
-6. [The golden rules](#6-the-golden-rules)
-7. [Anatomy of one service](#7-anatomy-of-one-service)
-8. [Platform services](#8-platform-services)
-9. [Shared modules](#9-shared-modules)
-10. [The business services](#10-the-business-services)
-11. [How services talk to each other](#11-how-services-talk-to-each-other)
-12. [Key workflows](#12-key-workflows)
-13. [The frontend (shelf-app)](#13-the-frontend-shelf-app)
-14. [Cross-cutting conventions](#14-cross-cutting-conventions)
-15. [Local development](#15-local-development)
-16. [Testing & quality gates](#16-testing--quality-gates)
-17. [Production deployment & startup ordering](#17-production-deployment--startup-ordering)
-18. [Security & hardening posture](#18-security--hardening-posture)
-19. [Definition of Done](#19-definition-of-done)
-20. [Glossary](#20-glossary)
+1. [What Shelf-J is](#1-what-shelf-j-is)
+2. [Who uses it](#2-who-uses-it)
+3. [The shape of a business on Shelf-J: Tenant, Store, Zone](#3-the-shape-of-a-business-on-shelf-j-tenant-store-zone)
+4. [One platform, four experiences](#4-one-platform-four-experiences)
+5. [Setting up a business](#5-setting-up-a-business)
+6. [The product catalog](#6-the-product-catalog)
+7. [Inventory & warehouse operations](#7-inventory--warehouse-operations)
+8. [Pricing, promotions & tax](#8-pricing-promotions--tax)
+9. [Buying from suppliers](#9-buying-from-suppliers)
+10. [Selling online: the storefront](#10-selling-online-the-storefront)
+11. [Selling in person: the POS](#11-selling-in-person-the-pos)
+12. [Orders, returns & alternative sales](#12-orders-returns--alternative-sales)
+13. [Customers, loyalty & store credit](#13-customers-loyalty--store-credit)
+14. [Reporting](#14-reporting)
+15. [Running the platform itself](#15-running-the-platform-itself)
+16. ["Catalog mode" — selling without showing a price](#16-catalog-mode--selling-without-showing-a-price)
+17. [Three everyday workflows, start to finish](#17-three-everyday-workflows-start-to-finish)
+18. [Multi-tenancy: what "isolated" actually means](#18-multi-tenancy-what-isolated-actually-means)
+19. [Reach, languages & currencies](#19-reach-languages--currencies)
+20. [Where to go next](#20-where-to-go-next)
 
 ---
 
-## 1. What Shelf-J does
+## 1. What Shelf-J is
 
-Imagine a business that owns one or more shops. With Shelf-J it can:
+A business that sells physical goods usually ends up stitching together two or three separate systems: one for inventory and purchasing, one for the till in the shop, and often a completely different one for an online store — none of which agree with each other about what's actually in stock. Shelf-J is built to be all three at once, sharing one live picture of stock, one catalog, one set of customers, and one set of orders regardless of whether a sale happened on a phone at home or at a counter in a shop.
 
-- track **what stock it has and where** — down to the batch/lot, serial number, and shelf zone (inventory),
-- **buy stock from suppliers** and receive it against purchase orders (procurement),
-- **sell at the counter** with a full POS (cash register, till management, receipts, layaway, gift cards),
-- **sell the same catalog online** on a public storefront customers browse and check out on,
-- **plan replenishment** (reorder points, kanban, ABC analysis, safety stock),
-- handle **UK-style VAT**, promotions, and multi-price-list pricing,
-- run **loyalty** and **store credit** for repeat customers,
-- see **reports** across stores of what sold, what's low, and what's in transit.
+Concretely, a business running on Shelf-J can:
 
-It's **multi-tenant**: many separate businesses (tenants) share the platform, but each only ever sees its own data. And it's built as **many small services** instead of one big program — each owns one capability and its own database, and they cooperate over REST + Kafka behind a single public **gateway**.
+- Track **what stock it has and exactly where** — down to the batch/lot, the serial number, and the shelf/aisle it's sitting on.
+- **Buy stock from suppliers** against purchase orders and record what actually arrives.
+- **Sell at the counter** with a full point-of-sale: scanning, split payments, till management, receipts, held sales, layaway, gift cards.
+- **Sell the same catalog online**, on a public storefront customers can browse and check out on without any staff involvement.
+- **Plan what to reorder and when**, from simple thresholds up to reorder-point/EOQ math, kanban cards, and ABC-classified cycle counts.
+- Handle **UK-style VAT**, multi-price-list pricing, and time-bounded promotions.
+- Run **loyalty points and store credit** for repeat customers.
+- See **cross-store reports** of what sold, what's low, and what's in transit.
 
-### The location model: Tenant → Store → Zone
-
-```
-Tenant (a business)
-  └── Store / Warehouse   (physical site: address, geo, hours, type STORE|WAREHOUSE)
-        └── Zone          (aisle/rack/cold-room/back-store — where stock physically sits)
-```
-
-- `tenant-svc` owns this hierarchy exclusively. Every other service references `store_id`/`zone_id` via API or events — **never** a DB join.
-- Every tenant gets a default store on onboarding; every store gets a default zone. Inventory, pricing, orders, and POS are always scoped to a `(store_id, zone_id)`.
-- Full flow: [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md).
+It's **multi-tenant**: many separate businesses share the same platform, each with their own catalog, stock, staff, and customers, and none of them can see or affect another's data (see [§18](#18-multi-tenancy-what-isolated-actually-means)). And it's built so that **one online sale and one in-store sale go through the exact same order, payment, and inventory logic** — a business never has to reconcile two different systems that happened to disagree about how many units are left.
 
 ---
 
-## 2. Core concepts
+## 2. Who uses it
 
-You don't need prior microservices experience, but these ideas are load-bearing everywhere in the codebase:
-
-- **Microservice** — a small independent program owning one business capability and its own database. `inventory-svc` never reads `payment-svc`'s tables; if it needs payment data it calls the API or consumes an event.
-- **API Gateway** — the single public entry point (`platform/gateway`). Browsers/apps never call a service directly; they call the gateway, which authenticates, rate-limits, and routes.
-- **Service discovery (Consul)** — services register themselves on boot; callers resolve `pricing-svc` → a live address at call time instead of hardcoding `host:port`.
-- **Centralized config** — settings live in a config service, not baked into images; secrets come from the environment/secret store at deploy time.
-- **Events & Kafka** — two ways services talk: **REST** ("I need the answer now") and **events** ("something happened, react if you care"). Every service publishes state changes via a transactional **outbox** (DB write + event write are atomic) so a crash between the two is impossible.
-- **Saga** — a workflow spread across services (e.g. checkout = quote → reserve stock → *pay* → confirm). If a later step fails, earlier steps are **compensated** (e.g. release the stock reservation). `order-svc` coordinates placement (quote + reserve) synchronously; payment is client-initiated against payment-svc and order-svc confirms on the resulting `PaymentCaptured` event (choreography, not a call) — see [§12](#12-key-workflows).
-- **Multi-tenancy** — `tenant_id` always comes from the verified JWT, never the request body/query/path. Every tenant-owned query filters by `tenant_id` first.
-
----
-
-## 3. System architecture
-
-```
-                     Storefront · POS · Admin Console · Platform Console
-                          (one Flutter app, 4 shells — see §13)
-                                          │
-                                          ▼
-                     ┌───────────────────────────────────────┐
-                     │   GATEWAY  :8090  (platform/gateway)   │
-                     │  CORS → RateLimit(Redis) → BruteForce  │
-                     │  → JwtAuth → TenantStatusGate → Proxy  │
-                     └───────────────────┬─────────────────────┘
-                                          │ Consul-resolved, circuit-broken
-        ┌─────────────────────────────────┼──────────────────────────────────┐
-        │                                 ▼                                  │
-        │            12 BUSINESS SERVICES (Helidon MP, one per box)          │
-        │                                                                    │
-        │  iam-svc    tenant-svc   product-svc   inventory-svc   pricing-svc │
-        │  cart-svc   order-svc    payment-svc   purchase-svc   customer-svc │
-        │  notification-svc        reporting-svc                            │
-        │                                                                    │
-        │  each: own Postgres schema · REST + Kafka outbox/consumers ·      │
-        │  3 health probes · Consul registration · Flyway migrations        │
-        └───────────────────────┬───────────────────────┬────────────────────┘
-                                 │                        │
-                    ┌────────────▼───────────┐  ┌─────────▼──────────────────┐
-                    │   PLATFORM SERVICES     │  │   DATA / MESSAGING          │
-                    │  discovery (Consul)     │  │  Postgres (per-service DB, │
-                    │  config    (:8888)      │  │    via PgBouncer pool)     │
-                    └─────────────────────────┘  │  Kafka (KRaft, outbox topics│
-                                                  │    shelfj.<domain>.<event>)│
-                                                  │  Redis (rate-limit, cache) │
-                                                  └─────────────────────────────┘
-                                                              │
-                                          ┌───────────────────▼──────────────────┐
-                                          │           OBSERVABILITY               │
-                                          │ OTel Collector → Zipkin + Tempo(trace)│
-                                          │             → Loki (logs, via Promtail)│
-                                          │ Prometheus (+ node/postgres/redis      │
-                                          │   exporters) → Grafana (dashboards)   │
-                                          └───────────────────────────────────────┘
-```
-
-Dev-only tooling that rides along in `docker-compose.yml`: **kafka-ui** (browse topics), **swagger-ui** (aggregated per-service OpenAPI), **pgAdmin**, and a one-shot **bootstrap** container that proves the whole stack is functional by creating the first platform admin through the gateway.
-
----
-
-## 4. Technology stack
-
-| Layer | Tech | Notes |
+| Persona | What they're here to do | Where they work |
 |---|---|---|
-| Language / runtime | **Java 21**, Helidon MP 4.x | MicroProfile (CDI/JAX-RS) style, not Helidon SE |
-| Build | **Maven**, multi-module reactor | one parent `pom.xml`, one module per service |
-| Database | **PostgreSQL**, one schema per service, pooled via **PgBouncer** | Flyway 10.20.1, HikariCP 6.2.1 |
-| Messaging | **Apache Kafka (KRaft mode, no ZooKeeper)** | transactional outbox pattern on every publisher |
-| Cache / rate-limit store | **Redis** (Lettuce client) | gateway rate-limit + brute-force counters, cart cache |
-| Discovery | **Consul** | self-register + health-checked deregistration |
-| Config | Custom **config service** | non-secret `.properties`, per-service + profile overlay |
-| Tracing | **OpenTelemetry → Zipkin + Tempo** | via `otel-collector` |
-| Logs | **Promtail → Loki** | container logs shipped from Docker |
-| Metrics | **Prometheus** (+ node/postgres/redis exporters) **→ Grafana** | MicroProfile Metrics per service |
-| AuthN | **JWT (Auth0 lib)**, Argon2id password hashing | gateway strips/re-stamps identity headers |
-| Testing | **JUnit 5**, **Testcontainers** (real Postgres+Kafka), **ArchUnit** | quality gates: SpotBugs, PMD, fmt-maven-plugin |
-| Frontend | **Flutter** (web deployed; Android/iOS targets present), **Riverpod 2.x**, `go_router`, `dio` | one codebase, 4 shells — see §13 |
-| Containers | **Docker / docker-compose** (dev), Kubernetes (production target) | health-check-gated startup |
+| **Platform Admin** | Runs Shelf-J itself as a service: onboards and monitors the businesses (tenants) using the platform, and can suspend one if needed. Not affiliated with any one business. | Platform Console |
+| **Owner** | Owns a business on the platform. Full control over their stores, catalog, pricing, staff, and reporting. Automatically granted this role the moment they finish onboarding. | Admin Console |
+| **Manager / Store Admin** | Runs one or more of the business's stores day to day: stock, purchasing, pricing, staff scheduling, reports. | Admin Console |
+| **Storekeeper** | Receives and adjusts stock, runs cycle counts, manages batches/zones. | Admin Console |
+| **Cashier** | Rings up in-store sales, handles tenders and returns, opens/closes the till. | POS |
+| **Customer** | Browses the public storefront and buys — with or without creating an account. | Storefront |
+
+A business owner signs up once, is walked through a short setup wizard, and lands as the **Owner** of their own tenant with their first store already created (see [§5](#5-setting-up-a-business)). From there they invite the rest of their team into whichever role fits.
 
 ---
 
-## 5. Repository layout
+## 3. The shape of a business on Shelf-J: Tenant, Store, Zone
+
+Every business on the platform is modeled the same way, three levels deep:
 
 ```
-shelf-j/
-├── pom.xml                      # parent: Java 21, Helidon BOM, quality plugins
-├── docker-compose.yml           # full local stack (see §15 for the port map)
-├── docker-compose.prod.yml      # prod overlay: fail-fast secrets, no dev tooling
-├── Dockerfile.svc / Dockerfile.web
-├── PRD.md  README.md  CLAUDE.md AUDIT.md  fable-finding.md
-│
-├── platform/
-│   ├── gateway/                 # single public entry point
-│   ├── discovery/                # Consul registration/lookup wrapper
-│   └── config/                   # centralized non-secret config server
-│
-├── services/                    # 12 business microservices, one Maven module each
-│   ├── iam-svc/ tenant-svc/ product-svc/ inventory-svc/ pricing-svc/
-│   ├── cart-svc/ order-svc/ payment-svc/ purchase-svc/ customer-svc/
-│   └── notification-svc/ reporting-svc/
-│
-├── shared/                      # CONTRACTS + infra glue only — no business logic
-│   ├── events-contract/          # BaseEvent/DomainEvent/OutboxRecord
-│   ├── common-web/               # response envelope, error mapper, tenant context
-│   ├── common-service/           # DataSource/Flyway/Consul/health/outbox/Kafka base classes
-│   └── common-test/               # Testcontainers + ArchUnit rule helpers
-│
-├── frontends/shelf-app/         # one Flutter app: storefront + POS + admin + platform
-├── docs/                        # onboarding-and-locations.md, coding-standards.md
-├── infra/                       # postgres role bootstrap SQL, etc.
-├── k6/                          # load tests (see §16)
-├── scripts/                     # redeploy.sh, run-web.sh, duplo.sh, ghcr-prune.sh
-└── .claude/skills/               # scaffold-service, add-endpoint, add-event, onboard-tenant, ...
+Tenant (the business itself — e.g. "Riverside Grocers")
+  └── Store or Warehouse (a physical site — has an address, geo-location, hours, and a type)
+        └── Zone (a place inside that site — an aisle, a rack, a cold room, the back store)
 ```
 
-**Rule:** `shared/` may contain DTOs, event contracts, filters, and generic infra plumbing — **never** business rules. If you're putting "how inventory works" into `shared/`, stop — it belongs in `inventory-svc`.
+- A **tenant** is one business. It can own as many **stores** as it likes — a corner shop chain might have five retail stores and one warehouse, all under the same tenant.
+- Every **store** has its own address, coordinates, opening hours, and a type (`STORE` for a retail site, `WAREHOUSE` for a non-selling one), plus its own settings — which payment methods it accepts, and whether it shows prices at all (see [§16](#16-catalog-mode--selling-without-showing-a-price)).
+- Every store is broken into **zones** — its internal map (aisle, rack, cold room, receiving, back store, display) — so a batch of stock isn't just "at Store #2," it's "at Store #2, Cold Room, Rack 3."
+- **Everything transactional is scoped to a store**: stock levels, prices, orders, and POS sales all happen in the context of one specific store. A customer shopping online picks (or is defaulted into) a store; a cashier is clocked in at one.
+- Onboarding always creates a first store and a first zone automatically, so a brand-new business can receive stock and take a sale immediately — adding more stores and zones later is a two-minute admin task, not a project.
 
 ---
 
-## 6. The golden rules
+## 4. One platform, four experiences
 
-Non-negotiable, apply to **every** service:
+Everyone — platform operator, business owner, cashier, or customer — ultimately uses the same underlying application, just through the door that matches their role:
 
-1. **Database-per-service.** No cross-service SQL joins. Need foreign data → call the owning service (REST) or consume its events.
-2. **Gateway is the only public door.** Business services are never exposed to the internet directly.
-3. **`tenant_id` from JWT only.** Never trust it from the request body/query/path. Filter every tenant query by it first.
-4. **Discover, don't hardcode.** Resolve other services via Consul; no hardcoded `host:port`.
-5. **Config is external.** No env-specific values or secrets in code/images.
-6. **Publish events via the transactional outbox** — the DB write and the event write are atomic.
-7. **Event consumers are idempotent.** Same event twice = same effect as once.
-8. **Append-only stays append-only:** `stock_movements`, `order_status_history`, `payments`, `refunds`, `loyalty_ledger`, `audit_log`, etc.
-9. **Controllers (`api/`) are thin.** Logic lives in `service/`. No DB calls in resource classes.
-10. **DTOs are the contract.** Never expose JPA/domain entities over HTTP.
-11. **Idempotency-Key** on retryable writes (checkout, payment capture, stock receipt, cash movements).
-12. **Health + metrics + tracing** on every service (3 probes: started/live/ready; ready checks DB+Kafka+config).
-13. **Money is `BigDecimal` / `NUMERIC`** — never floating point.
-14. **Time is UTC** (`timestamptz`); convert at the UI edge only.
-15. **Validate every input** at the boundary (Bean Validation); reject bad input with `400`.
-
-Full SQL-safety and SOLID rules (enforced on every change): [docs/coding-standards.md](docs/coding-standards.md) — no `SELECT *`, mandatory `WHERE` on every mutating query with `tenant_id` first, strict single-responsibility layering, interfaces over concretes for DIP, etc.
-
----
-
-## 7. Anatomy of one service
-
-Every business service has the same internal shape:
-
-```
-<service>/
-├── pom.xml
-└── src/main/java/com/shelfj/<service>/
-    ├── api/         # JAX-RS resources — THIN: map HTTP ↔ DTO, call service/, nothing else
-    ├── dto/          # request/response contracts
-    ├── service/      # business logic, transactions, orchestration
-    ├── domain/       # entities = database tables
-    ├── repo/         # persistence, always tenant-filtered
-    ├── messaging/     # Kafka producers (outbox) + consumers (idempotent)
-    ├── client/        # typed REST clients to other services, via discovery, with timeout/retry/breaker
-    ├── mapper/        # entity ↔ DTO
-    └── config/        # CDI producers, config beans
-    resources/
-    ├── META-INF/microprofile-config.properties
-    └── db/migration/  # Flyway: V1__init.sql, V2__...
-```
-
-Data flow for a write: `HTTP → api/ (validate DTO) → service/ (logic + repo save + outbox row, same tx) → return DTO`, then a background publisher drains the outbox to Kafka.
-
----
-
-## 8. Platform services
-
-### `platform/gateway` — the only public door
-Single `ProxyResource` (`/api/{service}/{path}`) in front of a Consul-resolved allowlist of the 12 routable services (internal-only services like `config`/`discovery` are never reachable through it). Request pipeline, in priority order:
-
-1. **CorsFilter** — answers preflight; only emits CORS headers if an allowed-origins list is configured.
-2. **RateLimitFilter** — Redis-backed fixed-window counter (default 100 req/min), shared across gateway replicas so round-robin can't bypass it.
-3. **BruteForceFilter** — login-path-specific Redis counter (default 5 failures / 15 min block).
-4. **JwtAuthFilter** — strips any client-supplied `X-Tenant-Id`/`X-User-Id`/`X-Roles`, validates the Bearer JWT, and **re-stamps** identity headers only from verified claims. Whitelists genuinely public paths (register/login/refresh, storefront catalog reads).
-5. **TenantStatusGate** — rejects with `403` if the resolved tenant isn't `ACTIVE`.
-6. **ProxyResource** — forwards `Idempotency-Key`, generates `X-Request-Id`, per-upstream circuit breaker, faithfully forwards `Content-Type` and raw bytes (so binary bodies like product images round-trip intact).
-
-### `platform/discovery` — Consul wrapper
-`ConsulClient implements ServiceRegistry` (a 1-method interface — the DIP seam so the gateway never depends on Consul directly). Handles self-register with an HTTP health check, deregistration, and a 3s in-memory TTL cache on `healthyInstances()` lookups (avoids hammering Consul on every proxied request, including caching "nothing found" to avoid retry storms when a service is down).
-
-### `platform/config` — centralized non-secret config
-`GET /config/{service}/{profile}` (guarded by a shared `X-Config-Token`) merges `{service}.properties` (base) with `{service}-{profile}.properties` (overlay) from a config-repo directory. Strict name validation (`[A-Za-z0-9_-]{1,64}`) blocks path traversal. Explicitly **not** for secrets — those come from the environment/secret store at deploy time.
-
-Every service pulls from it at startup via `common-service`'s **`ConfigServiceConfigSource`** (a MicroProfile `ConfigSource`, active when `shelfj.config.url` is set). Fetched values layer at **ordinal 150** — above the service's baked `META-INF/microprofile-config.properties` (100) but below env vars (300) / system properties (400) — so config-svc overrides image defaults while deploy-time env still wins. If config-svc is unreachable or has no entry for the service, it degrades to the local defaults, so services still start in any order.
-
----
-
-## 9. Shared modules
-
-| Module | Purpose |
-|---|---|
-| `events-contract` | Event envelope types only: `BaseEvent`, `DomainEvent`, `EventPayload`, `OutboxRecord`. Actual event names are per-service string constants — no business logic here. |
-| `common-web` | `ApiResponse`/`ErrorBody`/`ErrorCodes`, exception mappers (generic + UUID-parse), `TenantContext`/`TenantContextFilter`, `AdminAuthorizationFilter`, `Cursor` (pagination), `Validations`. |
-| `common-service` | Reusable infra: `DataSourceProducer`, `FlywayRunner`, `ConsulRegistrar`, `HealthChecks`, `BaseJdbcRepository`, the outbox pattern (`BaseOutboxRepository`/`OutboxPublisher`/`OutboxStore`), `BaseKafkaConsumer`/`KafkaConsumerRegistry`, `RedisClientProducer`, and shared tenant/store status-change projection consumers. |
-| `common-test` | Testcontainers helpers (`PostgresSupport`, `RedisSupport`) and `ShelfJArchRules` (ArchUnit rules enforcing the layering above). |
-
----
-
-## 10. The business services
-
-Every service publishes via its own transactional **outbox** table to Kafka topics named `shelfj.<service>.<event>`, and most consumers extend the shared `BaseKafkaConsumer` family. Endpoint lists below are representative, not exhaustive.
-
-### iam-svc — Identity & Access
-Staff/customer auth, JWT issuance, and POS cashier session lifecycle.
-- **API:** `/auth` register, login, platform-login, refresh, logout, change-password, `/auth/me`; `/auth/pos/sessions` start/touch/end/list + `/sweep` (idle-timeout force-expire); `/bootstrap/admin` (initial platform admin).
-- **Tables:** `users`, `roles`, `user_roles`, `refresh_tokens`, `otp_codes`, `audit_log`, `pos_sessions`, `tenant_status`/`store_status` (local projections).
-- **Events:** publishes `UserRegistered`; consumes `TenantCreated`, `StaffAssigned`, `TenantStatusChanged`, `StoreStatusChanged`.
-- **Notable:** platform-admin / tenant-admin / staff role model; POS idle-timeout sweep revokes stale sessions.
-
-### tenant-svc — Tenants, Stores, Zones, Staff
-Owns the Tenant→Store→Zone hierarchy and tenant onboarding (see §1).
-- **API:** `/onboarding` self-serve signup + tenant/store creation + status checklist; `/admin` tenant/store/zone CRUD + status, staff assign/list/remove, inventory-config; `/platform` cross-tenant list + suspend/reactivate; `/storefront` public config/store lookup.
-- **Tables:** `tenants`, `stores`, `zones`, `staff_assignments`, `tenant_inventory_config`.
-- **Events:** publishes `TenantCreated`, `TenantStatusChanged`, `StoreCreated`, `StoreStatusChanged`, `ZoneCreated`, `StaffAssigned`, `UserRoleGranted`.
-- **Notable:** source of truth for store/zone data every other service projects locally.
-
-### product-svc — Product Catalog (PIM)
-Product/variant master data and storefront catalog browsing.
-- **API:** `/admin` brands/categories/products (+images, per-store assortment, variants), UoM classes/conversions, item templates, item revisions, cross-references, catalog groups, container types, attribute groups, category sets, CSV import; `/catalog` (public) search/list/detail, barcode scan lookup.
-- **Tables:** `products`, `product_variants`, `brands`, `categories`, `product_images`, `product_stores`, `uom_*`, `item_templates`, `item_revisions`, `item_cross_references`, `catalog_groups`, `container_types`, `item_attribute_groups`, `category_sets`.
-- **Events:** publishes `ProductCreated`, `ProductUpdated`, `ProductDelisted`, `VariantCreated`, `ItemTemplateCreated`, `ItemRevisionCreated`.
-- **Notable:** full PIM feature set — supplier cross-references, item versioning, packaging/container hierarchy, configurable attribute groups.
-
-### inventory-svc — Stock, Batches, Planning (largest service)
-Single source of truth for stock: levels, reservations, batches/lots, serials, and advanced planning.
-- **API:** `/admin/inventory` receive, adjust, levels, batches, movements, thresholds, planning run/suggestions, serials, transfers, move-orders, ABC analysis, safety-stock, lot-genealogy, cycle-counts, physical-inventories, costing-methods, accounting-periods, kanban-cards, reorder-point plans, picking-rules; `/inventory/reservations` hold/consume/release; `/inventory/availability` (storefront read).
-- **Tables:** `inventory_batches`, `stock_movements` (append-only), `reservations`, `serial_numbers`, `transfer_orders`, `move_orders`, `safety_stock_params`, `abc_assignments`, `lot_genealogy`, `cycle_count_headers`, `physical_inventories`, `costing_methods`, `accounting_periods`, `kanban_cards`, `reorder_point_plans`, `picking_rules`, and more.
-- **Events:** publishes `StockReceived`, `StockReserved`, `StockReleased`, `StockDeducted`, `StockAdjusted`, `StockBelowThreshold`, `ReplenishmentSuggested`, `TransferOrderShipped/Received`, `CycleCountAdjusted`, `KanbanTriggered`, and more; consumes `GoodsReceived` (purchase-svc), `OrderFulfilled`/`OrderReturned` (order-svc).
-- **Notable:** FIFO/expiry-ordered deduction with row locking; costing methods & accounting-period close; lot genealogy; serial tracking; kanban/ROP replenishment; cycle counts & physical inventory; ABC analysis; zone-based picking with GL account mapping.
-
-### pricing-svc — Prices, Promotions, VAT
-Price resolution, promotions, and UK-style VAT computation/reporting.
-- **API:** `/prices/resolve` (+batch), `/price-lists` (+items), `/admin/price-overrides`, `/promotions`, `/vat-rates`, `/product-vat-categories`, `/customer-vat-status`, `/tax-transactions`, `/vat-return` (HMRC MTD boxes 1-9).
-- **Tables:** `price_lists`, `price_list_items`, `price_overrides`, `promotions`, `vat_rates`, `product_vat_categories`, `customer_vat_status`, `tax_transactions`.
-- **Events:** publishes `PriceChanged`, `PromotionActivated`.
-- **Notable:** VAT Notice 700 s.17-style return, customer VAT-exemption status, per-product VAT category, time-bounded PERCENT/FLAT promotions.
-
-### cart-svc — Storefront Cart
-Shopping cart for the online channel; guest and customer carts, merge on login.
-- **API:** `/cart` create/get, `/cart/items` add/update/remove, `/cart/merge`.
-- **Tables:** `carts`, `cart_items`, local `tenant_status`/`store_status` projections.
-- **Events:** consumes `OrderPlaced` (close cart), `TenantStatusChanged`/`StoreStatusChanged` (**flow-guard**: rejects cart mutations early if the tenant/store is suspended).
-
-### order-svc — Orders & Checkout (saga coordinator)
-The transaction/sales-journal service for **both** channels: online orders/returns and POS parked sales, layaway, gift cards, special orders, receipts.
-- **API:** `/orders` create/confirm/cancel/fulfil/void/returns; `/layaways` create/deposit/complete/cancel; `/gift-cards` issue/reload/redeem/transactions; `/pos/parked-sales`, `/pos/no-sale`; `/admin/special-orders`; `/admin/pos-log`; `/admin/pos/stock-positions`; `/admin/orders/{id}/receipts` (e-journal, print/email).
-- **Tables:** `orders`, `order_items`, `order_status_history` (append-only), `returns`, `layaways`, `gift_cards`, `gift_card_transactions`, `parked_sales`, `special_orders`, `pos_log_entries`, `order_receipts`, `idempotency_keys`.
-- **Events:** publishes `OrderPlaced`, `OrderConfirmed`, `OrderCancelled`, `OrderFulfilled`, `OrderReturned`, `OrderVoided`, `LayawayCreated/Completed/Cancelled`; consumes `StockReceived`/`StockDeducted`, `PaymentCaptured`/`PaymentFailed`, tenant/store status.
-- **Notable:** POS and online share the **same endpoints** — only `channel`/`fulfilment_type` differ. Idempotency-Key on checkout. See [§12 checkout saga](#12-key-workflows).
-
-### payment-svc — Payments & Cash Management
-Payment capture/refund plus till sessions, cash drawer movements, and end-of-day reporting.
-- **API:** `/payments` capture, online, by-order, refunds; `/admin/cash/till-sessions` open/drops/x-report/close; `/admin/cash` movements (pay-in/pay-out), z-report.
-- **Tables:** `payment_tenders`, `refund_tenders`, `till_sessions`, `cash_drops`, `cash_movements`, `z_reports`.
-- **Events:** publishes `PaymentCaptured`, `PaymentFailed`, `PaymentRefunded`.
-- **Notable:** payment methods CASH/CARD/UPI/WALLET/GIFT_CARD; X-report (mid-shift) vs Z-report (end-of-day close); idempotent cash-movement recording.
-
-### purchase-svc — Procurement
-Suppliers, purchase orders, goods receipts, and finance-adjacent intercompany invoicing.
-- **API:** `/suppliers`; `/purchase-orders` create/submit/lines; `/goods-receipts`; `/intercompany-invoices` (+settle); `/nominal-ledger` (read-only double-entry view).
-- **Tables:** `suppliers`, `purchase_orders`, `purchase_order_lines`, `goods_receipts`, `intercompany_invoices`, `nominal_ledger_entries`.
-- **Events:** publishes `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`.
-- **Notable:** FRS 102/UK GAAP-style double-entry nominal ledger; intercompany AR/AP invoicing for inter-org transfers.
-
-### customer-svc — Customers, Loyalty, Store Credit
-Customer profiles, addresses, and two append-only ledgers.
-- **API:** `/customers` CRUD (+anonymize-on-delete), addresses CRUD; `/{id}/loyalty` earn/redeem/adjust/ledger; `/{id}/store-credit` issue/redeem.
-- **Tables:** `customers`, `customer_addresses`, `loyalty_accounts`, `loyalty_ledger` (append-only), `store_credit_accounts`, `store_credit_ledger` (append-only).
-- **Events:** publishes `CustomerRegistered`, `LoyaltyEarned/Redeemed/Adjusted`, `StoreCreditIssued/Redeemed`.
-- **Notable:** GDPR-style anonymize-on-delete; both ledgers are auditable balances, never mutable counters.
-
-### notification-svc — Alerting
-Thin: consumes low-stock signals and exposes an alert feed (no outbound email/SMS integration yet — see PRD open questions).
-- **API:** `/admin/notifications/shortage-alerts` (filter by store/variant, paginated).
-- **Tables:** `shortage_alerts`.
-- **Events:** consumes `StockBelowThreshold`; publishes nothing.
-
-### reporting-svc — Cross-Store Analytics (CQRS read model)
-Pure projection service built by consuming inventory events.
-- **API:** `/admin/reports/inventory/on-hand`, `/supply-demand` (nets against open in-transit supply), `/movement-stats` (bucketed daily/weekly/monthly).
-- **Tables:** `inventory_projection`, `movement_events`, `open_supply_lines`.
-- **Events:** consumes `StockReceived`, `StockDeducted`, `StockAdjusted`, `TransferOrderShipped/Received`; publishes nothing.
-- **Notable:** no writes of its own beyond reacting to inventory-svc's Kafka stream.
-
----
-
-## 11. How services talk to each other
-
-**Rule of thumb:** need an answer right now to continue → **REST**, via a discovery-resolved client with timeout/retry/circuit-breaker. Just announcing something happened → **event** via Kafka.
-
-**Sync call map (who calls whom):**
-```
-order-svc    ──REST──►  pricing-svc, inventory-svc, payment-svc
-cart-svc     ──REST──►  pricing-svc, inventory-svc, product-svc
-product-svc  ──REST──►  inventory-svc   (stock flag on product page)
-purchase-svc ──REST──►  product-svc     (validate variant)
-tenant-svc   ──REST──►  iam-svc         (verify user on staff assignment)
-```
-
-**Event map (who publishes → who reacts), representative:**
-
-| Event | Publisher | Consumers |
+| Experience | Who it's for | What it's for |
 |---|---|---|
-| `TenantCreated` / `TenantStatusChanged` | tenant-svc | iam-svc, cart-svc, order-svc (status projections) |
-| `StoreCreated` / `StoreStatusChanged` | tenant-svc | iam-svc, cart-svc, order-svc |
-| `GoodsReceived` | purchase-svc | inventory-svc, reporting-svc |
-| `StockReceived` / `StockDeducted` / `StockAdjusted` | inventory-svc | reporting-svc |
-| `StockBelowThreshold` | inventory-svc | notification-svc |
-| `OrderPlaced` / `OrderConfirmed` | order-svc | inventory-svc, customer-svc, cart-svc, reporting-svc |
-| `OrderCancelled` / `OrderReturned` | order-svc | inventory-svc, payment-svc, reporting-svc |
-| `PaymentCaptured` / `PaymentFailed` | payment-svc | order-svc |
+| **Storefront** | Customers (guest or signed in) | Browse the catalog, add to cart, check out for pickup or delivery, track past orders. Reachable by anyone, no login required to browse. |
+| **POS** | Cashiers, managers | Ring up sales at the counter: scan, tender, hold/resume, manage the till. |
+| **Admin Console** | Owners, managers, storekeepers | Everything about running the business: catalog, inventory, pricing, purchasing, staff, stores, orders across every channel, customers, reporting. |
+| **Platform Console** | Platform admins | Onboard and monitor every business (tenant) on the platform; activate or suspend one. |
 
-**Reliability requirements on every call:** REST calls carry a timeout, retries with backoff, and a circuit breaker (Helidon MP Fault Tolerance). Events are at-least-once with idempotent consumers, published via the outbox, and tracked via `processed_events` dedupe tables.
+A person's role decides which of these they land in immediately after signing in, and the Admin/POS/Platform experiences are locked to the roles that should see them — a cashier can't wander into the Admin Console, and a Platform Admin's login is entirely separate from any business's staff login, so the two credentials can never be confused or reused for each other.
 
 ---
 
-## 12. Key workflows
+## 5. Setting up a business
 
-**Online checkout (storefront):**
-```
-Browse (public catalog) → add to cart → view live price (pricing-svc) → POST /orders (Idempotency-Key)
-  order-svc on placement: quote (pricing-svc) → reserve stock (inventory-svc) → order PENDING
-  client then captures payment directly against payment-svc (pay-now = /payments/online)
-  payment-svc emits PaymentCaptured → order-svc confirms the order (once tenders cover the total)
-  async on confirm: inventory deducts held stock; customer-svc accrues loyalty; reporting records the sale
-  payment fails → PaymentFailed → order CANCELLED (reservation released)
-  never paid → PendingOrderSweeper cancels the stranded PENDING order after a TTL (releases the hold)
-```
-> **Note on the "saga".** order-svc orchestrates the *placement* half (quote + reserve) synchronously,
-> but payment is **client-initiated** against payment-svc and order-svc reacts to `PaymentCaptured`/
-> `PaymentFailed` events — it does not call payment-svc itself. The stranded-order sweeper is the
-> backstop for a client that places an order and then never pays.
+Getting a new business onto the platform is deliberately a two-minute job, either self-serve or done for them:
 
-**POS sale (cashier):**
-```
-Cashier opens POS session (iam-svc) → opens till (payment-svc) → scans barcode (product-svc)
-  → price resolved for this store (pricing-svc) → [same order-svc saga, channel=POS]
-  → tender screen: cash/card/UPI/wallet/gift-card, split-tender supported (payment-svc)
-  → receipt generated + printed/emailed (order-svc) → till closed, Z-report (payment-svc)
-```
-Held sales can be **parked** and later **resumed** (with a discard-confirmation for unsynced changes); a sale can also be converted to a **layaway** with deposits, or issued as a **gift card**.
+**Self-serve signup:**
+1. Create an account (email + password).
+2. **Business details** — business name, optional legal/registered name, country (India, US, UK, Singapore, or UAE today), and currency (auto-suggested from the country, editable).
+3. **First store** — store name, a short store code, type (retail store or warehouse), address, city, postal code, country, and timezone.
+4. Done — the new Owner lands straight in their Admin Console, with a working store already in place.
 
-**Stock receipt (procurement):**
-```
-purchase-svc: create PO → submit to supplier → record goods receipt (batch, expiry, cost)
-  → GoodsReceived event → inventory-svc creates inventory_batches rows
-  → reporting-svc updates its projection
-Stock is deducted FIFO (earliest expiry / oldest arrival first), rows locked FOR UPDATE.
-```
+**Assisted onboarding:** a Platform Admin can also set a new business up on its owner's behalf — creating the owner's login, then the business and its first store in one form — ending in a hand-off screen showing the credentials to pass along to the new owner.
 
-**Replenishment planning:**
-```
-Admin sets thresholds/safety-stock/kanban cards → inventory-svc planning engine runs
-  → below-threshold triggers StockBelowThreshold → notification-svc raises a shortage alert
-  → suggestions can be turned into a purchase-svc PO
-```
+From there, an Owner/Manager fills the business out at their own pace, all from the Admin Console — not part of the initial wizard:
+- **More stores and zones** — add further retail stores or warehouses, each with its own address/timezone/accepted payment methods/"show prices" setting, and lay out each one's internal zones (aisle, rack, cold room, etc.).
+- **Staff** — assign a teammate to a store with a role (Owner, Manager, Storekeeper, Cashier). Typing an email either finds an existing account or provisions a brand-new one on the spot; a freshly created account's one-time temporary password is shown exactly once (masked by default, explicit reveal, one-tap copy) for the admin to hand to the new hire.
+- **Inventory configuration** — tenant-wide policy for how strictly lots, serials, grading, and costing are tracked.
+
+A deactivated business is locked out everywhere at once — its staff logins, POS, and storefront all stop working immediately, and its storefront shows customers a plain "currently unavailable" notice rather than an error.
 
 ---
 
-## 13. The frontend (shelf-app)
+## 6. The product catalog
 
-One Flutter codebase at `frontends/shelf-app/` (Riverpod 2.x, `go_router`, `dio`) serves **four shells** behind one `MaterialApp.router`, gated by JWT-derived roles:
+The catalog is the shared product truth behind both the storefront and POS — nothing is entered twice.
 
-| Shell | Route prefix | Who | What it does |
-|---|---|---|---|
-| **Storefront** | `/store/*` (always public) | guest or any signed-in role | Browse/search catalog, product detail, cart & checkout (with duplicate-order guard + pickup contact-phone capture), order history — respects a tenant's "show prices" catalog mode. |
-| **POS** | `/pos/*` | cashier or admin | Build a sale (scan/add items), park/resume held sales, tender across cash/card/UPI/wallet/gift-card, till open/close, print/email receipts. |
-| **Admin console** | `/admin/*` | tenant admin | Catalog (incl. CSV bulk import), inventory, pricing, stores, staff, procurement, orders across channels, customers, reports, dashboard. |
-| **Platform console** | `/platform/*` | platform admin (separate login) | Cross-tenant view; suspend/reactivate tenants. |
-
-New admins/owners without a `tenantId` claim are routed into a 2-step **onboarding wizard** (business details → first store) before landing in the admin console.
-
-**Auth & networking:**
-- `lib/core/auth/`: JWT decoded client-side to populate roles/tenant; tokens in `flutter_secure_storage`.
-- `lib/core/network/api_client.dart`: single `dio` instance, `AuthInterceptor` attaches the bearer token and does **single-flight token refresh** — concurrent 401s share one in-flight `/auth/refresh` call instead of racing/dropping requests.
-- `lib/core/network/api_response.dart`/`api_error.dart` mirror the backend's `{ data, error, meta }` envelope with structured error extraction (not string-matching).
-
-**State management:** `AsyncNotifier` for auth/single-shot state; `StateNotifier` + `.family` cursor-pagination providers (`customers_pagination.dart`, `orders_pagination.dart`, `products_pagination.dart`) for infinite-scroll admin lists.
-
-**Localization:** 8 languages (`en_GB` default) — English, Arabic, Bengali, Gujarati, Punjabi, Polish, Romanian, Urdu; Arabic/Urdu resolve RTL automatically.
-
-**Targets:** web (the deployed target, served via nginx on port 8088), plus Android/iOS project scaffolding. Flutter 3.44.2 in CI, matched to local SDK.
+- **Products & variants** — a product (e.g. "Basmati Rice") holds one or more purchasable variants/SKUs (e.g. "1kg bag," "5kg bag"), each with its own barcode, unit, and price. Variants can be tagged separately as sellable online, sellable at POS, both, or neither ("delisted" without deleting history).
+- **Brands & categories** — categories support one level of parent/child nesting for browsing and reporting; brands are a flat tag.
+- **Images** — one image per product (JPEG/PNG/WebP, size-limited), shown on both the storefront and the admin catalog.
+- **Store assortment** — a product can be sold everywhere (including automatically at any new store opened later), or hand-picked to only appear at specific stores.
+- **Barcode scanning** — a camera-based scanner (with a manual-entry fallback) is used consistently everywhere a barcode matters: tagging a new variant's barcode, receiving stock, and ringing up a sale at POS.
+- **Bulk import** — a supplier catalogue can be uploaded as a CSV in one go: the system previews what it found (row count, distinct products/categories/stores, whether price and quantity columns are present), lets the admin map CSV store names onto real stores and choose a destination store to stock into, and offers "add to catalog" or "replace existing" modes. One import creates categories, products, prices, and opening stock together, and reports back exactly what succeeded and what didn't, per category of failure.
+- **Deeper PIM (product information management) tools** for larger or more regulated catalogs, available underneath the everyday screens: units-of-measure conversions (including variant-specific factors), reusable attribute templates applied to many variants at once, dated revisions of a variant's spec, supplier/customer part-number cross-references, related-item links (substitutes, accessories), merchandising catalog groups, packaging/container types, and an alternate category hierarchy ("category sets") for businesses that need to slice their catalog more than one way.
 
 ---
 
-## 14. Cross-cutting conventions
+## 7. Inventory & warehouse operations
 
-- **Response envelope:** `{ "data": ..., "error": { "code", "message" } | null, "meta": { "requestId", "nextCursor" } }`.
-- **Errors:** correct HTTP codes (`400` validation, `401`/`403` auth, `404`, `409` conflict, `422` business rule, `500` unexpected); stable machine `code`; never leak stack traces or SQL.
-- **Pagination:** cursor only (`?after=&limit=`, default 20 / max 100, opaque base64 keyset cursor). No page numbers.
-- **Naming:** REST paths = plural kebab nouns (`/purchase-orders`); JSON = `camelCase`; DB columns = `snake_case`; events = `PascalCase` past tense (`OrderPlaced`); Kafka topics = `shelfj.<domain>.<event>`.
-- **IDs:** UUID primary keys, service-generated.
-- **Auth:** gateway validates the JWT once and re-stamps identity headers; services read `tenant_id`/`userId`/`roles` from those headers, never from the request body.
-- **Idempotency:** `Idempotency-Key` header on checkout/payment-capture/stock-receipt/cash-movement writes; the gateway forwards it verbatim; the service stores processed keys and replays the original response.
-- **Health:** `/health/started`, `/health/live`, `/health/ready` (ready checks real DB/Kafka/config reachability) + `/metrics` (Prometheus) on every service.
-- **Migrations:** Flyway only (`V<n>__desc.sql`); never manual DDL in prod.
-- **Tests:** unit for `service/` logic + Testcontainers integration for the core flow. Not done without it.
+This is the deepest part of the platform — everything about knowing what stock exists, where it is, and what to do about it.
 
----
+**The everyday basics**
+- **Receive stock** into a store and zone — by scanning or picking a variant, with an optional batch number, cost, and expiry date. Multiple lines can be received in one go.
+- **Adjust** on-hand quantity up or down with a reason code (shrinkage, damage, found stock, etc.) — every adjustment is logged, never a silent overwrite.
+- **Stock levels** — on-hand, reserved (held for a checkout in progress), and available, per store per variant, with a low-stock flag driven by each variant's configured threshold.
+- **Movement history** — a full, append-only ledger of every stock movement, ever.
 
-## 15. Local development
+**Batches, lots & serials**
+- Stock is tracked at the **batch/lot** level — quantity, expiry date, quality grade, and a material status (available, quarantined, rejected, on hold) — so a business handling perishables or regulated goods can hold back a bad batch without touching anything else.
+- Batches can be **split** (spin off part of a batch) or **merged**, with a full audit trail of who did it and when, and linked into **genealogy** (a repack made from two source batches can be traced back to both parents, and forward to anything made from it).
+- Individually **serial-numbered** items (registered explicitly or auto-generated with a prefix) are tracked one by one, with their own status (in stock, sold, defective) and full history.
+- A dedicated view surfaces everything **expiring soon** (configurable window) per store.
 
-**Prerequisites:** JDK 21 (Temurin), Maven 3.9+, Docker + Docker Compose.
+**Counting stock**
+- **Cycle counts** target a slice of the catalog (e.g. just the "A" items in an ABC classification) with a tolerance percentage — counts inside tolerance auto-approve, anything outside is flagged for a human to review before adjustments post.
+- **Physical inventory** runs a full, tag-based count of a store from a system-quantity snapshot through to sign-off.
+- **ABC analysis** classifies every variant at a store into A/B/C bands by revenue or velocity, which then drives which items get counted most often and how tightly they're planned.
 
-```bash
-cp .env.example .env && nano .env    # set real secrets (dev defaults work out of the box too)
-export JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64
-mvn clean install -DskipTests        # build all service JARs
-docker compose up -d --build         # infra → platform → business services → gateway, health-gated
-curl http://localhost:8090/api/inventory-svc/health/ready
-```
+**Planning what to reorder**
+- Simple **reorder thresholds** (a floor and a ceiling per store/variant) sit alongside more advanced options: full **reorder-point & EOQ** math (lead time, ordering cost, holding cost, unit cost, lot-size and min/max order constraints), **safety-stock** calculation by service level, **kanban cards** that trigger a replenishment signal when pulled (optionally sourcing from another store), and **PAR levels** for periodic automatic replenishment. A planning run turns any of these into concrete replenishment suggestions, which a buyer can action straight into a purchase order.
+- **Demand history** is aggregated from past sales into daily/weekly/monthly buckets to feed all of the above.
 
-**Ports exposed to the host:**
+**Moving stock around**
+- **Transfers** move stock between stores: create → ship from the source → receive at the destination (or cancel before it ships).
+- **Move orders** relocate stock between zones inside the same store: create → pick → complete.
+- **Picking rules** (e.g. pick the soonest-to-expire batch first, or the oldest-received) can be scoped to a store, category, or specific variant, with a defined zone priority order, and resolved on demand for "which batch/zone should I pick from for this line."
 
-| Port | Service | Port | Service |
-|---|---|---|---|
-| 8088 | shelf-app (web UI) | 3100 | Grafana |
-| 8090 | gateway (public API) | 8500 | Consul UI |
-| 5555 | pgAdmin | 9411 | Zipkin |
-| 8081 | kafka-ui | 9090 | Prometheus |
-| 8082 | swagger-ui (aggregated OpenAPI) | 5432 | Postgres (direct SQL) |
-| 6379 | Redis (redis-cli) | | |
+**Costing & the books**
+- Each store/variant carries a configured **costing method** (e.g. FIFO or average cost), and stock activity can be locked behind **accounting periods** once closed, so a closed month's numbers can't shift underneath finance later. Zones can be mapped to a general-ledger code for accounting reconciliation.
 
-Internal-only (not published to the host): `otel-collector`, `loki`, `tempo`, node/postgres/redis exporters, `pgbouncer`, and each service's own port 8080 (reached only via the gateway or the Docker network).
-
-`docker compose down` to stop. Rebuild-and-redeploy in one shot: `scripts/redeploy.sh`. Run the Flutter web app against the dockerized gateway: `scripts/run-web.sh` (port 40015).
+**What the storefront sees:** customers only ever see an in-stock / out-of-stock flag for a store — actual on-hand counts are never exposed publicly.
 
 ---
 
-## 16. Testing & quality gates
+## 8. Pricing, promotions & tax
 
-- **Backend:** JUnit 5 unit tests per service; Testcontainers integration tests (real Postgres + Kafka) for repos, messaging, and saga happy paths; `ArchUnit` rules (`ShelfJArchRules` in `common-test`) enforce the layering in §7; SpotBugs + PMD + `fmt-maven-plugin` run as part of `mvn clean install`.
-- **Load/contract tests (`k6/`):** `flow-guard-comprehensive.js` (47-endpoint, 8-phase happy path from onboarding to sale), `multi-tenant-retail.js`/`full-stack-simulation.js` (concurrent multi-tenant load), `gateway-rate-limit-stress.js`, `gateway-login-protection.js` (brute-force lockout), per-service `*-crud.js`; `k6/db/*.sh` runs `psql` assertions after a k6 run since k6 itself can't query Postgres.
-- **Frontend:** widget/unit tests under `frontends/shelf-app/test/` covering auth interceptor refresh, envelope/error mapping, cursor pagination, held-sale resume, catalog show-price mode, checkout duplicate-order guard, localization, and the adaptive nav shell.
-- **Duplication:** `scripts/duplo.sh` runs the Duplo duplicate-code finder over the Java sources.
-- **Skills** (`.claude/skills/`): `scaffold-service`, `add-endpoint`, `add-event`, `onboard-tenant`, `check-golden-rules` — use these for consistency when extending the system; a dedicated `shelf-j-reviewer` agent enforces the golden rules + SQL/SOLID rules + duplo on major changesets.
-
-**CI (`.github/workflows/`):** `ci.yml` builds+tests the full reactor on every push/PR to main; `docker-publish.yml` builds and pushes every service image to GHCR on push to main / version tags (with a cleanup job pruning old images); `release.yml` publishes JARs to GitHub Packages and as release assets on `v*` tags.
+- **Price lists** are scoped to a channel — one list for in-store, one for online, or one for both — and hold a price (and optional minimum quantity) per variant. Setting many prices at once (e.g. after a bulk import) is a single batch operation.
+- **Price resolution** computes the effective price for a variant, channel, and quantity in one call, including a VAT breakdown — this is what both the storefront and POS ask before showing a customer a number, and it's resolved for every line of an order in one shot at checkout.
+- **Promotions** are time-bounded (a start date and optional end date), either a percentage or a flat amount off, scoped to all products, a category, or specific items, with an optional minimum order amount to qualify. Live promotions also drive the storefront's rotating offers banner automatically.
+- **Price overrides** let staff apply a one-off, approved price change at the counter — logged permanently as an audit trail, never as a silent edit to the real price.
+- **VAT** is modelled UK-style: configurable VAT rates (standard/reduced/zero/exempt-style codes), a VAT category per product, and a VAT-exemption/reverse-charge status per business customer. Every sale logs a tax-transaction entry, and a full **VAT return** (matching the UK's Making Tax Digital box structure) can be produced for any date range.
 
 ---
 
-## 17. Production deployment & startup ordering
+## 9. Buying from suppliers
 
-- The `docker-compose.yml` port map (§15) is **local-dev only**. In production every service listens on the **same port (8080)**; addressing is by **k8s DNS + Consul**, never `host:port`.
-- **Do not order individual services at startup** — the dependency graph is a mesh (order-svc needs pricing+inventory+payment; cart-svc needs pricing+inventory+product; etc.), so no linear order works. Services start in **any order** and gate on readiness: `/health/started` (booting grace period), `/health/live` (restart if failing), `/health/ready` (stop routing traffic if failing — must check real DB/Kafka/config reachability), backed by `@Retry`/`@CircuitBreaker`/`@Fallback`.
-- Ordering exists only between **stages**, enforced by readiness gates, never between individual business services:
-  ```
-  infra (Postgres/Kafka/Consul/Redis) → platform (config → discovery → gateway)
-    → DB migrations (run-once Jobs, never inside app boot)
-    → all 12 business services in parallel → frontends
-  ```
-- Rollouts are independent per service (rolling update by default; blue-green/canary for risky changes) — never a synchronized "restart everything." `docker-compose.prod.yml` additionally fails fast (`${VAR:?...}`) if any datastore secret is left at its dev default.
+- **Suppliers** are onboarded with a name, country, currency, and VAT-registration flag.
+- A **purchase order** starts as a draft, has lines added (variant, quantity, cost, tax rate) with a running total, and is then submitted to the supplier.
+- When goods turn up, a **goods receipt** is recorded against the PO — confirming actual quantities received, which is what actually creates receivable stock in the relevant store/zone (see [§7](#7-inventory--warehouse-operations)). Partial and short deliveries are handled the same way, line by line.
+- For businesses with related entities trading stock between themselves, **intercompany invoices** raise a matched receivable/payable pair for an inter-org transfer and can be settled once paid, and a read-only **nominal ledger** gives a double-entry view of the resulting postings for reconciliation.
 
 ---
 
-## 18. Security & hardening posture
+## 10. Selling online: the storefront
 
-Two independent deep-dive audits have been run against the *actual code* (not the spec docs): [AUDIT.md](AUDIT.md) (2026-06-23, API/UI industry-standards review) and [fable-finding.md](fable-finding.md) (2026-07-02, security/correctness first-principles review). Both concluded the system is **well past design phase** and, on the backend, **close to production-grade**:
+The storefront is a normal online shop, reachable without an account, that always reflects the same catalog, prices, and stock the business's own staff see.
 
-- No SQL injection — every query is a bound `PreparedStatement`.
-- `tenant_id` only ever comes from the gateway-verified JWT; identity headers are stripped and re-stamped, never trusted from the client.
-- Money paths (refund caps, layaway overpayment, return-quantity caps) are enforced inside locked transactions, not check-then-act — no concurrent double-spend.
-- Inventory reserve/deduct locks rows `FOR UPDATE`; checkout is idempotent end-to-end (replay returns the original result, never double-charges or double-deducts).
-- Refresh tokens are opaque, hashed at rest, rotated, with reuse-triggers-family-revocation; passwords use Argon2id with timing-equalized responses against account enumeration.
-- Production datastore secrets fail fast instead of silently falling back to repo-public dev defaults (`docker-compose.prod.yml`).
-- Prior findings from both audits are tracked with fix status inline in those documents (most are fixed; anything deferred carries a documented rationale) — check them before assuming a known gap is still open.
+- **Browsing** — a searchable, filterable product grid/list, with category and "in stock only" filters, and a rotating offers banner built from whatever promotions are currently live. Businesses with more than one store get a store switcher right at the top, since catalog, pricing, and stock can all differ by store.
+- **Product detail** — images, description, and every purchasable variant (size/pack option) with its own stock badge and an Add button.
+- **Cart & checkout** — quantities are adjustable in the cart; a customer chooses **pickup from a store** or **delivery to an address** (delivery collects a full address and recipient details; pickup just needs a contact number so the business can notify them when it's ready). Available payment options are built dynamically from what the chosen store actually accepts — card/UPI/wallet only appear where prices are shown at all, cash always reads as "cash on delivery" or "cash at pickup," and a store that accepts none of the priced methods still gets a working "pay on/at…" option so checkout is never a dead end.
+- **Duplicate-order protection** — if a customer already has an order pending against the same cart, checkout offers to view/update that order instead of silently creating a second one.
+- **Order history** — a signed-in customer gets a real, cross-device order history; a guest gets a device-local one with a gentle nudge to sign in for the full picture.
+- **Account touches** — a lightweight sign-in/registration separate from staff logins; a one-time "who's shopping" preferences prompt (who they're shopping for, and how they want to be notified); an always-available feedback form (bug/feature/compliment/other, with an optional star rating); and a short post-purchase satisfaction survey. All of these are skippable — none block a purchase.
+- A small self-promotional card for the platform itself is mixed into the product grid at a random position, alongside the real products.
 
-The frontend is functional and structured but was flagged as roughly one tier below the backend on UI/UX polish at audit time — see AUDIT.md Part 2 for the current list. Known open items worth checking before relying on them: API versioning (no `/v1` prefix yet) and machine-readable OpenAPI generation are tracked in AUDIT.md as not-yet-done.
-
----
-
-## 19. Definition of Done
-
-A service isn't finished until:
-
-- [ ] Own Postgres schema via Flyway migrations; no access to any other service's database.
-- [ ] REST endpoints behind the gateway; DTOs in/out, never domain entities.
-- [ ] Input validated at the boundary; correct HTTP codes; standard error envelope.
-- [ ] `tenant_id` read from the JWT-derived header; every tenant query filters by it first.
-- [ ] Registers with Consul on startup; resolves other services via discovery.
-- [ ] Reads config from the config service/env; no secrets in code or image.
-- [ ] Publishes events via the outbox after commit; consumers are idempotent.
-- [ ] Append-only tables are truly append-only.
-- [ ] Money = `BigDecimal`/`NUMERIC`; timestamps = UTC `timestamptz`.
-- [ ] `/health/started`, `/health/live`, `/health/ready` (readiness checks real deps) + `/metrics`.
-- [ ] Starts in any order — survives dependencies being absent at boot (stays not-ready, doesn't crash-loop).
-- [ ] Synchronous calls have timeout + retry + circuit breaker + fallback.
-- [ ] Unit tests for logic + Testcontainers integration test for the core flow.
-- [ ] Builds clean with `mvn clean install`; containerizes; starts in docker-compose.
-- [ ] Follows the [golden rules](#6-the-golden-rules) and [coding standards](docs/coding-standards.md).
+If a business has been suspended by the Platform Admin, its entire storefront shows a plain "currently unavailable" message instead of attempting to sell anything.
 
 ---
 
-## 20. Glossary
+## 11. Selling in person: the POS
 
-| Term | Meaning |
-|---|---|
-| **Tenant** | One business using the platform; data isolated from other tenants. |
-| **Store / Warehouse** | A physical site owned by a tenant; has an address, geo, hours, type. |
-| **Zone** | A sub-location inside a store (aisle/rack/cold-room) where stock physically sits. |
-| **Gateway** | The single public entry point that authenticates, rate-limits, and routes. |
-| **Consul / discovery** | The registry where services announce and find each other. |
-| **Outbox** | A DB table where events are written in the same transaction as the data, then drained to Kafka — guarantees the event and the data agree. |
-| **Idempotent** | Doing the same operation twice has the same effect as once. |
-| **Saga** | A multi-service workflow with compensation if a later step fails. |
-| **Reservation** | Temporarily holding stock during checkout so two buyers can't claim the same unit. |
-| **FIFO** | Sell/deduct the oldest (or soonest-expiring) batch first. |
-| **GRN** | Goods Receipt Note — record of stock actually received from a supplier. |
-| **Layaway** | A sale reserved against deposits, completed once fully paid. |
-| **Parked sale** | A POS sale held mid-transaction, resumable later. |
-| **Till / X-report / Z-report** | Cash drawer session; X = mid-shift summary, Z = end-of-day close. |
-| **VAT MTD return** | UK HMRC Making Tax Digital VAT return (boxes 1-9), computed by pricing-svc. |
-| **CQRS / projection** | A read-optimized copy of data built from events (used by reporting-svc, status-gate consumers). |
-| **JWT** | Signed token proving who the caller is and what they may do. |
-| **DTO** | Data Transfer Object — the API's data shape, separate from DB entities. |
-| **Helidon MP** | The MicroProfile-based Java framework every service is built with. |
-| **Liveness / Readiness / Startup probe** | Health checks answering "alive?", "can serve traffic now?", "finished booting?" respectively. |
-| **Rolling / blue-green / canary** | Zero-downtime deploy strategies, applied per service. |
+The POS is built to run like a real till, on whatever screen a shop has — a tablet at the counter, a desktop, or a phone in a pinch.
+
+- **Clocking in** — a cashier picks their store (and terminal) and clocks in before any sale can start; a background heartbeat keeps that session alive, and clocking out is one tap away, with in-progress sales preserved rather than lost.
+- **Building a sale** — items go in by camera scan, a handheld barcode scanner, or manual entry; on wider screens the catalog sits alongside the running sale for tap-to-add, on a phone it opens as a browse sheet instead. Quantities adjust with +/-, lines swipe away to remove, and a customer (registered or a walk-in phone number) can be attached to the sale.
+- **Holding a sale** — a sale in progress can be **parked** so the cashier can serve someone else, and **resumed** later (with a warning before discarding one that's been added to since).
+- **No-sale** — opening the drawer without a transaction is its own logged action, distinct from a real sale, for loss-prevention purposes.
+- **Tendering** — payment can be **split across multiple methods** in one sale (cash, card, UPI, wallet, gift card, store credit) until the balance clears; cash entry shows change due, gift-card/store-credit entries look up and cap against the actual balance available. A completed sale offers reprinting or emailing the receipt before starting the next one.
+- **Till & cash management** — a shift opens with a starting cash float, supports mid-shift **cash drops** and **pay-in/pay-out** movements (each with a reason), and closes with a **Z-report**: the system shows the expected cash, the cashier enters what was actually counted, and the difference is reconciled on the spot. A separate **X-report** gives a read-only mid-shift snapshot without closing anything.
 
 ---
 
-*Companion documents: [PRD.md](PRD.md) (product requirements & roadmap) · [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md) · [docs/coding-standards.md](docs/coding-standards.md) · [AUDIT.md](AUDIT.md) · [fable-finding.md](fable-finding.md) · [CLAUDE.md](CLAUDE.md) (AI agent briefing).*
+## 12. Orders, returns & alternative sales
+
+Every sale — online or in-store — becomes the same kind of order underneath, which is what lets the rest of the business (inventory, payments, reporting) treat both channels identically:
+
+- **Lifecycle** — placed → confirmed → fulfilled, with cancel available before fulfilment and **void** available afterward (a POS-specific correction to a completed sale, distinct from a cancel). A full status history is kept for every order.
+- **Returns** — full or partial, against specific line items, with a reason and a choice of refund method (back to the original card, cash, or store credit); the refund total previews live before it's confirmed.
+- **Collecting payment after the fact** — orders that weren't paid at the moment of sale (cash-on-delivery/at-pickup online orders, or orders from a "catalog mode" store — see [§16](#16-catalog-mode--selling-without-showing-a-price)) show what's already been collected versus what's still owed, and let staff record the balance at handover.
+- **Layaway** — a sale reserved against a series of deposits, completed once fully paid (handing over the goods) or cancelled before then.
+- **Gift cards** — issued with a store, amount, and currency (the code is shown once, in a copyable field); can be reloaded, redeemed against a sale, and have their own transaction history.
+- **Special orders** — for stock a store doesn't currently carry but will bring in for a specific customer; these deliberately skip taking stock out of inventory until they're actually fulfilled.
+
+---
+
+## 13. Customers, loyalty & store credit
+
+- **Profiles & addresses** — customer records (with lookup by email or phone for a fast POS match), and multiple saved addresses tagged Home/Work/Billing/Shipping with a default.
+- **Loyalty points** — earned automatically on confirmed orders, redeemable against a sale, with a manual earn/redeem/adjust available to staff and a running ledger of every movement.
+- **Store credit** — issued (e.g. as part of a return) and redeemed against future purchases, tracked per currency.
+- **Right to be forgotten** — a customer record can be anonymized on request, scrubbing personal details while leaving the historical transaction record intact.
+
+---
+
+## 14. Reporting
+
+A small set of always-available, whole-business snapshots, refreshable on demand:
+
+- **On-hand inventory** — total units on hand, per store and variant, across the whole business.
+- **Supply vs. demand** — on-hand stock netted against everything already inbound (open purchase orders, transfers), so a buyer can see real coverage, not just what's on the shelf today.
+- **Movement statistics** — stock in/out/net, bucketed by day, week, or month.
+- **Sales summary & daily trend** — gross, refunded, and net revenue and order counts, grouped by currency, plus a day-by-day revenue trend.
+
+*(Today these are simple, whole-tenant, on-demand views — there's no custom date-range picker or CSV export in the reporting screens yet.)*
+
+---
+
+## 15. Running the platform itself
+
+A separate console exists purely for the people operating Shelf-J as a service to its business customers:
+
+- A directory of **every business (tenant)** on the platform, with status, country, currency, and signup date.
+- **Activate / suspend** a tenant — suspending immediately locks that business's staff logins, POS, and storefront (see [§5](#5-setting-up-a-business) and [§10](#10-selling-online-the-storefront)).
+- **Assisted onboarding** on a business's behalf, ending in a hand-off screen with the credentials to pass along (see [§5](#5-setting-up-a-business)).
+
+Platform administration is entirely separate from any one business's staff accounts — a platform credential and a store credential can never be used interchangeably.
+
+---
+
+## 16. "Catalog mode" — selling without showing a price
+
+Some businesses don't want to (or legally can't) show a retail price up front — wholesalers, quote-driven sellers, or certain regulated goods. Any store can be switched into **catalog mode**, and the effect ripples consistently through everything that store touches:
+
+- The storefront's product list, product detail, and cart all show stock and an **Add** button — never a price.
+- POS's tender step disappears entirely; ringing up items produces a **"Place order"** ticket instead of collecting payment.
+- Receipts and order history show "price on delivery" / "price in store" instead of a total.
+- Staff (or the customer, once contacted) settle the actual price and collect payment afterward through the normal "collect payment" flow on the order (see [§12](#12-orders-returns--alternative-sales)).
+
+It's a first-class, deliberate mode a store opts into — not a missing feature.
+
+---
+
+## 17. Three everyday workflows, start to finish
+
+**A customer buys online:**
+Browse the catalog → add items to cart → choose pickup or delivery → pick a payment method → review → place the order and pay → the business sees the order the moment it's confirmed, stock is set aside automatically, and the customer can track it from "My Orders." If payment never completes, the order is automatically released rather than sitting as a phantom hold on stock forever.
+
+**A cashier rings up a sale:**
+Clock in → scan or search items onto the sale (attach a customer if there is one) → hold it if interrupted, resume it later → tender (splitting across cash/card/UPI/wallet/gift card/store credit as needed) → print or email the receipt → start the next sale. At the end of the shift, close the till and reconcile the cash counted against what the system expected.
+
+**A store restocks:**
+A buyer raises a purchase order with a supplier and submits it → when the delivery arrives, goods are receipted against the PO (batch, expiry, cost) → the stock is immediately visible and available to sell, online and in-store alike. On the planning side, thresholds/safety-stock/kanban settings flag what's running low before it becomes a stockout, and a low-stock signal can be turned straight into the next purchase order.
+
+---
+
+## 18. Multi-tenancy: what "isolated" actually means
+
+Every business on Shelf-J operates as if it had the platform to itself:
+
+- A business never sees another business's products, stock, prices, orders, or customers — there is no setting or permission that can cross that line.
+- Staff accounts, customer accounts, and even login pages are kept separate per business (and separate again from the platform-operator login) — a password for one business's admin console does nothing anywhere else.
+- Suspending one business has zero effect on any other business's storefront, POS, or admin console.
+- A new business's very first action (signup) already has this isolation in place — there's no "shared" or "default" tenant that data could leak into.
+
+---
+
+## 19. Reach, languages & currencies
+
+- **Countries supported at onboarding today:** India, United States, United Kingdom, Singapore, and the UAE — with currency (INR/USD/GBP/SGD/AED) auto-suggested per country and editable anywhere money is set up (stores, price lists, promotions, gift cards, suppliers, layaways).
+- **Interface languages:** English (UK, the default), Polish, Romanian, Punjabi, Urdu, Bengali, Gujarati, and Arabic — chosen to match the largest non-English-speaking communities in the UK. Arabic and Urdu mirror the entire interface right-to-left automatically. *(Translation is fully wired up end to end today for the sign-in/registration screen; the rest of the interface is being translated progressively.)*
+- **Tax model:** UK-style VAT out of the box (see [§8](#8-pricing-promotions--tax)), with per-product VAT categories and per-customer exemption status.
+
+---
+
+## 20. Where to go next
+
+- **[docs/API-GUIDE.md](docs/API-GUIDE.md)** — every capability above, mapped to the actual API surface that provides it.
+- **[docs/UI-GUIDE.md](docs/UI-GUIDE.md)** — every screen in every experience (Storefront, POS, Admin Console, Platform Console), what it shows, and how it fits into the flows above.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the system is actually built, for engineers extending it.
+- **[docs/onboarding-and-locations.md](docs/onboarding-and-locations.md)** — the full onboarding and Tenant→Store→Zone design.
+- **[PRD.md](PRD.md)** — product requirements, goals, non-goals, and the delivery roadmap.
+- **[CLAUDE.md](CLAUDE.md)** — the engineering rules an AI agent (or a new engineer) must follow when changing this codebase.

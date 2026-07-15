@@ -7,12 +7,12 @@ description: Add a REST endpoint to an existing Shelf-J service following the la
 
 Use when adding/modifying a REST endpoint so it stays consistent with every other endpoint in the platform.
 
-> Context: [README §7 conventions](../../../README.md#7-cross-cutting-conventions), the service's spec in [README §9](../../../README.md#9-the-business-services--full-catalog), [golden rules](../../../CLAUDE.md).
+> Context: [ARCHITECTURE §14 conventions](../../../docs/ARCHITECTURE.md#14-cross-cutting-conventions), the service's spec in [docs/API-GUIDE.md](../../../docs/API-GUIDE.md), [golden rules](../../../CLAUDE.md).
 
 ## Before writing code — confirm
 
-1. **Right service?** The endpoint must live in the service that **owns** the data (README §9 ownership). If it needs another service's data, call that service (`client/`), don't add a table here.
-2. **Path & method** — plural kebab noun (`/purchase-orders`), correct verb. Admin vs public/internal route (it must map to a gateway route in [README §8.1](../../../README.md#81-platformgateway)).
+1. **Right service?** The endpoint must live in the service that **owns** the data (see [docs/API-GUIDE.md](../../../docs/API-GUIDE.md) or [ARCHITECTURE §10](../../../docs/ARCHITECTURE.md#10-the-business-services) for ownership). If it needs another service's data, call that service (`client/`), don't add a table here.
+2. **Path & method** — plural kebab noun (`/purchase-orders`), correct verb. Admin vs public/internal route (it must map to a gateway route in [ARCHITECTURE §8](../../../docs/ARCHITECTURE.md#8-platform-services)).
 3. **Auth & roles** — which roles may call it. Public storefront reads vs staff admin.
 4. **Tenant-scoped?** Almost always yes for business data.
 

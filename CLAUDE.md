@@ -2,7 +2,7 @@
 
 This file is auto-loaded into every Claude Code session for this repository. It gives an AI agent the context and rules needed to work on Shelf-J correctly. **Read it fully before making changes.**
 
-> **Deep docs:** [PRD.md](PRD.md) = what & why · [README.md](README.md) = how (concepts, per-service catalog, conventions) · [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md) = tenant onboarding + location model · [docs/coding-standards.md](docs/coding-standards.md) = SQL rules + SOLID rules (enforced on every change). When detail is needed, open those. This file is the fast briefing + the hard rules.
+> **Deep docs:** [PRD.md](PRD.md) = what & why · [README.md](README.md) = the product deep dive (features, personas, workflows) · [docs/API-GUIDE.md](docs/API-GUIDE.md) = full API surface by business capability · [docs/UI-GUIDE.md](docs/UI-GUIDE.md) = full UI surface by persona/screen · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) = how (concepts, per-service catalog, conventions) · [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md) = tenant onboarding + location model · [docs/coding-standards.md](docs/coding-standards.md) = SQL rules + SOLID rules (enforced on every change). When detail is needed, open those. This file is the fast briefing + the hard rules.
 
 ---
 
@@ -10,7 +10,7 @@ This file is auto-loaded into every Claude Code session for this repository. It 
 
 **Shelf-J** — a **multi-tenant SaaS** stock & store management platform that also lets **customers buy products** (public online storefront **and** in-store POS). Built as **strict microservices** on **Helidon MP (Java 21)**, behind an **API gateway**, with **service discovery (Consul)**, **centralized config**, and **Kafka** events. Architecture patterns borrowed from [red2n/home](https://github.com/red2n/home) (which is Spring Cloud) but **re-implemented in Helidon MP**.
 
-**Status:** design phase. The repo currently contains specs only (PRD, README, this file, skills). No service code or git history yet. When you scaffold code, follow the templates and rules below exactly.
+**Status:** not a design-phase repo — a working platform (12 business services + gateway/discovery/config, ~290 REST endpoints, a 4-shell Flutter frontend). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) Status section for specifics. Follow the templates and rules below exactly when changing or extending it.
 
 ---
 
@@ -40,7 +40,7 @@ Tenant (a business)
 
 ## The golden rules (non-negotiable — apply to EVERY service)
 
-These are the condensed form of [README §3](README.md#3-the-golden-rules-an-ai-agent-must-follow-these). Violating one is a bug even if the code runs. **SQL and SOLID rules are in [docs/coding-standards.md](docs/coding-standards.md) and must be applied to every change.**
+These are the condensed form of [ARCHITECTURE §6](docs/ARCHITECTURE.md#6-the-golden-rules). Violating one is a bug even if the code runs. **SQL and SOLID rules are in [docs/coding-standards.md](docs/coding-standards.md) and must be applied to every change.**
 
 1. **Database-per-service.** No service reads another service's tables. No cross-service SQL joins. Need foreign data → call the owning service (REST) or consume its events.
 2. **Gateway is the only public door.** Business services are never exposed to the internet directly.
@@ -71,7 +71,7 @@ Storefront / Admin / POS  ──►  API GATEWAY (Helidon MP)  ──►  busine
 ```
 
 **Platform services** (`platform/`): `gateway`, `discovery` (Consul), `config`.
-**Business services** (`services/`): `iam-svc`, `tenant-svc`, `product-svc`, `inventory-svc`, `pricing-svc`, `cart-svc`, `order-svc`, `payment-svc`, `purchase-svc`, `customer-svc`, `notification-svc`, `reporting-svc`. Each one's full spec (owns, endpoints, events) is in [README §9](README.md#9-the-business-services--full-catalog).
+**Business services** (`services/`): `iam-svc`, `tenant-svc`, `product-svc`, `inventory-svc`, `pricing-svc`, `cart-svc`, `order-svc`, `payment-svc`, `purchase-svc`, `customer-svc`, `notification-svc`, `reporting-svc`. Full endpoint catalog: [docs/API-GUIDE.md](docs/API-GUIDE.md). Owned tables/events per service: [ARCHITECTURE §10](docs/ARCHITECTURE.md#10-the-business-services).
 
 **Channel-sharing rule:** online checkout and in-store POS both go through **the same `order-svc`** — only `channel` (`ONLINE`/`POS`) and `fulfilment_type` differ, so inventory/payments/reporting behave identically across channels.
 
@@ -92,11 +92,11 @@ shelf-j/
 └── .claude/skills/          # invokable skills (scaffold-service, add-endpoint, add-event, onboard-tenant)
 ```
 
-Per-service internal shape (copy for each): `api/ dto/ service/ domain/ repo/ messaging/ client/ mapper/ config/` + `resources/db/migration/` (Flyway). See [README §6](README.md#6-anatomy-of-one-service-the-template-every-service-copies).
+Per-service internal shape (copy for each): `api/ dto/ service/ domain/ repo/ messaging/ client/ mapper/ config/` + `resources/db/migration/` (Flyway). See [ARCHITECTURE §7](docs/ARCHITECTURE.md#7-anatomy-of-one-service).
 
 ---
 
-## Conventions cheat-sheet (full list: [README §7](README.md#7-cross-cutting-conventions))
+## Conventions cheat-sheet (full list: [ARCHITECTURE §14](docs/ARCHITECTURE.md#14-cross-cutting-conventions))
 
 - **Response envelope:** `{ "data": ..., "error": ..., "meta": { "requestId", "nextCursor" } }`.
 - **Errors:** correct HTTP codes; stable machine `code` (e.g. `INVENTORY_INSUFFICIENT_STOCK`); never leak stack/SQL.
@@ -113,13 +113,13 @@ Per-service internal shape (copy for each): `api/ dto/ service/ domain/ repo/ me
 - The per-service ports `8001…8012` are a **LOCAL-DEV convenience only**. In production every service listens on the **same port (8080)**; addressing is by **k8s DNS + Consul**, never `host:port`. Don't put `+1` ports in prod manifests.
 - **Do NOT order individual services at startup.** The dependency graph is a mesh; no linear order works. Instead services **start in any order and gate on readiness** (probes + `@Retry` + `@CircuitBreaker`).
 - Ordering exists only between **stages**: `infra → platform (config/discovery/gateway) → DB migrations (run-once Jobs) → all business services in parallel → frontends`.
-- Full model: [README §13](README.md#13-production-deployment--startup-ordering) and [PRD §9](PRD.md).
+- Full model: [ARCHITECTURE §17](docs/ARCHITECTURE.md#17-production-deployment--startup-ordering) and [PRD §9](PRD.md).
 
 ---
 
 ## Build order (for the developer, ≠ runtime order)
 
-Phase 0 foundation (gateway/discovery/config + template) → Phase 1 back-office (iam, tenant, product, inventory, purchase) → Phase 2 commerce (pricing, cart, order, payment) → Phase 3 experience (customer, notification, reporting + frontends) → Phase 4 hardening. Each phase has an exit check — see [README §11](README.md#11-build-order--milestones).
+Phase 0 foundation (gateway/discovery/config + template) → Phase 1 back-office (iam, tenant, product, inventory, purchase) → Phase 2 commerce (pricing, cart, order, payment) → Phase 3 experience (customer, notification, reporting + frontends) → Phase 4 hardening. Each phase has an exit check — see [PRD §10](PRD.md).
 
 ---
 
@@ -138,14 +138,14 @@ Invokable skills live in `.claude/skills/`. Prefer them for consistency:
 
 ## Definition of Done (before declaring any service complete)
 
-Self-check against [README §14](README.md#14-definition-of-done-for-any-service). Highlights: own schema via Flyway · no cross-service DB access · DTOs in/out · tenant filtering · discovery registration · external config · outbox + idempotent consumers · 3 health probes (ready checks deps) · starts in any order · sync calls have timeout/retry/breaker/fallback · unit + Testcontainers tests · builds with `mvn clean install` · runs in docker-compose.
+Self-check against [ARCHITECTURE §19](docs/ARCHITECTURE.md#19-definition-of-done). Highlights: own schema via Flyway · no cross-service DB access · DTOs in/out · tenant filtering · discovery registration · external config · outbox + idempotent consumers · 3 health probes (ready checks deps) · starts in any order · sync calls have timeout/retry/breaker/fallback · unit + Testcontainers tests · builds with `mvn clean install` · runs in docker-compose.
 
 ---
 
 ## When unsure
 
-- **Where does X live / who owns this data?** → [README §9](README.md#9-the-business-services--full-catalog) (per-service ownership table).
-- **How do services talk for this flow?** → [README §10](README.md#10-how-services-talk-to-each-other) (sync map + event map + checkout saga).
+- **Where does X live / who owns this data?** → [docs/API-GUIDE.md](docs/API-GUIDE.md) (full endpoint catalog) or [ARCHITECTURE §10](docs/ARCHITECTURE.md#10-the-business-services) (owned tables/events summary).
+- **How do services talk for this flow?** → [ARCHITECTURE §11](docs/ARCHITECTURE.md#11-how-services-talk-to-each-other) (sync map + event map) and [§12](docs/ARCHITECTURE.md#12-key-workflows) (checkout saga).
 - **Onboarding / stores / zones / delivery?** → [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md).
 - **SQL or SOLID rule question?** → [docs/coding-standards.md](docs/coding-standards.md).
 - **A decision isn't settled?** → [PRD §11 open questions](PRD.md). Don't silently guess on those; surface them.

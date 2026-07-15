@@ -1,6 +1,6 @@
 # Shelf-J VPS Deployment Guide — storeql.com
 
-This guide covers everything needed to run Shelf-J on a production VPS under the domain **storeql.com**, from a bare server to a live multi-tenant platform. Read this alongside [README.md](../README.md) (architecture) and [docs/onboarding-and-locations.md](onboarding-and-locations.md) (tenant onboarding flow).
+This guide covers everything needed to run Shelf-J on a production VPS under the domain **storeql.com**, from a bare server to a live multi-tenant platform. Read this alongside [docs/ARCHITECTURE.md](ARCHITECTURE.md) (architecture) and [docs/onboarding-and-locations.md](onboarding-and-locations.md) (tenant onboarding flow).
 
 ---
 
@@ -394,7 +394,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml \
   up -d --scale iam-svc=2 --scale order-svc=2
 ```
 
-> For multi-node scaling, the next step is Kubernetes. See [README §13](../README.md#13-production-deployment--startup-ordering) for the production deployment model.
+> For multi-node scaling, the next step is Kubernetes. See [ARCHITECTURE §17](ARCHITECTURE.md#17-production-deployment--startup-ordering) for the production deployment model.
 
 ### Suspend / reactivate a tenant
 

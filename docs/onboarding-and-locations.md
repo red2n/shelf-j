@@ -1,6 +1,6 @@
 # Client Onboarding & Location Mapping — Design
 
-> **Status:** Target design (freshly designed for Shelf-J; not yet implemented). This is the authoritative spec for **how a new business (tenant) is onboarded** and **how physical locations are modeled** (Tenant → Stores → Zones). Build to this. Companion: [CLAUDE.md](../CLAUDE.md), [README §9](../README.md#9-the-business-services--full-catalog).
+> **Status:** Implemented (tenant-svc `/onboarding` + `/admin` endpoints, the Flutter onboarding wizard). This is the authoritative spec for **how a new business (tenant) is onboarded** and **how physical locations are modeled** (Tenant → Stores → Zones) — treat it as the reference when changing that flow. Companion: [CLAUDE.md](../CLAUDE.md), [docs/API-GUIDE.md § tenant-svc](API-GUIDE.md#tenant-svc), [ARCHITECTURE §10](ARCHITECTURE.md#10-the-business-services).
 
 ---
 
@@ -237,7 +237,7 @@ How the model is actually used once onboarding is done:
 | `StaffAssigned` | tenant-svc | iam-svc (role/store claim), notification-svc | tenantId, userId, storeId, role |
 | `FeatureToggled` | tenant-svc | any feature-gated service | tenantId, featureKey, enabled |
 
-All published via the **transactional outbox**; all consumers **idempotent** (dedupe on event id). See [README §10](../README.md#10-how-services-talk-to-each-other).
+All published via the **transactional outbox**; all consumers **idempotent** (dedupe on event id). See [ARCHITECTURE §11](ARCHITECTURE.md#11-how-services-talk-to-each-other).
 
 ---
 
@@ -246,7 +246,7 @@ All published via the **transactional outbox**; all consumers **idempotent** (de
 - `tenant_id` is read from the **JWT** on every request; **reject** any request whose body/path tries to set a different `tenant_id` (treat as `403`).
 - Every query in tenant-svc (and every service) filters `tenant_id` first; store/zone lookups are always `WHERE tenant_id = :jwtTenant AND ...`.
 - Cross-service: a service needing store/zone info calls tenant-svc or consumes its events — **never** a DB join. It may keep a **local read-cache** of `(store_id → tenant_id, geo, status)` built from `StoreCreated`/`ZoneCreated` to avoid chatty calls; that cache is its own table, refreshed by events (CQRS projection).
-- New tenant tables must follow the [README new-table checklist](../README.md#79-database-rules): `tenant_id NOT NULL`, composite index, and (when DB-level RLS is added) row-level-security policy keyed on the current tenant.
+- New tenant tables must follow the tenant-filter rules in [docs/coding-standards.md](coding-standards.md): `tenant_id NOT NULL`, composite index, and (when DB-level RLS is added) row-level-security policy keyed on the current tenant.
 
 ---
 

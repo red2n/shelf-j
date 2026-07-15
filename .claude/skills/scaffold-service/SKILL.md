@@ -5,9 +5,9 @@ description: Scaffold a new Shelf-J business microservice (Helidon MP, Java 21) 
 
 # Scaffold a new Shelf-J microservice
 
-Use this when adding a **new business microservice** to `services/`. It produces a service that already satisfies the [golden rules](../../../CLAUDE.md) and the [Definition of Done](../../../README.md#14-definition-of-done-for-any-service).
+Use this when adding a **new business microservice** to `services/`. It produces a service that already satisfies the [golden rules](../../../CLAUDE.md) and the [Definition of Done](../../../docs/ARCHITECTURE.md#19-definition-of-done).
 
-> Read first if unsure: [README §6 Anatomy of a service](../../../README.md#6-anatomy-of-one-service-the-template-every-service-copies), the target service's spec in [README §9](../../../README.md#9-the-business-services--full-catalog). **Fastest path: use `services/iam-svc` as the structural reference** (auth, outbox, validation) or `services/inventory-svc` for a full domain-rich example.
+> Read first if unsure: [ARCHITECTURE §7 Anatomy of a service](../../../docs/ARCHITECTURE.md#7-anatomy-of-one-service), the target service's spec in [docs/API-GUIDE.md](../../../docs/API-GUIDE.md). **Fastest path: use `services/iam-svc` as the structural reference** (auth, outbox, validation) or `services/inventory-svc` for a full domain-rich example.
 
 ## Reuse `shared/common-service` — do NOT re-write infra (saves ~100 lines/service; keeps Duplo low)
 
@@ -34,13 +34,13 @@ Validate after adding a service: `scripts/duplo.sh` (duplication should stay ~10
 
 ## Inputs to confirm before generating
 
-1. **Service name** — `<x>-svc` (kebab). Must match the name in README §9 and Consul.
+1. **Service name** — `<x>-svc` (kebab). Must match the name in [docs/API-GUIDE.md](../../../docs/API-GUIDE.md) and Consul.
 2. **Local dev port** — from [PRD §8](../../../PRD.md) (e.g. `inventory-svc` = 8004). Prod uses 8080 for all.
-3. **Owns (tables)** — the entities this service owns (from its README §9 entry). No other service's tables.
-4. **Events** — published (past tense) + consumed (from README §9 / §10).
-5. **Sync dependencies** — which other services it calls (README §10 sync map).
+3. **Owns (tables)** — the entities this service owns (from its [ARCHITECTURE §10](../../../docs/ARCHITECTURE.md#10-the-business-services) entry). No other service's tables.
+4. **Events** — published (past tense) + consumed (from [docs/API-GUIDE.md](../../../docs/API-GUIDE.md) / [ARCHITECTURE §11](../../../docs/ARCHITECTURE.md#11-how-services-talk-to-each-other)).
+5. **Sync dependencies** — which other services it calls ([ARCHITECTURE §11](../../../docs/ARCHITECTURE.md#11-how-services-talk-to-each-other) sync map).
 
-If any are unknown, stop and check the README — do not invent ownership or events.
+If any are unknown, stop and check docs/API-GUIDE.md / docs/ARCHITECTURE.md — do not invent ownership or events.
 
 ## Steps
 
@@ -65,7 +65,7 @@ If any are unknown, stop and check the README — do not invent ownership or eve
    - `X-Request-Id` propagation + tracing.
    - Cursor pagination helper.
 
-4. **Database**: create `src/main/resources/db/migration/V1__init.sql` defining the owned tables. Every tenant-owned table: `id UUID PK`, `tenant_id UUID NOT NULL`, composite index starting `tenant_id`, `timestamptz` UTC times, `NUMERIC` for money/qty, append-only tables have no UPDATE/DELETE paths. Follow the [new-table checklist](../../../README.md#79-database-rules).
+4. **Database**: create `src/main/resources/db/migration/V1__init.sql` defining the owned tables. Every tenant-owned table: `id UUID PK`, `tenant_id UUID NOT NULL`, composite index starting `tenant_id`, `timestamptz` UTC times, `NUMERIC` for money/qty, append-only tables have no UPDATE/DELETE paths. Follow the tenant-filter rules in [docs/coding-standards.md](../../../docs/coding-standards.md).
 
 5. **Config**: `src/main/resources/META-INF/microprofile-config.properties` with non-secret defaults (port, app name = service name). DB URL, Kafka brokers, secrets come from **config service / env** — never hardcoded. Register the service name with **Consul** on startup; deregister on shutdown.
 
@@ -78,8 +78,8 @@ If any are unknown, stop and check the README — do not invent ownership or eve
 
 8. **Tests**: a unit test for a core `service/` rule + a **Testcontainers** integration test (real Postgres, and Kafka if eventing) covering the service's primary flow. The service is not done without this.
 
-9. **Docker**: ensure it builds with `mvn clean install`, containerizes, and is added to `docker-compose.yml` with a healthcheck (`/health/ready`) and `depends_on: {postgres: service_healthy, kafka: service_healthy, consul: service_healthy}` per [README §12.1](../../../README.md#121-make-docker-compose-model-readiness-gating-not-a-race).
+9. **Docker**: ensure it builds with `mvn clean install`, containerizes, and is added to `docker-compose.yml` with a healthcheck (`/health/ready`) and `depends_on: {postgres: service_healthy, kafka: service_healthy, consul: service_healthy}` per [ARCHITECTURE §17](../../../docs/ARCHITECTURE.md#17-production-deployment--startup-ordering).
 
 ## Verify before declaring done
 
-Run through [README §14 Definition of Done](../../../README.md#14-definition-of-done-for-any-service). Critically: no cross-service DB access, DTOs in/out, tenant filtering, discovery registration, external config, outbox + idempotent consumers, 3 health probes with real readiness, starts in any order, sync calls resilient, tests present, `mvn clean install` green.
+Run through [ARCHITECTURE §19 Definition of Done](../../../docs/ARCHITECTURE.md#19-definition-of-done). Critically: no cross-service DB access, DTOs in/out, tenant filtering, discovery registration, external config, outbox + idempotent consumers, 3 health probes with real readiness, starts in any order, sync calls resilient, tests present, `mvn clean install` green.
