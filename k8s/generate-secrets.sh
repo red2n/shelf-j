@@ -11,6 +11,14 @@
 #
 # Usage: ./k8s/generate-secrets.sh
 set -euo pipefail
+
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "kubectl not found on PATH." >&2
+  echo "Installing k3s (curl -sfL https://get.k3s.io | sh -) already provides kubectl —" >&2
+  echo "it symlinks /usr/local/bin/kubectl to its own bundled binary. Run that first." >&2
+  exit 1
+fi
+
 NAMESPACE=shelf-j
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
