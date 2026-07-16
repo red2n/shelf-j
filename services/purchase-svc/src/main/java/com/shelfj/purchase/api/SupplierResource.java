@@ -17,16 +17,24 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 @RequestScoped
 @Path("/suppliers")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Suppliers")
 public class SupplierResource {
 
   @Inject PurchaseService svc;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Create a supplier",
+      description = "Creates a supplier master record for the caller's tenant.")
+  @APIResponse(responseCode = "201", description = "Supplier created")
   @POST
   public Response create(CreateSupplierRequest req) {
     Validations.validate(req);
@@ -35,6 +43,7 @@ public class SupplierResource {
         .build();
   }
 
+  @Operation(summary = "List suppliers", description = "Lists suppliers for the caller's tenant.")
   @GET
   public Response list(@jakarta.ws.rs.QueryParam("limit") Integer limit) {
     int clamped = com.shelfj.web.Cursor.clampLimit(limit);
@@ -43,6 +52,8 @@ public class SupplierResource {
         .build();
   }
 
+  @Operation(summary = "Get a supplier", description = "Returns a single supplier.")
+  @APIResponse(responseCode = "404", description = "Supplier not found")
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") UUID id) {

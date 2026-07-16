@@ -23,6 +23,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Kanban replenishment cards (Gap #18), including their order-modifier fields (Gap #28's kanban
@@ -33,11 +36,17 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Kanban Replenishment")
 public class KanbanResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Create a kanban replenishment card",
+      description =
+          "Defines a fixed reorder quantity card for a variant at a store, optionally"
+              + " sourced from another store.")
   @POST
   @Path("/kanban-cards")
   public Response createKanbanCard(CreateKanbanCardRequest req) {
@@ -64,6 +73,7 @@ public class KanbanResource {
         .build();
   }
 
+  @Operation(summary = "List kanban cards", description = "Filterable by store and status.")
   @GET
   @Path("/kanban-cards")
   public ApiResponse<List<KanbanCardResponse>> listKanbanCards(
@@ -76,6 +86,8 @@ public class KanbanResource {
             .toList());
   }
 
+  @Operation(summary = "Get a kanban card by id")
+  @APIResponse(responseCode = "404", description = "kanban card not found")
   @GET
   @Path("/kanban-cards/{id}")
   public ApiResponse<KanbanCardResponse> getKanbanCard(@PathParam("id") UUID id) {
@@ -83,6 +95,10 @@ public class KanbanResource {
     return ApiResponse.ok(Mappers.toKanbanCard(service.getKanbanCard(tenantId, id)));
   }
 
+  @Operation(
+      summary = "Trigger a kanban card",
+      description = "Signals the card's reorder point has been hit, moving it to TRIGGERED status.")
+  @APIResponse(responseCode = "404", description = "kanban card not found")
   @POST
   @Path("/kanban-cards/{id}/trigger")
   public ApiResponse<KanbanCardResponse> triggerKanbanCard(
@@ -93,6 +109,10 @@ public class KanbanResource {
             service.triggerKanbanCard(tenantId, id, req != null ? req.notes() : null)));
   }
 
+  @Operation(
+      summary = "Mark a kanban card as replenished",
+      description = "Closes the reorder cycle for a triggered card.")
+  @APIResponse(responseCode = "404", description = "kanban card not found")
   @POST
   @Path("/kanban-cards/{id}/replenish")
   public ApiResponse<KanbanCardResponse> replenishKanbanCard(@PathParam("id") UUID id) {
@@ -100,6 +120,12 @@ public class KanbanResource {
     return ApiResponse.ok(Mappers.toKanbanCard(service.replenishKanbanCard(tenantId, id)));
   }
 
+  @Operation(
+      summary = "Update a kanban card's order modifiers",
+      description =
+          "Sets min/max order quantity and lot-size multiplier applied when computing"
+              + " the actual reorder qty (Gap #28).")
+  @APIResponse(responseCode = "404", description = "kanban card not found")
   @PUT
   @Path("/kanban-cards/{id}/order-modifiers")
   public ApiResponse<KanbanCardResponse> updateKanbanModifiers(

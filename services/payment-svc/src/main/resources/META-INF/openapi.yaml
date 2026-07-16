@@ -1,4 +1,20 @@
 openapi: 3.0.3
+info:
+  title: Payment Service API
+  version: "1.0"
+  description: >
+    Payment capture, refunds, and store cash management for Shelf-J. Records payment tenders
+    (CASH/CARD/UPI/WALLET/GIFT_CARD/VOUCHER/STORE_CREDIT) for both POS and online orders, processes
+    refunds against captured tenders, and tracks till sessions, cash drops, pay-ins/pay-outs, and
+    end-of-day X/Z reports. Publishes PaymentCaptured, PaymentFailed, and PaymentRefunded. Reached
+    through the API gateway at /api/payment-svc.
+tags:
+  - name: Payments
+    description: Payment tender capture (staff and online), lookups, and refunds.
+  - name: Till Sessions
+    description: Cashier till float lifecycle — open, cash drops, X-report, Z-report close.
+  - name: Cash Movements
+    description: Pay-in/pay-out petty cash movements and daily Z-report generation.
 components:
   securitySchemes:
     bearerAuth:

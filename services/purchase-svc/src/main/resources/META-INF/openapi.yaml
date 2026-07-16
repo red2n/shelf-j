@@ -1,4 +1,24 @@
 openapi: 3.0.3
+info:
+  title: Purchase Service API
+  version: "1.0"
+  description: >
+    Procurement for Shelf-J: suppliers, purchase orders, goods receipts, and finance-adjacent
+    intercompany invoicing. Implements an FRS 102 / UK GAAP-style double-entry nominal ledger and
+    BACS-standard intercompany AR/AP invoicing for inter-org stock transfers. Publishes GoodsReceived
+    (consumed by inventory-svc and reporting-svc). Reached through the API gateway at
+    /api/purchase-svc.
+tags:
+  - name: Suppliers
+    description: Supplier master data.
+  - name: Purchase Orders
+    description: Purchase order creation, lines, and submission to supplier.
+  - name: Goods Receipts
+    description: Recording of goods received against a submitted purchase order.
+  - name: Intercompany Invoices
+    description: Intercompany AR/AP invoicing and settlement for inter-org inventory transfers.
+  - name: Nominal Ledger
+    description: Read-only double-entry nominal ledger view.
 components:
   securitySchemes:
     bearerAuth:

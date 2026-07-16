@@ -23,6 +23,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Costing methods (Gap #17) and accounting periods — bundled together as they were in
@@ -33,11 +36,16 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Costing & Accounting Periods")
 public class CostingResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Set the costing method for a variant at a store",
+      description = "method must be FIFO or AVERAGE.")
+  @APIResponse(responseCode = "400", description = "method is not FIFO or AVERAGE")
   @PUT
   @Path("/costing-methods")
   public ApiResponse<CostingMethodResponse> upsertCostingMethod(UpsertCostingMethodRequest req) {
@@ -50,6 +58,7 @@ public class CostingResource {
             service.upsertCostingMethod(tenantId, storeId, variantId, req.method())));
   }
 
+  @Operation(summary = "List costing methods for a store")
   @GET
   @Path("/costing-methods")
   public ApiResponse<List<CostingMethodResponse>> listCostingMethods(
@@ -62,6 +71,8 @@ public class CostingResource {
             .toList());
   }
 
+  @Operation(summary = "Get the costing method for a specific variant at a store")
+  @APIResponse(responseCode = "404", description = "costing method not found")
   @GET
   @Path("/costing-methods/by-variant")
   public ApiResponse<CostingMethodResponse> getCostingMethod(
@@ -73,6 +84,8 @@ public class CostingResource {
         Mappers.toCostingMethod(service.getCostingMethod(tenantId, storeId, variantId)));
   }
 
+  @Operation(summary = "Open a new accounting period for a store")
+  @APIResponse(responseCode = "201", description = "Period opened")
   @POST
   @Path("/accounting-periods")
   public Response openPeriod(OpenPeriodRequest req) {
@@ -85,6 +98,7 @@ public class CostingResource {
         .build();
   }
 
+  @Operation(summary = "List accounting periods for a store")
   @GET
   @Path("/accounting-periods")
   public ApiResponse<List<AccountingPeriodResponse>> listPeriods(
@@ -95,6 +109,8 @@ public class CostingResource {
         service.listPeriods(tenantId, storeId).stream().map(Mappers::toPeriod).toList());
   }
 
+  @Operation(summary = "Get an accounting period by id")
+  @APIResponse(responseCode = "404", description = "accounting period not found")
   @GET
   @Path("/accounting-periods/{id}")
   public ApiResponse<AccountingPeriodResponse> getPeriod(@PathParam("id") UUID id) {
@@ -102,6 +118,10 @@ public class CostingResource {
     return ApiResponse.ok(Mappers.toPeriod(service.getPeriod(tenantId, id)));
   }
 
+  @Operation(
+      summary = "Close an accounting period",
+      description = "Locks the period so no further costed movements can post into it.")
+  @APIResponse(responseCode = "404", description = "accounting period not found")
   @POST
   @Path("/accounting-periods/{id}/close")
   public ApiResponse<AccountingPeriodResponse> closePeriod(@PathParam("id") UUID id) {

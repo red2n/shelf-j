@@ -22,17 +22,30 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Safety stock parameters (Gap #8). Extracted from AdminResource. */
 @Path("/admin/inventory")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Safety Stock")
 public class SafetyStockResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Set safety-stock parameters for a variant at a store",
+      description =
+          "method must be MAD or USER_DEFINED; USER_DEFINED requires a positive"
+              + " userDefinedPct.")
+  @APIResponse(responseCode = "201", description = "Safety-stock parameters set")
+  @APIResponse(
+      responseCode = "400",
+      description = "Invalid method, or userDefinedPct missing when method is USER_DEFINED")
   @POST
   @Path("/safety-stock")
   public Response setSafetyStock(SetSafetyStockRequest req) {
@@ -52,6 +65,7 @@ public class SafetyStockResource {
         .build();
   }
 
+  @Operation(summary = "List safety-stock parameters for a store")
   @GET
   @Path("/safety-stock")
   public ApiResponse<List<SafetyStockParamsResponse>> listSafetyStock(
@@ -66,6 +80,7 @@ public class SafetyStockResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(summary = "Get safety-stock parameters for a specific variant at a store")
   @GET
   @Path("/safety-stock/{storeId}/{variantId}")
   public ApiResponse<SafetyStockParamsResponse> getSafetyStock(
@@ -75,6 +90,11 @@ public class SafetyStockResource {
         Mappers.toSafetyStockParams(service.getSafetyStockParams(tenantId, storeId, variantId)));
   }
 
+  @Operation(
+      summary = "Recompute safety-stock quantities",
+      description =
+          "Recalculates safetyStockQty from demand-history buckets for the given"
+              + " store/variant scope (or all, if omitted).")
   @POST
   @Path("/safety-stock/compute")
   public ApiResponse<ComputeSafetyStockResult> computeSafetyStock(ComputeSafetyStockRequest req) {

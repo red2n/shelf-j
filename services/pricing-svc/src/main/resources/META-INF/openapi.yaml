@@ -1,4 +1,32 @@
 openapi: 3.0.3
+info:
+  title: Pricing Service API
+  version: "1.0"
+  description: >
+    Price resolution, promotions, and UK-style VAT computation/reporting for Shelf-J
+    (docs/ARCHITECTURE.md §10, pricing-svc). Resolves the effective price and VAT breakdown for a
+    variant/channel/quantity (used by order-svc's checkout), manages price lists and POS price
+    overrides, time-bounded PERCENT/FLAT promotions, HMRC VAT rates and product/customer VAT
+    status, and computes the HMRC MTD VAT return (boxes 1-9, per VAT Notice 700 s.17).
+tags:
+  - name: Price Resolution
+    description: Resolve the effective price + VAT breakdown for a variant, channel, and quantity.
+  - name: Price Lists
+    description: Price list management — create lists and populate per-variant prices.
+  - name: Price Overrides
+    description: Append-only audit log of staff-approved ad-hoc POS price changes.
+  - name: Promotions
+    description: Time-bounded promotional discounts (PERCENT or FLAT), scoped to ALL / variant / category.
+  - name: VAT Rates
+    description: HMRC UK VAT rate management (T1/T5/T0/TX per VAT Notice 700).
+  - name: Product VAT Categories
+    description: Assign HMRC VAT codes to product variants.
+  - name: Customer VAT Status
+    description: B2B customer VAT registration status (VAT number, reverse-charge eligibility).
+  - name: Tax Transactions
+    description: POSLog-compatible tax transaction journal per HMRC VAT Notice 700.
+  - name: VAT Return
+    description: HMRC Making Tax Digital VAT return computation (boxes 1-9).
 components:
   securitySchemes:
     bearerAuth:

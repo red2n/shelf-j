@@ -24,17 +24,27 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Cycle counting (Gap #10): headers, lines, approve/adjust. Extracted from AdminResource. */
 @Path("/admin/inventory")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Cycle Counts")
 public class CycleCountResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Create a cycle count",
+      description =
+          "Generates a count header with one line per variant in the given ABC classes for the"
+              + " store, pre-populated with system quantity.")
+  @APIResponse(responseCode = "201", description = "Cycle count created")
   @POST
   @Path("/cycle-counts")
   public Response createCycleCount(CreateCycleCountRequest req) {
@@ -53,6 +63,7 @@ public class CycleCountResource {
         .build();
   }
 
+  @Operation(summary = "List cycle counts", description = "Filterable by store and status.")
   @GET
   @Path("/cycle-counts")
   public ApiResponse<List<CycleCountHeaderResponse>> listCycleCounts(
@@ -67,6 +78,8 @@ public class CycleCountResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(summary = "Get a cycle count by id, with its lines")
+  @APIResponse(responseCode = "404", description = "No such cycle count")
   @GET
   @Path("/cycle-counts/{id}")
   public ApiResponse<CycleCountHeaderResponse> getCycleCount(@PathParam("id") UUID id) {
@@ -77,6 +90,11 @@ public class CycleCountResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(
+      summary = "Enter a counted quantity for a cycle-count line",
+      description = "Records the counted qty and computes variance against system qty.")
+  @APIResponse(responseCode = "400", description = "countedQty must be >= 0")
+  @APIResponse(responseCode = "404", description = "No such cycle count or count line")
   @POST
   @Path("/cycle-counts/{id}/lines/{lineId}/count")
   public ApiResponse<CycleCountLineResponse> enterCount(
@@ -87,6 +105,12 @@ public class CycleCountResource {
     return ApiResponse.ok(Mappers.toCycleCountLine(line), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(
+      summary = "Approve a cycle count within tolerance",
+      description =
+          "Auto-approves lines whose variance percentage is within the count's tolerance and flags"
+              + " the rest for manual review.")
+  @APIResponse(responseCode = "404", description = "No such cycle count")
   @POST
   @Path("/cycle-counts/{id}/approve")
   public ApiResponse<CycleCountApproveResult> approveCycleCount(@PathParam("id") UUID headerId) {
@@ -97,6 +121,10 @@ public class CycleCountResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(
+      summary = "Post stock adjustments for an approved cycle count",
+      description = "Writes a StockAdjusted movement per approved line with a non-zero variance.")
+  @APIResponse(responseCode = "404", description = "No such cycle count")
   @POST
   @Path("/cycle-counts/{id}/adjust")
   public ApiResponse<CycleCountAdjustResult> adjustCycleCount(@PathParam("id") UUID headerId) {

@@ -28,6 +28,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Lot/batch traceability: genealogy (Gap #11), split/merge (Gap #23), expiry alerts (Gap #24),
@@ -39,11 +42,17 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Lot & Batch Traceability")
 public class LotResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Link a parent and child batch for genealogy",
+      description =
+          "Records a lot-genealogy relation (e.g. split/merge/repack) between two batches.")
+  @APIResponse(responseCode = "201", description = "Genealogy link created")
   @POST
   @Path("/lot-genealogy")
   public Response createLotLink(CreateLotLinkRequest req) {
@@ -62,6 +71,7 @@ public class LotResource {
         .build();
   }
 
+  @Operation(summary = "Get a batch's ancestor genealogy links")
   @GET
   @Path("/lot-genealogy/batch/{batchId}/ancestors")
   public ApiResponse<LotGenealogyTreeResponse> getAncestors(@PathParam("batchId") UUID batchId) {
@@ -73,6 +83,7 @@ public class LotResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(summary = "Get a batch's descendant genealogy links")
   @GET
   @Path("/lot-genealogy/batch/{batchId}/descendants")
   public ApiResponse<LotGenealogyTreeResponse> getDescendants(@PathParam("batchId") UUID batchId) {
@@ -84,6 +95,7 @@ public class LotResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(summary = "List a batch's direct genealogy links (one hop, parent and child)")
   @GET
   @Path("/lot-genealogy/batch/{batchId}/links")
   public ApiResponse<List<LotGenealogyLinkResponse>> getDirectLinks(
@@ -94,6 +106,15 @@ public class LotResource {
     return ApiResponse.ok(links, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(
+      summary = "Split a batch into a new child batch",
+      description =
+          "Moves qty out of the source batch into a newly created batch, linked via"
+              + " genealogy.")
+  @APIResponse(responseCode = "404", description = "Source batch not found")
+  @APIResponse(
+      responseCode = "422",
+      description = "Split qty exceeds remaining qty on source batch")
   @POST
   @Path("/lots/split")
   public ApiResponse<LotActionResponse> splitLot(LotSplitRequest req) {
@@ -105,6 +126,13 @@ public class LotResource {
     return ApiResponse.ok(Mappers.toLotAction(result.action()));
   }
 
+  @Operation(
+      summary = "Merge qty from a source batch into a target batch",
+      description = "Moves qty from the source batch into the target batch, linked via genealogy.")
+  @APIResponse(responseCode = "404", description = "Source or target batch not found")
+  @APIResponse(
+      responseCode = "422",
+      description = "Merge qty exceeds remaining qty on source batch")
   @POST
   @Path("/lots/merge")
   public ApiResponse<LotActionResponse> mergeLot(LotMergeRequest req) {
@@ -120,6 +148,7 @@ public class LotResource {
     return ApiResponse.ok(Mappers.toLotAction(result.action()));
   }
 
+  @Operation(summary = "List split/merge actions recorded against a batch")
   @GET
   @Path("/lots/{batchId}/actions")
   public ApiResponse<List<LotActionResponse>> listLotActions(@PathParam("batchId") UUID batchId) {
@@ -128,6 +157,10 @@ public class LotResource {
         service.listLotActions(tenantId, batchId).stream().map(Mappers::toLotAction).toList());
   }
 
+  @Operation(
+      summary = "List batches nearing expiry",
+      description = "Batches for a store expiring within the given number of days (default 30).")
+  @APIResponse(responseCode = "400", description = "withinDays must be 1-3650")
   @GET
   @Path("/batches/expiring")
   public ApiResponse<List<ExpiringBatchResponse>> listExpiringBatches(
@@ -141,6 +174,9 @@ public class LotResource {
             .toList());
   }
 
+  @Operation(summary = "Update a batch's quality grade")
+  @APIResponse(responseCode = "400", description = "grade must not be blank")
+  @APIResponse(responseCode = "404", description = "No such batch")
   @PUT
   @Path("/batches/{id}/grade")
   public ApiResponse<BatchResponse> updateBatchGrade(

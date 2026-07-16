@@ -1,0 +1,13 @@
+openapi: 3.0.3
+info:
+  title: Shelf-J API Gateway
+  version: "1.0"
+  description: >
+    The single public door onto Shelf-J (golden rule #2). Proxies /api/{service}/{path} (and the
+    canonical, versioned /api/v1/{service}/{path}) to the upstream business service resolved via
+    Consul, after JWT verification, rate-limiting, and brute-force protection. Each business
+    service's own contract is served at /api/v1/{service}/openapi — see the swagger-ui dropdown
+    for the full list.
+tags:
+  - name: Proxy
+    description: Generic request forwarding to business services.

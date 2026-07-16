@@ -34,12 +34,16 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Admin endpoints for tenant profile, stores, zones, and staff. All tenant-scoped. */
 @Path("/admin")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Admin")
 public class AdminResource {
 
   @Inject TenantService service;
@@ -47,12 +51,18 @@ public class AdminResource {
 
   // ── tenant profile ───────────────────────────────────────────────────────
 
+  @Operation(summary = "Get the tenant profile", description = "Returns the caller's tenant.")
+  @APIResponse(responseCode = "404", description = "Tenant not found")
   @GET
   @Path("/tenant")
   public ApiResponse<TenantResponse> getTenant() {
     return ApiResponse.ok(Mappers.toTenant(service.getTenant(ctx.requireTenantId())));
   }
 
+  @Operation(
+      summary = "Update the tenant profile",
+      description = "Updates business name and legal name for the caller's tenant.")
+  @APIResponse(responseCode = "404", description = "Tenant not found")
   @PUT
   @Path("/tenant")
   public ApiResponse<TenantResponse> updateTenant(UpdateTenantRequest req) {
@@ -62,7 +72,9 @@ public class AdminResource {
 
   // ── stores ───────────────────────────────────────────────────────────────
 
-  /** List this tenant's stores. Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
+  @Operation(
+      summary = "List the tenant's stores",
+      description = "Cursor-paginated: ?after=<meta.nextCursor>&limit=1-100.")
   @GET
   @Path("/stores")
   public ApiResponse<List<StoreResponse>> listStores(
@@ -72,6 +84,10 @@ public class AdminResource {
     return ApiResponse.ok(stores, new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  @Operation(
+      summary = "Add a store",
+      description = "Adds a new store (+ its DEFAULT zone) to the caller's tenant.")
+  @APIResponse(responseCode = "201", description = "Store created")
   @POST
   @Path("/stores")
   public Response addStore(CreateStoreRequest req) {
@@ -82,12 +98,20 @@ public class AdminResource {
         .build();
   }
 
+  @Operation(summary = "Get a store", description = "Returns a single store in the tenant.")
+  @APIResponse(responseCode = "404", description = "No such store in this tenant")
   @GET
   @Path("/stores/{storeId}")
   public ApiResponse<StoreResponse> getStore(@PathParam("storeId") UUID storeId) {
     return ApiResponse.ok(Mappers.toStore(service.getStore(ctx.requireTenantId(), storeId)));
   }
 
+  @Operation(
+      summary = "Update a store",
+      description =
+          "Updates store address, geo, hours, price visibility, and enabled payment methods.")
+  @APIResponse(responseCode = "400", description = "Invalid enabled payment methods")
+  @APIResponse(responseCode = "404", description = "No such store in this tenant")
   @PUT
   @Path("/stores/{storeId}")
   public ApiResponse<StoreResponse> updateStore(
@@ -97,6 +121,10 @@ public class AdminResource {
         Mappers.toStore(service.updateStore(ctx.requireTenantId(), storeId, req)));
   }
 
+  @Operation(
+      summary = "Change a store's status",
+      description = "Publishes StoreStatusChanged so other services (e.g. iam-svc) can react.")
+  @APIResponse(responseCode = "404", description = "No such store in this tenant")
   @PATCH
   @Path("/stores/{storeId}/status")
   public ApiResponse<StoreResponse> patchStoreStatus(
@@ -108,7 +136,10 @@ public class AdminResource {
 
   // ── zones ────────────────────────────────────────────────────────────────
 
-  /** List a store's zones. Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
+  @Operation(
+      summary = "List a store's zones",
+      description = "Cursor-paginated: ?after=<meta.nextCursor>&limit=1-100.")
+  @APIResponse(responseCode = "404", description = "No such store in this tenant")
   @GET
   @Path("/stores/{storeId}/zones")
   public ApiResponse<List<ZoneResponse>> listZones(
@@ -120,6 +151,11 @@ public class AdminResource {
     return ApiResponse.ok(zones, new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  @Operation(
+      summary = "Add a zone to a store",
+      description = "Creates an aisle/rack/cold-room/back-store zone under the given store.")
+  @APIResponse(responseCode = "201", description = "Zone created")
+  @APIResponse(responseCode = "404", description = "No such store in this tenant")
   @POST
   @Path("/stores/{storeId}/zones")
   public Response addZone(@PathParam("storeId") UUID storeId, CreateZoneRequest req) {
@@ -130,6 +166,8 @@ public class AdminResource {
         .build();
   }
 
+  @Operation(summary = "Get a zone", description = "Returns a single zone in the tenant.")
+  @APIResponse(responseCode = "404", description = "No such zone")
   @GET
   @Path("/stores/{storeId}/zones/{zoneId}")
   public ApiResponse<ZoneResponse> getZone(
@@ -137,6 +175,8 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toZone(service.getZone(ctx.requireTenantId(), zoneId)));
   }
 
+  @Operation(summary = "Update a zone", description = "Updates a zone's name, code, or type.")
+  @APIResponse(responseCode = "404", description = "No such zone")
   @PUT
   @Path("/stores/{storeId}/zones/{zoneId}")
   public ApiResponse<ZoneResponse> updateZone(
@@ -145,6 +185,8 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toZone(service.updateZone(ctx.requireTenantId(), zoneId, req)));
   }
 
+  @Operation(summary = "Change a zone's status", description = "Updates a zone's status.")
+  @APIResponse(responseCode = "404", description = "No such zone")
   @PATCH
   @Path("/stores/{storeId}/zones/{zoneId}/status")
   public ApiResponse<ZoneResponse> patchZoneStatus(
@@ -158,6 +200,11 @@ public class AdminResource {
 
   // ── staff ────────────────────────────────────────────────────────────────
 
+  @Operation(
+      summary = "Assign staff to a store",
+      description = "Grants a user a role at a store. userId must already exist (see iam-svc).")
+  @APIResponse(responseCode = "201", description = "Staff assigned")
+  @APIResponse(responseCode = "404", description = "No such store in this tenant")
   @POST
   @Path("/staff")
   public Response assignStaff(AssignStaffRequest req) {
@@ -166,7 +213,9 @@ public class AdminResource {
     return Response.status(Response.Status.CREATED).entity(ApiResponse.ok("assigned")).build();
   }
 
-  /** List staff assignments. Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
+  @Operation(
+      summary = "List staff assignments",
+      description = "Cursor-paginated: ?after=<meta.nextCursor>&limit=1-100.")
   @GET
   @Path("/staff")
   public ApiResponse<List<StaffResponse>> listStaff(
@@ -177,6 +226,10 @@ public class AdminResource {
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  @Operation(
+      summary = "Remove a staff assignment",
+      description = "Removes a user's role assignment at the given store (?store=<storeId>).")
+  @APIResponse(responseCode = "400", description = "?store=<storeId> query parameter is missing")
   @DELETE
   @Path("/staff/{userId}")
   public ApiResponse<String> removeStaff(

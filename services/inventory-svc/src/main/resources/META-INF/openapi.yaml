@@ -1,4 +1,53 @@
 openapi: 3.0.3
+info:
+  title: Inventory Service API
+  version: "1.0"
+  description: >
+    Single source of truth for stock in Shelf-J: on-hand/available levels, reservations,
+    batches/lots, serial numbers, and advanced planning (ABC analysis, safety stock, reorder-point/EOQ,
+    kanban, cycle counts, physical inventory, costing, zone-based picking). Consumes GoodsReceived
+    from purchase-svc and OrderFulfilled/OrderReturned/OrderCancelled from order-svc; publishes
+    stock-change and replenishment events for every other service to react to. Reached through the
+    API gateway at /api/inventory-svc.
+tags:
+  - name: Stock Operations
+    description: Manual receive, adjust, stock levels, batches, movements, and movement purge.
+  - name: Reservations
+    description: Hold/consume/release stock reservations used by order-svc during checkout.
+  - name: Storefront Availability
+    description: Public in-stock/out-of-stock signal for the storefront (no quantities exposed).
+  - name: Reorder Thresholds & Planning
+    description: Min/max reorder thresholds and replenishment-suggestion planning runs.
+  - name: Demand History
+    description: Aggregation of SALE movements into demand buckets for forecasting.
+  - name: Serial Numbers
+    description: Serialized item registration, lookup, movement history, and status control.
+  - name: Move Orders
+    description: Intra-store zone-to-zone stock moves.
+  - name: Transfer Orders
+    description: Inter-store stock transfers (ship/receive/cancel).
+  - name: Lot & Batch Traceability
+    description: Lot genealogy, split/merge actions, expiry alerts, and grade control.
+  - name: Cycle Counts
+    description: Cycle-count headers, line entry, tolerance-based approval, and adjustment posting.
+  - name: ABC Analysis
+    description: Variant ABC classification runs and assignments.
+  - name: Safety Stock
+    description: Safety-stock parameters and computation.
+  - name: Reorder Point & EOQ
+    description: Reorder-point/economic-order-quantity plans and order modifiers.
+  - name: Kanban Replenishment
+    description: Kanban card lifecycle (create/trigger/replenish) and order modifiers.
+  - name: Costing & Accounting Periods
+    description: Costing method assignment and accounting-period open/close.
+  - name: Reference Data
+    description: Transaction reason codes, source types, and zone GL account mappings.
+  - name: Picking Rules
+    description: Picking-strategy rules, zone priorities, rule assignments, and pick-order resolution.
+  - name: Physical Inventory
+    description: Full physical-inventory counts (headers, tags, completion).
+  - name: Planning Configuration
+    description: Lot UOM conversions and PAR level configuration.
 components:
   securitySchemes:
     bearerAuth:

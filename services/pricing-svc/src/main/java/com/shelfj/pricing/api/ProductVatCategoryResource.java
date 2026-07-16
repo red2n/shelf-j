@@ -17,17 +17,26 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Assign HMRC VAT codes to product variants. */
 @RequestScoped
 @Path("/product-vat-categories")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Product VAT Categories")
 public class ProductVatCategoryResource {
 
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Assign a VAT category to a variant",
+      description = "Sets the HMRC VAT code applied to a product variant's price resolution.")
+  @APIResponse(responseCode = "200", description = "VAT category assigned")
+  @APIResponse(responseCode = "404", description = "VAT code not found")
   @POST
   public Response upsert(UpsertProductVatCategoryRequest req) {
     Validations.validate(req);
@@ -36,6 +45,11 @@ public class ProductVatCategoryResource {
         .build();
   }
 
+  @Operation(
+      summary = "Get a variant's VAT category",
+      description = "Looks up the VAT code assigned to a product variant.")
+  @APIResponse(responseCode = "200", description = "VAT category found")
+  @APIResponse(responseCode = "404", description = "No VAT category assigned for this variant")
   @GET
   @Path("/{variantId}")
   public Response get(@PathParam("variantId") UUID variantId) {

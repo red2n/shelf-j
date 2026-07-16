@@ -18,6 +18,9 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Intercompany AR/AP invoicing for inter-org inventory transfers (Gap #20, Oracle Inventory Ch.
@@ -27,11 +30,20 @@ import java.util.UUID;
 @Path("/intercompany-invoices")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Intercompany Invoices")
 public class IntercompanyInvoiceResource {
 
   @Inject PurchaseService svc;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Raise an intercompany invoice pair",
+      description =
+          "Raises an AR invoice for the sending store and an AP invoice for the receiving store"
+              + " atomically, posting the corresponding FRS 102 / UK GAAP double-entry nominal"
+              + " ledger entries. Payment due date is invoice date + 30 days (BACS terms).")
+  @APIResponse(responseCode = "201", description = "Invoice pair raised")
+  @APIResponse(responseCode = "400", description = "from and to store must be different")
   @POST
   public Response raise(RaiseIntercompanyInvoiceRequest req) {
     Validations.validate(req);
@@ -44,6 +56,9 @@ public class IntercompanyInvoiceResource {
         .build();
   }
 
+  @Operation(
+      summary = "List intercompany invoices",
+      description = "Lists intercompany invoices for the caller's tenant.")
   @GET
   public Response list(@jakarta.ws.rs.QueryParam("limit") Integer limit) {
     int clamped = com.shelfj.web.Cursor.clampLimit(limit);
@@ -53,12 +68,22 @@ public class IntercompanyInvoiceResource {
         .build();
   }
 
+  @Operation(
+      summary = "Get an intercompany invoice",
+      description = "Returns a single AR or AP intercompany invoice.")
+  @APIResponse(responseCode = "404", description = "Invoice not found")
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") UUID id) {
     return Response.ok(ApiResponse.ok(Mappers.toDto(svc.getIntercompanyInvoice(ctx, id)))).build();
   }
 
+  @Operation(
+      summary = "Settle an intercompany invoice",
+      description =
+          "Posts the settlement nominal ledger entries (bank/debtors or creditors/bank) for the"
+              + " given invoice.")
+  @APIResponse(responseCode = "404", description = "Invoice not found")
   @POST
   @Path("/{id}/settle")
   public Response settle(@PathParam("id") UUID id) {

@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
 import java.util.List;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
 /** Request/response DTOs for order-svc. tenant_id never in request — comes from JWT context. */
 public final class Dtos {
@@ -15,40 +16,54 @@ public final class Dtos {
 
   // ── Order ─────────────────────────────────────────────────────────────────
 
+  @Schema(name = "OrderItemRequest")
   public record OrderItemRequest(
-      @NotBlank String variantId,
+      @Schema(description = "UUID of the product variant.") @NotBlank String variantId,
       @NotNull @Positive BigDecimal qty,
-      // Optional when server-side pricing is enforced (the value is ignored there); required and
-      // trusted only in legacy mode — see ServiceConfig#pricingEnforce.
-      @Positive BigDecimal unitPrice,
+      @Schema(
+              description =
+                  "Optional when server-side pricing is enforced (ignored there); required and"
+                      + " trusted only in legacy mode.")
+          @Positive
+          BigDecimal unitPrice,
       String notes) {}
 
+  @Schema(
+      name = "PlaceOrderRequest",
+      description = "Places an order. tenantId comes from the caller's JWT, never from this body.")
   public record PlaceOrderRequest(
-      @NotBlank String storeId,
-      String customerId,
-      @NotBlank String channel,
-      String fulfilmentType,
+      @Schema(description = "UUID of the store this order is placed at.") @NotBlank String storeId,
+      @Schema(description = "UUID of the customer; ignored for a signed-in customer caller.")
+          String customerId,
+      @Schema(description = "ONLINE or POS.") @NotBlank String channel,
+      @Schema(description = "INSTORE, DELIVERY, etc. Defaults to in-store.") String fulfilmentType,
       @NotNull @Valid List<OrderItemRequest> items,
-      @PositiveOrZero BigDecimal taxAmount,
-      @PositiveOrZero BigDecimal discountAmount,
-      String currency,
+      @Schema(description = "Ignored when server-side pricing enforcement is on.") @PositiveOrZero
+          BigDecimal taxAmount,
+      @Schema(description = "Ignored when server-side pricing enforcement is on.") @PositiveOrZero
+          BigDecimal discountAmount,
+      @Schema(description = "ISO 4217 currency code. Defaults to USD.") String currency,
       String notes,
-      String idempotencyKey,
+      @Schema(description = "Legacy fallback for the Idempotency-Key header.")
+          String idempotencyKey,
       Boolean taxExempt,
       String exemptReason,
-      // Required when fulfilmentType=DELIVERY (enforced in OrderService, not here — the column set
-      // differs by fulfilment type rather than being unconditionally required).
-      String deliveryLine1,
+      @Schema(description = "Required when fulfilmentType is DELIVERY.") String deliveryLine1,
       String deliveryLine2,
-      String deliveryCity,
-      String deliveryPostalCode,
-      String deliveryRecipientName,
-      String deliveryRecipientPhone,
+      @Schema(description = "Required when fulfilmentType is DELIVERY.") String deliveryCity,
+      @Schema(description = "Required when fulfilmentType is DELIVERY.") String deliveryPostalCode,
+      @Schema(description = "Required when fulfilmentType is DELIVERY.")
+          String deliveryRecipientName,
+      @Schema(description = "Required when fulfilmentType is DELIVERY.")
+          String deliveryRecipientPhone,
       String contactPhone,
-      // How the customer intends to pay: CASH | CARD | UPI | WALLET. With a pay-later flow,
-      // CASH + DELIVERY is cash-on-delivery; settlement itself is recorded by payment-svc.
-      String paymentMethod) {}
+      @Schema(
+              description =
+                  "How the customer intends to pay: CASH, CARD, UPI, or WALLET. CASH + DELIVERY is"
+                      + " cash-on-delivery; settlement itself is recorded by payment-svc.")
+          String paymentMethod) {}
 
+  @Schema(name = "OrderItemResponse")
   public record OrderItemResponse(
       String id,
       String variantId,
@@ -57,13 +72,14 @@ public final class Dtos {
       BigDecimal lineTotal,
       String notes) {}
 
+  @Schema(name = "OrderResponse")
   public record OrderResponse(
       String id,
       String storeId,
       String customerId,
-      String channel,
+      @Schema(description = "ONLINE or POS.") String channel,
       String fulfilmentType,
-      String status,
+      @Schema(description = "PENDING, CONFIRMED, FULFILLED, CANCELLED, or VOIDED.") String status,
       BigDecimal subtotal,
       BigDecimal taxAmount,
       BigDecimal discountAmount,
@@ -82,8 +98,9 @@ public final class Dtos {
       String deliveryRecipientName,
       String deliveryRecipientPhone,
       String contactPhone,
-      String paymentMethod) {}
+      @Schema(description = "CASH, CARD, UPI, or WALLET.") String paymentMethod) {}
 
+  @Schema(name = "OrderStatusHistoryResponse", description = "Append-only order status transition.")
   public record OrderStatusHistoryResponse(
       String id,
       String orderId,
@@ -95,17 +112,25 @@ public final class Dtos {
 
   // ── Returns (Gap #14) ─────────────────────────────────────────────────────
 
+  @Schema(name = "ReturnItemRequest")
   public record ReturnItemRequest(
-      @NotBlank String variantId, @NotNull @Positive BigDecimal qty, String condition) {}
+      @NotBlank String variantId,
+      @NotNull @Positive BigDecimal qty,
+      @Schema(description = "Condition of the returned item, e.g. NEW, DAMAGED.")
+          String condition) {}
 
+  @Schema(name = "CreateReturnRequest")
   public record CreateReturnRequest(
       @NotBlank String reason,
-      String refundMethod,
+      @Schema(description = "Defaults to refunding via the order's original payment method.")
+          String refundMethod,
       @NotNull @Valid List<ReturnItemRequest> items) {}
 
+  @Schema(name = "ReturnItemResponse")
   public record ReturnItemResponse(
       String id, String variantId, BigDecimal qty, BigDecimal refundAmount, String condition) {}
 
+  @Schema(name = "ReturnResponse")
   public record ReturnResponse(
       String id,
       String orderId,
@@ -122,13 +147,14 @@ public final class Dtos {
 
   // ── Order list (header-only, no items embedded) ───────────────────────────
 
+  @Schema(name = "OrderSummaryResponse", description = "Order header only, without line items.")
   public record OrderSummaryResponse(
       String id,
       String storeId,
       String customerId,
-      String channel,
+      @Schema(description = "ONLINE or POS.") String channel,
       String fulfilmentType,
-      String status,
+      @Schema(description = "PENDING, CONFIRMED, FULFILLED, CANCELLED, or VOIDED.") String status,
       BigDecimal subtotal,
       BigDecimal taxAmount,
       BigDecimal discountAmount,
@@ -138,43 +164,54 @@ public final class Dtos {
       String updatedAt,
       String paymentMethod) {}
 
+  @Schema(name = "VoidRequest")
   public record VoidRequest(@NotBlank String reason) {}
 
+  @Schema(name = "VoidResponse")
   public record VoidResponse(String orderId, String reason, String voidedAt) {}
 
   // ── Layaway (Gap #14) ─────────────────────────────────────────────────────
 
+  @Schema(name = "LayawayItemRequest")
   public record LayawayItemRequest(
       @NotBlank String variantId,
       @NotNull @Positive BigDecimal qty,
       @NotNull @Positive BigDecimal unitPrice) {}
 
+  @Schema(name = "CreateLayawayRequest")
   public record CreateLayawayRequest(
       @NotBlank String storeId,
       String customerId,
       @NotNull @Valid List<LayawayItemRequest> items,
-      @NotNull @Positive BigDecimal initialDeposit,
+      @Schema(description = "Initial deposit; cannot exceed the layaway's total amount.")
+          @NotNull
+          @Positive
+          BigDecimal initialDeposit,
       String paymentMethod,
       String dueDate,
       String notes) {}
 
+  @Schema(name = "AddDepositRequest")
   public record AddDepositRequest(
       @NotNull @Positive BigDecimal amount, @NotBlank String paymentMethod, String reference) {}
 
+  @Schema(name = "LayawayItemResponse")
   public record LayawayItemResponse(
       String id, String variantId, BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal) {}
 
+  @Schema(name = "LayawayDepositResponse")
   public record LayawayDepositResponse(
       String id, BigDecimal amount, String paymentMethod, String reference, String paidAt) {}
 
+  @Schema(name = "LayawayResponse")
   public record LayawayResponse(
       String id,
       String storeId,
       String customerId,
       BigDecimal totalAmount,
       BigDecimal depositPaid,
-      BigDecimal balance,
-      String status,
+      @Schema(description = "Total amount minus deposits paid so far.") BigDecimal balance,
+      @Schema(description = "ACTIVE, COMPLETED, or CANCELLED.") String status,
       String notes,
       String createdAt,
       String dueDate,
@@ -185,31 +222,38 @@ public final class Dtos {
 
   // ── Gift cards (Gap #14) ──────────────────────────────────────────────────
 
+  @Schema(name = "IssueGiftCardRequest")
   public record IssueGiftCardRequest(
       @NotBlank String storeId,
-      @NotNull @Positive BigDecimal amount,
-      String currency,
+      @Schema(description = "Initial stored-value amount.") @NotNull @Positive BigDecimal amount,
+      @Schema(description = "ISO 4217 currency code. Defaults to USD.") String currency,
       String expiresAt) {}
 
+  @Schema(name = "ReloadGiftCardRequest")
   public record ReloadGiftCardRequest(@NotNull @Positive BigDecimal amount, String reference) {}
 
+  @Schema(name = "RedeemGiftCardRequest")
   public record RedeemGiftCardRequest(
-      @NotNull @Positive BigDecimal amount, String orderId, String reference) {}
+      @NotNull @Positive BigDecimal amount,
+      @Schema(description = "UUID of the order this redemption pays for, if any.") String orderId,
+      String reference) {}
 
+  @Schema(name = "GiftCardResponse")
   public record GiftCardResponse(
       String id,
       String storeId,
       String code,
       BigDecimal initialBalance,
       BigDecimal currentBalance,
-      String status,
+      @Schema(description = "ACTIVE, DEPLETED, or EXPIRED.") String status,
       String currency,
       String issuedAt,
       String expiresAt) {}
 
+  @Schema(name = "GiftCardTransactionResponse")
   public record GiftCardTransactionResponse(
       String id,
-      String txType,
+      @Schema(description = "ISSUE, RELOAD, or REDEEM.") String txType,
       BigDecimal amount,
       BigDecimal balanceBefore,
       BigDecimal balanceAfter,
@@ -219,12 +263,18 @@ public final class Dtos {
 
   // ── Gap #42: Special orders ───────────────────────────────────────────────
 
+  @Schema(name = "SpecialOrderItemRequest")
   public record SpecialOrderItemRequest(
       @NotBlank String variantId,
       @NotNull @Positive BigDecimal qty,
       @NotNull @Positive BigDecimal unitPrice,
       String notes) {}
 
+  @Schema(
+      name = "CreateSpecialOrderRequest",
+      description =
+          "Places a customer order for future delivery at a store, without immediate inventory"
+              + " deduction.")
   public record CreateSpecialOrderRequest(
       @NotBlank String storeId,
       String customerId,
@@ -232,12 +282,14 @@ public final class Dtos {
       String customerPhone,
       String customerEmail,
       String deliveryAddress,
-      String requestedDeliveryDate,
+      @Schema(description = "ISO-8601 date the customer has requested delivery by.")
+          String requestedDeliveryDate,
       String notes,
       @NotNull @Valid List<SpecialOrderItemRequest> items,
-      String currency,
+      @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
       String idempotencyKey) {}
 
+  @Schema(name = "SpecialOrderItemResponse")
   public record SpecialOrderItemResponse(
       String id,
       String variantId,
@@ -246,6 +298,7 @@ public final class Dtos {
       BigDecimal lineTotal,
       String notes) {}
 
+  @Schema(name = "SpecialOrderResponse")
   public record SpecialOrderResponse(
       String id,
       String storeId,
@@ -256,7 +309,7 @@ public final class Dtos {
       String deliveryAddress,
       String requestedDeliveryDate,
       String notes,
-      String status,
+      @Schema(description = "PENDING, CONFIRMED, FULFILLED, or CANCELLED.") String status,
       BigDecimal subtotal,
       BigDecimal total,
       String currency,
@@ -266,6 +319,9 @@ public final class Dtos {
 
   // ── Gap #43: POSLog ───────────────────────────────────────────────────────
 
+  @Schema(
+      name = "PosLogEntryResponse",
+      description = "Append-only POS transaction journal entry for a fulfilled order.")
   public record PosLogEntryResponse(
       String id,
       String orderId,
@@ -283,9 +339,13 @@ public final class Dtos {
 
   // ── Gap #44: Receipts ─────────────────────────────────────────────────────
 
+  @Schema(name = "GenerateReceiptRequest")
   public record GenerateReceiptRequest(
-      @NotBlank String receiptType, String emailedTo, Integer printCount) {}
+      @Schema(description = "PRINT or EMAIL.") @NotBlank String receiptType,
+      @Schema(description = "Required when receiptType is EMAIL.") String emailedTo,
+      Integer printCount) {}
 
+  @Schema(name = "OrderReceiptResponse")
   public record OrderReceiptResponse(
       String id,
       String orderId,
@@ -296,11 +356,17 @@ public final class Dtos {
 
   // ── Gap #50: SIM ↔ POS sync ───────────────────────────────────────────────
 
+  @Schema(
+      name = "PosStockPositionResponse",
+      description =
+          "Eventually-consistent local projection of on-hand stock for a store/variant, updated"
+              + " asynchronously from inventory-svc events.")
   public record PosStockPositionResponse(
       String storeId, String variantId, String onHandQty, String updatedAt) {}
 
   // ── Parked (suspended) sales ──────────────────────────────────────────────
 
+  @Schema(name = "ParkedSaleItemRequest")
   public record ParkedSaleItemRequest(
       @NotBlank String variantId,
       @NotNull @Positive BigDecimal qty,
@@ -308,6 +374,7 @@ public final class Dtos {
       @PositiveOrZero BigDecimal discountAmount,
       String notes) {}
 
+  @Schema(name = "ParkSaleRequest")
   public record ParkSaleRequest(
       @NotBlank String storeId,
       String customerId,
@@ -315,8 +382,11 @@ public final class Dtos {
       List<@NotNull ParkedSaleItemRequest> items,
       String notes) {}
 
-  public record ResumeParkedSaleRequest(@NotBlank String parkedSaleId) {}
+  @Schema(name = "ResumeParkedSaleRequest")
+  public record ResumeParkedSaleRequest(
+      @Schema(description = "UUID of the parked sale to resume.") @NotBlank String parkedSaleId) {}
 
+  @Schema(name = "ParkedSaleItemResponse")
   public record ParkedSaleItemResponse(
       String variantId,
       BigDecimal qty,
@@ -325,6 +395,7 @@ public final class Dtos {
       BigDecimal lineTotal,
       String notes) {}
 
+  @Schema(name = "ParkedSaleResponse")
   public record ParkedSaleResponse(
       String id,
       String storeId,
@@ -335,11 +406,16 @@ public final class Dtos {
       List<ParkedSaleItemResponse> items,
       String notes,
       String parkedAt,
-      String expiresAt) {}
+      @Schema(description = "When this parked sale is auto-discarded if not resumed.")
+          String expiresAt) {}
 
   // ── No-sale / open-drawer log ─────────────────────────────────────────────
 
+  @Schema(
+      name = "NoSaleRequest",
+      description = "Logs a cash-drawer open with no accompanying sale.")
   public record NoSaleRequest(String storeId, String tillSessionId, String reason) {}
 
+  @Schema(name = "NoSaleResponse")
   public record NoSaleResponse(String id, String storeId, String reason, String loggedAt) {}
 }

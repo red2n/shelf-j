@@ -23,6 +23,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Reorder thresholds and min-max replenishment planning. Extracted from {@code AdminResource} (Gap
@@ -32,11 +35,15 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Reorder Thresholds & Planning")
 public class PlanningResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Set a reorder threshold for a variant at a store",
+      description = "min threshold that triggers a low-stock suggestion, plus an optional max qty.")
   @POST
   @Path("/thresholds")
   public Response setThreshold(ThresholdRequest req) {
@@ -54,6 +61,7 @@ public class PlanningResource {
         .build();
   }
 
+  @Operation(summary = "List reorder thresholds", description = "Filterable by store.")
   @GET
   @Path("/thresholds")
   public ApiResponse<List<ThresholdResponse>> listThresholds(@QueryParam("store") String store) {
@@ -64,6 +72,11 @@ public class PlanningResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(
+      summary = "Run the min-max replenishment plan",
+      description =
+          "Generates replenishment suggestions for variants whose available qty has"
+              + " fallen below its threshold.")
   @POST
   @Path("/planning/run")
   public ApiResponse<List<SuggestionResponse>> runMinMaxPlan(@QueryParam("store") String store) {
@@ -74,6 +87,9 @@ public class PlanningResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(
+      summary = "List replenishment suggestions",
+      description = "Filterable by store and status.")
   @GET
   @Path("/planning/suggestions")
   public ApiResponse<List<SuggestionResponse>> listSuggestions(
@@ -91,6 +107,10 @@ public class PlanningResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(
+      summary = "Resolve a replenishment suggestion",
+      description = "Sets the suggestion's status (e.g. ACCEPTED/DISMISSED).")
+  @APIResponse(responseCode = "404", description = "No open suggestion with that id")
   @PUT
   @Path("/planning/suggestions/{id}/status")
   public ApiResponse<SuggestionResponse> resolveSuggestion(

@@ -1,4 +1,49 @@
 openapi: 3.0.3
+info:
+  title: Product Service API
+  version: "1.0"
+  description: >
+    Product/variant master data (PIM) and public storefront catalog browsing for Shelf-J. Owns
+    brands, categories, products, variants, images, per-store assortment, units of measure, item
+    templates/revisions/cross-references/relationships, catalog groups, container types, item
+    attribute groups, and category sets. Publishes ProductCreated/ProductUpdated/ProductDelisted,
+    VariantCreated, ItemTemplateCreated, and ItemRevisionCreated. Reached through the API gateway at
+    /api/product-svc.
+tags:
+  - name: Catalog
+    description: Public storefront catalog browsing/search and POS barcode-scan lookup.
+  - name: Brands
+    description: Admin brand CRUD.
+  - name: Categories
+    description: Admin category CRUD (single-hierarchy tree).
+  - name: Products
+    description: Admin product CRUD and admin product listing.
+  - name: Product Images
+    description: Upload, fetch, and remove a product's primary image.
+  - name: Store Assortment
+    description: Which stores a product is sold at (empty = sold everywhere).
+  - name: Variants
+    description: Admin variant CRUD under a product, plus batch variant resolution.
+  - name: Units of Measure
+    description: UOM classes/units, quantity conversion, and variant-specific conversion factors.
+  - name: Item Templates
+    description: Reusable attribute templates and applying them to a variant.
+  - name: Cross-References
+    description: Supplier/customer part-number cross-references for a variant.
+  - name: Item Relationships
+    description: Related-item links between variants (substitute, complementary).
+  - name: Item Revisions
+    description: Dated revisions of a variant's spec.
+  - name: Bulk Import
+    description: Bulk JSON import and supplier-CSV import of categories/products/variants.
+  - name: Catalog Groups
+    description: Merchandising catalog-group CRUD, membership, and variant assignment.
+  - name: Container Types
+    description: Packaging/container type CRUD and variant-to-container links.
+  - name: Attribute Groups
+    description: Structured attribute-group definitions/fields and a variant's attribute values.
+  - name: Category Sets
+    description: Alternate category-hierarchy ("category set") CRUD, membership, and variant assignment.
 components:
   securitySchemes:
     bearerAuth:

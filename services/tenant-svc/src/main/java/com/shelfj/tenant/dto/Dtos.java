@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
 /**
  * Request/response DTOs for tenant-svc. No tenant_id in requests — it comes from the JWT/context.
@@ -15,33 +16,42 @@ public final class Dtos {
 
   // ── requests ─────────────────────────────────────────────────────────────────
 
+  @Schema(name = "CreateTenantRequest", description = "Create the business (tenant).")
   public record CreateTenantRequest(
       @NotBlank String businessName,
       String legalName,
-      @NotBlank @Size(min = 2, max = 2) String country,
-      @NotBlank @Size(min = 3, max = 3) String currency) {}
+      @Schema(description = "ISO 3166-1 alpha-2 country code.") @NotBlank @Size(min = 2, max = 2)
+          String country,
+      @Schema(description = "ISO 4217 currency code.") @NotBlank @Size(min = 3, max = 3)
+          String currency) {}
 
+  @Schema(name = "UpdateTenantRequest")
   public record UpdateTenantRequest(@NotBlank String businessName, String legalName) {}
 
+  @Schema(name = "CreateStoreRequest", description = "Create a store (STORE or WAREHOUSE).")
   public record CreateStoreRequest(
       @NotBlank String name,
       @NotBlank String code,
-      String type,
+      @Schema(description = "STORE or WAREHOUSE. Defaults to STORE.") String type,
       String line1,
       String line2,
       String city,
       String state,
       String country,
       String pincode,
-      BigDecimal geoLat,
-      BigDecimal geoLng,
+      @Schema(description = "Store latitude, for geo/delivery-area features.") BigDecimal geoLat,
+      @Schema(description = "Store longitude, for geo/delivery-area features.") BigDecimal geoLng,
       String timezone,
-      String businessHours,
-      // null → defaults to true (show prices). false = availability-only storefront.
-      Boolean showPrices,
-      // null → defaults to CASH,CARD. Subset of CASH, CARD, UPI, WALLET.
-      List<String> enabledPaymentMethods) {}
+      @Schema(description = "Free-form business hours (e.g. serialized weekly schedule).")
+          String businessHours,
+      @Schema(
+              description =
+                  "Null defaults to true (show prices). false = availability-only storefront.")
+          Boolean showPrices,
+      @Schema(description = "Null defaults to CASH,CARD. Subset of CASH, CARD, UPI, WALLET.")
+          List<String> enabledPaymentMethods) {}
 
+  @Schema(name = "UpdateStoreRequest")
   public record UpdateStoreRequest(
       @NotBlank String name,
       String line1,
@@ -50,42 +60,58 @@ public final class Dtos {
       String state,
       String country,
       String pincode,
-      BigDecimal geoLat,
-      BigDecimal geoLng,
+      @Schema(description = "Store latitude, for geo/delivery-area features.") BigDecimal geoLat,
+      @Schema(description = "Store longitude, for geo/delivery-area features.") BigDecimal geoLng,
       String timezone,
       String businessHours,
       Boolean showPrices,
-      // null → keep current. Subset of CASH, CARD, UPI, WALLET; must not be empty.
-      List<String> enabledPaymentMethods) {}
+      @Schema(
+              description =
+                  "Null keeps current value. Subset of CASH, CARD, UPI, WALLET; must not be"
+                      + " empty.")
+          List<String> enabledPaymentMethods) {}
 
-  public record PatchStatusRequest(@NotBlank String status) {}
+  @Schema(name = "PatchStatusRequest")
+  public record PatchStatusRequest(
+      @Schema(description = "New status, e.g. ACTIVE or INACTIVE.") @NotBlank String status) {}
 
-  public record CreateZoneRequest(@NotBlank String name, @NotBlank String code, String type) {}
+  @Schema(name = "CreateZoneRequest", description = "Create a zone (aisle/rack/etc.) in a store.")
+  public record CreateZoneRequest(
+      @NotBlank String name,
+      @NotBlank String code,
+      @Schema(description = "e.g. AISLE, COLD_ROOM, BACK_STORE. Defaults to AISLE.") String type) {}
 
+  @Schema(name = "UpdateZoneRequest")
   public record UpdateZoneRequest(@NotBlank String name, @NotBlank String code, String type) {}
 
+  @Schema(name = "AssignStaffRequest", description = "Assign a staff user a role at a store.")
   public record AssignStaffRequest(
-      @NotBlank String userId, @NotBlank String storeId, @NotBlank String role) {}
+      @Schema(description = "UUID of the user to assign (must already exist in iam-svc).") @NotBlank
+          String userId,
+      @Schema(description = "UUID of the store the role applies to.") @NotBlank String storeId,
+      @Schema(description = "Role name, e.g. OWNER, MANAGER, STAFF.") @NotBlank String role) {}
 
   // ── responses ────────────────────────────────────────────────────────────────
 
+  @Schema(name = "TenantResponse")
   public record TenantResponse(
       String id,
       String name,
       String legalName,
-      String status,
+      @Schema(description = "ACTIVE or INACTIVE.") String status,
       String country,
       String currency,
       String createdAt,
       String updatedAt) {}
 
+  @Schema(name = "StoreResponse")
   public record StoreResponse(
       String id,
       String name,
       String code,
-      String type,
-      String status,
-      boolean isDefault,
+      @Schema(description = "STORE or WAREHOUSE.") String type,
+      @Schema(description = "ACTIVE or INACTIVE.") String status,
+      @Schema(description = "True if this is the tenant's default store.") boolean isDefault,
       String line1,
       String line2,
       String city,
@@ -102,10 +128,13 @@ public final class Dtos {
       String updatedAt) {}
 
   /** Public storefront config for a store (what the guest shop needs to render). */
+  @Schema(
+      name = "StorefrontConfigResponse",
+      description = "Public storefront config for a store (what the guest shop needs to render).")
   public record StorefrontConfigResponse(
       String storeId,
       String storeName,
-      String status,
+      @Schema(description = "ACTIVE or INACTIVE.") String status,
       boolean showPrices,
       List<String> enabledPaymentMethods,
       String line1,
@@ -114,57 +143,72 @@ public final class Dtos {
       String pincode,
       String phone) {}
 
+  @Schema(name = "ZoneResponse")
   public record ZoneResponse(
       String id,
       String storeId,
       String name,
       String code,
-      String type,
-      String status,
+      @Schema(description = "e.g. AISLE, COLD_ROOM, BACK_STORE, DEFAULT.") String type,
+      @Schema(description = "ACTIVE or INACTIVE.") String status,
       String createdAt,
       String updatedAt) {}
 
+  @Schema(name = "StaffResponse")
   public record StaffResponse(
       String id, String userId, String storeId, String role, String assignedAt) {}
 
+  @Schema(name = "OnboardingStatus", description = "Setup-checklist state for the tenant.")
   public record OnboardingStatus(
       boolean tenantActive, boolean hasDefaultStore, List<String> nextSteps) {}
 
   // ── Combined onboarding (tenant + first store in one call) ───────────────
 
+  @Schema(
+      name = "OnboardRequest",
+      description = "Combined onboarding: create tenant + first store in one call.")
   public record OnboardRequest(
       // tenant
       @NotBlank String businessName,
       String legalName,
-      @NotBlank @Size(min = 2, max = 2) String country,
-      @NotBlank @Size(min = 3, max = 3) String currency,
+      @Schema(description = "ISO 3166-1 alpha-2 country code.") @NotBlank @Size(min = 2, max = 2)
+          String country,
+      @Schema(description = "ISO 4217 currency code.") @NotBlank @Size(min = 3, max = 3)
+          String currency,
       // first store
       @NotBlank String storeName,
       @NotBlank String storeCode,
-      String storeType,
+      @Schema(description = "STORE or WAREHOUSE. Defaults to STORE.") String storeType,
       String storeLine1,
       String storeCity,
       String storeCountry,
       String storePincode,
-      String storeTimezone) {}
+      @Schema(description = "Defaults to UTC.") String storeTimezone) {}
 
+  @Schema(name = "OnboardResponse")
   public record OnboardResponse(TenantResponse tenant, StoreResponse store) {}
 
   // ── Gap #53: Inventory org parameters ────────────────────────────────────
 
+  @Schema(
+      name = "UpsertInventoryConfigRequest",
+      description =
+          "Per-tenant inventory-control parameters. Every field is optional — unset fields keep"
+              + " their current (or default) value.")
   public record UpsertInventoryConfigRequest(
       Boolean lotControlEnabled,
       Boolean serialControlEnabled,
       Boolean gradeControlEnabled,
       Boolean expiryTrackingEnabled,
-      // Optional, but if supplied must be one of the supported costing methods (was stored
-      // verbatim).
-      @Pattern(regexp = "FIFO|AVERAGE|STANDARD", message = "must be FIFO, AVERAGE or STANDARD")
+      @Schema(description = "One of FIFO, AVERAGE, STANDARD.")
+          @Pattern(regexp = "FIFO|AVERAGE|STANDARD", message = "must be FIFO, AVERAGE or STANDARD")
           String costingMethod,
-      @Size(max = 16) String defaultUom,
+      @Schema(description = "Default unit-of-measure code, e.g. EA.") @Size(max = 16)
+          String defaultUom,
       Boolean reorderAlertEnabled,
       Boolean autoReserveOnOrder) {}
 
+  @Schema(name = "TenantInventoryConfigResponse")
   public record TenantInventoryConfigResponse(
       String id,
       String tenantId,
@@ -172,7 +216,7 @@ public final class Dtos {
       boolean serialControlEnabled,
       boolean gradeControlEnabled,
       boolean expiryTrackingEnabled,
-      String costingMethod,
+      @Schema(description = "FIFO, AVERAGE, or STANDARD.") String costingMethod,
       String defaultUom,
       boolean reorderAlertEnabled,
       boolean autoReserveOnOrder,

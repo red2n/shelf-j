@@ -1,4 +1,15 @@
 openapi: 3.0.3
+info:
+  title: Notification Service API
+  version: "1.0"
+  description: >
+    Thin fan-in service: consumes events (StockBelowThreshold, OrderConfirmed, UserRegistered),
+    records shortage alerts and in-app notifications, and exposes read feeds. Delivery channel is
+    pluggable — in-app log by default, with an optional SMTP email channel. Publishes no events of
+    its own. Reached through the API gateway at /api/notification-svc.
+tags:
+  - name: Notifications
+    description: Read-only feeds for shortage alerts and in-app notifications.
 components:
   securitySchemes:
     bearerAuth:

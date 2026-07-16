@@ -22,6 +22,9 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Reorder point / EOQ plans (Gap #19), including their order-modifier fields (Gap #28's ROP half —
@@ -32,11 +35,17 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Reorder Point & EOQ")
 public class ReorderPointResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Upsert a reorder-point/EOQ plan",
+      description =
+          "Sets the lead time, ordering cost, holding cost %, and unit cost inputs used"
+              + " to compute the variant's ROP and economic order quantity.")
   @PUT
   @Path("/rop-plans")
   public ApiResponse<RopPlanResponse> upsertRopPlan(UpsertRopPlanRequest req) {
@@ -56,6 +65,7 @@ public class ReorderPointResource {
                 req.unitCost())));
   }
 
+  @Operation(summary = "List ROP/EOQ plans for a store")
   @GET
   @Path("/rop-plans")
   public ApiResponse<List<RopPlanResponse>> listRopPlans(@QueryParam("store") String store) {
@@ -65,6 +75,8 @@ public class ReorderPointResource {
         service.listRopPlans(tenantId, storeId).stream().map(Mappers::toRopPlan).toList());
   }
 
+  @Operation(summary = "Get the ROP/EOQ plan for a specific variant at a store")
+  @APIResponse(responseCode = "404", description = "ROP plan not found")
   @GET
   @Path("/rop-plans/by-variant")
   public ApiResponse<RopPlanResponse> getRopPlan(
@@ -75,6 +87,9 @@ public class ReorderPointResource {
     return ApiResponse.ok(Mappers.toRopPlan(service.getRopPlan(tenantId, storeId, variantId)));
   }
 
+  @Operation(
+      summary = "Recompute ROP and EOQ for a store's plans",
+      description = "Recalculates avgDailyDemand-derived rop and eoq for every plan at the store.")
   @POST
   @Path("/rop-plans/compute")
   public ApiResponse<ComputeRopResult> computeRopPlans(@QueryParam("store") String store) {
@@ -84,6 +99,12 @@ public class ReorderPointResource {
     return ApiResponse.ok(new ComputeRopResult(count));
   }
 
+  @Operation(
+      summary = "Update a ROP plan's order modifiers",
+      description =
+          "Sets min/max order quantity and lot-size multiplier applied to the computed"
+              + " EOQ (Gap #28).")
+  @APIResponse(responseCode = "404", description = "ROP plan not found")
   @PUT
   @Path("/rop-plans/{id}/order-modifiers")
   public ApiResponse<RopPlanResponse> updateRopModifiers(

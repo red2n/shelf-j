@@ -16,6 +16,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Serves per-service, per-profile configuration as JSON.
@@ -32,6 +35,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @Path("/config")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "Config")
 public class ConfigResource {
 
   @Inject
@@ -42,6 +46,14 @@ public class ConfigResource {
   private static final java.util.regex.Pattern SAFE_NAME =
       java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,64}");
 
+  @Operation(
+      summary = "Get merged configuration for a service/profile",
+      description =
+          "Merges {service}.properties with the {service}-{profile}.properties overlay. Internal"
+              + " use only — called by services at bootstrap, not reachable through the gateway.")
+  @APIResponse(responseCode = "200", description = "Merged key/value configuration")
+  @APIResponse(responseCode = "400", description = "service or profile name outside [A-Za-z0-9_-]")
+  @APIResponse(responseCode = "404", description = "No configuration found for service/profile")
   @GET
   @Path("/{service}/{profile}")
   public ApiResponse<Map<String, String>> get(

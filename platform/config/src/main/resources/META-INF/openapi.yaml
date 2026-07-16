@@ -1,0 +1,11 @@
+openapi: 3.0.3
+info:
+  title: Shelf-J Config Service
+  version: "1.0"
+  description: >
+    Internal-only service (not routed through the gateway, no public port) that serves merged
+    per-service, per-profile configuration as JSON. Secrets never live here — only non-secret,
+    environment-shaped configuration (golden rule #5).
+tags:
+  - name: Config
+    description: Per-service, per-profile configuration lookup.

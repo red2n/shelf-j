@@ -24,17 +24,27 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Serial number control: register, list, lookup, history, status. Extracted from AdminResource. */
 @Path("/admin/inventory")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Serial Numbers")
 public class SerialResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Register serial numbers for a batch",
+      description =
+          "Registers explicit serials or auto-generates up to 200 with an optional" + " prefix.")
+  @APIResponse(responseCode = "201", description = "Serials registered")
+  @APIResponse(responseCode = "400", description = "autoQty exceeds 200")
   @POST
   @Path("/serials/register")
   public Response registerSerials(RegisterSerialsRequest req) {
@@ -56,6 +66,9 @@ public class SerialResource {
     return Response.status(Response.Status.CREATED).entity(ApiResponse.ok(items)).build();
   }
 
+  @Operation(
+      summary = "List serial numbers",
+      description = "Filterable by store, variant, and status.")
   @GET
   @Path("/serials")
   public ApiResponse<List<SerialNumberResponse>> listSerials(
@@ -75,6 +88,9 @@ public class SerialResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(summary = "Look up a serial number by its serial code")
+  @APIResponse(responseCode = "400", description = "serial_no query param is required")
+  @APIResponse(responseCode = "404", description = "No such serial number")
   @GET
   @Path("/serials/lookup")
   public ApiResponse<SerialNumberResponse> lookupSerial(@QueryParam("serial_no") String serialNo) {
@@ -85,12 +101,16 @@ public class SerialResource {
         Mappers.toSerial(service.lookupSerialByNo(ctx.requireTenantId(), serialNo)));
   }
 
+  @Operation(summary = "Get a serial number by id")
+  @APIResponse(responseCode = "404", description = "No such serial number")
   @GET
   @Path("/serials/{id}")
   public ApiResponse<SerialNumberResponse> getSerial(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toSerial(service.getSerial(ctx.requireTenantId(), id)));
   }
 
+  @Operation(summary = "Get a serial number's status history")
+  @APIResponse(responseCode = "404", description = "No such serial number")
   @GET
   @Path("/serials/{id}/history")
   public ApiResponse<List<SerialMovementResponse>> serialHistory(@PathParam("id") UUID id) {
@@ -101,6 +121,12 @@ public class SerialResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(
+      summary = "Update a serial number's status",
+      description =
+          "Records a status transition (e.g. IN_STOCK -> SOLD) in the serial's movement"
+              + " history.")
+  @APIResponse(responseCode = "404", description = "No such serial number")
   @PUT
   @Path("/serials/{id}/status")
   public ApiResponse<SerialNumberResponse> updateSerialStatus(

@@ -14,6 +14,9 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Public storefront availability. Returns a per-variant in-stock flag for a store so the guest shop
@@ -23,11 +26,18 @@ import java.util.UUID;
 @Path("/inventory/availability")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "Storefront Availability")
 public class StorefrontResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Get per-variant availability for a store",
+      description =
+          "Public, read-only in-stock/out-of-stock flag per variant. No quantities are"
+              + " exposed.")
+  @APIResponse(responseCode = "400", description = "store must be a UUID")
   @GET
   public ApiResponse<List<AvailabilityResponse>> availability(@QueryParam("store") String store) {
     UUID tenantId = ctx.requireTenantId();

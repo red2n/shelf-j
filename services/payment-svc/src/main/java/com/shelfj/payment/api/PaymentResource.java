@@ -18,18 +18,30 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Payment tenders and refunds. */
 @RequestScoped
 @Path("/payments")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Payments")
 public class PaymentResource {
 
   @Inject PaymentService svc;
   @Inject TenantContext ctx;
 
-  /** Record a payment tender for an order. Returns 201 with the tender on success. */
+  @Operation(
+      summary = "Record a payment tender",
+      description =
+          "Staff-recorded tender (POS/back-office) for an order. Requires CASHIER, MANAGER, or"
+              + " OWNER.")
+  @APIResponse(responseCode = "201", description = "Tender captured")
+  @APIResponse(responseCode = "400", description = "Invalid method or customerId required")
+  @APIResponse(responseCode = "403", description = "Caller lacks a cashier/manager/owner role")
+  @APIResponse(responseCode = "422", description = "Payment method disabled for this store")
   @POST
   public Response record(
       @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
@@ -49,6 +61,18 @@ public class PaymentResource {
    * is emitted so order-svc confirms the order. (Hardening TODO: integrate a real payment provider
    * — this still self-attests that money actually moved.)
    */
+  @Operation(
+      summary = "Capture an online customer payment",
+      description =
+          "Cashless-only payment for a guest/customer storefront order. Verifies the order exists,"
+              + " is ONLINE, is PENDING, belongs to the caller when authenticated, and the amount"
+              + " matches the order total before capturing.")
+  @APIResponse(responseCode = "201", description = "Tender captured")
+  @APIResponse(responseCode = "400", description = "Cash tendered online, or amount mismatch")
+  @APIResponse(
+      responseCode = "404",
+      description = "Order not found, not ONLINE, or not the caller's")
+  @APIResponse(responseCode = "409", description = "Order is not awaiting payment")
   @POST
   @Path("/online")
   public Response payOnline(
@@ -66,6 +90,13 @@ public class PaymentResource {
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(tender))).build();
   }
 
+  @Operation(
+      summary = "Get a payment tender by id",
+      description =
+          "Staff may read any tender in their tenant; a customer may only read a tender on their"
+              + " own order.")
+  @APIResponse(responseCode = "200", description = "Tender found")
+  @APIResponse(responseCode = "404", description = "Tender not found, or not owned by the caller")
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") UUID id) {
@@ -74,6 +105,11 @@ public class PaymentResource {
   }
 
   /** List all payment tenders recorded for a given order. */
+  @Operation(
+      summary = "List payment tenders for an order",
+      description = "All tenders recorded against the given order.")
+  @APIResponse(responseCode = "200", description = "Tenders for the order")
+  @APIResponse(responseCode = "404", description = "Order not owned by the caller")
   @GET
   @Path("/by-order/{orderId}")
   public Response listByOrder(@PathParam("orderId") UUID orderId) {
@@ -82,6 +118,15 @@ public class PaymentResource {
   }
 
   /** Record a refund against a previously captured tender. MANAGER or above only. */
+  @Operation(
+      summary = "Record a refund",
+      description =
+          "Refund against a previously captured tender for the order. Existence, order-match, and"
+              + " the cumulative refund cap are enforced with the payment row locked. Requires"
+              + " MANAGER or OWNER.")
+  @APIResponse(responseCode = "201", description = "Refund recorded")
+  @APIResponse(responseCode = "400", description = "Invalid method")
+  @APIResponse(responseCode = "403", description = "Caller lacks a manager/owner role")
   @POST
   @Path("/by-order/{orderId}/refunds")
   public Response recordRefund(
@@ -105,6 +150,11 @@ public class PaymentResource {
   }
 
   /** List all refunds for a given order. */
+  @Operation(
+      summary = "List refunds for an order",
+      description = "All refunds recorded against the given order.")
+  @APIResponse(responseCode = "200", description = "Refunds for the order")
+  @APIResponse(responseCode = "404", description = "Order not owned by the caller")
   @GET
   @Path("/by-order/{orderId}/refunds")
   public Response listRefunds(@PathParam("orderId") UUID orderId) {

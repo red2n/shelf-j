@@ -19,17 +19,28 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Layaway management — Gap #14 POS feature. */
 @Path("/layaways")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Layaways")
 public class LayawayResource {
 
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Create a layaway",
+      description =
+          "Opens a layaway with an initial deposit; the balance is the total minus the deposit.")
+  @APIResponse(responseCode = "201", description = "Layaway created")
+  @APIResponse(responseCode = "400", description = "No items in the layaway")
+  @APIResponse(responseCode = "409", description = "Initial deposit exceeds the total amount")
   @POST
   public Response create(CreateLayawayRequest req) {
     Validations.validate(req);
@@ -41,6 +52,11 @@ public class LayawayResource {
         .build();
   }
 
+  @Operation(
+      summary = "Get a layaway by id",
+      description = "Layaway detail with items and deposits.")
+  @APIResponse(responseCode = "200", description = "Layaway found")
+  @APIResponse(responseCode = "404", description = "Layaway not found")
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") String id) {
@@ -50,6 +66,11 @@ public class LayawayResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(layaway, items, deposits))).build();
   }
 
+  @Operation(
+      summary = "Add a deposit to a layaway",
+      description = "Records an additional deposit payment toward the layaway's balance.")
+  @APIResponse(responseCode = "200", description = "Deposit recorded")
+  @APIResponse(responseCode = "404", description = "Layaway not found")
   @POST
   @Path("/{id}/deposits")
   public Response addDeposit(@PathParam("id") String id, AddDepositRequest req) {
@@ -60,6 +81,11 @@ public class LayawayResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(layaway, items, deposits))).build();
   }
 
+  @Operation(
+      summary = "Complete a layaway",
+      description = "Marks a fully-paid layaway as completed and emits LayawayCompleted.")
+  @APIResponse(responseCode = "200", description = "Layaway completed")
+  @APIResponse(responseCode = "404", description = "Layaway not found")
   @POST
   @Path("/{id}/complete")
   public Response complete(@PathParam("id") String id) {
@@ -69,6 +95,13 @@ public class LayawayResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(layaway, items, deposits))).build();
   }
 
+  @Operation(
+      summary = "Cancel a layaway",
+      description =
+          "Cancels an active layaway and emits LayawayCancelled. An optional reason may be given;"
+              + " if a body is sent it must include one.")
+  @APIResponse(responseCode = "200", description = "Layaway cancelled")
+  @APIResponse(responseCode = "404", description = "Layaway not found")
   @POST
   @Path("/{id}/cancel")
   public Response cancel(@PathParam("id") String id, VoidRequest req) {

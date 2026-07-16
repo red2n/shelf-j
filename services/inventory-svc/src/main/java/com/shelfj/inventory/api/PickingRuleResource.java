@@ -28,17 +28,27 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Picking rules, zone priorities, and rule assignments (Gap #38). Extracted from AdminResource. */
 @Path("/admin/inventory")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Picking Rules")
 public class PickingRuleResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Create a picking rule",
+      description =
+          "Defines a named picking strategy (e.g. FIFO/FEFO) with an optional grade"
+              + " preference.")
+  @APIResponse(responseCode = "201", description = "Picking rule created")
   @POST
   @Path("/picking-rules")
   public Response createPickingRule(CreatePickingRuleRequest req) {
@@ -50,6 +60,7 @@ public class PickingRuleResource {
         .build();
   }
 
+  @Operation(summary = "List picking rules")
   @GET
   @Path("/picking-rules")
   public ApiResponse<List<PickingRuleResponse>> listPickingRules(
@@ -61,12 +72,16 @@ public class PickingRuleResource {
             .toList());
   }
 
+  @Operation(summary = "Get a picking rule by id")
+  @APIResponse(responseCode = "404", description = "Picking rule not found")
   @GET
   @Path("/picking-rules/{id}")
   public ApiResponse<PickingRuleResponse> getPickingRule(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toPickingRule(service.getPickingRule(ctx.requireTenantId(), id)));
   }
 
+  @Operation(summary = "Deactivate a picking rule")
+  @APIResponse(responseCode = "404", description = "Picking rule not found")
   @DELETE
   @Path("/picking-rules/{id}")
   public ApiResponse<PickingRuleResponse> deactivatePickingRule(@PathParam("id") UUID id) {
@@ -74,6 +89,10 @@ public class PickingRuleResource {
         Mappers.toPickingRule(service.deactivatePickingRule(ctx.requireTenantId(), id)));
   }
 
+  @Operation(
+      summary = "Set a picking rule's zone priorities",
+      description = "Replaces the ordered list of zone pick priorities for the rule.")
+  @APIResponse(responseCode = "404", description = "Picking rule not found")
   @PUT
   @Path("/picking-rules/{id}/zone-priorities")
   public ApiResponse<List<PickingRuleZonePriorityResponse>> setZonePriorities(
@@ -85,6 +104,7 @@ public class PickingRuleResource {
             .toList());
   }
 
+  @Operation(summary = "List a picking rule's zone priorities")
   @GET
   @Path("/picking-rules/{id}/zone-priorities")
   public ApiResponse<List<PickingRuleZonePriorityResponse>> listZonePriorities(
@@ -95,6 +115,12 @@ public class PickingRuleResource {
             .toList());
   }
 
+  @Operation(
+      summary = "Assign a picking rule to a scope",
+      description =
+          "Binds a picking rule to a scope (e.g. tenant/store/category) so it applies"
+              + " automatically to matching resolves.")
+  @APIResponse(responseCode = "201", description = "Assignment created")
   @POST
   @Path("/picking-rule-assignments")
   public Response createPickingRuleAssignment(CreatePickingRuleAssignmentRequest req) {
@@ -107,6 +133,7 @@ public class PickingRuleResource {
         .build();
   }
 
+  @Operation(summary = "List picking rule assignments")
   @GET
   @Path("/picking-rule-assignments")
   public ApiResponse<List<PickingRuleAssignmentResponse>> listPickingRuleAssignments(
@@ -118,6 +145,9 @@ public class PickingRuleResource {
             .toList());
   }
 
+  @Operation(summary = "Delete a picking rule assignment")
+  @APIResponse(responseCode = "204", description = "Assignment deleted")
+  @APIResponse(responseCode = "404", description = "Picking rule assignment not found")
   @DELETE
   @Path("/picking-rule-assignments/{id}")
   public Response deletePickingRuleAssignment(@PathParam("id") UUID id) {
@@ -125,6 +155,12 @@ public class PickingRuleResource {
     return Response.noContent().build();
   }
 
+  @Operation(
+      summary = "Resolve the applicable picking rule and pick order for a variant at a store",
+      description =
+          "Previews the batch pick order (e.g. FIFO/FEFO with grade preference) the"
+              + " resolved rule would produce.")
+  @APIResponse(responseCode = "400", description = "store and variant query params are required")
   @GET
   @Path("/picking-rules/resolve")
   public ApiResponse<PickingRuleResolveResponse> resolvePickingRule(

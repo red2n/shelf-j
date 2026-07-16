@@ -24,6 +24,8 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Transaction reason codes (Gap #21), source types (Gap #22), and zone GL mappings (Gap #31) —
@@ -34,11 +36,13 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Reference Data")
 public class ReferenceDataResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(summary = "Create a transaction reason code")
   @POST
   @Path("/reason-codes")
   public ApiResponse<ReasonCodeResponse> createReasonCode(CreateReasonCodeRequest req) {
@@ -48,6 +52,7 @@ public class ReferenceDataResource {
         Mappers.toReasonCode(service.createReasonCode(tenantId, req.code(), req.description())));
   }
 
+  @Operation(summary = "List transaction reason codes")
   @GET
   @Path("/reason-codes")
   public ApiResponse<List<ReasonCodeResponse>> listReasonCodes() {
@@ -56,6 +61,7 @@ public class ReferenceDataResource {
         service.listReasonCodes(tenantId).stream().map(Mappers::toReasonCode).toList());
   }
 
+  @Operation(summary = "Activate a transaction reason code")
   @POST
   @Path("/reason-codes/{id}/activate")
   public ApiResponse<ReasonCodeResponse> activateReasonCode(@PathParam("id") UUID id) {
@@ -63,6 +69,7 @@ public class ReferenceDataResource {
     return ApiResponse.ok(Mappers.toReasonCode(service.setReasonCodeActive(tenantId, id, true)));
   }
 
+  @Operation(summary = "Deactivate a transaction reason code")
   @POST
   @Path("/reason-codes/{id}/deactivate")
   public ApiResponse<ReasonCodeResponse> deactivateReasonCode(@PathParam("id") UUID id) {
@@ -70,6 +77,7 @@ public class ReferenceDataResource {
     return ApiResponse.ok(Mappers.toReasonCode(service.setReasonCodeActive(tenantId, id, false)));
   }
 
+  @Operation(summary = "Create a transaction source type")
   @POST
   @Path("/source-types")
   public ApiResponse<SourceTypeResponse> createSourceType(CreateSourceTypeRequest req) {
@@ -79,6 +87,7 @@ public class ReferenceDataResource {
         Mappers.toSourceType(service.createSourceType(tenantId, req.code(), req.description())));
   }
 
+  @Operation(summary = "List transaction source types")
   @GET
   @Path("/source-types")
   public ApiResponse<List<SourceTypeResponse>> listSourceTypes() {
@@ -87,6 +96,7 @@ public class ReferenceDataResource {
         service.listSourceTypes(tenantId).stream().map(Mappers::toSourceType).toList());
   }
 
+  @Operation(summary = "Activate a transaction source type")
   @POST
   @Path("/source-types/{id}/activate")
   public ApiResponse<SourceTypeResponse> activateSourceType(@PathParam("id") UUID id) {
@@ -94,6 +104,7 @@ public class ReferenceDataResource {
     return ApiResponse.ok(Mappers.toSourceType(service.setSourceTypeActive(tenantId, id, true)));
   }
 
+  @Operation(summary = "Deactivate a transaction source type")
   @POST
   @Path("/source-types/{id}/deactivate")
   public ApiResponse<SourceTypeResponse> deactivateSourceType(@PathParam("id") UUID id) {
@@ -101,6 +112,11 @@ public class ReferenceDataResource {
     return ApiResponse.ok(Mappers.toSourceType(service.setSourceTypeActive(tenantId, id, false)));
   }
 
+  @Operation(
+      summary = "Upsert a zone-to-GL-account mapping",
+      description =
+          "Maps a store (optionally a specific zone) to a nominal ledger code for"
+              + " accounting postings.")
   @PUT
   @Path("/zone-gl-mappings")
   public ApiResponse<ZoneGlMappingResponse> upsertZoneGlMapping(UpsertZoneGlMappingRequest req) {
@@ -114,6 +130,7 @@ public class ReferenceDataResource {
     return ApiResponse.ok(Mappers.toZoneGlMapping(m));
   }
 
+  @Operation(summary = "List zone-to-GL-account mappings for a store")
   @GET
   @Path("/zone-gl-mappings")
   public ApiResponse<List<ZoneGlMappingResponse>> listZoneGlMappings(
