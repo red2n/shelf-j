@@ -1,0 +1,209 @@
+# Non-secret configuration shared across the stack. Mirrors docker-compose.yml's
+# x-svc-env anchor + infra/prometheus/prometheus.yml + infra/grafana/provisioning.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shelfj-common-env
+  namespace: shelf-j
+data:
+  # SERVER_PORT maps to the "server.port" MP Config property per the spec's standard
+  # env-var mapping rules (dots/hyphens -> underscore, uppercased) — same for every
+  # SHELFJ_* key below (e.g. SHELFJ_DB_URL -> shelfj.db.url). No literal-dotted env var
+  # names needed; Helidon resolves them the same way docker-compose.yml's dotted keys do.
+  SERVER_PORT: "8080"
+  # Runtime app pool goes through PgBouncer; Flyway migrates straight to Postgres
+  # (its DDL runs as multi-statement transactions that need full session affinity,
+  # which PgBouncer's transaction pool_mode breaks — see infra/postgres note in
+  # docker-compose.yml x-svc-env).
+  SHELFJ_DB_URL: "jdbc:postgresql://pgbouncer:6432/shelfj?prepareThreshold=0"
+  SHELFJ_DB_MIGRATION_URL: "jdbc:postgresql://postgres:5432/shelfj"
+  SHELFJ_CONSUL_HOST: "consul"
+  SHELFJ_CONSUL_PORT: "8500"
+  SHELFJ_KAFKA_BOOTSTRAP: "kafka:29092"
+  SHELFJ_CONFIG_URL: "http://config:8080"
+  # No config-repo/*.properties files are shipped for any profile (server-side
+  # stub only) — every service falls back to its own baked-in defaults regardless
+  # of this value. Kept as "docker" to match the exact behavior already exercised
+  # in docker-compose.yml; there is nothing to gain by inventing a "k8s" profile
+  # with no backing config files.
+  SHELFJ_CONFIG_PROFILE: "docker"
+  SHELFJ_REDIS_HOST: "redis"
+  SHELFJ_REDIS_PORT: "6379"
+
+---
+# All Helidon MP services expose /metrics in Prometheus format — same scrape config as
+# infra/prometheus/prometheus.yml, extended to cover all 12 business services + gateway +
+# config (the checked-in compose file's copy is missing cart/payment/customer/notification/
+# reporting-svc jobs).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shelfj-prometheus-config
+  namespace: shelf-j
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        project: 'shelf-j'
+        env: 'k3s'
+
+    scrape_configs:
+      - job_name: 'prometheus'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['localhost:9090']
+            labels: { service: 'prometheus', layer: 'infra' }
+
+      - job_name: 'gateway'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['gateway:8080']
+            labels: { service: 'gateway', layer: 'platform' }
+
+      - job_name: 'config'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['config:8080']
+            labels: { service: 'config', layer: 'platform' }
+
+      - job_name: 'iam-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['iam-svc:8080']
+            labels: { service: 'iam-svc', layer: 'business' }
+
+      - job_name: 'tenant-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['tenant-svc:8080']
+            labels: { service: 'tenant-svc', layer: 'business' }
+
+      - job_name: 'inventory-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['inventory-svc:8080']
+            labels: { service: 'inventory-svc', layer: 'business' }
+
+      - job_name: 'product-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['product-svc:8080']
+            labels: { service: 'product-svc', layer: 'business' }
+
+      - job_name: 'pricing-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['pricing-svc:8080']
+            labels: { service: 'pricing-svc', layer: 'business' }
+
+      - job_name: 'purchase-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['purchase-svc:8080']
+            labels: { service: 'purchase-svc', layer: 'business' }
+
+      - job_name: 'order-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['order-svc:8080']
+            labels: { service: 'order-svc', layer: 'business' }
+
+      - job_name: 'cart-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['cart-svc:8080']
+            labels: { service: 'cart-svc', layer: 'business' }
+
+      - job_name: 'payment-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['payment-svc:8080']
+            labels: { service: 'payment-svc', layer: 'business' }
+
+      - job_name: 'customer-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['customer-svc:8080']
+            labels: { service: 'customer-svc', layer: 'business' }
+
+      - job_name: 'notification-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['notification-svc:8080']
+            labels: { service: 'notification-svc', layer: 'business' }
+
+      - job_name: 'reporting-svc'
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['reporting-svc:8080']
+            labels: { service: 'reporting-svc', layer: 'business' }
+
+      # ── Infrastructure exporters ─────────────────────────────────────────────
+      - job_name: 'node'
+        static_configs:
+          - targets: ['node-exporter:9100']
+            labels: { service: 'node', layer: 'infra' }
+
+      - job_name: 'postgres'
+        static_configs:
+          - targets: ['postgres-exporter:9187']
+            labels: { service: 'postgres', layer: 'infra' }
+
+      - job_name: 'redis'
+        static_configs:
+          - targets: ['redis-exporter:9121']
+            labels: { service: 'redis', layer: 'infra' }
+
+      - job_name: 'consul'
+        metrics_path: /v1/agent/metrics
+        params:
+          format: ['prometheus']
+        static_configs:
+          - targets: ['consul:8500']
+            labels: { service: 'consul', layer: 'infra' }
+
+---
+# Grafana datasources — Prometheus only. Loki/Tempo/Zipkin are intentionally not
+# deployed in this k3s cut (see k8s/README.md); add their datasources back here if/when
+# the tracing/log-aggregation stack is added.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shelfj-grafana-datasources
+  namespace: shelf-j
+data:
+  datasources.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus-shelfj
+        url: http://prometheus:9090
+        access: proxy
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: "15s"
+          httpMethod: POST
+          prometheusType: Prometheus
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shelfj-grafana-dashboard-provider
+  namespace: shelf-j
+data:
+  provider.yml: |
+    apiVersion: 1
+    providers:
+      - name: shelf-j
+        orgId: 1
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards

@@ -1,0 +1,47 @@
+# Consul — service discovery, dev-agent mode (in-memory, single node, no ACLs). This
+# matches docker-compose.yml exactly, including docker-compose.prod.yml's storeql.com
+# overlay, which does NOT harden Consul either — it is not re-designed here; that's a
+# separate, later exercise if/when Consul HA becomes necessary.
+apiVersion: v1
+kind: Service
+metadata:
+  name: consul
+  namespace: shelf-j
+spec:
+  selector: { app: consul }
+  ports:
+    - port: 8500
+      targetPort: 8500
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consul
+  namespace: shelf-j
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: consul } }
+  template:
+    metadata: { labels: { app: consul } }
+    spec:
+      containers:
+        - name: consul
+          image: hashicorp/consul:1.22.0
+          args: ["agent", "-dev", "-client=0.0.0.0"]
+          ports: [{ containerPort: 8500 }]
+          readinessProbe:
+            exec: { command: ["consul", "members"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            exec: { command: ["consul", "members"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 12
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 300m, memory: 256Mi }

@@ -1,0 +1,77 @@
+# Kafka — KRaft mode (no Zookeeper). Single broker/controller, matches docker-compose.yml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: shelf-j
+spec:
+  clusterIP: None # headless: stable pod DNS for the StatefulSet
+  selector: { app: kafka }
+  ports:
+    - { name: broker, port: 29092, targetPort: 29092 }
+    - { name: controller, port: 29093, targetPort: 29093 }
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: shelf-j
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector: { matchLabels: { app: kafka } }
+  template:
+    metadata: { labels: { app: kafka } }
+    spec:
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.6.1
+          ports:
+            - { containerPort: 29092 }
+            - { containerPort: 29093 }
+          env:
+            - { name: KAFKA_NODE_ID, value: "1" }
+            - { name: KAFKA_PROCESS_ROLES, value: "broker,controller" }
+            - { name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@kafka-0.kafka:29093" }
+            - name: KAFKA_LISTENERS
+              value: "PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093"
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://kafka:29092"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+            - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER" }
+            - { name: KAFKA_INTER_BROKER_LISTENER_NAME, value: "PLAINTEXT" }
+            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS, value: "0" }
+            - { name: KAFKA_NUM_PARTITIONS, value: "12" }
+            - { name: KAFKA_AUTO_CREATE_TOPICS_ENABLE, value: "true" }
+            - { name: CLUSTER_ID, value: "0WL1kI1NQdi0DVeRDFPA4g" }
+            - { name: KAFKA_HEAP_OPTS, value: "-Xms512m -Xmx1g" }
+            - name: KAFKA_JVM_PERFORMANCE_OPTS
+              value: "-XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:+ExplicitGCInvokesConcurrent"
+          volumeMounts:
+            - { name: kafka-data, mountPath: /var/lib/kafka/data }
+          readinessProbe:
+            exec: { command: ["kafka-broker-api-versions", "--bootstrap-server", "localhost:29092"] }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 18
+          livenessProbe:
+            exec: { command: ["kafka-broker-api-versions", "--bootstrap-server", "localhost:29092"] }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 12
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { cpu: "1", memory: 1500Mi }
+  volumeClaimTemplates:
+    - metadata: { name: kafka-data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources: { requests: { storage: 20Gi } }

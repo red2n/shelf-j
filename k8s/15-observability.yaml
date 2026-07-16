@@ -1,0 +1,240 @@
+# Prometheus + Grafana + exporters. Zipkin/Loki/Tempo/otel-collector/Kafka UI/Swagger UI/
+# pgAdmin are intentionally NOT deployed here (see k8s/README.md) — Prometheus already
+# scrapes every service's /metrics directly (no otel-collector hop needed for metrics;
+# that collector only fanned out traces+logs to the dropped tracing/log stack).
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-exporter
+  namespace: shelf-j
+spec:
+  selector: { app: node-exporter }
+  ports: [{ port: 9100, targetPort: 9100 }]
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: shelf-j
+spec:
+  selector: { matchLabels: { app: node-exporter } }
+  template:
+    metadata: { labels: { app: node-exporter } }
+    spec:
+      hostPID: true
+      containers:
+        - name: node-exporter
+          image: prom/node-exporter:v1.8.1
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+          ports: [{ containerPort: 9100 }]
+          volumeMounts:
+            - { name: proc, mountPath: /host/proc, readOnly: true }
+            - { name: sys, mountPath: /host/sys, readOnly: true }
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 150m, memory: 64Mi }
+      volumes:
+        - { name: proc, hostPath: { path: /proc } }
+        - { name: sys, hostPath: { path: /sys } }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: shelf-j
+spec:
+  selector: { app: postgres-exporter }
+  ports: [{ port: 9187, targetPort: 9187 }]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: shelf-j
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: postgres-exporter } }
+  template:
+    metadata: { labels: { app: postgres-exporter } }
+    spec:
+      containers:
+        - name: postgres-exporter
+          image: prometheuscommunity/postgres-exporter:v0.15.0
+          env:
+            - name: DATA_SOURCE_NAME
+              value: "postgresql://shelfj:$(POSTGRES_PASSWORD)@postgres:5432/shelfj?sslmode=disable"
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: POSTGRES_PASSWORD } }
+          ports: [{ containerPort: 9187 }]
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 150m, memory: 64Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-exporter
+  namespace: shelf-j
+spec:
+  selector: { app: redis-exporter }
+  ports: [{ port: 9121, targetPort: 9121 }]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter
+  namespace: shelf-j
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: redis-exporter } }
+  template:
+    metadata: { labels: { app: redis-exporter } }
+    spec:
+      containers:
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.62.0
+          env:
+            - { name: REDIS_ADDR, value: "redis:6379" }
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-redis, key: REDIS_PASSWORD } }
+          ports: [{ containerPort: 9121 }]
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 150m, memory: 64Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: shelf-j
+spec:
+  selector: { app: prometheus }
+  ports: [{ port: 9090, targetPort: 9090 }]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: shelf-j
+spec:
+  replicas: 1
+  strategy: { type: Recreate } # PVC is ReadWriteOnce — avoid two pods mounting it during rollout
+  selector: { matchLabels: { app: prometheus } }
+  template:
+    metadata: { labels: { app: prometheus } }
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time=15d
+            - --web.enable-lifecycle
+          ports: [{ containerPort: 9090 }]
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus/prometheus.yml, subPath: prometheus.yml }
+            - { name: data, mountPath: /prometheus }
+          readinessProbe:
+            httpGet: { path: /-/healthy, port: 9090 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: 9090 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+      volumes:
+        - { name: config, configMap: { name: shelfj-prometheus-config } }
+        - { name: data, persistentVolumeClaim: { claimName: prometheus-data } }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: shelf-j
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources: { requests: { storage: 10Gi } } # 15d retention at this scale (5-10 tenants)
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: shelf-j
+spec:
+  selector: { app: grafana }
+  ports: [{ port: 3000, targetPort: 3000 }]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: shelf-j
+spec:
+  replicas: 1
+  strategy: { type: Recreate } # PVC is ReadWriteOnce — avoid two pods mounting it during rollout
+  selector: { matchLabels: { app: grafana } }
+  template:
+    metadata: { labels: { app: grafana } }
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana-oss:11.1.0
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom: { secretKeyRef: { name: shelfj-grafana, key: GF_SECURITY_ADMIN_USER } }
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-grafana, key: GF_SECURITY_ADMIN_PASSWORD } }
+            - { name: GF_USERS_ALLOW_SIGN_UP, value: "false" }
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "false" }
+          ports: [{ containerPort: 3000 }]
+          volumeMounts:
+            - { name: datasources, mountPath: /etc/grafana/provisioning/datasources }
+            - { name: dashboard-provider, mountPath: /etc/grafana/provisioning/dashboards }
+            - { name: dashboards, mountPath: /var/lib/grafana/dashboards }
+            - { name: data, mountPath: /var/lib/grafana }
+          readinessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 300m, memory: 256Mi }
+      volumes:
+        - { name: datasources, configMap: { name: shelfj-grafana-datasources } }
+        - { name: dashboard-provider, configMap: { name: shelfj-grafana-dashboard-provider } }
+        # Populated by: kubectl -n shelf-j create configmap shelfj-grafana-dashboards
+        #   --from-file=infra/grafana/dashboards/  (see k8s/README.md)
+        - { name: dashboards, configMap: { name: shelfj-grafana-dashboards, optional: true } }
+        - { name: data, persistentVolumeClaim: { claimName: grafana-data } }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: shelf-j
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources: { requests: { storage: 2Gi } }

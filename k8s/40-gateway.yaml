@@ -1,0 +1,60 @@
+# Gateway — the only public door (golden rule #2). Terminates behind the Ingress
+# (Traefik, bundled with k3s) at api.storeql.com; the Ingress is the TLS/CORS-origin
+# edge here, replacing Caddy from the bare-VPS docker-compose.prod.yml setup.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: shelf-j
+spec:
+  selector: { app: gateway }
+  ports: [{ port: 8080, targetPort: 8080 }]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: shelf-j
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: gateway } }
+  template:
+    metadata: { labels: { app: gateway } }
+    spec:
+      containers:
+        - name: gateway
+          image: ghcr.io/red2n/shelf-j-gateway:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-jwt } # key "shelfj.jwt.secret" — verifies every request
+          env:
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
+            # Production values (docker-compose.prod.yml overlay) — NOT the dev/k6 defaults
+            # from the base docker-compose.yml (30000 req/min, cors "*").
+            - { name: SHELFJ_GATEWAY_RATE_LIMIT_REQUESTS_PER_MINUTE, value: "100" }
+            - { name: SHELFJ_GATEWAY_CORS_ALLOWED_ORIGINS, value: "https://app.storeql.com" }
+            - { name: SHELFJ_GATEWAY_UPSTREAM_READ_TIMEOUT_SECONDS, value: "120" }
+            # Trust X-Forwarded-For from the Ingress so the rate-limiter/brute-force
+            # throttle key on the real client IP, not the Ingress pod IP.
+            - { name: SHELFJ_GATEWAY_TRUST_FORWARDED_HEADERS, value: "true" }
+            - name: SHELFJ_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-redis, key: REDIS_PASSWORD } }
+          startupProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 20
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 200m, memory: 450Mi }
+            limits: { cpu: 500m, memory: 700Mi }

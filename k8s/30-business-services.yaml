@@ -1,0 +1,606 @@
+# The 12 business services. Each: own Postgres role/schema, registers with Consul under
+# SHELFJ_ADVERTISE_HOST (must equal this file's k8s Service name — the gateway and any
+# peer service resolve each other via Consul's stored Address, not k8s DNS directly).
+#
+# Probes use the full 3-endpoint model (ARCHITECTURE.md DoD): /health/started gates how
+# long the JVM + inline Flyway migration get to boot before being killed; /health/ready
+# gates traffic (checks real DB/Kafka/config reachability); /health/live triggers a
+# restart. docker-compose.yml's single Docker healthcheck only used /health/live for all
+# three purposes — Kubernetes lets us use the granular endpoints each service already
+# exposes.
+#
+# Flyway migrations run inline at boot (FlywayRunner, shared/common-service) — there is
+# no standalone "migrate-only" entry point in this codebase today, so this mirrors
+# exactly how docker-compose.yml and the storeql.com VPS deployment already run in
+# production. Safe at replicas: 1 (no concurrent-migration race); re-check before ever
+# scaling any of these to >1 replica.
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: iam-svc, namespace: shelf-j }
+spec:
+  selector: { app: iam-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: iam-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: iam-svc } }
+  template:
+    metadata: { labels: { app: iam-svc } }
+    spec:
+      containers:
+        - name: iam-svc
+          image: ghcr.io/red2n/shelf-j-iam-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+            - secretRef: { name: shelfj-jwt } # key "shelfj.jwt.secret" — iam-svc issues/verifies tokens
+          env:
+            - { name: SHELFJ_DB_USER, value: "iam_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: IAM_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "iam-svc" }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 200m, memory: 450Mi }
+            limits: { cpu: 500m, memory: 700Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: tenant-svc, namespace: shelf-j }
+spec:
+  selector: { app: tenant-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: tenant-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: tenant-svc } }
+  template:
+    metadata: { labels: { app: tenant-svc } }
+    spec:
+      containers:
+        - name: tenant-svc
+          image: ghcr.io/red2n/shelf-j-tenant-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "tenant_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: TENANT_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "tenant-svc" }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 200m, memory: 450Mi }
+            limits: { cpu: 500m, memory: 700Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: inventory-svc, namespace: shelf-j }
+spec:
+  selector: { app: inventory-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: inventory-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: inventory-svc } }
+  template:
+    metadata: { labels: { app: inventory-svc } }
+    spec:
+      containers:
+        - name: inventory-svc
+          image: ghcr.io/red2n/shelf-j-inventory-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "inventory_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: INVENTORY_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "inventory-svc" }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 200m, memory: 450Mi }
+            limits: { cpu: 500m, memory: 700Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: order-svc, namespace: shelf-j }
+spec:
+  selector: { app: order-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: order-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: order-svc } }
+  template:
+    metadata: { labels: { app: order-svc } }
+    spec:
+      containers:
+        - name: order-svc
+          image: ghcr.io/red2n/shelf-j-order-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "order_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: ORDER_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "order-svc" }
+            # docs/vps-deployment.md §5: "Server-side pricing must be true in production."
+            - { name: SHELFJ_ORDER_PRICING_ENFORCE, value: "true" }
+            # Stock holds for ONLINE checkout. Left false (the dev default) until you've
+            # seeded real inventory for your tenants — flip to "true" once you have, or
+            # every online checkout will 409 on stock. See docker-compose.yml's comment
+            # on shelfj.order.inventory.reserve-enforce.
+            - { name: SHELFJ_ORDER_RESERVE_ENFORCE, value: "false" }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 200m, memory: 450Mi }
+            limits: { cpu: 500m, memory: 700Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: purchase-svc, namespace: shelf-j }
+spec:
+  selector: { app: purchase-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: purchase-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: purchase-svc } }
+  template:
+    metadata: { labels: { app: purchase-svc } }
+    spec:
+      containers:
+        - name: purchase-svc
+          image: ghcr.io/red2n/shelf-j-purchase-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "purchase_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: PURCHASE_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "purchase-svc" }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 150m, memory: 320Mi }
+            limits: { cpu: 400m, memory: 512Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: cart-svc, namespace: shelf-j }
+spec:
+  selector: { app: cart-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cart-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: cart-svc } }
+  template:
+    metadata: { labels: { app: cart-svc } }
+    spec:
+      containers:
+        - name: cart-svc
+          image: ghcr.io/red2n/shelf-j-cart-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "cart_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: CART_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "cart-svc" }
+            # Backs the cart/cart-items cache-aside reads (CartRepository).
+            - name: SHELFJ_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-redis, key: REDIS_PASSWORD } }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 150m, memory: 320Mi }
+            limits: { cpu: 400m, memory: 512Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: pricing-svc, namespace: shelf-j }
+spec:
+  selector: { app: pricing-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: pricing-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: pricing-svc } }
+  template:
+    metadata: { labels: { app: pricing-svc } }
+    spec:
+      containers:
+        - name: pricing-svc
+          image: ghcr.io/red2n/shelf-j-pricing-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "pricing_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: PRICING_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "pricing-svc" }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 150m, memory: 320Mi }
+            limits: { cpu: 400m, memory: 512Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: payment-svc, namespace: shelf-j }
+spec:
+  selector: { app: payment-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: payment-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: payment-svc } }
+  template:
+    metadata: { labels: { app: payment-svc } }
+    spec:
+      containers:
+        - name: payment-svc
+          image: ghcr.io/red2n/shelf-j-payment-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "payment_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: PAYMENT_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx256m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "payment-svc" }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 100m, memory: 220Mi }
+            limits: { cpu: 300m, memory: 384Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: product-svc, namespace: shelf-j }
+spec:
+  selector: { app: product-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: product-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: product-svc } }
+  template:
+    metadata: { labels: { app: product-svc } }
+    spec:
+      containers:
+        - name: product-svc
+          image: ghcr.io/red2n/shelf-j-product-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "product_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: PRODUCT_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "product-svc" }
+            # Backs the findProduct cache-aside read (ProductRepository).
+            - name: SHELFJ_REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-redis, key: REDIS_PASSWORD } }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 200m, memory: 450Mi }
+            limits: { cpu: 500m, memory: 700Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: customer-svc, namespace: shelf-j }
+spec:
+  selector: { app: customer-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: customer-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: customer-svc } }
+  template:
+    metadata: { labels: { app: customer-svc } }
+    spec:
+      containers:
+        - name: customer-svc
+          image: ghcr.io/red2n/shelf-j-customer-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "customer_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: CUSTOMER_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "customer-svc" }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 150m, memory: 320Mi }
+            limits: { cpu: 400m, memory: 512Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: notification-svc, namespace: shelf-j }
+spec:
+  selector: { app: notification-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: notification-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: notification-svc } }
+  template:
+    metadata: { labels: { app: notification-svc } }
+    spec:
+      containers:
+        - name: notification-svc
+          image: ghcr.io/red2n/shelf-j-notification-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "notification_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: NOTIFICATION_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "notification-svc" }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 150m, memory: 320Mi }
+            limits: { cpu: 400m, memory: 512Mi }
+
+---
+apiVersion: v1
+kind: Service
+metadata: { name: reporting-svc, namespace: shelf-j }
+spec:
+  selector: { app: reporting-svc }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: reporting-svc, namespace: shelf-j }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: reporting-svc } }
+  template:
+    metadata: { labels: { app: reporting-svc } }
+    spec:
+      containers:
+        - name: reporting-svc
+          image: ghcr.io/red2n/shelf-j-reporting-svc:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token }
+          env:
+            - { name: SHELFJ_DB_USER, value: "reporting_svc" }
+            - name: SHELFJ_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: REPORTING_DB_PASSWORD } }
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx384m -XX:+UseG1GC" }
+            - { name: SHELFJ_ADVERTISE_HOST, value: "reporting-svc" }
+          startupProbe:
+            httpGet: { path: /health/started, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 150m, memory: 320Mi }
+            limits: { cpu: 400m, memory: 512Mi }
