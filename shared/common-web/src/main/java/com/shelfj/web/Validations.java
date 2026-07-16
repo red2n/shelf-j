@@ -13,7 +13,8 @@ import java.util.Set;
  * <p>We validate in the resource via {@link #validate(Object)} instead of relying on JAX-RS
  * {@code @Valid}, because Helidon registers its own {@code ConstraintViolationException} mapper
  * that returns a verbose, internals-leaking body. Calling this ourselves throws {@link
- * ApiException} with a clean {@code VALIDATION_FAILED} 400 (golden rule #15, docs/ARCHITECTURE.md §14).
+ * ApiException} with a clean {@code VALIDATION_FAILED} 400 (golden rule #15, docs/ARCHITECTURE.md
+ * §14).
  */
 public final class Validations {
 

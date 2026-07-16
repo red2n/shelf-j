@@ -4,9 +4,10 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * Reusable Redis Testcontainer support for service integration tests (docs/ARCHITECTURE.md §16). Same shape as
- * {@link PostgresSupport}: a real Redis in a container, no mocks, so distributed-counter behaviour
- * (atomic INCR+EXPIRE, key TTL/expiry) is verified against the real thing.
+ * Reusable Redis Testcontainer support for service integration tests (docs/ARCHITECTURE.md §16).
+ * Same shape as {@link PostgresSupport}: a real Redis in a container, no mocks, so
+ * distributed-counter behaviour (atomic INCR+EXPIRE, key TTL/expiry) is verified against the real
+ * thing.
  */
 public final class RedisSupport implements AutoCloseable {
 
