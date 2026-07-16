@@ -23,6 +23,9 @@ import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.UriInfo;
 import java.util.Optional;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * The single public door. Routes {@code /api/{service}/{path...}} to the upstream resolved from
@@ -36,6 +39,7 @@ import java.util.UUID;
  */
 @Path("/api")
 @ApplicationScoped
+@Tag(name = "Proxy")
 public class ProxyResource {
 
   @Inject ServiceRegistry registry;
@@ -43,9 +47,23 @@ public class ProxyResource {
   @Inject GatewayConfig config;
   @Inject UpstreamCircuitBreaker breaker;
 
+  @Operation(
+      summary = "Proxy a GET request to a business service",
+      description =
+          "Forwards to the upstream resolved via Consul for {service} (optionally prefixed with a"
+              + " /v1 version segment). {service} must be in the routable allowlist.")
+  @APIResponse(responseCode = "200", description = "Upstream response, relayed as-is")
+  @APIResponse(responseCode = "401", description = "Missing, invalid, or expired bearer token")
+  @APIResponse(responseCode = "403", description = "Caller lacks a required role or tenant scope")
+  @APIResponse(responseCode = "500", description = "Unexpected gateway failure")
+  @APIResponse(responseCode = "502", description = "Upstream returned a connectivity error")
+  @APIResponse(responseCode = "504", description = "Upstream did not answer in time")
+  @APIResponse(
+      responseCode = "503",
+      description = "No healthy upstream instance, or its circuit breaker is open")
   @GET
   @Path("/{service}/{path: .*}")
-  @Produces(MediaType.APPLICATION_JSON)
+  @Produces(MediaType.WILDCARD)
   public Response proxyGet(
       @PathParam("service") String rawService,
       @PathParam("path") String rawPath,
@@ -71,10 +89,22 @@ public class ProxyResource {
         .orElseGet(() -> serviceUnavailable(service));
   }
 
+  @Operation(
+      summary = "Proxy a POST request to a business service",
+      description = "Forwards the request body to the upstream resolved via Consul for {service}.")
+  @APIResponse(responseCode = "200", description = "Upstream response, relayed as-is")
+  @APIResponse(responseCode = "401", description = "Missing, invalid, or expired bearer token")
+  @APIResponse(responseCode = "403", description = "Caller lacks a required role or tenant scope")
+  @APIResponse(responseCode = "500", description = "Unexpected gateway failure")
+  @APIResponse(responseCode = "502", description = "Upstream returned a connectivity error")
+  @APIResponse(responseCode = "504", description = "Upstream did not answer in time")
+  @APIResponse(
+      responseCode = "503",
+      description = "No healthy upstream instance, or its circuit breaker is open")
   @POST
   @Path("/{service}/{path: .*}")
   @Consumes(MediaType.WILDCARD)
-  @Produces(MediaType.APPLICATION_JSON)
+  @Produces(MediaType.WILDCARD)
   public Response proxyPost(
       @PathParam("service") String rawService,
       @PathParam("path") String rawPath,
@@ -102,10 +132,22 @@ public class ProxyResource {
         .orElseGet(() -> serviceUnavailable(service));
   }
 
+  @Operation(
+      summary = "Proxy a PUT request to a business service",
+      description = "Forwards the request body to the upstream resolved via Consul for {service}.")
+  @APIResponse(responseCode = "200", description = "Upstream response, relayed as-is")
+  @APIResponse(responseCode = "401", description = "Missing, invalid, or expired bearer token")
+  @APIResponse(responseCode = "403", description = "Caller lacks a required role or tenant scope")
+  @APIResponse(responseCode = "500", description = "Unexpected gateway failure")
+  @APIResponse(responseCode = "502", description = "Upstream returned a connectivity error")
+  @APIResponse(responseCode = "504", description = "Upstream did not answer in time")
+  @APIResponse(
+      responseCode = "503",
+      description = "No healthy upstream instance, or its circuit breaker is open")
   @PUT
   @Path("/{service}/{path: .*}")
   @Consumes(MediaType.WILDCARD)
-  @Produces(MediaType.APPLICATION_JSON)
+  @Produces(MediaType.WILDCARD)
   public Response proxyPut(
       @PathParam("service") String rawService,
       @PathParam("path") String rawPath,
@@ -133,10 +175,22 @@ public class ProxyResource {
         .orElseGet(() -> serviceUnavailable(service));
   }
 
+  @Operation(
+      summary = "Proxy a PATCH request to a business service",
+      description = "Forwards the request body to the upstream resolved via Consul for {service}.")
+  @APIResponse(responseCode = "200", description = "Upstream response, relayed as-is")
+  @APIResponse(responseCode = "401", description = "Missing, invalid, or expired bearer token")
+  @APIResponse(responseCode = "403", description = "Caller lacks a required role or tenant scope")
+  @APIResponse(responseCode = "500", description = "Unexpected gateway failure")
+  @APIResponse(responseCode = "502", description = "Upstream returned a connectivity error")
+  @APIResponse(responseCode = "504", description = "Upstream did not answer in time")
+  @APIResponse(
+      responseCode = "503",
+      description = "No healthy upstream instance, or its circuit breaker is open")
   @jakarta.ws.rs.PATCH
   @Path("/{service}/{path: .*}")
   @Consumes(MediaType.WILDCARD)
-  @Produces(MediaType.APPLICATION_JSON)
+  @Produces(MediaType.WILDCARD)
   public Response proxyPatch(
       @PathParam("service") String rawService,
       @PathParam("path") String rawPath,
@@ -164,9 +218,21 @@ public class ProxyResource {
         .orElseGet(() -> serviceUnavailable(service));
   }
 
+  @Operation(
+      summary = "Proxy a DELETE request to a business service",
+      description = "Forwards to the upstream resolved via Consul for {service}.")
+  @APIResponse(responseCode = "200", description = "Upstream response, relayed as-is")
+  @APIResponse(responseCode = "401", description = "Missing, invalid, or expired bearer token")
+  @APIResponse(responseCode = "403", description = "Caller lacks a required role or tenant scope")
+  @APIResponse(responseCode = "500", description = "Unexpected gateway failure")
+  @APIResponse(responseCode = "502", description = "Upstream returned a connectivity error")
+  @APIResponse(responseCode = "504", description = "Upstream did not answer in time")
+  @APIResponse(
+      responseCode = "503",
+      description = "No healthy upstream instance, or its circuit breaker is open")
   @DELETE
   @Path("/{service}/{path: .*}")
-  @Produces(MediaType.APPLICATION_JSON)
+  @Produces(MediaType.WILDCARD)
   public Response proxyDelete(
       @PathParam("service") String rawService,
       @PathParam("path") String rawPath,

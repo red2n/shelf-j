@@ -18,17 +18,26 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Time-bounded promotional discounts (PERCENT or FLAT, scoped to ALL / variant / category). */
 @RequestScoped
 @Path("/promotions")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Promotions")
 public class PromotionResource {
 
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Create a promotion",
+      description =
+          "Creates a time-bounded PERCENT or FLAT discount, optionally scoped to a store/channel.")
+  @APIResponse(responseCode = "201", description = "Promotion created")
   @POST
   public Response create(CreatePromotionRequest req) {
     Validations.validate(req);
@@ -37,6 +46,10 @@ public class PromotionResource {
         .build();
   }
 
+  @Operation(
+      summary = "List active promotions",
+      description = "All currently-active promotions for the tenant.")
+  @APIResponse(responseCode = "200", description = "List of active promotions")
   @GET
   public Response list() {
     return Response.ok(
@@ -44,6 +57,10 @@ public class PromotionResource {
         .build();
   }
 
+  @Operation(
+      summary = "Add a scope item to a promotion",
+      description = "Attaches the promotion to a scope (ALL, VARIANT, or CATEGORY) it applies to.")
+  @APIResponse(responseCode = "201", description = "Promotion item added")
   @POST
   @Path("/{id}/items")
   public Response addItem(@PathParam("id") UUID id, AddPromotionItemRequest req) {

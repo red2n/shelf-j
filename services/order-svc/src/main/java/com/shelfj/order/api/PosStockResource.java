@@ -17,6 +17,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Gap #50 — SIM ↔ POS sync. Exposes the local stock-position projection to POS screens so cashiers
@@ -29,11 +32,19 @@ import java.util.UUID;
 @RequestScoped
 @Path("/admin/pos/stock-positions")
 @Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "POS Stock Positions")
 public class PosStockResource {
 
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "List POS stock positions",
+      description =
+          "Local, eventually-consistent projection of on-hand quantities per store/variant,"
+              + " updated asynchronously from inventory-svc events. Not to be used for reservation"
+              + " decisions.")
+  @APIResponse(responseCode = "200", description = "List of stock positions")
   @GET
   public Response list(
       @QueryParam("storeId") String storeIdStr,

@@ -1,0 +1,39 @@
+# shelf-app — the Flutter web bundle (admin console + storefront + POS), served by
+# non-root nginx. Its SHELFJ_API_BASE is baked in at CI build time (GitHub Actions
+# variable), not runtime-configurable — see k8s/README.md for what that means here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: shelf-app
+  namespace: shelf-j
+spec:
+  selector: { app: shelf-app }
+  ports: [{ port: 8080, targetPort: 8080 }]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shelf-app
+  namespace: shelf-j
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: shelf-app } }
+  template:
+    metadata: { labels: { app: shelf-app } }
+    spec:
+      containers:
+        - name: shelf-app
+          image: ghcr.io/red2n/shelf-j-web:latest
+          ports: [{ containerPort: 8080 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }

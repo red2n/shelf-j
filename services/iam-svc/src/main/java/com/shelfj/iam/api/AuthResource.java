@@ -21,6 +21,9 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Public authentication endpoints (docs/ARCHITECTURE.md §10, iam-svc). These are reachable without
@@ -31,6 +34,7 @@ import jakarta.ws.rs.core.Response;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Auth")
 public class AuthResource {
 
   @Inject AuthService auth;
@@ -44,6 +48,13 @@ public class AuthResource {
    * too rather than relying on that alone — a future rename/move of this path off {@code /admin/}
    * must not silently drop the management-role requirement.
    */
+  @Operation(
+      summary = "Provision a staff account",
+      description =
+          "Find-or-create a staff account by email. Returns the userId the caller assigns a store"
+              + " role to via tenant-svc. Requires PLATFORM_ADMIN, OWNER, or MANAGER.")
+  @APIResponse(responseCode = "200", description = "Staff user found or created")
+  @APIResponse(responseCode = "403", description = "Caller lacks an admin/owner/manager role")
   @POST
   @Path("/admin/staff-users")
   public ApiResponse<ProvisionStaffResponse> provisionStaff(ProvisionStaffRequest req) {
@@ -52,6 +63,11 @@ public class AuthResource {
     return ApiResponse.ok(auth.provisionStaff(ctx.requireTenantId(), req.email(), req.password()));
   }
 
+  @Operation(
+      summary = "Register a new customer",
+      description = "Public self-signup. No JWT required — this endpoint mints identity.")
+  @APIResponse(responseCode = "201", description = "Account created, tokens issued")
+  @APIResponse(responseCode = "409", description = "Email already bound to a different tenant")
   @POST
   @Path("/register")
   public Response register(RegisterRequest req) {
@@ -60,6 +76,11 @@ public class AuthResource {
     return Response.status(Response.Status.CREATED).entity(ApiResponse.ok(tokens)).build();
   }
 
+  @Operation(
+      summary = "Log in with email and password",
+      description = "Public tenant/customer login. No JWT required.")
+  @APIResponse(responseCode = "200", description = "Credentials valid, tokens issued")
+  @APIResponse(responseCode = "401", description = "Invalid email or password")
   @POST
   @Path("/login")
   public ApiResponse<TokenResponse> login(LoginRequest req) {
@@ -71,6 +92,14 @@ public class AuthResource {
    * Platform console login — distinct from {@link #login} so a PLATFORM_ADMIN credential is never
    * valid on a store/POS login screen, and a tenant staff credential is never valid here.
    */
+  @Operation(
+      summary = "Log in to the platform console",
+      description =
+          "PLATFORM_ADMIN-only login, kept separate from /auth/login so tenant staff and platform"
+              + " admin credentials are never interchangeable.")
+  @APIResponse(responseCode = "200", description = "Credentials valid, tokens issued")
+  @APIResponse(responseCode = "401", description = "Invalid email or password")
+  @APIResponse(responseCode = "403", description = "Credential is valid but not a PLATFORM_ADMIN")
   @POST
   @Path("/platform-login")
   public ApiResponse<TokenResponse> platformLogin(LoginRequest req) {
@@ -78,6 +107,11 @@ public class AuthResource {
     return ApiResponse.ok(auth.platformLogin(req.email(), req.password()));
   }
 
+  @Operation(
+      summary = "Exchange a refresh token for a new access token",
+      description = "Public — authenticates via the refresh token itself, not a bearer JWT.")
+  @APIResponse(responseCode = "200", description = "New token pair issued")
+  @APIResponse(responseCode = "401", description = "Refresh token invalid, expired, or revoked")
   @POST
   @Path("/refresh")
   public ApiResponse<TokenResponse> refresh(RefreshRequest req) {
@@ -85,6 +119,10 @@ public class AuthResource {
     return ApiResponse.ok(auth.refresh(req.refreshToken()));
   }
 
+  @Operation(
+      summary = "Log out",
+      description = "Revokes the given refresh token. Idempotent-friendly: revoking twice is safe.")
+  @APIResponse(responseCode = "200", description = "Refresh token revoked")
   @POST
   @Path("/logout")
   public ApiResponse<String> logout(LogoutRequest req) {
@@ -93,6 +131,12 @@ public class AuthResource {
     return ApiResponse.ok("logged_out");
   }
 
+  @Operation(
+      summary = "Change the current user's password",
+      description =
+          "Requires the current password to re-verify identity before setting the new one.")
+  @APIResponse(responseCode = "200", description = "Password changed")
+  @APIResponse(responseCode = "401", description = "Current password is incorrect")
   @PUT
   @Path("/change-password")
   public ApiResponse<String> changePassword(ChangePasswordRequest req) {

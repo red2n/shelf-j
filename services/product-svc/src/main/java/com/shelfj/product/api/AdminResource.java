@@ -74,6 +74,9 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Admin catalog CRUD. Tenant-scoped (tenantId from context). */
 @Path("/admin")
@@ -87,6 +90,9 @@ public class AdminResource {
 
   // ── brands ───────────────────────────────────────────────────────────────
 
+  @Operation(summary = "Create a brand")
+  @APIResponse(responseCode = "201", description = "Brand created")
+  @Tag(name = "Brands")
   @POST
   @Path("/brands")
   public Response createBrand(CreateBrandRequest req) {
@@ -94,6 +100,8 @@ public class AdminResource {
     return created(Mappers.toBrand(service.createBrand(ctx.requireTenantId(), req)));
   }
 
+  @Operation(summary = "List brands")
+  @Tag(name = "Brands")
   @GET
   @Path("/brands")
   public ApiResponse<List<BrandResponse>> listBrands() {
@@ -101,12 +109,18 @@ public class AdminResource {
         service.listBrands(ctx.requireTenantId()).stream().map(Mappers::toBrand).toList());
   }
 
+  @Operation(summary = "Get a brand by id")
+  @APIResponse(responseCode = "404", description = "Brand not found")
+  @Tag(name = "Brands")
   @GET
   @Path("/brands/{id}")
   public ApiResponse<BrandResponse> getBrand(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toBrand(service.getBrand(ctx.requireTenantId(), id)));
   }
 
+  @Operation(summary = "Rename a brand")
+  @APIResponse(responseCode = "404", description = "Brand not found")
+  @Tag(name = "Brands")
   @PUT
   @Path("/brands/{id}")
   public ApiResponse<BrandResponse> updateBrand(@PathParam("id") UUID id, UpdateBrandRequest req) {
@@ -114,6 +128,11 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toBrand(service.renameBrand(ctx.requireTenantId(), id, req)));
   }
 
+  @Operation(
+      summary = "Deactivate a brand",
+      description = "Soft delete: sets the brand's status to inactive.")
+  @APIResponse(responseCode = "404", description = "Brand not found")
+  @Tag(name = "Brands")
   @DELETE
   @Path("/brands/{id}")
   public ApiResponse<BrandResponse> deactivateBrand(@PathParam("id") UUID id) {
@@ -122,6 +141,9 @@ public class AdminResource {
 
   // ── categories ───────────────────────────────────────────────────────────
 
+  @Operation(summary = "Create a category")
+  @APIResponse(responseCode = "201", description = "Category created")
+  @Tag(name = "Categories")
   @POST
   @Path("/categories")
   public Response createCategory(CreateCategoryRequest req) {
@@ -129,6 +151,8 @@ public class AdminResource {
     return created(Mappers.toCategory(service.createCategory(ctx.requireTenantId(), req)));
   }
 
+  @Operation(summary = "List categories")
+  @Tag(name = "Categories")
   @GET
   @Path("/categories")
   public ApiResponse<List<CategoryResponse>> listCategories() {
@@ -136,12 +160,18 @@ public class AdminResource {
         service.listCategories(ctx.requireTenantId()).stream().map(Mappers::toCategory).toList());
   }
 
+  @Operation(summary = "Get a category by id")
+  @APIResponse(responseCode = "404", description = "Category not found")
+  @Tag(name = "Categories")
   @GET
   @Path("/categories/{id}")
   public ApiResponse<CategoryResponse> getCategory(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toCategory(service.getCategory(ctx.requireTenantId(), id)));
   }
 
+  @Operation(summary = "Update a category")
+  @APIResponse(responseCode = "404", description = "Category not found")
+  @Tag(name = "Categories")
   @PUT
   @Path("/categories/{id}")
   public ApiResponse<CategoryResponse> updateCategory(
@@ -151,6 +181,11 @@ public class AdminResource {
         Mappers.toCategory(service.updateCategory(ctx.requireTenantId(), id, req)));
   }
 
+  @Operation(
+      summary = "Deactivate a category",
+      description = "Soft delete: sets the category's status to inactive.")
+  @APIResponse(responseCode = "404", description = "Category not found")
+  @Tag(name = "Categories")
   @DELETE
   @Path("/categories/{id}")
   public ApiResponse<CategoryResponse> deactivateCategory(@PathParam("id") UUID id) {
@@ -160,6 +195,9 @@ public class AdminResource {
 
   // ── products ─────────────────────────────────────────────────────────────
 
+  @Operation(summary = "Create a product")
+  @APIResponse(responseCode = "201", description = "Product created")
+  @Tag(name = "Products")
   @POST
   @Path("/products")
   public Response createProduct(CreateProductRequest req) {
@@ -172,6 +210,13 @@ public class AdminResource {
    * ?after=<cursor>&limit=1-100 (default 20) for pagination — previously capped at one page with no
    * way to reach the rest of a tenant's catalog.
    */
+  @Operation(
+      summary = "List products (admin)",
+      description =
+          "Returns products in all statuses; optional ?status= and ?category= filters."
+              + " Cursor-paginated via ?after=&limit= (1-100, default 20).")
+  @APIResponse(responseCode = "400", description = "Malformed pagination cursor")
+  @Tag(name = "Products")
   @GET
   @Path("/products")
   public ApiResponse<List<ProductResponse>> listProductsAdmin(
@@ -188,12 +233,18 @@ public class AdminResource {
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  @Operation(summary = "Get a product by id")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @Tag(name = "Products")
   @GET
   @Path("/products/{id}")
   public ApiResponse<ProductResponse> getProduct(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toProduct(service.getProduct(ctx.requireTenantId(), id)));
   }
 
+  @Operation(summary = "Update a product")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @Tag(name = "Products")
   @PUT
   @Path("/products/{id}")
   public ApiResponse<ProductResponse> updateProduct(
@@ -202,6 +253,11 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toProduct(service.updateProduct(ctx.requireTenantId(), id, req)));
   }
 
+  @Operation(
+      summary = "Delist a product",
+      description = "Soft delete: sets status DELISTED and publishes ProductDelisted.")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @Tag(name = "Products")
   @DELETE
   @Path("/products/{id}")
   public ApiResponse<ProductResponse> delistProduct(@PathParam("id") UUID id) {
@@ -214,6 +270,16 @@ public class AdminResource {
    * Upload/replace the product's primary image. Raw body (not multipart): the admin app PUTs the
    * bytes with the image's own Content-Type (image/jpeg | image/png | image/webp), max 512 KB.
    */
+  @Operation(
+      summary = "Upload or replace a product's primary image",
+      description =
+          "Raw body (not multipart): PUT the bytes with the image's own Content-Type"
+              + " (image/jpeg | image/png | image/webp), max 512 KB.")
+  @APIResponse(
+      responseCode = "400",
+      description = "Content-Type not an accepted image type, body empty, or over 512 KB")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @Tag(name = "Product Images")
   @PUT
   @Path("/products/{id}/image")
   @Consumes({"image/jpeg", "image/png", "image/webp"})
@@ -225,6 +291,8 @@ public class AdminResource {
     return ApiResponse.ok("uploaded");
   }
 
+  @Operation(summary = "Remove a product's primary image")
+  @Tag(name = "Product Images")
   @DELETE
   @Path("/products/{id}/image")
   public ApiResponse<String> deleteProductImage(@PathParam("id") UUID id) {
@@ -235,6 +303,11 @@ public class AdminResource {
   // ── per-store assortment ───────────────────────────────────────────────────
 
   /** Store ids this product is sold at. Empty list = sold at all stores. */
+  @Operation(
+      summary = "Get a product's store assortment",
+      description = "Store ids this product is sold at. Empty list means sold at all stores.")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @Tag(name = "Store Assortment")
   @GET
   @Path("/products/{id}/stores")
   public ApiResponse<List<String>> getProductStores(@PathParam("id") UUID id) {
@@ -243,6 +316,11 @@ public class AdminResource {
   }
 
   /** Replace the product's store assortment. Empty/absent list = sold at all stores. */
+  @Operation(
+      summary = "Replace a product's store assortment",
+      description = "Empty/absent list means sold at all stores.")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @Tag(name = "Store Assortment")
   @PUT
   @Path("/products/{id}/stores")
   public ApiResponse<List<String>> setProductStores(
@@ -257,6 +335,9 @@ public class AdminResource {
 
   // ── variants ─────────────────────────────────────────────────────────────
 
+  @Operation(summary = "Create a variant under a product")
+  @APIResponse(responseCode = "201", description = "Variant created")
+  @Tag(name = "Variants")
   @POST
   @Path("/products/{id}/variants")
   public Response createVariant(@PathParam("id") UUID productId, CreateVariantRequest req) {
@@ -264,6 +345,8 @@ public class AdminResource {
     return created(Mappers.toVariant(service.createVariant(ctx.requireTenantId(), productId, req)));
   }
 
+  @Operation(summary = "List a product's variants (admin)")
+  @Tag(name = "Variants")
   @GET
   @Path("/products/{id}/variants")
   public ApiResponse<List<VariantResponse>> listVariants(@PathParam("id") UUID productId) {
@@ -278,6 +361,13 @@ public class AdminResource {
    * can show human-readable labels instead of raw variant UUIDs. {@code ?ids=a,b,c} (max 200);
    * unknown ids are simply omitted from the result.
    */
+  @Operation(
+      summary = "Batch-resolve variant ids",
+      description =
+          "Resolves up to 200 variant ids (?ids=a,b,c) to name/SKU/product context so admin"
+              + " screens can show human-readable labels instead of raw UUIDs. Unknown ids are"
+              + " simply omitted from the result.")
+  @Tag(name = "Variants")
   @GET
   @Path("/products/variants/resolve")
   public ApiResponse<List<VariantScanResponse>> resolveVariants(@QueryParam("ids") String ids) {
@@ -298,6 +388,9 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(summary = "Get a variant by id")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Variants")
   @GET
   @Path("/products/{id}/variants/{variantId}")
   public ApiResponse<VariantResponse> getVariant(
@@ -305,6 +398,9 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toVariant(service.getVariant(ctx.requireTenantId(), variantId)));
   }
 
+  @Operation(summary = "Update a variant")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Variants")
   @PUT
   @Path("/products/{id}/variants/{variantId}")
   public ApiResponse<VariantResponse> updateVariant(
@@ -316,6 +412,11 @@ public class AdminResource {
         Mappers.toVariant(service.updateVariant(ctx.requireTenantId(), productId, variantId, req)));
   }
 
+  @Operation(
+      summary = "Delist a variant",
+      description = "Soft delete: sets the variant's status to DELISTED.")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Variants")
   @DELETE
   @Path("/products/{id}/variants/{variantId}")
   public ApiResponse<VariantResponse> delistVariant(
@@ -326,12 +427,16 @@ public class AdminResource {
 
   // ── UOM ──────────────────────────────────────────────────────────────────
 
+  @Operation(summary = "List UOM classes")
+  @Tag(name = "Units of Measure")
   @GET
   @Path("/uom/classes")
   public ApiResponse<List<UomClassResponse>> listUomClasses() {
     return ApiResponse.ok(service.listUomClasses().stream().map(Mappers::toUomClass).toList());
   }
 
+  @Operation(summary = "List UOM unit definitions", description = "Optionally filtered by ?class=.")
+  @Tag(name = "Units of Measure")
   @GET
   @Path("/uom/units")
   public ApiResponse<List<UomDefinitionResponse>> listUomUnits(
@@ -340,6 +445,16 @@ public class AdminResource {
         service.listUomDefinitions(classCode).stream().map(Mappers::toUomDefinition).toList());
   }
 
+  @Operation(
+      summary = "Convert a quantity between two UOMs",
+      description =
+          "Uses a variant-specific conversion factor when ?variant= is given and one exists,"
+              + " else falls back to the standard class-wide factor.")
+  @APIResponse(responseCode = "400", description = "from, to, or qty missing")
+  @APIResponse(
+      responseCode = "404",
+      description = "No conversion path from the source to the target UOM")
+  @Tag(name = "Units of Measure")
   @GET
   @Path("/uom/convert")
   public ApiResponse<ConvertResult> convertUom(
@@ -362,6 +477,10 @@ public class AdminResource {
             qty));
   }
 
+  @Operation(
+      summary = "Upsert a variant-specific UOM conversion factor",
+      description = "Creates or replaces the factor between two UOMs for a specific variant.")
+  @Tag(name = "Units of Measure")
   @POST
   @Path("/uom/item-conversions")
   public Response upsertItemConversion(UomItemConversionRequest req) {
@@ -381,6 +500,10 @@ public class AdminResource {
         .build();
   }
 
+  @Operation(
+      summary = "List variant-specific UOM conversions",
+      description = "Optionally filtered by ?variant=.")
+  @Tag(name = "Units of Measure")
   @GET
   @Path("/uom/item-conversions")
   public ApiResponse<List<UomItemConversionResponse>> listItemConversions(
@@ -393,6 +516,9 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(summary = "Delete a variant-specific UOM conversion")
+  @APIResponse(responseCode = "404", description = "Item conversion not found")
+  @Tag(name = "Units of Measure")
   @DELETE
   @Path("/uom/item-conversions/{id}")
   public Response deleteItemConversion(@PathParam("id") UUID id) {
@@ -406,6 +532,9 @@ public class AdminResource {
 
   // ── Item Templates (Gap #13) ─────────────────────────────────────────────
 
+  @Operation(summary = "Create an item attribute template")
+  @APIResponse(responseCode = "201", description = "Template created")
+  @Tag(name = "Item Templates")
   @POST
   @Path("/item-templates")
   public Response createTemplate(CreateItemTemplateRequest req) {
@@ -417,6 +546,8 @@ public class AdminResource {
                 tenantId, req.name().trim(), req.description(), req.attributes())));
   }
 
+  @Operation(summary = "List item templates")
+  @Tag(name = "Item Templates")
   @GET
   @Path("/item-templates")
   public ApiResponse<List<ItemTemplateResponse>> listTemplates() {
@@ -424,12 +555,18 @@ public class AdminResource {
         service.listTemplates(ctx.requireTenantId()).stream().map(Mappers::toTemplate).toList());
   }
 
+  @Operation(summary = "Get an item template by id")
+  @APIResponse(responseCode = "404", description = "Template not found")
+  @Tag(name = "Item Templates")
   @GET
   @Path("/item-templates/{id}")
   public ApiResponse<ItemTemplateResponse> getTemplate(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toTemplate(service.getTemplate(ctx.requireTenantId(), id)));
   }
 
+  @Operation(summary = "Deactivate an item template")
+  @APIResponse(responseCode = "404", description = "Template not found")
+  @Tag(name = "Item Templates")
   @DELETE
   @Path("/item-templates/{id}")
   public ApiResponse<ItemTemplateResponse> deactivateTemplate(@PathParam("id") UUID id) {
@@ -437,6 +574,10 @@ public class AdminResource {
         Mappers.toTemplate(service.deactivateTemplate(ctx.requireTenantId(), id)));
   }
 
+  @Operation(
+      summary = "Apply a template's attributes to a variant",
+      description = "Publishes ItemTemplateApplied.")
+  @Tag(name = "Item Templates")
   @POST
   @Path("/item-templates/{id}/apply/{variantId}")
   public ApiResponse<ItemTemplateApplicationResponse> applyTemplate(
@@ -448,6 +589,15 @@ public class AdminResource {
 
   // ── Supplier / Customer Cross-References (Gap #33) ───────────────────────
 
+  @Operation(
+      summary = "Create a supplier/customer cross-reference for a variant",
+      description = "partyType must be SUPPLIER or CUSTOMER.")
+  @APIResponse(responseCode = "201", description = "Cross-reference created")
+  @APIResponse(
+      responseCode = "400",
+      description = "partyType is not SUPPLIER or CUSTOMER, or partyId is not a UUID")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Cross-References")
   @POST
   @Path("/products/variants/{variantId}/cross-references")
   public Response createCrossReference(
@@ -458,6 +608,11 @@ public class AdminResource {
             service.createCrossReference(ctx.requireTenantId(), variantId, req)));
   }
 
+  @Operation(
+      summary = "List a variant's cross-references",
+      description = "Optionally filtered by ?partyType= (SUPPLIER or CUSTOMER).")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Cross-References")
   @GET
   @Path("/products/variants/{variantId}/cross-references")
   public ApiResponse<List<ItemCrossReferenceResponse>> listCrossReferences(
@@ -468,6 +623,9 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(summary = "Delete a cross-reference")
+  @APIResponse(responseCode = "404", description = "Cross reference not found")
+  @Tag(name = "Cross-References")
   @DELETE
   @Path("/products/variants/{variantId}/cross-references/{id}")
   public Response deleteCrossReference(
@@ -478,6 +636,17 @@ public class AdminResource {
 
   // ── Item Relationships (Gap #32) ─────────────────────────────────────────
 
+  @Operation(
+      summary = "Create a related-item link between two variants",
+      description =
+          "relationshipType must be SUBSTITUTE or COMPLEMENTARY. A variant cannot relate to"
+              + " itself.")
+  @APIResponse(responseCode = "201", description = "Relationship created")
+  @APIResponse(
+      responseCode = "400",
+      description = "relationshipType invalid, or relatedVariantId equals variantId")
+  @APIResponse(responseCode = "404", description = "Either variant not found")
+  @Tag(name = "Item Relationships")
   @POST
   @Path("/products/variants/{variantId}/relationships")
   public Response createRelationship(
@@ -487,6 +656,9 @@ public class AdminResource {
     return created(Mappers.toRelationship(service.createRelationship(tenantId, variantId, req)));
   }
 
+  @Operation(summary = "List a variant's item relationships")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Item Relationships")
   @GET
   @Path("/products/variants/{variantId}/relationships")
   public ApiResponse<List<ItemRelationshipResponse>> listRelationships(
@@ -498,6 +670,9 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(summary = "Delete an item relationship")
+  @APIResponse(responseCode = "404", description = "Item relationship not found")
+  @Tag(name = "Item Relationships")
   @DELETE
   @Path("/products/variants/{variantId}/relationships/{id}")
   public Response deleteRelationship(
@@ -508,6 +683,12 @@ public class AdminResource {
 
   // ── Item Revisions (Gap #12) ──────────────────────────────────────────────
 
+  @Operation(
+      summary = "Create a dated revision of a variant's spec",
+      description = "Publishes ItemRevisionCreated.")
+  @APIResponse(responseCode = "201", description = "Revision created")
+  @APIResponse(responseCode = "400", description = "effectiveDate is not a valid date")
+  @Tag(name = "Item Revisions")
   @POST
   @Path("/products/variants/{variantId}/revisions")
   public Response createRevision(
@@ -522,6 +703,8 @@ public class AdminResource {
     return created(Mappers.toRevision(rev));
   }
 
+  @Operation(summary = "List a variant's revisions")
+  @Tag(name = "Item Revisions")
   @GET
   @Path("/products/variants/{variantId}/revisions")
   public ApiResponse<List<ItemRevisionResponse>> listRevisions(
@@ -531,6 +714,9 @@ public class AdminResource {
         service.listRevisions(tenantId, variantId).stream().map(Mappers::toRevision).toList());
   }
 
+  @Operation(summary = "Get a variant's current active revision")
+  @APIResponse(responseCode = "404", description = "No active revision for this variant")
+  @Tag(name = "Item Revisions")
   @GET
   @Path("/products/variants/{variantId}/revisions/current")
   public ApiResponse<ItemRevisionResponse> currentRevision(@PathParam("variantId") UUID variantId) {
@@ -538,6 +724,9 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toRevision(service.currentRevision(tenantId, variantId)));
   }
 
+  @Operation(summary = "Get a specific revision by id")
+  @APIResponse(responseCode = "404", description = "No such revision")
+  @Tag(name = "Item Revisions")
   @GET
   @Path("/products/variants/{variantId}/revisions/{id}")
   public ApiResponse<ItemRevisionResponse> getRevision(
@@ -560,6 +749,15 @@ public class AdminResource {
    * <p>Duplicate categories are skipped. Duplicate SKUs return an error entry but the rest
    * continue. Always returns 200 with a result summary and any per-row errors.
    */
+  @Operation(
+      summary = "Bulk-import categories and products/variants",
+      description =
+          "Imports categories then products+variants from a JSON payload. Never hard-fails the"
+              + " batch: duplicate categories are skipped, duplicate SKUs return a per-row error"
+              + " but the rest continue, and this always returns 200 with a result summary plus"
+              + " any per-row errors.")
+  @APIResponse(responseCode = "400", description = "Request body is missing")
+  @Tag(name = "Bulk Import")
   @POST
   @Path("/import")
   public ApiResponse<BulkImportResult> bulkImport(BulkImportRequest req) {
@@ -575,6 +773,17 @@ public class AdminResource {
    * optional {@code mode} (ADD|REPLACE), optional {@code storeNameToId} map (store name → UUID
    * string, resolved client-side so this service never calls tenant-svc synchronously).
    */
+  @Operation(
+      summary = "Import a supplier catalogue CSV",
+      description =
+          "Parses a raw CSV (GTBJ format) into categories/products/variants, then optionally"
+              + " receives stock and/or sets prices for the imported variants via inventory-svc"
+              + " and pricing-svc. storeNameToId is resolved client-side so this service never"
+              + " calls tenant-svc synchronously.")
+  @APIResponse(
+      responseCode = "400",
+      description = "csv field missing/blank, CSV empty, or missing required columns")
+  @Tag(name = "Bulk Import")
   @POST
   @Path("/import/supplier-csv")
   public ApiResponse<BulkImportResult> importSupplierCsv(
@@ -589,6 +798,9 @@ public class AdminResource {
 
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
 
+  @Operation(summary = "Create a merchandising catalog group")
+  @APIResponse(responseCode = "201", description = "Catalog group created")
+  @Tag(name = "Catalog Groups")
   @POST
   @Path("/catalog-groups")
   public Response createCatalogGroup(CreateCatalogGroupRequest req) {
@@ -598,6 +810,8 @@ public class AdminResource {
     return created(Mappers.toCatalogGroup(group, List.of()));
   }
 
+  @Operation(summary = "List catalog groups", description = "Includes each group's elements.")
+  @Tag(name = "Catalog Groups")
   @GET
   @Path("/catalog-groups")
   public ApiResponse<List<CatalogGroupResponse>> listCatalogGroups() {
@@ -614,6 +828,9 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(summary = "Get a catalog group by id", description = "Includes the group's elements.")
+  @APIResponse(responseCode = "404", description = "Catalog group not found")
+  @Tag(name = "Catalog Groups")
   @GET
   @Path("/catalog-groups/{id}")
   public ApiResponse<CatalogGroupResponse> getCatalogGroup(@PathParam("id") UUID id) {
@@ -626,6 +843,9 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toCatalogGroup(group, elements));
   }
 
+  @Operation(summary = "Deactivate a catalog group")
+  @APIResponse(responseCode = "404", description = "Catalog group not found")
+  @Tag(name = "Catalog Groups")
   @DELETE
   @Path("/catalog-groups/{id}")
   public Response deactivateCatalogGroup(@PathParam("id") UUID id) {
@@ -633,6 +853,13 @@ public class AdminResource {
     return Response.noContent().build();
   }
 
+  @Operation(
+      summary = "Add an element (attribute) to a catalog group",
+      description = "dataType must be TEXT, NUMBER, BOOLEAN, or DATE.")
+  @APIResponse(responseCode = "201", description = "Element created")
+  @APIResponse(responseCode = "400", description = "dataType is not TEXT, NUMBER, BOOLEAN, or DATE")
+  @APIResponse(responseCode = "404", description = "Catalog group not found")
+  @Tag(name = "Catalog Groups")
   @POST
   @Path("/catalog-groups/{groupId}/elements")
   public Response createCatalogGroupElement(
@@ -643,6 +870,9 @@ public class AdminResource {
         Mappers.toCatalogGroupElement(service.createCatalogGroupElement(tenantId, groupId, req)));
   }
 
+  @Operation(summary = "Delete a catalog group element")
+  @APIResponse(responseCode = "404", description = "Catalog group element not found")
+  @Tag(name = "Catalog Groups")
   @DELETE
   @Path("/catalog-groups/{groupId}/elements/{elementId}")
   public Response deleteCatalogGroupElement(
@@ -651,6 +881,11 @@ public class AdminResource {
     return Response.noContent().build();
   }
 
+  @Operation(summary = "Assign a variant to a catalog group")
+  @APIResponse(responseCode = "201", description = "Assignment created")
+  @APIResponse(responseCode = "400", description = "groupId missing or malformed")
+  @APIResponse(responseCode = "404", description = "Variant or catalog group not found")
+  @Tag(name = "Catalog Groups")
   @POST
   @Path("/products/variants/{variantId}/catalog-assignment")
   public Response assignCatalogGroup(
@@ -661,6 +896,9 @@ public class AdminResource {
         Mappers.toCatalogAssignment(service.assignCatalogGroup(tenantId, variantId, req)));
   }
 
+  @Operation(summary = "Get a variant's catalog group assignment")
+  @APIResponse(responseCode = "404", description = "No catalog assignment for this variant")
+  @Tag(name = "Catalog Groups")
   @GET
   @Path("/products/variants/{variantId}/catalog-assignment")
   public ApiResponse<CatalogAssignmentResponse> getCatalogAssignment(
@@ -670,6 +908,8 @@ public class AdminResource {
             service.getCatalogAssignment(ctx.requireTenantId(), variantId)));
   }
 
+  @Operation(summary = "Update a variant's catalog group element values")
+  @Tag(name = "Catalog Groups")
   @PUT
   @Path("/products/variants/{variantId}/catalog-assignment")
   public ApiResponse<CatalogAssignmentResponse> updateCatalogAssignment(
@@ -679,6 +919,9 @@ public class AdminResource {
         Mappers.toCatalogAssignment(service.updateCatalogAssignment(tenantId, variantId, req)));
   }
 
+  @Operation(summary = "Remove a variant's catalog group assignment")
+  @APIResponse(responseCode = "404", description = "No catalog assignment for this variant")
+  @Tag(name = "Catalog Groups")
   @DELETE
   @Path("/products/variants/{variantId}/catalog-assignment")
   public Response deleteCatalogAssignment(@PathParam("variantId") UUID variantId) {
@@ -688,6 +931,11 @@ public class AdminResource {
 
   // ── Container Types (Gap #37) ────────────────────────────────────────────
 
+  @Operation(
+      summary = "Create a container type",
+      description = "Packaging/container type used for variant packing hierarchy.")
+  @APIResponse(responseCode = "201", description = "Container type created")
+  @Tag(name = "Container Types")
   @POST
   @Path("/container-types")
   public Response createContainerType(CreateContainerTypeRequest req) {
@@ -696,6 +944,8 @@ public class AdminResource {
         Mappers.toContainerType(service.createContainerType(ctx.requireTenantId(), req)));
   }
 
+  @Operation(summary = "List container types")
+  @Tag(name = "Container Types")
   @GET
   @Path("/container-types")
   public ApiResponse<List<ContainerTypeResponse>> listContainerTypes() {
@@ -705,6 +955,9 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(summary = "Get a container type by id")
+  @APIResponse(responseCode = "404", description = "Container type not found")
+  @Tag(name = "Container Types")
   @GET
   @Path("/container-types/{id}")
   public ApiResponse<ContainerTypeResponse> getContainerType(@PathParam("id") UUID id) {
@@ -712,6 +965,9 @@ public class AdminResource {
         Mappers.toContainerType(service.getContainerType(ctx.requireTenantId(), id)));
   }
 
+  @Operation(summary = "Update a container type")
+  @APIResponse(responseCode = "404", description = "Container type not found")
+  @Tag(name = "Container Types")
   @PUT
   @Path("/container-types/{id}")
   public ApiResponse<ContainerTypeResponse> updateContainerType(
@@ -721,6 +977,9 @@ public class AdminResource {
         Mappers.toContainerType(service.updateContainerType(ctx.requireTenantId(), id, req)));
   }
 
+  @Operation(summary = "Deactivate a container type")
+  @APIResponse(responseCode = "404", description = "Container type not found")
+  @Tag(name = "Container Types")
   @DELETE
   @Path("/container-types/{id}")
   public ApiResponse<ContainerTypeResponse> deactivateContainerType(@PathParam("id") UUID id) {
@@ -728,6 +987,10 @@ public class AdminResource {
         Mappers.toContainerType(service.deactivateContainerType(ctx.requireTenantId(), id)));
   }
 
+  @Operation(summary = "Link a variant to a container type")
+  @APIResponse(responseCode = "201", description = "Container link created")
+  @APIResponse(responseCode = "404", description = "Variant or container type not found")
+  @Tag(name = "Container Types")
   @POST
   @Path("/products/variants/{variantId}/container-links")
   public Response createVariantContainerLink(
@@ -739,6 +1002,9 @@ public class AdminResource {
     return created(Mappers.toVariantContainerLink(link, ct.code(), ct.name()));
   }
 
+  @Operation(summary = "List a variant's container links")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Container Types")
   @GET
   @Path("/products/variants/{variantId}/container-links")
   public ApiResponse<List<VariantContainerLinkResponse>> listVariantContainerLinks(
@@ -754,6 +1020,9 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(summary = "Delete a variant-to-container-type link")
+  @APIResponse(responseCode = "404", description = "Container link not found")
+  @Tag(name = "Container Types")
   @DELETE
   @Path("/products/variants/{variantId}/container-links/{id}")
   public Response deleteVariantContainerLink(
@@ -764,6 +1033,10 @@ public class AdminResource {
 
   // ── Item Attribute Groups (Gap #36) ─────────────────────────────────────
 
+  @Operation(
+      summary = "List structured attribute-group definitions",
+      description = "Includes each group's fields.")
+  @Tag(name = "Attribute Groups")
   @GET
   @Path("/attribute-groups")
   public ApiResponse<List<ItemAttributeGroupResponse>> listAttributeGroups() {
@@ -779,6 +1052,11 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(
+      summary = "Get a structured attribute group by code",
+      description = "Includes the group's fields.")
+  @APIResponse(responseCode = "404", description = "Attribute group not found")
+  @Tag(name = "Attribute Groups")
   @GET
   @Path("/attribute-groups/{groupCode}")
   public ApiResponse<ItemAttributeGroupResponse> getAttributeGroup(
@@ -791,6 +1069,9 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toAttributeGroup(group, fields));
   }
 
+  @Operation(summary = "Set a variant's values for an attribute group")
+  @APIResponse(responseCode = "404", description = "Attribute group or variant not found")
+  @Tag(name = "Attribute Groups")
   @PUT
   @Path("/products/variants/{variantId}/attribute-groups/{groupCode}")
   public ApiResponse<VariantAttributeGroupValuesResponse> upsertVariantAttributeGroupValues(
@@ -805,6 +1086,9 @@ public class AdminResource {
                 tenantId, variantId, groupCode, req.values())));
   }
 
+  @Operation(summary = "List a variant's attribute group values (all groups)")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Attribute Groups")
   @GET
   @Path("/products/variants/{variantId}/attribute-groups")
   public ApiResponse<List<VariantAttributeGroupValuesResponse>> listVariantAttributeGroupValues(
@@ -816,6 +1100,11 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(summary = "Get a variant's values for one attribute group")
+  @APIResponse(
+      responseCode = "404",
+      description = "No attribute group values for this group on this variant")
+  @Tag(name = "Attribute Groups")
   @GET
   @Path("/products/variants/{variantId}/attribute-groups/{groupCode}")
   public ApiResponse<VariantAttributeGroupValuesResponse> getVariantAttributeGroupValues(
@@ -826,6 +1115,11 @@ public class AdminResource {
             service.getVariantAttributeGroupValues(tenantId, variantId, groupCode)));
   }
 
+  @Operation(summary = "Remove a variant's values for one attribute group")
+  @APIResponse(
+      responseCode = "404",
+      description = "No attribute group values for this group on this variant")
+  @Tag(name = "Attribute Groups")
   @DELETE
   @Path("/products/variants/{variantId}/attribute-groups/{groupCode}")
   public Response deleteVariantAttributeGroupValues(
@@ -836,6 +1130,11 @@ public class AdminResource {
 
   // ──────────────────────────────────────────────── category sets (Gap #39) ──
 
+  @Operation(
+      summary = "Create a category set",
+      description = "An alternate category hierarchy independent of the main category tree.")
+  @APIResponse(responseCode = "201", description = "Category set created")
+  @Tag(name = "Category Sets")
   @POST
   @Path("/category-sets")
   public Response createCategorySet(CreateCategorySetRequest req) {
@@ -844,6 +1143,8 @@ public class AdminResource {
     return created(Mappers.toCategorySet(cs));
   }
 
+  @Operation(summary = "List category sets")
+  @Tag(name = "Category Sets")
   @GET
   @Path("/category-sets")
   public ApiResponse<List<CategorySetResponse>> listCategorySets() {
@@ -852,12 +1153,18 @@ public class AdminResource {
         service.listCategorySets(tenantId).stream().map(Mappers::toCategorySet).toList());
   }
 
+  @Operation(summary = "Get a category set by id")
+  @APIResponse(responseCode = "404", description = "Category set not found")
+  @Tag(name = "Category Sets")
   @GET
   @Path("/category-sets/{id}")
   public ApiResponse<CategorySetResponse> getCategorySet(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toCategorySet(service.getCategorySet(ctx.requireTenantId(), id)));
   }
 
+  @Operation(summary = "Update a category set")
+  @APIResponse(responseCode = "404", description = "Category set not found")
+  @Tag(name = "Category Sets")
   @PUT
   @Path("/category-sets/{id}")
   public ApiResponse<CategorySetResponse> updateCategorySet(
@@ -866,6 +1173,9 @@ public class AdminResource {
         Mappers.toCategorySet(service.updateCategorySet(ctx.requireTenantId(), id, req)));
   }
 
+  @Operation(summary = "Delete a category set")
+  @APIResponse(responseCode = "404", description = "Category set not found")
+  @Tag(name = "Category Sets")
   @DELETE
   @Path("/category-sets/{id}")
   public Response deleteCategorySet(@PathParam("id") UUID id) {
@@ -873,6 +1183,10 @@ public class AdminResource {
     return Response.noContent().build();
   }
 
+  @Operation(summary = "Add a category as a member of a category set")
+  @APIResponse(responseCode = "201", description = "Member added")
+  @APIResponse(responseCode = "404", description = "Category set or category not found")
+  @Tag(name = "Category Sets")
   @POST
   @Path("/category-sets/{id}/members")
   public Response addCategorySetMember(
@@ -882,6 +1196,9 @@ public class AdminResource {
     return created(Mappers.toCategorySetMember(m));
   }
 
+  @Operation(summary = "List a category set's member categories")
+  @APIResponse(responseCode = "404", description = "Category set not found")
+  @Tag(name = "Category Sets")
   @GET
   @Path("/category-sets/{id}/members")
   public ApiResponse<List<CategorySetMemberResponse>> listCategorySetMembers(
@@ -893,6 +1210,9 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(summary = "Remove a category from a category set")
+  @APIResponse(responseCode = "404", description = "Category not a member of this set")
+  @Tag(name = "Category Sets")
   @DELETE
   @Path("/category-sets/{id}/members/{categoryId}")
   public Response deleteCategorySetMember(
@@ -901,6 +1221,10 @@ public class AdminResource {
     return Response.noContent().build();
   }
 
+  @Operation(summary = "Assign a variant into a category set")
+  @APIResponse(responseCode = "201", description = "Assignment created")
+  @APIResponse(responseCode = "404", description = "Variant or category set not found")
+  @Tag(name = "Category Sets")
   @POST
   @Path("/products/variants/{variantId}/category-set-assignments")
   public Response assignVariantCategorySet(
@@ -910,6 +1234,9 @@ public class AdminResource {
     return created(Mappers.toVariantCategorySetAssignment(a));
   }
 
+  @Operation(summary = "List a variant's category set assignments")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Category Sets")
   @GET
   @Path("/products/variants/{variantId}/category-set-assignments")
   public ApiResponse<List<VariantCategorySetAssignmentResponse>> listVariantCategorySetAssignments(
@@ -921,6 +1248,9 @@ public class AdminResource {
             .toList());
   }
 
+  @Operation(summary = "Remove a variant's category set assignment")
+  @APIResponse(responseCode = "404", description = "Category set assignment not found")
+  @Tag(name = "Category Sets")
   @DELETE
   @Path("/products/variants/{variantId}/category-set-assignments/{setId}")
   public Response deleteVariantCategorySetAssignment(

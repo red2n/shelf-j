@@ -3,6 +3,7 @@ package com.shelfj.iam.dto;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
 /**
  * Request/response DTOs for iam-svc. DTOs are the API contract (golden rule #10). No tenant fields
@@ -13,68 +14,121 @@ public final class Dtos {
   private Dtos() {}
 
   /** Customer self-signup. */
+  @Schema(name = "RegisterRequest", description = "Customer self-signup.")
   public record RegisterRequest(
-      @Email @NotBlank String email,
-      @NotBlank @Size(min = 8, max = 100) String password,
-      String phone) {}
+      @Schema(description = "Unique login email.") @Email @NotBlank String email,
+      @Schema(description = "Plaintext password (hashed server-side before storage).")
+          @NotBlank
+          @Size(min = 8, max = 100)
+          String password,
+      @Schema(description = "Optional contact phone number.") String phone) {}
 
   /**
    * Admin provisions a staff account by email (find-or-create). The admin supplies the initial
    * password and shares it with the new staff member out-of-band; it is never echoed back in the
    * response.
    */
+  @Schema(
+      name = "ProvisionStaffRequest",
+      description =
+          "Admin find-or-create of a staff account by email. tenantId is taken from the caller's"
+              + " JWT, never from this body.")
   public record ProvisionStaffRequest(
-      @Email @NotBlank String email, @NotBlank @Size(min = 8, max = 100) String password) {}
+      @Schema(description = "Staff member's login email.") @Email @NotBlank String email,
+      @Schema(
+              description =
+                  "Initial password, shared with the new staff member out-of-band. Never echoed"
+                      + " back in the response.")
+          @NotBlank
+          @Size(min = 8, max = 100)
+          String password) {}
 
   /** Result of staff provisioning: the userId to assign a store role to. */
-  public record ProvisionStaffResponse(String userId, String email, boolean created) {}
+  @Schema(
+      name = "ProvisionStaffResponse",
+      description = "The userId to assign a store role to via tenant-svc.")
+  public record ProvisionStaffResponse(
+      @Schema(description = "UUID of the staff user.") String userId,
+      String email,
+      @Schema(description = "True if a new user was created; false if one already existed.")
+          boolean created) {}
 
   /** Login with email + password. */
+  @Schema(name = "LoginRequest")
   public record LoginRequest(@Email @NotBlank String email, @NotBlank String password) {}
 
   /** Refresh access token. */
-  public record RefreshRequest(@NotBlank String refreshToken) {}
+  @Schema(name = "RefreshRequest")
+  public record RefreshRequest(
+      @Schema(description = "A previously issued, still-valid refresh token.") @NotBlank
+          String refreshToken) {}
 
   /** Logout / revoke a refresh token. */
-  public record LogoutRequest(@NotBlank String refreshToken) {}
+  @Schema(name = "LogoutRequest")
+  public record LogoutRequest(
+      @Schema(description = "The refresh token to revoke.") @NotBlank String refreshToken) {}
 
   /** Token pair returned on register/login/refresh. */
+  @Schema(name = "TokenResponse", description = "Access/refresh token pair.")
   public record TokenResponse(
-      String accessToken, String refreshToken, String tokenType, long expiresInSeconds) {
+      @Schema(description = "Short-lived JWT used as the Authorization: Bearer credential.")
+          String accessToken,
+      @Schema(description = "Long-lived token used to mint a new access token via /auth/refresh.")
+          String refreshToken,
+      @Schema(description = "Always \"Bearer\".") String tokenType,
+      @Schema(description = "Access token lifetime in seconds from issuance.")
+          long expiresInSeconds) {
     public static TokenResponse bearer(String access, String refresh, long ttl) {
       return new TokenResponse(access, refresh, "Bearer", ttl);
     }
   }
 
   /** Change password (authenticated user only). */
+  @Schema(name = "ChangePasswordRequest")
   public record ChangePasswordRequest(
-      @NotBlank String currentPassword, @NotBlank @Size(min = 8, max = 100) String newPassword) {}
+      @Schema(description = "The user's current password, re-verified before the change.") @NotBlank
+          String currentPassword,
+      @Schema(description = "The new password to set.") @NotBlank @Size(min = 8, max = 100)
+          String newPassword) {}
 
   /** Current principal (GET /auth/me). */
+  @Schema(name = "MeResponse", description = "The authenticated caller's identity and roles.")
   public record MeResponse(
       String userId,
-      String tenantId,
-      String type,
-      java.util.List<String> roles,
+      @Schema(description = "Null for platform-admin users, who are not tenant-scoped.")
+          String tenantId,
+      @Schema(description = "CUSTOMER, STAFF, or PLATFORM_ADMIN.") String type,
+      @Schema(description = "Role names granted to this user, e.g. OWNER, MANAGER, PLATFORM_ADMIN.")
+          java.util.List<String> roles,
       String email,
       String phone,
-      String status,
+      @Schema(description = "Account status, e.g. ACTIVE, DISABLED.") String status,
       String createdAt) {}
 
   // ── Gap #45: POS session idle timeout ─────────────────────────────────────
 
-  public record StartPosSessionRequest(@NotBlank String storeId, Integer idleTimeoutSeconds) {}
+  @Schema(name = "StartPosSessionRequest")
+  public record StartPosSessionRequest(
+      @Schema(description = "UUID of the store this cashier session is opened at.") @NotBlank
+          String storeId,
+      @Schema(description = "Idle timeout override in seconds; falls back to the store default.")
+          Integer idleTimeoutSeconds) {}
 
+  @Schema(name = "PosSessionResponse")
   public record PosSessionResponse(
       String id,
       String tenantId,
       String userId,
       String storeId,
       String startedAt,
-      String lastActivityAt,
-      String endedAt,
+      @Schema(description = "Timestamp of the last recorded activity heartbeat.")
+          String lastActivityAt,
+      @Schema(description = "Null while the session is still open.") String endedAt,
       int idleTimeoutSeconds,
-      String status) {}
+      @Schema(description = "ACTIVE, ENDED, or EXPIRED.") String status) {}
 
-  public record IdleSweepResult(int sessionsExpired) {}
+  @Schema(name = "IdleSweepResult", description = "Result of a POS idle-timeout sweep.")
+  public record IdleSweepResult(
+      @Schema(description = "Number of sessions force-expired by this sweep.")
+          int sessionsExpired) {}
 }

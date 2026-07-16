@@ -23,17 +23,25 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Physical inventory counts (Gap #16). Extracted from AdminResource. */
 @Path("/admin/inventory")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Physical Inventory")
 public class PhysicalInventoryResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Start a full physical inventory count for a store",
+      description = "Creates the count header; tags for each variant/zone are added separately.")
+  @APIResponse(responseCode = "201", description = "Physical inventory created")
   @POST
   @Path("/physical-inventories")
   public Response createPhysicalInventory(CreatePhysicalInventoryRequest req) {
@@ -47,6 +55,7 @@ public class PhysicalInventoryResource {
         .build();
   }
 
+  @Operation(summary = "List physical inventories", description = "Filterable by store.")
   @GET
   @Path("/physical-inventories")
   public ApiResponse<List<PhysicalInventoryResponse>> listPhysicalInventories(
@@ -58,6 +67,8 @@ public class PhysicalInventoryResource {
             .toList());
   }
 
+  @Operation(summary = "Get a physical inventory by id, with its tags")
+  @APIResponse(responseCode = "404", description = "Physical inventory not found")
   @GET
   @Path("/physical-inventories/{id}")
   public ApiResponse<PhysicalInventoryResponse> getPhysicalInventory(@PathParam("id") UUID id) {
@@ -66,6 +77,11 @@ public class PhysicalInventoryResource {
     return ApiResponse.ok(Mappers.toPhysicalInventory(pi, service.listTags(tenantId, id)));
   }
 
+  @Operation(
+      summary = "Add a count tag to a physical inventory",
+      description =
+          "Registers a variant (optionally at a zone) with its known system quantity to"
+              + " be counted.")
   @POST
   @Path("/physical-inventories/{id}/tags")
   public ApiResponse<PhysicalInventoryTagResponse> addTag(
@@ -78,6 +94,10 @@ public class PhysicalInventoryResource {
         Mappers.toTag(service.addTag(tenantId, piId, variantId, zoneId, req.systemQty())));
   }
 
+  @Operation(
+      summary = "Record a counted quantity for a tag",
+      description = "Sets the counted qty and computes its adjustment against system qty.")
+  @APIResponse(responseCode = "404", description = "Physical inventory tag not found")
   @POST
   @Path("/physical-inventories/{id}/tags/{tagId}/count")
   public ApiResponse<PhysicalInventoryTagResponse> countTag(
@@ -87,6 +107,10 @@ public class PhysicalInventoryResource {
     return ApiResponse.ok(Mappers.toTag(service.countTag(tenantId, piId, tagId, req.countedQty())));
   }
 
+  @Operation(
+      summary = "Complete a physical inventory",
+      description = "Marks the count complete and posts stock adjustments for tag variances.")
+  @APIResponse(responseCode = "404", description = "Physical inventory not found")
   @POST
   @Path("/physical-inventories/{id}/complete")
   public ApiResponse<PhysicalInventoryResponse> completePhysicalInventory(

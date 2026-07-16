@@ -14,6 +14,10 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * One-shot bootstrap endpoint. Creates the first PLATFORM_ADMIN when none exists. Refuses if a
@@ -27,15 +31,27 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Bootstrap")
 public class BootstrapResource {
 
   @Inject AuthService svc;
 
+  @Schema(name = "BootstrapRequest")
   public record BootstrapRequest(
-      @NotBlank String email, @NotBlank @Size(min = 8, max = 100) String password) {}
+      @Schema(description = "Email for the first platform administrator.") @NotBlank String email,
+      @Schema(description = "Initial password for the account.") @NotBlank @Size(min = 8, max = 100)
+          String password) {}
 
+  @Schema(name = "BootstrapResponse")
   public record BootstrapResponse(String userId, String email, String role) {}
 
+  @Operation(
+      summary = "Create the first platform administrator",
+      description =
+          "One-shot bootstrap for a fresh deployment. Not gated by JWT — the deployment has no"
+              + " admin yet — but refuses if a PLATFORM_ADMIN already exists.")
+  @APIResponse(responseCode = "201", description = "Platform administrator created")
+  @APIResponse(responseCode = "409", description = "A platform administrator already exists")
   @POST
   @Path("/admin")
   public Response createPlatformAdmin(BootstrapRequest req) {

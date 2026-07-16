@@ -13,16 +13,27 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 @Path("/admin/reports/inventory")
 @RequestScoped
 @Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "Inventory Reports")
 public class AdminResource {
 
   @Inject ReportingService service;
   @Inject TenantContext ctx;
 
   /** Gap #47: cross-store on-hand snapshot. */
+  @Operation(
+      summary = "Cross-store on-hand snapshot",
+      description =
+          "On-hand quantity per store/variant, projected from consumed stock-movement events."
+              + " Optionally filtered by store and/or variant.")
+  @APIResponse(responseCode = "200", description = "On-hand rows plus a grand total")
+  @APIResponse(responseCode = "400", description = "storeId or variantId is not a valid UUID")
   @GET
   @Path("/on-hand")
   public ApiResponse<Object> onHand(
@@ -36,6 +47,13 @@ public class AdminResource {
   }
 
   /** Gap #48: supply/demand netting — on-hand + open in-transit supply lines. */
+  @Operation(
+      summary = "Supply/demand netting report",
+      description =
+          "Nets on-hand quantity against open in-transit supply lines per store/variant, to show"
+              + " net available. Optionally filtered by store and/or variant.")
+  @APIResponse(responseCode = "200", description = "Netting rows")
+  @APIResponse(responseCode = "400", description = "storeId or variantId is not a valid UUID")
   @GET
   @Path("/supply-demand")
   public ApiResponse<Object> supplyDemand(
@@ -49,6 +67,13 @@ public class AdminResource {
   }
 
   /** Gap #49: movement statistics bucketed by day/week/month. */
+  @Operation(
+      summary = "Movement statistics report",
+      description =
+          "Stock in/out/net movement totals per store/variant, bucketed by the given number of"
+              + " days (e.g. 1 for daily, 7 for weekly, 30 for monthly-ish buckets).")
+  @APIResponse(responseCode = "200", description = "Movement statistic rows")
+  @APIResponse(responseCode = "400", description = "storeId or variantId is not a valid UUID")
   @GET
   @Path("/movement-stats")
   public ApiResponse<Object> movementStats(

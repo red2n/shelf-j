@@ -18,6 +18,9 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Cash management: till float, cash drops, X-report (read-only), Z-report (close).
@@ -28,12 +31,19 @@ import java.util.UUID;
 @Path("/admin/cash/till-sessions")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Till Sessions")
 public class CashManagementResource {
 
   @Inject CashManagementService svc;
   @Inject TenantContext ctx;
 
   /** Open a till session (record opening float). CASHIER or above. */
+  @Operation(
+      summary = "Open a till session",
+      description =
+          "Records the opening cash float for the store. Requires CASHIER, MANAGER, or" + " OWNER.")
+  @APIResponse(responseCode = "201", description = "Till session opened")
+  @APIResponse(responseCode = "403", description = "Caller lacks a cashier/manager/owner role")
   @POST
   public Response open(OpenTillRequest req) {
     ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
@@ -45,6 +55,9 @@ public class CashManagementResource {
   }
 
   /** Get current session status and float. */
+  @Operation(summary = "Get a till session", description = "Current session status and float.")
+  @APIResponse(responseCode = "200", description = "Till session found")
+  @APIResponse(responseCode = "404", description = "Till session not found")
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") UUID id) {
@@ -53,6 +66,13 @@ public class CashManagementResource {
   }
 
   /** Record a cash drop (mid-shift safe drop). MANAGER or above. */
+  @Operation(
+      summary = "Record a cash drop",
+      description = "Mid-shift safe drop against an open till session. Requires MANAGER or OWNER.")
+  @APIResponse(responseCode = "201", description = "Cash drop recorded")
+  @APIResponse(responseCode = "400", description = "Till already closed, or invalid drop amount")
+  @APIResponse(responseCode = "403", description = "Caller lacks a manager/owner role")
+  @APIResponse(responseCode = "404", description = "Till session not found")
   @POST
   @Path("/{id}/drops")
   public Response drop(@PathParam("id") UUID id, RecordCashDropRequest req) {
@@ -65,6 +85,14 @@ public class CashManagementResource {
   }
 
   /** X-report: mid-day read-only snapshot. Does not close the till. MANAGER or above. */
+  @Operation(
+      summary = "Get the X-report",
+      description =
+          "Mid-day read-only snapshot of the till session's totals. Does not close the"
+              + " till. Requires MANAGER or OWNER.")
+  @APIResponse(responseCode = "200", description = "X-report generated")
+  @APIResponse(responseCode = "403", description = "Caller lacks a manager/owner role")
+  @APIResponse(responseCode = "404", description = "Till session not found")
   @GET
   @Path("/{id}/x-report")
   public Response xReport(@PathParam("id") UUID id) {
@@ -73,6 +101,15 @@ public class CashManagementResource {
   }
 
   /** Z-report: end-of-day close. Requires counted cash amount. MANAGER or above. */
+  @Operation(
+      summary = "Close the till (Z-report)",
+      description =
+          "End-of-day close: computes totals against the counted cash amount and closes the"
+              + " session. Requires MANAGER or OWNER.")
+  @APIResponse(responseCode = "200", description = "Till closed, Z-report generated")
+  @APIResponse(responseCode = "400", description = "Till already closed")
+  @APIResponse(responseCode = "403", description = "Caller lacks a manager/owner role")
+  @APIResponse(responseCode = "404", description = "Till session not found")
   @POST
   @Path("/{id}/close")
   public Response close(@PathParam("id") UUID id, CloseTillRequest req) {

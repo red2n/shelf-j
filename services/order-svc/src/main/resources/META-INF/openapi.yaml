@@ -1,4 +1,31 @@
 openapi: 3.0.3
+info:
+  title: Order Service API
+  version: "1.0"
+  description: >
+    The transaction/sales-journal service for both channels (docs/ARCHITECTURE.md §10, order-svc):
+    online orders/returns and POS parked sales, layaway, gift cards, special orders, and receipts.
+    Online checkout and in-store POS share the same endpoints — only channel/fulfilmentType differ
+    — so inventory, payments, and reporting behave identically across channels. Coordinates the
+    checkout saga with pricing-svc, inventory-svc, and payment-svc, and publishes order/layaway
+    lifecycle events via the transactional outbox.
+tags:
+  - name: Orders
+    description: Order lifecycle — place, confirm, cancel, fulfil, void (POS), and returns.
+  - name: Layaways
+    description: Layaway creation, deposits, completion, and cancellation (POS feature).
+  - name: Gift Cards
+    description: Gift card issuance, reload, redemption, and transaction history.
+  - name: Special Orders
+    description: Customer orders placed at a store for future delivery, without immediate stock deduction.
+  - name: POS Operations
+    description: Parked (suspended) sales and no-sale / open-drawer logging for the POS register.
+  - name: POS Transaction Log
+    description: Append-only POSLog / e-journal of completed POS transactions.
+  - name: POS Stock Positions
+    description: Read-only local projection of live on-hand quantities for POS screens.
+  - name: Receipts
+    description: Receipt / e-journal generation records for orders (print and email).
 components:
   securitySchemes:
     bearerAuth:

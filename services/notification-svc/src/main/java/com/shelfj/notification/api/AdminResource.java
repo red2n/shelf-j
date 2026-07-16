@@ -13,15 +13,26 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 @Path("/admin/notifications")
 @RequestScoped
 @Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "Notifications")
 public class AdminResource {
 
   @Inject NotificationService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "List shortage alerts",
+      description =
+          "Paginated shortage alerts for the caller's tenant, optionally filtered by store or"
+              + " variant. Recorded from consumed StockBelowThreshold events, newest first.")
+  @APIResponse(responseCode = "200", description = "Shortage alerts")
+  @APIResponse(responseCode = "400", description = "storeId or variantId is not a valid UUID")
   @GET
   @Path("/shortage-alerts")
   public ApiResponse<Object> listShortageAlerts(
@@ -42,6 +53,12 @@ public class AdminResource {
   }
 
   /** In-app notifications feed (welcome / order-confirmation / …) for the tenant, newest first. */
+  @Operation(
+      summary = "List in-app notifications",
+      description =
+          "In-app notifications feed (welcome / order-confirmation / shortage alert / …) for the"
+              + " caller's tenant, newest first, optionally filtered by recipient.")
+  @APIResponse(responseCode = "200", description = "Notifications")
   @GET
   public ApiResponse<Object> listNotifications(
       @QueryParam("recipient") String recipient,

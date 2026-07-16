@@ -20,6 +20,9 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Public storefront catalog. The tenant (which business's storefront) comes from {@code
@@ -37,11 +40,22 @@ import java.util.UUID;
 @Path("/catalog")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "Catalog")
 public class CatalogResource {
 
   @Inject ProductService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Browse or search the public catalog",
+      description =
+          "Lists ACTIVE products; the online channel further filters to sellable_online, POS"
+              + " channel to sellable_pos. At least one of q/sku/barcode routes to the search"
+              + " path; otherwise the standard filtered list is returned. Tenant comes from"
+              + " X-Tenant-Id.")
+  @APIResponse(
+      responseCode = "400",
+      description = "storefront tenant not resolved, or store is not a UUID")
   @GET
   @Path("/products")
   public ApiResponse<List<ProductResponse>> list(
@@ -84,6 +98,9 @@ public class CatalogResource {
   }
 
   /** Public category list for storefront browse-by-category. Tenant from {@code X-Tenant-Id}. */
+  @Operation(
+      summary = "List storefront categories",
+      description = "Public category list for browse-by-category. Tenant from X-Tenant-Id.")
   @GET
   @Path("/categories")
   public ApiResponse<List<CategoryResponse>> categories() {
@@ -91,12 +108,15 @@ public class CatalogResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(summary = "Get a storefront product by id")
+  @APIResponse(responseCode = "404", description = "No such product for this tenant")
   @GET
   @Path("/products/{id}")
   public ApiResponse<ProductResponse> get(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toProduct(service.getProduct(requireTenant(), id)));
   }
 
+  @Operation(summary = "List a product's variants")
   @GET
   @Path("/products/{id}/variants")
   public ApiResponse<List<VariantResponse>> variants(@PathParam("id") UUID id) {
@@ -109,6 +129,13 @@ public class CatalogResource {
    * storefront/admin renders its colour-tile placeholder instead. Cached briefly so catalog pages
    * don't re-download on every visit but a replaced image shows up within a minute.
    */
+  @Operation(
+      summary = "Fetch a product's primary image",
+      description =
+          "Returns the owner-uploaded image bytes. 404 when the product has no image — the"
+              + " caller should render a placeholder instead. Cached for 60 seconds.")
+  @APIResponse(responseCode = "200", description = "Image bytes with their original Content-Type")
+  @APIResponse(responseCode = "404", description = "Product has no image, or does not exist")
   @GET
   @Path("/products/{id}/image")
   public jakarta.ws.rs.core.Response image(@PathParam("id") UUID id) {
@@ -122,6 +149,13 @@ public class CatalogResource {
    * POS barcode-scan lookup. Returns the variant and its parent product in a single response so the
    * terminal does not need a second round-trip. Returns 404 when no active variant matches.
    */
+  @Operation(
+      summary = "Look up a variant by barcode",
+      description =
+          "POS barcode-scan lookup. Returns the variant and its parent product in a single"
+              + " response so the terminal needs only one round-trip.")
+  @APIResponse(responseCode = "400", description = "barcode is blank")
+  @APIResponse(responseCode = "404", description = "No active variant found for this barcode")
   @GET
   @Path("/variants/by-barcode/{code}")
   public ApiResponse<VariantScanResponse> scanByBarcode(@PathParam("code") String code) {

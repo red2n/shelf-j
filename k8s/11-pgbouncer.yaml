@@ -1,0 +1,74 @@
+# PgBouncer — connection pooler (transaction mode). Business services route their
+# runtime pool through pgbouncer:6432; Flyway migrates straight to postgres:5432 (see
+# shelfj-common-env ConfigMap). Mirrors docker-compose.yml's pgbouncer service.
+#
+# NOTE: docker-compose.yml works around a pgbouncer c-ares DNS bug specific to Docker's
+# generated /etc/resolv.conf ("search ." + edns0/ndots — see that file's comment) by
+# pinning postgres to a static IP + extra_hosts. Kubernetes' resolv.conf is a normal
+# search-domain list (ndots:5), not Docker's "search ." form, so this bug is not expected
+# to recur — but if pgbouncer logs "server DNS lookup failed (bad-af)" on "postgres",
+# add a hostAliases entry here pointing "postgres" at the postgres Service's ClusterIP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: shelf-j
+spec:
+  selector: { app: pgbouncer }
+  ports:
+    - port: 6432
+      targetPort: 6432
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: shelf-j
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: pgbouncer } }
+  template:
+    metadata: { labels: { app: pgbouncer } }
+    spec:
+      containers:
+        - name: pgbouncer
+          image: pgbouncer/pgbouncer:latest
+          ports: [{ containerPort: 6432 }]
+          env:
+            - { name: DATABASES, value: "* = host=postgres port=5432 dbname=shelfj" }
+            - { name: PGBOUNCER_POOL_MODE, value: "transaction" }
+            - { name: PGBOUNCER_MAX_CLIENT_CONN, value: "2000" }
+            - { name: PGBOUNCER_DEFAULT_POOL_SIZE, value: "50" }
+            - { name: PGBOUNCER_MIN_POOL_SIZE, value: "4" }
+            - { name: PGBOUNCER_RESERVE_POOL_SIZE, value: "10" }
+            - { name: PGBOUNCER_MAX_DB_CONNECTIONS, value: "220" }
+            - { name: PGBOUNCER_SERVER_LIFETIME, value: "3600" }
+            - { name: PGBOUNCER_SERVER_IDLE_TIMEOUT, value: "300" }
+            - { name: PGBOUNCER_QUERY_TIMEOUT, value: "30" }
+            - { name: PGBOUNCER_IGNORE_STARTUP_PARAMETERS, value: "extra_float_digits,options" }
+            - { name: PGBOUNCER_AUTH_TYPE, value: "trust" }
+            - { name: PGBOUNCER_AUTH_FILE, value: "/etc/pgbouncer/userlist.txt" }
+          volumeMounts:
+            - name: userlist
+              mountPath: /etc/pgbouncer/userlist.txt
+              subPath: userlist.txt
+              readOnly: true
+          readinessProbe:
+            tcpSocket: { port: 6432 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            tcpSocket: { port: 6432 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { cpu: 300m, memory: 128Mi }
+      volumes:
+        - name: userlist
+          secret: { secretName: shelfj-postgres-init, items: [{ key: userlist.txt, path: userlist.txt }] }

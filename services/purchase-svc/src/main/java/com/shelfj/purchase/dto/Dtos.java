@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
 /**
  * Request and response DTOs for purchase-svc. These are the HTTP contract — never expose domain.
@@ -19,14 +20,17 @@ public final class Dtos {
   private Dtos() {}
 
   // ── Supplier ──────────────────────────────────────────────────────────────────
+  @Schema(name = "CreateSupplierRequest", description = "Create a supplier master record.")
   public record CreateSupplierRequest(
       @NotBlank String name,
       String vatNumber,
       boolean vatRegistered,
-      String countryCode,
-      String currency,
-      @Min(1) Integer paymentTermsDays) {}
+      @Schema(description = "ISO 3166-1 alpha-2 country code. Defaults to GB.") String countryCode,
+      @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
+      @Schema(description = "Payment terms in days. Defaults to 30 (BACS standard).") @Min(1)
+          Integer paymentTermsDays) {}
 
+  @Schema(name = "SupplierResponse")
   public record SupplierResponse(
       UUID id,
       UUID tenantId,
@@ -40,21 +44,28 @@ public final class Dtos {
       Instant updatedAt) {}
 
   // ── Purchase Order ────────────────────────────────────────────────────────────
+  @Schema(name = "CreatePurchaseOrderRequest", description = "Create a DRAFT purchase order.")
   public record CreatePurchaseOrderRequest(
-      @NotNull UUID supplierId, @NotNull UUID storeId, String currency, String expectedDelivery) {}
+      @NotNull UUID supplierId,
+      @NotNull UUID storeId,
+      @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
+      @Schema(description = "ISO-8601 date the goods are expected to arrive.")
+          String expectedDelivery) {}
 
+  @Schema(name = "AddPurchaseOrderLineRequest")
   public record AddPurchaseOrderLineRequest(
       @NotNull UUID variantId,
       @NotNull @DecimalMin("0.001") BigDecimal qty,
       @NotNull @DecimalMin("0.01") BigDecimal unitPrice,
-      String vatCode) {}
+      @Schema(description = "UK VAT code, e.g. T1. Defaults to T1.") String vatCode) {}
 
+  @Schema(name = "PurchaseOrderResponse")
   public record PurchaseOrderResponse(
       UUID id,
       UUID tenantId,
       UUID supplierId,
       UUID storeId,
-      String status,
+      @Schema(description = "DRAFT or SUBMITTED.") String status,
       String currency,
       BigDecimal totalNet,
       BigDecimal totalVat,
@@ -63,6 +74,7 @@ public final class Dtos {
       Instant createdAt,
       Instant updatedAt) {}
 
+  @Schema(name = "PurchaseOrderLineResponse")
   public record PurchaseOrderLineResponse(
       UUID id,
       UUID poId,
@@ -73,14 +85,19 @@ public final class Dtos {
       Instant createdAt) {}
 
   // ── Goods Receipt ─────────────────────────────────────────────────────────────
+  @Schema(
+      name = "CreateGoodsReceiptRequest",
+      description = "Record goods received against a SUBMITTED purchase order.")
   public record CreateGoodsReceiptRequest(
       @NotNull UUID poId,
       @NotNull UUID storeId,
       @NotNull @Valid List<GoodsReceiptLineRequest> lines) {}
 
+  @Schema(name = "GoodsReceiptLineRequest")
   public record GoodsReceiptLineRequest(
       @NotNull UUID variantId, @NotNull @DecimalMin("0.001") BigDecimal qtyReceived) {}
 
+  @Schema(name = "GoodsReceiptResponse")
   public record GoodsReceiptResponse(
       UUID id,
       UUID tenantId,
@@ -89,28 +106,44 @@ public final class Dtos {
       Instant receivedAt,
       List<GoodsReceiptLineResponse> lines) {}
 
+  @Schema(name = "GoodsReceiptLineResponse")
   public record GoodsReceiptLineResponse(
       UUID id, UUID variantId, BigDecimal qtyReceived, Instant createdAt) {}
 
   // ── Intercompany Invoice ──────────────────────────────────────────────────────
+  @Schema(
+      name = "RaiseIntercompanyInvoiceRequest",
+      description =
+          "Raises an AR/AP intercompany invoice pair for an inter-org stock transfer between two"
+              + " stores.")
   public record RaiseIntercompanyInvoiceRequest(
-      @NotNull String fromStoreId,
-      @NotNull String toStoreId,
-      String transferRef,
-      @NotNull @DecimalMin("0.01") BigDecimal netAmount,
+      @Schema(description = "UUID of the sending store.") @NotNull String fromStoreId,
+      @Schema(description = "UUID of the receiving store.") @NotNull String toStoreId,
+      @Schema(description = "Optional UUID linking this invoice pair to a transfer order.")
+          String transferRef,
+      @Schema(description = "Net amount, per HMRC INTM arm's-length transfer pricing.")
+          @NotNull
+          @DecimalMin("0.01")
+          BigDecimal netAmount,
       @NotNull @DecimalMin("0") BigDecimal vatAmount,
       @NotNull @DecimalMin("0.01") BigDecimal grossAmount,
-      String vatCode,
-      boolean vatDisregarded,
-      String currency) {}
+      @Schema(description = "UK VAT code, e.g. T1. Defaults to T1.") String vatCode,
+      @Schema(
+              description =
+                  "True when both stores are in the same VAT group (HMRC VAT Notice 700/2) — no"
+                      + " VAT nominal entries are posted.")
+          boolean vatDisregarded,
+      @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency) {}
 
+  @Schema(name = "IntercompanyInvoicePairResponse")
   public record IntercompanyInvoicePairResponse(
       IntercompanyInvoiceResponse arInvoice, IntercompanyInvoiceResponse apInvoice) {}
 
+  @Schema(name = "IntercompanyInvoiceResponse")
   public record IntercompanyInvoiceResponse(
       UUID id,
       UUID tenantId,
-      String invoiceType,
+      @Schema(description = "AR (sending store) or AP (receiving store).") String invoiceType,
       UUID fromStoreId,
       UUID toStoreId,
       UUID transferRef,
@@ -119,22 +152,28 @@ public final class Dtos {
       BigDecimal grossAmount,
       String vatCode,
       boolean vatDisregarded,
-      String status,
+      @Schema(description = "RAISED or SETTLED.") String status,
       LocalDate invoiceDate,
-      LocalDate paymentDueDate,
+      @Schema(description = "Invoice date + 30 days (BACS standard terms).")
+          LocalDate paymentDueDate,
       String currency,
       Instant createdAt) {}
 
   // ── Nominal Ledger ────────────────────────────────────────────────────────────
+  @Schema(
+      name = "NominalLedgerEntryResponse",
+      description = "A single double-entry nominal ledger line (debit or credit, never both).")
   public record NominalLedgerEntryResponse(
       UUID id,
       UUID tenantId,
       LocalDate entryDate,
-      String nominalCode,
+      @Schema(description = "Nominal account code, e.g. 1100 (Debtors), 2100 (Creditors).")
+          String nominalCode,
       String nominalName,
       BigDecimal debit,
       BigDecimal credit,
       String description,
-      UUID sourceRef,
+      @Schema(description = "UUID of the source document (invoice, settlement, etc.).")
+          UUID sourceRef,
       Instant createdAt) {}
 }

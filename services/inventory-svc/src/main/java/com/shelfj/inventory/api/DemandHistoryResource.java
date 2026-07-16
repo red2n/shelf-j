@@ -19,17 +19,25 @@ import jakarta.ws.rs.core.MediaType;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Demand history: SALE-movement aggregation into buckets. Extracted from AdminResource. */
 @Path("/admin/inventory")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Demand History")
 public class DemandHistoryResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Aggregate SALE movements into demand buckets",
+      description =
+          "Upserts per-store/variant demand buckets (day/week/month) from SALE-type stock"
+              + " movements, feeding safety-stock and ROP/EOQ computation.")
   @POST
   @Path("/demand/aggregate")
   public ApiResponse<AggregateResult> aggregateDemand(AggregateRequest req) {
@@ -47,6 +55,9 @@ public class DemandHistoryResource {
     return ApiResponse.ok(new AggregateResult(bucketsUpserted, bucketType));
   }
 
+  @Operation(
+      summary = "List demand history buckets",
+      description = "Filterable by store, variant, and bucket type.")
   @GET
   @Path("/demand/history")
   public ApiResponse<List<DemandBucketResponse>> listDemandHistory(

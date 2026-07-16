@@ -23,6 +23,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Reservation API (called by order-svc during checkout): hold, consume, release, and read.
@@ -32,11 +35,19 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Reservations")
 public class ReservationResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Hold stock for an order",
+      description =
+          "Places a time-bounded HELD reservation against available stock (FIFO/expiry-ordered)."
+              + " Supports Idempotency-Key so a retried checkout does not double-reserve.")
+  @APIResponse(responseCode = "201", description = "Reservation held")
+  @APIResponse(responseCode = "422", description = "Not enough stock to reserve")
   @POST
   public Response reserve(
       @HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
@@ -59,6 +70,7 @@ public class ReservationResource {
         .build();
   }
 
+  @Operation(summary = "List reservations", description = "Filterable by store and status.")
   @GET
   public ApiResponse<List<ReservationResponse>> listReservations(
       @QueryParam("store") String store,
@@ -74,12 +86,20 @@ public class ReservationResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(summary = "Get a reservation by id")
+  @APIResponse(responseCode = "404", description = "No such reservation")
   @GET
   @Path("/{id}")
   public ApiResponse<ReservationResponse> getReservation(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toReservation(service.getReservation(ctx.requireTenantId(), id)));
   }
 
+  @Operation(
+      summary = "Consume a held reservation",
+      description =
+          "FIFO/expiry-ordered deduction of the reserved qty from the underlying batches"
+              + " once the order is confirmed.")
+  @APIResponse(responseCode = "422", description = "Reservation is not in a HELD state")
   @POST
   @Path("/{id}/consume")
   public ApiResponse<String> consume(@PathParam("id") UUID id) {
@@ -87,6 +107,9 @@ public class ReservationResource {
     return ApiResponse.ok("consumed");
   }
 
+  @Operation(
+      summary = "Release a held reservation",
+      description = "Returns the held qty to available stock; a no-op if already released/expired.")
   @POST
   @Path("/{id}/release")
   public ApiResponse<String> release(@PathParam("id") UUID id) {
@@ -96,6 +119,11 @@ public class ReservationResource {
 
   // ── Gap #29: Bulk (batch) reservations ────────────────────────────────────
 
+  @Operation(
+      summary = "Reserve stock for multiple lines in one call",
+      description =
+          "Best-effort bulk reserve: each line is attempted independently and the"
+              + " succeeded/failed counts plus per-line results are returned.")
   @POST
   @Path("/batch")
   public ApiResponse<BatchReserveResponse> bulkReserve(BatchReserveRequest req) {

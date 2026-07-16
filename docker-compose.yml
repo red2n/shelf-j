@@ -306,18 +306,18 @@ services:
     ports: ["127.0.0.1:${SWAGGER_UI_PORT:-8082}:8080"]
     environment:
       URLS: >-
-        [{"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/iam-svc/openapi", "name": "iam-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/tenant-svc/openapi", "name": "tenant-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/product-svc/openapi", "name": "product-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/inventory-svc/openapi", "name": "inventory-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/pricing-svc/openapi", "name": "pricing-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/cart-svc/openapi", "name": "cart-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/order-svc/openapi", "name": "order-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/payment-svc/openapi", "name": "payment-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/purchase-svc/openapi", "name": "purchase-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/customer-svc/openapi", "name": "customer-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/notification-svc/openapi", "name": "notification-svc"},
-        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/reporting-svc/openapi", "name": "reporting-svc"}]
+        [{"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/iam-svc/openapi", "name": "iam-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/tenant-svc/openapi", "name": "tenant-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/product-svc/openapi", "name": "product-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/inventory-svc/openapi", "name": "inventory-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/pricing-svc/openapi", "name": "pricing-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/cart-svc/openapi", "name": "cart-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/order-svc/openapi", "name": "order-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/payment-svc/openapi", "name": "payment-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/purchase-svc/openapi", "name": "purchase-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/customer-svc/openapi", "name": "customer-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/notification-svc/openapi", "name": "notification-svc"},
+        {"url": "http://localhost:${GATEWAY_HOST_PORT:-8090}/api/v1/reporting-svc/openapi", "name": "reporting-svc"}]
       URLS_PRIMARY_NAME: iam-svc
     mem_limit: ${SWAGGER_UI_MEM_LIMIT:-256m}
     networks: [shelfj_network]

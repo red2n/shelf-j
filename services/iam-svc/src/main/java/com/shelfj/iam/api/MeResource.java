@@ -18,6 +18,9 @@ import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * {@code GET /auth/me} — returns the current principal. iam-svc verifies the access token itself
@@ -27,11 +30,19 @@ import java.util.UUID;
 @Path("/auth/me")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "Me")
 public class MeResource {
 
   @Inject JwtService jwt;
   @Inject AuthService auth;
 
+  @Operation(
+      summary = "Get the current principal",
+      description =
+          "Verifies the bearer access token itself (iam-svc owns JWT verification) and returns the"
+              + " authenticated user's identity and roles.")
+  @APIResponse(responseCode = "200", description = "Current principal")
+  @APIResponse(responseCode = "401", description = "Missing, invalid, or expired bearer token")
   @GET
   public ApiResponse<MeResponse> me(@HeaderParam(HttpHeaders.AUTHORIZATION) String authorization) {
     if (authorization == null || !authorization.startsWith("Bearer ")) {

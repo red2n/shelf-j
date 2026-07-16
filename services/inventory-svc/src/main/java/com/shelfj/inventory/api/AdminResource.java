@@ -32,6 +32,9 @@ import jakarta.ws.rs.core.Response;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Admin inventory ops: receive (manual), adjust, levels, batches, movements, purge. This is the
@@ -48,6 +51,7 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Stock Operations")
 public class AdminResource {
 
   @Inject InventoryService service;
@@ -55,6 +59,12 @@ public class AdminResource {
 
   // ── receive ──────────────────────────────────────────────────────────────
 
+  @Operation(
+      summary = "Receive stock manually into a new batch",
+      description =
+          "Creates a new batch/lot for a variant at a store and records the StockReceived event."
+              + " Supports Idempotency-Key so a retried receipt does not double-count stock.")
+  @APIResponse(responseCode = "201", description = "Batch received")
   @POST
   @Path("/receive")
   public Response receive(
@@ -84,6 +94,11 @@ public class AdminResource {
         .build();
   }
 
+  @Operation(
+      summary = "Receive multiple items in one call",
+      description =
+          "Best-effort bulk receive: each line is processed independently, and any per-line"
+              + " failure is collected in the result instead of aborting the whole batch.")
   @POST
   @Path("/receive/batch")
   public ApiResponse<BatchReceiveResult> receiveBatch(BatchReceiveRequest req) {
@@ -118,6 +133,11 @@ public class AdminResource {
 
   // ── adjust ───────────────────────────────────────────────────────────────
 
+  @Operation(
+      summary = "Adjust stock by a signed delta",
+      description =
+          "Manual correction (e.g. stock-take variance, damage write-off) recorded as a"
+              + " StockAdjusted movement. Supports Idempotency-Key.")
   @POST
   @Path("/adjust")
   public ApiResponse<String> adjust(
@@ -137,6 +157,11 @@ public class AdminResource {
 
   // ── levels ───────────────────────────────────────────────────────────────
 
+  @Operation(
+      summary = "List stock levels",
+      description =
+          "Cursor-paginated on-hand/reserved/available quantities per variant, optionally"
+              + " filtered by store.")
   @GET
   @Path("/levels")
   public ApiResponse<List<LevelResponse>> levels(
@@ -152,6 +177,9 @@ public class AdminResource {
   }
 
   /** Aggregate KPI counts (total SKUs + low-stock) without paging the full levels list. */
+  @Operation(
+      summary = "Get stock level KPI summary",
+      description = "Aggregate SKU count and low-stock count without paging the full levels list.")
   @GET
   @Path("/levels/summary")
   public ApiResponse<LevelSummaryResponse> levelsSummary(@QueryParam("store") String store) {
@@ -164,6 +192,9 @@ public class AdminResource {
 
   // ── batches ──────────────────────────────────────────────────────────────
 
+  @Operation(
+      summary = "List batches",
+      description = "Filterable by store, variant, and material status.")
   @GET
   @Path("/batches")
   public ApiResponse<List<BatchResponse>> listBatches(
@@ -183,12 +214,18 @@ public class AdminResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(summary = "Get a batch by id")
+  @APIResponse(responseCode = "404", description = "No such batch")
   @GET
   @Path("/batches/{id}")
   public ApiResponse<BatchResponse> getBatch(@PathParam("id") UUID id) {
     return ApiResponse.ok(Mappers.toBatch(service.getBatch(ctx.requireTenantId(), id)));
   }
 
+  @Operation(
+      summary = "Update a batch's material status",
+      description = "Sets a hold/release-style material status (e.g. QUARANTINE) with a reason.")
+  @APIResponse(responseCode = "404", description = "No such batch")
   @PUT
   @Path("/batches/{id}/material-status")
   public ApiResponse<BatchResponse> updateMaterialStatus(
@@ -201,6 +238,9 @@ public class AdminResource {
 
   // ── movements ────────────────────────────────────────────────────────────
 
+  @Operation(
+      summary = "List stock movements",
+      description = "Append-only movement ledger, filterable by store, variant, and movement type.")
   @GET
   @Path("/movements")
   public ApiResponse<List<MovementResponse>> listMovements(
@@ -221,6 +261,11 @@ public class AdminResource {
 
   // ── purge movements (Gap #30) ───────────────────────────────────────────
 
+  @Operation(
+      summary = "Purge old stock movements",
+      description =
+          "Permanently deletes movement history older than the given instant (Gap #30 — used for"
+              + " data retention housekeeping, not exposed to regular admin users).")
   @POST
   @Path("/movements/purge")
   public ApiResponse<PurgeResult> purgeMovements(PurgeMovementsRequest req) {

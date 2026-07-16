@@ -19,6 +19,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * ABC analysis (Gap #9): variant classification runs and assignments. Extracted from AdminResource.
@@ -27,11 +30,21 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "ABC Analysis")
 public class AbcAnalysisResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Run an ABC classification compile",
+      description =
+          "Scores variants by value or velocity and assigns A/B/C classes based on cumulative"
+              + " percentage thresholds.")
+  @APIResponse(responseCode = "201", description = "Compile run persisted with its assignments")
+  @APIResponse(
+      responseCode = "400",
+      description = "Invalid criteria (must be VALUE or VELOCITY) or invalid thresholds")
   @POST
   @Path("/abc/compile")
   public Response runAbcCompile(RunAbcRequest req) {
@@ -49,6 +62,11 @@ public class AbcAnalysisResource {
         .build();
   }
 
+  @Operation(
+      summary = "List ABC assignments",
+      description =
+          "Returns the latest ABC class assignment per variant, optionally filtered by"
+              + " store or class.")
   @GET
   @Path("/abc/assignments")
   public ApiResponse<List<AbcAssignmentResponse>> listAbcAssignments(
@@ -65,6 +83,8 @@ public class AbcAnalysisResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(summary = "Get a variant's ABC assignment")
+  @APIResponse(responseCode = "404", description = "No ABC assignment for this store/variant")
   @GET
   @Path("/abc/assignments/{storeId}/{variantId}")
   public ApiResponse<AbcAssignmentResponse> getAbcAssignment(

@@ -21,17 +21,27 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Move orders (Gap #5): intra-store zone-to-zone stock moves. Extracted from AdminResource. */
 @Path("/admin/inventory")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Move Orders")
 public class MoveOrderResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Create a move order",
+      description =
+          "Requests one or more variants be moved from one zone to another within the"
+              + " same store.")
+  @APIResponse(responseCode = "201", description = "Move order created")
   @POST
   @Path("/move-orders")
   public Response createMoveOrder(CreateMoveOrderRequest req) {
@@ -60,6 +70,7 @@ public class MoveOrderResource {
         .build();
   }
 
+  @Operation(summary = "List move orders", description = "Filterable by store and status.")
   @GET
   @Path("/move-orders")
   public ApiResponse<List<MoveOrderResponse>> listMoveOrders(
@@ -75,6 +86,8 @@ public class MoveOrderResource {
             .toList());
   }
 
+  @Operation(summary = "Get a move order by id, with its lines")
+  @APIResponse(responseCode = "404", description = "No such move order")
   @GET
   @Path("/move-orders/{id}")
   public ApiResponse<MoveOrderResponse> getMoveOrder(@PathParam("id") UUID id) {
@@ -82,6 +95,11 @@ public class MoveOrderResource {
     return ApiResponse.ok(Mappers.toMoveOrder(wl.order(), wl.lines()));
   }
 
+  @Operation(
+      summary = "Pick a move order",
+      description = "Marks the move order picked, deducting the moved qty from the source zone.")
+  @APIResponse(responseCode = "404", description = "No such move order")
+  @APIResponse(responseCode = "422", description = "Move order is not in a pickable state")
   @POST
   @Path("/move-orders/{id}/pick")
   public ApiResponse<MoveOrderResponse> pickMoveOrder(@PathParam("id") UUID id) {
@@ -89,6 +107,11 @@ public class MoveOrderResource {
     return ApiResponse.ok(Mappers.toMoveOrder(wl.order(), wl.lines()));
   }
 
+  @Operation(summary = "Cancel a move order")
+  @APIResponse(responseCode = "404", description = "No such move order")
+  @APIResponse(
+      responseCode = "422",
+      description = "Move order cannot be cancelled in its current state")
   @POST
   @Path("/move-orders/{id}/cancel")
   public ApiResponse<MoveOrderResponse> cancelMoveOrder(@PathParam("id") UUID id) {

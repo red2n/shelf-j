@@ -1,0 +1,49 @@
+# config-svc — central non-secret config lookup. Every business service calls it at
+# startup and falls back to baked-in defaults if unreachable (see shelfj-common-env).
+apiVersion: v1
+kind: Service
+metadata:
+  name: config
+  namespace: shelf-j
+spec:
+  selector: { app: config }
+  ports: [{ port: 8080, targetPort: 8080 }]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config
+  namespace: shelf-j
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: config } }
+  template:
+    metadata: { labels: { app: config } }
+    spec:
+      containers:
+        - name: config
+          image: ghcr.io/red2n/shelf-j-config:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: shelfj-common-env }
+            - secretRef: { name: shelfj-config-token } # key "shelfj.config.token" — exact-match property name
+          env:
+            - { name: JAVA_TOOL_OPTIONS, value: "-Xms64m -Xmx256m -XX:+UseG1GC" }
+          # config-svc's health endpoint is /health (not /health/live like the business
+          # services + gateway) — see docker-compose.yml's config service healthcheck.
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 12
+          resources:
+            requests: { cpu: 100m, memory: 200Mi }
+            limits: { cpu: 300m, memory: 384Mi }

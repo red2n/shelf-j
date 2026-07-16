@@ -16,17 +16,28 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Resolve the effective GBP price + VAT breakdown for a given variant, channel, and quantity. */
 @RequestScoped
 @Path("/prices")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Price Resolution")
 public class PriceResolveResource {
 
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Resolve the effective price for a variant",
+      description =
+          "Resolves unit price, applicable promotion, VAT code/rate/amount, and total-with-VAT"
+              + " for a single variant/channel/quantity.")
+  @APIResponse(responseCode = "200", description = "Resolved price and VAT breakdown")
+  @APIResponse(responseCode = "404", description = "No active price configured for the variant")
   @POST
   @Path("/resolve")
   public Response resolve(ResolvePriceRequest req) {
@@ -37,6 +48,13 @@ public class PriceResolveResource {
   /**
    * Batch form of {@link #resolve} — one call for every line in an order instead of one per line.
    */
+  @Operation(
+      summary = "Resolve effective prices for multiple lines",
+      description =
+          "Batch form of price resolution — one call for every line in an order instead of one"
+              + " HTTP round trip per line. Results are returned in the same order as the request.")
+  @APIResponse(responseCode = "200", description = "Resolved prices, one per input line")
+  @APIResponse(responseCode = "404", description = "No active price configured for a variant")
   @POST
   @Path("/resolve-batch")
   public Response resolveBatch(ResolvePriceBatchRequest req) {

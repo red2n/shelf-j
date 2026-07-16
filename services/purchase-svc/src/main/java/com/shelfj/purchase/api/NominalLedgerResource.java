@@ -13,17 +13,26 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** FRS 102 / UK GAAP nominal ledger — read-only view of double-entry journal. */
 @RequestScoped
 @Path("/nominal-ledger")
 @Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "Nominal Ledger")
 public class NominalLedgerResource {
 
   @Inject PurchaseService svc;
   @Inject TenantContext ctx;
 
-  /** Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
+  @Operation(
+      summary = "List nominal ledger entries",
+      description =
+          "Read-only double-entry journal view, optionally filtered by nominal code and date range"
+              + " (?code=&from=&to=). Cursor-paginated: ?after=<meta.nextCursor>&limit=1-100.")
+  @APIResponse(responseCode = "400", description = "Malformed pagination cursor")
   @GET
   public Response list(
       @QueryParam("code") String code,

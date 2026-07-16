@@ -1,0 +1,117 @@
+# TLS (cert-manager + Let's Encrypt) + routing for the two subdomains, mirroring
+# infra/Caddyfile's storeql.com layout exactly:
+#   app.storeql.com  -> shelf-app (web UI)
+#   api.storeql.com  -> gateway (API)
+#   storeql.com      -> redirect to https://app.storeql.com
+#
+# Prerequisites (see k8s/README.md):
+#   - cert-manager installed in the cluster (not bundled with k3s)
+#   - DNS A records for all three hosts pointed at this VPS's public IP
+#   - k3s's bundled Traefik is the IngressClass in use (default in k3s)
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: config@storeql.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shelfj-web
+  namespace: shelf-j
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: ["app.storeql.com"]
+      secretName: app-storeql-com-tls
+  rules:
+    - host: app.storeql.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: shelf-app, port: { number: 8080 } }
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shelfj-api
+  namespace: shelf-j
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: ["api.storeql.com"]
+      secretName: api-storeql-com-tls
+  rules:
+    - host: api.storeql.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: gateway, port: { number: 8080 } }
+
+---
+# Traefik sets X-Forwarded-For/-Proto/-Host on every proxied request by default (no
+# middleware needed for that — SHELFJ_GATEWAY_TRUST_FORWARDED_HEADERS=true in
+# 40-gateway.yaml just needs to trust what Traefik already sends).
+#
+# Bare-domain redirect: storeql.com -> https://app.storeql.com (matches infra/Caddyfile's
+# `storeql.com { redir https://app.storeql.com{uri} permanent }`).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-to-app
+  namespace: shelf-j
+spec:
+  redirectRegex:
+    regex: "^https?://storeql\\.com/(.*)"
+    replacement: "https://app.storeql.com/${1}"
+    permanent: true
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: shelfj-bare-domain-redirect
+  namespace: shelf-j
+spec:
+  entryPoints: ["web", "websecure"]
+  routes:
+    - match: Host(`storeql.com`)
+      kind: Rule
+      middlewares:
+        - name: redirect-to-app
+      services:
+        - name: shelf-app # unused (middleware redirects before reaching it) but required by the CRD schema
+          port: 8080
+  tls:
+    secretName: storeql-com-tls
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: storeql-com-tls
+  namespace: shelf-j
+spec:
+  secretName: storeql-com-tls
+  issuerRef: { name: letsencrypt-prod, kind: ClusterIssuer }
+  dnsNames: ["storeql.com"]

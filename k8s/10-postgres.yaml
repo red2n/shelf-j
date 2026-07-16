@@ -1,0 +1,113 @@
+# PostgreSQL — single instance, one DB/schema-per-service (golden rule #1). Tuned a step
+# up from docker-compose.yml's dev defaults since this box has 32 GB (vs. the 4-8 GB dev
+# host those defaults target), without maxing out the node — see k8s/README.md sizing notes.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: shelf-j
+spec:
+  clusterIP: None # headless: stable DNS for the StatefulSet pod, no load-balancing needed
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: shelf-j
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - { name: POSTGRES_DB, value: "shelfj" }
+            - { name: POSTGRES_USER, value: "shelfj" }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: shelfj-postgres, key: POSTGRES_PASSWORD } }
+          args:
+            - postgres
+            - -c
+            - shared_buffers=1GB
+            - -c
+            - work_mem=32MB
+            - -c
+            - maintenance_work_mem=256MB
+            - -c
+            - wal_buffers=16MB
+            - -c
+            - max_wal_size=1GB
+            - -c
+            - min_wal_size=128MB
+            - -c
+            - checkpoint_completion_target=0.9
+            - -c
+            - synchronous_commit=off
+            - -c
+            - random_page_cost=1.1
+            - -c
+            - effective_cache_size=4GB
+            - -c
+            - max_connections=300
+            - -c
+            - autovacuum_max_workers=3
+            - -c
+            - autovacuum_vacuum_scale_factor=0.05
+            - -c
+            - autovacuum_analyze_scale_factor=0.025
+            - -c
+            - autovacuum_vacuum_cost_delay=2ms
+            - -c
+            - default_statistics_target=200
+            - -c
+            - shared_preload_libraries=pg_stat_statements
+            - -c
+            - pg_stat_statements.track=all
+            - -c
+            - log_min_duration_statement=200
+          volumeMounts:
+            - { name: pgdata, mountPath: /var/lib/postgresql/data }
+            # Per-service roles + GRANTs (golden rule #1 hardening) — runs once against a
+            # fresh volume only, same as docker-entrypoint-initdb.d in docker-compose.yml.
+            - name: init-roles
+              mountPath: /docker-entrypoint-initdb.d/01-roles.sql
+              subPath: 01-roles.sql
+              readOnly: true
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "shelfj"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "shelfj"] }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 12
+          resources:
+            requests: { cpu: "1", memory: 2Gi }
+            limits: { cpu: "2", memory: 3Gi }
+      volumes:
+        - name: init-roles
+          secret: { secretName: shelfj-postgres-init, items: [{ key: 01-roles.sql, path: 01-roles.sql }] }
+  volumeClaimTemplates:
+    - metadata: { name: pgdata }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path # k3s's built-in default StorageClass
+        resources: { requests: { storage: 20Gi } }

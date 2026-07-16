@@ -15,6 +15,9 @@ import jakarta.ws.rs.core.MediaType;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * N4: sales revenue reporting, built from the OrderConfirmed / PaymentRefunded projection. {@code
@@ -24,12 +27,23 @@ import java.util.UUID;
 @Path("/admin/reports/sales")
 @RequestScoped
 @Produces(MediaType.APPLICATION_JSON)
+@Tag(name = "Sales Reports")
 public class SalesReportResource {
 
   @Inject ReportingService service;
   @Inject TenantContext ctx;
 
   /** Gross / refunded / net revenue and order count, grouped by currency. */
+  @Operation(
+      summary = "Sales revenue summary",
+      description =
+          "Gross/refunded/net revenue and order count, grouped by currency, over the given"
+              + " inclusive date range. Optionally filtered by store and/or channel"
+              + " (ONLINE/POS).")
+  @APIResponse(responseCode = "200", description = "Sales summary rows, one per currency")
+  @APIResponse(
+      responseCode = "400",
+      description = "from/to is not a valid yyyy-MM-dd date, or storeId is not a valid UUID")
   @GET
   @Path("/summary")
   public ApiResponse<Object> summary(
@@ -44,6 +58,15 @@ public class SalesReportResource {
   }
 
   /** Daily revenue buckets (per currency), newest day first. */
+  @Operation(
+      summary = "Daily sales revenue buckets",
+      description =
+          "Daily revenue buckets (per currency), newest day first, over the given inclusive date"
+              + " range. Optionally filtered by store and/or channel (ONLINE/POS).")
+  @APIResponse(responseCode = "200", description = "Daily sales rows")
+  @APIResponse(
+      responseCode = "400",
+      description = "from/to is not a valid yyyy-MM-dd date, or storeId is not a valid UUID")
   @GET
   @Path("/by-day")
   public ApiResponse<Object> byDay(

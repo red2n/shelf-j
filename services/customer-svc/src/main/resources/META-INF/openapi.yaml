@@ -1,4 +1,23 @@
 openapi: 3.0.3
+info:
+  title: Customer Service API
+  version: "1.0"
+  description: >
+    Customer profiles, addresses, and two append-only ledgers for Shelf-J. Owns customer
+    registration/update and GDPR-style anonymize-on-delete, customer addresses, loyalty points
+    (earn/redeem/adjust with an auditable ledger), and store credit (issue/redeem with an auditable
+    ledger). Publishes CustomerRegistered, LoyaltyEarned/Redeemed/Adjusted, and
+    StoreCreditIssued/Redeemed; consumes OrderConfirmed to auto-accrue loyalty points. Reached
+    through the API gateway at /api/customer-svc.
+tags:
+  - name: Customers
+    description: Customer profile registration, lookup, update, and GDPR anonymize-on-delete.
+  - name: Addresses
+    description: Customer address book (CRUD).
+  - name: Loyalty
+    description: Loyalty points balance, earn/redeem/adjust, and the auditable ledger.
+  - name: Store Credit
+    description: Store credit balance, issue/redeem.
 components:
   securitySchemes:
     bearerAuth:

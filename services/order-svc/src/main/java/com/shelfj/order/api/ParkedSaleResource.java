@@ -22,6 +22,9 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Parked (suspended) sales — allows a cashier to hold an in-progress sale and serve the next
@@ -31,11 +34,19 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "POS Operations")
 public class ParkedSaleResource {
 
   @Inject ParkedSaleService svc;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Park a sale",
+      description =
+          "Holds an in-progress cashier sale so the next customer can be served. Requires CASHIER,"
+              + " MANAGER, or OWNER.")
+  @APIResponse(responseCode = "201", description = "Sale parked")
+  @APIResponse(responseCode = "403", description = "Caller lacks a POS-eligible role")
   @POST
   @Path("/parked-sales")
   public Response park(ParkSaleRequest req) {
@@ -49,6 +60,11 @@ public class ParkedSaleResource {
         .build();
   }
 
+  @Operation(
+      summary = "List parked sales",
+      description = "Active parked sales for the tenant, optionally filtered by store.")
+  @APIResponse(responseCode = "200", description = "List of parked sales")
+  @APIResponse(responseCode = "403", description = "Caller lacks a POS-eligible role")
   @GET
   @Path("/parked-sales")
   public ApiResponse<List<ParkedSaleResponse>> listParked(@QueryParam("storeId") String storeId) {
@@ -59,6 +75,10 @@ public class ParkedSaleResource {
     return ApiResponse.ok(sales, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(summary = "Get a parked sale by id", description = "Retrieves a single parked sale.")
+  @APIResponse(responseCode = "200", description = "Parked sale found")
+  @APIResponse(responseCode = "403", description = "Caller lacks a POS-eligible role")
+  @APIResponse(responseCode = "404", description = "Parked sale not found")
   @GET
   @Path("/parked-sales/{id}")
   public ApiResponse<ParkedSaleResponse> getParked(@PathParam("id") UUID id) {
@@ -67,6 +87,12 @@ public class ParkedSaleResource {
     return ApiResponse.ok(svc.get(tenantId, id), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  @Operation(
+      summary = "Cancel/discard a parked sale",
+      description = "Removes a parked sale without resuming it.")
+  @APIResponse(responseCode = "204", description = "Parked sale removed")
+  @APIResponse(responseCode = "403", description = "Caller lacks a POS-eligible role")
+  @APIResponse(responseCode = "404", description = "Parked sale not found")
   @DELETE
   @Path("/parked-sales/{id}")
   public Response cancel(@PathParam("id") UUID id) {
@@ -76,6 +102,11 @@ public class ParkedSaleResource {
     return Response.noContent().build();
   }
 
+  @Operation(
+      summary = "Log a no-sale / open-drawer event",
+      description = "Records a cash-drawer open with no accompanying sale, for audit purposes.")
+  @APIResponse(responseCode = "201", description = "No-sale logged")
+  @APIResponse(responseCode = "403", description = "Caller lacks a POS-eligible role")
   @POST
   @Path("/no-sale")
   public Response logNoSale(NoSaleRequest req) {

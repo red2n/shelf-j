@@ -1,4 +1,20 @@
 openapi: 3.0.3
+info:
+  title: IAM Service API
+  version: "1.0"
+  description: >
+    Identity, authentication, and session management for Shelf-J. Issues and verifies JWTs,
+    registers customers and staff, and manages POS cashier sessions (start/touch/end/idle sweep).
+    Reached through the API gateway at /api/iam-svc.
+tags:
+  - name: Bootstrap
+    description: One-shot platform-admin bootstrap for a fresh deployment.
+  - name: Auth
+    description: Registration, login, token refresh/logout, and password change.
+  - name: Me
+    description: The current authenticated principal.
+  - name: POS Sessions
+    description: Cashier POS session lifecycle and idle-timeout sweep.
 components:
   securitySchemes:
     bearerAuth:

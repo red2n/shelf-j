@@ -1,4 +1,25 @@
 openapi: 3.0.3
+info:
+  title: Tenant Service API
+  version: "1.0"
+  description: >
+    Owns the Tenant → Store → Zone hierarchy and tenant onboarding for Shelf-J. Handles self-serve
+    business signup (tenant + first store + default zone in one call), ongoing tenant/store/zone/staff
+    administration, per-tenant inventory-control parameters, platform-wide tenant oversight, and the
+    public storefront config every guest shop reads. Every other service references store/zone data via
+    API or events, never a direct DB join — tenant-svc is the source of truth. Reached through the API
+    gateway at /api/tenant-svc.
+tags:
+  - name: Onboarding
+    description: Self-serve tenant signup, first-store creation, and onboarding-status checklist.
+  - name: Admin
+    description: Tenant-scoped administration of the tenant profile, stores, zones, and staff assignments.
+  - name: Inventory Config
+    description: Per-tenant inventory-control parameters (lot/serial/grade tracking, costing, UOM).
+  - name: Platform
+    description: Cross-tenant platform-admin operations — listing and suspending/reactivating tenants.
+  - name: Storefront
+    description: Public, read-only storefront config and store lookup for the guest online shop.
 components:
   securitySchemes:
     bearerAuth:

@@ -21,6 +21,9 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Lot UOM conversions (Gap #26) and PAR levels (Gap #27) — matches {@code
@@ -30,11 +33,16 @@ import java.util.UUID;
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Planning Configuration")
 public class PlanningConfigResource {
 
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Upsert a lot's unit-of-measure conversion",
+      description = "Defines the factor to convert between two UOMs for a specific batch.")
+  @APIResponse(responseCode = "400", description = "UOM conversion factor must be positive")
   @PUT
   @Path("/lots/{batchId}/uom-conversions")
   public ApiResponse<LotUomConversionResponse> upsertLotUomConversion(
@@ -47,6 +55,7 @@ public class PlanningConfigResource {
     return ApiResponse.ok(Mappers.toLotUomConversion(c));
   }
 
+  @Operation(summary = "List a batch's UOM conversions")
   @GET
   @Path("/lots/{batchId}/uom-conversions")
   public ApiResponse<List<LotUomConversionResponse>> listLotUomConversions(
@@ -58,6 +67,12 @@ public class PlanningConfigResource {
             .toList());
   }
 
+  @Operation(
+      summary = "Upsert a PAR level",
+      description =
+          "Sets the target periodic-automatic-replenishment quantity for a variant at a"
+              + " store.")
+  @APIResponse(responseCode = "400", description = "parQty must be positive")
   @PUT
   @Path("/par-levels")
   public ApiResponse<ParLevelResponse> upsertParLevel(UpsertParLevelRequest req) {
@@ -74,6 +89,7 @@ public class PlanningConfigResource {
     return ApiResponse.ok(Mappers.toParLevel(p));
   }
 
+  @Operation(summary = "List PAR levels for a store")
   @GET
   @Path("/par-levels")
   public ApiResponse<List<ParLevelResponse>> listParLevels(@QueryParam("store") String store) {

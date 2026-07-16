@@ -17,6 +17,9 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * Gap #41 — POS price overrides. Append-only audit log of staff-approved ad-hoc price changes at
@@ -26,11 +29,19 @@ import jakarta.ws.rs.core.Response;
 @Path("/admin/price-overrides")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Price Overrides")
 public class PriceOverrideResource {
 
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Record a POS price override",
+      description =
+          "Appends a staff-approved ad-hoc price change made at the point of sale. Requires an"
+              + " admin/staff role (enforced by AdminAuthorizationFilter).")
+  @APIResponse(responseCode = "201", description = "Price override recorded")
+  @APIResponse(responseCode = "403", description = "Caller lacks a staff/admin role")
   @POST
   public Response create(CreatePriceOverrideRequest req) {
     Validations.validate(req);
@@ -39,6 +50,13 @@ public class PriceOverrideResource {
   }
 
   /** Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
+  @Operation(
+      summary = "List price overrides",
+      description =
+          "Append-only audit log of POS price overrides, optionally filtered by store or variant."
+              + " Cursor-paginated.")
+  @APIResponse(responseCode = "200", description = "Page of price overrides")
+  @APIResponse(responseCode = "403", description = "Caller lacks a staff/admin role")
   @GET
   public Response list(
       @QueryParam("storeId") String storeId,

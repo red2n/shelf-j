@@ -17,17 +17,27 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** B2B customer VAT registration status (VAT number, reverse-charge eligibility). */
 @RequestScoped
 @Path("/customer-vat-status")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Customer VAT Status")
 public class CustomerVatStatusResource {
 
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  @Operation(
+      summary = "Set a customer's VAT status",
+      description =
+          "Records a B2B customer's VAT registration number, reverse-charge eligibility, and"
+              + " country code.")
+  @APIResponse(responseCode = "200", description = "VAT status set")
   @POST
   public Response upsert(UpsertCustomerVatStatusRequest req) {
     Validations.validate(req);
@@ -42,6 +52,12 @@ public class CustomerVatStatusResource {
    * ({@link com.shelfj.web.AdminAuthorizationFilter}), so this needs its own gate rather than
    * relying on that distant routing detail to stay true.
    */
+  @Operation(
+      summary = "Get a customer's VAT status",
+      description = "Staff-only lookup of a B2B customer's VAT registration status.")
+  @APIResponse(responseCode = "200", description = "VAT status found")
+  @APIResponse(responseCode = "403", description = "Caller lacks a staff/admin role")
+  @APIResponse(responseCode = "404", description = "No VAT status recorded for this customer")
   @GET
   @Path("/{customerId}")
   public Response get(@PathParam("customerId") UUID customerId) {

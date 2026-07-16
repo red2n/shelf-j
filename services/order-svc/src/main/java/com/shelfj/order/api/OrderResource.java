@@ -26,12 +26,16 @@ import jakarta.ws.rs.core.Response;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Order lifecycle: place, confirm, cancel, fulfil, void (POS), returns. */
 @Path("/orders")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Orders")
 public class OrderResource {
 
   @Inject OrderService svc;
@@ -45,6 +49,12 @@ public class OrderResource {
    * created_at >= from ?to= ISO-8601 datetime — created_at <= to ?after= opaque cursor from the
    * previous page's meta.nextCursor ?limit= 1-100 (default 20)
    */
+  @Operation(
+      summary = "List orders",
+      description =
+          "List orders for the caller's tenant, optionally filtered by store, channel, status, and"
+              + " creation-date range. Cursor-paginated.")
+  @APIResponse(responseCode = "200", description = "Page of order summaries")
   @GET
   public ApiResponse<List<OrderSummaryResponse>> list(
       @QueryParam("store") String store,
@@ -72,6 +82,13 @@ public class OrderResource {
    * so a customer can only ever see their own orders — never another customer's or the tenant's
    * full order book.
    */
+  @Operation(
+      summary = "List the signed-in customer's own orders",
+      description =
+          "Storefront order history for the authenticated customer only — never another"
+              + " customer's or the tenant's full order book. Cursor-paginated.")
+  @APIResponse(responseCode = "200", description = "Page of the caller's own order summaries")
+  @APIResponse(responseCode = "401", description = "No customer identity on the token")
   @GET
   @Path("/mine")
   public ApiResponse<List<OrderSummaryResponse>> mine(
@@ -89,6 +106,24 @@ public class OrderResource {
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  @Operation(
+      summary = "Place an order",
+      description =
+          "Places an ONLINE or POS order. Requires an Idempotency-Key (header, or the legacy body"
+              + " field as fallback) so a retried checkout replays the original order instead of"
+              + " creating a duplicate. ONLINE orders reserve stock in inventory-svc before"
+              + " persisting; POS orders deduct stock directly on fulfilment. POS channel requires"
+              + " CASHIER, MANAGER, or OWNER.")
+  @APIResponse(responseCode = "201", description = "Order placed")
+  @APIResponse(
+      responseCode = "400",
+      description =
+          "No items, missing delivery address for DELIVERY orders, invalid paymentMethod, missing"
+              + " Idempotency-Key, missing price in non-enforced mode, or discount exceeds subtotal")
+  @APIResponse(responseCode = "403", description = "Non-staff caller attempted to apply a discount")
+  @APIResponse(
+      responseCode = "409",
+      description = "Tenant or store is suspended/closed, or insufficient stock to reserve")
   @POST
   public Response place(
       @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
@@ -109,6 +144,15 @@ public class OrderResource {
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  @Operation(
+      summary = "Get an order by id",
+      description =
+          "Staff may read any order in their tenant; an authenticated customer may only read their"
+              + " own order.")
+  @APIResponse(responseCode = "200", description = "Order with items")
+  @APIResponse(
+      responseCode = "404",
+      description = "Order not found, or not owned by the calling customer")
   @GET
   @Path("/{id}")
   public Response get(@PathParam("id") String id) {
@@ -117,6 +161,12 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  @Operation(
+      summary = "Confirm an order",
+      description = "Transitions a PENDING order to CONFIRMED and emits OrderConfirmed.")
+  @APIResponse(responseCode = "200", description = "Order confirmed")
+  @APIResponse(responseCode = "404", description = "Order not found")
+  @APIResponse(responseCode = "409", description = "Order is not in PENDING status")
   @POST
   @Path("/{id}/confirm")
   public Response confirm(@PathParam("id") String id) {
@@ -125,6 +175,16 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  @Operation(
+      summary = "Cancel an order",
+      description =
+          "Cancels a PENDING or CONFIRMED order and releases any stock holds via OrderCancelled."
+              + " An optional reason may be given; if a body is sent it must include one.")
+  @APIResponse(responseCode = "200", description = "Order cancelled")
+  @APIResponse(responseCode = "404", description = "Order not found")
+  @APIResponse(
+      responseCode = "409",
+      description = "Order is not PENDING or CONFIRMED, so it cannot be cancelled")
   @POST
   @Path("/{id}/cancel")
   public Response cancel(@PathParam("id") String id, VoidRequest req) {
@@ -143,6 +203,14 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  @Operation(
+      summary = "Fulfil an order",
+      description =
+          "Transitions a CONFIRMED order to FULFILLED and emits OrderFulfilled with its line"
+              + " items.")
+  @APIResponse(responseCode = "200", description = "Order fulfilled")
+  @APIResponse(responseCode = "404", description = "Order not found")
+  @APIResponse(responseCode = "409", description = "Order is not in CONFIRMED status")
   @POST
   @Path("/{id}/fulfil")
   public Response fulfil(@PathParam("id") String id) {
@@ -151,6 +219,13 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  @Operation(
+      summary = "Get an order's status history",
+      description = "Append-only status transition log for the order (object-level authorized).")
+  @APIResponse(responseCode = "200", description = "Ordered list of status transitions")
+  @APIResponse(
+      responseCode = "404",
+      description = "Order not found, or not owned by the calling customer")
   @GET
   @Path("/{id}/history")
   public Response history(@PathParam("id") String id) {
@@ -160,6 +235,12 @@ public class OrderResource {
 
   // ── Post-void (Gap #14) ───────────────────────────────────────────────────
 
+  @Operation(
+      summary = "Void a POS order",
+      description = "Voids a POS-channel order after the fact and emits OrderVoided.")
+  @APIResponse(responseCode = "200", description = "Order voided")
+  @APIResponse(responseCode = "404", description = "Order not found")
+  @APIResponse(responseCode = "409", description = "Void is only allowed on POS-channel orders")
   @POST
   @Path("/{id}/void")
   public Response voidOrder(@PathParam("id") String id, VoidRequest req) {
@@ -170,6 +251,16 @@ public class OrderResource {
 
   // ── Returns (Gap #14) ─────────────────────────────────────────────────────
 
+  @Operation(
+      summary = "Create a return for an order",
+      description =
+          "Refunds one or more line items of the order. Cannot be used on a voided or cancelled"
+              + " order.")
+  @APIResponse(responseCode = "201", description = "Return created")
+  @APIResponse(
+      responseCode = "404",
+      description = "Order not found, or a returned variant is not on the order")
+  @APIResponse(responseCode = "409", description = "Order is voided or cancelled")
   @POST
   @Path("/{id}/returns")
   public Response createReturn(@PathParam("id") String id, CreateReturnRequest req) {
@@ -185,6 +276,13 @@ public class OrderResource {
     return s == null || s.isBlank() ? null : com.shelfj.web.Parsing.instant(s, field);
   }
 
+  @Operation(
+      summary = "List returns for an order",
+      description = "All returns recorded against the given order.")
+  @APIResponse(responseCode = "200", description = "List of returns with their items")
+  @APIResponse(
+      responseCode = "404",
+      description = "Order not found, or not owned by the calling customer")
   @GET
   @Path("/{id}/returns")
   public Response listReturns(@PathParam("id") String id) {
