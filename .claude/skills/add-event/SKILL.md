@@ -7,14 +7,14 @@ description: Add a Kafka domain event to Shelf-J — define the contract, publis
 
 Use when a service needs to **announce** something happened, or **react** to another service's event. Events are how services stay consistent without sharing a database ([golden rules](../../../CLAUDE.md) #1, #6, #7).
 
-> Context: [README §10 how services talk](../../../README.md#10-how-services-talk-to-each-other) (sync map + event map + saga), the publisher/consumer columns in [README §9](../../../README.md#9-the-business-services--full-catalog).
+> Context: [ARCHITECTURE §11 how services talk](../../../docs/ARCHITECTURE.md#11-how-services-talk-to-each-other) (sync map + event map) and [§12 key workflows](../../../docs/ARCHITECTURE.md#12-key-workflows) (saga), the publisher/consumer list per service in [docs/API-GUIDE.md](../../../docs/API-GUIDE.md).
 
 ## Decide first
 
 1. **Is an event the right tool?** Use an **event** when you're announcing a fact others may care about ("X happened"). Use a **REST call** (`client/`) when you need an answer *now* to continue. Don't use events for request/response.
 2. **Name** — `PascalCase`, **past tense**, the thing that happened: `OrderPlaced`, `StockReceived`, `StoreCreated`. Not commands (`CreateOrder` ✗).
 3. **Topic** — `shelfj.<domain>.<event>` (e.g. `shelfj.orders.order-placed`).
-4. **Owner = publisher.** Only the service that owns the data publishes the event. Confirm publisher + consumers against README §9/§10.
+4. **Owner = publisher.** Only the service that owns the data publishes the event. Confirm publisher + consumers against [docs/API-GUIDE.md](../../../docs/API-GUIDE.md) (events per service) and [ARCHITECTURE §11](../../../docs/ARCHITECTURE.md#11-how-services-talk-to-each-other) (event map).
 
 ## Producer side (the service that owns the change)
 
@@ -34,7 +34,7 @@ Use when a service needs to **announce** something happened, or **react** to ano
 
 ## Saga note (multi-service workflows)
 
-If this event is part of a workflow with compensation (e.g. checkout: reserve → pay → confirm, release on failure), the **coordinator** (usually `order-svc`) owns the saga and the compensating actions. Make sure each step's failure has a defined, tested compensation. See the checkout saga in [README §9.7](../../../README.md#97-order-svc--orders--checkout-saga-coordinator).
+If this event is part of a workflow with compensation (e.g. checkout: reserve → pay → confirm, release on failure), the **coordinator** (usually `order-svc`) owns the saga and the compensating actions. Make sure each step's failure has a defined, tested compensation. See the checkout saga in [ARCHITECTURE §12](../../../docs/ARCHITECTURE.md#12-key-workflows).
 
 ## Self-check
 

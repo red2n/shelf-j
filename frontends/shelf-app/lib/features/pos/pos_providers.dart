@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../admin/customer_providers.dart';
@@ -146,7 +147,7 @@ final posStoresProvider = FutureProvider.autoDispose<List<StoreInfo>>((ref) asyn
 /// the till is never left without a tender.
 final posEnabledPaymentMethodsProvider = Provider.autoDispose<List<String>>((ref) {
   final storeId = ref.watch(posStoreProvider);
-  final stores = ref.watch(posStoresProvider).valueOrNull;
+  final stores = ref.watch(posStoresProvider).value;
   if (storeId == null || stores == null) return const ['CASH', 'CARD'];
   for (final s in stores) {
     if (s.id == storeId) return s.enabledPaymentMethods;

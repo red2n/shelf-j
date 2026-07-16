@@ -12,8 +12,8 @@ import org.eclipse.microprofile.health.Readiness;
 
 /**
  * Shared health probes: liveness = process alive; readiness = DB reachable (so services start in
- * any order — README §7.8). Liveness deliberately does NOT check the DB (a DB outage must not get
- * the pod killed).
+ * any order — docs/ARCHITECTURE.md §17). Liveness deliberately does NOT check the DB (a DB outage
+ * must not get the pod killed).
  */
 public final class HealthChecks {
 

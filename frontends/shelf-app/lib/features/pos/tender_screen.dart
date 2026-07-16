@@ -6,6 +6,7 @@ import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
 import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
@@ -204,7 +205,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _processing = false);
-      _snack('Sale failed: $e', error: true);
+      _snack(friendlyError(e, fallback: 'Sale failed.'), error: true);
     }
   }
 
@@ -219,7 +220,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
   }) {
     final subtotal = cartSnapshot.fold<double>(0, (s, l) => s + l.lineTotal);
     final storeId = ref.read(posStoreProvider);
-    final stores = ref.read(posStoresProvider).valueOrNull ?? [];
+    final stores = ref.read(posStoresProvider).value ?? [];
     final store = stores.firstWhere((s) => s.id == storeId,
         orElse: () => stores.isNotEmpty ? stores.first : _emptyStore());
     final addressParts = [
@@ -262,7 +263,8 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       _snack(type == 'EMAIL' ? 'Receipt emailed.' : 'Receipt printed.');
     } catch (e) {
       if (!mounted) return;
-      _snack('Could not record receipt: $e', error: true);
+      _snack(friendlyError(e, fallback: 'Could not record receipt.'),
+          error: true);
     }
   }
 
@@ -341,7 +343,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           Expanded(
             child: ListView.separated(
               itemCount: cart.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
+              separatorBuilder: (_, _) => const Divider(height: 1),
               itemBuilder: (_, i) {
                 final l = cart[i];
                 return ListTile(
@@ -440,7 +442,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _processing = false);
-      _snack('Could not place order: $e', error: true);
+      _snack(friendlyError(e, fallback: 'Could not place order.'), error: true);
     }
   }
 
@@ -603,7 +605,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
                         style: TextStyle(color: cs.outline)))
                 : ListView.separated(
                     itemCount: _tenders.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (_, i) {
                       final t = _tenders[i];
                       return ListTile(
@@ -848,9 +850,10 @@ class _GiftCardTenderDialogState extends ConsumerState<_GiftCardTenderDialog> {
         });
       }
     } catch (e) {
-      setState(() => _error = e.toString().contains('404')
-          ? 'No gift card with that code.'
-          : 'Lookup failed: $e');
+      setState(() => _error =
+          (e is DioException && e.response?.statusCode == 404)
+              ? 'No gift card with that code.'
+              : friendlyError(e, fallback: 'Lookup failed.'));
     } finally {
       if (mounted) setState(() => _checking = false);
     }
@@ -935,7 +938,8 @@ class _StoreCreditTenderDialog extends ConsumerWidget {
         child: async.when(
           loading: () => const SizedBox(
               height: 80, child: Center(child: CircularProgressIndicator())),
-          error: (e, _) => Text('Could not load store credit.\n$e'),
+          error: (e, _) =>
+              Text(friendlyError(e, fallback: 'Could not load store credit.')),
           data: (acct) {
             final applied = acct.balance.clamp(0, remaining).toDouble();
             return Column(

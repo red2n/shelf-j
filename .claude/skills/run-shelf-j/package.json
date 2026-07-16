@@ -1,0 +1,9 @@
+{
+  "name": "run-shelf-j-driver",
+  "private": true,
+  "type": "module",
+  "description": "Browser driver for the run-shelf-j skill. Not part of the Shelf-J product — agent tooling only.",
+  "dependencies": {
+    "playwright-core": "^1.48.0"
+  }
+}

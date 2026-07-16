@@ -1,7 +1,9 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'customer_providers.dart';
@@ -98,7 +100,7 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               itemCount:
                   customers.length + (page.hasMore || page.isLoadingMore ? 1 : 0),
-              separatorBuilder: (_, __) => const SizedBox(height: 4),
+              separatorBuilder: (_, _) => const SizedBox(height: 4),
               itemBuilder: (_, i) {
                 if (i >= customers.length) {
                   return const Padding(
@@ -187,9 +189,9 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = e.toString().contains('409')
+        _error = (e is DioException && e.response?.statusCode == 409)
             ? 'A customer with this email already exists.'
-            : 'Could not add customer: $e';
+            : friendlyError(e, fallback: 'Could not add customer.');
       });
     }
   }
@@ -289,7 +291,7 @@ class _CustomerDetailDialog extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     // Watch the detail provider so an in-place edit refreshes name/phone/etc.
-    final c = ref.watch(customerDetailProvider(customer.id)).valueOrNull ?? customer;
+    final c = ref.watch(customerDetailProvider(customer.id)).value ?? customer;
     final loyaltyAsync = ref.watch(customerLoyaltyProvider(customer.id));
     final creditAsync = ref.watch(customerStoreCreditProvider(customer.id));
     final ledgerAsync = ref.watch(customerLoyaltyLedgerProvider(customer.id));
@@ -394,8 +396,9 @@ class _CustomerDetailDialog extends ConsumerWidget {
                 loading: () => const Padding(
                     padding: EdgeInsets.all(16),
                     child: Center(child: CircularProgressIndicator())),
-                error: (e, _) =>
-                    Text('Could not load ledger: $e', style: TextStyle(color: cs.error)),
+                error: (e, _) => Text(
+                    friendlyError(e, fallback: 'Could not load ledger.'),
+                    style: TextStyle(color: cs.error)),
                 data: (entries) => entries.isEmpty
                     ? Text('No loyalty activity yet.',
                         style: TextStyle(color: cs.outline))
@@ -484,7 +487,8 @@ class _CustomerDetailDialog extends ConsumerWidget {
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not anonymize: $e')),
+        SnackBar(
+            content: Text(friendlyError(e, fallback: 'Could not anonymize.'))),
       );
     }
   }
@@ -503,7 +507,8 @@ class _CustomerDetailDialog extends ConsumerWidget {
       _toast(context, 'Points updated.');
     } catch (e) {
       if (!context.mounted) return;
-      _toast(context, 'Failed: $e', error: true);
+      _toast(context, friendlyError(e, fallback: 'Could not update points.'),
+          error: true);
     }
   }
 
@@ -522,7 +527,9 @@ class _CustomerDetailDialog extends ConsumerWidget {
       _toast(context, 'Store credit updated.');
     } catch (e) {
       if (!context.mounted) return;
-      _toast(context, 'Failed: $e', error: true);
+      _toast(
+          context, friendlyError(e, fallback: 'Could not update store credit.'),
+          error: true);
     }
   }
 
@@ -658,8 +665,9 @@ class _AddressesSectionState extends ConsumerState<_AddressesSection> {
           loading: () => const Padding(
               padding: EdgeInsets.all(12),
               child: Center(child: CircularProgressIndicator())),
-          error: (e, _) =>
-              Text('Could not load addresses: $e', style: TextStyle(color: cs.error)),
+          error: (e, _) => Text(
+              friendlyError(e, fallback: 'Could not load addresses.'),
+              style: TextStyle(color: cs.error)),
           data: (addresses) => addresses.isEmpty
               ? Text('No addresses saved.', style: TextStyle(color: cs.outline))
               : Column(
@@ -722,7 +730,9 @@ class _AddressesSectionState extends ConsumerState<_AddressesSection> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not delete address: $e')),
+        SnackBar(
+            content:
+                Text(friendlyError(e, fallback: 'Could not delete address.'))),
       );
     } finally {
       if (mounted) setState(() => _deleting.remove(addressId));
@@ -800,7 +810,7 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not save: $e';
+        _error = friendlyError(e, fallback: 'Could not save customer.');
       });
     }
   }
@@ -845,7 +855,7 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _gender,
+                initialValue: _gender,
                 decoration: const InputDecoration(labelText: 'Gender'),
                 items: const [
                   DropdownMenuItem(value: 'MALE', child: Text('Male')),
@@ -942,7 +952,7 @@ class _AddressFormDialogState extends ConsumerState<_AddressFormDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not save: $e';
+        _error = friendlyError(e, fallback: 'Could not save address.');
       });
     }
   }
@@ -966,7 +976,7 @@ class _AddressFormDialogState extends ConsumerState<_AddressFormDialog> {
                   const SizedBox(height: 8),
                 ],
                 DropdownButtonFormField<String>(
-                  value: _type,
+                  initialValue: _type,
                   decoration: const InputDecoration(labelText: 'Type'),
                   items: const [
                     DropdownMenuItem(value: 'HOME', child: Text('Home')),

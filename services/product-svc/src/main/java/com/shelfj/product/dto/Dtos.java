@@ -210,7 +210,9 @@ public final class Dtos {
    * the same SKU, so re-importing a sheet overrides rather than duplicates.
    */
   public record BulkImportRequest(
-      List<ImportCategoryRequest> categories, List<ImportProductRequest> products, String mode) {}
+      @Valid List<ImportCategoryRequest> categories,
+      @Valid List<ImportProductRequest> products,
+      String mode) {}
 
   /**
    * Wraps a raw supplier CSV with optional store-name-to-UUID mapping and import mode. The server

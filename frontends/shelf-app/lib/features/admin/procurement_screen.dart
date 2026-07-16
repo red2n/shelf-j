@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -76,7 +77,7 @@ class _SuppliersTab extends ConsumerWidget {
           child: async.when(
             loading: () => const LoadingView(label: 'Loading suppliers…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load suppliers.\n$e',
+              message: friendlyError(e, fallback: 'Could not load suppliers.'),
               onRetry: () => ref.invalidate(suppliersProvider),
             ),
             data: (suppliers) {
@@ -96,7 +97,7 @@ class _SuppliersTab extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: suppliers.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
                   final s = suppliers[i];
                   return Card(
@@ -178,7 +179,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not add supplier: $e';
+        _error = friendlyError(e, fallback: 'Could not add supplier.');
       });
     }
   }
@@ -223,7 +224,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _country,
+                        initialValue: _country,
                         decoration: const InputDecoration(labelText: 'Country'),
                         items: const [
                           DropdownMenuItem(value: 'IN', child: Text('India')),
@@ -238,7 +239,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _currency,
+                        initialValue: _currency,
                         decoration: const InputDecoration(labelText: 'Currency'),
                         items: const [
                           DropdownMenuItem(value: 'INR', child: Text('INR')),
@@ -329,7 +330,8 @@ class _PurchaseOrdersTab extends ConsumerWidget {
           child: async.when(
             loading: () => const LoadingView(label: 'Loading purchase orders…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load purchase orders.\n$e',
+              message:
+                  friendlyError(e, fallback: 'Could not load purchase orders.'),
               onRetry: () => ref.invalidate(purchaseOrdersProvider),
             ),
             data: (pos) {
@@ -349,7 +351,7 @@ class _PurchaseOrdersTab extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: pos.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
                   final po = pos[i];
                   return Card(
@@ -437,7 +439,7 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not create PO: $e';
+        _error = friendlyError(e, fallback: 'Could not create PO.');
       });
     }
   }
@@ -469,10 +471,11 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
             ],
             suppliersAsync.when(
               loading: () => const LinearProgressIndicator(),
-              error: (e, _) => Text('Suppliers failed: $e',
+              error: (e, _) => Text(
+                  friendlyError(e, fallback: 'Could not load suppliers.'),
                   style: TextStyle(color: cs.error)),
               data: (suppliers) => DropdownButtonFormField<String>(
-                value: _supplierId,
+                initialValue: _supplierId,
                 isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Supplier *'),
                 items: [
@@ -489,10 +492,11 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
             const SizedBox(height: 12),
             storesAsync.when(
               loading: () => const LinearProgressIndicator(),
-              error: (e, _) =>
-                  Text('Stores failed: $e', style: TextStyle(color: cs.error)),
+              error: (e, _) => Text(
+                  friendlyError(e, fallback: 'Could not load stores.'),
+                  style: TextStyle(color: cs.error)),
               data: (stores) => DropdownButtonFormField<String>(
-                value: _storeId,
+                initialValue: _storeId,
                 isExpanded: true,
                 decoration:
                     const InputDecoration(labelText: 'Deliver to store *'),
@@ -505,7 +509,7 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _currency,
+              initialValue: _currency,
               decoration: const InputDecoration(labelText: 'Currency'),
               items: const [
                 DropdownMenuItem(value: 'INR', child: Text('INR')),
@@ -596,7 +600,7 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
           error: (e, _) => SizedBox(
             height: 140,
             child: ErrorView(
-              message: 'Could not load lines.\n$e',
+              message: friendlyError(e, fallback: 'Could not load lines.'),
               onRetry: () => ref.invalidate(purchaseOrderLinesProvider(poId)),
             ),
           ),
@@ -705,7 +709,7 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
       if (!mounted) return;
       setState(() => _submitting = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Could not submit PO: $e'),
+        content: Text(friendlyError(e, fallback: 'Could not submit PO.')),
         backgroundColor: Theme.of(context).colorScheme.error,
       ));
     }
@@ -764,7 +768,7 @@ class _AddPoLineDialogState extends ConsumerState<_AddPoLineDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not add line: $e';
+        _error = friendlyError(e, fallback: 'Could not add line.');
       });
     }
   }
@@ -824,7 +828,7 @@ class _AddPoLineDialogState extends ConsumerState<_AddPoLineDialog> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _vatCode,
+              initialValue: _vatCode,
               decoration: const InputDecoration(labelText: 'VAT code'),
               items: const [
                 DropdownMenuItem(value: 'STANDARD', child: Text('Standard')),
@@ -907,7 +911,7 @@ class _ReceiveGoodsDialogState extends ConsumerState<_ReceiveGoodsDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not record receipt: $e';
+        _error = friendlyError(e, fallback: 'Could not record receipt.');
       });
     }
   }
@@ -926,7 +930,7 @@ class _ReceiveGoodsDialogState extends ConsumerState<_ReceiveGoodsDialog> {
           error: (e, _) => SizedBox(
             height: 120,
             child: ErrorView(
-              message: 'Could not load PO lines.\n$e',
+              message: friendlyError(e, fallback: 'Could not load PO lines.'),
               onRetry: () =>
                   ref.invalidate(purchaseOrderLinesProvider(widget.poId)),
             ),

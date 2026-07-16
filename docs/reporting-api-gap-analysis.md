@@ -16,7 +16,7 @@ Backed by `inventory_projection`, `movement_events`, `open_supply_lines` tables 
 
 Source: `services/reporting-svc/src/main/java/com/shelfj/reporting/api/AdminResource.java:17-66`.
 
-## Designed but not built (per README §9.12 / PRD §4.12)
+## Designed but not built (per ARCHITECTURE.md §10 reporting-svc / PRD §4.12)
 
 - `GET /admin/reports/sales` (by day/store/channel/product)
 - `GET /admin/reports/inventory-valuation`

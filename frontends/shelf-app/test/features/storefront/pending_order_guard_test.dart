@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -125,15 +126,15 @@ Widget _routerScope(List<Override> overrides) {
     routes: [
       GoRoute(
         path: '/store/cart',
-        builder: (_, __) => const Scaffold(body: StorefrontCartScreen()),
+        builder: (_, _) => const Scaffold(body: StorefrontCartScreen()),
       ),
       GoRoute(
         path: '/store/orders',
-        builder: (_, __) => const Scaffold(body: Text('Orders page')),
+        builder: (_, _) => const Scaffold(body: Text('Orders page')),
       ),
       GoRoute(
         path: '/store/products',
-        builder: (_, __) => const Scaffold(body: Text('Products page')),
+        builder: (_, _) => const Scaffold(body: Text('Products page')),
       ),
     ],
   );
@@ -386,8 +387,9 @@ void main() {
       await tester.tap(find.text('Place order'));
       await tester.pumpAndSettle();
 
-      // Failing Dio → checkout error snackbar confirms the attempt was made.
-      expect(find.textContaining('Checkout failed'), findsOneWidget);
+      // Failing Dio (connection error) → checkout error snackbar confirms the
+      // attempt was made, routed through friendlyError's network-error copy.
+      expect(find.textContaining("Can't reach the server"), findsOneWidget);
     });
 
     testWidgets('does not re-show the dialog on the second checkout attempt',

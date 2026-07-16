@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../core/format.dart';
+import '../../core/network/api_error.dart';
 import '../../core/storage/app_storage.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
@@ -55,8 +56,12 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       if (raw == null || raw.isEmpty || !mounted) return;
       final j = jsonDecode(raw) as Map<String, dynamic>;
       setState(() {
-        if (_line1Ctrl.text.isEmpty) _line1Ctrl.text = j['line1'] as String? ?? '';
-        if (_line2Ctrl.text.isEmpty) _line2Ctrl.text = j['line2'] as String? ?? '';
+        if (_line1Ctrl.text.isEmpty) {
+          _line1Ctrl.text = j['line1'] as String? ?? '';
+        }
+        if (_line2Ctrl.text.isEmpty) {
+          _line2Ctrl.text = j['line2'] as String? ?? '';
+        }
         if (_cityCtrl.text.isEmpty) _cityCtrl.text = j['city'] as String? ?? '';
         if (_postalCtrl.text.isEmpty) {
           _postalCtrl.text = j['postalCode'] as String? ?? '';
@@ -180,7 +185,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           child: ListView.separated(
             padding: const EdgeInsets.all(16),
             itemCount: cart.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
+            separatorBuilder: (_, _) => const Divider(height: 1),
             itemBuilder: (_, i) {
               final l = cart[i];
               return ListTile(
@@ -764,27 +769,21 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     }
   }
 
-  /// Maps checkout failures to something a shopper can act on; falls back to the raw error.
+  /// Maps checkout failures to something a shopper can act on; falls back to the
+  /// backend's structured message via [friendlyError].
   static String _checkoutErrorMessage(Object e) {
-    if (e is DioException) {
-      final err = e.response?.data is Map
-          ? (e.response!.data as Map)['error'] as Map?
-          : null;
-      final code = err?['code'] as String?;
-      switch (code) {
-        case 'ORDER_INSUFFICIENT_STOCK':
-          return 'Sorry — some items in your cart just sold out. '
-              'Please adjust the quantities and try again.';
-        case 'ORDER_INVENTORY_UNAVAILABLE':
-          return 'We couldn\'t confirm stock right now. Please try again in a moment.';
-        case 'PAYMENT_METHOD_DISABLED':
-          return 'That payment method isn\'t available at this store any more. '
-              'Please pick another one.';
-        default:
-          if (err?['message'] is String) return 'Checkout failed: ${err!['message']}';
-      }
+    switch (apiErrorCode(e)) {
+      case 'ORDER_INSUFFICIENT_STOCK':
+        return 'Sorry — some items in your cart just sold out. '
+            'Please adjust the quantities and try again.';
+      case 'ORDER_INVENTORY_UNAVAILABLE':
+        return 'We couldn\'t confirm stock right now. Please try again in a moment.';
+      case 'PAYMENT_METHOD_DISABLED':
+        return 'That payment method isn\'t available at this store any more. '
+            'Please pick another one.';
+      default:
+        return friendlyError(e, fallback: 'Checkout failed.');
     }
-    return 'Checkout failed: $e';
   }
 
   // ── Pending-order guard ──────────────────────────────────────────────────

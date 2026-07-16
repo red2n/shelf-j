@@ -10,8 +10,8 @@ import java.util.UUID;
  * published to Kafka via the transactional outbox. Every event is tenant-scoped and idempotently
  * consumable: consumers dedupe on {@link #eventId()}.
  *
- * <p>This module is CONTRACTS ONLY — no business logic. See README §10 and the {@code add-event}
- * skill.
+ * <p>This module is CONTRACTS ONLY — no business logic. See docs/ARCHITECTURE.md §11 and the {@code
+ * add-event} skill.
  */
 public interface DomainEvent {
 

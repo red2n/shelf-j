@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'storefront_providers.dart';
@@ -28,7 +29,7 @@ class ProductDetailScreen extends ConsumerWidget {
       body: productAsync.when(
         loading: () => const LoadingView(label: 'Loading…'),
         error: (e, _) => ErrorView(
-          message: 'Could not load product.\n$e',
+          message: friendlyError(e, fallback: 'Could not load product.'),
           onRetry: () => ref.invalidate(storefrontProductProvider(productId)),
         ),
         data: (product) => ListView(
@@ -63,7 +64,8 @@ class ProductDetailScreen extends ConsumerWidget {
                 padding: EdgeInsets.all(16),
                 child: Center(child: CircularProgressIndicator()),
               ),
-              error: (e, _) => Text('Could not load options: $e',
+              error: (e, _) => Text(
+                  friendlyError(e, fallback: 'Could not load options.'),
                   style: TextStyle(color: cs.error)),
               data: (variants) {
                 if (variants.isEmpty) {
@@ -96,7 +98,7 @@ class _VariantRow extends ConsumerWidget {
     // .select() so this row only rebuilds when *its own* variant's availability changes,
     // not on every store switch's whole-map refetch.
     final inStock = ref.watch(storefrontAvailabilityProvider.select((async) {
-      final map = async.valueOrNull;
+      final map = async.value;
       return map == null ? true : (map[variant.id] ?? false);
     }));
 
@@ -153,7 +155,7 @@ class _VariantRow extends ConsumerWidget {
         trailing: priceAsync.when(
           loading: () => const SizedBox(
               height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)),
-          error: (_, __) => Text('Unavailable',
+          error: (_, _) => Text('Unavailable',
               style: TextStyle(color: cs.outline, fontSize: 12)),
           data: (p) {
             return Row(

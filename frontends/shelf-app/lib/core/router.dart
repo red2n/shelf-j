@@ -40,7 +40,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final authAsync = ref.read(authNotifierProvider);
       if (authAsync.isLoading) return null;
 
-      final auth = authAsync.valueOrNull ?? const AuthUnauthenticated();
+      final auth = authAsync.value ?? const AuthUnauthenticated();
       final loc = state.matchedLocation;
 
       // Public storefront — accessible to EVERYONE (guests and any signed-in
@@ -83,22 +83,22 @@ final routerProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
-      GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
-      GoRoute(path: '/platform/login', builder: (_, __) => const PlatformLoginScreen()),
-      GoRoute(path: '/onboarding', builder: (_, __) => const OnboardingWizard()),
+      GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
+      GoRoute(path: '/platform/login', builder: (_, _) => const PlatformLoginScreen()),
+      GoRoute(path: '/onboarding', builder: (_, _) => const OnboardingWizard()),
 
       // ── Platform admin shell (PLATFORM_ADMIN only) ─────────────────────────
       ShellRoute(
         builder: (context, state, child) =>
             PlatformShell(currentLocation: state.matchedLocation, child: child),
         routes: [
-          GoRoute(path: '/platform', redirect: (_, __) => '/platform/overview'),
+          GoRoute(path: '/platform', redirect: (_, _) => '/platform/overview'),
           GoRoute(
               path: '/platform/overview',
-              builder: (_, __) => const PlatformDashboardScreen()),
+              builder: (_, _) => const PlatformDashboardScreen()),
           GoRoute(
               path: '/platform/tenants',
-              builder: (_, __) => const TenantsScreen()),
+              builder: (_, _) => const TenantsScreen()),
         ],
       ),
 
@@ -107,25 +107,25 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) =>
             AdminShell(currentLocation: state.matchedLocation, child: child),
         routes: [
-          GoRoute(path: '/admin', redirect: (_, __) => '/admin/dashboard'),
-          GoRoute(path: '/admin/dashboard', builder: (_, __) => const DashboardScreen()),
-          GoRoute(path: '/admin/catalog', builder: (_, __) => const CatalogScreen()),
-          GoRoute(path: '/admin/inventory', builder: (_, __) => const InventoryScreen()),
-          GoRoute(path: '/admin/stores', builder: (_, __) => const StoresScreen()),
-          GoRoute(path: '/admin/orders', builder: (_, __) => const AdminOrdersScreen()),
+          GoRoute(path: '/admin', redirect: (_, _) => '/admin/dashboard'),
+          GoRoute(path: '/admin/dashboard', builder: (_, _) => const DashboardScreen()),
+          GoRoute(path: '/admin/catalog', builder: (_, _) => const CatalogScreen()),
+          GoRoute(path: '/admin/inventory', builder: (_, _) => const InventoryScreen()),
+          GoRoute(path: '/admin/stores', builder: (_, _) => const StoresScreen()),
+          GoRoute(path: '/admin/orders', builder: (_, _) => const AdminOrdersScreen()),
           GoRoute(
               path: '/admin/procurement',
-              builder: (_, __) => const ProcurementScreen()),
+              builder: (_, _) => const ProcurementScreen()),
           GoRoute(
               path: '/admin/pricing',
-              builder: (_, __) => const PricingScreen()),
-          GoRoute(path: '/admin/reports', builder: (_, __) => const ReportsScreen()),
+              builder: (_, _) => const PricingScreen()),
+          GoRoute(path: '/admin/reports', builder: (_, _) => const ReportsScreen()),
           GoRoute(
               path: '/admin/customers',
-              builder: (_, __) => const CustomersScreen()),
+              builder: (_, _) => const CustomersScreen()),
           GoRoute(
-              path: '/admin/sales', builder: (_, __) => const SalesScreen()),
-          GoRoute(path: '/admin/staff', builder: (_, __) => const StaffScreen()),
+              path: '/admin/sales', builder: (_, _) => const SalesScreen()),
+          GoRoute(path: '/admin/staff', builder: (_, _) => const StaffScreen()),
         ],
       ),
 
@@ -134,10 +134,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) =>
             PosShell(currentLocation: state.matchedLocation, child: child),
         routes: [
-          GoRoute(path: '/pos', redirect: (_, __) => '/pos/cart'),
-          GoRoute(path: '/pos/cart', builder: (_, __) => const PosCartScreen()),
-          GoRoute(path: '/pos/tender', builder: (_, __) => const TenderScreen()),
-          GoRoute(path: '/pos/cash', builder: (_, __) => const CashScreen()),
+          GoRoute(path: '/pos', redirect: (_, _) => '/pos/cart'),
+          GoRoute(path: '/pos/cart', builder: (_, _) => const PosCartScreen()),
+          GoRoute(path: '/pos/tender', builder: (_, _) => const TenderScreen()),
+          GoRoute(path: '/pos/cash', builder: (_, _) => const CashScreen()),
         ],
       ),
 
@@ -146,15 +146,15 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) =>
             StorefrontShell(currentLocation: state.matchedLocation, child: child),
         routes: [
-          GoRoute(path: '/store', redirect: (_, __) => '/store/products'),
-          GoRoute(path: '/store/products', builder: (_, __) => const ProductListScreen()),
+          GoRoute(path: '/store', redirect: (_, _) => '/store/products'),
+          GoRoute(path: '/store/products', builder: (_, _) => const ProductListScreen()),
           GoRoute(
             path: '/store/products/:id',
             builder: (_, state) =>
                 ProductDetailScreen(productId: state.pathParameters['id']!),
           ),
-          GoRoute(path: '/store/cart', builder: (_, __) => const StorefrontCartScreen()),
-          GoRoute(path: '/store/orders', builder: (_, __) => const StorefrontOrdersScreen()),
+          GoRoute(path: '/store/cart', builder: (_, _) => const StorefrontCartScreen()),
+          GoRoute(path: '/store/orders', builder: (_, _) => const StorefrontOrdersScreen()),
         ],
       ),
     ],
@@ -171,7 +171,7 @@ class _AuthListenable extends ChangeNotifier {
   _AuthListenable(Ref ref) {
     ref.listen<AsyncValue<AuthState>>(
       authNotifierProvider,
-      (_, __) => notifyListeners(),
+      (_, _) => notifyListeners(),
     );
   }
 }

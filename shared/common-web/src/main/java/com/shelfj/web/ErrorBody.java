@@ -3,7 +3,7 @@ package com.shelfj.web;
 import java.util.List;
 
 /**
- * Machine-readable error payload (README §7.2).
+ * Machine-readable error payload (docs/ARCHITECTURE.md §14).
  *
  * @param code stable, machine-readable code, e.g. {@code "INVENTORY_INSUFFICIENT_STOCK"} — never
  *     changes meaning

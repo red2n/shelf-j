@@ -136,8 +136,10 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
             width: 380,
             child: async.when(
               loading: () => const SizedBox(
-                  height: 80, child: Center(child: CircularProgressIndicator())),
-              error: (e, _) => Text('Failed: $e'),
+                  height: 80,
+                  child: Center(child: CircularProgressIndicator())),
+              error: (e, _) => Text(
+                  friendlyError(e, fallback: 'Could not load held sales.')),
               data: (sales) => sales.isEmpty
                   ? const Text('No held sales.')
                   : Column(
@@ -338,7 +340,7 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
                 )
               : ListView.separated(
                   itemCount: items.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (_, idx) => _SaleLine(line: items[idx]),
                 ),
         ),
@@ -488,7 +490,7 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
           height: 40,
           child: categoriesAsync.when(
             loading: () => const SizedBox.shrink(),
-            error: (_, __) => const SizedBox.shrink(),
+            error: (_, _) => const SizedBox.shrink(),
             data: (cats) => ListView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -524,7 +526,8 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
             error: (e, _) => Center(
                 child: Padding(
                     padding: const EdgeInsets.all(24),
-                    child: Text('Could not load products.\n$e',
+                    child: Text(
+                        friendlyError(e, fallback: 'Could not load products.'),
                         textAlign: TextAlign.center))),
             data: (products) {
               // Apply in-stock filter using lazy-resolved offer data.
@@ -533,7 +536,7 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
               if (inStockOnly) {
                 displayProducts = products.where((p) {
                   final offer =
-                      ref.watch(posProductOfferProvider(p)).valueOrNull;
+                      ref.watch(posProductOfferProvider(p)).value;
                   return offer == null || offer.inStock;
                 }).toList();
               }
@@ -596,7 +599,7 @@ class _OfferTile extends ConsumerWidget {
               const SizedBox(height: 6),
               offerAsync.when(
                 loading: () => Text('…', style: TextStyle(color: cs.outline)),
-                error: (_, __) =>
+                error: (_, _) =>
                     Text('—', style: TextStyle(color: cs.outline)),
                 data: (o) {
                   if (o == null) {
@@ -1043,7 +1046,8 @@ class _CustomerPickerDialogState extends ConsumerState<_CustomerPickerDialog> {
               child: async.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (e, _) => Center(
-                    child: Text('Could not load customers.\n$e',
+                    child: Text(
+                        friendlyError(e, fallback: 'Could not load customers.'),
                         textAlign: TextAlign.center)),
                 data: (all) {
                   final list = _query.isEmpty
@@ -1059,7 +1063,7 @@ class _CustomerPickerDialogState extends ConsumerState<_CustomerPickerDialog> {
                   }
                   return ListView.separated(
                     itemCount: list.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (_, i) {
                       final c = list[i];
                       return ListTile(

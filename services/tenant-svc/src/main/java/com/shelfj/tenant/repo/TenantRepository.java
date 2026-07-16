@@ -681,21 +681,31 @@ public class TenantRepository extends BaseOutboxRepository {
     }
   }
 
-  public List<Tenant> listAllTenants() {
-    return inTx(
-        c -> {
-          try (PreparedStatement ps =
-              c.prepareStatement(
-                  "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
-                      + " created_at, updated_at FROM tenants ORDER BY created_at DESC")) {
-            try (ResultSet rs = ps.executeQuery()) {
-              List<Tenant> result = new java.util.ArrayList<>();
-              while (rs.next()) result.add(mapTenant(rs));
-              return result;
-            }
+  /**
+   * Keyset page of every tenant on the platform (platform-admin), ordered by {@code (created_at,
+   * id)} ascending. Was a flat unbounded scan of {@code tenants}; now paginated like {@link
+   * #listStores(UUID, Instant, UUID, int)} so a growing platform doesn't turn this into an
+   * ever-larger single response.
+   */
+  public List<Tenant> listAllTenants(Instant afterCreatedAt, UUID afterId, int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
+                + " created_at, updated_at FROM tenants");
+    if (afterCreatedAt != null && afterId != null) sql.append(" WHERE (created_at, id) > (?, ?)");
+    sql.append(" ORDER BY created_at, id LIMIT ?");
+    return query(
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          if (afterCreatedAt != null && afterId != null) {
+            ps.setObject(i++, afterCreatedAt.atOffset(ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
           }
+          ps.setInt(i, limit);
         },
-        "list all tenants");
+        TenantRepository::mapTenant,
+        "list all tenants page");
   }
 
   public Optional<TenantInventoryConfig> findInventoryConfig(UUID tenantId) {

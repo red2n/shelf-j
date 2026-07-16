@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'pricing_providers.dart';
@@ -77,7 +78,8 @@ class _PriceListsTab extends ConsumerWidget {
           child: async.when(
             loading: () => const LoadingView(label: 'Loading price lists…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load price lists.\n$e',
+              message:
+                  friendlyError(e, fallback: 'Could not load price lists.'),
               onRetry: () => ref.invalidate(priceListsProvider),
             ),
             data: (lists) {
@@ -87,7 +89,7 @@ class _PriceListsTab extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: lists.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
                   final l = lists[i];
                   return Card(
@@ -167,7 +169,7 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not create price list: $e';
+        _error = friendlyError(e, fallback: 'Could not create price list.');
       });
     }
   }
@@ -192,7 +194,7 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _channel,
+                    initialValue: _channel,
                     decoration: const InputDecoration(labelText: 'Channel'),
                     items: const [
                       DropdownMenuItem(value: 'ALL', child: Text('All')),
@@ -249,7 +251,7 @@ class _PriceListItemsDialog extends ConsumerWidget {
         child: async.when(
           loading: () => const LoadingView(label: 'Loading items…'),
           error: (e, _) => ErrorView(
-            message: 'Could not load items.\n$e',
+            message: friendlyError(e, fallback: 'Could not load items.'),
             onRetry: () => ref.invalidate(priceListItemsProvider(priceList.id)),
           ),
           data: (items) {
@@ -260,11 +262,11 @@ class _PriceListItemsDialog extends ConsumerWidget {
             final labels = ref
                     .watch(variantLabelsProvider(
                         variantIdsKey(items.map((it) => it.variantId))))
-                    .valueOrNull ??
+                    .value ??
                 const <String, VariantLabel>{};
             return ListView.separated(
               itemCount: items.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
+              separatorBuilder: (_, _) => const Divider(height: 1),
               itemBuilder: (_, i) {
                 final it = items[i];
                 final sku = variantSku(it.variantId, labels);
@@ -339,7 +341,7 @@ class _PriceListItemDialogState extends ConsumerState<_PriceListItemDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not add item: $e';
+        _error = friendlyError(e, fallback: 'Could not add item.');
       });
     }
   }
@@ -410,7 +412,7 @@ class _PromotionsTab extends ConsumerWidget {
           child: async.when(
             loading: () => const LoadingView(label: 'Loading promotions…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load promotions.\n$e',
+              message: friendlyError(e, fallback: 'Could not load promotions.'),
               onRetry: () => ref.invalidate(promotionsProvider),
             ),
             data: (promos) {
@@ -420,7 +422,7 @@ class _PromotionsTab extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: promos.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
                   final p = promos[i];
                   final label = p.type == 'PERCENT'
@@ -520,7 +522,7 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not create promotion: $e';
+        _error = friendlyError(e, fallback: 'Could not create promotion.');
       });
     }
   }
@@ -546,7 +548,7 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<String>(
-                      value: _type,
+                      initialValue: _type,
                       decoration: const InputDecoration(labelText: 'Type'),
                       items: const [
                         DropdownMenuItem(
@@ -573,7 +575,7 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<String>(
-                      value: _channel,
+                      initialValue: _channel,
                       decoration: const InputDecoration(labelText: 'Channel'),
                       items: const [
                         DropdownMenuItem(value: 'ALL', child: Text('All')),
@@ -626,7 +628,7 @@ class _VatRatesTab extends ConsumerWidget {
           child: async.when(
             loading: () => const LoadingView(label: 'Loading VAT rates…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load VAT rates.\n$e',
+              message: friendlyError(e, fallback: 'Could not load VAT rates.'),
               onRetry: () => ref.invalidate(vatRatesProvider),
             ),
             data: (rates) {
@@ -636,7 +638,7 @@ class _VatRatesTab extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: rates.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
                   final r = rates[i];
                   return Card(
@@ -741,7 +743,7 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not save VAT rate: $e';
+        _error = friendlyError(e, fallback: 'Could not save VAT rate.');
       });
     }
   }
@@ -835,7 +837,7 @@ Widget _errorBox(BuildContext context, String? error) {
 
 Widget _currencyDropdown(String value, ValueChanged<String> onChanged) =>
     DropdownButtonFormField<String>(
-      value: value,
+      initialValue: value,
       decoration: const InputDecoration(labelText: 'Currency'),
       items: const [
         DropdownMenuItem(value: 'INR', child: Text('INR')),

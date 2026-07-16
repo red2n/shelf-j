@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'cash_providers.dart';
@@ -62,7 +63,7 @@ class _OpenTillViewState extends ConsumerState<_OpenTillView> {
     } catch (e) {
       setState(() {
         _opening = false;
-        _error = 'Could not open till: $e';
+        _error = friendlyError(e, fallback: 'Could not open till.');
       });
     }
   }
@@ -144,7 +145,7 @@ class _OpenSessionView extends ConsumerWidget {
     return reportAsync.when(
       loading: () => const LoadingView(label: 'Loading till…'),
       error: (e, _) => ErrorView(
-        message: 'Could not load till report.\n$e',
+        message: friendlyError(e, fallback: 'Could not load till report.'),
         onRetry: () => ref.invalidate(xReportProvider(sessionId)),
       ),
       data: (r) {
@@ -245,7 +246,8 @@ class _OpenSessionView extends ConsumerWidget {
       _toast(context, 'Cash drop recorded.');
     } catch (e) {
       if (!context.mounted) return;
-      _toast(context, 'Failed: $e', error: true);
+      _toast(context, friendlyError(e, fallback: 'Could not record cash drop.'),
+          error: true);
     }
   }
 
@@ -271,7 +273,11 @@ class _OpenSessionView extends ConsumerWidget {
       _toast(context, '$label recorded.');
     } catch (e) {
       if (!context.mounted) return;
-      _toast(context, 'Failed: $e', error: true);
+      _toast(
+          context,
+          friendlyError(e,
+              fallback: 'Could not record ${label.toLowerCase()}.'),
+          error: true);
     }
   }
 
@@ -331,7 +337,8 @@ class _OpenSessionView extends ConsumerWidget {
       );
     } catch (e) {
       if (!context.mounted) return;
-      _toast(context, 'Could not close till: $e', error: true);
+      _toast(context, friendlyError(e, fallback: 'Could not close till.'),
+          error: true);
     }
   }
 

@@ -437,11 +437,46 @@ public class PurchaseService {
 
   // ── Nominal Ledger ────────────────────────────────────────────────────────────
 
-  public List<NominalLedgerEntry> getNominalLedger(
-      TenantContext ctx, String nominalCode, String fromStr, String toStr) {
+  /** Cursor-paginated nominal ledger. Cursor wraps {@code entryDate|createdAt|id}. */
+  public com.shelfj.web.Cursor.Page<NominalLedgerEntry> getNominalLedger(
+      TenantContext ctx,
+      String nominalCode,
+      String fromStr,
+      String toStr,
+      String after,
+      int limit) {
     LocalDate from = fromStr != null ? LocalDate.parse(fromStr) : null;
     LocalDate to = toStr != null ? LocalDate.parse(toStr) : null;
-    return repo.findNominalLedger(ctx.requireTenantId(), nominalCode, from, to);
+    String rawKey = com.shelfj.web.Cursor.decode(after);
+    LocalDate afterEntryDate = null;
+    java.time.Instant afterCreatedAt = null;
+    UUID afterId = null;
+    if (rawKey != null) {
+      String[] parts = rawKey.split("\\|", 3);
+      if (parts.length != 3) {
+        throw new ApiException(
+            400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), null);
+      }
+      try {
+        afterEntryDate = LocalDate.parse(parts[0]);
+        afterCreatedAt = java.time.Instant.parse(parts[1]);
+        afterId = UUID.fromString(parts[2]);
+      } catch (RuntimeException e) {
+        throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
+      }
+    }
+    List<NominalLedgerEntry> rows =
+        repo.findNominalLedger(
+            ctx.requireTenantId(),
+            nominalCode,
+            from,
+            to,
+            afterEntryDate,
+            afterCreatedAt,
+            afterId,
+            limit + 1);
+    return com.shelfj.web.Cursor.page(
+        rows, limit, e -> e.entryDate() + "|" + e.createdAt() + "|" + e.id());
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────

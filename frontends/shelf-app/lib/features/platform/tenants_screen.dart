@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../admin/providers/admin_providers.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'tenant_onboarding_notifier.dart';
@@ -32,7 +33,7 @@ class TenantsScreen extends ConsumerWidget {
                   ),
                   tenantsAsync.when(
                     loading: () => const SizedBox.shrink(),
-                    error: (_, __) => const SizedBox.shrink(),
+                    error: (_, _) => const SizedBox.shrink(),
                     data: (list) => Chip(
                       label: Text('${list.length} tenants'),
                       backgroundColor: cs.secondaryContainer,
@@ -67,7 +68,7 @@ class TenantsScreen extends ConsumerWidget {
           child: tenantsAsync.when(
             loading: () => const LoadingView(label: 'Loading tenants…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load tenants.\n${e.toString()}',
+              message: friendlyError(e, fallback: 'Could not load tenants.'),
               onRetry: () => ref.invalidate(allTenantsProvider),
             ),
             data: (tenants) {
@@ -165,7 +166,8 @@ class TenantsScreen extends ConsumerWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to $label tenant: $e'),
+            content: Text(friendlyError(e,
+                fallback: 'Failed to ${label.toLowerCase()} tenant.')),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
@@ -289,7 +291,7 @@ class _NarrowList extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: tenants.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 4),
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
       itemBuilder: (context, i) {
         final t = tenants[i];
         final cs = Theme.of(context).colorScheme;
@@ -683,7 +685,7 @@ class _BusinessStoreForm extends StatelessWidget {
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: country,
+                    initialValue: country,
                     decoration: const InputDecoration(labelText: 'Country *'),
                     items: const [
                       DropdownMenuItem(value: 'IN', child: Text('India')),
@@ -699,7 +701,7 @@ class _BusinessStoreForm extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: currency,
+                    initialValue: currency,
                     decoration:
                         const InputDecoration(labelText: 'Currency *'),
                     items: const [
@@ -751,7 +753,7 @@ class _BusinessStoreForm extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: storeType,
+                    initialValue: storeType,
                     decoration: const InputDecoration(labelText: 'Type'),
                     items: const [
                       DropdownMenuItem(
@@ -777,7 +779,7 @@ class _BusinessStoreForm extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: timezone,
+                    initialValue: timezone,
                     decoration:
                         const InputDecoration(labelText: 'Timezone'),
                     items: const [

@@ -602,36 +602,41 @@ public class PricingRepository extends BaseOutboxRepository {
         "insert price override");
   }
 
-  public List<PriceOverride> listPriceOverrides(UUID tenantId, UUID storeId, UUID variantId) {
-    if (storeId != null) {
-      return query(
-          "SELECT id, tenant_id, order_id, variant_id, store_id, original_price,"
-              + " override_price, override_reason, overridden_by, created_at"
-              + " FROM price_overrides WHERE tenant_id=? AND store_id=? ORDER BY created_at DESC",
-          ps -> {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, storeId);
-          },
-          this::mapPriceOverride,
-          "list price overrides by store");
-    }
-    if (variantId != null) {
-      return query(
-          "SELECT id, tenant_id, order_id, variant_id, store_id, original_price,"
-              + " override_price, override_reason, overridden_by, created_at"
-              + " FROM price_overrides WHERE tenant_id=? AND variant_id=? ORDER BY created_at DESC",
-          ps -> {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, variantId);
-          },
-          this::mapPriceOverride,
-          "list price overrides by variant");
-    }
+  /**
+   * Keyset page of price overrides (append-only audit log), newest first. {@code storeId} and
+   * {@code variantId} filters can be combined. Replaces three previously separate branches, two of
+   * which had no bound at all and one a hardcoded, non-paginated {@code LIMIT 200} that silently
+   * dropped rows past it with no signal a further page existed.
+   */
+  public List<PriceOverride> listPriceOverrides(
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      Instant afterCreatedAt,
+      UUID afterId,
+      int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, order_id, variant_id, store_id, original_price,"
+                + " override_price, override_reason, overridden_by, created_at"
+                + " FROM price_overrides WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (variantId != null) sql.append(" AND variant_id=?");
+    if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) < (?, ?)");
+    sql.append(" ORDER BY created_at DESC, id DESC LIMIT ?");
     return query(
-        "SELECT id, tenant_id, order_id, variant_id, store_id, original_price,"
-            + " override_price, override_reason, overridden_by, created_at"
-            + " FROM price_overrides WHERE tenant_id=? ORDER BY created_at DESC LIMIT 200",
-        ps -> ps.setObject(1, tenantId),
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (variantId != null) ps.setObject(i++, variantId);
+          if (afterCreatedAt != null && afterId != null) {
+            ps.setObject(i++, afterCreatedAt.atOffset(ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
+        },
         this::mapPriceOverride,
         "list price overrides");
   }

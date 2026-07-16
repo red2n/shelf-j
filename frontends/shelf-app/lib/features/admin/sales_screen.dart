@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -94,9 +95,9 @@ class _GiftCardsTabState extends ConsumerState<_GiftCardsTab> {
       setState(() {
         _loading = false;
         _card = null;
-        _error = e.toString().contains('404')
+        _error = (e is DioException && e.response?.statusCode == 404)
             ? 'No gift card with that code.'
-            : 'Lookup failed: $e';
+            : friendlyError(e, fallback: 'Lookup failed.');
       });
     }
   }
@@ -118,7 +119,8 @@ class _GiftCardsTabState extends ConsumerState<_GiftCardsTab> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Failed: $e'),
+          content:
+              Text(friendlyError(e, fallback: 'Could not update gift card.')),
           backgroundColor: Theme.of(context).colorScheme.error));
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -273,7 +275,7 @@ class _IssueGiftCardDialogState extends ConsumerState<_IssueGiftCardDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not issue: $e';
+        _error = friendlyError(e, fallback: 'Could not issue gift card.');
       });
     }
   }
@@ -296,9 +298,10 @@ class _IssueGiftCardDialogState extends ConsumerState<_IssueGiftCardDialog> {
             ],
             storesAsync.when(
               loading: () => const LinearProgressIndicator(),
-              error: (e, _) => Text('Stores failed: $e'),
+              error: (e, _) =>
+                  Text(friendlyError(e, fallback: 'Could not load stores.')),
               data: (stores) => DropdownButtonFormField<String>(
-                value: _storeId,
+                initialValue: _storeId,
                 isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Store *'),
                 items: [
@@ -322,7 +325,7 @@ class _IssueGiftCardDialogState extends ConsumerState<_IssueGiftCardDialog> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _currency,
+                    initialValue: _currency,
                     decoration: const InputDecoration(labelText: 'Currency'),
                     items: const [
                       DropdownMenuItem(value: 'INR', child: Text('INR')),
@@ -382,7 +385,9 @@ class _LayawaysTabState extends ConsumerState<_LayawaysTab> {
       setState(() {
         _loading = false;
         _layaway = null;
-        _error = e.toString().contains('404') ? 'No layaway with that id.' : '$e';
+        _error = (e is DioException && e.response?.statusCode == 404)
+            ? 'No layaway with that id.'
+            : friendlyError(e, fallback: 'Could not look up layaway.');
       });
     }
   }
@@ -405,7 +410,8 @@ class _LayawaysTabState extends ConsumerState<_LayawaysTab> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Failed: $e'),
+          content:
+              Text(friendlyError(e, fallback: 'Could not update layaway.')),
           backgroundColor: Theme.of(context).colorScheme.error));
     }
   }
@@ -532,7 +538,7 @@ class _CreateLayawayDialogState extends ConsumerState<_CreateLayawayDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not create layaway: $e';
+        _error = friendlyError(e, fallback: 'Could not create layaway.');
       });
     }
   }
@@ -556,9 +562,10 @@ class _CreateLayawayDialogState extends ConsumerState<_CreateLayawayDialog> {
               ],
               storesAsync.when(
                 loading: () => const LinearProgressIndicator(),
-                error: (e, _) => Text('Stores failed: $e'),
+                error: (e, _) =>
+                    Text(friendlyError(e, fallback: 'Could not load stores.')),
                 data: (stores) => DropdownButtonFormField<String>(
-                  value: _storeId,
+                  initialValue: _storeId,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Store *'),
                   items: [
@@ -618,7 +625,8 @@ class _SpecialOrdersTab extends ConsumerWidget {
           child: async.when(
             loading: () => const LoadingView(label: 'Loading special orders…'),
             error: (e, _) => ErrorView(
-              message: 'Could not load special orders.\n$e',
+              message:
+                  friendlyError(e, fallback: 'Could not load special orders.'),
               onRetry: () => ref.invalidate(specialOrdersProvider),
             ),
             data: (orders) {
@@ -638,7 +646,7 @@ class _SpecialOrdersTab extends ConsumerWidget {
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: orders.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 4),
+                separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
                   final o = orders[i];
                   return Card(
@@ -693,7 +701,8 @@ class _SpecialOrderActions extends ConsumerWidget {
               } catch (e) {
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text('Failed: $e'),
+                    content: Text(friendlyError(e,
+                        fallback: 'Could not update special order.')),
                     backgroundColor: Theme.of(context).colorScheme.error));
               }
             },
@@ -755,7 +764,7 @@ class _CreateSpecialOrderDialogState
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = 'Could not create: $e';
+        _error = friendlyError(e, fallback: 'Could not create special order.');
       });
     }
   }
@@ -779,9 +788,10 @@ class _CreateSpecialOrderDialogState
               ],
               storesAsync.when(
                 loading: () => const LinearProgressIndicator(),
-                error: (e, _) => Text('Stores failed: $e'),
+                error: (e, _) =>
+                    Text(friendlyError(e, fallback: 'Could not load stores.')),
                 data: (stores) => DropdownButtonFormField<String>(
-                  value: _storeId,
+                  initialValue: _storeId,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Store *'),
                   items: [

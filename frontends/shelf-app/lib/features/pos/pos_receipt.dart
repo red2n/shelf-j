@@ -1,5 +1,7 @@
+import 'dart:js_interop';
+
 // ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html;
+import 'package:web/web.dart' as web;
 
 import 'pos_providers.dart';
 
@@ -38,11 +40,6 @@ class PosReceiptData {
       orderId.length >= 8 ? orderId.substring(0, 8).toUpperCase() : orderId.toUpperCase();
 
   String _fmt(double v) => '$currency ${v.toStringAsFixed(2)}';
-
-  String _pad(String left, String right, {int width = 42}) {
-    final gap = width - left.length - right.length;
-    return gap > 0 ? '$left${' ' * gap}$right' : '$left $right';
-  }
 
   String _fmtDate() {
     final d = dateTime.toLocal();
@@ -195,9 +192,12 @@ class PosReceiptData {
 }
 
 void openReceiptPrint(PosReceiptData data) {
-  final blob = html.Blob([data.toHtml()], 'text/html');
-  final url = html.Url.createObjectUrlFromBlob(blob);
-  html.window.open(url, '_blank', 'width=420,height=700,menubar=no,toolbar=no');
+  final blob = web.Blob(
+    [data.toHtml().toJS].toJS,
+    web.BlobPropertyBag(type: 'text/html'),
+  );
+  final url = web.URL.createObjectURL(blob);
+  web.window.open(url, '_blank', 'width=420,height=700,menubar=no,toolbar=no');
   // Revoke after a short delay so the browser has time to load the page.
-  Future.delayed(const Duration(seconds: 10), () => html.Url.revokeObjectUrl(url));
+  Future.delayed(const Duration(seconds: 10), () => web.URL.revokeObjectURL(url));
 }

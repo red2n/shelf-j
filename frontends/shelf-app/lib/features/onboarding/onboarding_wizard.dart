@@ -234,7 +234,7 @@ class _Step1TenantForm extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              value: country,
+              initialValue: country,
               decoration: const InputDecoration(
                 labelText: 'Country *',
                 prefixIcon: Icon(Icons.flag_outlined),
@@ -251,7 +251,7 @@ class _Step1TenantForm extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              value: currency,
+              initialValue: currency,
               decoration: const InputDecoration(
                 labelText: 'Currency *',
                 prefixIcon: Icon(Icons.currency_exchange),
@@ -356,7 +356,7 @@ class _Step2StoreForm extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              value: storeType,
+              initialValue: storeType,
               decoration: const InputDecoration(
                 labelText: 'Type',
                 prefixIcon: Icon(Icons.category_outlined),
@@ -398,7 +398,7 @@ class _Step2StoreForm extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              value: country,
+              initialValue: country,
               decoration: const InputDecoration(
                 labelText: 'Country',
                 prefixIcon: Icon(Icons.flag_outlined),
@@ -414,7 +414,7 @@ class _Step2StoreForm extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              value: timezone,
+              initialValue: timezone,
               decoration: const InputDecoration(
                 labelText: 'Timezone',
                 prefixIcon: Icon(Icons.schedule),

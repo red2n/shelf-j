@@ -19,7 +19,7 @@ Future<List<dynamic>> fetchAllPages(
     final resp = await dio.get(path, queryParameters: {
       ...?query,
       'limit': pageSize,
-      if (after != null) 'after': after,
+      'after': ?after,
     });
     final body = resp.data as Map<String, dynamic>;
     all.addAll((body['data'] as List?) ?? const []);

@@ -238,8 +238,13 @@ public class TenantService {
 
   // --- reads ---
 
-  public List<Tenant> listAllTenants() {
-    return repo.listAllTenants();
+  /** Cursor-paginated platform-wide tenant list (platform-admin). */
+  public Cursor.Page<Tenant> listAllTenants(String after, int limit) {
+    Cursor.CreatedAtId key = Cursor.decodeCreatedAtId(after);
+    List<Tenant> rows =
+        repo.listAllTenants(
+            key == null ? null : key.createdAt(), key == null ? null : key.id(), limit + 1);
+    return Cursor.page(rows, limit, t -> t.createdAt() + "|" + t.id());
   }
 
   public Tenant getTenant(UUID tenantId) {

@@ -1,6 +1,8 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'storefront_providers.dart';
 import 'survey_widgets.dart';
@@ -37,7 +39,7 @@ class StorefrontShell extends ConsumerWidget {
     final count = ref.watch(cartProvider).fold<int>(0, (s, l) => s + l.qty);
     // A deactivated tenant's shop is closed — show a friendly notice instead of
     // letting every product/price call fail with a raw 403.
-    final suspended = ref.watch(storefrontSuspendedProvider).valueOrNull ?? false;
+    final suspended = ref.watch(storefrontSuspendedProvider).value ?? false;
 
     // Show the preferences sheet once after a customer first signs in or registers.
     ref.listen<bool>(storefrontJustAuthenticatedProvider, (_, justAuth) {
@@ -273,11 +275,14 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = e.toString().contains('401')
+        final status = e is DioException ? e.response?.statusCode : null;
+        _error = status == 401
             ? 'Incorrect email or password.'
-            : e.toString().contains('409')
+            : status == 409
                 ? 'An account with this email already exists.'
-                : 'Could not ${_register ? 'register' : 'sign in'}: $e';
+                : friendlyError(e,
+                    fallback:
+                        'Could not ${_register ? 'register' : 'sign in'}.');
       });
     }
   }

@@ -453,7 +453,7 @@ STAGE 4 — Frontends  (storefront · admin-console · pos)
 | Ports | Unique per service `8001…8012` (avoid laptop collisions) | **All services on the same `containerPort` (8080)** — isolated per pod |
 | Addressing | `localhost:<port>` | **DNS via k8s `Service`** (`order-svc.shelfj.svc.cluster.local`) + Consul discovery; callers never use raw `host:port` |
 | Scaling | 1 instance each | **N replicas**, autoscaled (HPA) on CPU/latency/lag |
-| Ordering | `depends_on: condition: service_healthy` (see README §11.x) | **Stage gates + readiness probes**, no per-service order |
+| Ordering | `depends_on: condition: service_healthy` (see docs/ARCHITECTURE.md §17) | **Stage gates + readiness probes**, no per-service order |
 | Migrations | run-once script before services | **`Job` / Helm hook**, gated before STAGE 3 |
 | Config & secrets | `.env` / config service | config service + **k8s Secrets / Vault**, never in images |
 | Rollout | restart all | **rolling update** (or blue-green/canary) per service, independently versioned |

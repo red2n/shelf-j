@@ -6,7 +6,7 @@ import org.postgresql.ds.PGSimpleDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 /**
- * Reusable Postgres Testcontainer support for service integration tests (README §7.10).
+ * Reusable Postgres Testcontainer support for service integration tests (docs/ARCHITECTURE.md §16).
  *
  * <p>Spins up a real Postgres in a container, optionally runs the service's Flyway migrations
  * against it, and hands back a {@link DataSource}. Keeps integration tests honest (real DB, real

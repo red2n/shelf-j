@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -30,7 +31,7 @@ class CategoriesScreen extends ConsumerWidget {
                   ),
                   catsAsync.when(
                     loading: () => const SizedBox.shrink(),
-                    error: (_, __) => const SizedBox.shrink(),
+                    error: (_, _) => const SizedBox.shrink(),
                     data: (list) => Chip(
                       label: Text('${list.length} categories'),
                       backgroundColor: cs.secondaryContainer,
@@ -136,7 +137,7 @@ class CategoriesScreen extends ConsumerWidget {
           );
           ref.invalidate(categoriesProvider);
         },
-        availableParents: ref.read(categoriesProvider).valueOrNull ?? [],
+        availableParents: ref.read(categoriesProvider).value ?? [],
       ),
     );
   }
@@ -194,7 +195,8 @@ class CategoriesScreen extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Failed: $e'),
+          content: Text(
+              friendlyError(e, fallback: 'Could not deactivate category.')),
           backgroundColor: Theme.of(context).colorScheme.error,
         ));
       }
@@ -325,7 +327,7 @@ class _NarrowList extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: cats.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 4),
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
       itemBuilder: (context, i) {
         final cat = cats[i];
         final cs = Theme.of(context).colorScheme;
@@ -498,7 +500,7 @@ class _CategoryDialogState extends State<_CategoryDialog> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
-                  value: _parentId,
+                  initialValue: _parentId,
                   decoration:
                       const InputDecoration(labelText: 'Parent category'),
                   items: [
@@ -550,7 +552,7 @@ class _CategoryDialogState extends State<_CategoryDialog> {
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = friendlyError(e, fallback: 'Could not save category.');
       });
     }
   }

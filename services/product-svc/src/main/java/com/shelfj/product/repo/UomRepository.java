@@ -1,0 +1,147 @@
+package com.shelfj.product.repo;
+
+import com.shelfj.product.domain.Domain.UomClass;
+import com.shelfj.product.domain.Domain.UomDefinition;
+import com.shelfj.product.domain.Domain.UomItemConversion;
+import com.shelfj.service.BaseJdbcRepository;
+import jakarta.enterprise.context.ApplicationScoped;
+import java.math.BigDecimal;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * Units of measure: classes/definitions (reference data) and per-variant conversion factors.
+ * Extracted from {@code ProductRepository}: self-contained, no outbox events, no coupling to any
+ * other aggregate, so it only needs the JDBC infra inherited from {@link BaseJdbcRepository}.
+ */
+@ApplicationScoped
+public class UomRepository extends BaseJdbcRepository {
+
+  public List<UomClass> listUomClasses() {
+    return query(
+        "SELECT id, code, name FROM uom_classes ORDER BY name",
+        ps -> {},
+        rs ->
+            new UomClass(
+                rs.getObject("id", UUID.class), rs.getString("code"), rs.getString("name")),
+        "list uom classes");
+  }
+
+  public List<UomDefinition> listUomDefinitions(String classCode) {
+    if (classCode != null) {
+      return query(
+          "SELECT id, class_code, code, name FROM uom_definitions WHERE class_code = ? ORDER BY name",
+          ps -> ps.setString(1, classCode),
+          UomRepository::mapUomDef,
+          "list uom definitions by class");
+    }
+    return query(
+        "SELECT id, class_code, code, name FROM uom_definitions ORDER BY class_code, name",
+        ps -> {},
+        UomRepository::mapUomDef,
+        "list all uom definitions");
+  }
+
+  public Optional<BigDecimal> findStandardConversionFactor(String fromUom, String toUom) {
+    var list =
+        query(
+            "SELECT factor FROM uom_standard_conversions WHERE from_uom = ? AND to_uom = ?",
+            ps -> {
+              ps.setString(1, fromUom);
+              ps.setString(2, toUom);
+            },
+            rs -> rs.getBigDecimal("factor"),
+            "find std conversion");
+    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  public UomItemConversion upsertItemConversion(UomItemConversion c) {
+    return inTx(
+        conn -> {
+          try (PreparedStatement ps =
+              conn.prepareStatement(
+                  "INSERT INTO uom_item_conversions"
+                      + " (id, tenant_id, variant_id, from_uom, to_uom, factor)"
+                      + " VALUES (?,?,?,?,?,?)"
+                      + " ON CONFLICT (tenant_id, variant_id, from_uom, to_uom)"
+                      + " DO UPDATE SET factor = EXCLUDED.factor"
+                      + " RETURNING id, tenant_id, variant_id, from_uom, to_uom, factor")) {
+            ps.setObject(1, c.id());
+            ps.setObject(2, c.tenantId());
+            ps.setObject(3, c.variantId());
+            ps.setString(4, c.fromUom());
+            ps.setString(5, c.toUom());
+            ps.setBigDecimal(6, c.factor());
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              return mapItemConversion(rs);
+            }
+          }
+        },
+        "upsert item conversion");
+  }
+
+  public List<UomItemConversion> listItemConversions(UUID tenantId, UUID variantId) {
+    return query(
+        "SELECT id, tenant_id, variant_id, from_uom, to_uom, factor"
+            + " FROM uom_item_conversions WHERE tenant_id = ? AND variant_id = ?"
+            + " ORDER BY from_uom, to_uom",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, variantId);
+        },
+        UomRepository::mapItemConversion,
+        "list item conversions");
+  }
+
+  public boolean deleteItemConversion(UUID tenantId, UUID id) {
+    try (var c = dataSource.getConnection();
+        var ps =
+            c.prepareStatement("DELETE FROM uom_item_conversions WHERE tenant_id = ? AND id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, id);
+      return ps.executeUpdate() > 0;
+    } catch (SQLException e) {
+      throw dbError("delete item conversion", e);
+    }
+  }
+
+  public Optional<BigDecimal> findItemConversionFactor(
+      UUID tenantId, UUID variantId, String fromUom, String toUom) {
+    var list =
+        query(
+            "SELECT factor FROM uom_item_conversions"
+                + " WHERE tenant_id = ? AND variant_id = ? AND from_uom = ? AND to_uom = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, variantId);
+              ps.setString(3, fromUom);
+              ps.setString(4, toUom);
+            },
+            rs -> rs.getBigDecimal("factor"),
+            "find item conversion factor");
+    return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  private static UomDefinition mapUomDef(ResultSet rs) throws SQLException {
+    return new UomDefinition(
+        rs.getObject("id", UUID.class),
+        rs.getString("class_code"),
+        rs.getString("code"),
+        rs.getString("name"));
+  }
+
+  private static UomItemConversion mapItemConversion(ResultSet rs) throws SQLException {
+    return new UomItemConversion(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getString("from_uom"),
+        rs.getString("to_uom"),
+        rs.getBigDecimal("factor"));
+  }
+}

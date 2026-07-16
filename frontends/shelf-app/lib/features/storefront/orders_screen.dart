@@ -34,7 +34,7 @@ class StorefrontOrdersScreen extends ConsumerWidget {
             return ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: list.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 4),
+              separatorBuilder: (_, _) => const SizedBox(height: 4),
               itemBuilder: (_, i) => _ServerOrderTile(
                   order: list[i],
                   storeName: storeNames[list[i].storeId] ?? list[i].storeId,
@@ -56,7 +56,7 @@ class StorefrontOrdersScreen extends ConsumerWidget {
               : ListView.separated(
                   padding: const EdgeInsets.all(16),
                   itemCount: orders.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 4),
+                  separatorBuilder: (_, _) => const SizedBox(height: 4),
                   itemBuilder: (_, i) =>
                       _LocalOrderTile(order: orders[i], showPrices: showPrices),
                 ),

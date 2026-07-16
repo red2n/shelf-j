@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -190,7 +191,8 @@ class _SupplyDemandReport extends ConsumerWidget {
     return async.when(
       loading: () => const LoadingView(label: 'Loading supply / demand…'),
       error: (e, _) => ErrorView(
-        message: 'Could not load supply / demand report.\n$e',
+        message: friendlyError(e,
+            fallback: 'Could not load supply / demand report.'),
         onRetry: () => ref.invalidate(supplyDemandReportProvider),
       ),
       data: (rows) => Column(
@@ -248,7 +250,7 @@ class _SalesReport extends ConsumerWidget {
     return async.when(
       loading: () => const LoadingView(label: 'Loading sales…'),
       error: (e, _) => ErrorView(
-        message: 'Could not load sales report.\n$e',
+        message: friendlyError(e, fallback: 'Could not load sales report.'),
         onRetry: () => ref.invalidate(salesSummaryReportProvider),
       ),
       data: (rows) => Column(
@@ -306,7 +308,7 @@ class _MovementStatsReport extends ConsumerWidget {
     return async.when(
       loading: () => const LoadingView(label: 'Loading movement stats…'),
       error: (e, _) => ErrorView(
-        message: 'Could not load movement stats.\n$e',
+        message: friendlyError(e, fallback: 'Could not load movement stats.'),
         onRetry: () => ref.invalidate(movementStatsReportProvider),
       ),
       data: (rows) => Column(
@@ -366,7 +368,7 @@ class _OnHandReport extends ConsumerWidget {
     return reportAsync.when(
       loading: () => const LoadingView(label: 'Loading on-hand report…'),
       error: (e, _) => ErrorView(
-        message: 'Could not load on-hand report.\n${e.toString()}',
+        message: friendlyError(e, fallback: 'Could not load on-hand report.'),
         onRetry: () => ref.invalidate(onHandReportProvider),
       ),
       data: (rows) {
