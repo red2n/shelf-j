@@ -26,12 +26,12 @@ A signed-in user's role decides both where they land and what they can reach:
 |---|---|---|
 | `PLATFORM_ADMIN` | Platform Admin | Global superuser for the SaaS operator; never needs onboarding; confined to the Platform Console |
 | `OWNER` | Tenant Admin | Business owner; granted automatically when a new tenant/store is created |
-| `STORE_ADMIN`, `MANAGER` | Tenant Admin | Also treated as "admin" for routing purposes |
+| `MANAGER` | Tenant Admin | Also treated as "admin" for routing purposes |
 | `STOREKEEPER` | Assignable staff role (from the Staff screen) | See note below |
 | `CASHIER` | POS | Access to the POS only |
 | `CUSTOMER` | Storefront | Default role on self-registration; also the fallback/default persona |
 
-> **Known rough edge:** `STOREKEEPER` is assignable from the Staff screen, but today it isn't included in the app's "is this an admin" or "is this a cashier" checks — so a user with *only* that role doesn't land on an operational screen, it falls through to the public storefront by default. Worth confirming whether that's intended before relying on the Storekeeper role alone for someone's login.
+> **Known rough edge:** `STOREKEEPER` is assignable from the Staff screen, but today it isn't included in the app's "is this an admin" or "is this a cashier" checks — so a user with *only* that role doesn't land on an operational screen, it falls through to the public storefront by default. Worth confirming whether that's intended before relying on the Storekeeper role alone for someone's login. (The app's admin check also accepts a `STORE_ADMIN` role code, but no backend service ever issues or accepts that role — it's a dead branch, which is why it doesn't appear in the table above.)
 
 **Routing rules:**
 - Unauthenticated users land on the sign-in screen (a separate one for the Platform Console vs. everyone else).
@@ -197,14 +197,14 @@ Navigation: **Sale · Tender · Cash** (a distinct amber accent branding sets th
 
 | Screen | What the user does |
 |---|---|
-| **Sale** | On wide terminals: a persistent two-pane layout — product catalog on the left (search, in-stock filter, category chips, tap-to-add), the running sale on the right. On phones: the sale view only, with a **Browse** button opening the same catalog as a bottom sheet. A barcode field accepts a camera scan, a handheld scanner, or manual entry. Each line supports qty +/- and swipe-to-remove. A customer bar lets the cashier attach a registered customer or record a walk-in's phone number. Actions: **Hold** (park the sale, with a discard-confirmation if resuming over unsaved changes), **Resume** (pick from held sales), **No sale** (open the drawer without a transaction, logged for loss-prevention). A totals bar shows subtotal, an optional order-level discount, and net total, with a **Charge** button. |
-| **Tender** | **Split/multi-tender payment**: add one or more payments (Cash, Card, UPI, Wallet, Gift Card, Store Credit) until the balance clears; cash/card entries offer quick preset amounts or "Exact," cash shows change due; gift-card/store-credit entries look up and cap against the actual balance. Added tenders can be removed before completing. On completion: a "Sale complete" confirmation with order number and change due, plus **Reprint** and **Email** receipt actions, then "New sale." |
+| **Sale** | On wide terminals: a persistent two-pane layout — product catalog on the left (search, in-stock filter, category chips, tap-to-add), the running sale on the right. On phones: the sale view only, with a **Browse** button opening the same catalog as a bottom sheet. A barcode field accepts a camera scan, a handheld scanner, or manual entry. Each line supports qty +/- and swipe-to-remove. A customer bar attaches a registered customer or records a walk-in's phone number — **required on every sale**: tendering is blocked until one or the other is present. Actions: **Hold** (park the sale, with a discard-confirmation if resuming over unsaved changes), **Resume** (pick from held sales), **No sale** (open the drawer without a transaction, logged for loss-prevention). A totals bar shows subtotal, an optional order-level discount, and net total, with a **Charge** button. |
+| **Tender** | **Split/multi-tender payment**: add one or more payments (Cash, Card, UPI, Wallet, Gift Card, Store Credit) until the balance clears; cash/card entries offer quick preset amounts or "Exact," cash shows change due; gift-card/store-credit entries look up and cap against the actual balance. Added tenders can be removed before completing. On completion: a "Sale complete" confirmation with order number and change due, plus **Reprint** and **Email** receipt actions, then "New sale." (The Email action records the receipt + address against the order and reports success, but no email is actually dispatched today — there's no receipt consumer behind it.) |
 | **Tender** *(Catalog-mode store)* | Skips payment entirely when the clocked-in store has prices hidden: lists the items and a single **Place order** button — no prices, no tender, just an order record for later fulfilment/pricing. |
 | **Cash / Till** | **Open till**: enter a starting cash float. Once open: **Cash drop**, **Pay in**, **Pay out** (each a reason + amount mini-dialog), and **Close till (Z-report)** — shows expected cash, prompts for the counted amount, and produces a "till closed" confirmation. |
 
 **Flows:**
 - *Start of shift:* Clock in (pick store) → Sale screen unlocked.
-- *Ring up a sale:* scan/search items → (optional) attach customer/walk-in phone → Hold or Charge → Tender (splitting across methods as needed) → receipt (print/email) → New sale.
+- *Ring up a sale:* scan/search items → attach customer or walk-in phone (required) → Hold or Charge → Tender (splitting across methods as needed) → receipt → New sale.
 - *Interrupted sale:* Hold → serve another customer → Resume (discarding or completing the interrupted cart).
 - *End of shift:* Close till → count cash → Z-report → Clock out.
 
@@ -224,8 +224,8 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 |---|---|
 | **Shop** | See above. First-time visitors are shown a skippable "tell us about yourself" preference prompt shortly after arriving. |
 | **Product Detail** | Image, name, description, and an "Options" list of purchasable variants (SKU, unit, barcode), each with a stock badge and an **Add** button. In Catalog-mode stores, prices are hidden entirely — just stock + Add. |
-| **Cart & Checkout** | Line items with qty +/- (and totals, if prices are shown). Fulfilment choice: **Collect from store** or **Deliver to home** — delivery needs a full address (line 1/2, city, postal code, recipient name & phone); pickup just needs a contact phone. Payment options build dynamically from what the store accepts and whether prices are shown (Card/UPI/Wallet only appear when priced; Cash always reads as "cash on delivery/at pickup"; a store with no applicable method still gets a generic "pay on/at…" fallback so checkout never dead-ends). A **Review your order** step precedes placing it. If a pending order already exists for the same cart/customer, the app offers to view/update it instead of silently duplicating. Ends in a "Payment successful"/"Order placed" confirmation. |
-| **My Orders** | Signed-in customers see a real, cross-device order history; guests see only orders placed on this device, with a banner nudging them to sign in for the full history. Each order shows fulfilment type, date, status, and total (or "Price on delivery/in store" in Catalog mode). |
+| **Cart & Checkout** | Line items with qty +/- (and totals, if prices are shown). Browsing and carting need no account, but tapping checkout as a guest opens the sign-in/registration dialog and won't proceed without it — **every order is placed by a signed-in customer** (the gateway only accepts order placement from a verified customer token). Fulfilment choice: **Collect from store** or **Deliver to home** — delivery needs a full address (line 1/2, city, postal code, recipient name & phone); pickup just needs a contact phone. Payment options build dynamically from what the store accepts and whether prices are shown (Card/UPI/Wallet only appear when priced; Cash always reads as "cash on delivery/at pickup"; a store with no applicable method still gets a generic "pay on/at…" fallback so checkout never dead-ends). A **Review your order** step precedes placing it. If a pending order already exists for the same cart/customer, the app offers to view/update it instead of silently duplicating. Ends in a "Payment successful"/"Order placed" confirmation. |
+| **My Orders** | Signed-in customers see a real, cross-device order history; guests just see a banner nudging them to sign in (the screen has a device-local list for unauthenticated orders, but since checkout requires sign-in it stays empty in practice). Each order shows fulfilment type, date, status, and total (or "Price on delivery/in store" in Catalog mode). |
 
 **Account & engagement surfaces (dialogs/sheets, not separate screens):**
 - **Sign in / Create account** — email + password (+ phone required to register); reusable from the account menu or at checkout.
@@ -236,11 +236,11 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 - **Store-unavailable notice** — if the business has been deactivated by the platform, the whole storefront shows a "currently unavailable" message instead of the shop.
 
 **Flows:**
-- *Guest browsing:* land on Shop → (skippable preference prompt) → browse/search/filter → Product Detail → Add to cart → Cart → choose Pickup/Delivery → choose payment → Review → Place order/Pay → confirmation.
+- *Guest browsing → first purchase:* land on Shop → (skippable preference prompt) → browse/search/filter → Product Detail → Add to cart → Cart → **sign in / create account (required here)** → choose Pickup/Delivery → choose payment → Review → Place order/Pay → confirmation.
 - *Returning customer:* Sign in → Preferences (first time) → shop → My Orders shows the full synced history.
 - *Post-purchase engagement:* Order placed → (later) post-order survey; any time → Send feedback from the account menu.
 
-**Notable UX/product features:** multi-store switching within one business's storefront; a native ad slot mixed into organic product listings; guest checkout with device-local order history plus a sign-in nudge (no forced account creation to buy); a duplicate-order guard; Catalog mode strips prices/payment consistently across product list, detail, cart, and order history; four lightweight, skippable customer-research surveys (preferences, feedback, post-order) built directly into the shopping experience.
+**Notable UX/product features:** multi-store switching within one business's storefront; a native ad slot mixed into organic product listings; anonymous browsing with a low-friction sign-in gate placed at checkout (account creation is required to buy, but nowhere earlier); a duplicate-order guard; Catalog mode strips prices/payment consistently across product list, detail, cart, and order history; four lightweight, skippable customer-research surveys (preferences, feedback, post-order) built directly into the shopping experience.
 
 ---
 
@@ -248,11 +248,10 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 
 - **"Catalog mode"** (a per-store "show prices" toggle, set from Admin → Stores → Edit) turns off pricing everywhere that store's customers/staff touch it — storefront listings/detail/cart/orders show stock only ("Add," no price), the POS Tender screen skips payment collection entirely and becomes a "Place order" ticket, and receipts/orders show "Price on delivery"/"Price in store" instead of a total. This is a first-class, deliberately designed alternate business mode (e.g. for wholesale/quote-based or regulated-pricing retailers) — see [README §16](../README.md#16-catalog-mode--selling-without-showing-a-price).
 - **Barcode scanning:** one shared full-screen camera scanner (with a flash/torch toggle) is reused in three places — Admin Products (tag a variant's barcode), Admin Inventory (resolve a variant when receiving stock), and POS Sale (ring up items) — always with manual text entry as a fallback, since desktop browsers have no camera-scanning path.
-- **Responsive navigation:** every console uses the same adaptive shell — a persistent side rail on tablet/desktop/web, collapsing to a drawer on phones — so the whole app is one responsive experience rather than separate mobile/desktop builds.
 - **Dark mode:** full light/dark theming that follows the OS setting; a warm ivory/charcoal/amber/forest-green palette with dedicated, colour-blind-safe success/warning colors (always paired with text or an icon, never colour alone).
 - **Localization:** 8 languages ship at the framework level — English (UK, default), Polish, Romanian, Punjabi, Urdu, Bengali, Gujarati, Arabic — chosen to match the largest non-English-speaking communities in the UK. Urdu and Arabic auto-mirror the whole layout right-to-left. In practice, only the Login/Register screen's strings are fully translated today; the rest of the interface is still English, with translation coverage layered on top of already-complete RTL/date/number framework support.
 - **Multi-currency:** every money-creating flow (onboarding, stores, price lists, promotions, gift cards, purchase orders/suppliers, layaways) offers the same 5 currencies (INR/USD/GBP/SGD/AED) tied to the 5 supported countries.
-- **Receipts:** generated as printable HTML opened in a new browser tab that auto-invokes the browser's print dialog (a web-first design); POS also offers emailing the receipt.
+- **Receipts:** generated as printable HTML opened in a new browser tab that auto-invokes the browser's print dialog (a web-first design); the POS "email receipt" action records the request against the order but doesn't dispatch an email yet.
 - **Auditable "soft" cash/inventory actions:** POS "No sale" and cash drop/pay-in/pay-out are explicit, logged, non-sale operations distinct from a Charge — a loss-prevention/reconciliation feature.
 - **Reliability touches:** temp passwords for newly-provisioned staff accounts are shown exactly once (masked by default, explicit reveal + copy, with a "clear your clipboard" reminder); a few sensitive create actions (special orders, POS payment collection) are safe to retry without double effect; tenant deactivation is enforced end-to-end (the storefront shows a "closed" notice rather than a raw error).
 - **No CSV export or date-range filtering yet** on the Reports screen — reports are simple, refreshable, whole-business snapshots today.
@@ -261,31 +260,33 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 
 ## 8. Full route reference
 
-| Area | Screen |
+| Route | Screen |
 |---|---|
-| Sign-in | Login / Register |
-| Sign-in | Platform console sign-in |
-| Onboarding | Business setup wizard (2 steps) |
-| Platform | Platform Overview (dashboard) |
-| Platform | Tenants list + onboarding dialog |
-| Admin | Dashboard |
-| Admin | Catalog (Products / Categories / Import tabs) |
-| Admin | Inventory (Levels / Batches tabs) + Receive Stock |
-| Admin | Stores + Zones |
-| Admin | Orders (all channels) + Return/Refund + Collect Payment |
-| Admin | Procurement (Purchase Orders / Suppliers tabs) |
-| Admin | Pricing (Price Lists / Promotions / VAT Rates tabs) |
-| Admin | Reports (On-Hand / Sales / Supply-Demand / Movements) |
-| Admin | Customers + loyalty/credit + addresses |
-| Admin | Sales tools (Gift Cards / Layaways / Special Orders tabs) |
-| Admin | Staff |
-| POS | Sale (or Clock-in gate if no session) |
-| POS | Tender (or "Place order" view in Catalog mode) |
-| POS | Cash / Till |
-| Storefront | Shop (product list) |
-| Storefront | Product Detail |
-| Storefront | Cart & Checkout |
-| Storefront | My Orders |
+| `/login` | Login / Register |
+| `/platform/login` | Platform console sign-in |
+| `/onboarding` | Business setup wizard (2 steps) |
+| `/platform/overview` | Platform Overview (dashboard) |
+| `/platform/tenants` | Tenants list + onboarding dialog |
+| `/admin/dashboard` | Dashboard |
+| `/admin/catalog` | Catalog (Products / Categories / Import tabs) |
+| `/admin/inventory` | Inventory (Levels / Batches tabs) + Receive Stock |
+| `/admin/stores` | Stores + Zones |
+| `/admin/orders` | Orders (all channels) + Return/Refund + Collect Payment |
+| `/admin/procurement` | Procurement (Purchase Orders / Suppliers tabs) |
+| `/admin/pricing` | Pricing (Price Lists / Promotions / VAT Rates tabs) |
+| `/admin/reports` | Reports (On-Hand / Sales / Supply-Demand / Movements) |
+| `/admin/customers` | Customers + loyalty/credit + addresses |
+| `/admin/sales` | Sales tools (Gift Cards / Layaways / Special Orders tabs) |
+| `/admin/staff` | Staff |
+| `/pos/cart` | POS Sale (or Clock-in gate if no session) |
+| `/pos/tender` | POS Tender (or "Place order" view in Catalog mode) |
+| `/pos/cash` | POS Cash / Till |
+| `/store/products` | Shop (product list) |
+| `/store/products/:id` | Product Detail |
+| `/store/cart` | Cart & Checkout |
+| `/store/orders` | My Orders |
+
+(`/platform`, `/admin`, `/pos`, and `/store` redirect to their area's default screen.)
 
 ---
 

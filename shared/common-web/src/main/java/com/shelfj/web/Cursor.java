@@ -8,7 +8,7 @@ import java.util.UUID;
 import java.util.function.Function;
 
 /**
- * Helper for cursor-based pagination (README §7.3). Lists use {@code ?after=<cursor>&limit=<n>} —
+ * Helper for cursor-based pagination (docs/ARCHITECTURE.md §14). Lists use {@code ?after=<cursor>&limit=<n>} —
  * no page numbers. Default limit 20, max 100. A cursor is an opaque base64 token (here, wrapping
  * the last-seen sort key).
  */

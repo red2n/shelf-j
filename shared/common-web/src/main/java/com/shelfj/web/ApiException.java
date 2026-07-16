@@ -53,7 +53,7 @@ public class ApiException extends RuntimeException {
     return ErrorBody.of(code, getMessage(), details);
   }
 
-  // --- common factories (status codes per README §7.2) ---
+  // --- common factories (status codes per docs/ARCHITECTURE.md §14) ---
   public static ApiException badRequest(String code, String message) {
     return new ApiException(400, code, message, List.of());
   }

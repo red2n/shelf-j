@@ -38,7 +38,7 @@ Protective features: Redis-backed rate limiting (default 100 req/min per caller,
 These apply across (almost) every endpoint below and are called out per-service only where a service deviates from them:
 
 - **Tenant scoping**: every request is scoped to the caller's tenant, taken from the gateway-verified identity (or, on public storefront paths, from the resolved storefront tenant) — never from a client-supplied body field.
-- **Default-deny RBAC**: role model is `PLATFORM_ADMIN` (cross-tenant), `OWNER`, `MANAGER`, `STOREKEEPER`, `CASHIER`, `CUSTOMER`. Any mutating request (POST/PUT/PATCH/DELETE) needs at least a staff role; refund/void paths under `/admin/...` need a management role (`PLATFORM_ADMIN`/`OWNER`/`MANAGER`); a small explicit allowlist (identity endpoints, tenant bootstrap, price resolution) is open before any role exists.
+- **Default-deny RBAC**: role model is `PLATFORM_ADMIN` (cross-tenant), `OWNER`, `MANAGER`, `STOREKEEPER`, `CASHIER`, `CUSTOMER`. The shared `AdminAuthorizationFilter` enforces three tiers: **(1)** the entire `/admin/...` subtree — every HTTP method, *including GETs* — requires a management role (`PLATFORM_ADMIN`/`OWNER`/`MANAGER`), with exactly two exemptions (`POST /admin/tenant` during onboarding, `POST .../receipts`); **(2)** `POST .../refunds` and `POST .../void` require a management role even outside `/admin/`; **(3)** any other mutating request (POST/PUT/PATCH/DELETE) needs at least a staff role, except a small open allowlist (identity endpoints, onboarding, `/prices/resolve*`, `/orders`, `/cart*`, `/payments/online`, `/inventory/reservations*`). Non-`/admin` GETs are not gated by this filter. Practical consequence: `STOREKEEPER` and `CASHIER` cannot call anything under `/admin/...` — including reads like `/admin/inventory/levels` — despite those endpoints covering their day-to-day work; grant such staff `MANAGER` or keep them on the non-admin surfaces.
 - **Pagination**: list endpoints are cursor-paginated — `?after=<meta.nextCursor>&limit=1-100` (default ~20).
 - **Idempotency**: money- or stock-moving POSTs (place order, reserve/receive/adjust stock, record payment/refund/cash movement, goods receipt) accept an `Idempotency-Key` header so a retried POST is safe; placing an order requires one.
 - **Eventing**: domain events are written to each service's own outbox table in the same transaction as the state change and published to Kafka at-least-once; consumers dedupe on event id. No service calls another synchronously for these flows.
@@ -48,17 +48,17 @@ These apply across (almost) every endpoint below and are called out per-service 
 ## cart-svc
 
 ### Cart (`/cart`)
-Pre-checkout shopping cart for both guest and signed-in storefront shoppers.
+Server-side pre-checkout cart, keyed by cart id, session id, or the caller's authenticated identity. Note: every call requires a verified token (cart paths are not on the gateway's public storefront whitelist, and no anonymous/guest token exists), so a tokenless guest cannot reach this service — the current Flutter storefront keeps its pre-checkout cart on-device and never calls cart-svc. The session-cart + merge endpoints exist for authenticated clients that want a server-side cart.
 
 - `POST /cart` — create or fetch the caller's active cart.
 - `GET /cart` — view the cart and its line items (identified by cart id, session id, or the caller's authenticated identity).
 - `POST /cart/items` — add an item to the cart (increments quantity if the variant is already in it).
 - `PUT /cart/items/{itemId}` — change the quantity of a cart line.
 - `DELETE /cart/items/{itemId}` — remove a line from the cart.
-- `POST /cart/merge` — merge a guest's session cart into the authenticated customer's cart (post-login merge).
+- `POST /cart/merge` — merge a session-keyed cart into the authenticated customer's cart (post-login merge).
 
 **Business rules**
-- Cart is not on the gateway's public storefront whitelist — every call needs a verified token, guest or customer.
+- Cart is not on the gateway's public storefront whitelist — every call needs a verified token.
 - Once an order is placed, the cart is asynchronously marked checked-out (via `OrderPlaced`), not synchronously cleared by the checkout call.
 
 **Events**
@@ -305,7 +305,7 @@ Pure fan-in service: no write endpoints, just reads over data assembled from con
 
 **Business rules**
 - Placing an order requires an `Idempotency-Key` (rejected with 400 otherwise) — the one hard requirement across the whole surface.
-- `POS` channel orders require a `CASHIER`/`MANAGER`/`OWNER` role; `ONLINE` orders don't (customer or guest checkout).
+- `POS` channel orders require a `CASHIER`/`MANAGER`/`OWNER` role; `ONLINE` orders need no staff role — but the gateway only forwards order placement for a verified, signed-in customer token (there is no anonymous guest checkout).
 - Special orders deliberately skip immediate inventory deduction, unlike regular POS/online orders.
 - Void, cancel, and return are three distinct lifecycle actions: void corrects a completed sale, cancel stops an unfulfilled order, return is a post-sale reversal.
 - The POS stock-position projection is explicitly documented as eventually consistent and must not be used to make reservation decisions.
@@ -337,7 +337,7 @@ Pure fan-in service: no write endpoints, just reads over data assembled from con
 **Business rules**
 - Online storefront payments must be cashless (`CARD`/`UPI`/`WALLET`); cash tenders are POS-staff-only via the in-person endpoint.
 - Online payment is verified against order-svc (order exists, is `ONLINE`, belongs to the caller if authenticated, amount matches the order total) before capture.
-- Role tiers: `CASHIER`+ can open a till and record a POS tender; refunds, cash drops, X/Z-reports, and pay-in/pay-out all require `MANAGER`+.
+- Role tiers: `CASHIER`+ can record a POS tender (`POST /payments`); but **everything under `/admin/cash/...` — including opening a till — currently requires `MANAGER`+**, because the shared `AdminAuthorizationFilter` management-gates the whole `/admin/` subtree before `CashManagementResource`'s own (looser, currently unreachable) `CASHIER` check runs. In practice a till can only be opened by a `MANAGER`/`OWNER`, and refunds, cash drops, X/Z-reports, and pay-in/pay-out are `MANAGER`+ as well.
 - `Idempotency-Key` is honored on tender recording, refunds, and cash movements.
 
 **Events**
@@ -371,7 +371,7 @@ Pure fan-in service: no write endpoints, just reads over data assembled from con
 
 **Business rules**
 - `POST /prices/resolve(-batch)` is deliberately open with no staff-role requirement — it's a service-to-service call order-svc makes without identity headers during checkout pricing.
-- The customer-VAT-status GET endpoint has its own explicit role check (`PLATFORM_ADMIN`/`OWNER`/`MANAGER`/`STOREKEEPER`/`CASHIER`) because GETs aren't covered by the shared write-only default-deny filter.
+- The customer-VAT-status GET endpoint has its own explicit role check (`PLATFORM_ADMIN`/`OWNER`/`MANAGER`/`STOREKEEPER`/`CASHIER`) because non-`/admin` GETs aren't covered by the shared default-deny filter (see Platform-wide conventions).
 - Price overrides are append-only audit records, never edited or deleted.
 
 **Events**

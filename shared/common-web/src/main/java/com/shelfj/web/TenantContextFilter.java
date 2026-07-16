@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
 /**
  * Populates {@link TenantContext} from the identity headers the gateway forwards (after it
  * validates the JWT), and guarantees an {@code X-Request-Id} exists and is echoed on the response
- * (README §7.6, §7.8).
+ * (docs/ARCHITECTURE.md §14).
  *
  * <p>In production the gateway validates the JWT and injects {@code X-Tenant-Id} / {@code
  * X-User-Id} / {@code X-Roles}. In local/dev calls that hit a service directly, these may be absent

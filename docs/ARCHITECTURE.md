@@ -246,13 +246,15 @@ Single `ProxyResource` (`/api/{service}/{path}`) in front of a Consul-resolved a
 5. **TenantStatusGate** — rejects with `403` if the resolved tenant isn't `ACTIVE`.
 6. **ProxyResource** — forwards `Idempotency-Key`, generates `X-Request-Id`, per-upstream circuit breaker, faithfully forwards `Content-Type` and raw bytes (so binary bodies like product images round-trip intact).
 
+> **Adding a new service?** The allowlist is `shelfj.gateway.routable-services`, which hard-defaults to the 12 current services (`GatewayConfig`). A new service must be added to that config value or the gateway rejects every `/api/<new-svc>/...` call — even if the service is healthy and registered in Consul. Registering with discovery is **not** enough.
+
 ### `platform/discovery` — Consul wrapper
 `ConsulClient implements ServiceRegistry` (a 1-method interface — the DIP seam so the gateway never depends on Consul directly). Handles self-register with an HTTP health check, deregistration, and a 3s in-memory TTL cache on `healthyInstances()` lookups (avoids hammering Consul on every proxied request, including caching "nothing found" to avoid retry storms when a service is down).
 
 ### `platform/config` — centralized non-secret config
 `GET /config/{service}/{profile}` (guarded by a shared `X-Config-Token`) merges `{service}.properties` (base) with `{service}-{profile}.properties` (overlay) from a config-repo directory. Strict name validation (`[A-Za-z0-9_-]{1,64}`) blocks path traversal. Explicitly **not** for secrets — those come from the environment/secret store at deploy time.
 
-Every service pulls from it at startup via `common-service`'s **`ConfigServiceConfigSource`** (a MicroProfile `ConfigSource`, active when `shelfj.config.url` is set) . Fetched values layer at **ordinal 150** — above the service's baked `META-INF/microprofile-config.properties` (100) but below env vars (300) / system properties (400) — so config-svc overrides image defaults while deploy-time env still wins. If config-svc is unreachable or has no entry for the service, it degrades to the local defaults, so services still start in any order.
+Every service pulls from it at startup via `common-service`'s **`ConfigServiceConfigSource`** (a MicroProfile `ConfigSource`, active when `shelfj.config.url` is set). Fetched values layer at **ordinal 150** — above the service's baked `META-INF/microprofile-config.properties` (100) but below env vars (300) / system properties (400) — so config-svc overrides image defaults while deploy-time env still wins. If config-svc is unreachable or has no entry for the service, it degrades to the local defaults, so services still start in any order.
 
 For a service named `<service>` (e.g. `iam-svc`) and a profile `<profile>` (default `default`), the config repo stores `<service>.properties` plus an optional `<service>-<profile>.properties` overlay — see the files under `platform/config/src/main/resources/config-repo/` for the live examples.
 
@@ -298,7 +300,7 @@ Product/variant master data and storefront catalog browsing.
 Single source of truth for stock: levels, reservations, batches/lots, serials, and advanced planning.
 - **API:** `/admin/inventory` receive, adjust, levels, batches, movements, thresholds, planning run/suggestions, serials, transfers, move-orders, ABC analysis, safety-stock, lot-genealogy, cycle-counts, physical-inventories, costing-methods, accounting-periods, kanban-cards, reorder-point plans, picking-rules; `/inventory/reservations` hold/consume/release; `/inventory/availability` (storefront read).
 - **Tables:** `inventory_batches`, `stock_movements` (append-only), `reservations`, `serial_numbers`, `transfer_orders`, `move_orders`, `safety_stock_params`, `abc_assignments`, `lot_genealogy`, `cycle_count_headers`, `physical_inventories`, `costing_methods`, `accounting_periods`, `kanban_cards`, `reorder_point_plans`, `picking_rules`, and more.
-- **Events:** publishes `StockReceived`, `StockReserved`, `StockReleased`, `StockDeducted`, `StockAdjusted`, `StockBelowThreshold`, `ReplenishmentSuggested`, `TransferOrderShipped/Received`, `CycleCountAdjusted`, `KanbanTriggered`, and more; consumes `GoodsReceived` (purchase-svc), `OrderFulfilled`/`OrderReturned` (order-svc).
+- **Events:** publishes `StockReceived`, `StockReserved`, `StockReleased`, `StockDeducted`, `StockAdjusted`, `StockBelowThreshold`, `ReplenishmentSuggested`, `TransferOrderShipped/Received`, `CycleCountAdjusted`, `KanbanTriggered`, and more; consumes `GoodsReceived` (purchase-svc), `OrderFulfilled`/`OrderReturned`/`OrderCancelled` (order-svc).
 - **Notable:** FIFO/expiry-ordered deduction with row locking; costing methods & accounting-period close; lot genealogy; serial tracking; kanban/ROP replenishment; cycle counts & physical inventory; ABC analysis; zone-based picking with GL account mapping.
 
 ### pricing-svc — Prices, Promotions, VAT
@@ -309,7 +311,7 @@ Price resolution, promotions, and UK-style VAT computation/reporting.
 - **Notable:** VAT Notice 700 s.17-style return, customer VAT-exemption status, per-product VAT category, time-bounded PERCENT/FLAT promotions.
 
 ### cart-svc — Storefront Cart
-Shopping cart for the online channel; guest and customer carts, merge on login.
+Server-side shopping cart for the online channel: session-scoped and customer carts, with merge-on-login. Every call requires a verified token (cart paths are **not** on the gateway's public storefront whitelist); the current Flutter storefront keeps its pre-checkout cart on-device and does not call this service.
 - **API:** `/cart` create/get, `/cart/items` add/update/remove, `/cart/merge`.
 - **Tables:** `carts`, `cart_items`, local `tenant_status`/`store_status` projections.
 - **Events:** consumes `OrderPlaced` (close cart), `TenantStatusChanged`/`StoreStatusChanged` (**flow-guard**: rejects cart mutations early if the tenant/store is suspended).
@@ -318,7 +320,7 @@ Shopping cart for the online channel; guest and customer carts, merge on login.
 The transaction/sales-journal service for **both** channels: online orders/returns and POS parked sales, layaway, gift cards, special orders, receipts.
 - **API:** `/orders` create/confirm/cancel/fulfil/void/returns; `/layaways` create/deposit/complete/cancel; `/gift-cards` issue/reload/redeem/transactions; `/pos/parked-sales`, `/pos/no-sale`; `/admin/special-orders`; `/admin/pos-log`; `/admin/pos/stock-positions`; `/admin/orders/{id}/receipts` (e-journal, print/email).
 - **Tables:** `orders`, `order_items`, `order_status_history` (append-only), `returns`, `layaways`, `gift_cards`, `gift_card_transactions`, `parked_sales`, `special_orders`, `pos_log_entries`, `order_receipts`, `idempotency_keys`.
-- **Events:** publishes `OrderPlaced`, `OrderConfirmed`, `OrderCancelled`, `OrderFulfilled`, `OrderReturned`, `OrderVoided`, `LayawayCreated/Completed/Cancelled`; consumes `StockReceived`/`StockDeducted`, `PaymentCaptured`/`PaymentFailed`, tenant/store status.
+- **Events:** publishes `OrderPlaced`, `OrderConfirmed`, `OrderCancelled`, `OrderFulfilled`, `OrderReturned`, `OrderVoided`, `LayawayCreated/Completed/Cancelled`; consumes `StockReceived`/`StockDeducted`/`StockAdjusted` (POS stock-position projection), `PaymentCaptured`/`PaymentFailed`/`PaymentRefunded`, tenant/store status.
 - **Notable:** POS and online share the **same endpoints** — only `channel`/`fulfilment_type` differ. Idempotency-Key on checkout. See [§12 checkout saga](#12-key-workflows).
 
 ### payment-svc — Payments & Cash Management
@@ -326,7 +328,7 @@ Payment capture/refund plus till sessions, cash drawer movements, and end-of-day
 - **API:** `/payments` capture, online, by-order, refunds; `/admin/cash/till-sessions` open/drops/x-report/close; `/admin/cash` movements (pay-in/pay-out), z-report.
 - **Tables:** `payment_tenders`, `refund_tenders`, `till_sessions`, `cash_drops`, `cash_movements`, `z_reports`.
 - **Events:** publishes `PaymentCaptured`, `PaymentFailed`, `PaymentRefunded`.
-- **Notable:** payment methods CASH/CARD/UPI/WALLET/GIFT_CARD; X-report (mid-shift) vs Z-report (end-of-day close); idempotent cash-movement recording.
+- **Notable:** payment methods CASH/CARD/UPI/WALLET/GIFT_CARD/VOUCHER/STORE_CREDIT; X-report (mid-shift) vs Z-report (end-of-day close); idempotent cash-movement recording.
 
 ### purchase-svc — Procurement
 Suppliers, purchase orders, goods receipts, and finance-adjacent intercompany invoicing.
@@ -339,21 +341,21 @@ Suppliers, purchase orders, goods receipts, and finance-adjacent intercompany in
 Customer profiles, addresses, and two append-only ledgers.
 - **API:** `/customers` CRUD (+anonymize-on-delete), addresses CRUD; `/{id}/loyalty` earn/redeem/adjust/ledger; `/{id}/store-credit` issue/redeem.
 - **Tables:** `customers`, `customer_addresses`, `loyalty_accounts`, `loyalty_ledger` (append-only), `store_credit_accounts`, `store_credit_ledger` (append-only).
-- **Events:** publishes `CustomerRegistered`, `LoyaltyEarned/Redeemed/Adjusted`, `StoreCreditIssued/Redeemed`.
+- **Events:** publishes `CustomerRegistered`, `LoyaltyEarned/Redeemed/Adjusted`, `StoreCreditIssued/Redeemed`; consumes `OrderConfirmed` (auto-accrues loyalty points, deduped by event id).
 - **Notable:** GDPR-style anonymize-on-delete; both ledgers are auditable balances, never mutable counters.
 
 ### notification-svc — Alerting
-Thin: consumes low-stock signals and exposes an alert feed (no outbound email/SMS integration yet — see PRD open questions).
-- **API:** `/admin/notifications/shortage-alerts` (filter by store/variant, paginated).
-- **Tables:** `shortage_alerts`.
-- **Events:** consumes `StockBelowThreshold`; publishes nothing.
+Thin fan-in service: consumes events, records notifications, and exposes read feeds. Delivery channel is pluggable (`shelfj.notification.channel`): in-app log by default, with an optional SMTP email channel (`SmtpChannel`). No SMS yet — see PRD open questions.
+- **API:** `/admin/notifications/shortage-alerts` (filter by store/variant, paginated); `/admin/notifications` (in-app notification feed, newest first).
+- **Tables:** `shortage_alerts`, `notification_log`.
+- **Events:** consumes `StockBelowThreshold` (shortage alert), `OrderConfirmed` (order-confirmation notice), `UserRegistered` (welcome notice); publishes nothing.
 
 ### reporting-svc — Cross-Store Analytics (CQRS read model)
-Pure projection service built by consuming inventory events.
-- **API:** `/admin/reports/inventory/on-hand`, `/supply-demand` (nets against open in-transit supply), `/movement-stats` (bucketed daily/weekly/monthly).
-- **Tables:** `inventory_projection`, `movement_events`, `open_supply_lines`.
-- **Events:** consumes `StockReceived`, `StockDeducted`, `StockAdjusted`, `TransferOrderShipped/Received`; publishes nothing.
-- **Notable:** no writes of its own beyond reacting to inventory-svc's Kafka stream.
+Pure projection service built by consuming inventory and sales events.
+- **API:** inventory — `/admin/reports/inventory/on-hand`, `/supply-demand` (nets against open in-transit supply), `/movement-stats` (bucketed daily/weekly/monthly); sales — `/admin/reports/sales/summary` (gross/refunded/net revenue + order count per currency), `/admin/reports/sales/by-day` (daily revenue buckets).
+- **Tables:** `inventory_projection`, `movement_events`, `open_supply_lines`, `sales_facts`.
+- **Events:** consumes `StockReceived`, `StockDeducted`, `StockAdjusted`, `TransferOrderShipped/Received` (stock projections) and `OrderConfirmed`, `PaymentRefunded` (sales projection, net of refunds); publishes nothing.
+- **Notable:** no writes of its own beyond reacting to other services' Kafka streams.
 
 ---
 
@@ -377,11 +379,12 @@ tenant-svc   ──REST──►  iam-svc         (verify user on staff assignme
 | `TenantCreated` / `TenantStatusChanged` | tenant-svc | iam-svc, cart-svc, order-svc (status projections) |
 | `StoreCreated` / `StoreStatusChanged` | tenant-svc | iam-svc, cart-svc, order-svc |
 | `GoodsReceived` | purchase-svc | inventory-svc, reporting-svc |
-| `StockReceived` / `StockDeducted` / `StockAdjusted` | inventory-svc | reporting-svc |
+| `StockReceived` / `StockDeducted` / `StockAdjusted` | inventory-svc | reporting-svc, order-svc (POS stock-position projection) |
 | `StockBelowThreshold` | inventory-svc | notification-svc |
-| `OrderPlaced` / `OrderConfirmed` | order-svc | inventory-svc, customer-svc, cart-svc, reporting-svc |
+| `OrderPlaced` / `OrderConfirmed` | order-svc | inventory-svc, customer-svc, cart-svc, reporting-svc, notification-svc |
 | `OrderCancelled` / `OrderReturned` | order-svc | inventory-svc, payment-svc, reporting-svc |
-| `PaymentCaptured` / `PaymentFailed` | payment-svc | order-svc |
+| `PaymentCaptured` / `PaymentFailed` / `PaymentRefunded` | payment-svc | order-svc, reporting-svc (refunds net against sales) |
+| `UserRegistered` | iam-svc | notification-svc (welcome notice) |
 
 **Reliability requirements on every call:** REST calls carry a timeout, retries with backoff, and a circuit breaker (Helidon MP Fault Tolerance). Events are at-least-once with idempotent consumers, published via the outbox, and tracked via `processed_events` dedupe tables.
 
@@ -437,7 +440,7 @@ One Flutter codebase at `frontends/shelf-app/` (Riverpod 2.x, `go_router`, `dio`
 | Shell | Route prefix | Who | What it does |
 |---|---|---|---|
 | **Storefront** | `/store/*` (always public) | guest or any signed-in role | Browse/search catalog, product detail, cart & checkout (with duplicate-order guard + pickup contact-phone capture), order history — respects a tenant's "show prices" catalog mode. |
-| **POS** | `/pos/*` | cashier or admin | Build a sale (scan/add items), park/resume held sales, tender across cash/card/UPI/wallet/gift-card, till open/close, print/email receipts. |
+| **POS** | `/pos/*` | cashier or admin | Build a sale (scan/add items), park/resume held sales, split-tender across cash/card/UPI/wallet/gift-card/store-credit, till open/close, print receipts (an "email receipt" is currently only logged, not sent). |
 | **Admin console** | `/admin/*` | tenant admin | Catalog (incl. CSV bulk import), inventory, pricing, stores, staff, procurement, orders across channels, customers, reports, dashboard. |
 | **Platform console** | `/platform/*` | platform admin (separate login) | Cross-tenant view; suspend/reactivate tenants. |
 

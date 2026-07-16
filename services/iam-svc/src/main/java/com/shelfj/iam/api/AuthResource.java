@@ -23,7 +23,7 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
 /**
- * Public authentication endpoints (README §9.1). These are reachable without a tenant/JWT — they
+ * Public authentication endpoints (docs/ARCHITECTURE.md §10, iam-svc). These are reachable without a tenant/JWT — they
  * MINT identity. Thin controllers: validate DTO, delegate to {@link AuthService}, return the
  * envelope.
  */

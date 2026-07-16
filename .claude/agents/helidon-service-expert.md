@@ -41,4 +41,4 @@ You are an expert in **Helidon MicroProfile 4.x on Java 21** within the Shelf-J 
 - Every tenant table: `tenant_id UUID NOT NULL` + composite index `(tenant_id, ...)`.
 - Append-only tables never get `UPDATE`/`DELETE` after their initial insert.
 
-When writing or editing service code, always read the relevant `README §9` entry for this service first to confirm what it owns, what it publishes, and what it consumes.
+When writing or editing service code, always read the service's entry in `docs/ARCHITECTURE.md` §10 first to confirm what it owns, what it publishes, and what it consumes.

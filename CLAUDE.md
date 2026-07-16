@@ -77,7 +77,7 @@ Storefront / Admin / POS  ──►  API GATEWAY (Helidon MP)  ──►  busine
 
 ---
 
-## Repository layout (target)
+## Repository layout
 
 ```
 shelf-j/
@@ -85,9 +85,9 @@ shelf-j/
 ├── docker-compose.yml       # postgres, kafka, consul, redis, zipkin, prometheus, grafana (with healthchecks)
 ├── platform/                # gateway, discovery, config
 ├── services/                # the 12 business microservices (one Maven module each)
-├── shared/                  # CONTRACTS ONLY: events-contract, common-web, common-test (no business logic)
-├── frontends/               # storefront, admin-console, pos
-├── docs/                    # onboarding-and-locations.md, etc.
+├── shared/                  # contracts + shared infra, NO business logic: events-contract, common-web, common-service (DataSource/Flyway/Consul/outbox/health base — reuse it, never re-implement), common-test
+├── frontends/               # shelf-app: ONE Flutter app with four shells (storefront, admin, POS, platform console)
+├── docs/                    # ARCHITECTURE.md, API-GUIDE.md, UI-GUIDE.md, onboarding-and-locations.md, coding-standards.md, …
 ├── PRD.md  README.md  CLAUDE.md
 └── .claude/skills/          # invokable skills (scaffold-service, add-endpoint, add-event, onboard-tenant)
 ```

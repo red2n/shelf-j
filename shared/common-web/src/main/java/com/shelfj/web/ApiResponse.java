@@ -1,7 +1,7 @@
 package com.shelfj.web;
 
 /**
- * The single response envelope every Shelf-J endpoint returns (README §7.1).
+ * The single response envelope every Shelf-J endpoint returns (docs/ARCHITECTURE.md §14).
  *
  * <pre>{@code
  * { "data": {...}, "error": null, "meta": { "requestId": "...", "nextCursor": "..." } }

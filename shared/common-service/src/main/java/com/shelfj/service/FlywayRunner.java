@@ -10,7 +10,7 @@ import org.flywaydb.core.Flyway;
 
 /**
  * Runs Flyway migrations on startup into the service's own schema. Dev/template convenience;
- * production runs migrations as a separate Job (README §13.3). Failure is non-fatal — readiness
+ * production runs migrations as a separate Job (docs/ARCHITECTURE.md §17). Failure is non-fatal — readiness
  * stays red and retries.
  */
 @ApplicationScoped
