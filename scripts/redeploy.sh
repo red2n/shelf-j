@@ -151,9 +151,20 @@ else
       flutter build web --release --dart-define=SHELFJ_API_BASE="$UI_API_BASE"
     )
   else
-    red "flutter not found on PATH — cannot build the web UI image."
-    red "Install Flutter, or pass --no-build with a prior frontends/shelf-app/build/web."
-    exit 1
+    # No local Flutter SDK — a fresh machine shouldn't need one installed by hand.
+    # Docker is already a hard requirement for this script (docker compose below),
+    # so build the bundle in a throwaway Flutter container instead of failing.
+    cyan "flutter not found on PATH — building web UI in a Docker container (ghcr.io/cirruslabs/flutter:stable), no local install needed…"
+    PUB_CACHE_DIR="$ROOT/.cache/flutter-pub-cache"
+    mkdir -p "$PUB_CACHE_DIR"
+    docker run --rm \
+      --user "$(id -u):$(id -g)" \
+      -e HOME=/tmp \
+      -v "$ROOT/frontends/shelf-app:/app" \
+      -v "$PUB_CACHE_DIR:/tmp/.pub-cache" \
+      -w /app \
+      ghcr.io/cirruslabs/flutter:stable \
+      bash -lc "flutter pub get && flutter build web --release --dart-define=SHELFJ_API_BASE='$UI_API_BASE'"
   fi
 fi
 
