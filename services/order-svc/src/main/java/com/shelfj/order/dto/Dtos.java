@@ -23,8 +23,11 @@ public final class Dtos {
       @Schema(
               description =
                   "Optional when server-side pricing is enforced (ignored there); required and"
-                      + " trusted only in legacy mode.")
-          @Positive
+                      + " trusted only in legacy mode. Zero is allowed (e.g. a price-hidden"
+                      + " storefront that never resolves a real price client-side, or a genuine"
+                      + " free/comped item) — server-side pricing enforcement re-resolves the"
+                      + " real price regardless.")
+          @PositiveOrZero
           BigDecimal unitPrice,
       String notes) {}
 
