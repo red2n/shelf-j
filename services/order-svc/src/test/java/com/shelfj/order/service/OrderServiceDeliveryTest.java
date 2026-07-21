@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.shelfj.order.client.PricingClient;
+import com.shelfj.order.client.TenantClient;
 import com.shelfj.order.config.ServiceConfig;
 import com.shelfj.order.domain.Domain.Order;
 import com.shelfj.order.dto.Dtos.OrderItemRequest;
@@ -19,6 +20,7 @@ import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +43,7 @@ class OrderServiceDeliveryTest {
   @Mock TenantContext ctx;
   @Mock TenantStatusRepository tenantStatusRepo;
   @Mock StoreStatusRepository storeStatusRepo;
+  @Mock TenantClient tenants;
 
   private OrderService svc;
 
@@ -53,9 +56,13 @@ class OrderServiceDeliveryTest {
     svc.inventory = inventory;
     svc.tenantStatusRepo = tenantStatusRepo;
     svc.storeStatusRepo = storeStatusRepo;
+    svc.tenants = tenants;
     when(ctx.requireTenantId()).thenReturn(TENANT);
     when(tenantStatusRepo.isActive(any())).thenReturn(true);
-    when(storeStatusRepo.isActive(any())).thenReturn(true);
+    org.mockito.Mockito.lenient().when(storeStatusRepo.isActive(any())).thenReturn(true);
+    org.mockito.Mockito.lenient()
+        .when(tenants.resolveFulfilment(any(), any()))
+        .thenReturn(Optional.empty());
     org.mockito.Mockito.lenient().when(config.pricingEnforce()).thenReturn(false);
   }
 
