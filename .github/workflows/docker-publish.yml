@@ -3,19 +3,35 @@ name: Build & Publish Docker Images
 # Triggers on every merge to main and on version tags.
 # CI (ci.yml) gates quality; this workflow only publishes — it skips tests.
 #
-# Build-once, no-artifact design: the Maven reactor is built a single time and
-# every service image is built + pushed from the local target/ dirs in the same
-# job. We deliberately do NOT hand JARs between jobs via actions/upload-artifact:
-# the bundled per-service target/libs trees are ~700 MB per run and, even at a
-# 1-day retention, expired artifacts keep counting against the (small) storage
-# quota until GitHub's 6–12h purge — which is what broke the deploy. No artifact
-# upload == no artifact storage consumed.
+# Build-once-per-service, no-artifact design: each service image used to be
+# built + pushed sequentially in ONE job off a single full-reactor `mvn install`.
+# That job kept accumulating Maven target/ output and Docker layers across all
+# 15 images on the same runner disk with nothing ever freed mid-job, and it
+# eventually ran the runner out of disk space and failed the publish for every
+# service, not just the one that tipped it over. Building via a matrix — one
+# fresh runner (fresh disk) per service — removes the cumulative growth
+# entirely and isolates failures (one bad service image no longer blocks the
+# rest). Each matrix leg builds only its own module + reactor deps
+# (`-pl <path> -am`), not the full reactor, to keep the redundant shared-module
+# rebuild across legs cheap. We still deliberately do NOT hand JARs between
+# jobs via actions/upload-artifact: the bundled per-service target/libs trees
+# are ~700 MB per run and, even at a 1-day retention, expired artifacts keep
+# counting against the (small) storage quota until GitHub's 6–12h purge —
+# which is what broke the deploy before. No artifact upload == no artifact
+# storage consumed.
 on:
   push:
     branches: [main]
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+
+# A new push to the same ref supersedes any in-flight publish for that ref —
+# stops runs piling up (and racing each other's GHCR writes/cleanup) when
+# several PRs merge to main in quick succession.
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
@@ -24,15 +40,38 @@ env:
   DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
 
 jobs:
-  # ── Build every service JAR once, then build & push all images (no artifacts) ─
+  # ── One job per service: fresh runner disk each time, no accumulation ──────
   services:
-    name: Build & publish service images
+    name: Build & publish ${{ matrix.name }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    strategy:
+      fail-fast: false
+      # name/path/jar — must stay in sync with the service catalog.
+      matrix:
+        include:
+          # Platform
+          - { name: gateway, path: platform/gateway, jar: gateway }
+          - { name: config, path: platform/config, jar: config-svc }
+          # Business — Phase 1 (back-office)
+          - { name: iam-svc, path: services/iam-svc, jar: iam-svc }
+          - { name: tenant-svc, path: services/tenant-svc, jar: tenant-svc }
+          - { name: product-svc, path: services/product-svc, jar: product-svc }
+          - { name: inventory-svc, path: services/inventory-svc, jar: inventory-svc }
+          - { name: purchase-svc, path: services/purchase-svc, jar: purchase-svc }
+          # Business — Phase 2 (commerce)
+          - { name: pricing-svc, path: services/pricing-svc, jar: pricing-svc }
+          - { name: cart-svc, path: services/cart-svc, jar: cart-svc }
+          - { name: order-svc, path: services/order-svc, jar: order-svc }
+          - { name: payment-svc, path: services/payment-svc, jar: payment-svc }
+          # Business — Phase 3 (experience)
+          - { name: customer-svc, path: services/customer-svc, jar: customer-svc }
+          - { name: notification-svc, path: services/notification-svc, jar: notification-svc }
+          - { name: reporting-svc, path: services/reporting-svc, jar: reporting-svc }
 
     steps:
       - name: Checkout
@@ -45,8 +84,11 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Build all modules
-        run: mvn -B -V clean install -DskipTests
+      # Only this module + the shared reactor modules it depends on — not the
+      # full 20-module reactor. Cheaper per leg and keeps this job's disk
+      # footprint small regardless of how many services the matrix fans out to.
+      - name: Build ${{ matrix.name }} (+ reactor deps)
+        run: mvn -B -V -pl ${{ matrix.path }} -am clean install -DskipTests
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -58,14 +100,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & push all service images
+      - name: Build & push ${{ matrix.name }} image
         run: |
           set -euo pipefail
 
-          # Compute the tag suffixes once (mirrors docker/metadata-action):
-          #   - sha-<short>           always
+          # Tag suffixes (mirrors docker/metadata-action):
+          #   - sha-<short>                 always
           #   - <version>/<maj.min>/<maj>   on v*.*.* tag pushes
-          #   - <branch> + latest     on default-branch pushes / dispatch
+          #   - <branch> + latest           on default-branch pushes / dispatch
           suffixes=("sha-$(echo "${GITHUB_SHA}" | cut -c1-7)")
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
@@ -77,58 +119,26 @@ jobs:
             fi
           fi
 
-          # name|svc_path|svc_jar  — must stay in sync with the service catalog.
-          services=(
-            # Platform
-            "gateway|platform/gateway|gateway"
-            "config|platform/config|config-svc"
-            # Business — Phase 1 (back-office)
-            "iam-svc|services/iam-svc|iam-svc"
-            "tenant-svc|services/tenant-svc|tenant-svc"
-            "product-svc|services/product-svc|product-svc"
-            "inventory-svc|services/inventory-svc|inventory-svc"
-            "purchase-svc|services/purchase-svc|purchase-svc"
-            # Business — Phase 2 (commerce)
-            "pricing-svc|services/pricing-svc|pricing-svc"
-            "cart-svc|services/cart-svc|cart-svc"
-            "order-svc|services/order-svc|order-svc"
-            "payment-svc|services/payment-svc|payment-svc"
-            # Business — Phase 3 (experience)
-            "customer-svc|services/customer-svc|customer-svc"
-            "notification-svc|services/notification-svc|notification-svc"
-            "reporting-svc|services/reporting-svc|reporting-svc"
-          )
-
-          {
-            echo "## Published images"
-            echo ""
-            echo "| Service | Image |"
-            echo "|---|---|"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          for entry in "${services[@]}"; do
-            IFS='|' read -r name svc_path svc_jar <<< "$entry"
-            image="${IMAGE_PREFIX}-${name}"
-            tag_args=()
-            for s in "${suffixes[@]}"; do
-              tag_args+=("-t" "${image}:${s}")
-            done
-            echo "::group::Building ${image}"
-            # --provenance/--sbom=false: skip the attestation manifests buildx
-            # otherwise attaches on push — they show up as extra untagged GHCR
-            # versions and just add storage with no value for our single-arch JVM image.
-            docker buildx build \
-              --push \
-              --provenance=false \
-              --sbom=false \
-              --file Dockerfile.svc \
-              --build-arg "SVC_PATH=${svc_path}" \
-              --build-arg "SVC_JAR=${svc_jar}" \
-              "${tag_args[@]}" \
-              .
-            echo "::endgroup::"
-            echo "| ${name} | \`${image}:latest\` |" >> "$GITHUB_STEP_SUMMARY"
+          image="${IMAGE_PREFIX}-${{ matrix.name }}"
+          tag_args=()
+          for s in "${suffixes[@]}"; do
+            tag_args+=("-t" "${image}:${s}")
           done
+
+          # --provenance/--sbom=false: skip the attestation manifests buildx
+          # otherwise attaches on push — they show up as extra untagged GHCR
+          # versions and just add storage with no value for our single-arch JVM image.
+          docker buildx build \
+            --push \
+            --provenance=false \
+            --sbom=false \
+            --file Dockerfile.svc \
+            --build-arg "SVC_PATH=${{ matrix.path }}" \
+            --build-arg "SVC_JAR=${{ matrix.jar }}" \
+            "${tag_args[@]}" \
+            .
+
+          echo "Published \`${image}:latest\`" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Build the Flutter web bundle and push its image (no artifacts) ─────────
   # Set SHELFJ_API_BASE as a GitHub Actions repository variable (Settings →
@@ -210,11 +220,18 @@ jobs:
   # can still roll back one build) and deletes everything older, plus any
   # untagged leftovers. Runs only on default-branch / tag publishes, never on a
   # workflow_dispatch from a feature branch.
+  #
+  # always(): with fail-fast:false on the services matrix, one flaky service
+  # must not skip pruning for the other 14 that published fine — ghcr-cleanup-
+  # action's validate:true already no-ops safely on a package that never got
+  # published this run.
   cleanup:
     name: Prune old GHCR versions
     needs: [services, web]
     runs-on: ubuntu-latest
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v')
+    if: >
+      always() &&
+      (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v'))
     permissions:
       packages: write
     strategy:
