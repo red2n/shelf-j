@@ -1,12 +1,17 @@
-# TLS (cert-manager + Let's Encrypt) + routing for the two subdomains, mirroring
-# infra/Caddyfile's storeql.com layout exactly:
-#   app.storeql.com  -> shelf-app (web UI)
-#   api.storeql.com  -> gateway (API)
-#   storeql.com      -> redirect to https://app.storeql.com
+# TLS (cert-manager + Let's Encrypt) + routing. shelf-app is ONE Flutter build with four
+# GoRouter shells selected client-side by URL hash (#/store, #/pos, #/admin, #/platform —
+# see frontends/shelf-app/lib/core/router.dart), all served from the single app.storeql.com
+# Ingress below. storeql.com/www./pos. are therefore just Traefik redirects into that same
+# app with the right hash pre-filled — not separate deployments:
+#   app.storeql.com      -> shelf-app (staff/admin/platform login entry point)
+#   api.storeql.com      -> gateway (API)
+#   storeql.com          -> redirect to https://app.storeql.com/#/store (customer storefront)
+#   www.storeql.com      -> redirect to https://app.storeql.com/#/store (customer storefront)
+#   pos.storeql.com      -> redirect to https://app.storeql.com/#/pos (in-store POS)
 #
 # Prerequisites (see k8s/README.md):
 #   - cert-manager installed in the cluster (not bundled with k3s)
-#   - DNS A records for all three hosts pointed at this VPS's public IP
+#   - DNS A records for all five hosts pointed at this VPS's public IP
 #   - k3s's bundled Traefik is the IngressClass in use (default in k3s)
 
 apiVersion: cert-manager.io/v1
@@ -73,17 +78,36 @@ spec:
 # middleware needed for that — SHELFJ_GATEWAY_TRUST_FORWARDED_HEADERS=true in
 # 40-gateway.yaml just needs to trust what Traefik already sends).
 #
-# Bare-domain redirect: storeql.com -> https://app.storeql.com (matches infra/Caddyfile's
-# `storeql.com { redir https://app.storeql.com{uri} permanent }`).
+# Bare-domain redirect: storeql.com/www. -> https://app.storeql.com/?tenant=<default>#/store,
+# landing customers straight on the storefront shell (pre-selected to the one active
+# tenant, "Main Store") instead of the staff /login screen. The `?tenant=` query param is
+# an existing dev seam the storefront already reads (storefront_providers.dart) — once
+# there's more than one tenant, this single-tenant redirect needs to become real
+# subdomain/domain-per-tenant resolution instead.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: redirect-to-app
+  name: redirect-to-storefront
   namespace: shelf-j
 spec:
   redirectRegex:
-    regex: "^https?://storeql\\.com/(.*)"
-    replacement: "https://app.storeql.com/${1}"
+    regex: "^https?://(?:www\\.)?storeql\\.com/(.*)"
+    replacement: "https://app.storeql.com/?tenant=e65a2886-4674-4db8-b26e-99eac96e07af#/store"
+    permanent: true
+
+---
+# pos.storeql.com -> https://app.storeql.com/#/pos, landing in-store staff on the POS
+# shell. Same underlying shelf-app build/Deployment as everything else — router.dart's
+# auth guard still requires a cashier/admin login before the POS screens render.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-to-pos
+  namespace: shelf-j
+spec:
+  redirectRegex:
+    regex: "^https?://pos\\.storeql\\.com/(.*)"
+    replacement: "https://app.storeql.com/#/pos"
     permanent: true
 
 ---
@@ -95,10 +119,17 @@ metadata:
 spec:
   entryPoints: ["web", "websecure"]
   routes:
-    - match: Host(`storeql.com`)
+    - match: Host(`storeql.com`) || Host(`www.storeql.com`)
       kind: Rule
       middlewares:
-        - name: redirect-to-app
+        - name: redirect-to-storefront
+      services:
+        - name: shelf-app # unused (middleware redirects before reaching it) but required by the CRD schema
+          port: 8080
+    - match: Host(`pos.storeql.com`)
+      kind: Rule
+      middlewares:
+        - name: redirect-to-pos
       services:
         - name: shelf-app # unused (middleware redirects before reaching it) but required by the CRD schema
           port: 8080
@@ -114,4 +145,4 @@ metadata:
 spec:
   secretName: storeql-com-tls
   issuerRef: { name: letsencrypt-prod, kind: ClusterIssuer }
-  dnsNames: ["storeql.com"]
+  dnsNames: ["storeql.com", "www.storeql.com", "pos.storeql.com"]
