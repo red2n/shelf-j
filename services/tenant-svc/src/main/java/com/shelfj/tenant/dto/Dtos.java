@@ -222,4 +222,27 @@ public final class Dtos {
       boolean autoReserveOnOrder,
       String createdAt,
       String updatedAt) {}
+
+  // ── delivery areas ─────────────────────────────────────────────────────────
+
+  @Schema(
+      name = "CreateDeliveryAreaRequest",
+      description = "Map a pincode (postal code) to this store for home delivery fulfilment.")
+  public record CreateDeliveryAreaRequest(
+      @NotBlank @Size(max = 32) String pincode,
+      @Schema(description = "Lower number = higher priority when multiple stores cover a pincode.")
+          Integer priority) {}
+
+  @Schema(name = "DeliveryAreaResponse")
+  public record DeliveryAreaResponse(
+      String id, String storeId, String pincode, int priority, String createdAt) {}
+
+  @Schema(name = "FulfilmentResolveResponse")
+  public record FulfilmentResolveResponse(
+      @Schema(description = "Store that should fulfil a DELIVERY order for the given pincode.")
+          String storeId,
+      String storeName,
+      String storeCode,
+      String pincode,
+      int priority) {}
 }

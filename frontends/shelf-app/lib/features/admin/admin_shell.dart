@@ -3,82 +3,117 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'providers/admin_providers.dart';
 
-const _destinations = [
-  AdaptiveNavDestination(
-    label: 'Dashboard',
-    icon: Icons.dashboard_outlined,
-    selectedIcon: Icons.dashboard,
-  ),
-  AdaptiveNavDestination(
-    label: 'Catalog',
-    icon: Icons.inventory_2_outlined,
-    selectedIcon: Icons.inventory_2,
-  ),
-  AdaptiveNavDestination(
-    label: 'Inventory',
-    icon: Icons.warehouse_outlined,
-    selectedIcon: Icons.warehouse,
-  ),
-  AdaptiveNavDestination(
-    label: 'Stores',
-    icon: Icons.store_outlined,
-    selectedIcon: Icons.store,
-  ),
-  AdaptiveNavDestination(
-    label: 'Orders',
-    icon: Icons.receipt_long_outlined,
-    selectedIcon: Icons.receipt_long,
-  ),
-  AdaptiveNavDestination(
-    label: 'Procurement',
-    icon: Icons.local_shipping_outlined,
-    selectedIcon: Icons.local_shipping,
-  ),
-  AdaptiveNavDestination(
-    label: 'Pricing',
-    icon: Icons.sell_outlined,
-    selectedIcon: Icons.sell,
-  ),
-  AdaptiveNavDestination(
-    label: 'Reports',
-    icon: Icons.bar_chart_outlined,
-    selectedIcon: Icons.bar_chart,
-  ),
-  AdaptiveNavDestination(
-    label: 'Customers',
-    icon: Icons.groups_outlined,
-    selectedIcon: Icons.groups,
-  ),
-  AdaptiveNavDestination(
-    label: 'Sales',
-    icon: Icons.card_giftcard_outlined,
-    selectedIcon: Icons.card_giftcard,
-  ),
-  AdaptiveNavDestination(
-    label: 'Staff',
-    icon: Icons.people_outline,
-    selectedIcon: Icons.people,
-  ),
-];
+class _AdminNavItem {
+  final AdaptiveNavDestination destination;
+  final String route;
+  /// When true, shown to storekeeper-only users (warehouse-focused shell).
+  final bool storekeeperVisible;
 
-const _routes = [
-  '/admin/dashboard',
-  '/admin/catalog',
-  '/admin/inventory',
-  '/admin/stores',
-  '/admin/orders',
-  '/admin/procurement',
-  '/admin/pricing',
-  '/admin/reports',
-  '/admin/customers',
-  '/admin/sales',
-  '/admin/staff',
+  const _AdminNavItem({
+    required this.destination,
+    required this.route,
+    this.storekeeperVisible = false,
+  });
+}
+
+const _navItems = [
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Dashboard',
+      icon: Icons.dashboard_outlined,
+      selectedIcon: Icons.dashboard,
+    ),
+    route: '/admin/dashboard',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Catalog',
+      icon: Icons.inventory_2_outlined,
+      selectedIcon: Icons.inventory_2,
+    ),
+    route: '/admin/catalog',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Inventory',
+      icon: Icons.warehouse_outlined,
+      selectedIcon: Icons.warehouse,
+    ),
+    route: '/admin/inventory',
+    storekeeperVisible: true,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Stores',
+      icon: Icons.store_outlined,
+      selectedIcon: Icons.store,
+    ),
+    route: '/admin/stores',
+    storekeeperVisible: true,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Orders',
+      icon: Icons.receipt_long_outlined,
+      selectedIcon: Icons.receipt_long,
+    ),
+    route: '/admin/orders',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Procurement',
+      icon: Icons.local_shipping_outlined,
+      selectedIcon: Icons.local_shipping,
+    ),
+    route: '/admin/procurement',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Pricing',
+      icon: Icons.sell_outlined,
+      selectedIcon: Icons.sell,
+    ),
+    route: '/admin/pricing',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Reports',
+      icon: Icons.bar_chart_outlined,
+      selectedIcon: Icons.bar_chart,
+    ),
+    route: '/admin/reports',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Customers',
+      icon: Icons.groups_outlined,
+      selectedIcon: Icons.groups,
+    ),
+    route: '/admin/customers',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Sales',
+      icon: Icons.card_giftcard_outlined,
+      selectedIcon: Icons.card_giftcard,
+    ),
+    route: '/admin/sales',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Staff',
+      icon: Icons.people_outline,
+      selectedIcon: Icons.people,
+    ),
+    route: '/admin/staff',
+  ),
 ];
 
 class AdminShell extends ConsumerWidget {
@@ -91,21 +126,30 @@ class AdminShell extends ConsumerWidget {
     required this.child,
   });
 
-  int get _selectedIndex {
-    final idx = _routes.indexWhere((r) => currentLocation.startsWith(r));
-    return idx < 0 ? 0 : idx;
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tenantAsync = ref.watch(tenantInfoProvider);
     final tenantName = tenantAsync.value?.name ?? '';
+    final auth = ref.watch(authNotifierProvider).value;
+    final storekeeperOnly = auth is AuthAuthenticated &&
+        auth.isStorekeeper &&
+        !auth.isManager;
+
+    final items = storekeeperOnly
+        ? _navItems.where((i) => i.storekeeperVisible).toList()
+        : _navItems;
+    final routes = items.map((i) => i.route).toList();
+    final destinations = items.map((i) => i.destination).toList();
+
+    var selectedIndex =
+        routes.indexWhere((r) => currentLocation.startsWith(r));
+    if (selectedIndex < 0) selectedIndex = 0;
 
     return AdaptiveNavShell(
       title: tenantName,
-      destinations: _destinations,
-      selectedIndex: _selectedIndex,
-      onDestinationSelected: (i) => context.go(_routes[i]),
+      destinations: destinations,
+      selectedIndex: selectedIndex,
+      onDestinationSelected: (i) => context.go(routes[i]),
       actions: [
         PopupMenuButton<String>(
           icon: const Icon(Icons.account_circle_outlined),

@@ -1,6 +1,7 @@
 package com.shelfj.tenant.service;
 
 import com.shelfj.service.OutboxRow;
+import com.shelfj.tenant.domain.Domain.DeliveryArea;
 import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.StoreWithZone;
@@ -9,9 +10,12 @@ import com.shelfj.tenant.domain.Domain.TenantInventoryConfig;
 import com.shelfj.tenant.domain.Domain.TenantWithStore;
 import com.shelfj.tenant.domain.Domain.Zone;
 import com.shelfj.tenant.dto.Dtos.AssignStaffRequest;
+import com.shelfj.tenant.dto.Dtos.CreateDeliveryAreaRequest;
 import com.shelfj.tenant.dto.Dtos.CreateStoreRequest;
 import com.shelfj.tenant.dto.Dtos.CreateTenantRequest;
 import com.shelfj.tenant.dto.Dtos.CreateZoneRequest;
+import com.shelfj.tenant.dto.Dtos.DeliveryAreaResponse;
+import com.shelfj.tenant.dto.Dtos.FulfilmentResolveResponse;
 import com.shelfj.tenant.dto.Dtos.OnboardRequest;
 import com.shelfj.tenant.dto.Dtos.OnboardingStatus;
 import com.shelfj.tenant.dto.Dtos.PatchStatusRequest;
@@ -30,6 +34,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -476,6 +481,92 @@ public class TenantService {
             () ->
                 new ApiException(
                     404, "INVENTORY_CONFIG_NOT_FOUND", "No inventory config found", List.of()));
+  }
+
+  // ── delivery areas ─────────────────────────────────────────────────────────
+
+  public DeliveryAreaResponse addDeliveryArea(
+      UUID tenantId, UUID storeId, CreateDeliveryAreaRequest req) {
+    repo.findStore(tenantId, storeId)
+        .orElseThrow(
+            () ->
+                new ApiException(
+                    404, "STORE_NOT_FOUND", "No such store in this tenant", List.of()));
+    String pincode = req.pincode().trim();
+    if (pincode.isEmpty()) {
+      throw ApiException.badRequest("DELIVERY_PINCODE_REQUIRED", "pincode is required");
+    }
+    int priority = req.priority() != null ? req.priority() : 100;
+    var area =
+        new DeliveryArea(UUID.randomUUID(), tenantId, storeId, pincode, priority, Instant.now());
+    try {
+      return Mappers.toDto(repo.insertDeliveryArea(area));
+    } catch (RuntimeException e) {
+      // Unique (tenant, store, pincode) — surface a clean 409.
+      throw ApiException.conflict(
+          "DELIVERY_AREA_EXISTS", "This store already covers pincode " + pincode);
+    }
+  }
+
+  public List<DeliveryAreaResponse> listDeliveryAreas(UUID tenantId, UUID storeId) {
+    repo.findStore(tenantId, storeId)
+        .orElseThrow(
+            () ->
+                new ApiException(
+                    404, "STORE_NOT_FOUND", "No such store in this tenant", List.of()));
+    return repo.listDeliveryAreas(tenantId, storeId).stream().map(Mappers::toDto).toList();
+  }
+
+  public void deleteDeliveryArea(UUID tenantId, UUID storeId, UUID areaId) {
+    if (!repo.deleteDeliveryArea(tenantId, storeId, areaId)) {
+      throw new ApiException(404, "DELIVERY_AREA_NOT_FOUND", "No such delivery area", List.of());
+    }
+  }
+
+  /**
+   * Resolve the fulfilling store for a home-delivery pincode. When the tenant has no delivery areas
+   * configured, falls back to the tenant's default (or first) store so single-store tenants keep
+   * working without mapping. When areas exist but the pincode is unmapped → 404.
+   */
+  public FulfilmentResolveResponse resolveFulfilment(UUID tenantId, String pincode) {
+    if (pincode == null || pincode.isBlank()) {
+      throw ApiException.badRequest("FULFILMENT_PINCODE_REQUIRED", "pincode is required");
+    }
+    Optional<DeliveryArea> hit = repo.resolveDeliveryArea(tenantId, pincode);
+    if (hit.isPresent()) {
+      Store store =
+          repo.findStore(tenantId, hit.get().storeId())
+              .orElseThrow(
+                  () ->
+                      new ApiException(
+                          404, "STORE_NOT_FOUND", "Mapped store no longer exists", List.of()));
+      return new FulfilmentResolveResponse(
+          store.id().toString(),
+          store.name(),
+          store.code(),
+          hit.get().pincode(),
+          hit.get().priority());
+    }
+    if (repo.hasAnyDeliveryAreas(tenantId)) {
+      throw new ApiException(
+          404,
+          "FULFILMENT_AREA_NOT_COVERED",
+          "No store delivers to pincode " + pincode.trim(),
+          List.of());
+    }
+    // No areas configured → default/first store.
+    List<Store> stores = repo.listStores(tenantId);
+    Store store =
+        stores.stream()
+            .filter(Store::isDefault)
+            .findFirst()
+            .or(() -> stores.stream().findFirst())
+            .orElseThrow(
+                () ->
+                    new ApiException(
+                        404, "STORE_NOT_FOUND", "Tenant has no stores to fulfil from", List.of()));
+    return new FulfilmentResolveResponse(
+        store.id().toString(), store.name(), store.code(), pincode.trim(), 0);
   }
 
   private static UUID parseUuid(String s, String field) {

@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../constants.dart';
 
 @immutable
 sealed class AuthState {
@@ -26,27 +27,41 @@ class AuthAuthenticated extends AuthState {
     this.email,
   });
 
-  bool get isAdmin =>
-      roles.contains('PLATFORM_ADMIN') ||
-      roles.contains('STORE_ADMIN') ||
-      roles.contains('OWNER') ||
-      roles.contains('MANAGER');
-  bool get isCashier => roles.contains('CASHIER');
-  bool get isCustomer => roles.contains('CUSTOMER');
+  /// Full tenant console (OWNER/MANAGER). Storekeepers also land in admin but
+  /// with a restricted nav — see [isStorekeeper] / [canAccessAdmin].
+  bool get isManager =>
+      roles.contains(UserRoles.owner) || roles.contains(UserRoles.manager);
 
-  // OWNER/ADMIN with no tenantId haven't completed onboarding yet.
+  /// Warehouse operator: receive stock, view levels/batches. Not pricing/staff.
+  bool get isStorekeeper => roles.contains(UserRoles.storekeeper);
+
+  /// True when the user may enter the `/admin/*` shell at all.
+  bool get canAccessAdmin => isManager || isStorekeeper;
+
+  /// Alias for [canAccessAdmin] — used by the router and existing shells.
+  bool get isAdmin => canAccessAdmin;
+
+  bool get isCashier => roles.contains(UserRoles.cashier);
+  bool get isCustomer => roles.contains(UserRoles.customer);
+
+  // OWNER/MANAGER with no tenantId haven't completed onboarding yet.
   // PLATFORM_ADMIN is a global superuser and never needs onboarding.
+  // Storekeepers are always staffed onto an existing tenant, so they never
+  // self-onboard.
   bool get needsOnboarding =>
-      !roles.contains('PLATFORM_ADMIN') &&
+      !roles.contains(UserRoles.platformAdmin) &&
       tenantId == null &&
-      (isAdmin || roles.isEmpty);
+      (isManager || roles.isEmpty);
 
-  bool get isPlatformAdmin => roles.contains('PLATFORM_ADMIN');
+  bool get isPlatformAdmin => roles.contains(UserRoles.platformAdmin);
 
   String get homeRoute {
     if (needsOnboarding) return '/onboarding';
     if (isPlatformAdmin) return '/platform/overview';
-    if (isAdmin) return '/admin/dashboard';
+    // Storekeeper-only staff land on Inventory — their day job — not the
+    // manager dashboard (which hits management-only report APIs).
+    if (isStorekeeper && !isManager) return '/admin/inventory';
+    if (isManager) return '/admin/dashboard';
     if (isCashier) return '/pos/cart';
     return '/store/products';
   }

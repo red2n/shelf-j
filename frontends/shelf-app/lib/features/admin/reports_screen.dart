@@ -1,11 +1,16 @@
+import 'dart:js_interop';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// ignore: avoid_web_libraries_in_flutter
+import 'package:web/web.dart' as web;
+
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 
-enum _ReportType { sales, onHand, supplyDemand, movements }
+enum _ReportType { sales, salesByDay, onHand, supplyDemand, movements }
 
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
@@ -129,6 +134,8 @@ class _ReportContent extends ConsumerWidget {
     switch (type) {
       case _ReportType.sales:
         return _SalesReport();
+      case _ReportType.salesByDay:
+        return _SalesByDayReport();
       case _ReportType.onHand:
         return _OnHandReport();
       case _ReportType.supplyDemand:
@@ -139,13 +146,18 @@ class _ReportContent extends ConsumerWidget {
   }
 }
 
-/// Shared header (title + subtitle + refresh) used by the table reports.
+/// Shared header (title + subtitle + refresh + optional export) used by table reports.
 class _ReportHeader extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback onRefresh;
-  const _ReportHeader(
-      {required this.title, required this.subtitle, required this.onRefresh});
+  final VoidCallback? onExportCsv;
+  const _ReportHeader({
+    required this.title,
+    required this.subtitle,
+    required this.onRefresh,
+    this.onExportCsv,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -171,11 +183,104 @@ class _ReportHeader extends StatelessWidget {
               ],
             ),
           ),
+          if (onExportCsv != null)
+            TextButton.icon(
+              onPressed: onExportCsv,
+              icon: const Icon(Icons.download_outlined, size: 18),
+              label: const Text('Export CSV'),
+            ),
           IconButton(icon: const Icon(Icons.refresh), onPressed: onRefresh),
         ],
       ),
     );
   }
+}
+
+/// From/to date pickers bound to [reportDateRangeProvider].
+class _DateRangeBar extends ConsumerWidget {
+  const _DateRangeBar();
+
+  Future<void> _pick(
+      BuildContext context, WidgetRef ref, {required bool isFrom}) async {
+    final range = ref.read(reportDateRangeProvider);
+    final current = isFrom ? range.from : range.to;
+    DateTime initial;
+    try {
+      initial = current != null ? DateTime.parse(current) : DateTime.now();
+    } catch (_) {
+      initial = DateTime.now();
+    }
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 1),
+    );
+    if (picked == null) return;
+    final s = yyyyMmDd(picked);
+    ref.read(reportDateRangeProvider.notifier).state = isFrom
+        ? range.copyWith(from: s)
+        : range.copyWith(to: s);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final range = ref.watch(reportDateRangeProvider);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          OutlinedButton.icon(
+            onPressed: () => _pick(context, ref, isFrom: true),
+            icon: const Icon(Icons.event_outlined, size: 18),
+            label: Text('From: ${range.from ?? '—'}'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => _pick(context, ref, isFrom: false),
+            icon: const Icon(Icons.event_outlined, size: 18),
+            label: Text('To: ${range.to ?? '—'}'),
+          ),
+          TextButton(
+            onPressed: () {
+              final now = DateTime.now();
+              ref.read(reportDateRangeProvider.notifier).state = ReportDateRange(
+                from: yyyyMmDd(now.subtract(const Duration(days: 30))),
+                to: yyyyMmDd(now),
+              );
+            },
+            child: const Text('Last 30 days'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+void _downloadCsv(String filename, String csv) {
+  final blob = web.Blob(
+    [csv.toJS].toJS,
+    web.BlobPropertyBag(type: 'text/csv;charset=utf-8'),
+  );
+  final url = web.URL.createObjectURL(blob);
+  final anchor = web.HTMLAnchorElement()
+    ..href = url
+    ..download = filename;
+  web.document.body?.append(anchor);
+  anchor.click();
+  anchor.remove();
+  web.URL.revokeObjectURL(url);
+}
+
+String _csvEscape(Object? v) {
+  final s = v?.toString() ?? '';
+  if (s.contains(',') || s.contains('"') || s.contains('\n')) {
+    return '"${s.replaceAll('"', '""')}"';
+  }
+  return s;
 }
 
 String _short(String s, [int n = 8]) =>
@@ -202,6 +307,22 @@ class _SupplyDemandReport extends ConsumerWidget {
             title: 'Supply / Demand Netting',
             subtitle: 'On-hand + in-transit → net available',
             onRefresh: () => ref.invalidate(supplyDemandReportProvider),
+            onExportCsv: rows.isEmpty
+                ? null
+                : () {
+                    final buf = StringBuffer(
+                        'storeId,variantId,onHand,supplyInTransit,netAvailable\n');
+                    for (final r in rows) {
+                      buf.writeln([
+                        _csvEscape(r.storeId),
+                        _csvEscape(r.variantId),
+                        r.onHand,
+                        r.supplyInTransit,
+                        r.netAvailable,
+                      ].join(','));
+                    }
+                    _downloadCsv('supply-demand.csv', buf.toString());
+                  },
           ),
           if (rows.isEmpty)
             const Expanded(child: Center(child: Text('No netting data yet.')))
@@ -246,6 +367,7 @@ class _SalesReport extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
+    final range = ref.watch(reportDateRangeProvider);
     final async = ref.watch(salesSummaryReportProvider);
     return async.when(
       loading: () => const LoadingView(label: 'Loading sales…'),
@@ -258,9 +380,28 @@ class _SalesReport extends ConsumerWidget {
         children: [
           _ReportHeader(
             title: 'Sales Revenue',
-            subtitle: 'Gross / refunded / net revenue by currency',
+            subtitle:
+                'Gross / refunded / net revenue by currency${range.from != null ? ' · ${range.from} → ${range.to}' : ''}',
             onRefresh: () => ref.invalidate(salesSummaryReportProvider),
+            onExportCsv: rows.isEmpty
+                ? null
+                : () {
+                    final buf =
+                        StringBuffer('currency,orders,gross,refunded,net\n');
+                    for (final r in rows) {
+                      buf.writeln([
+                        _csvEscape(r.currency),
+                        r.orders,
+                        r.gross,
+                        r.refunded,
+                        r.net,
+                      ].join(','));
+                    }
+                    _downloadCsv('sales-summary.csv', buf.toString());
+                  },
           ),
+          const _DateRangeBar(),
+          const SizedBox(height: 12),
           if (rows.isEmpty)
             const Expanded(child: Center(child: Text('No sales yet.')))
           else
@@ -300,6 +441,89 @@ class _SalesReport extends ConsumerWidget {
   }
 }
 
+class _SalesByDayReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final range = ref.watch(reportDateRangeProvider);
+    final async = ref.watch(salesByDayReportProvider);
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading sales by day…'),
+      error: (e, _) => ErrorView(
+        message:
+            friendlyError(e, fallback: 'Could not load sales-by-day report.'),
+        onRetry: () => ref.invalidate(salesByDayReportProvider),
+      ),
+      data: (rows) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ReportHeader(
+            title: 'Sales by Day',
+            subtitle:
+                'Daily revenue buckets${range.from != null ? ' · ${range.from} → ${range.to}' : ''}',
+            onRefresh: () => ref.invalidate(salesByDayReportProvider),
+            onExportCsv: rows.isEmpty
+                ? null
+                : () {
+                    final buf = StringBuffer(
+                        'day,currency,orders,gross,refunded,net\n');
+                    for (final r in rows) {
+                      buf.writeln([
+                        _csvEscape(r.day),
+                        _csvEscape(r.currency),
+                        r.orders,
+                        r.gross,
+                        r.refunded,
+                        r.net,
+                      ].join(','));
+                    }
+                    _downloadCsv('sales-by-day.csv', buf.toString());
+                  },
+          ),
+          const _DateRangeBar(),
+          const SizedBox(height: 12),
+          if (rows.isEmpty)
+            const Expanded(
+                child: Center(child: Text('No daily sales in this range.')))
+          else
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Card(
+                  child: DataTable(
+                    headingRowColor:
+                        WidgetStatePropertyAll(cs.surfaceContainerHigh),
+                    columnSpacing: 24,
+                    columns: const [
+                      DataColumn(label: Text('Day')),
+                      DataColumn(label: Text('Currency')),
+                      DataColumn(label: Text('Orders'), numeric: true),
+                      DataColumn(label: Text('Gross'), numeric: true),
+                      DataColumn(label: Text('Refunded'), numeric: true),
+                      DataColumn(label: Text('Net'), numeric: true),
+                    ],
+                    rows: rows
+                        .map((r) => DataRow(cells: [
+                              DataCell(Text(r.day)),
+                              DataCell(Text(r.currency)),
+                              DataCell(Text('${r.orders}')),
+                              DataCell(Text(r.gross.toStringAsFixed(2))),
+                              DataCell(Text(r.refunded.toStringAsFixed(2))),
+                              DataCell(Text(r.net.toStringAsFixed(2),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold))),
+                            ]))
+                        .toList(),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MovementStatsReport extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -318,6 +542,23 @@ class _MovementStatsReport extends ConsumerWidget {
             title: 'Movement Statistics',
             subtitle: 'Stock in / out / net per period',
             onRefresh: () => ref.invalidate(movementStatsReportProvider),
+            onExportCsv: rows.isEmpty
+                ? null
+                : () {
+                    final buf = StringBuffer(
+                        'storeId,variantId,bucket,totalIn,totalOut,net\n');
+                    for (final r in rows) {
+                      buf.writeln([
+                        _csvEscape(r.storeId),
+                        _csvEscape(r.variantId),
+                        _csvEscape(r.bucket),
+                        r.totalIn,
+                        r.totalOut,
+                        r.net,
+                      ].join(','));
+                    }
+                    _downloadCsv('movement-stats.csv', buf.toString());
+                  },
           ),
           if (rows.isEmpty)
             const Expanded(child: Center(child: Text('No movement data yet.')))
@@ -376,31 +617,24 @@ class _OnHandReport extends ConsumerWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('On-Hand Inventory',
-                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.bold)),
-                        Text('Total units across all stores',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(color: cs.outline)),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
-                    onPressed: () => ref.invalidate(onHandReportProvider),
-                  ),
-                ],
-              ),
+            _ReportHeader(
+              title: 'On-Hand Inventory',
+              subtitle: 'Total units across all stores',
+              onRefresh: () => ref.invalidate(onHandReportProvider),
+              onExportCsv: rows.isEmpty
+                  ? null
+                  : () {
+                      final buf =
+                          StringBuffer('storeId,variantId,onHand\n');
+                      for (final r in rows) {
+                        buf.writeln([
+                          _csvEscape(r.storeId),
+                          _csvEscape(r.variantId),
+                          r.onHand,
+                        ].join(','));
+                      }
+                      _downloadCsv('on-hand.csv', buf.toString());
+                    },
             ),
             // Summary chip
             Padding(
@@ -476,6 +710,8 @@ String _reportLabel(_ReportType r) {
   switch (r) {
     case _ReportType.sales:
       return 'Sales Revenue';
+    case _ReportType.salesByDay:
+      return 'Sales by Day';
     case _ReportType.onHand:
       return 'On-Hand Inventory';
     case _ReportType.supplyDemand:
@@ -489,6 +725,8 @@ IconData _reportIcon(_ReportType r) {
   switch (r) {
     case _ReportType.sales:
       return Icons.payments_outlined;
+    case _ReportType.salesByDay:
+      return Icons.calendar_view_day_outlined;
     case _ReportType.onHand:
       return Icons.inventory_2_outlined;
     case _ReportType.supplyDemand:

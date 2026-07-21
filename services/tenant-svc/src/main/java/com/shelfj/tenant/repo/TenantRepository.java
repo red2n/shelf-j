@@ -2,6 +2,7 @@ package com.shelfj.tenant.repo;
 
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
+import com.shelfj.tenant.domain.Domain.DeliveryArea;
 import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.StoreWithZone;
@@ -754,5 +755,97 @@ public class TenantRepository extends BaseOutboxRepository {
           return null;
         },
         "publish event");
+  }
+
+  // ── delivery areas ─────────────────────────────────────────────────────────
+
+  public DeliveryArea insertDeliveryArea(DeliveryArea a) {
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO delivery_areas (id, tenant_id, store_id, pincode, priority,"
+                      + " created_at) VALUES (?,?,?,?,?,?)")) {
+            ps.setObject(1, a.id());
+            ps.setObject(2, a.tenantId());
+            ps.setObject(3, a.storeId());
+            ps.setString(4, a.pincode());
+            ps.setInt(5, a.priority());
+            ps.setObject(6, a.createdAt().atOffset(ZoneOffset.UTC));
+            ps.executeUpdate();
+          }
+          return null;
+        },
+        "insert delivery area");
+    return a;
+  }
+
+  public List<DeliveryArea> listDeliveryAreas(UUID tenantId, UUID storeId) {
+    return query(
+        "SELECT id, tenant_id, store_id, pincode, priority, created_at FROM delivery_areas"
+            + " WHERE tenant_id=? AND store_id=? ORDER BY priority ASC, pincode ASC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+        },
+        TenantRepository::mapDeliveryArea,
+        "list delivery areas");
+  }
+
+  public boolean deleteDeliveryArea(UUID tenantId, UUID storeId, UUID areaId) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "DELETE FROM delivery_areas WHERE tenant_id=? AND store_id=? AND id=?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, storeId);
+            ps.setObject(3, areaId);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "delete delivery area");
+  }
+
+  /**
+   * Lowest-priority (highest precedence) store covering the pincode, or empty if none mapped. When
+   * no delivery_areas exist for the tenant at all, callers should fall back to the default store.
+   */
+  public Optional<DeliveryArea> resolveDeliveryArea(UUID tenantId, String pincode) {
+    List<DeliveryArea> rows =
+        query(
+            "SELECT id, tenant_id, store_id, pincode, priority, created_at FROM delivery_areas"
+                + " WHERE tenant_id=? AND lower(pincode)=lower(?) ORDER BY priority ASC LIMIT 1",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, pincode.trim());
+            },
+            TenantRepository::mapDeliveryArea,
+            "resolve delivery area");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  public boolean hasAnyDeliveryAreas(UUID tenantId) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement("SELECT 1 FROM delivery_areas WHERE tenant_id=? LIMIT 1")) {
+            ps.setObject(1, tenantId);
+            try (ResultSet rs = ps.executeQuery()) {
+              return rs.next();
+            }
+          }
+        },
+        "has any delivery areas");
+  }
+
+  private static DeliveryArea mapDeliveryArea(ResultSet rs) throws SQLException {
+    return new DeliveryArea(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getString("pincode"),
+        rs.getInt("priority"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 }

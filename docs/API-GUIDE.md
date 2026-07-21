@@ -38,7 +38,7 @@ Protective features: Redis-backed rate limiting (default 100 req/min per caller,
 These apply across (almost) every endpoint below and are called out per-service only where a service deviates from them:
 
 - **Tenant scoping**: every request is scoped to the caller's tenant, taken from the gateway-verified identity (or, on public storefront paths, from the resolved storefront tenant) — never from a client-supplied body field.
-- **Default-deny RBAC**: role model is `PLATFORM_ADMIN` (cross-tenant), `OWNER`, `MANAGER`, `STOREKEEPER`, `CASHIER`, `CUSTOMER`. The shared `AdminAuthorizationFilter` enforces three tiers: **(1)** the entire `/admin/...` subtree — every HTTP method, *including GETs* — requires a management role (`PLATFORM_ADMIN`/`OWNER`/`MANAGER`), with exactly two exemptions (`POST /admin/tenant` during onboarding, `POST .../receipts`); **(2)** `POST .../refunds` and `POST .../void` require a management role even outside `/admin/`; **(3)** any other mutating request (POST/PUT/PATCH/DELETE) needs at least a staff role, except a small open allowlist (identity endpoints, onboarding, `/prices/resolve*`, `/orders`, `/cart*`, `/payments/online`, `/inventory/reservations*`). Non-`/admin` GETs are not gated by this filter. Practical consequence: `STOREKEEPER` and `CASHIER` cannot call anything under `/admin/...` — including reads like `/admin/inventory/levels` — despite those endpoints covering their day-to-day work; grant such staff `MANAGER` or keep them on the non-admin surfaces.
+- **Default-deny RBAC**: role model is `PLATFORM_ADMIN` (cross-tenant), `OWNER`, `MANAGER`, `STOREKEEPER`, `CASHIER`, `CUSTOMER`. The shared `AdminAuthorizationFilter` enforces four tiers: **(1)** most of the `/admin/...` subtree — every HTTP method, *including GETs* — requires a management role (`PLATFORM_ADMIN`/`OWNER`/`MANAGER`), with bootstrap/receipt exemptions (`POST /admin/tenant` during onboarding, `POST .../receipts`); **(2)** **staff-operable admin surfaces** require any staff role (`STOREKEEPER`/`CASHIER` included): `/admin/inventory/**` (warehouse), `/admin/cash/**` (till — resource layer may still demand MANAGER+ for close/drops), plus support GETs `GET /admin/tenant`, `GET /admin/stores…`, `GET /admin/products/variants/resolve`; **(3)** `POST .../refunds` and `POST .../void` require a management role even outside `/admin/`; **(4)** any other mutating request needs at least a staff role, except a small open allowlist (identity endpoints, onboarding, `/prices/resolve*`, `/orders`, `/cart*`, `/payments/online`, `/inventory/reservations*`). Non-`/admin` GETs outside the staff-admin list are not gated by this filter.
 - **Pagination**: list endpoints are cursor-paginated — `?after=<meta.nextCursor>&limit=1-100` (default ~20).
 - **Idempotency**: money- or stock-moving POSTs (place order, reserve/receive/adjust stock, record payment/refund/cash movement, goods receipt) accept an `Idempotency-Key` header so a retried POST is safe; placing an order requires one.
 - **Eventing**: domain events are written to each service's own outbox table in the same transaction as the state change and published to Kafka at-least-once; consumers dedupe on event id. No service calls another synchronously for these flows.
@@ -262,13 +262,14 @@ Called by order-svc during checkout to hold stock before it's actually deducted.
 
 ## notification-svc
 
-### Notifications (`/admin/notifications`)
-Pure fan-in service: no write endpoints, just reads over data assembled from consumed events.
+### Notifications (`/admin/notifications` + send)
+Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `GET /admin/notifications/shortage-alerts` — list low-stock shortage alerts (by store or variant).
-- `GET /admin/notifications` — in-app notification feed (welcome, order-confirmation, etc.), newest first.
+- `GET /admin/notifications` — in-app notification feed (welcome, order-confirmation, POS receipt, etc.), newest first.
+- `POST /notifications/send` — staff-triggered send (order-svc uses this for EMAIL receipts). Body: `recipient`, `subject`, `body`, optional `type`/`eventId`.
 
 **Business rules**
-- This service has no synchronous write API at all — every record it exposes was created by reacting to a Kafka event from another service.
+- Channel is selected by `shelfj.notification.channel`: `app` (default, in-app only) or `email`/`smtp` (SMTP **plus** in-app via a composite channel so the feed still fills when email is on).
 
 **Events**
 - Consumes: `OrderConfirmed` (order-confirmation notice), `StockBelowThreshold` (shortage alert), `UserRegistered` (welcome/registration notice).
@@ -337,7 +338,7 @@ Pure fan-in service: no write endpoints, just reads over data assembled from con
 **Business rules**
 - Online storefront payments must be cashless (`CARD`/`UPI`/`WALLET`); cash tenders are POS-staff-only via the in-person endpoint.
 - Online payment is verified against order-svc (order exists, is `ONLINE`, belongs to the caller if authenticated, amount matches the order total) before capture.
-- Role tiers: `CASHIER`+ can record a POS tender (`POST /payments`); but **everything under `/admin/cash/...` — including opening a till — currently requires `MANAGER`+**, because the shared `AdminAuthorizationFilter` management-gates the whole `/admin/` subtree before `CashManagementResource`'s own (looser, currently unreachable) `CASHIER` check runs. In practice a till can only be opened by a `MANAGER`/`OWNER`, and refunds, cash drops, X/Z-reports, and pay-in/pay-out are `MANAGER`+ as well.
+- Role tiers: `CASHIER`+ can record a POS tender (`POST /payments`). `/admin/cash/**` is on the filter's **staff-operable** tier, so `CASHIER` can reach till endpoints; `CashManagementResource` then allows `CASHIER` to open/get a till, while drops, X-report, and Z-report (close) stay `MANAGER`/`OWNER`. Cash movements (pay-in/pay-out) under `/admin/cash` also require `MANAGER`/`OWNER` at the resource layer.
 - `Idempotency-Key` is honored on tender recording, refunds, and cash movements.
 
 **Events**

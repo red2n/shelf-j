@@ -7,9 +7,16 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Chooses the active {@link NotificationChannel} at startup from {@code
- * shelfj.notification.channel}: {@code app} (default — in-app notifications) or {@code email}
- * (SMTP). SMS/push are future channels added the same way. Keeping the selection here means the
- * consumers/service just inject {@link NotificationChannel} and never know which transport is live.
+ * shelfj.notification.channel}:
+ *
+ * <ul>
+ *   <li>{@code app} (default) — in-app feed only ({@link AppChannel})
+ *   <li>{@code email} / {@code smtp} — SMTP <em>plus</em> in-app ({@link CompositeChannel}): the
+ *       feed still records every send, and the message is emailed
+ * </ul>
+ *
+ * SMS/push are future channels. Consumers inject {@link NotificationChannel} and never know which
+ * transport is live.
  */
 @ApplicationScoped
 public class NotificationChannelProducer {
@@ -46,11 +53,20 @@ public class NotificationChannelProducer {
   @Produces
   @ApplicationScoped
   public NotificationChannel channel() {
+    AppChannel app = new AppChannel();
     if ("email".equalsIgnoreCase(channelName) || "smtp".equalsIgnoreCase(channelName)) {
-      return new SmtpChannel(
-          smtpHost, smtpPort, blankToNull(smtpUsername), blankToNull(smtpPassword), from, startTls);
+      SmtpChannel smtp =
+          new SmtpChannel(
+              smtpHost,
+              smtpPort,
+              blankToNull(smtpUsername),
+              blankToNull(smtpPassword),
+              from,
+              startTls);
+      // Always keep the in-app path so the admin feed is populated when email is on.
+      return new CompositeChannel(app, smtp);
     }
-    return new AppChannel();
+    return app;
   }
 
   private static String blankToNull(java.util.Optional<String> v) {

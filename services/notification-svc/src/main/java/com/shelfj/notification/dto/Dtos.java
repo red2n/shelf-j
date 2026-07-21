@@ -40,4 +40,33 @@ public final class Dtos {
       String body,
       @Schema(description = "Delivery status, e.g. SENT, FAILED.") String status,
       Instant createdAt) {}
+
+  @Schema(
+      name = "SendNotificationRequest",
+      description = "Staff or service-to-service request to deliver one notification.")
+  public record SendNotificationRequest(
+      @Schema(description = "Email (or other channel address) to deliver to.", required = true)
+          @jakarta.validation.constraints.NotBlank
+          String recipient,
+      @Schema(description = "Subject line.", required = true)
+          @jakarta.validation.constraints.NotBlank
+          String subject,
+      @Schema(description = "Plain-text body.", required = true)
+          @jakarta.validation.constraints.NotBlank
+          String body,
+      @Schema(
+              description =
+                  "Notification kind recorded in the log, e.g. POS_RECEIPT, ORDER_CONFIRMATION.")
+          String type,
+      @Schema(
+              description =
+                  "Optional idempotency id. When set, re-sends with the same (eventId, type) are"
+                      + " no-ops. When omitted a new UUID is minted (always delivers).")
+          String eventId) {}
+
+  @Schema(name = "SendNotificationResponse")
+  public record SendNotificationResponse(
+      @Schema(description = "Event id used for dedupe.") String eventId,
+      String type,
+      @Schema(description = "SENT when delivered or already delivered.") String status) {}
 }

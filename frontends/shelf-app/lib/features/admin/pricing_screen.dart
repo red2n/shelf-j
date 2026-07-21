@@ -15,7 +15,7 @@ class PricingScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -31,6 +31,7 @@ class PricingScreen extends ConsumerWidget {
               Tab(text: 'Price Lists'),
               Tab(text: 'Promotions'),
               Tab(text: 'VAT Rates'),
+              Tab(text: 'VAT Return'),
             ],
           ),
           const Expanded(
@@ -39,6 +40,7 @@ class PricingScreen extends ConsumerWidget {
                 _PriceListsTab(),
                 _PromotionsTab(),
                 _VatRatesTab(),
+                _VatReturnTab(),
               ],
             ),
           ),
@@ -791,6 +793,207 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
         ),
       ),
       actions: _dialogActions(context, _loading, _submit, _isEdit ? 'Save' : 'Create'),
+    );
+  }
+}
+
+// ── VAT Return (HMRC MTD boxes 1–9) ──────────────────────────────────────────
+
+class _VatReturnTab extends ConsumerStatefulWidget {
+  const _VatReturnTab();
+
+  @override
+  ConsumerState<_VatReturnTab> createState() => _VatReturnTabState();
+}
+
+class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
+  late VatReturnRange _range;
+
+  @override
+  void initState() {
+    super.initState();
+    _range = defaultVatReturnRange();
+  }
+
+  Future<void> _pickFrom() async {
+    final initial = DateTime.tryParse(_range.from) ?? DateTime.now().toUtc();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(DateTime.now().year - 5),
+      lastDate: DateTime(DateTime.now().year + 1),
+    );
+    if (picked == null) return;
+    setState(() {
+      _range = VatReturnRange(
+        from: DateTime.utc(picked.year, picked.month, picked.day)
+            .toIso8601String(),
+        to: _range.to,
+      );
+    });
+  }
+
+  Future<void> _pickTo() async {
+    final initial = DateTime.tryParse(_range.to) ?? DateTime.now().toUtc();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(DateTime.now().year - 5),
+      lastDate: DateTime(DateTime.now().year + 1),
+    );
+    if (picked == null) return;
+    // Exclusive end of day → next midnight
+    final end = DateTime.utc(picked.year, picked.month, picked.day)
+        .add(const Duration(days: 1));
+    setState(() {
+      _range = VatReturnRange(from: _range.from, to: end.toIso8601String());
+    });
+  }
+
+  String _dayLabel(String iso) {
+    final d = DateTime.tryParse(iso);
+    if (d == null) return iso;
+    return d.toIso8601String().split('T').first;
+  }
+
+  static const _boxLabels = <int, String>{
+    1: 'VAT due on sales and other outputs',
+    2: 'VAT due on acquisitions from EU (usually 0)',
+    3: 'Total VAT due (box 1 + box 2)',
+    4: 'VAT reclaimed on purchases (input VAT)',
+    5: 'Net VAT to pay / reclaim',
+    6: 'Total value of sales excluding VAT',
+    7: 'Total value of purchases excluding VAT',
+    8: 'Total value of EU supplies (goods)',
+    9: 'Total value of EU acquisitions (goods)',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final async = ref.watch(vatReturnProvider(_range));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _pickFrom,
+                icon: const Icon(Icons.event_outlined, size: 18),
+                label: Text('From: ${_dayLabel(_range.from)}'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _pickTo,
+                icon: const Icon(Icons.event_outlined, size: 18),
+                label: Text('To: ${_dayLabel(_range.to)}'),
+              ),
+              TextButton(
+                onPressed: () =>
+                    setState(() => _range = defaultVatReturnRange()),
+                child: const Text('This quarter'),
+              ),
+              TextButton(
+                onPressed: () {
+                  final now = DateTime.now().toUtc();
+                  final from =
+                      now.subtract(const Duration(days: 90)).toIso8601String();
+                  setState(() {
+                    _range = VatReturnRange(
+                        from: from, to: now.toIso8601String());
+                  });
+                },
+                child: const Text('Last 90 days'),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh',
+                onPressed: () => ref.invalidate(vatReturnProvider(_range)),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: async.when(
+            loading: () =>
+                const LoadingView(label: 'Computing VAT return…'),
+            error: (e, _) => ErrorView(
+              message: friendlyError(e,
+                  fallback: 'Could not load VAT return.'),
+              onRetry: () => ref.invalidate(vatReturnProvider(_range)),
+            ),
+            data: (vr) {
+              final boxes = <int, double>{
+                1: vr.box1,
+                2: vr.box2,
+                3: vr.box3,
+                4: vr.box4,
+                5: vr.box5,
+                6: vr.box6,
+                7: vr.box7,
+                8: vr.box8,
+                9: vr.box9,
+              };
+              return ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Text(
+                    'HMRC Making Tax Digital VAT return (boxes 1–9)',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Period ${_dayLabel(_range.from)} → ${_dayLabel(_range.to)}',
+                    style: TextStyle(color: cs.outline),
+                  ),
+                  const SizedBox(height: 16),
+                  ...boxes.entries.map((e) {
+                    final n = e.key;
+                    final highlight = n == 3 || n == 5;
+                    return Card(
+                      color: highlight ? cs.primaryContainer.withAlpha(80) : null,
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: highlight
+                              ? cs.primaryContainer
+                              : cs.secondaryContainer,
+                          child: Text(
+                            '$n',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: highlight
+                                  ? cs.onPrimaryContainer
+                                  : cs.onSecondaryContainer,
+                            ),
+                          ),
+                        ),
+                        title: Text(_boxLabels[n] ?? 'Box $n'),
+                        trailing: Text(
+                          e.value.toStringAsFixed(2),
+                          style: TextStyle(
+                            fontWeight:
+                                highlight ? FontWeight.bold : FontWeight.w600,
+                            fontFamily: 'monospace',
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

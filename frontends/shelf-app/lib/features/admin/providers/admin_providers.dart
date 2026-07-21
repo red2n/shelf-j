@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import '../../../core/constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/paged.dart';
@@ -67,7 +68,41 @@ class InventoryLevel {
         available: (j['available'] as num?)?.toDouble() ?? 0,
       );
 
+  /// Default low-stock heuristic when no reorder threshold is configured.
   bool get isLow => available <= 5;
+
+  /// Low stock against real reorder thresholds (key = `storeId:variantId`).
+  /// Falls back to [isLow] when this store+variant has no threshold.
+  bool isLowAgainst(Map<String, double> thresholds) {
+    final t = thresholds['$storeId:$variantId'];
+    if (t == null) return isLow;
+    return available <= t;
+  }
+}
+
+/// Reorder threshold (min qty that triggers low-stock) for a store+variant.
+class ReorderThreshold {
+  final String id;
+  final String storeId;
+  final String variantId;
+  final double threshold;
+  final double? maxQty;
+
+  const ReorderThreshold({
+    required this.id,
+    required this.storeId,
+    required this.variantId,
+    required this.threshold,
+    this.maxQty,
+  });
+
+  factory ReorderThreshold.fromJson(Map<String, dynamic> j) => ReorderThreshold(
+        id: j['id'] as String? ?? '',
+        storeId: j['storeId'] as String? ?? '',
+        variantId: j['variantId'] as String? ?? '',
+        threshold: (j['threshold'] as num?)?.toDouble() ?? 0,
+        maxQty: (j['maxQty'] as num?)?.toDouble(),
+      );
 }
 
 class TenantInfo {
@@ -355,6 +390,195 @@ final batchesProvider =
   );
   final data = (resp.data['data'] as List?) ?? [];
   return data.map((e) => BatchInfo.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+class ExpiringBatch {
+  final String id;
+  final String storeId;
+  final String variantId;
+  final String batchNo;
+  final double remainingQty;
+  final String? expiryDate;
+  final int daysUntilExpiry;
+
+  const ExpiringBatch({
+    required this.id,
+    required this.storeId,
+    required this.variantId,
+    required this.batchNo,
+    required this.remainingQty,
+    this.expiryDate,
+    required this.daysUntilExpiry,
+  });
+
+  factory ExpiringBatch.fromJson(Map<String, dynamic> j) => ExpiringBatch(
+        id: j['id'] as String? ?? '',
+        storeId: j['storeId'] as String? ?? '',
+        variantId: j['variantId'] as String? ?? '',
+        batchNo: j['batchNo'] as String? ?? '-',
+        remainingQty: (j['remainingQty'] as num?)?.toDouble() ?? 0,
+        expiryDate: j['expiryDate'] as String?,
+        daysUntilExpiry: (j['daysUntilExpiry'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// Batches expiring within [withinDays] at a store.
+final expiringBatchesProvider = FutureProvider.autoDispose
+    .family<List<ExpiringBatch>, ({String storeId, int withinDays})>((ref, args) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+    '/${ApiConstants.inventory}/admin/inventory/batches/expiring',
+    queryParameters: {
+      'store': args.storeId,
+      'withinDays': args.withinDays,
+    },
+  );
+  final data = (resp.data['data'] as List?) ?? [];
+  return data.map((e) => ExpiringBatch.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+class TransferOrderLine {
+  final String? id;
+  final String variantId;
+  final double requestedQty;
+  final double? shippedQty;
+  final double? receivedQty;
+
+  const TransferOrderLine({
+    this.id,
+    required this.variantId,
+    required this.requestedQty,
+    this.shippedQty,
+    this.receivedQty,
+  });
+
+  factory TransferOrderLine.fromJson(Map<String, dynamic> j) => TransferOrderLine(
+        id: j['id'] as String?,
+        variantId: j['variantId'] as String? ?? '',
+        requestedQty: (j['requestedQty'] as num?)?.toDouble() ?? 0,
+        shippedQty: (j['shippedQty'] as num?)?.toDouble(),
+        receivedQty: (j['receivedQty'] as num?)?.toDouble(),
+      );
+}
+
+class TransferOrder {
+  final String id;
+  final String fromStoreId;
+  final String toStoreId;
+  final String? transferType;
+  final String status;
+  final String? notes;
+  final String? createdAt;
+  final String? shippedAt;
+  final String? receivedAt;
+  final List<TransferOrderLine> lines;
+
+  const TransferOrder({
+    required this.id,
+    required this.fromStoreId,
+    required this.toStoreId,
+    this.transferType,
+    required this.status,
+    this.notes,
+    this.createdAt,
+    this.shippedAt,
+    this.receivedAt,
+    required this.lines,
+  });
+
+  factory TransferOrder.fromJson(Map<String, dynamic> j) => TransferOrder(
+        id: j['id'] as String? ?? '',
+        fromStoreId: j['fromStoreId'] as String? ?? '',
+        toStoreId: j['toStoreId'] as String? ?? '',
+        transferType: j['transferType'] as String?,
+        status: j['status'] as String? ?? '-',
+        notes: j['notes'] as String?,
+        createdAt: j['createdAt'] as String?,
+        shippedAt: j['shippedAt'] as String?,
+        receivedAt: j['receivedAt'] as String?,
+        lines: ((j['lines'] as List?) ?? [])
+            .map((e) => TransferOrderLine.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+/// Transfer orders, optional store filter (empty = all).
+final transferOrdersProvider =
+    FutureProvider.autoDispose.family<List<TransferOrder>, String>((ref, storeId) async {
+  final params = <String, dynamic>{'limit': 50};
+  if (storeId.isNotEmpty) params['store'] = storeId;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.inventory}/admin/inventory/transfers',
+        queryParameters: params,
+      );
+  final data = (resp.data['data'] as List?) ?? [];
+  return data.map((e) => TransferOrder.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+class StockMovement {
+  final String id;
+  final String storeId;
+  final String variantId;
+  final String? batchId;
+  final String type;
+  final double qty;
+  final String? createdAt;
+
+  const StockMovement({
+    required this.id,
+    required this.storeId,
+    required this.variantId,
+    this.batchId,
+    required this.type,
+    required this.qty,
+    this.createdAt,
+  });
+
+  factory StockMovement.fromJson(Map<String, dynamic> j) => StockMovement(
+        id: j['id'] as String? ?? '',
+        storeId: j['storeId'] as String? ?? '',
+        variantId: j['variantId'] as String? ?? '',
+        batchId: j['batchId'] as String?,
+        type: j['type'] as String? ?? '-',
+        qty: (j['qty'] as num?)?.toDouble() ?? 0,
+        createdAt: j['createdAt'] as String?,
+      );
+}
+
+/// Recent stock movements for a store (empty storeId = tenant-wide if API allows).
+final stockMovementsProvider =
+    FutureProvider.autoDispose.family<List<StockMovement>, String>((ref, storeId) async {
+  final params = <String, dynamic>{'limit': 50};
+  if (storeId.isNotEmpty) params['store'] = storeId;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.inventory}/admin/inventory/movements',
+        queryParameters: params,
+      );
+  final data = (resp.data['data'] as List?) ?? [];
+  return data.map((e) => StockMovement.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+/// Reorder thresholds for a store. Pass empty string for all stores.
+final thresholdsProvider = FutureProvider.autoDispose
+    .family<List<ReorderThreshold>, String>((ref, storeId) async {
+  final params = <String, dynamic>{};
+  if (storeId.isNotEmpty) params['store'] = storeId;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.inventory}/admin/inventory/thresholds',
+        queryParameters: params.isEmpty ? null : params,
+      );
+  final data = (resp.data['data'] as List?) ?? [];
+  return data
+      .map((e) => ReorderThreshold.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+/// Lookup map of `storeId:variantId` → threshold qty for low-stock checks.
+final thresholdsMapProvider =
+    FutureProvider.autoDispose<Map<String, double>>((ref) async {
+  final list = await ref.watch(thresholdsProvider('').future);
+  return {
+    for (final t in list) '${t.storeId}:${t.variantId}': t.threshold,
+  };
 });
 
 /// Store ids a product is restricted to (empty = sold at all stores).
@@ -852,13 +1076,130 @@ class SalesSummaryRow {
       );
 }
 
-/// Sales revenue report grouped by currency.
+/// Daily sales bucket (reporting-svc sales/by-day).
+class SalesDayRow {
+  final String day;
+  final String currency;
+  final int orders;
+  final double gross;
+  final double refunded;
+  final double net;
+
+  const SalesDayRow({
+    required this.day,
+    required this.currency,
+    required this.orders,
+    required this.gross,
+    required this.refunded,
+    required this.net,
+  });
+
+  factory SalesDayRow.fromJson(Map<String, dynamic> j) => SalesDayRow(
+        day: j['day'] as String? ?? '-',
+        currency: j['currency'] as String? ?? '-',
+        orders: (j['orders'] as num?)?.toInt() ?? 0,
+        gross: (j['gross'] as num?)?.toDouble() ?? 0,
+        refunded: (j['refunded'] as num?)?.toDouble() ?? 0,
+        net: (j['net'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// Inclusive calendar date range (yyyy-MM-dd) for sales reports.
+class ReportDateRange {
+  final String? from;
+  final String? to;
+
+  const ReportDateRange({this.from, this.to});
+
+  ReportDateRange copyWith({String? from, String? to}) =>
+      ReportDateRange(from: from ?? this.from, to: to ?? this.to);
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReportDateRange && other.from == from && other.to == to;
+
+  @override
+  int get hashCode => Object.hash(from, to);
+}
+
+String yyyyMmDd(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-'
+    '${d.month.toString().padLeft(2, '0')}-'
+    '${d.day.toString().padLeft(2, '0')}';
+
+/// Default last 30 days; ReportsScreen mutates this to re-fetch sales reports.
+final reportDateRangeProvider = StateProvider<ReportDateRange>((ref) {
+  final now = DateTime.now();
+  return ReportDateRange(
+    from: yyyyMmDd(now.subtract(const Duration(days: 30))),
+    to: yyyyMmDd(now),
+  );
+});
+
+/// Sales revenue report grouped by currency, optional from/to (yyyy-MM-dd).
 final salesSummaryReportProvider =
     FutureProvider.autoDispose<List<SalesSummaryRow>>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final params = <String, dynamic>{};
+  if (range.from != null && range.from!.isNotEmpty) params['from'] = range.from;
+  if (range.to != null && range.to!.isNotEmpty) params['to'] = range.to;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.reporting}/admin/reports/sales/summary',
+        queryParameters: params.isEmpty ? null : params,
+      );
+  final rows = (resp.data['data']?['rows'] as List?) ?? [];
+  return rows
+      .map((e) => SalesSummaryRow.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+/// Daily sales revenue buckets, newest day first.
+final salesByDayReportProvider =
+    FutureProvider.autoDispose<List<SalesDayRow>>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final params = <String, dynamic>{};
+  if (range.from != null && range.from!.isNotEmpty) params['from'] = range.from;
+  if (range.to != null && range.to!.isNotEmpty) params['to'] = range.to;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.reporting}/admin/reports/sales/by-day',
+        queryParameters: params.isEmpty ? null : params,
+      );
+  final rows = (resp.data['data']?['rows'] as List?) ?? [];
+  return rows.map((e) => SalesDayRow.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+/// Delivery area (pincode coverage) for a store.
+class DeliveryArea {
+  final String id;
+  final String storeId;
+  final String pincode;
+  final int priority;
+  final String createdAt;
+
+  const DeliveryArea({
+    required this.id,
+    required this.storeId,
+    required this.pincode,
+    required this.priority,
+    required this.createdAt,
+  });
+
+  factory DeliveryArea.fromJson(Map<String, dynamic> j) => DeliveryArea(
+        id: j['id'] as String? ?? '',
+        storeId: j['storeId'] as String? ?? '',
+        pincode: j['pincode'] as String? ?? '',
+        priority: (j['priority'] as num?)?.toInt() ?? 0,
+        createdAt: j['createdAt'] as String? ?? '',
+      );
+}
+
+/// Pincodes a store fulfils for home delivery.
+final deliveryAreasProvider =
+    FutureProvider.autoDispose.family<List<DeliveryArea>, String>((ref, storeId) async {
   final resp = await ref
       .read(apiClientProvider)
       .dio
-      .get('/${ApiConstants.reporting}/admin/reports/sales/summary');
-  final rows = (resp.data['data']?['rows'] as List?) ?? [];
-  return rows.map((e) => SalesSummaryRow.fromJson(e as Map<String, dynamic>)).toList();
+      .get('/${ApiConstants.tenant}/admin/stores/$storeId/delivery-areas');
+  final data = (resp.data['data'] as List?) ?? [];
+  return data.map((e) => DeliveryArea.fromJson(e as Map<String, dynamic>)).toList();
 });

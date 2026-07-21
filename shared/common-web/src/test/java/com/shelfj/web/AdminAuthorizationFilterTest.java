@@ -44,6 +44,78 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("POST", "/cart-something"));
   }
 
+  // ── Staff-operable admin surfaces (STOREKEEPER inventory + CASHIER till) ──
+
+  @Test
+  void storekeeperCanReceiveStockUnderAdminInventory() throws Exception {
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("POST", "/admin/inventory/receive"));
+  }
+
+  @Test
+  void storekeeperCanReadInventoryLevels() throws Exception {
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/inventory/levels"));
+  }
+
+  @Test
+  void customerCannotReadAdminInventory() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/admin/inventory/levels"), 403);
+  }
+
+  @Test
+  void unauthenticatedCannotReadAdminInventory() throws Exception {
+    assertAborted(invoke("GET", "/admin/inventory/levels"), 403);
+  }
+
+  @Test
+  void cashierCanOpenTillSession() throws Exception {
+    // Resource layer allows CASHIER on open; the filter must not management-block first.
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertNotAborted(invoke("POST", "/admin/cash/till-sessions"));
+  }
+
+  @Test
+  void cashierCanReadTillSession() throws Exception {
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertNotAborted(
+        invoke("GET", "/admin/cash/till-sessions/00000000-0000-0000-0000-000000000001"));
+  }
+
+  @Test
+  void storekeeperCanReadStoresForInventoryUi() throws Exception {
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/stores"));
+    assertNotAborted(invoke("GET", "/admin/stores/abc/zones"));
+    assertNotAborted(invoke("GET", "/admin/tenant"));
+    assertNotAborted(invoke("GET", "/admin/products/variants/resolve"));
+  }
+
+  @Test
+  void storekeeperCannotMutateStores() throws Exception {
+    // Creating/updating stores stays management-only.
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertAborted(invoke("POST", "/admin/stores"), 403);
+    assertAborted(invoke("PUT", "/admin/stores/abc"), 403);
+  }
+
+  @Test
+  void storekeeperCannotAccessManagementAdminPaths() throws Exception {
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertAborted(invoke("GET", "/admin/staff"), 403);
+    assertAborted(invoke("GET", "/admin/reports/sales/summary"), 403);
+    assertAborted(invoke("POST", "/admin/products"), 403);
+  }
+
+  @Test
+  void managerStillHasFullAdminAccess() throws Exception {
+    ctx.set(null, null, Set.of("MANAGER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/staff"));
+    assertNotAborted(invoke("POST", "/admin/inventory/receive"));
+    assertNotAborted(invoke("POST", "/admin/cash/till-sessions"));
+  }
+
   private Response.StatusType invoke(String method, String path) throws Exception {
     AbortCapture capture = new AbortCapture();
     var req = requestContext(method, path, capture);

@@ -21,10 +21,20 @@ import java.util.Set;
  * {@code STOREKEEPER}, {@code CASHIER}, {@code CUSTOMER}.
  *
  * <ul>
- *   <li>Paths containing {@code /admin/} and POST to {@code .../refunds} or {@code .../void}
+ *   <li>Most paths under {@code /admin/} and POST to {@code .../refunds} or {@code .../void}
  *       require a management role ({@code PLATFORM_ADMIN} / {@code OWNER} / {@code MANAGER}).
- *   <li>Every other mutating request requires any staff role (management plus {@code STOREKEEPER} /
- *       {@code CASHIER}) — i.e. not a plain {@code CUSTOMER}.
+ *   <li><b>Staff-operable admin surfaces</b> — day-to-day warehouse and till work — only require
+ *       any staff role ({@code STOREKEEPER}/{@code CASHIER} included):
+ *       <ul>
+ *         <li>{@code /admin/inventory/**} (receive, adjust, levels, batches, planning, …)
+ *         <li>{@code /admin/cash/**} (till open/close, drops, pay-in/out — resource layer still
+ *             enforces finer rules, e.g. Z-report stays MANAGER+)
+ *         <li>Read support for those UIs: {@code GET /admin/tenant}, {@code GET /admin/stores…},
+ *             {@code GET /admin/products/variants/resolve}
+ *       </ul>
+ *       Without this tier, STOREKEEPER could not receive stock and CASHIER could not open a till,
+ *       even though the resource classes intentionally allow those roles.
+ *   <li>Every other mutating request requires any staff role — i.e. not a plain {@code CUSTOMER}.
  *   <li>Open mutations (no staff role yet, or no role headers at all): the iam identity endpoints,
  *       tenant bootstrap ({@code POST /onboarding/tenants}, {@code POST /admin/tenant} — the caller
  *       only becomes OWNER via the TenantCreated event), and {@code POST /prices/resolve}/{@code
@@ -63,6 +73,15 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
 
     if (requiresManagement(path, method)) {
       if (!hasAny(MANAGEMENT_ROLES)) {
+        req.abortWith(forbidden());
+      }
+      return;
+    }
+    // Staff-operable admin GETs + mutations (inventory, till, support reads) — not open to
+    // customers, but open to STOREKEEPER/CASHIER. Must run for GETs too: non-admin GETs are
+    // otherwise unauthenticated by this filter.
+    if (requiresStaffAdmin(path, method)) {
+      if (!hasAny(STAFF_ROLES)) {
         req.abortWith(forbidden());
       }
       return;
@@ -144,10 +163,35 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     // Receipt printing is a cashier action (logging a print event after completing a sale);
     // it must not be locked behind management roles even though the path is under /admin/.
     if (path.endsWith("/receipts") && "POST".equalsIgnoreCase(method)) return false;
+    // Day-to-day warehouse/till surfaces — gated by requiresStaffAdmin instead.
+    if (requiresStaffAdmin(path, method)) return false;
     if (path.startsWith("/admin/")) return true;
     if (path.endsWith("/refunds") && "POST".equalsIgnoreCase(method)) return true;
     if (path.endsWith("/void") && "POST".equalsIgnoreCase(method)) return true;
     return false;
+  }
+
+  /**
+   * Admin paths that STOREKEEPER / CASHIER (any staff) may call. Resource methods may still impose
+   * a stricter role (e.g. till close stays MANAGER+).
+   */
+  static boolean requiresStaffAdmin(String path, String method) {
+    // Warehouse ops — the storekeeper's primary job.
+    if (pathEqualsOrUnder(path, "/admin/inventory")) return true;
+    // Till / cash drawer — cashiers open a session; close/drops stay stricter at resource level.
+    if (pathEqualsOrUnder(path, "/admin/cash")) return true;
+    // Read-only support data the inventory UI needs (tenant name, store/zone pickers, SKU labels).
+    // Mutations on stores/tenant stay management-only via requiresManagement.
+    if ("GET".equalsIgnoreCase(method)) {
+      if ("/admin/tenant".equals(path)) return true;
+      if (pathEqualsOrUnder(path, "/admin/stores")) return true;
+      if ("/admin/products/variants/resolve".equals(path)) return true;
+    }
+    return false;
+  }
+
+  private static boolean pathEqualsOrUnder(String path, String prefix) {
+    return path.equals(prefix) || path.startsWith(prefix + "/");
   }
 
   private static Response forbidden() {
