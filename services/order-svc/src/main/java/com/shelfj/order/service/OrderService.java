@@ -38,6 +38,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /** Business logic for order-svc. Thin resource → this service → repository. */
@@ -1027,7 +1028,7 @@ public class OrderService {
 
   private static String shortId(UUID id) {
     String s = id.toString().replace("-", "");
-    return s.substring(0, Math.min(8, s.length())).toUpperCase();
+    return s.substring(0, Math.min(8, s.length())).toUpperCase(Locale.ROOT);
   }
 
   private static String formatReceiptEmail(Order order, List<OrderItem> items) {

@@ -503,8 +503,12 @@ public class TenantService {
       return Mappers.toDto(repo.insertDeliveryArea(area));
     } catch (RuntimeException e) {
       // Unique (tenant, store, pincode) — surface a clean 409.
-      throw ApiException.conflict(
-          "DELIVERY_AREA_EXISTS", "This store already covers pincode " + pincode);
+      throw new ApiException(
+          409,
+          "DELIVERY_AREA_EXISTS",
+          "This store already covers pincode " + pincode,
+          List.of(),
+          e);
     }
   }
 
