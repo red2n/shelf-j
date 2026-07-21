@@ -22,6 +22,8 @@ spec:
   template:
     metadata: { labels: { app: gateway } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: gateway
           image: ghcr.io/red2n/shelf-j-gateway:latest

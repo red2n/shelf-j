@@ -6,6 +6,9 @@ metadata:
   namespace: shelf-j
 spec:
   clusterIP: None # headless: stable pod DNS for the StatefulSet
+  publishNotReadyAddresses: true # kafka-0 must resolve its own kafka-0.kafka hostname
+                                  # to start at all — without this, DNS for a not-yet-Ready
+                                  # pod isn't published and the broker can never reach Ready.
   selector: { app: kafka }
   ports:
     - { name: broker, port: 29092, targetPort: 29092 }

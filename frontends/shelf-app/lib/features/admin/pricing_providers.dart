@@ -154,3 +154,82 @@ final vatRatesProvider = FutureProvider.autoDispose<List<VatRate>>((ref) async {
   final data = (resp.data['data'] as List?) ?? [];
   return data.map((e) => VatRate.fromJson(e as Map<String, dynamic>)).toList();
 });
+
+/// HMRC MTD VAT return boxes 1–9 for a period (ISO-8601 timestamps).
+class VatReturn {
+  final double box1;
+  final double box2;
+  final double box3;
+  final double box4;
+  final double box5;
+  final double box6;
+  final double box7;
+  final double box8;
+  final double box9;
+  final String? periodFrom;
+  final String? periodTo;
+
+  const VatReturn({
+    required this.box1,
+    required this.box2,
+    required this.box3,
+    required this.box4,
+    required this.box5,
+    required this.box6,
+    required this.box7,
+    required this.box8,
+    required this.box9,
+    this.periodFrom,
+    this.periodTo,
+  });
+
+  factory VatReturn.fromJson(Map<String, dynamic> j) => VatReturn(
+        box1: (j['box1'] as num?)?.toDouble() ?? 0,
+        box2: (j['box2'] as num?)?.toDouble() ?? 0,
+        box3: (j['box3'] as num?)?.toDouble() ?? 0,
+        box4: (j['box4'] as num?)?.toDouble() ?? 0,
+        box5: (j['box5'] as num?)?.toDouble() ?? 0,
+        box6: (j['box6'] as num?)?.toDouble() ?? 0,
+        box7: (j['box7'] as num?)?.toDouble() ?? 0,
+        box8: (j['box8'] as num?)?.toDouble() ?? 0,
+        box9: (j['box9'] as num?)?.toDouble() ?? 0,
+        periodFrom: j['periodFrom'] as String?,
+        periodTo: j['periodTo'] as String?,
+      );
+}
+
+/// ISO timestamp range for the VAT return query.
+class VatReturnRange {
+  final String from;
+  final String to;
+  const VatReturnRange({required this.from, required this.to});
+
+  @override
+  bool operator ==(Object other) =>
+      other is VatReturnRange && other.from == from && other.to == to;
+
+  @override
+  int get hashCode => Object.hash(from, to);
+}
+
+/// Default: current UK VAT quarter (calendar quarter) in UTC.
+VatReturnRange defaultVatReturnRange() {
+  final now = DateTime.now().toUtc();
+  final qMonth = ((now.month - 1) ~/ 3) * 3 + 1;
+  final from = DateTime.utc(now.year, qMonth, 1);
+  final to = DateTime.utc(
+      qMonth == 10 ? now.year + 1 : now.year, qMonth == 10 ? 1 : qMonth + 3, 1);
+  return VatReturnRange(
+    from: from.toIso8601String(),
+    to: to.toIso8601String(),
+  );
+}
+
+final vatReturnProvider =
+    FutureProvider.autoDispose.family<VatReturn, VatReturnRange>((ref, range) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+    '/${ApiConstants.pricing}/vat-return',
+    queryParameters: {'from': range.from, 'to': range.to},
+  );
+  return VatReturn.fromJson(resp.data['data'] as Map<String, dynamic>);
+});

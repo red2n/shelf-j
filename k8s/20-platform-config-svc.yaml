@@ -21,6 +21,8 @@ spec:
   template:
     metadata: { labels: { app: config } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: config
           image: ghcr.io/red2n/shelf-j-config:latest

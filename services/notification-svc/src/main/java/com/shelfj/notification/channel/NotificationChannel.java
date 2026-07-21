@@ -2,9 +2,9 @@ package com.shelfj.notification.channel;
 
 /**
  * A pluggable outbound delivery channel. The active implementation is chosen at startup by {@link
- * NotificationChannelProducer} from {@code shelfj.notification.channel} — {@link LogChannel}
- * (default, dev/demo) or {@link SmtpChannel}. Adding SMS/push later is a new implementation, no
- * change to the consumers.
+ * NotificationChannelProducer} from {@code shelfj.notification.channel} — {@link AppChannel}
+ * (default, in-app feed) or a {@link CompositeChannel} of APP + {@link SmtpChannel} when email is
+ * configured. Adding SMS/push later is a new implementation, no change to the consumers.
  */
 public interface NotificationChannel {
 

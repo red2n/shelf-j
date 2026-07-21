@@ -27,11 +27,11 @@ A signed-in user's role decides both where they land and what they can reach:
 | `PLATFORM_ADMIN` | Platform Admin | Global superuser for the SaaS operator; never needs onboarding; confined to the Platform Console |
 | `OWNER` | Tenant Admin | Business owner; granted automatically when a new tenant/store is created |
 | `MANAGER` | Tenant Admin | Also treated as "admin" for routing purposes |
-| `STOREKEEPER` | Assignable staff role (from the Staff screen) | See note below |
-| `CASHIER` | POS | Access to the POS only |
+| `STOREKEEPER` | Warehouse operator | Admin shell restricted to **Inventory** + **Stores** (zones); home is Inventory |
+| `CASHIER` | POS | Access to the POS only (till open is staff-allowed; close/Z-report stays manager+) |
 | `CUSTOMER` | Storefront | Default role on self-registration; also the fallback/default persona |
 
-> **Known rough edge:** `STOREKEEPER` is assignable from the Staff screen, but today it isn't included in the app's "is this an admin" or "is this a cashier" checks — so a user with *only* that role doesn't land on an operational screen, it falls through to the public storefront by default. Worth confirming whether that's intended before relying on the Storekeeper role alone for someone's login. (The app's admin check also accepts a `STORE_ADMIN` role code, but no backend service ever issues or accepts that role — it's a dead branch, which is why it doesn't appear in the table above.)
+> **Roles that map to real work:** `STOREKEEPER` can call `/admin/inventory/**` and the supporting store/zone/tenant reads (backend `AdminAuthorizationFilter` staff-admin tier). They cannot manage staff, pricing, catalog, or reports. `CASHIER` can open a till under `/admin/cash/**`; closing the till and cash drops remain manager+.
 
 **Routing rules:**
 - Unauthenticated users land on the sign-in screen (a separate one for the Platform Console vs. everyone else).
@@ -107,12 +107,15 @@ Left-hand navigation: **Dashboard · Catalog · Inventory · Stores · Orders ·
 | **Categories** | A flat list with one level of parent/child nesting. Create/Edit: name + optional parent. **Deactivate** hides a category from product-assignment dropdowns without deleting it. |
 | **Import** | Upload a supplier catalogue CSV; the app parses it client-side and previews row count, distinct products/categories/stores detected, and whether price/quantity columns are present — before anything is submitted. Lets the admin map each CSV store name to a real store and pick one destination store to receive stock into, in either **"add"** or **"replace existing"** mode. A built-in "expected format" help dialog documents the CSV schema. One import creates categories, products, prices, and stock receipts together, then reports created counts and itemized errors per category (catalog / stock-receipt / price). |
 
-### 4.2 Inventory (2 tabs)
+### 4.2 Inventory (5 tabs)
 
 | Tab | What the user does |
 |---|---|
-| **Levels** | Search by product/SKU/ID; a "Low stock" filter chip; on-hand/reserved/available quantity per product per store with a Low/OK badge; infinite scroll. |
-| **Batches** | Filter by store, zone, and material status (Available / Quarantine / Rejected / Hold); batch number, variant, remaining/received qty, zone, expiry date, and grade — lot/expiry and quality-hold tracking for perishable or regulated stock. |
+| **Levels** | Search by product/SKU/ID; a "Low stock" filter chip (uses configured reorder thresholds when set); on-hand/reserved/available quantity per product per store with a Low/OK badge; infinite scroll. Per-row actions: **Adjust stock** (signed delta + reason) and **Set reorder level**. |
+| **Batches** | Filter by store, zone, and material status (Available / Quarantine / Rejected / Hold); batch number, variant, remaining/received qty, zone, expiry date, and grade. **Change material status** per batch; banner for batches expiring within 30 days. |
+| **Transfers** | Inter-store transfer orders: create (from/to store + variant + qty), list, **Ship** / **Receive** / **Cancel** by status. |
+| **Movements** | Append-only stock movement ledger (receipts, sales, adjustments, transfers), filterable by store. |
+| **Thresholds** | List reorder levels per store/variant; create or edit threshold (+ optional max qty). |
 | **Receive Stock** *(top-level action)* | Pick a store (and zone within it), then either scan a barcode with the camera or enter a variant manually; enter quantity, optional batch number, cost price, and expiry date. |
 
 ### 4.3 Stores
@@ -251,10 +254,10 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 - **Dark mode:** full light/dark theming that follows the OS setting; a warm ivory/charcoal/amber/forest-green palette with dedicated, colour-blind-safe success/warning colors (always paired with text or an icon, never colour alone).
 - **Localization:** 8 languages ship at the framework level — English (UK, default), Polish, Romanian, Punjabi, Urdu, Bengali, Gujarati, Arabic — chosen to match the largest non-English-speaking communities in the UK. Urdu and Arabic auto-mirror the whole layout right-to-left. In practice, only the Login/Register screen's strings are fully translated today; the rest of the interface is still English, with translation coverage layered on top of already-complete RTL/date/number framework support.
 - **Multi-currency:** every money-creating flow (onboarding, stores, price lists, promotions, gift cards, purchase orders/suppliers, layaways) offers the same 5 currencies (INR/USD/GBP/SGD/AED) tied to the 5 supported countries.
-- **Receipts:** generated as printable HTML opened in a new browser tab that auto-invokes the browser's print dialog (a web-first design); the POS "email receipt" action records the request against the order but doesn't dispatch an email yet.
+- **Receipts:** generated as printable HTML opened in a new browser tab that auto-invokes the browser's print dialog (a web-first design); the POS "email receipt" action records the audit row **and** delivers a plain-text receipt via notification-svc (SMTP when `shelfj.notification.channel=email`, otherwise the APP log channel).
 - **Auditable "soft" cash/inventory actions:** POS "No sale" and cash drop/pay-in/pay-out are explicit, logged, non-sale operations distinct from a Charge — a loss-prevention/reconciliation feature.
 - **Reliability touches:** temp passwords for newly-provisioned staff accounts are shown exactly once (masked by default, explicit reveal + copy, with a "clear your clipboard" reminder); a few sensitive create actions (special orders, POS payment collection) are safe to retry without double effect; tenant deactivation is enforced end-to-end (the storefront shows a "closed" notice rather than a raw error).
-- **No CSV export or date-range filtering yet** on the Reports screen — reports are simple, refreshable, whole-business snapshots today.
+- **Reports:** sales summary and sales-by-day support date range filters and client-side CSV export; inventory reports remain whole-business snapshots.
 
 ---
 

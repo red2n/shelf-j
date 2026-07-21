@@ -41,9 +41,12 @@ class StorageKeys {
   static const String sfSavedAddress = 'sf_saved_address';
 }
 
+/// Backend role codes (iam-svc seed). Do not invent client-only roles.
 class UserRoles {
+  static const String platformAdmin = 'PLATFORM_ADMIN';
   static const String owner = 'OWNER';
-  static const String storeAdmin = 'STORE_ADMIN';
+  static const String manager = 'MANAGER';
+  static const String storekeeper = 'STOREKEEPER';
   static const String cashier = 'CASHIER';
   static const String customer = 'CUSTOMER';
 }

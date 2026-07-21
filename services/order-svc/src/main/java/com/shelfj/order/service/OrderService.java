@@ -38,6 +38,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /** Business logic for order-svc. Thin resource → this service → repository. */
@@ -52,6 +53,8 @@ public class OrderService {
   @Inject com.shelfj.order.config.ServiceConfig config;
   @Inject com.shelfj.order.client.PricingClient pricing;
   @Inject com.shelfj.order.client.InventoryClient inventory;
+  @Inject com.shelfj.order.client.NotificationClient notifications;
+  @Inject com.shelfj.order.client.TenantClient tenants;
 
   // ── Orders ────────────────────────────────────────────────────────────────
 
@@ -65,16 +68,11 @@ public class OrderService {
 
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = Parsing.uuid(req.storeId(), "storeId");
-    ctx.requireStoreAccess(storeId);
 
     if (!tenantStatusRepo.isActive(tenantId))
       throw ApiException.conflict(
           "TENANT_NOT_OPERATIONAL",
           "Tenant is suspended or blocked — orders cannot be placed at this time");
-    if (!storeStatusRepo.isActive(storeId))
-      throw ApiException.conflict(
-          "STORE_NOT_OPERATIONAL",
-          "Store is closed or suspended — orders cannot be placed at this location");
     // A signed-in storefront customer is bound to their own order from the authenticated identity —
     // never from the (untrusted) request body. Staff placing a POS order may still attach a
     // customer
@@ -99,7 +97,20 @@ public class OrderService {
             "ORDER_DELIVERY_ADDRESS_REQUIRED",
             "deliveryLine1, deliveryCity, deliveryPostalCode, deliveryRecipientName and"
                 + " deliveryRecipientPhone are required when fulfilmentType is DELIVERY");
+      // Server-side fulfilling-store resolve (pincode → store). When delivery areas are mapped,
+      // this overrides the client storeId so stock is reserved at the correct warehouse.
+      // When none are configured, tenant-svc falls back to default/first store; if tenant-svc
+      // is down we keep the client storeId (fail-open for routing only).
+      var resolved = tenants.resolveFulfilment(tenantId, req.deliveryPostalCode().trim());
+      if (resolved.isPresent()) {
+        storeId = resolved.get().storeId();
+      }
     }
+    ctx.requireStoreAccess(storeId);
+    if (!storeStatusRepo.isActive(storeId))
+      throw ApiException.conflict(
+          "STORE_NOT_OPERATIONAL",
+          "Store is closed or suspended — orders cannot be placed at this location");
     String paymentMethod = null;
     if (req.paymentMethod() != null && !req.paymentMethod().isBlank()) {
       paymentMethod = req.paymentMethod().trim().toUpperCase(java.util.Locale.ROOT);
@@ -970,13 +981,38 @@ public class OrderService {
 
   // ── Gap #44: Receipts ─────────────────────────────────────────────────────
 
+  /**
+   * Records a print/email receipt event. For {@link OrderReceipt#TYPE_EMAIL}, builds a plain-text
+   * receipt and delivers it via notification-svc (SMTP when configured, APP log otherwise) before
+   * persisting the audit row — a send failure surfaces as 503 so the cashier is not told it emailed
+   * when it did not.
+   */
   public OrderReceipt generateReceipt(UUID tenantId, UUID orderId, GenerateReceiptRequest req) {
-    repo.findOrder(tenantId, orderId)
-        .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
+    return generateReceipt(tenantId, orderId, req, null);
+  }
+
+  public OrderReceipt generateReceipt(
+      UUID tenantId, UUID orderId, GenerateReceiptRequest req, TenantContext ctx) {
+    Order order =
+        repo.findOrder(tenantId, orderId)
+            .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
     if (OrderReceipt.TYPE_EMAIL.equals(req.receiptType())
         && (req.emailedTo() == null || req.emailedTo().isBlank()))
       throw ApiException.badRequest(
           "RECEIPT_EMAIL_REQUIRED", "emailedTo required for EMAIL receipts");
+
+    if (OrderReceipt.TYPE_EMAIL.equals(req.receiptType())) {
+      List<OrderItem> items = repo.findOrderItems(tenantId, orderId);
+      String body = formatReceiptEmail(order, items);
+      String subject = "Your receipt — order " + shortId(order.id());
+      UUID eventId = UUID.randomUUID();
+      UUID userId = ctx != null ? ctx.userId() : null;
+      java.util.Set<String> roles =
+          ctx != null && ctx.roles() != null ? ctx.roles() : java.util.Set.of("CASHIER");
+      notifications.send(
+          tenantId, userId, roles, req.emailedTo().trim(), subject, body, "POS_RECEIPT", eventId);
+    }
+
     int printCount = req.printCount() != null ? req.printCount() : 1;
     var receipt =
         new OrderReceipt(
@@ -988,6 +1024,64 @@ public class OrderService {
             printCount,
             Instant.now());
     return repo.insertOrderReceipt(receipt);
+  }
+
+  private static String shortId(UUID id) {
+    String s = id.toString().replace("-", "");
+    return s.substring(0, Math.min(8, s.length())).toUpperCase(Locale.ROOT);
+  }
+
+  private static String formatReceiptEmail(Order order, List<OrderItem> items) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("Thank you for your purchase.\n\n");
+    sb.append("Order: ").append(order.id()).append('\n');
+    sb.append("Channel: ").append(order.channel()).append('\n');
+    sb.append("Status: ").append(order.status()).append('\n');
+    if (order.createdAt() != null) {
+      sb.append("Date (UTC): ").append(order.createdAt()).append('\n');
+    }
+    sb.append('\n').append("Items:\n");
+    if (items == null || items.isEmpty()) {
+      sb.append("  (no line items)\n");
+    } else {
+      for (OrderItem i : items) {
+        sb.append("  • ")
+            .append(i.qty())
+            .append(" × ")
+            .append(i.variantId())
+            .append(" @ ")
+            .append(i.unitPrice())
+            .append(" = ")
+            .append(i.lineTotal())
+            .append(' ')
+            .append(order.currency())
+            .append('\n');
+      }
+    }
+    sb.append('\n');
+    sb.append("Subtotal: ")
+        .append(order.subtotal())
+        .append(' ')
+        .append(order.currency())
+        .append('\n');
+    if (order.taxAmount() != null) {
+      sb.append("Tax: ")
+          .append(order.taxAmount())
+          .append(' ')
+          .append(order.currency())
+          .append('\n');
+    }
+    if (order.discountAmount() != null
+        && order.discountAmount().compareTo(java.math.BigDecimal.ZERO) != 0) {
+      sb.append("Discount: ")
+          .append(order.discountAmount())
+          .append(' ')
+          .append(order.currency())
+          .append('\n');
+    }
+    sb.append("Total: ").append(order.total()).append(' ').append(order.currency()).append('\n');
+    sb.append("\n— Shelf-J\n");
+    return sb.toString();
   }
 
   public List<OrderReceipt> listReceipts(UUID tenantId, UUID orderId) {

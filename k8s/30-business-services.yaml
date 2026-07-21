@@ -32,6 +32,8 @@ spec:
   template:
     metadata: { labels: { app: iam-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: iam-svc
           image: ghcr.io/red2n/shelf-j-iam-svc:latest
@@ -81,6 +83,8 @@ spec:
   template:
     metadata: { labels: { app: tenant-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: tenant-svc
           image: ghcr.io/red2n/shelf-j-tenant-svc:latest
@@ -129,6 +133,8 @@ spec:
   template:
     metadata: { labels: { app: inventory-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: inventory-svc
           image: ghcr.io/red2n/shelf-j-inventory-svc:latest
@@ -177,6 +183,8 @@ spec:
   template:
     metadata: { labels: { app: order-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: order-svc
           image: ghcr.io/red2n/shelf-j-order-svc:latest
@@ -232,6 +240,8 @@ spec:
   template:
     metadata: { labels: { app: purchase-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: purchase-svc
           image: ghcr.io/red2n/shelf-j-purchase-svc:latest
@@ -280,6 +290,8 @@ spec:
   template:
     metadata: { labels: { app: cart-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: cart-svc
           image: ghcr.io/red2n/shelf-j-cart-svc:latest
@@ -331,6 +343,8 @@ spec:
   template:
     metadata: { labels: { app: pricing-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: pricing-svc
           image: ghcr.io/red2n/shelf-j-pricing-svc:latest
@@ -379,6 +393,8 @@ spec:
   template:
     metadata: { labels: { app: payment-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: payment-svc
           image: ghcr.io/red2n/shelf-j-payment-svc:latest
@@ -427,6 +443,8 @@ spec:
   template:
     metadata: { labels: { app: product-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: product-svc
           image: ghcr.io/red2n/shelf-j-product-svc:latest
@@ -478,6 +496,8 @@ spec:
   template:
     metadata: { labels: { app: customer-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: customer-svc
           image: ghcr.io/red2n/shelf-j-customer-svc:latest
@@ -526,6 +546,8 @@ spec:
   template:
     metadata: { labels: { app: notification-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: notification-svc
           image: ghcr.io/red2n/shelf-j-notification-svc:latest
@@ -574,6 +596,8 @@ spec:
   template:
     metadata: { labels: { app: reporting-svc } }
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: reporting-svc
           image: ghcr.io/red2n/shelf-j-reporting-svc:latest

@@ -38,16 +38,17 @@ public class ReceiptResource {
   @Operation(
       summary = "Generate a receipt record",
       description =
-          "Records a print or email receipt-generation event for the order. Does not render the"
-              + " receipt itself — the frontend renders from order data. emailedTo is required for"
-              + " EMAIL receipts.")
+          "Records a print or email receipt-generation event for the order. For EMAIL, builds a"
+              + " plain-text receipt and delivers it via notification-svc (SMTP when configured)"
+              + " before writing the audit row. emailedTo is required for EMAIL receipts.")
   @APIResponse(responseCode = "201", description = "Receipt record created")
   @APIResponse(responseCode = "400", description = "emailedTo missing for an EMAIL receipt type")
   @APIResponse(responseCode = "404", description = "Order not found")
+  @APIResponse(responseCode = "503", description = "notification-svc unavailable — email not sent")
   @POST
   public Response generate(@PathParam("orderId") UUID orderId, GenerateReceiptRequest req) {
     Validations.validate(req);
-    var receipt = svc.generateReceipt(ctx.requireTenantId(), orderId, req);
+    var receipt = svc.generateReceipt(ctx.requireTenantId(), orderId, req, ctx);
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(receipt))).build();
   }
 

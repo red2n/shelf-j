@@ -108,6 +108,13 @@ class StoresScreen extends ConsumerWidget {
                             icon: const Icon(Icons.grid_view_outlined, size: 18),
                             label: const Text('Zones'),
                           ),
+                          TextButton.icon(
+                            onPressed: () =>
+                                _showDeliveryAreasDialog(context, ref, s),
+                            icon: const Icon(Icons.local_shipping_outlined,
+                                size: 18),
+                            label: const Text('Delivery'),
+                          ),
                           const SizedBox(width: 4),
                           Tooltip(
                             message:
@@ -176,6 +183,14 @@ class StoresScreen extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (_) => _ZonesDialog(store: store),
+    );
+  }
+
+  void _showDeliveryAreasDialog(
+      BuildContext context, WidgetRef ref, StoreInfo store) {
+    showDialog(
+      context: context,
+      builder: (_) => _DeliveryAreasDialog(store: store),
     );
   }
 
@@ -352,6 +367,197 @@ class _ZonesDialog extends ConsumerWidget {
                 friendlyError(e, fallback: 'Could not update zone status.'))),
       );
     }
+  }
+}
+
+/// Lists / adds / deletes pincode delivery coverage for a store.
+class _DeliveryAreasDialog extends ConsumerStatefulWidget {
+  final StoreInfo store;
+  const _DeliveryAreasDialog({required this.store});
+
+  @override
+  ConsumerState<_DeliveryAreasDialog> createState() =>
+      _DeliveryAreasDialogState();
+}
+
+class _DeliveryAreasDialogState extends ConsumerState<_DeliveryAreasDialog> {
+  final _pincodeCtrl = TextEditingController();
+  final _priorityCtrl = TextEditingController(text: '100');
+  bool _adding = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _pincodeCtrl.dispose();
+    _priorityCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _add() async {
+    final pincode = _pincodeCtrl.text.trim();
+    if (pincode.isEmpty) {
+      setState(() => _error = 'Enter a pincode.');
+      return;
+    }
+    setState(() {
+      _adding = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.tenant}/admin/stores/${widget.store.id}/delivery-areas',
+        data: {
+          'pincode': pincode,
+          'priority': int.tryParse(_priorityCtrl.text.trim()) ?? 100,
+        },
+      );
+      if (!mounted) return;
+      _pincodeCtrl.clear();
+      ref.invalidate(deliveryAreasProvider(widget.store.id));
+      setState(() => _adding = false);
+    } catch (e) {
+      setState(() {
+        _adding = false;
+        final status = e is DioException ? e.response?.statusCode : null;
+        _error = status == 409
+            ? 'This store already covers that pincode.'
+            : friendlyError(e, fallback: 'Could not add delivery area.');
+      });
+    }
+  }
+
+  Future<void> _delete(DeliveryArea area) async {
+    try {
+      await ref.read(apiClientProvider).dio.delete(
+          '/${ApiConstants.tenant}/admin/stores/${widget.store.id}/delivery-areas/${area.id}');
+      ref.invalidate(deliveryAreasProvider(widget.store.id));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              friendlyError(e, fallback: 'Could not remove delivery area.'))));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final async = ref.watch(deliveryAreasProvider(widget.store.id));
+    return AlertDialog(
+      title: Text('Delivery areas · ${widget.store.name}'),
+      content: SizedBox(
+        width: 440,
+        height: 420,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Pincodes this store fulfils for home delivery. '
+              'Lower priority wins when multiple stores cover the same pincode.',
+              style: TextStyle(color: cs.outline, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            if (_error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: cs.errorContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child:
+                    Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
+              ),
+              const SizedBox(height: 8),
+            ],
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: _pincodeCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Pincode',
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _add(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _priorityCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Priority',
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _adding ? null : _add,
+                  child: _adding
+                      ? const SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Text('Add'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: async.when(
+                loading: () =>
+                    const LoadingView(label: 'Loading delivery areas…'),
+                error: (e, _) => ErrorView(
+                  message: friendlyError(e,
+                      fallback: 'Could not load delivery areas.'),
+                  onRetry: () =>
+                      ref.invalidate(deliveryAreasProvider(widget.store.id)),
+                ),
+                data: (areas) {
+                  if (areas.isEmpty) {
+                    return Center(
+                      child: Text('No delivery areas yet.',
+                          style: TextStyle(color: cs.outline)),
+                    );
+                  }
+                  return ListView.separated(
+                    itemCount: areas.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final a = areas[i];
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading:
+                            Icon(Icons.pin_drop_outlined, color: cs.primary),
+                        title: Text(a.pincode,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text('Priority ${a.priority}'),
+                        trailing: IconButton(
+                          tooltip: 'Remove',
+                          icon: const Icon(Icons.delete_outline, size: 20),
+                          onPressed: () => _delete(a),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    );
   }
 }
 

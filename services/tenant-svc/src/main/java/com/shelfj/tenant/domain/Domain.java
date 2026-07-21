@@ -94,4 +94,8 @@ public final class Domain {
   }
 
   public record TenantWithStore(Tenant tenant, Store store) {}
+
+  /** Pincode → store fulfilment mapping (one row per store coverage). */
+  public record DeliveryArea(
+      UUID id, UUID tenantId, UUID storeId, String pincode, int priority, Instant createdAt) {}
 }

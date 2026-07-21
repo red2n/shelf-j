@@ -235,6 +235,10 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if ("GET".equals(method) && path.startsWith("api/tenant-svc/storefront")) {
       return true;
     }
+    // Soft delivery-coverage check before checkout (pincode → fulfilling store).
+    if ("GET".equals(method) && "api/tenant-svc/fulfilment/resolve".equals(path)) {
+      return true;
+    }
     if ("GET".equals(method) && path.startsWith("api/inventory-svc/inventory/availability")) {
       return true;
     }

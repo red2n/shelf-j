@@ -73,10 +73,24 @@ final routerProvider = Provider<GoRouter>((ref) {
         if (!auth.isPlatformAdmin && loc.startsWith('/platform')) {
           return auth.homeRoute;
         }
-        // block cashier-only users from the admin area
-        if (loc.startsWith('/admin') && !auth.isAdmin) return auth.homeRoute;
-        // block pure customers from pos and admin
-        if (loc.startsWith('/pos') && !auth.isCashier && !auth.isAdmin) {
+        // Admin shell: OWNER/MANAGER (full) or STOREKEEPER (inventory-focused).
+        // Storekeeper deep-links into management-only screens are bounced home
+        // by AdminShell's restricted destinations list + API 403s as belt-and-
+        // suspenders; the gate here only checks shell entry.
+        if (loc.startsWith('/admin') && !auth.canAccessAdmin) {
+          return auth.homeRoute;
+        }
+        // Storekeeper-only: keep them on inventory (and store list for zone
+        // context). Other /admin/* routes redirect home so the nav can't be
+        // bypassed via URL.
+        if (loc.startsWith('/admin') &&
+            auth.isStorekeeper &&
+            !auth.isManager &&
+            !_storekeeperAdminAllowed(loc)) {
+          return auth.homeRoute;
+        }
+        // POS: cashiers and managers. Storekeepers stay on admin inventory.
+        if (loc.startsWith('/pos') && !auth.isCashier && !auth.isManager) {
           return auth.homeRoute;
         }
       }
@@ -166,6 +180,11 @@ final routerProvider = Provider<GoRouter>((ref) {
   ref.onDispose(router.dispose);
   return router;
 });
+
+/// Paths a storekeeper-only user may open inside the admin shell.
+bool _storekeeperAdminAllowed(String loc) {
+  return loc.startsWith('/admin/inventory') || loc.startsWith('/admin/stores');
+}
 
 class _AuthListenable extends ChangeNotifier {
   _AuthListenable(Ref ref) {

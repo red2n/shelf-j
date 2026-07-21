@@ -298,7 +298,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
                 OutlinedButton.icon(
                   onPressed: () {
                     openReceiptPrint(receiptData);
-                    _recordReceipt(orderId, 'SALE', null);
+                    _recordReceipt(orderId, 'PRINT', null);
                   },
                   icon: const Icon(Icons.print_outlined, size: 18),
                   label: const Text('Reprint'),
@@ -467,7 +467,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
                 OutlinedButton.icon(
                   onPressed: () {
                     openReceiptPrint(receiptData);
-                    _recordReceipt(orderId, 'SALE', null);
+                    _recordReceipt(orderId, 'PRINT', null);
                   },
                   icon: const Icon(Icons.print_outlined, size: 18),
                   label: const Text('Reprint'),

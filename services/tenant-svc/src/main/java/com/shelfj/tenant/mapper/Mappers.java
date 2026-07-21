@@ -1,10 +1,12 @@
 package com.shelfj.tenant.mapper;
 
+import com.shelfj.tenant.domain.Domain.DeliveryArea;
 import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.Tenant;
 import com.shelfj.tenant.domain.Domain.TenantInventoryConfig;
 import com.shelfj.tenant.domain.Domain.Zone;
+import com.shelfj.tenant.dto.Dtos.DeliveryAreaResponse;
 import com.shelfj.tenant.dto.Dtos.StaffResponse;
 import com.shelfj.tenant.dto.Dtos.StoreResponse;
 import com.shelfj.tenant.dto.Dtos.TenantInventoryConfigResponse;
@@ -94,6 +96,11 @@ public final class Mappers {
         c.autoReserveOnOrder(),
         ts(c.createdAt()),
         ts(c.updatedAt()));
+  }
+
+  public static DeliveryAreaResponse toDto(DeliveryArea a) {
+    return new DeliveryAreaResponse(
+        a.id().toString(), a.storeId().toString(), a.pincode(), a.priority(), ts(a.createdAt()));
   }
 
   private static String ts(Instant i) {
