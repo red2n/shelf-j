@@ -2,7 +2,7 @@
 
 This file is auto-loaded into every Claude Code session for this repository. It gives an AI agent the context and rules needed to work on Shelf-J correctly. **Read it fully before making changes.**
 
-> **Deep docs:** [PRD.md](PRD.md) = what & why · [README.md](README.md) = the product deep dive (features, personas, workflows) · [docs/API-GUIDE.md](docs/API-GUIDE.md) = full API surface by business capability · [docs/UI-GUIDE.md](docs/UI-GUIDE.md) = full UI surface by persona/screen · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) = how (concepts, per-service catalog, conventions) · [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md) = tenant onboarding + location model · [docs/coding-standards.md](docs/coding-standards.md) = SQL rules + SOLID rules (enforced on every change). When detail is needed, open those. This file is the fast briefing + the hard rules.
+> **Deep docs:** [PRD.md](PRD.md) = what & why · [README.md](README.md) = the product deep dive (features, personas, workflows) · [docs/API-GUIDE.md](docs/API-GUIDE.md) = full API surface by business capability · [docs/UI-GUIDE.md](docs/UI-GUIDE.md) = full UI surface by persona/screen · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) = how (concepts, per-service catalog, conventions) · [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md) = tenant onboarding + location model · [docs/coding-standards.md](docs/coding-standards.md) = SQL rules + SOLID rules (enforced on every change) · [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md) = version tags, what fires on a tag push, GHCR retention. When detail is needed, open those. This file is the fast briefing + the hard rules.
 
 ---
 
@@ -148,4 +148,5 @@ Self-check against [ARCHITECTURE §19](docs/ARCHITECTURE.md#19-definition-of-don
 - **How do services talk for this flow?** → [ARCHITECTURE §11](docs/ARCHITECTURE.md#11-how-services-talk-to-each-other) (sync map + event map) and [§12](docs/ARCHITECTURE.md#12-key-workflows) (checkout saga).
 - **Onboarding / stores / zones / delivery?** → [docs/onboarding-and-locations.md](docs/onboarding-and-locations.md).
 - **SQL or SOLID rule question?** → [docs/coding-standards.md](docs/coding-standards.md).
+- **Cutting a release / tagging a version?** → [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md).
 - **A decision isn't settled?** → [PRD §11 open questions](PRD.md). Don't silently guess on those; surface them.

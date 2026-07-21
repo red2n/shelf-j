@@ -1,9 +1,12 @@
 name: Release
 
+# Tag pattern must stay in sync with docker-publish.yml's trigger (v*.*.*) —
+# a tag that doesn't match both workflows would cut a GitHub Release with no
+# matching Docker images (or vice versa). See docs/RELEASE-PROCESS.md.
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*.*.*'
 
 permissions:
   contents: read
