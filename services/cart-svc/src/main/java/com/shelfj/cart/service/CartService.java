@@ -217,7 +217,7 @@ public class CartService {
       throw ApiException.conflict(
           "TENANT_NOT_OPERATIONAL",
           "Tenant is suspended or blocked — cart operations are unavailable");
-    if (!storeStatusRepo.isActive(storeId))
+    if (!storeStatusRepo.isActive(tenantId, storeId))
       throw ApiException.conflict(
           "STORE_NOT_OPERATIONAL",
           "Store is closed or suspended — cart operations are unavailable for this location");

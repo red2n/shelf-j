@@ -25,14 +25,15 @@ public class PosSessionService {
       throw ApiException.badRequest(
           "POS_SESSION_INVALID_TIMEOUT", "idleTimeoutSeconds must be 60–86400");
     UUID storeId = UUID.fromString(req.storeId());
-    if (!storeStatusRepo.isActive(storeId))
+    UUID tenantId = ctx.requireTenantId();
+    if (!storeStatusRepo.isActive(tenantId, storeId))
       throw ApiException.conflict(
           "STORE_NOT_OPERATIONAL",
           "Store is not accepting new sessions — it is closed or suspended");
     var session =
         new PosSession(
             UUID.randomUUID(),
-            ctx.requireTenantId(),
+            tenantId,
             ctx.userId(),
             storeId,
             Instant.now(),

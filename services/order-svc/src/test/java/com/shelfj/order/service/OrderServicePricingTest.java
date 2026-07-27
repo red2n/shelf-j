@@ -58,7 +58,7 @@ class OrderServicePricingTest {
     svc.storeStatusRepo = storeStatusRepo;
     when(ctx.requireTenantId()).thenReturn(TENANT);
     when(tenantStatusRepo.isActive(any())).thenReturn(true);
-    when(storeStatusRepo.isActive(any())).thenReturn(true);
+    when(storeStatusRepo.isActive(any(), any())).thenReturn(true);
   }
 
   private static PlaceOrderRequest request(BigDecimal clientUnitPrice, BigDecimal discount) {
@@ -163,6 +163,29 @@ class OrderServicePricingTest {
             () ->
                 svc.placeOrder(request(new BigDecimal("5.00"), new BigDecimal("1.00")), ctx, null));
     assertEquals("ORDER_DISCOUNT_NOT_ALLOWED", e.code());
+    verifyNoInteractions(repo);
+  }
+
+  /**
+   * Regression test for the tenant-aware store check in StoreStatusRepository: a storeId that
+   * belongs to a different tenant (or the projection has recorded under one) must reject the
+   * order, not just check whether *some* store with that id happens to be ACTIVE. Without this,
+   * a caller could place an order under tenant A referencing a real, active store that actually
+   * belongs to tenant B.
+   */
+  @Test
+  void placeOrderRejectsAStoreThatBelongsToAnotherTenant() {
+    when(config.pricingEnforce()).thenReturn(false);
+    // The real repo method returns false here specifically because STORE is on record under a
+    // different tenant than TENANT — simulated directly at the mock boundary since that
+    // tenant-vs-projection comparison lives in StoreStatusRepository, not OrderService.
+    when(storeStatusRepo.isActive(TENANT, STORE)).thenReturn(false);
+
+    ApiException e =
+        assertThrows(
+            ApiException.class,
+            () -> svc.placeOrder(request(new BigDecimal("5.00"), null), ctx, null));
+    assertEquals("STORE_NOT_OPERATIONAL", e.code());
     verifyNoInteractions(repo);
   }
 

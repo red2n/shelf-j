@@ -124,12 +124,20 @@ public class TenantService {
             null,
             null,
             null);
-    StoreWithZone storeWithZone = createDefaultStore(tenant.id(), storeReq);
+    StoreWithZone storeWithZone = createDefaultStore(tenant.id(), ownerUserId, storeReq);
     return new TenantWithStore(tenant, storeWithZone.store());
   }
 
-  /** Create the first/default store + its DEFAULT zone. Publishes StoreCreated + ZoneCreated. */
-  public StoreWithZone createDefaultStore(UUID tenantId, CreateStoreRequest req) {
+  /**
+   * Create the first/default store + its DEFAULT zone. Publishes StoreCreated + ZoneCreated.
+   *
+   * <p>{@code callerUserId} must be the tenant's owner. This endpoint is reachable with a
+   * caller-supplied {@code tenantId} (the gateway's onboarding carve-out: a JWT with no tenant
+   * claim yet still needs a way to name the tenant it just created — see JwtAuthFilter#isOnboarding),
+   * so tenantId alone is not proof the caller is entitled to act on that tenant.
+   */
+  public StoreWithZone createDefaultStore(UUID tenantId, UUID callerUserId, CreateStoreRequest req) {
+    requireOwner(getTenant(tenantId), callerUserId);
     boolean isDefault = !repo.hasDefaultStore(tenantId);
     return createStoreInternal(tenantId, req, isDefault);
   }
@@ -289,14 +297,32 @@ public class TenantService {
     return Cursor.page(rows, limit, z -> z.createdAt() + "|" + z.id());
   }
 
-  public OnboardingStatus onboardingStatus(UUID tenantId) {
+  /**
+   * {@code callerUserId} must be the tenant's owner — see {@link #createDefaultStore} for why this
+   * can't rely on tenantId alone.
+   */
+  public OnboardingStatus onboardingStatus(UUID tenantId, UUID callerUserId) {
     Tenant t = getTenant(tenantId);
+    requireOwner(t, callerUserId);
     boolean active = Tenant.STATUS_ACTIVE.equals(t.status());
     boolean hasStore = repo.hasDefaultStore(tenantId);
     List<String> next = new ArrayList<>();
     if (!hasStore) next.add("Create your first store (POST /onboarding/stores)");
     if (hasStore) next.add("Add products, map zones, invite staff");
     return new OnboardingStatus(active, hasStore, next);
+  }
+
+  /**
+   * Guards the two onboarding endpoints the gateway will forward a caller-supplied tenantId for
+   * (see {@link #createDefaultStore}). Every other endpoint gets tenantId from a verified JWT
+   * claim, where this check would be redundant; here it's the only thing standing between "any
+   * authenticated user" and "this specific tenant's owner."
+   */
+  private static void requireOwner(Tenant tenant, UUID callerUserId) {
+    if (!tenant.ownerUserId().equals(callerUserId)) {
+      throw ApiException.forbidden(
+          "TENANT_ACCESS_DENIED", "Caller is not the owner of this tenant");
+    }
   }
 
   public Tenant patchTenantStatus(UUID tenantId, PatchStatusRequest req) {

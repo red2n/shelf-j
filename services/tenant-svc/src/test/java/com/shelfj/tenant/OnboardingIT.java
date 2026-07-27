@@ -75,6 +75,8 @@ class OnboardingIT {
             "{\"name\":\"Main\",\"code\":\"MAIN\"}",
             "X-Tenant-Id",
             tenantId,
+            "X-User-Id",
+            OWNER,
             "X-Roles",
             "OWNER");
     assertThat(storeResp.getStatus(), is(201));
@@ -99,9 +101,79 @@ class OnboardingIT {
             "{\"name\":\"Dup\",\"code\":\"MAIN\"}",
             "X-Tenant-Id",
             tenantId,
+            "X-User-Id",
+            OWNER,
             "X-Roles",
             "OWNER");
     assertThat(dup.getStatus(), is(409));
+
+    // onboarding status reflects the store that now exists
+    String status =
+        target
+            .path("/onboarding/status")
+            .request()
+            .header("X-Tenant-Id", tenantId)
+            .header("X-User-Id", OWNER)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    assertThat(status, containsString("\"hasDefaultStore\":true"));
+  }
+
+  /**
+   * Regression test for the tenant-ownership check in TenantService#createDefaultStore /
+   * #onboardingStatus: the gateway's onboarding carve-out (JwtAuthFilter#isOnboarding) forwards a
+   * caller-supplied X-Tenant-Id whenever the caller's JWT has no tenant claim yet, precisely so a
+   * user can name the tenant they just created — but that means tenantId alone is not proof of
+   * authorization. A second user must not be able to reach into the first user's tenant just by
+   * knowing its id.
+   */
+  @Test
+  void onboardingStoresRejectsNonOwner() {
+    Response t =
+        post(
+            "/onboarding/tenants",
+            "{\"businessName\":\"VictimCo\",\"country\":\"in\",\"currency\":\"inr\"}",
+            "X-User-Id",
+            OWNER);
+    String tenantId = field(t.readEntity(String.class), "id");
+
+    String attacker = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    Response attackerStore =
+        post(
+            "/onboarding/stores",
+            "{\"name\":\"Evil\",\"code\":\"EVIL1\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-User-Id",
+            attacker,
+            "X-Roles",
+            "OWNER");
+    assertThat(attackerStore.getStatus(), is(403));
+    assertThat(attackerStore.readEntity(String.class), containsString("TENANT_ACCESS_DENIED"));
+
+    Response attackerStatus =
+        target
+            .path("/onboarding/status")
+            .request()
+            .header("X-Tenant-Id", tenantId)
+            .header("X-User-Id", attacker)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(attackerStatus.getStatus(), is(403));
+    assertThat(attackerStatus.readEntity(String.class), containsString("TENANT_ACCESS_DENIED"));
+
+    // the real owner is unaffected
+    Response ownerStore =
+        post(
+            "/onboarding/stores",
+            "{\"name\":\"Main\",\"code\":\"MAIN\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-User-Id",
+            OWNER,
+            "X-Roles",
+            "OWNER");
+    assertThat(ownerStore.getStatus(), is(201));
   }
 
   @Test
@@ -131,6 +203,8 @@ class OnboardingIT {
         "{\"name\":\"A-store\",\"code\":\"AST\"}",
         "X-Tenant-Id",
         tenantA,
+        "X-User-Id",
+        OWNER,
         "X-Roles",
         "OWNER");
 
@@ -180,6 +254,8 @@ class OnboardingIT {
             "{\"name\":\"StaffStore\",\"code\":\"SS1\"}",
             "X-Tenant-Id",
             tenantId,
+            "X-User-Id",
+            OWNER,
             "X-Roles",
             "OWNER");
     String storeId = field(sr.readEntity(String.class), "id");
@@ -239,6 +315,8 @@ class OnboardingIT {
         "{\"name\":\"Page Store 1\",\"code\":\"PG1\"}",
         "X-Tenant-Id",
         tenantId,
+        "X-User-Id",
+        OWNER,
         "X-Roles",
         "OWNER");
     for (int i = 2; i <= 5; i++) {

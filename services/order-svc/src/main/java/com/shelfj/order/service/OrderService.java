@@ -107,7 +107,7 @@ public class OrderService {
       }
     }
     ctx.requireStoreAccess(storeId);
-    if (!storeStatusRepo.isActive(storeId))
+    if (!storeStatusRepo.isActive(tenantId, storeId))
       throw ApiException.conflict(
           "STORE_NOT_OPERATIONAL",
           "Store is closed or suspended — orders cannot be placed at this location");
