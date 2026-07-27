@@ -175,7 +175,6 @@ class OrderServicePricingTest {
    */
   @Test
   void placeOrderRejectsAStoreThatBelongsToAnotherTenant() {
-    when(config.pricingEnforce()).thenReturn(false);
     // The real repo method returns false here specifically because STORE is on record under a
     // different tenant than TENANT — simulated directly at the mock boundary since that
     // tenant-vs-projection comparison lives in StoreStatusRepository, not OrderService.
