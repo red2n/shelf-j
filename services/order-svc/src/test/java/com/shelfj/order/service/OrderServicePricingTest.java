@@ -168,10 +168,10 @@ class OrderServicePricingTest {
 
   /**
    * Regression test for the tenant-aware store check in StoreStatusRepository: a storeId that
-   * belongs to a different tenant (or the projection has recorded under one) must reject the
-   * order, not just check whether *some* store with that id happens to be ACTIVE. Without this,
-   * a caller could place an order under tenant A referencing a real, active store that actually
-   * belongs to tenant B.
+   * belongs to a different tenant (or the projection has recorded under one) must reject the order,
+   * not just check whether *some* store with that id happens to be ACTIVE. Without this, a caller
+   * could place an order under tenant A referencing a real, active store that actually belongs to
+   * tenant B.
    */
   @Test
   void placeOrderRejectsAStoreThatBelongsToAnotherTenant() {

@@ -133,10 +133,12 @@ public class TenantService {
    *
    * <p>{@code callerUserId} must be the tenant's owner. This endpoint is reachable with a
    * caller-supplied {@code tenantId} (the gateway's onboarding carve-out: a JWT with no tenant
-   * claim yet still needs a way to name the tenant it just created — see JwtAuthFilter#isOnboarding),
-   * so tenantId alone is not proof the caller is entitled to act on that tenant.
+   * claim yet still needs a way to name the tenant it just created — see
+   * JwtAuthFilter#isOnboarding), so tenantId alone is not proof the caller is entitled to act on
+   * that tenant.
    */
-  public StoreWithZone createDefaultStore(UUID tenantId, UUID callerUserId, CreateStoreRequest req) {
+  public StoreWithZone createDefaultStore(
+      UUID tenantId, UUID callerUserId, CreateStoreRequest req) {
     requireOwner(getTenant(tenantId), callerUserId);
     boolean isDefault = !repo.hasDefaultStore(tenantId);
     return createStoreInternal(tenantId, req, isDefault);

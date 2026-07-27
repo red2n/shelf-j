@@ -58,7 +58,7 @@ class CartServiceTest {
     StoreStatusRepository storeRepo =
         new StoreStatusRepository() {
           @Override
-          public boolean isActive(UUID storeId) {
+          public boolean isActive(UUID tenantId, UUID storeId) {
             return storeActive;
           }
 

@@ -13,12 +13,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Real-Postgres coverage for the tenant-aware store check (see StoreStatusRepository#isActive):
- * a store projected under one tenant must never read as active for a different tenant, even
- * though a never-seen store id still fails open. Lives in order-svc rather than common-service
- * because that's where this exact PostgresSupport + Flyway pattern is already proven (see
- * OrderIT), and order-svc owns a real copy of the store_status table
- * (V5__flow_guard_projections.sql) — common-service itself carries no schema for it.
+ * Real-Postgres coverage for the tenant-aware store check (see StoreStatusRepository#isActive): a
+ * store projected under one tenant must never read as active for a different tenant, even though a
+ * never-seen store id still fails open. Lives in order-svc rather than common-service because
+ * that's where this exact PostgresSupport + Flyway pattern is already proven (see OrderIT), and
+ * order-svc owns a real copy of the store_status table (V5__flow_guard_projections.sql) —
+ * common-service itself carries no schema for it.
  */
 class StoreStatusRepositoryIT {
 
