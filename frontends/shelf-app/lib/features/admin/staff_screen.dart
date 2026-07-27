@@ -36,6 +36,7 @@ class StaffScreen extends ConsumerWidget {
               const SizedBox(width: 8),
               IconButton(
                 icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh staff',
                 onPressed: () => ref.invalidate(staffProvider),
               ),
             ],
@@ -431,10 +432,10 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Assign'),
         ),
       ],

@@ -108,6 +108,7 @@ class _PlatformLoginScreenState extends ConsumerState<PlatformLoginScreen> {
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
                             icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
+                            tooltip: _obscure ? 'Show password' : 'Hide password',
                             onPressed: () => setState(() => _obscure = !_obscure),
                           ),
                         ),

@@ -40,7 +40,7 @@ A signed-in user's role decides both where they land and what they can reach:
 - A Platform Admin is confined to the Platform Console; everyone else is blocked from it. Non-admins are blocked from the Admin Console; pure customers are blocked from the POS.
 - Each role has a home screen it lands on right after signing in: incomplete onboarding → the setup wizard; platform admin → Platform Overview; admin → Dashboard; cashier → the POS Sale screen; everyone else → the Storefront.
 
-**Shared navigation chrome:** every console uses the same responsive pattern — a persistent side rail with icon/label toggle on tablet/desktop/web (≥800px), collapsing to a slide-out drawer with the same destinations on phones. There's no separate "mobile app" vs. "web app" — it's one responsive experience throughout.
+**Shared navigation chrome:** every console uses the same responsive shell (`AdaptiveNavShell`) — a persistent side rail with icon/label toggle on tablet/desktop/web (≥800px). Below that, it collapses per shell: Admin (11 destinations) and the Platform Console fall back to a slide-out drawer, while Storefront (Shop/Cart) and POS (Sale/Tender/Cash) — both well within Material's 3–5-destination range — use a persistent bottom navigation bar instead, per Material 3's compact-width guidance. There's no separate "mobile app" vs. "web app" — it's one responsive experience throughout.
 
 ---
 
@@ -258,6 +258,15 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 - **Auditable "soft" cash/inventory actions:** POS "No sale" and cash drop/pay-in/pay-out are explicit, logged, non-sale operations distinct from a Charge — a loss-prevention/reconciliation feature.
 - **Reliability touches:** temp passwords for newly-provisioned staff accounts are shown exactly once (masked by default, explicit reveal + copy, with a "clear your clipboard" reminder); a few sensitive create actions (special orders, POS payment collection) are safe to retry without double effect; tenant deactivation is enforced end-to-end (the storefront shows a "closed" notice rather than a raw error).
 - **Reports:** sales summary and sales-by-day support date range filters and client-side CSV export; inventory reports remain whole-business snapshots.
+
+### 7.1 Material 3 conventions
+
+- **Color:** `AppTheme.light`/`.dark` (`core/theme.dart`) build the `ColorScheme` with `ColorScheme.fromSeed(seedColor: charcoal, ...)`, overriding only the roles the brand has an opinion on (primary/secondary + containers, surface, outline). Everything else — tertiary, error, the 5 surface-container tones, inverse roles — is algorithm-derived from that seed so it stays contrast-correct and internally consistent. Don't hand-add a one-off `Color(0x...)` for a new UI element; derive it from `Theme.of(context).colorScheme` (or extend `StatusColors`/`ChannelAccent` in `theme.dart` for a new semantic/channel role).
+- **Channel accents (POS):** the POS terminal's amber accent is a `ChannelAccent` `ThemeExtension` applied via `AppTheme.applyPosAccent()`, scoped to the POS subtree by `PosShell`'s `Theme(...)` wrapper — not a raw `Color` constant threaded through widgets. Read it with `context.channelAccent.{color,onColor}` so the background and its contrasting foreground always travel together.
+- **Navigation:** `AdaptiveNavShell`'s `compactStyle` picks the phone-width pattern — `CompactNavStyle.drawer` (default, for 6+ destinations) or `CompactNavStyle.bottomBar` (3–5 destinations). Don't add a 6th+ destination to a shell that uses `bottomBar` without reconsidering the pattern.
+- **Icons:** the nav-destination convention is `_outlined` for unselected, filled (no suffix) for selected (see any `AdaptiveNavDestination`) — follow that pairing for new selectable icons. Elsewhere, prefer `_outlined` as the default icon style; the existing mix of filled/outlined glyphs on non-selectable icons predates this note and hasn't been swept, so match the surrounding screen rather than the nearest icon.
+- **Banners:** use `MaterialBanner` (see `_ExpiringBanner` in `inventory_screen.dart` or `_SignInBanner` in `storefront/orders_screen.dart`) for a persistent, dismissible, 1–2-action message — not a hand-rolled `Container`/`Material` block.
+- **Deferred (needs a product/data decision, not just a widget swap):** a Time picker for store business hours — `businessHours` is currently a raw `String` with no structured per-day open/close shape, so there's no data model for a picker to write into yet. A `RangeSlider` price filter on the storefront catalog — product-svc/pricing-svc don't currently accept a min/max price query param, so the control would have nothing to filter against.
 
 ---
 

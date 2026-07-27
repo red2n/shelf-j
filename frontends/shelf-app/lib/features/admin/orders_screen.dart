@@ -637,11 +637,11 @@ class _ReturnDialogState extends ConsumerState<_ReturnDialog> {
                   if (order != null) _submit(order);
                 },
           child: _submitting
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Process return'),
         ),
       ],
@@ -689,11 +689,13 @@ class _ReturnLineRow extends StatelessWidget {
           ),
           IconButton(
             icon: const Icon(Icons.remove_circle_outline),
+            tooltip: 'Decrease quantity',
             onPressed: value > 0 ? () => onChanged(value - 1) : null,
           ),
           Text('$value', style: const TextStyle(fontWeight: FontWeight.bold)),
           IconButton(
             icon: const Icon(Icons.add_circle_outline),
+            tooltip: 'Increase quantity',
             onPressed: value < maxQty ? () => onChanged(value + 1) : null,
           ),
         ],
@@ -1016,16 +1018,16 @@ class _CollectPaymentDialogState extends ConsumerState<_CollectPaymentDialog> {
                         'Outstanding: ${AppFormat.money(outstanding, currencyCode: o.currency)}',
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        for (final m in const ['CASH', 'CARD', 'UPI', 'WALLET'])
-                          ChoiceChip(
-                            label: Text(m),
-                            selected: _method == m,
-                            onSelected: (_) => setState(() => _method = m),
-                          ),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'CASH', label: Text('CASH')),
+                        ButtonSegment(value: 'CARD', label: Text('CARD')),
+                        ButtonSegment(value: 'UPI', label: Text('UPI')),
+                        ButtonSegment(value: 'WALLET', label: Text('WALLET')),
                       ],
+                      selected: {_method},
+                      onSelectionChanged: (s) =>
+                          setState(() => _method = s.first),
                     ),
                   ],
                 ],
@@ -1040,11 +1042,11 @@ class _CollectPaymentDialogState extends ConsumerState<_CollectPaymentDialog> {
           FilledButton.icon(
             onPressed: _submitting ? null : () => _collect(outstanding),
             icon: _submitting
-                ? const SizedBox(
+                ?  SizedBox(
                     height: 16,
                     width: 16,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white))
+                        strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                 : const Icon(Icons.point_of_sale_outlined),
             label: Text(
                 'Collect ${AppFormat.money(outstanding, currencyCode: o.currency)}'),

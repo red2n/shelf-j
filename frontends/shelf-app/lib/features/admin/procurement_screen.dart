@@ -16,31 +16,63 @@ class ProcurementScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
       length: 2,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-            child: Text('Procurement',
-                style: Theme.of(context).textTheme.headlineMedium),
-          ),
-          const TabBar(
-            isScrollable: true,
-            tabAlignment: TabAlignment.start,
-            tabs: [
-              Tab(text: 'Purchase Orders'),
-              Tab(text: 'Suppliers'),
-            ],
-          ),
-          const Expanded(
-            child: TabBarView(
+      child: Builder(
+        // A Builder gives this subtree a context below DefaultTabController,
+        // so DefaultTabController.of(context) below can find it.
+        builder: (context) {
+          final tabController = DefaultTabController.of(context);
+          return Scaffold(
+            body: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _PurchaseOrdersTab(),
-                _SuppliersTab(),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                  child: Text('Procurement',
+                      style: Theme.of(context).textTheme.headlineMedium),
+                ),
+                const TabBar(
+                  isScrollable: true,
+                  tabAlignment: TabAlignment.start,
+                  tabs: [
+                    Tab(text: 'Purchase Orders'),
+                    Tab(text: 'Suppliers'),
+                  ],
+                ),
+                const Expanded(
+                  child: TabBarView(
+                    children: [
+                      _PurchaseOrdersTab(),
+                      _SuppliersTab(),
+                    ],
+                  ),
+                ),
               ],
             ),
-          ),
-        ],
+            // One primary action, following whichever tab is active, instead
+            // of a separate "Create PO" / "Add supplier" button duplicated
+            // per tab.
+            floatingActionButton: ListenableBuilder(
+              listenable: tabController,
+              builder: (context, _) => tabController.index == 1
+                  ? FloatingActionButton.extended(
+                      onPressed: () => showDialog(
+                        context: context,
+                        builder: (_) => const _SupplierDialog(),
+                      ),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add supplier'),
+                    )
+                  : FloatingActionButton.extended(
+                      onPressed: () => showDialog(
+                        context: context,
+                        builder: (_) => const _CreatePoDialog(),
+                      ),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Create PO'),
+                    ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -57,22 +89,7 @@ class _SuppliersTab extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: Row(
-            children: [
-              const Spacer(),
-              FilledButton.icon(
-                onPressed: () => showDialog(
-                  context: context,
-                  builder: (_) => const _SupplierDialog(),
-                ),
-                icon: const Icon(Icons.add),
-                label: const Text('Add supplier'),
-              ),
-            ],
-          ),
-        ),
+        const SizedBox(height: 12),
         Expanded(
           child: async.when(
             loading: () => const LoadingView(label: 'Loading suppliers…'),
@@ -287,11 +304,11 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Add'),
         ),
       ],
@@ -310,22 +327,7 @@ class _PurchaseOrdersTab extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: Row(
-            children: [
-              const Spacer(),
-              FilledButton.icon(
-                onPressed: () => showDialog(
-                  context: context,
-                  builder: (_) => const _CreatePoDialog(),
-                ),
-                icon: const Icon(Icons.add),
-                label: const Text('Create PO'),
-              ),
-            ],
-          ),
-        ),
+        const SizedBox(height: 12),
         Expanded(
           child: async.when(
             loading: () => const LoadingView(label: 'Loading purchase orders…'),
@@ -550,11 +552,11 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Create'),
         ),
       ],
@@ -776,11 +778,39 @@ class _AddPoLineDialogState extends ConsumerState<_AddPoLineDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return AlertDialog(
-      title: const Text('Add PO line'),
-      content: SizedBox(
-        width: 400,
-        child: Column(
+    return Dialog.fullscreen(
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            tooltip: 'Cancel',
+            onPressed: _loading ? null : () => Navigator.pop(context),
+          ),
+          title: const Text('Add PO line'),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Center(
+                child: FilledButton(
+                  onPressed: _loading ? null : _submit,
+                  child: _loading
+                      ? SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: cs.onPrimary))
+                      : const Text('Add line'),
+                ),
+              ),
+            ),
+          ],
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -839,24 +869,11 @@ class _AddPoLineDialogState extends ConsumerState<_AddPoLineDialog> {
               onChanged: (v) => setState(() => _vatCode = v!),
             ),
           ],
+              ),
+            ),
+          ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _loading ? null : () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _loading ? null : _submit,
-          child: _loading
-              ? const SizedBox(
-                  height: 18,
-                  width: 18,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
-              : const Text('Add line'),
-        ),
-      ],
     );
   }
 }
@@ -1013,11 +1030,11 @@ class _ReceiveGoodsDialogState extends ConsumerState<_ReceiveGoodsDialog> {
                   if (lines != null) _submit(lines);
                 },
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Confirm receipt'),
         ),
       ],

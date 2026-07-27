@@ -189,7 +189,10 @@ class _ReportHeader extends StatelessWidget {
               icon: const Icon(Icons.download_outlined, size: 18),
               label: const Text('Export CSV'),
             ),
-          IconButton(icon: const Icon(Icons.refresh), onPressed: onRefresh),
+          IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Refresh',
+              onPressed: onRefresh),
         ],
       ),
     );

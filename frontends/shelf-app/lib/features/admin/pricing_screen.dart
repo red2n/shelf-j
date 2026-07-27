@@ -1084,11 +1084,11 @@ List<Widget> _dialogActions(
     FilledButton(
       onPressed: loading ? null : onSubmit,
       child: loading
-          ? const SizedBox(
+          ?  SizedBox(
               height: 18,
               width: 18,
               child:
-                  CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  CircularProgressIndicator(strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
           : Text(label),
     ),
   ];

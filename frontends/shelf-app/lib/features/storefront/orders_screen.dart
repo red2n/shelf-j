@@ -170,35 +170,40 @@ class _StatusChip extends StatelessWidget {
 }
 
 /// Shown to guests: their history is device-only until they sign in.
-class _SignInBanner extends ConsumerWidget {
+class _SignInBanner extends StatefulWidget {
   const _SignInBanner();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  State<_SignInBanner> createState() => _SignInBannerState();
+}
+
+class _SignInBannerState extends State<_SignInBanner> {
+  bool _dismissed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_dismissed) return const SizedBox.shrink();
     final cs = Theme.of(context).colorScheme;
-    return Material(
-      color: cs.secondaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-        child: Row(
-          children: [
-            Icon(Icons.info_outline, size: 18, color: cs.onSecondaryContainer),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Showing orders from this device. Sign in to see your full order history.',
-                style: TextStyle(color: cs.onSecondaryContainer, fontSize: 13),
-              ),
-            ),
-            TextButton(
-              onPressed: () => showDialog(
-                  context: context,
-                  builder: (_) => const StorefrontAuthDialog()),
-              child: const Text('Sign in'),
-            ),
-          ],
-        ),
+    return MaterialBanner(
+      backgroundColor: cs.secondaryContainer,
+      leading: Icon(Icons.info_outline, size: 18, color: cs.onSecondaryContainer),
+      content: Text(
+        'Showing orders from this device. Sign in to see your full order history.',
+        style: TextStyle(color: cs.onSecondaryContainer, fontSize: 13),
       ),
+      actions: [
+        TextButton(
+          onPressed: () => setState(() => _dismissed = true),
+          child: Text('Not now', style: TextStyle(color: cs.onSecondaryContainer)),
+        ),
+        TextButton(
+          onPressed: () => showDialog(
+              context: context, builder: (_) => const StorefrontAuthDialog()),
+          child: Text('Sign in',
+              style: TextStyle(
+                  color: cs.onSecondaryContainer, fontWeight: FontWeight.bold)),
+        ),
+      ],
     );
   }
 }

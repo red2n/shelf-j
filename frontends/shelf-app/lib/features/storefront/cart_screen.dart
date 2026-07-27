@@ -198,6 +198,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.remove_circle_outline),
+                      tooltip: 'Decrease quantity',
                       onPressed: () =>
                           notifier.setQty(l.variantId, l.qty - 1),
                     ),
@@ -205,6 +206,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                     IconButton(
                       icon: const Icon(Icons.add_circle_outline),
+                      tooltip: 'Increase quantity',
                       onPressed: () =>
                           notifier.setQty(l.variantId, l.qty + 1),
                     ),
@@ -401,11 +403,11 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                     child: FilledButton.icon(
                       onPressed: _placing ? null : _checkout,
                       icon: _placing
-                          ? const SizedBox(
+                          ?  SizedBox(
                               height: 18,
                               width: 18,
                               child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
+                                  strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                           : Icon(selectedPay.payNow
                               ? Icons.lock_outline
                               : Icons.receipt_long),

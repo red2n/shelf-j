@@ -31,7 +31,13 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     final cats = catsAsync.value ?? [];
     final catById = {for (var c in cats) c.id: c};
 
-    return Column(
+    return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showCreateDialog(context, ref, cats),
+        icon: const Icon(Icons.add),
+        label: const Text('New Product'),
+      ),
+      body: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Header
@@ -62,12 +68,6 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                 overflowSpacing: 8,
                 overflowAlignment: OverflowBarAlignment.start,
                 children: [
-                  FilledButton.icon(
-                    onPressed: () =>
-                        _showCreateDialog(context, ref, cats),
-                    icon: const Icon(Icons.add),
-                    label: const Text('New Product'),
-                  ),
                   OutlinedButton.icon(
                     onPressed: () {
                       ref
@@ -90,12 +90,9 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           child: Row(
             children: [
               Expanded(
-                child: TextField(
-                  decoration: const InputDecoration(
-                    hintText: 'Search products…',
-                    prefixIcon: Icon(Icons.search),
-                    isDense: true,
-                  ),
+                child: SearchBar(
+                  hintText: 'Search products…',
+                  leading: const Icon(Icons.search),
                   onChanged: (v) => setState(() => _search = v.trim()),
                 ),
               ),
@@ -223,6 +220,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           }),
         ),
       ],
+      ),
     );
   }
 
@@ -799,11 +797,11 @@ class _ProductDialogState extends State<_ProductDialog> {
                       FilledButton(
                         onPressed: _loading ? null : _submit,
                         child: _loading
-                            ? const SizedBox(
+                            ?  SizedBox(
                                 height: 18,
                                 width: 18,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
+                                    strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                             : const Text('Create'),
                       ),
                     ],
@@ -903,6 +901,7 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
+                    tooltip: 'Close',
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -1097,11 +1096,11 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                     FilledButton(
                       onPressed: _saving ? null : _saveVariant,
                       child: _saving
-                          ? const SizedBox(
+                          ?  SizedBox(
                               height: 16,
                               width: 16,
                               child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
+                                  strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                           : const Text('Add'),
                     ),
                   ],
@@ -1185,11 +1184,11 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                       }
                     },
               child: saving
-                  ? const SizedBox(
+                  ?  SizedBox(
                       height: 16,
                       width: 16,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
+                          strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                   : const Text('Save'),
             ),
           ],
@@ -1390,11 +1389,11 @@ class _AssortmentDialogState extends ConsumerState<_AssortmentDialog> {
         FilledButton(
           onPressed: (_saving || !_loaded) ? null : _save,
           child: _saving
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Save'),
         ),
       ],

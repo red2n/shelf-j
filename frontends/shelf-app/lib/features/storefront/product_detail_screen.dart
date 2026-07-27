@@ -22,6 +22,7 @@ class ProductDetailScreen extends ConsumerWidget {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
+          tooltip: 'Back to products',
           onPressed: () => context.go('/store/products'),
         ),
         title: const Text('Product'),

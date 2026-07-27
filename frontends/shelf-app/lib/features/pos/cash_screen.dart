@@ -116,11 +116,11 @@ class _OpenTillViewState extends ConsumerState<_OpenTillView> {
               FilledButton.icon(
                 onPressed: _opening ? null : _open,
                 icon: _opening
-                    ? const SizedBox(
+                    ?  SizedBox(
                         height: 18,
                         width: 18,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
+                            strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                     : const Icon(Icons.lock_open),
                 label: Text(_opening ? 'Opening…' : 'Open till'),
               ),
@@ -160,6 +160,7 @@ class _OpenSessionView extends ConsumerWidget {
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh till session',
                   onPressed: () => ref.invalidate(xReportProvider(sessionId)),
                 ),
               ],

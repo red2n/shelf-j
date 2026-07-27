@@ -12,10 +12,21 @@ class AdaptiveNavDestination {
   });
 }
 
+/// How the shell presents navigation below the [AdaptiveNavShell._railBreakpoint].
+enum CompactNavStyle {
+  /// A [NavigationDrawer] toggled from the app-bar leading icon — for shells
+  /// with more destinations than a bottom bar comfortably holds (e.g. Admin).
+  drawer,
+
+  /// A persistent bottom [NavigationBar] — Material's recommended pattern for
+  /// 3–5 top-level destinations on a phone (e.g. Storefront, POS).
+  bottomBar,
+}
+
 /// Responsive navigation. On wide layouts (tablet / desktop / web) a persistent
 /// [NavigationRail] sits beside the content and the app-bar icon expands/collapses
-/// its labels. On phones it collapses to a [NavigationDrawer] toggled by that same
-/// app-bar icon.
+/// its labels. On phones it collapses to either a [NavigationDrawer] (toggled by
+/// that same app-bar icon) or a bottom [NavigationBar], per [compactStyle].
 class AdaptiveNavShell extends StatefulWidget {
   final String title;
   final List<AdaptiveNavDestination> destinations;
@@ -24,12 +35,15 @@ class AdaptiveNavShell extends StatefulWidget {
   final Widget child;
   final List<Widget> actions;
 
-  /// Icon shown at the start of the app bar; tapping it toggles the menu.
+  /// Icon shown at the start of the app bar; tapping it toggles the drawer.
+  /// Unused when [compactStyle] is [CompactNavStyle.bottomBar].
   final IconData leadingIcon;
 
   /// Optional app-bar theming (used e.g. by the POS shell's accent colour).
   final Color? appBarBackgroundColor;
   final Color? appBarForegroundColor;
+
+  final CompactNavStyle compactStyle;
 
   const AdaptiveNavShell({
     super.key,
@@ -42,6 +56,7 @@ class AdaptiveNavShell extends StatefulWidget {
     this.leadingIcon = Icons.storefront_rounded,
     this.appBarBackgroundColor,
     this.appBarForegroundColor,
+    this.compactStyle = CompactNavStyle.drawer,
   });
 
   @override
@@ -68,17 +83,21 @@ class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
     }
   }
 
-  PreferredSizeWidget _appBar({required VoidCallback onLeading}) {
+  // onLeading == null omits the leading toggle icon entirely (bottom-bar mode
+  // has no drawer to open, so there's nothing for it to control).
+  PreferredSizeWidget _appBar({VoidCallback? onLeading}) {
     return AppBar(
       backgroundColor: widget.appBarBackgroundColor,
       foregroundColor: widget.appBarForegroundColor,
       // Replace the automatic hamburger with the product icon as the toggle.
       automaticallyImplyLeading: false,
-      leading: IconButton(
-        icon: Icon(widget.leadingIcon),
-        tooltip: 'Toggle menu',
-        onPressed: onLeading,
-      ),
+      leading: onLeading == null
+          ? null
+          : IconButton(
+              icon: Icon(widget.leadingIcon),
+              tooltip: 'Toggle menu',
+              onPressed: onLeading,
+            ),
       title: Text(widget.title, overflow: TextOverflow.ellipsis),
       actions: widget.actions,
     );
@@ -90,17 +109,39 @@ class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
       if (constraints.maxWidth >= _railBreakpoint) {
         return _buildWide(context);
       }
-      return _buildNarrow(context);
+      return widget.compactStyle == CompactNavStyle.bottomBar
+          ? _buildBottomBar(context)
+          : _buildNarrow(context);
     });
   }
 
-  // Phones: nav lives in a drawer toggled from the app-bar icon.
+  // Phones (drawer style): nav lives in a drawer toggled from the app-bar icon.
   Widget _buildNarrow(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
       appBar: _appBar(onLeading: _toggleDrawer),
       drawer: _buildDrawer(context),
       body: widget.child,
+    );
+  }
+
+  // Phones (bottom-bar style): nav lives in a persistent NavigationBar — the
+  // Material-recommended pattern for a small, flat set of destinations.
+  Widget _buildBottomBar(BuildContext context) {
+    return Scaffold(
+      appBar: _appBar(),
+      body: widget.child,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: widget.selectedIndex,
+        onDestinationSelected: widget.onDestinationSelected,
+        destinations: widget.destinations
+            .map((d) => NavigationDestination(
+                  icon: Icon(d.icon),
+                  selectedIcon: Icon(d.selectedIcon),
+                  label: d.label,
+                ))
+            .toList(),
+      ),
     );
   }
 

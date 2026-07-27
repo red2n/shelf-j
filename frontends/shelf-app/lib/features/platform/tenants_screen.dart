@@ -458,6 +458,7 @@ class _OnboardingDialogState extends ConsumerState<_OnboardingDialog> {
                         ),
                         IconButton(
                           icon: const Icon(Icons.close),
+                          tooltip: 'Close',
                           onPressed: ob.loading ? null : _close,
                         ),
                       ],
@@ -600,6 +601,7 @@ class _AccountForm extends StatelessWidget {
               suffixIcon: IconButton(
                 icon:
                     Icon(obscure ? Icons.visibility_off : Icons.visibility),
+                tooltip: obscure ? 'Show password' : 'Hide password',
                 onPressed: onToggleObscure,
               ),
             ),
@@ -610,11 +612,11 @@ class _AccountForm extends StatelessWidget {
           FilledButton(
             onPressed: loading ? null : onNext,
             child: loading
-                ? const SizedBox(
+                ?  SizedBox(
                     height: 18,
                     width: 18,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white))
+                        strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                 : const Text('Next  →'),
           ),
         ],
@@ -803,11 +805,11 @@ class _BusinessStoreForm extends StatelessWidget {
             FilledButton(
               onPressed: loading ? null : onSubmit,
               child: loading
-                  ? const SizedBox(
+                  ?  SizedBox(
                       height: 18,
                       width: 18,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
+                          strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                   : const Text('Create tenant & store'),
             ),
           ],

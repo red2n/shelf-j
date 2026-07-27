@@ -271,7 +271,7 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
                           )
                         : IconButton(
                             icon: const Icon(Icons.add_circle_outline),
-                            color: AppTheme.posAccent,
+                            color: context.channelAccent.color,
                             onPressed: () => _scan(_barcodeCtrl.text),
                           ),
                   ),
@@ -384,6 +384,7 @@ class _SaleLine extends ConsumerWidget {
             IconButton(
               visualDensity: VisualDensity.compact,
               icon: const Icon(Icons.remove_circle_outline),
+              tooltip: 'Decrease quantity',
               onPressed: () => notifier.setQty(line.variantId, line.qty - 1),
             ),
             Text('${line.qty}',
@@ -391,6 +392,7 @@ class _SaleLine extends ConsumerWidget {
             IconButton(
               visualDensity: VisualDensity.compact,
               icon: const Icon(Icons.add_circle_outline),
+              tooltip: 'Increase quantity',
               onPressed: () => notifier.setQty(line.variantId, line.qty + 1),
             ),
             if (showPrices)
@@ -447,22 +449,22 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
           child: Row(
             children: [
               Expanded(
-                child: TextField(
+                child: SearchBar(
                   controller: _searchCtrl,
-                  decoration: InputDecoration(
-                    isDense: true,
-                    hintText: 'Search products…',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: query.isEmpty
-                        ? null
-                        : IconButton(
+                  hintText: 'Search products…',
+                  leading: const Icon(Icons.search),
+                  trailing: query.isEmpty
+                      ? null
+                      : [
+                          IconButton(
                             icon: const Icon(Icons.clear),
+                            tooltip: 'Clear search',
                             onPressed: () {
                               _searchCtrl.clear();
                               ref.read(posSearchProvider.notifier).state = '';
                             },
                           ),
-                  ),
+                        ],
                   onChanged: (v) =>
                       ref.read(posSearchProvider.notifier).state = v.trim(),
                 ),
@@ -627,8 +629,8 @@ class _OfferTile extends ConsumerWidget {
                     children: [
                       Expanded(
                         child: Text('${o.currency} ${o.unitPrice.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                                color: AppTheme.posAccent,
+                            style: TextStyle(
+                                color: context.channelAccent.color,
                                 fontWeight: FontWeight.bold)),
                       ),
                       _StockDot(inStock: o.inStock),
@@ -686,7 +688,7 @@ class _StoreSelector extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         children: [
-          const Icon(Icons.store, size: 18, color: AppTheme.posAccent),
+          Icon(Icons.store, size: 18, color: context.channelAccent.color),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -904,7 +906,8 @@ class _TotalsBar extends ConsumerWidget {
               flex: 2,
               child: FilledButton.icon(
                 style: FilledButton.styleFrom(
-                    backgroundColor: AppTheme.posAccent,
+                    backgroundColor: context.channelAccent.color,
+                    foregroundColor: context.channelAccent.onColor,
                     padding: const EdgeInsets.symmetric(vertical: 16)),
                 onPressed:
                     items.isEmpty ? null : () => context.go('/pos/tender'),
@@ -969,7 +972,8 @@ class _TotalsBar extends ConsumerWidget {
                 flex: 2,
                 child: FilledButton(
                   style: FilledButton.styleFrom(
-                      backgroundColor: AppTheme.posAccent,
+                      backgroundColor: context.channelAccent.color,
+                      foregroundColor: context.channelAccent.onColor,
                       padding: const EdgeInsets.symmetric(vertical: 16)),
                   onPressed:
                       items.isEmpty ? null : () => context.go('/pos/tender'),
@@ -1011,19 +1015,17 @@ class _CustomerPickerDialogState extends ConsumerState<_CustomerPickerDialog> {
               child: Row(
                 children: [
                   Expanded(
-                    child: TextField(
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        hintText: 'Search name, email or phone…',
-                        prefixIcon: Icon(Icons.search),
-                        isDense: true,
-                      ),
+                    child: SearchBar(
+                      autoFocus: true,
+                      hintText: 'Search name, email or phone…',
+                      leading: const Icon(Icons.search),
                       onChanged: (v) =>
                           setState(() => _query = v.trim().toLowerCase()),
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
+                    tooltip: 'Close',
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
