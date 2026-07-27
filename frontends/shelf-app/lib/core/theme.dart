@@ -93,6 +93,7 @@ class AppTheme {
     final scheme = ColorScheme.fromSeed(
       brightness: Brightness.light,
       seedColor: _charcoal,
+      dynamicSchemeVariant: DynamicSchemeVariant.expressive,
       primary: _charcoal,
       onPrimary: _ivory,
       primaryContainer: _amber,
@@ -133,6 +134,7 @@ class AppTheme {
     final scheme = ColorScheme.fromSeed(
       brightness: Brightness.dark,
       seedColor: _charcoal,
+      dynamicSchemeVariant: DynamicSchemeVariant.expressive,
       primary: _amber,
       onPrimary: _charcoal,
       primaryContainer: const Color(0xFF5C4B00),
