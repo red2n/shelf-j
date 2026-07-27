@@ -120,12 +120,9 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
           child: Row(
             children: [
               Expanded(
-                child: TextField(
-                  decoration: const InputDecoration(
-                    hintText: 'Search product, SKU or ID…',
-                    prefixIcon: Icon(Icons.search),
-                    isDense: true,
-                  ),
+                child: SearchBar(
+                  hintText: 'Search product, SKU or ID…',
+                  leading: const Icon(Icons.search),
                   onChanged: (v) => setState(() => _search = v.trim()),
                 ),
               ),
@@ -397,12 +394,9 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
               ),
               SizedBox(
                 width: 240,
-                child: TextField(
-                  decoration: const InputDecoration(
-                    hintText: 'Search batch no. / variant…',
-                    prefixIcon: Icon(Icons.search),
-                    isDense: true,
-                  ),
+                child: SearchBar(
+                  hintText: 'Search batch no. / variant…',
+                  leading: const Icon(Icons.search),
                   onChanged: (v) => setState(() => _search = v.trim()),
                 ),
               ),
@@ -519,44 +513,48 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
 }
 
 /// Banner of batches expiring within 30 days for the selected store.
-class _ExpiringBanner extends ConsumerWidget {
+class _ExpiringBanner extends ConsumerStatefulWidget {
   final String storeId;
   const _ExpiringBanner({required this.storeId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ExpiringBanner> createState() => _ExpiringBannerState();
+}
+
+class _ExpiringBannerState extends ConsumerState<_ExpiringBanner> {
+  bool _dismissed = false;
+
+  @override
+  Widget build(BuildContext context) {
     final async = ref.watch(
-        expiringBatchesProvider((storeId: storeId, withinDays: 30)));
+        expiringBatchesProvider((storeId: widget.storeId, withinDays: 30)));
     return async.when(
       loading: () => const SizedBox.shrink(),
       error: (_, _) => const SizedBox.shrink(),
       data: (rows) {
-        if (rows.isEmpty) return const SizedBox.shrink();
+        if (rows.isEmpty || _dismissed) return const SizedBox.shrink();
         final cs = Theme.of(context).colorScheme;
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-          child: Material(
-            color: cs.errorContainer.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  Icon(Icons.event_busy, size: 18, color: cs.onErrorContainer),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${rows.length} batch(es) expiring within 30 days'
-                      ' — e.g. ${rows.first.batchNo}'
-                      '${rows.first.expiryDate != null ? ' (${rows.first.expiryDate})' : ''}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: cs.onErrorContainer,
-                          ),
-                    ),
-                  ),
-                ],
-              ),
+          child: MaterialBanner(
+            backgroundColor: cs.errorContainer.withValues(alpha: 0.45),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            leading: Icon(Icons.event_busy, size: 18, color: cs.onErrorContainer),
+            content: Text(
+              '${rows.length} batch(es) expiring within 30 days'
+              ' — e.g. ${rows.first.batchNo}'
+              '${rows.first.expiryDate != null ? ' (${rows.first.expiryDate})' : ''}',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: cs.onErrorContainer),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => setState(() => _dismissed = true),
+                child: Text('Dismiss', style: TextStyle(color: cs.onErrorContainer)),
+              ),
+            ],
           ),
         );
       },
@@ -835,10 +833,27 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                     Expanded(
                       child: TextFormField(
                         controller: _expiryCtrl,
+                        readOnly: true,
                         decoration: const InputDecoration(
                           labelText: 'Expiry',
-                          hintText: 'YYYY-MM-DD',
+                          suffixIcon: Icon(Icons.calendar_today_outlined),
                         ),
+                        onTap: () async {
+                          final now = DateTime.now();
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate:
+                                DateTime.tryParse(_expiryCtrl.text) ?? now,
+                            firstDate: DateTime(now.year - 5),
+                            lastDate: DateTime(now.year + 20),
+                          );
+                          if (picked != null) {
+                            _expiryCtrl.text =
+                                '${picked.year.toString().padLeft(4, '0')}-'
+                                '${picked.month.toString().padLeft(2, '0')}-'
+                                '${picked.day.toString().padLeft(2, '0')}';
+                          }
+                        },
                       ),
                     ),
                   ],
@@ -856,11 +871,11 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child:
-                      CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      CircularProgressIndicator(strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Receive'),
         ),
       ],
@@ -1394,11 +1409,11 @@ class _AdjustStockDialogState extends ConsumerState<_AdjustStockDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Adjust'),
         ),
       ],
@@ -1604,11 +1619,11 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Save'),
         ),
       ],

@@ -306,11 +306,13 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
             // ── Error / result banners ─────────────────────────────────────
             if (_error != null) ...[
               const SizedBox(height: 16),
-              _ErrorBanner(message: _error!),
+              _ErrorBanner(
+                  message: _error!, onDismiss: () => setState(() => _error = null)),
             ],
             if (_result != null) ...[
               const SizedBox(height: 16),
-              _ResultBanner(result: _result!),
+              _ResultBanner(
+                  result: _result!, onDismiss: () => setState(() => _result = null)),
             ],
 
             // ── Preview + store mapping ────────────────────────────────────
@@ -363,22 +365,22 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                 error: (_, _) => FilledButton.icon(
                   onPressed: _loading ? null : () => _import([]),
                   icon: _loading
-                      ? const SizedBox(
+                      ?  SizedBox(
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
+                              strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                       : const Icon(Icons.cloud_upload_outlined),
                   label: Text(_loading ? 'Importing…' : 'Import $_productCount products'),
                 ),
                 data: (stores) => FilledButton.icon(
                   onPressed: _loading ? null : () => _import(stores),
                   icon: _loading
-                      ? const SizedBox(
+                      ?  SizedBox(
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
+                              strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                       : const Icon(Icons.cloud_upload_outlined),
                   label: Text(_loading ? 'Importing…' : 'Import $_productCount products'),
                 ),
@@ -697,7 +699,8 @@ class _DestinationStoreCard extends StatelessWidget {
 
 class _ResultBanner extends StatelessWidget {
   final Map<String, dynamic> result;
-  const _ResultBanner({required this.result});
+  final VoidCallback onDismiss;
+  const _ResultBanner({required this.result, required this.onDismiss});
 
   @override
   Widget build(BuildContext context) {
@@ -709,34 +712,26 @@ class _ResultBanner extends StatelessWidget {
         errors.isNotEmpty || stockErrors.isNotEmpty || priceErrors.isNotEmpty;
     final stockReceived = result['stockReceived'] as int?;
     final pricesSet = result['pricesSet'] as int?;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: hasErrors ? cs.errorContainer : Colors.green.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-            color: hasErrors ? cs.error : Colors.green.shade300),
-      ),
-      child: Column(
+    // Success reuses the app's existing green (secondary) role instead of a
+    // one-off Colors.green, so it stays in step with the rest of the theme.
+    final bg = hasErrors ? cs.errorContainer : cs.secondaryContainer;
+    final fg = hasErrors ? cs.onErrorContainer : cs.onSecondaryContainer;
+    return MaterialBanner(
+      backgroundColor: bg,
+      leading: Icon(
+          hasErrors ? Icons.warning_amber_outlined : Icons.check_circle_outline,
+          color: hasErrors ? cs.error : cs.secondary),
+      content: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Icon(
-                  hasErrors
-                      ? Icons.warning_amber_outlined
-                      : Icons.check_circle_outline,
-                  color: hasErrors ? cs.error : Colors.green.shade700),
-              const SizedBox(width: 8),
-              Text(
-                hasErrors
-                    ? 'Import completed with errors'
-                    : 'Import completed successfully',
-                style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: hasErrors ? cs.error : Colors.green.shade800),
-              ),
-            ],
+          Text(
+            hasErrors
+                ? 'Import completed with errors'
+                : 'Import completed successfully',
+            style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: hasErrors ? cs.error : cs.secondary),
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -814,6 +809,12 @@ class _ResultBanner extends StatelessWidget {
           ],
         ],
       ),
+      actions: [
+        TextButton(
+          onPressed: onDismiss,
+          child: Text('Dismiss', style: TextStyle(color: fg)),
+        ),
+      ],
     );
   }
 }
@@ -845,24 +846,22 @@ class _ResultStat extends StatelessWidget {
 
 class _ErrorBanner extends StatelessWidget {
   final String message;
-  const _ErrorBanner({required this.message});
+  final VoidCallback onDismiss;
+  const _ErrorBanner({required this.message, required this.onDismiss});
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-          color: cs.errorContainer, borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        children: [
-          Icon(Icons.error_outline, color: cs.onErrorContainer),
-          const SizedBox(width: 8),
-          Expanded(
-              child: Text(message,
-                  style: TextStyle(color: cs.onErrorContainer))),
-        ],
-      ),
+    return MaterialBanner(
+      backgroundColor: cs.errorContainer,
+      leading: Icon(Icons.error_outline, color: cs.onErrorContainer),
+      content: Text(message, style: TextStyle(color: cs.onErrorContainer)),
+      actions: [
+        TextButton(
+          onPressed: onDismiss,
+          child: Text('Dismiss', style: TextStyle(color: cs.onErrorContainer)),
+        ),
+      ],
     );
   }
 }

@@ -65,6 +65,7 @@ class _InventoryTransfersTabState extends ConsumerState<InventoryTransfersTab> {
               const SizedBox(width: 12),
               IconButton(
                 icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh transfer orders',
                 onPressed: () => ref.invalidate(
                     transferOrdersProvider(_storeFilter ?? '')),
               ),
@@ -400,6 +401,7 @@ class _InventoryMovementsTabState extends ConsumerState<InventoryMovementsTab> {
               const SizedBox(width: 8),
               IconButton(
                 icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh stock movements',
                 onPressed: () =>
                     ref.invalidate(stockMovementsProvider(_storeId ?? '')),
               ),

@@ -876,6 +876,7 @@ class _LineItemsEditorState extends ConsumerState<_LineItemsEditor> {
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
             trailing: IconButton(
               icon: Icon(Icons.delete_outline, size: 18, color: cs.error),
+              tooltip: 'Remove item',
               onPressed: () {
                 widget.items.remove(it);
                 widget.onChanged();
@@ -977,11 +978,11 @@ List<Widget> _actions(
     FilledButton(
       onPressed: loading ? null : onSubmit,
       child: loading
-          ? const SizedBox(
+          ?  SizedBox(
               height: 18,
               width: 18,
               child:
-                  CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  CircularProgressIndicator(strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
           : Text(label),
     ),
   ];

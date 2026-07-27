@@ -59,7 +59,7 @@ class OrderServiceDeliveryTest {
     svc.tenants = tenants;
     when(ctx.requireTenantId()).thenReturn(TENANT);
     when(tenantStatusRepo.isActive(any())).thenReturn(true);
-    org.mockito.Mockito.lenient().when(storeStatusRepo.isActive(any())).thenReturn(true);
+    org.mockito.Mockito.lenient().when(storeStatusRepo.isActive(any(), any())).thenReturn(true);
     org.mockito.Mockito.lenient()
         .when(tenants.resolveFulfilment(any(), any()))
         .thenReturn(Optional.empty());

@@ -87,7 +87,7 @@ public class OnboardingResource {
   public Response createStore(CreateStoreRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
-    var result = service.createDefaultStore(tenantId, req);
+    var result = service.createDefaultStore(tenantId, ctx.requireUserId(), req);
     return Response.status(Response.Status.CREATED)
         .entity(
             ApiResponse.ok(Mappers.toStore(result.store()), ApiResponse.Meta.of(ctx.requestId())))
@@ -100,6 +100,6 @@ public class OnboardingResource {
   @GET
   @Path("/status")
   public ApiResponse<OnboardingStatus> status() {
-    return ApiResponse.ok(service.onboardingStatus(ctx.requireTenantId()));
+    return ApiResponse.ok(service.onboardingStatus(ctx.requireTenantId(), ctx.requireUserId()));
   }
 }

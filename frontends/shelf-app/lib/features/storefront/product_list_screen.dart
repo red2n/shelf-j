@@ -267,7 +267,7 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
   // rotation timer always reads a valid length.
   List<_Offer> _offers = _fallbackOffers;
 
-  final _controller = PageController(viewportFraction: 0.92);
+  final _controller = CarouselController();
   int _page = 0;
   Timer? _timer;
 
@@ -277,7 +277,7 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
     _timer = Timer.periodic(const Duration(seconds: 4), (_) {
       if (!_controller.hasClients || _offers.length < 2) return;
       final next = (_page + 1) % _offers.length;
-      _controller.animateToPage(next,
+      _controller.animateToItem(next,
           duration: const Duration(milliseconds: 450), curve: Curves.easeInOut);
     });
   }
@@ -314,50 +314,53 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
         const SizedBox(height: 12),
         SizedBox(
           height: 150,
-          child: PageView.builder(
-            controller: _controller,
-            itemCount: _offers.length,
-            onPageChanged: (i) => setState(() => _page = i),
-            itemBuilder: (_, i) {
-              final o = _offers[i];
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    gradient: LinearGradient(
-                      colors: o.colors,
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+          child: LayoutBuilder(
+            builder: (context, constraints) => CarouselView(
+              controller: _controller,
+              itemExtent: constraints.maxWidth * 0.92,
+              itemSnapping: true,
+              enableSplash: false,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              onIndexChanged: (i) => setState(() => _page = i),
+              children: [
+                for (final o in _offers)
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: o.colors,
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    padding: const EdgeInsets.all(20),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(o.title,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 6),
+                              Text(o.subtitle,
+                                  style: TextStyle(
+                                      color: Colors.white.withAlpha(220),
+                                      fontSize: 13)),
+                            ],
+                          ),
+                        ),
+                        Icon(o.icon, color: Colors.white.withAlpha(220), size: 48),
+                      ],
                     ),
                   ),
-                  padding: const EdgeInsets.all(20),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(o.title,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 6),
-                            Text(o.subtitle,
-                                style: TextStyle(
-                                    color: Colors.white.withAlpha(220),
-                                    fontSize: 13)),
-                          ],
-                        ),
-                      ),
-                      Icon(o.icon, color: Colors.white.withAlpha(220), size: 48),
-                    ],
-                  ),
-                ),
-              );
-            },
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 10),

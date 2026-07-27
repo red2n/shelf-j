@@ -57,6 +57,9 @@ class StorefrontShell extends ConsumerWidget {
       destinations: _destinations,
       selectedIndex: _selectedIndex,
       onDestinationSelected: (i) => context.go(_routes[i]),
+      // Only 2 destinations — a bottom bar beats a hamburger-triggered drawer
+      // for the phone-first shopping flow (Material's compact-width guidance).
+      compactStyle: CompactNavStyle.bottomBar,
       actions: suspended
           ? const []
           : [
@@ -367,11 +370,11 @@ class _StorefrontAuthDialogState extends ConsumerState<StorefrontAuthDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : Text(_register ? 'Create account' : 'Sign in'),
         ),
       ],

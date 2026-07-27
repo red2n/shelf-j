@@ -436,48 +436,62 @@ class _StoreStatusDot extends StatelessWidget {
 
 /// Low-stock alert banner shown at the top of the dashboard when stock has
 /// fallen below threshold (sourced from notification-svc shortage alerts).
-class _ShortageAlertsBanner extends StatelessWidget {
+class _ShortageAlertsBanner extends StatefulWidget {
   final List<ShortageAlert> alerts;
   const _ShortageAlertsBanner({required this.alerts});
 
   @override
+  State<_ShortageAlertsBanner> createState() => _ShortageAlertsBannerState();
+}
+
+class _ShortageAlertsBannerState extends State<_ShortageAlertsBanner> {
+  bool _dismissed = false;
+
+  @override
   Widget build(BuildContext context) {
+    if (_dismissed) return const SizedBox.shrink();
     final cs = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 24),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: cs.errorContainer,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: cs.onErrorContainer),
-              const SizedBox(width: 8),
-              Text('${alerts.length} low-stock alert${alerts.length == 1 ? '' : 's'}',
-                  style: TextStyle(
-                      color: cs.onErrorContainer, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          for (final a in alerts.take(5))
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Text(
-                'Variant ${a.variantId.length > 8 ? a.variantId.substring(0, 8) : a.variantId}… · '
-                'available ${a.available.toStringAsFixed(0)} ≤ threshold ${a.threshold.toStringAsFixed(0)}',
-                style: TextStyle(color: cs.onErrorContainer, fontSize: 12),
-              ),
-            ),
-          if (alerts.length > 5)
-            Text('…and ${alerts.length - 5} more',
+    final alerts = widget.alerts;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: MaterialBanner(
+        backgroundColor: cs.errorContainer,
+        leading: Icon(Icons.warning_amber_rounded, color: cs.onErrorContainer),
+        content: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('${alerts.length} low-stock alert${alerts.length == 1 ? '' : 's'}',
                 style: TextStyle(
-                    color: cs.onErrorContainer,
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic)),
+                    color: cs.onErrorContainer, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            for (final a in alerts.take(5))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  'Variant ${a.variantId.length > 8 ? a.variantId.substring(0, 8) : a.variantId}… · '
+                  'available ${a.available.toStringAsFixed(0)} ≤ threshold ${a.threshold.toStringAsFixed(0)}',
+                  style: TextStyle(color: cs.onErrorContainer, fontSize: 12),
+                ),
+              ),
+            if (alerts.length > 5)
+              Text('…and ${alerts.length - 5} more',
+                  style: TextStyle(
+                      color: cs.onErrorContainer,
+                      fontSize: 12,
+                      fontStyle: FontStyle.italic)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => context.go('/admin/inventory'),
+            child: Text('View inventory',
+                style: TextStyle(color: cs.onErrorContainer)),
+          ),
+          TextButton(
+            onPressed: () => setState(() => _dismissed = true),
+            child: Text('Dismiss', style: TextStyle(color: cs.onErrorContainer)),
+          ),
         ],
       ),
     );

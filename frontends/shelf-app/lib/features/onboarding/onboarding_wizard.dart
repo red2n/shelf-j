@@ -270,9 +270,9 @@ class _Step1TenantForm extends StatelessWidget {
             FilledButton(
               onPressed: loading ? null : onNext,
               child: loading
-                  ? const SizedBox(
+                  ?  SizedBox(
                       height: 20, width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                   : const Text('Continue  →'),
             ),
           ],
@@ -433,9 +433,9 @@ class _Step2StoreForm extends StatelessWidget {
             FilledButton(
               onPressed: loading ? null : onSubmit,
               child: loading
-                  ? const SizedBox(
+                  ?  SizedBox(
                       height: 20, width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                   : const Text('Create store & finish setup'),
             ),
           ],

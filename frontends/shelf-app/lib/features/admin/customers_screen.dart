@@ -62,6 +62,7 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
               const SizedBox(width: 8),
               IconButton(
                 icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh customers',
                 onPressed: () =>
                     ref.read(customersPaginationProvider.notifier).refresh(),
               ),
@@ -271,11 +272,11 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Add'),
         ),
       ],
@@ -697,6 +698,7 @@ class _AddressesSectionState extends ConsumerState<_AddressesSection> {
                             IconButton(
                               visualDensity: VisualDensity.compact,
                               icon: const Icon(Icons.edit_outlined, size: 18),
+                              tooltip: 'Edit address',
                               onPressed: () => showDialog(
                                 context: context,
                                 builder: (_) => _AddressFormDialog(
@@ -706,6 +708,7 @@ class _AddressesSectionState extends ConsumerState<_AddressesSection> {
                             IconButton(
                               visualDensity: VisualDensity.compact,
                               icon: const Icon(Icons.delete_outline, size: 18),
+                              tooltip: 'Delete address',
                               onPressed: _deleting.contains(a.id)
                                   ? null
                                   : () => _delete(a.id),
@@ -850,8 +853,26 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
               ),
               TextFormField(
                 controller: _dobCtrl,
+                readOnly: true,
                 decoration: const InputDecoration(
-                    labelText: 'Date of birth (YYYY-MM-DD)'),
+                  labelText: 'Date of birth',
+                  suffixIcon: Icon(Icons.calendar_today_outlined),
+                ),
+                onTap: () async {
+                  final now = DateTime.now();
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: DateTime.tryParse(_dobCtrl.text) ??
+                        DateTime(now.year - 30),
+                    firstDate: DateTime(1900),
+                    lastDate: now,
+                  );
+                  if (picked != null) {
+                    _dobCtrl.text = '${picked.year.toString().padLeft(4, '0')}-'
+                        '${picked.month.toString().padLeft(2, '0')}-'
+                        '${picked.day.toString().padLeft(2, '0')}';
+                  }
+                },
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(

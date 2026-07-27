@@ -328,6 +328,7 @@ class _FeedbackSheetState extends ConsumerState<FeedbackSheet> {
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.close),
+                tooltip: 'Close',
                 onPressed: () => Navigator.of(context).pop(),
               ),
             ]),
@@ -371,6 +372,7 @@ class _FeedbackSheetState extends ConsumerState<FeedbackSheet> {
                     filled ? Icons.star : Icons.star_border,
                     color: filled ? cs.primary : cs.outline,
                   ),
+                  tooltip: '${i + 1} star${i == 0 ? '' : 's'}',
                   onPressed: () => setState(() {
                     // Tapping the same star again clears the rating
                     _starRating = _starRating == i + 1 ? null : i + 1;

@@ -74,50 +74,57 @@ class _PosShellState extends ConsumerState<PosShell> {
   Widget build(BuildContext context) {
     final session = ref.watch(posSessionProvider);
 
-    return AdaptiveNavShell(
-      title: 'POS Terminal',
-      leadingIcon: Icons.point_of_sale,
-      appBarBackgroundColor: AppTheme.posAccent,
-      appBarForegroundColor: Colors.white,
-      destinations: _destinations,
-      selectedIndex: _selectedIndex,
-      onDestinationSelected: (i) => context.go(_routes[i]),
-      actions: [
-        if (session != null)
-          TextButton.icon(
-            onPressed: () async {
-              final ok = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Clock out?'),
-                  content: const Text(
-                      'This ends your POS session. Any sale in progress is kept.'),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('Cancel')),
-                    FilledButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Clock out')),
-                  ],
-                ),
-              );
-              if (ok == true) {
-                await ref.read(posSessionProvider.notifier).clockOut();
-              }
-            },
-            icon: const Icon(Icons.logout, color: Colors.white, size: 18),
-            label: const Text('Clock out',
-                style: TextStyle(color: Colors.white)),
+    // Scope the amber channel accent (app bar, primary actions, nav indicator)
+    // to the whole POS subtree via the theme system, rather than threading the
+    // raw AppTheme.posAccent constant into each widget by hand.
+    return Theme(
+      data: AppTheme.applyPosAccent(Theme.of(context)),
+      child: AdaptiveNavShell(
+        title: 'POS Terminal',
+        leadingIcon: Icons.point_of_sale,
+        // 3 flat destinations — a bottom bar, per Material's compact-width guidance.
+        compactStyle: CompactNavStyle.bottomBar,
+        destinations: _destinations,
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (i) => context.go(_routes[i]),
+        actions: [
+          if (session != null)
+            TextButton.icon(
+              onPressed: () async {
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Clock out?'),
+                    content: const Text(
+                        'This ends your POS session. Any sale in progress is kept.'),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('Cancel')),
+                      FilledButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('Clock out')),
+                    ],
+                  ),
+                );
+                if (ok == true) {
+                  await ref.read(posSessionProvider.notifier).clockOut();
+                }
+              },
+              // No explicit colour: TextButton.icon already resolves to
+              // colorScheme.primary, which reads correctly on the amber app bar.
+              icon: const Icon(Icons.logout, size: 18),
+              label: const Text('Clock out'),
+            ),
+          IconButton(
+            icon: const Icon(Icons.exit_to_app),
+            tooltip: 'Sign out',
+            onPressed: () => ref.read(authNotifierProvider.notifier).logout(),
           ),
-        IconButton(
-          icon: const Icon(Icons.exit_to_app),
-          tooltip: 'Sign out',
-          onPressed: () => ref.read(authNotifierProvider.notifier).logout(),
-        ),
-      ],
-      // Gate the whole terminal: no selling until a cashier clocks in.
-      child: session == null ? const _ClockInView() : widget.child,
+        ],
+        // Gate the whole terminal: no selling until a cashier clocks in.
+        child: session == null ? const _ClockInView() : widget.child,
+      ),
     );
   }
 }
@@ -168,8 +175,8 @@ class _ClockInViewState extends ConsumerState<_ClockInView> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Icon(Icons.point_of_sale,
-                    size: 48, color: AppTheme.posAccent),
+                Icon(Icons.point_of_sale,
+                    size: 48, color: context.channelAccent.color),
                 const SizedBox(height: 12),
                 Text('Clock in',
                     textAlign: TextAlign.center,
@@ -215,16 +222,18 @@ class _ClockInViewState extends ConsumerState<_ClockInView> {
                 const SizedBox(height: 24),
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
-                    backgroundColor: AppTheme.posAccent,
+                    backgroundColor: context.channelAccent.color,
+                    foregroundColor: context.channelAccent.onColor,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                   onPressed: _busy ? null : _clockIn,
                   icon: _busy
-                      ? const SizedBox(
+                      ? SizedBox(
                           height: 18,
                           width: 18,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
+                              strokeWidth: 2,
+                              color: context.channelAccent.onColor))
                       : const Icon(Icons.login),
                   label: Text(_busy ? 'Opening…' : 'Clock in',
                       style: const TextStyle(fontSize: 16)),

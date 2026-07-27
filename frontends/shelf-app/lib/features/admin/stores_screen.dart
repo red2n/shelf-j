@@ -16,7 +16,13 @@ class StoresScreen extends ConsumerWidget {
     final storesAsync = ref.watch(storesProvider);
     final cs = Theme.of(context).colorScheme;
 
-    return Column(
+    return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showAddStoreDialog(context, ref),
+        icon: const Icon(Icons.add_business),
+        label: const Text('Add Store'),
+      ),
+      body: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
@@ -25,14 +31,9 @@ class StoresScreen extends ConsumerWidget {
             children: [
               Text('Stores', style: Theme.of(context).textTheme.headlineMedium),
               const Spacer(),
-              FilledButton.icon(
-                onPressed: () => _showAddStoreDialog(context, ref),
-                icon: const Icon(Icons.add_business),
-                label: const Text('Add Store'),
-              ),
-              const SizedBox(width: 8),
               IconButton(
                 icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh stores',
                 onPressed: () => ref.invalidate(storesProvider),
               ),
             ],
@@ -157,6 +158,7 @@ class StoresScreen extends ConsumerWidget {
           ),
         ),
       ],
+      ),
     );
   }
 
@@ -497,11 +499,11 @@ class _DeliveryAreasDialogState extends ConsumerState<_DeliveryAreasDialog> {
                 FilledButton(
                   onPressed: _adding ? null : _add,
                   child: _adding
-                      ? const SizedBox(
+                      ?  SizedBox(
                           height: 16,
                           width: 16,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
+                              strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
                       : const Text('Add'),
                 ),
               ],
@@ -715,10 +717,10 @@ class _ZoneFormDialogState extends ConsumerState<_ZoneFormDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : Text(_isEdit ? 'Save' : 'Create'),
         ),
       ],
@@ -954,11 +956,11 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(
+              ?  SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
+                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
               : const Text('Save changes'),
         ),
       ],
@@ -1109,14 +1111,41 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return AlertDialog(
-      title: const Text('Add Store'),
-      content: SizedBox(
-        width: 420,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
+    return Dialog.fullscreen(
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            tooltip: 'Cancel',
+            onPressed: _loading ? null : () => Navigator.pop(context),
+          ),
+          title: const Text('Add Store'),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Center(
+                child: FilledButton(
+                  onPressed: _loading ? null : _submit,
+                  child: _loading
+                      ? SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: cs.onPrimary))
+                      : const Text('Create store'),
+                ),
+              ),
+            ),
+          ],
+        ),
+        body: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1259,25 +1288,12 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                   onChanged: (v) => setState(() => _payMethods = v),
                 ),
               ],
+              ),
             ),
           ),
         ),
+        ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _loading ? null : () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _loading ? null : _submit,
-          child: _loading
-              ? const SizedBox(
-                  height: 18,
-                  width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Create store'),
-        ),
-      ],
     );
   }
 }

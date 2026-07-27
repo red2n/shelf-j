@@ -359,16 +359,17 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           ),
           FilledButton.icon(
             style: FilledButton.styleFrom(
-              backgroundColor: AppTheme.posAccent,
+              backgroundColor: context.channelAccent.color,
+              foregroundColor: context.channelAccent.onColor,
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
             onPressed: _processing ? null : _placeOrderOnly,
             icon: _processing
-                ? const SizedBox(
+                ? SizedBox(
                     height: 20,
                     width: 20,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white))
+                        strokeWidth: 2, color: context.channelAccent.onColor))
                 : const Icon(Icons.receipt_long),
             label: Text(_processing ? 'Placing…' : 'Place order',
                 style: const TextStyle(fontSize: 17)),
@@ -626,6 +627,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
                                     const TextStyle(fontWeight: FontWeight.bold)),
                             IconButton(
                               icon: const Icon(Icons.delete_outline, size: 20),
+                              tooltip: 'Remove tender',
                               onPressed: _processing
                                   ? null
                                   : () => setState(() => _tenders.removeAt(i)),
@@ -638,16 +640,17 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           ),
           FilledButton.icon(
             style: FilledButton.styleFrom(
-              backgroundColor: AppTheme.posAccent,
+              backgroundColor: context.channelAccent.color,
+              foregroundColor: context.channelAccent.onColor,
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
             onPressed: (_processing || !settled) ? null : _complete,
             icon: _processing
-                ? const SizedBox(
+                ? SizedBox(
                     height: 20,
                     width: 20,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white))
+                        strokeWidth: 2, color: context.channelAccent.onColor))
                 : const Icon(Icons.check_circle_outline),
             label: Text(_processing ? 'Processing…' : 'Complete Sale',
                 style: const TextStyle(fontSize: 17)),
@@ -883,7 +886,9 @@ class _GiftCardTenderDialogState extends ConsumerState<_GiftCardTenderDialog> {
                           width: 16,
                           child: CircularProgressIndicator(strokeWidth: 2)))
                   : IconButton(
-                      icon: const Icon(Icons.search), onPressed: _check),
+                      icon: const Icon(Icons.search),
+                      tooltip: 'Check balance',
+                      onPressed: _check),
             ),
             onSubmitted: (_) => _check(),
           ),

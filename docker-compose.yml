@@ -630,8 +630,10 @@ services:
       shelfj.db.password: ${ORDER_DB_PASSWORD:-order_dev_change_me}
       JAVA_TOOL_OPTIONS: "${ORDER_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: order-svc
-      # Gap #63 — set to true to make order-svc resolve prices from pricing-svc (ignore client prices)
-      shelfj.order.pricing.enforce: ${SHELFJ_ORDER_PRICING_ENFORCE:-false}
+      # Gap #63 — order-svc resolves prices from pricing-svc, ignoring client-supplied prices.
+      # Defaults to true (secure); set SHELFJ_ORDER_PRICING_ENFORCE=false only for local dev/demo
+      # with an unseeded price catalogue.
+      shelfj.order.pricing.enforce: ${SHELFJ_ORDER_PRICING_ENFORCE:-true}
       # Checkout stock holds for ONLINE orders. Defaults to false in this dev rig (mirrors
       # pricing.enforce): with no seeded inventory every online checkout would 409 on stock.
       shelfj.order.inventory.reserve-enforce: ${SHELFJ_ORDER_RESERVE_ENFORCE:-false}
