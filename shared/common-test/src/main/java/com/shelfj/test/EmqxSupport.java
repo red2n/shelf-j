@@ -3,10 +3,10 @@ package com.shelfj.test;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
+import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.utility.DockerImageName;
-import org.testcontainers.utility.MountableFile;
 
 /**
  * Starts the same EMQX broker + config the docker-compose stack uses (infra/emqx.conf,
@@ -35,15 +35,18 @@ public final class EmqxSupport implements AutoCloseable {
         new GenericContainer<>(DockerImageName.parse("emqx/emqx:5.8.0"))
             .withExposedPorts(MQTT_PORT, API_PORT)
             .withEnv("SHELFJ_JWT_SECRET", jwtSecret)
-            .withCopyFileToContainer(
-                MountableFile.forHostPath(REPO_ROOT.resolve("infra/emqx.conf")),
-                "/opt/emqx/etc/emqx.conf")
-            .withCopyFileToContainer(
-                MountableFile.forHostPath(REPO_ROOT.resolve("infra/emqx-acl.conf")),
-                "/opt/emqx/etc/acl.conf")
-            .withCopyFileToContainer(
-                MountableFile.forHostPath(REPO_ROOT.resolve("infra/emqx-api-key.conf")),
-                "/opt/emqx/etc/api-key.conf")
+            .withFileSystemBind(
+                REPO_ROOT.resolve("infra/emqx.conf").toString(),
+                "/opt/emqx/etc/emqx.conf",
+                BindMode.READ_ONLY)
+            .withFileSystemBind(
+                REPO_ROOT.resolve("infra/emqx-acl.conf").toString(),
+                "/opt/emqx/etc/acl.conf",
+                BindMode.READ_ONLY)
+            .withFileSystemBind(
+                REPO_ROOT.resolve("infra/emqx-api-key.conf").toString(),
+                "/opt/emqx/etc/api-key.conf",
+                BindMode.READ_ONLY)
             .waitingFor(Wait.forListeningPort())
             .withStartupTimeout(Duration.ofSeconds(90));
     c.start();
