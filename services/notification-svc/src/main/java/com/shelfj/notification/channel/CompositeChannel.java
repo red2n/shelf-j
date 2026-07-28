@@ -1,5 +1,7 @@
 package com.shelfj.notification.channel;
 
+import java.util.UUID;
+
 /**
  * Fan-out channel: always runs the in-app (APP) path so the notification feed stays populated, then
  * the external channel (SMTP). External failure propagates so callers retry; APP never fails the
@@ -22,9 +24,14 @@ public final class CompositeChannel implements NotificationChannel {
   }
 
   @Override
-  public void send(String recipient, String subject, String body) {
+  public void send(UUID tenantId, String recipient, String subject, String body) {
     // In-app first (no-op + debug log); never blocks external delivery.
-    inApp.send(recipient, subject, body);
-    external.send(recipient, subject, body);
+    inApp.send(tenantId, recipient, subject, body);
+    external.send(tenantId, recipient, subject, body);
+  }
+
+  /** For {@link NotificationChannelProducer}'s shutdown disposer only. */
+  NotificationChannel external() {
+    return external;
   }
 }

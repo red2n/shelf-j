@@ -348,6 +348,23 @@ services:
       timeout: 3s
       retries: 12
 
+  # MQTT broker for notification-svc's device-facing push channel (POS terminals, kiosk/back-store
+  # displays, platform console). Only exercised when shelfj.notification.channel=mqtt — the default
+  # (app) never talks to it, so it's deliberately not in x-svc-depends.
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    container_name: shelfj-mqtt
+    restart: unless-stopped
+    volumes:
+      - ./infra/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports: ["127.0.0.1:1883:1883"]
+    networks: [shelfj_network]
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t healthcheck -m ping -q 0 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   zipkin:
     image: openzipkin/zipkin:3.6.1
     container_name: shelfj-zipkin
@@ -782,6 +799,9 @@ services:
       shelfj.db.password: ${NOTIFICATION_DB_PASSWORD:-notification_dev_change_me}
       JAVA_TOOL_OPTIONS: "${NOTIFICATION_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: notification-svc
+      # Only used when shelfj.notification.channel is overridden to mqtt (default: app).
+      shelfj.notification.channel: ${NOTIFICATION_CHANNEL:-app}
+      shelfj.notification.mqtt.host: mqtt
     mem_limit: ${NOTIFICATION_MEM_LIMIT:-512m}
     networks: [shelfj_network]
     depends_on: *svc-depends

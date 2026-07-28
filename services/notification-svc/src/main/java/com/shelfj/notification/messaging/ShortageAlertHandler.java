@@ -1,6 +1,7 @@
 package com.shelfj.notification.messaging;
 
 import com.shelfj.notification.service.NotificationService;
+import com.shelfj.notification.service.Notifier;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -17,6 +18,13 @@ import java.util.UUID;
  * {@link ShortageAlertConsumer} (SRP). Malformed payloads are skipped; write failures propagate so
  * the consumer loop redelivers instead of losing the event.
  *
+ * <p>Also pushes the alert via {@link Notifier} (recipient = store id) so a device-facing channel
+ * — MQTT to POS terminals / kiosk displays / the platform console — gets it in real time instead
+ * of relying on staff polling {@code /admin/notifications/shortage-alerts}. The push is called
+ * unconditionally (not gated on the alert being newly recorded): {@link Notifier} has its own
+ * (eventId, type) dedupe, independent of the shortage_alerts dedupe, so a redelivery after a prior
+ * push failure still retries the push even though the alert row is already there.
+ *
  * <p>Expected payload: {@code {eventId, tenantId, storeId, variantId, available, threshold}}.
  */
 @ApplicationScoped
@@ -24,8 +32,10 @@ class ShortageAlertHandler {
 
   private static final Logger LOG = System.getLogger(ShortageAlertHandler.class.getName());
   static final String CONSUMER_NAME = "notification-svc/shortage-alert";
+  static final String NOTIFICATION_TYPE = "SHORTAGE_ALERT";
 
   @Inject NotificationService service;
+  @Inject Notifier notifier;
 
   void handle(String json) {
     UUID eventId;
@@ -60,5 +70,18 @@ class ShortageAlertHandler {
           available,
           threshold);
     }
+
+    String body =
+        "Variant "
+            + variantId
+            + " at store "
+            + storeId
+            + ": available "
+            + available.toPlainString()
+            + " (threshold "
+            + threshold.toPlainString()
+            + ")";
+    notifier.notifyOnce(
+        eventId, NOTIFICATION_TYPE, tenantId, storeId.toString(), "Stock below threshold", body);
   }
 }

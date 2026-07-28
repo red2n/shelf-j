@@ -2,6 +2,7 @@ package com.shelfj.notification.channel;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.util.UUID;
 
 /**
  * Default channel: in-app notifications. The message is persisted to {@code notification_log} by
@@ -20,7 +21,7 @@ public final class AppChannel implements NotificationChannel {
   }
 
   @Override
-  public void send(String recipient, String subject, String body) {
+  public void send(UUID tenantId, String recipient, String subject, String body) {
     // In-app delivery is the notification_log record itself (written by the Notifier); nothing is
     // pushed out of band. Logged so the message is visible in dev without a feed reader.
     LOG.log(Level.DEBUG, "[in-app → {0}] {1}", recipient, subject);

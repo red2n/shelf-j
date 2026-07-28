@@ -3,9 +3,12 @@ package com.shelfj.notification.channel;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class CompositeChannelTest {
+
+  private static final UUID TENANT = UUID.randomUUID();
 
   private static final class CountingChannel implements NotificationChannel {
     final String id;
@@ -22,7 +25,7 @@ class CompositeChannelTest {
     }
 
     @Override
-    public void send(String recipient, String subject, String body) {
+    public void send(UUID tenantId, String recipient, String subject, String body) {
       if (fail) throw new IllegalStateException(id + " boom");
       sends++;
     }
@@ -35,7 +38,7 @@ class CompositeChannelTest {
     CompositeChannel composite = new CompositeChannel(app, smtp);
 
     assertEquals("SMTP", composite.name());
-    composite.send("a@b.com", "Hi", "body");
+    composite.send(TENANT, "a@b.com", "Hi", "body");
     assertEquals(1, app.sends);
     assertEquals(1, smtp.sends);
   }
@@ -47,7 +50,8 @@ class CompositeChannelTest {
     smtp.fail = true;
     CompositeChannel composite = new CompositeChannel(app, smtp);
 
-    assertThrows(IllegalStateException.class, () -> composite.send("a@b.com", "Hi", "body"));
+    assertThrows(
+        IllegalStateException.class, () -> composite.send(TENANT, "a@b.com", "Hi", "body"));
     assertEquals(1, app.sends, "in-app still ran before external failure");
     assertEquals(0, smtp.sends);
   }

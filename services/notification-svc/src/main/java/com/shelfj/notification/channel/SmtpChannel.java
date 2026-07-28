@@ -8,6 +8,7 @@ import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import java.util.Properties;
+import java.util.UUID;
 
 /**
  * SMTP delivery via Jakarta Mail. Selected when {@code shelfj.notification.channel=smtp}.
@@ -39,7 +40,8 @@ public final class SmtpChannel implements NotificationChannel {
   }
 
   @Override
-  public void send(String recipient, String subject, String body) {
+  public void send(UUID tenantId, String recipient, String subject, String body) {
+    // The recipient is already a globally-unique email address, so email needs no tenant scoping.
     boolean auth = username != null && !username.isBlank();
     Properties props = new Properties();
     props.put("mail.smtp.host", host);
