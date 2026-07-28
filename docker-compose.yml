@@ -363,7 +363,11 @@ services:
     container_name: shelfj-mqtt
     restart: unless-stopped
     environment:
-      SHELFJ_JWT_SECRET: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
+      # infra/emqx.conf's `secret` is a placeholder — EMQX only interpolates its own EMQX_<PATH>
+      # env-var overrides into config values, never arbitrary custom vars, so the real secret is
+      # injected this way (overrides authentication.1.secret) rather than by referencing
+      # ${SHELFJ_JWT_SECRET} from within the conf file, which silently does not work.
+      EMQX_AUTHENTICATION__1__SECRET: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
     volumes:
       - ./infra/emqx.conf:/opt/emqx/etc/emqx.conf:ro
       - ./infra/emqx-acl.conf:/opt/emqx/etc/acl.conf:ro
