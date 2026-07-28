@@ -12,10 +12,10 @@ import org.testcontainers.utility.MountableFile;
  * Starts the same EMQX broker + config the docker-compose stack uses (infra/emqx.conf,
  * infra/emqx-acl.conf, infra/emqx-api-key.conf) so integration tests in notification-svc (MQTT
  * publish/ACL) and iam-svc (session-kick on logout) exercise the real broker config, not a
- * stand-in. Mounts those files straight from the repo (no copy) so a test can never drift from
- * what actually ships — this couples the test to running from a {@code services/<name>} module
- * directory (the normal `mvn test` working directory), which every other module-relative path in
- * this repo already assumes.
+ * stand-in. Mounts those files straight from the repo (no copy) so a test can never drift from what
+ * actually ships — this couples the test to running from a {@code services/<name>} module directory
+ * (the normal `mvn test` working directory), which every other module-relative path in this repo
+ * already assumes.
  */
 public final class EmqxSupport implements AutoCloseable {
 

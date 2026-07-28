@@ -245,8 +245,8 @@ public class AuthService {
 
   /**
    * Revoke a refresh token (logout) and, best-effort, kick the user's live MQTT push session (see
-   * {@link MqttSessionRevoker}) so they stop receiving device pushes immediately rather than
-   * until the access token naturally expires.
+   * {@link MqttSessionRevoker}) so they stop receiving device pushes immediately rather than until
+   * the access token naturally expires.
    */
   public void logout(String refreshToken) {
     refreshTokens

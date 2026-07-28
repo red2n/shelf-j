@@ -12,8 +12,8 @@ import java.time.Instant;
  * token's {@code tenant} claim is that same sentinel rather than a real tenant id.
  *
  * <p>Minted once per process (not refreshed): a long expiry means a restart is required to renew
- * it, which is an accepted trade-off for now — see notification-svc notes if this needs to become
- * a background-refreshed credential.
+ * it, which is an accepted trade-off for now — see notification-svc notes if this needs to become a
+ * background-refreshed credential.
  */
 final class MqttPublisherToken {
 

@@ -14,11 +14,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * ShortageAlertHandler both records the alert row (existing behaviour) and pushes it through
- * {@link Notifier} — the device-facing channel (MQTT to POS/kiosk/platform console) picks this up
- * when {@code shelfj.notification.channel=mqtt}. The two are independently idempotent: a
- * redelivery must still retry a push that previously failed, even though the alert row is already
- * there from the first delivery attempt.
+ * ShortageAlertHandler both records the alert row (existing behaviour) and pushes it through {@link
+ * Notifier} — the device-facing channel (MQTT to POS/kiosk/platform console) picks this up when
+ * {@code shelfj.notification.channel=mqtt}. The two are independently idempotent: a redelivery must
+ * still retry a push that previously failed, even though the alert row is already there from the
+ * first delivery attempt.
  */
 class ShortageAlertHandlerTest {
 

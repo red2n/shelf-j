@@ -18,9 +18,9 @@ import java.util.UUID;
  * {@link ShortageAlertConsumer} (SRP). Malformed payloads are skipped; write failures propagate so
  * the consumer loop redelivers instead of losing the event.
  *
- * <p>Also pushes the alert via {@link Notifier} (recipient = store id) so a device-facing channel
- * — MQTT to POS terminals / kiosk displays / the platform console — gets it in real time instead
- * of relying on staff polling {@code /admin/notifications/shortage-alerts}. The push is called
+ * <p>Also pushes the alert via {@link Notifier} (recipient = store id) so a device-facing channel —
+ * MQTT to POS terminals / kiosk displays / the platform console — gets it in real time instead of
+ * relying on staff polling {@code /admin/notifications/shortage-alerts}. The push is called
  * unconditionally (not gated on the alert being newly recorded): {@link Notifier} has its own
  * (eventId, type) dedupe, independent of the shortage_alerts dedupe, so a redelivery after a prior
  * push failure still retries the push even though the alert row is already there.

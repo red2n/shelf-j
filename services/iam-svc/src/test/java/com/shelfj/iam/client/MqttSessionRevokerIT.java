@@ -25,9 +25,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Proves logout's MQTT kick ({@link MqttSessionRevoker}, wired via {@code AuthService.logout})
  * actually disconnects a live device session against a real EMQX broker — not just that the HTTP
- * call was made and returned 2xx. This is also the actual verification of
- * infra/emqx-api-key.conf's bootstrap-file format, which was authored without a broker available
- * to test against.
+ * call was made and returned 2xx. This is also the actual verification of infra/emqx-api-key.conf's
+ * bootstrap-file format, which was authored without a broker available to test against.
  */
 @HelidonTest
 class MqttSessionRevokerIT {
@@ -47,8 +46,7 @@ class MqttSessionRevokerIT {
     System.setProperty("shelfj.consul.enabled", "false");
     System.setProperty("shelfj.kafka.enabled", "false");
     System.setProperty("shelfj.jwt.secret", JWT_SECRET);
-    System.setProperty(
-        "shelfj.mqtt.admin-api-url", "http://" + MQTT.host() + ":" + MQTT.apiPort());
+    System.setProperty("shelfj.mqtt.admin-api-url", "http://" + MQTT.host() + ":" + MQTT.apiPort());
     // Must match infra/emqx-api-key.conf's literal contents — see EmqxSupport's javadoc.
     System.setProperty("shelfj.mqtt.admin-api-key", "iam-svc");
     System.setProperty("shelfj.mqtt.admin-api-secret", "iam_mqtt_admin_dev_change_me");

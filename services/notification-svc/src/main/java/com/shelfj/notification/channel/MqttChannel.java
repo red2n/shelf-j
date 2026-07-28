@@ -13,14 +13,14 @@ import java.util.UUID;
  * Device-facing push over MQTT: POS terminals, kiosk/back-store displays, and the platform console
  * subscribe to their own {@code shelfj/notifications/{tenantId}/{recipient}} topic and receive
  * alerts (e.g. StockBelowThreshold) in real time instead of polling {@code
- * /admin/notifications/shortage-alerts}. Selected via {@code shelfj.notification.channel=mqtt}.
- * Not for customer-facing push — browsers/phones don't speak MQTT natively; use SMTP/SMS for that.
+ * /admin/notifications/shortage-alerts}. Selected via {@code shelfj.notification.channel=mqtt}. Not
+ * for customer-facing push — browsers/phones don't speak MQTT natively; use SMTP/SMS for that.
  *
- * <p>The connection is established lazily on first send (not in the constructor) so a broker
- * that isn't up yet at boot does not fail service startup — see ARCHITECTURE §17 (services start
- * in any order). Once connected, the client reconnects automatically on drops; a publish attempted
- * while disconnected throws, so the caller (via {@link com.shelfj.notification.service.Notifier})
- * does not record the send and the Kafka consumer redelivers and retries.
+ * <p>The connection is established lazily on first send (not in the constructor) so a broker that
+ * isn't up yet at boot does not fail service startup — see ARCHITECTURE §17 (services start in any
+ * order). Once connected, the client reconnects automatically on drops; a publish attempted while
+ * disconnected throws, so the caller (via {@link com.shelfj.notification.service.Notifier}) does
+ * not record the send and the Kafka consumer redelivers and retries.
  */
 public final class MqttChannel implements NotificationChannel {
 
@@ -43,10 +43,7 @@ public final class MqttChannel implements NotificationChannel {
           builder
               .simpleAuth()
               .username(username)
-              .password(
-                  password == null
-                      ? new byte[0]
-                      : password.getBytes(StandardCharsets.UTF_8))
+              .password(password == null ? new byte[0] : password.getBytes(StandardCharsets.UTF_8))
               .applySimpleAuth();
     }
     this.client = builder.buildBlocking();

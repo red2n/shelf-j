@@ -104,8 +104,7 @@ public class NotificationChannelProducer {
     }
     if ("mqtt".equalsIgnoreCase(channelName)) {
       String token =
-          MqttPublisherToken.mint(
-              jwtSecret.orElse(null), jwtIssuer, mqttPublisherTokenTtlSeconds);
+          MqttPublisherToken.mint(jwtSecret.orElse(null), jwtIssuer, mqttPublisherTokenTtlSeconds);
       MqttChannel mqtt =
           new MqttChannel(
               mqttHost,

@@ -16,18 +16,16 @@ import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * On logout, forces notification-svc's MQTT device-push channel to drop the user's live
- * connection instead of leaving it receiving alerts until the JWT naturally expires (EMQX's JWT
- * auth is only checked at CONNECT time, not per message — see docs/ARCHITECTURE.md's
- * notification-svc section). Best-effort: any failure (broker unreachable, feature not
- * configured, the user never had a live connection) is swallowed — a logout must never fail
- * because of this side effect.
+ * On logout, forces notification-svc's MQTT device-push channel to drop the user's live connection
+ * instead of leaving it receiving alerts until the JWT naturally expires (EMQX's JWT auth is only
+ * checked at CONNECT time, not per message — see docs/ARCHITECTURE.md's notification-svc section).
+ * Best-effort: any failure (broker unreachable, feature not configured, the user never had a live
+ * connection) is swallowed — a logout must never fail because of this side effect.
  *
  * <p>The client id it kicks, {@code mqtt-<tenantId>-<userId>}, must match exactly what the
- * frontend's live-push connection uses — see frontends/shelf-app's
- * live_alerts_provider.dart. NOT independently verified against a running broker (no Docker in
- * the environment that authored this); MqttSessionRevokerIT (Testcontainers) is the actual
- * verification.
+ * frontend's live-push connection uses — see frontends/shelf-app's live_alerts_provider.dart. NOT
+ * independently verified against a running broker (no Docker in the environment that authored
+ * this); MqttSessionRevokerIT (Testcontainers) is the actual verification.
  */
 @ApplicationScoped
 public class MqttSessionRevoker {

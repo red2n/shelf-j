@@ -11,9 +11,9 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
- * No broker in these tests (that needs Testcontainers/a real MQTT connection — see
- * NotificationIT for the DB-backed integration test); this covers the two pure pieces of logic
- * that decide tenant isolation and wire format: topic scoping and payload shape.
+ * No broker in these tests (that needs Testcontainers/a real MQTT connection — see NotificationIT
+ * for the DB-backed integration test); this covers the two pure pieces of logic that decide tenant
+ * isolation and wire format: topic scoping and payload shape.
  */
 class MqttChannelTest {
 

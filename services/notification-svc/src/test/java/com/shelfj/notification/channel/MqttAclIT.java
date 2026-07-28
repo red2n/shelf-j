@@ -31,8 +31,8 @@ import org.junit.jupiter.api.Test;
  * own; (3) a client cannot spoof a username that doesn't match its JWT's {@code tenant} claim.
  *
  * <p>This is the only place that can catch a broker misconfiguration — the EMQX config was written
- * without a broker available to test against, so this is the actual verification of it, not just
- * of the Java code.
+ * without a broker available to test against, so this is the actual verification of it, not just of
+ * the Java code.
  */
 class MqttAclIT {
 
