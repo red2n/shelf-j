@@ -354,8 +354,8 @@ services:
   #
   # EMQX (not Mosquitto): clients authenticate with their existing shelfj platform JWT so a device
   # reuses the login it already has instead of a separate minted credential; auth+ACL config is in
-  # infra/emqx.conf / infra/emqx-acl.conf (see those files — NOT independently verified against a
-  # running broker, confirm with the MqttAclIT Testcontainers test before relying on this in prod).
+  # infra/emqx.conf / infra/emqx-acl.conf, verified against a running broker by the MqttAclIT and
+  # MqttSessionRevokerIT Testcontainers tests.
   # 1883 = plain MQTT (notification-svc's publisher connection); 8083 = MQTT-over-WebSocket (the
   # Flutter admin/platform-console/POS shells, which can't open a raw TCP socket from a browser).
   mqtt:
