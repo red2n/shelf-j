@@ -80,7 +80,7 @@ class MqttAclIT {
   }
 
   @Test
-  void publishedAlertReachesItsOwnTenantsSubscriber() {
+  void publishedAlertReachesItsOwnTenantsSubscriber() throws InterruptedException {
     UUID tenantA = UUID.randomUUID();
     MqttChannel publisher =
         new MqttChannel(
