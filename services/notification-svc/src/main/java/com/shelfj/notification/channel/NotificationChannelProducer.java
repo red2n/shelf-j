@@ -65,18 +65,26 @@ public class NotificationChannelProducer {
   @ConfigProperty(name = "shelfj.notification.mqtt.client-id", defaultValue = "notification-svc")
   String mqttClientId;
 
-  // Optional so an unset/blank credential is "no auth" rather than a failed injection.
-  @Inject
-  @ConfigProperty(name = "shelfj.notification.mqtt.username")
-  java.util.Optional<String> mqttUsername;
-
-  @Inject
-  @ConfigProperty(name = "shelfj.notification.mqtt.password")
-  java.util.Optional<String> mqttPassword;
-
   @Inject
   @ConfigProperty(name = "shelfj.notification.mqtt.tls", defaultValue = "false")
   boolean mqttTls;
+
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.notification.mqtt.publisher-token-ttl-seconds",
+      defaultValue = "2592000") // 30 days
+  long mqttPublisherTokenTtlSeconds;
+
+  // The MQTT broker authenticates every client, including this service's own publisher
+  // connection, with a shelfj platform JWT (see infra/emqx.conf) — so notification-svc needs the
+  // same signing secret/issuer as iam-svc.
+  @Inject
+  @ConfigProperty(name = "shelfj.jwt.secret")
+  java.util.Optional<String> jwtSecret;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.jwt.issuer", defaultValue = "shelfj")
+  String jwtIssuer;
 
   @Produces
   @ApplicationScoped
@@ -95,13 +103,16 @@ public class NotificationChannelProducer {
       return new CompositeChannel(app, smtp);
     }
     if ("mqtt".equalsIgnoreCase(channelName)) {
+      String token =
+          MqttPublisherToken.mint(
+              jwtSecret.orElse(null), jwtIssuer, mqttPublisherTokenTtlSeconds);
       MqttChannel mqtt =
           new MqttChannel(
               mqttHost,
               mqttPort,
               mqttClientId,
-              blankToNull(mqttUsername),
-              blankToNull(mqttPassword),
+              MqttPublisherToken.PUBLISHER_IDENTITY,
+              token,
               mqttTls);
       return new CompositeChannel(app, mqtt);
     }

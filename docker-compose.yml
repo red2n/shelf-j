@@ -351,19 +351,33 @@ services:
   # MQTT broker for notification-svc's device-facing push channel (POS terminals, kiosk/back-store
   # displays, platform console). Only exercised when shelfj.notification.channel=mqtt — the default
   # (app) never talks to it, so it's deliberately not in x-svc-depends.
+  #
+  # EMQX (not Mosquitto): clients authenticate with their existing shelfj platform JWT so a device
+  # reuses the login it already has instead of a separate minted credential; auth+ACL config is in
+  # infra/emqx.conf / infra/emqx-acl.conf (see those files — NOT independently verified against a
+  # running broker, confirm with the MqttAclIT Testcontainers test before relying on this in prod).
+  # 1883 = plain MQTT (notification-svc's publisher connection); 8083 = MQTT-over-WebSocket (the
+  # Flutter admin/platform-console/POS shells, which can't open a raw TCP socket from a browser).
   mqtt:
-    image: eclipse-mosquitto:2.0
+    image: emqx/emqx:5.8.0
     container_name: shelfj-mqtt
     restart: unless-stopped
+    environment:
+      SHELFJ_JWT_SECRET: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
     volumes:
-      - ./infra/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-    ports: ["127.0.0.1:1883:1883"]
+      - ./infra/emqx.conf:/opt/emqx/etc/emqx.conf:ro
+      - ./infra/emqx-acl.conf:/opt/emqx/etc/acl.conf:ro
+    ports:
+      - "127.0.0.1:1883:1883"
+      - "127.0.0.1:8083:8083"
+      - "127.0.0.1:18083:18083" # dashboard — local debugging only, admin/public by default
     networks: [shelfj_network]
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t healthcheck -m ping -q 0 || exit 1"]
+      test: ["CMD-SHELL", "emqx ctl status || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
+      start_period: 30s
 
   zipkin:
     image: openzipkin/zipkin:3.6.1
@@ -799,9 +813,12 @@ services:
       shelfj.db.password: ${NOTIFICATION_DB_PASSWORD:-notification_dev_change_me}
       JAVA_TOOL_OPTIONS: "${NOTIFICATION_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: notification-svc
-      # Only used when shelfj.notification.channel is overridden to mqtt (default: app).
+      # Only used when shelfj.notification.channel is overridden to mqtt (default: app). The
+      # MQTT broker authenticates every client (including this publisher connection) with a
+      # shelfj platform JWT, so notification-svc needs the same signing secret as iam-svc/gateway.
       shelfj.notification.channel: ${NOTIFICATION_CHANNEL:-app}
       shelfj.notification.mqtt.host: mqtt
+      shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
     mem_limit: ${NOTIFICATION_MEM_LIMIT:-512m}
     networks: [shelfj_network]
     depends_on: *svc-depends

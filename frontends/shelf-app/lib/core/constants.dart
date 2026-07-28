@@ -19,6 +19,16 @@ class ApiConstants {
   static const String customer = 'customer-svc';
   static const String reporting = 'reporting-svc';
   static const String notification = 'notification-svc';
+
+  /// MQTT-over-WebSocket broker for the live admin push channel (see
+  /// lib/features/admin/providers/live_alerts_provider.dart). Not behind the gateway — a
+  /// persistent pub/sub socket needs a WS-capable path, so this points straight at the broker.
+  /// Overridable at build time for a dockerized/remote deploy, same pattern as [baseUrl]:
+  ///   flutter build web --dart-define=SHELFJ_MQTT_WS_URL=wss://mqtt.example.com/mqtt
+  static const String mqttWsUrl = String.fromEnvironment(
+    'SHELFJ_MQTT_WS_URL',
+    defaultValue: 'ws://localhost:8083/mqtt',
+  );
 }
 
 class StorageKeys {

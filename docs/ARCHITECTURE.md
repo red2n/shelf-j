@@ -345,7 +345,9 @@ Customer profiles, addresses, and two append-only ledgers.
 - **Notable:** GDPR-style anonymize-on-delete; both ledgers are auditable balances, never mutable counters.
 
 ### notification-svc — Alerting
-Thin fan-in service: consumes events, records notifications, and exposes read feeds. Delivery channel is pluggable (`shelfj.notification.channel`): in-app log by default, with an optional SMTP email channel (`SmtpChannel`). No SMS yet — see PRD open questions.
+Thin fan-in service: consumes events, records notifications, and exposes read feeds. Delivery channel is pluggable (`shelfj.notification.channel`): in-app log by default, an optional SMTP email channel (`SmtpChannel`), or an optional MQTT channel (`MqttChannel`, HiveMQ MQTT Client) for device-facing push — POS terminals, kiosk/back-store displays, the platform console — topic-scoped `shelfj/notifications/{tenantId}/{recipient}`. No SMS yet — see PRD open questions.
+
+**MQTT broker (EMQX, not Mosquitto):** every client — a tenant's own device *and* notification-svc's own publisher connection — authenticates with a shelfj platform JWT (same HS256 secret/issuer iam-svc signs with) as the MQTT password; the broker's `verify_claims` config ties the connecting username to that JWT's `tenant` claim so it can't be spoofed, and file-based ACL then scopes a tenant client's subscribe to exactly its own topic subtree (`infra/emqx.conf`, `infra/emqx-acl.conf`). A device already holding a login session reuses that JWT directly — no separate credential-issuing endpoint. **This auth/ACL config was authored without a broker available to test against; `MqttAclIT` (Testcontainers) is the actual verification of it — run it before relying on this in anything beyond local dev.**
 - **API:** `/admin/notifications/shortage-alerts` (filter by store/variant, paginated); `/admin/notifications` (in-app notification feed, newest first).
 - **Tables:** `shortage_alerts`, `notification_log`.
 - **Events:** consumes `StockBelowThreshold` (shortage alert), `OrderConfirmed` (order-confirmation notice), `UserRegistered` (welcome notice); publishes nothing.
