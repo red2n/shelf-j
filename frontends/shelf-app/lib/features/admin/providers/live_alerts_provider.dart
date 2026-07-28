@@ -27,21 +27,25 @@ class LiveAlert {
 /// a conditional import — not implemented, since the shortage-alert dashboard is a back-office
 /// screen predominantly used from a browser.
 class LiveAlertsNotifier extends StateNotifier<LiveAlert?> {
-  LiveAlertsNotifier(this._tenantId, this._jwt) : super(null) {
+  LiveAlertsNotifier(this._tenantId, this._userId, this._jwt, this._storeIds) : super(null) {
     if (kIsWeb && _tenantId != null && _jwt.isNotEmpty) {
       _connect(_tenantId, _jwt);
     }
   }
 
   final String? _tenantId;
+  final String _userId;
   final String _jwt;
+  final List<String> _storeIds;
   MqttBrowserClient? _client;
 
   Future<void> _connect(String tenantId, String jwt) async {
-    final client = MqttBrowserClient(
-      ApiConstants.mqttWsUrl,
-      'admin-$tenantId-${DateTime.now().millisecondsSinceEpoch}',
-    );
+    // Deterministic clientId (not a per-connection random suffix): iam-svc's
+    // MqttSessionRevoker computes this exact same string on logout to force-disconnect this
+    // session — see services/iam-svc/.../client/MqttSessionRevoker.java. A second simultaneous
+    // connection with the same clientId disconnects the first (standard MQTT behavior), so only
+    // one live push connection per user is supported at a time — an accepted trade-off.
+    final client = MqttBrowserClient(ApiConstants.mqttWsUrl, 'mqtt-$tenantId-$_userId');
     client.keepAlivePeriod = 30;
     client.autoReconnect = true;
     client.logging(on: false);
@@ -57,7 +61,18 @@ class LiveAlertsNotifier extends StateNotifier<LiveAlert?> {
     }
 
     _client = client;
-    client.subscribe('shelfj/notifications/$tenantId/#', MqttQos.atLeastOnce);
+    // Store-restricted staff (e.g. a CASHIER/STOREKEEPER assigned to specific stores) only ever
+    // subscribe to their own stores' topics, not the whole tenant — the ACL is tenant-scoped only
+    // (a device *could* still ask for the tenant wildcard), but a well-behaved client should never
+    // ask for more than the signed-in user is allowed to see. Unrestricted staff (empty storeIds —
+    // OWNER/MANAGER/PLATFORM_ADMIN) keep the tenant-wide wildcard.
+    if (_storeIds.isEmpty) {
+      client.subscribe('shelfj/notifications/$tenantId/#', MqttQos.atLeastOnce);
+    } else {
+      for (final storeId in _storeIds) {
+        client.subscribe('shelfj/notifications/$tenantId/$storeId', MqttQos.atLeastOnce);
+      }
+    }
     client.updates?.listen((events) {
       for (final event in events) {
         final publish = event.payload as MqttPublishMessage;
@@ -90,6 +105,8 @@ final liveAlertsProvider = StateNotifierProvider.autoDispose<LiveAlertsNotifier,
 ) {
   final auth = ref.watch(authNotifierProvider).value;
   final tenantId = auth is AuthAuthenticated ? auth.tenantId : null;
+  final userId = auth is AuthAuthenticated ? auth.userId : '';
   final jwt = auth is AuthAuthenticated ? auth.accessToken : '';
-  return LiveAlertsNotifier(tenantId, jwt);
+  final storeIds = auth is AuthAuthenticated ? auth.storeIds : const <String>[];
+  return LiveAlertsNotifier(tenantId, userId, jwt, storeIds);
 });

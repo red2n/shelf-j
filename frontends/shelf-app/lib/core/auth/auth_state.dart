@@ -18,6 +18,11 @@ class AuthAuthenticated extends AuthState {
   final List<String> roles;
   final String? email;
 
+  /// Stores this holder may operate in — mirrors the JWT's `storeIds` claim. Empty means
+  /// unrestricted (e.g. OWNER/PLATFORM_ADMIN), matching backend TenantContext semantics; present
+  /// means store-bound staff (e.g. a CASHIER/STOREKEEPER assigned to specific stores).
+  final List<String> storeIds;
+
   const AuthAuthenticated({
     required this.accessToken,
     required this.refreshToken,
@@ -25,6 +30,7 @@ class AuthAuthenticated extends AuthState {
     this.tenantId,
     required this.roles,
     this.email,
+    this.storeIds = const [],
   });
 
   /// Full tenant console (OWNER/MANAGER). Storekeepers also land in admin but

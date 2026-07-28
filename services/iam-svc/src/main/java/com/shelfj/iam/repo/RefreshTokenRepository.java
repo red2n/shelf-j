@@ -55,11 +55,18 @@ public class RefreshTokenRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
-  public void revoke(String tokenHash) {
-    exec(
-        "UPDATE refresh_tokens SET revoked = true WHERE token_hash = ?",
-        ps -> ps.setString(1, tokenHash),
-        "revoke refresh token");
+  /**
+   * Revoke one token (logout) and return its owner, so the caller can act on whose session this
+   * was.
+   */
+  public Optional<UUID> revoke(String tokenHash) {
+    return query(
+            "UPDATE refresh_tokens SET revoked = true WHERE token_hash = ? RETURNING user_id",
+            ps -> ps.setString(1, tokenHash),
+            rs -> rs.getObject("user_id", UUID.class),
+            "revoke refresh token")
+        .stream()
+        .findFirst();
   }
 
   public void revokeAllForUser(UUID userId) {

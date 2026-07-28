@@ -367,6 +367,7 @@ services:
     volumes:
       - ./infra/emqx.conf:/opt/emqx/etc/emqx.conf:ro
       - ./infra/emqx-acl.conf:/opt/emqx/etc/acl.conf:ro
+      - ./infra/emqx-api-key.conf:/opt/emqx/etc/api-key.conf:ro
     ports:
       - "127.0.0.1:1883:1883"
       - "127.0.0.1:8083:8083"
@@ -604,6 +605,14 @@ services:
       JAVA_TOOL_OPTIONS: "${IAM_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: iam-svc
       shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
+      # Best-effort: on logout, kick the user's live MQTT push session (infra/emqx-api-key.conf)
+      # instead of leaving it connected until the JWT naturally expires. infra/emqx-api-key.conf
+      # is a static file, NOT templated from these env vars — if you override
+      # EMQX_API_KEY/EMQX_API_SECRET here, update that file to match, or the kick calls will
+      # 401 (harmlessly: logout still succeeds, the session just isn't force-disconnected).
+      shelfj.mqtt.admin-api-url: http://mqtt:18083
+      shelfj.mqtt.admin-api-key: ${EMQX_API_KEY:-iam-svc}
+      shelfj.mqtt.admin-api-secret: ${EMQX_API_SECRET:-iam_mqtt_admin_dev_change_me}
     mem_limit: ${IAM_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     depends_on: *svc-depends

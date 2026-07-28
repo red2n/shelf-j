@@ -75,4 +75,23 @@ void main() {
       expect(auth.homeRoute, '/admin/inventory');
     });
   });
+
+  group('storeIds', () {
+    test('defaults to empty (unrestricted) when not supplied', () {
+      final auth = _auth(roles: [UserRoles.owner]);
+      expect(auth.storeIds, isEmpty);
+    });
+
+    test('carries the assigned stores for store-bound staff', () {
+      final auth = AuthAuthenticated(
+        accessToken: 'a',
+        refreshToken: 'r',
+        userId: 'u-1',
+        tenantId: 't-1',
+        roles: const [UserRoles.cashier],
+        storeIds: const ['store-1'],
+      );
+      expect(auth.storeIds, ['store-1']);
+    });
+  });
 }
