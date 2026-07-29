@@ -74,6 +74,11 @@ public class TenantStatusGate {
             .header(io.helidon.http.HeaderNames.create(HttpHeaders.TENANT_ID), tenantId)
             .request()) {
       if (resp.status().code() == 404) {
+        // Only logged branch that actually blocks — the fail-open branches below stay quiet on
+        // purpose, matching every other traffic-control filter in the gateway (RateLimitFilter,
+        // BruteForceFilter): expected per-request outcomes aren't worth log volume. This one is
+        // the exception because it's the gate doing its job, not routine traffic.
+        LOG.log(Level.INFO, "Storefront gate: tenant {0} not found — blocking", tenantId);
         return false; // tenant does not exist → reject, not fail-open
       }
       if (resp.status().code() != 200) {
@@ -81,7 +86,11 @@ public class TenantStatusGate {
       }
       String body = resp.as(String.class);
       // Inactive only on an explicit, successfully-read negative — otherwise fail open.
-      return !body.replaceAll("\\s", "").contains("\"active\":false");
+      boolean active = !body.replaceAll("\\s", "").contains("\"active\":false");
+      if (!active) {
+        LOG.log(Level.INFO, "Storefront gate: tenant {0} is suspended — blocking", tenantId);
+      }
+      return active;
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "tenant-status lookup failed for " + tenantId + ": " + e.getMessage());
       return true;

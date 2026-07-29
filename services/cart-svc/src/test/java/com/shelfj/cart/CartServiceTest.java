@@ -52,7 +52,9 @@ class CartServiceTest {
           }
 
           @Override
-          public void upsertTenantStatus(UUID t, String s, Instant i) {}
+          public boolean upsertTenantStatus(UUID t, String s, Instant i) {
+            return true;
+          }
         };
 
     StoreStatusRepository storeRepo =
@@ -63,7 +65,9 @@ class CartServiceTest {
           }
 
           @Override
-          public void upsertStoreStatus(UUID s, UUID t, String st, Instant i) {}
+          public boolean upsertStoreStatus(UUID s, UUID t, String st, Instant i) {
+            return true;
+          }
         };
 
     CartRepository cartRepo =
