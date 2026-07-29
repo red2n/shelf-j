@@ -34,7 +34,12 @@
         <flyway.version>10.20.1</flyway.version>
         <postgresql.version>42.7.4</postgresql.version>
         <hikaricp.version>6.2.1</hikaricp.version>
-        <testcontainers.version>1.20.4</testcontainers.version>
+        <!-- Must match the version Helidon's own BOM pins org.testcontainers:testcontainers/jdbc
+             to (checked via `mvn help:effective-pom`) — otherwise postgresql/kafka/database-commons
+             resolve to this property's value while testcontainers-core/jdbc resolve to Helidon's,
+             producing a mixed-version Testcontainers classpath (unsupported; caused flaky
+             GenericContainer port-wait timeouts against containers that were demonstrably up). -->
+        <testcontainers.version>1.21.4</testcontainers.version>
         <junit.version>5.11.3</junit.version>
         <lettuce.version>6.5.1.RELEASE</lettuce.version>
         <shelfj.version>0.1.0-SNAPSHOT</shelfj.version>

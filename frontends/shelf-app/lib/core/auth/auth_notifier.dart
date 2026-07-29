@@ -108,6 +108,10 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
                 .toList() ??
             [],
         email: claims['email'] as String?,
+        storeIds: (claims['storeIds'] as List<dynamic>?)
+                ?.map((s) => s.toString())
+                .toList() ??
+            [],
       );
     } catch (_) {
       return const AuthUnauthenticated();

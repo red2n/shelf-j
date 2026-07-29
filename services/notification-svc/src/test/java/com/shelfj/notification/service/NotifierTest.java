@@ -22,6 +22,7 @@ class NotifierTest {
   private static final class FakeChannel implements NotificationChannel {
     int sends;
     boolean fail;
+    UUID lastTenantId;
 
     @Override
     public String name() {
@@ -29,8 +30,9 @@ class NotifierTest {
     }
 
     @Override
-    public void send(String recipient, String subject, String body) {
+    public void send(UUID tenantId, String recipient, String subject, String body) {
       if (fail) throw new IllegalStateException("boom");
+      lastTenantId = tenantId;
       sends++;
     }
   }
@@ -77,6 +79,7 @@ class NotifierTest {
 
     assertEquals(1, channel.sends);
     assertEquals(1, repo.records);
+    assertEquals(TENANT, channel.lastTenantId, "channel must receive the tenant for scoping");
   }
 
   @Test

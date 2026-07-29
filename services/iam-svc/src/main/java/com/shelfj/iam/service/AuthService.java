@@ -3,6 +3,7 @@ package com.shelfj.iam.service;
 import com.shelfj.iam.auth.JwtService;
 import com.shelfj.iam.auth.Passwords;
 import com.shelfj.iam.auth.Tokens;
+import com.shelfj.iam.client.MqttSessionRevoker;
 import com.shelfj.iam.config.ServiceConfig;
 import com.shelfj.iam.domain.User;
 import com.shelfj.iam.dto.Dtos.ProvisionStaffResponse;
@@ -34,6 +35,7 @@ public class AuthService {
   @Inject JwtService jwt;
   @Inject UserRepository users;
   @Inject RefreshTokenRepository refreshTokens;
+  @Inject MqttSessionRevoker mqttSessions;
 
   /** Customer self-signup → creates a CUSTOMER (global, tenantId null) and returns a token pair. */
   public TokenResponse register(String email, String password, String phone) {
@@ -241,9 +243,17 @@ public class AuthService {
     return issueTokens(user);
   }
 
-  /** Revoke a refresh token (logout). */
+  /**
+   * Revoke a refresh token (logout) and, best-effort, kick the user's live MQTT push session (see
+   * {@link MqttSessionRevoker}) so they stop receiving device pushes immediately rather than until
+   * the access token naturally expires.
+   */
   public void logout(String refreshToken) {
-    refreshTokens.revoke(Tokens.hash(refreshToken));
+    refreshTokens
+        .revoke(Tokens.hash(refreshToken))
+        .flatMap(users::findById)
+        .filter(user -> user.tenantId() != null)
+        .ifPresent(user -> mqttSessions.revoke(user.tenantId(), user.id()));
   }
 
   /**

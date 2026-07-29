@@ -32,7 +32,7 @@ public class Notifier {
     }
     // Send first: a failure here throws and is NOT recorded, so the consumer redelivers and
     // retries.
-    channel.send(recipient, subject, body);
+    channel.send(tenantId, recipient, subject, body);
     repo.recordNotification(
         tenantId, eventId, type, channel.name(), recipient, subject, body, "SENT");
   }

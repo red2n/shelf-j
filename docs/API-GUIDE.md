@@ -269,7 +269,8 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `POST /notifications/send` — staff-triggered send (order-svc uses this for EMAIL receipts). Body: `recipient`, `subject`, `body`, optional `type`/`eventId`.
 
 **Business rules**
-- Channel is selected by `shelfj.notification.channel`: `app` (default, in-app only) or `email`/`smtp` (SMTP **plus** in-app via a composite channel so the feed still fills when email is on).
+- Channel is selected by `shelfj.notification.channel`: `app` (default, in-app only), `email`/`smtp` (SMTP **plus** in-app via a composite channel so the feed still fills when email is on), or `mqtt` (device-facing push — POS terminals, kiosk/back-store displays, platform console — **plus** in-app; topic `shelfj/notifications/{tenantId}/{recipient}`).
+- MQTT auth: every client (including this service's own publisher connection) presents a shelfj platform JWT as the MQTT password; the broker (EMQX) verifies it and ties the connecting username to the JWT's `tenant` claim, then ACL-scopes reads to that tenant's own topic subtree — see `infra/emqx.conf` / `infra/emqx-acl.conf`.
 
 **Events**
 - Consumes: `OrderConfirmed` (order-confirmation notice), `StockBelowThreshold` (shortage alert), `UserRegistered` (welcome/registration notice).

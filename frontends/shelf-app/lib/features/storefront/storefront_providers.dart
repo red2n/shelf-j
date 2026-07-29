@@ -450,8 +450,11 @@ final storefrontProductProvider =
   return StoreProduct.fromJson(resp.data['data'] as Map<String, dynamic>);
 });
 
+// Not autoDispose: cached for the session so scrolling the catalog (cards
+// entering/leaving the viewport) doesn't re-fetch variants and trip the
+// gateway's per-IP rate limit.
 final storefrontVariantsProvider =
-    FutureProvider.autoDispose.family<List<StoreVariant>, String>((ref, productId) async {
+    FutureProvider.family<List<StoreVariant>, String>((ref, productId) async {
   final dio = ref.watch(storefrontDioProvider);
   final resp =
       await dio.get('/${ApiConstants.product}/catalog/products/$productId/variants');
@@ -469,15 +472,17 @@ final storefrontShowPricesProvider = Provider<bool>(
 
 /// First sellable variant of a product (no price) — used to add to cart in
 /// catalog mode without ever resolving a price.
+// Not autoDispose: same reasoning as storefrontVariantsProvider above.
 final productFirstVariantProvider =
-    FutureProvider.autoDispose.family<StoreVariant?, String>((ref, productId) async {
+    FutureProvider.family<StoreVariant?, String>((ref, productId) async {
   final variants = await ref.watch(storefrontVariantsProvider(productId).future);
   return variants.isEmpty ? null : variants.first;
 });
 
-/// Resolved ONLINE price for one variant.
+/// Resolved ONLINE price for one variant. Not autoDispose: same reasoning as
+/// storefrontVariantsProvider above.
 final variantPriceProvider =
-    FutureProvider.autoDispose.family<ResolvedPrice, String>((ref, variantId) async {
+    FutureProvider.family<ResolvedPrice, String>((ref, variantId) async {
   final dio = ref.watch(storefrontDioProvider);
   final resp = await dio.post(
     '/${ApiConstants.pricing}/prices/resolve',
@@ -502,8 +507,9 @@ class CardOffer {
   const CardOffer(this.variant, this.price);
 }
 
+// Not autoDispose: same reasoning as storefrontVariantsProvider above.
 final productCardOfferProvider =
-    FutureProvider.autoDispose.family<CardOffer?, String>((ref, productId) async {
+    FutureProvider.family<CardOffer?, String>((ref, productId) async {
   final variants = await ref.watch(storefrontVariantsProvider(productId).future);
   if (variants.isEmpty) return null;
   final v = variants.first;

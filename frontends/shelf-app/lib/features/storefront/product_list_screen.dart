@@ -27,6 +27,13 @@ class ProductListScreen extends ConsumerStatefulWidget {
 class _ProductListScreenState extends ConsumerState<ProductListScreen> {
   String _query = '';
 
+  // Cached so the ad doesn't jump to a new random slot (reshuffling list
+  // item identity/position) on every unrelated rebuild — e.g. an
+  // availability tick or cart change — which otherwise churns the
+  // autoDispose-free per-card providers for no reason.
+  int? _adIndex;
+  int _adIndexForCount = -1;
+
   @override
   void initState() {
     super.initState();
@@ -129,9 +136,14 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
               );
             }
             // Inject one ad at a random position among the real products.
-            final adIndex = math.Random().nextInt(displayProducts.length + 1);
+            // The position is cached per product-list length so it doesn't
+            // reshuffle (and churn item identity) on every rebuild.
+            if (_adIndexForCount != displayProducts.length) {
+              _adIndex = math.Random().nextInt(displayProducts.length + 1);
+              _adIndexForCount = displayProducts.length;
+            }
             final items = <Object>[...displayProducts]
-              ..insert(adIndex, const _AdSlot());
+              ..insert(_adIndex!, const _AdSlot());
 
             if (cols == 1) {
               return SliverPadding(
@@ -143,7 +155,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                     final item = items[i];
                     return item is _AdSlot
                         ? const _AdRow()
-                        : _ProductRow(product: item as StoreProduct);
+                        : _ProductRow(
+                            key: ValueKey((item as StoreProduct).id),
+                            product: item);
                   },
                 ),
               );
@@ -162,7 +176,9 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                   final item = items[i];
                   return item is _AdSlot
                       ? const _AdCard()
-                      : _ProductCard(product: item as StoreProduct);
+                      : _ProductCard(
+                          key: ValueKey((item as StoreProduct).id),
+                          product: item);
                 },
               ),
             );
@@ -479,7 +495,7 @@ class _EmptyProducts extends ConsumerWidget {
 
 class _ProductCard extends ConsumerWidget {
   final StoreProduct product;
-  const _ProductCard({required this.product});
+  const _ProductCard({super.key, required this.product});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -519,7 +535,7 @@ class _ProductCard extends ConsumerWidget {
 /// stacked products read as a tidy vertical list instead of giant full-width tiles.
 class _ProductRow extends ConsumerWidget {
   final StoreProduct product;
-  const _ProductRow({required this.product});
+  const _ProductRow({super.key, required this.product});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

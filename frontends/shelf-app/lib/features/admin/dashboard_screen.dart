@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../shared/widgets/error_view.dart';
 import 'providers/admin_providers.dart';
 import 'providers/inventory_levels_pagination.dart';
+import 'providers/live_alerts_provider.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -14,6 +15,17 @@ class DashboardScreen extends ConsumerWidget {
     final inventoryAsync = ref.watch(inventoryLevelsSummaryProvider);
     final tenantAsync = ref.watch(tenantInfoProvider);
     final alertsAsync = ref.watch(shortageAlertsProvider);
+
+    // Live push (MQTT) is a "refetch now + toast" nudge on top of the polled feed above, not a
+    // second data source — see live_alerts_provider.dart.
+    ref.listen(liveAlertsProvider, (previous, next) {
+      if (next != null && next != previous) {
+        ref.invalidate(shortageAlertsProvider);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('${next.subject}: ${next.body}')));
+      }
+    });
 
     return RefreshIndicator(
       onRefresh: () async {
