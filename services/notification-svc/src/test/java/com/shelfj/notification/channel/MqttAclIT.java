@@ -11,6 +11,7 @@ import com.hivemq.client.mqtt.MqttGlobalPublishFilter;
 import com.hivemq.client.mqtt.datatypes.MqttQos;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5BlockingClient;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5Client;
+import com.hivemq.client.mqtt.mqtt5.exceptions.Mqtt5SubAckException;
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAck;
 import com.shelfj.test.EmqxSupport;
@@ -126,15 +127,19 @@ class MqttAclIT {
     Mqtt5BlockingClient intruder = newClient();
     connect(intruder, tenantB.toString(), signToken(tenantB.toString()));
     try {
-      Mqtt5SubAck subAck =
-          intruder
-              .subscribeWith()
-              .topicFilter(MqttChannel.topic(tenantA, "store-1"))
-              .qos(MqttQos.AT_LEAST_ONCE)
-              .send();
-      assertTrue(
-          subAck.getReasonCodes().stream().anyMatch(c -> c.isError()),
-          "a validly-authenticated tenant must still be denied another tenant's topic");
+      // A single-topic subscribe whose SUBACK is all Error Codes makes the blocking client throw
+      // rather than return normally — it doesn't hand back a SubAck to inspect.
+      Mqtt5SubAckException denied =
+          assertThrows(
+              Mqtt5SubAckException.class,
+              () ->
+                  intruder
+                      .subscribeWith()
+                      .topicFilter(MqttChannel.topic(tenantA, "store-1"))
+                      .qos(MqttQos.AT_LEAST_ONCE)
+                      .send(),
+              "a validly-authenticated tenant must still be denied another tenant's topic");
+      assertTrue(denied.getMqttMessage().getReasonCodes().stream().allMatch(c -> c.isError()));
     } finally {
       intruder.disconnect();
     }
