@@ -821,10 +821,10 @@ class _CustomerBarState extends ConsumerState<_CustomerBar> {
                 hintText: 'Required for all orders',
                 prefixIcon: const Icon(Icons.phone_outlined, size: 18),
                 suffixIcon: ref.watch(posWalkInPhoneProvider).isEmpty
-                    ? const Icon(Icons.warning_amber_outlined,
-                        size: 18, color: Colors.orange)
-                    : const Icon(Icons.check_circle_outline,
-                        size: 18, color: Colors.green),
+                    ? Icon(Icons.warning_amber_outlined,
+                        size: 18, color: context.status.warning)
+                    : Icon(Icons.check_circle_outline,
+                        size: 18, color: context.status.success),
               ),
               onChanged: (v) =>
                   ref.read(posWalkInPhoneProvider.notifier).state = v.trim(),

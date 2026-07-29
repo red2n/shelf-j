@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -206,7 +207,9 @@ class _GiftCardsTabState extends ConsumerState<_GiftCardsTab> {
               leading: Icon(
                   t.amount >= 0 ? Icons.arrow_upward : Icons.arrow_downward,
                   size: 16,
-                  color: t.amount >= 0 ? Colors.green : Colors.red),
+                  color: t.amount >= 0
+                      ? context.status.success
+                      : Theme.of(context).colorScheme.error),
               title: Text(t.txType),
               trailing: Text(
                   '${t.amount.toStringAsFixed(2)} → ${t.balanceAfter.toStringAsFixed(2)}'),
@@ -927,12 +930,17 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-          color: Colors.grey.shade200, borderRadius: BorderRadius.circular(12)),
+          color: cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12)),
       child: Text(status,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+          style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: cs.onSurfaceVariant)),
     );
   }
 }

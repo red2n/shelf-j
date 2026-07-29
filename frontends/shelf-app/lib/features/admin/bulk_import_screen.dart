@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/theme.dart';
 import 'providers/admin_providers.dart';
 
 // ── Supplier Catalogue CSV import ─────────────────────────────────────────────
@@ -494,12 +495,12 @@ class _PreviewCard extends StatelessWidget {
             Row(
               children: [
                 Icon(Icons.check_circle_outline,
-                    color: Colors.green.shade700, size: 20),
+                    color: context.status.success, size: 20),
                 const SizedBox(width: 8),
                 Text('File parsed successfully',
                     style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: Colors.green.shade800)),
+                        color: context.status.success)),
               ],
             ),
             const SizedBox(height: 12),

@@ -11,6 +11,11 @@ const Color _green = Color(0xFFB6D7A8);       // success container / secondary
 const Color _forestGreen = Color(0xFF3D7A30);
 const Color _darkAmber = Color(0xFFAA7B00);
 
+// "Info" tone used for channel-identity badges (e.g. ONLINE vs POS) — distinct
+// from success/warning/error, adapts for dark mode via StatusColors.dark.
+const Color _slateBlue = Color(0xFF3D5A80);
+const Color _lightSlateBlue = Color(0xFFA9C5E8);
+
 /// Semantic status colours as a [ThemeExtension], so widgets read them from the
 /// active theme (`context.status.success`) and they adapt to light/dark
 /// automatically. Always pair the colour with text or an icon — never convey
@@ -19,16 +24,36 @@ const Color _darkAmber = Color(0xFFAA7B00);
 class StatusColors extends ThemeExtension<StatusColors> {
   final Color success;
   final Color warning;
+  final Color info;
+  final Color onInfo;
 
-  const StatusColors({required this.success, required this.warning});
+  const StatusColors({
+    required this.success,
+    required this.warning,
+    required this.info,
+    required this.onInfo,
+  });
 
-  static const light = StatusColors(success: _forestGreen, warning: _darkAmber);
-  static const dark = StatusColors(success: _green, warning: _amber);
+  static const light = StatusColors(
+    success: _forestGreen,
+    warning: _darkAmber,
+    info: _slateBlue,
+    onInfo: _ivory,
+  );
+  static const dark = StatusColors(
+    success: _green,
+    warning: _amber,
+    info: _lightSlateBlue,
+    onInfo: _slateBlue,
+  );
 
   @override
-  StatusColors copyWith({Color? success, Color? warning}) => StatusColors(
+  StatusColors copyWith({Color? success, Color? warning, Color? info, Color? onInfo}) =>
+      StatusColors(
         success: success ?? this.success,
         warning: warning ?? this.warning,
+        info: info ?? this.info,
+        onInfo: onInfo ?? this.onInfo,
       );
 
   @override
@@ -37,6 +62,8 @@ class StatusColors extends ThemeExtension<StatusColors> {
     return StatusColors(
       success: Color.lerp(success, other.success, t)!,
       warning: Color.lerp(warning, other.warning, t)!,
+      info: Color.lerp(info, other.info, t)!,
+      onInfo: Color.lerp(onInfo, other.onInfo, t)!,
     );
   }
 }

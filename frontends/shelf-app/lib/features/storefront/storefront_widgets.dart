@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/theme.dart';
 import 'storefront_providers.dart';
 
 /// A lively deterministic product placeholder (colored tile + initials) so the
@@ -298,7 +299,9 @@ class StockBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = inStock ? Colors.green : Colors.grey;
+    final color = inStock
+        ? context.status.success
+        : Theme.of(context).colorScheme.onSurfaceVariant;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -307,7 +310,7 @@ class StockBadge extends StatelessWidget {
         const SizedBox(width: 4),
         Text(inStock ? 'In stock' : 'Out of stock',
             style: TextStyle(
-                color: color.shade700, fontWeight: FontWeight.w600, fontSize: 13)),
+                color: color, fontWeight: FontWeight.w600, fontSize: 13)),
       ],
     );
   }

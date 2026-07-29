@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -1048,25 +1049,26 @@ class _PoStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     Color bg;
     Color fg;
     switch (status.toUpperCase()) {
       case 'DRAFT':
-        bg = Colors.grey.shade200;
-        fg = Colors.grey.shade800;
+        bg = cs.surfaceContainerHighest;
+        fg = cs.onSurfaceVariant;
         break;
       case 'SUBMITTED':
-        bg = Colors.blue.shade100;
-        fg = Colors.blue.shade800;
+        bg = context.status.info;
+        fg = context.status.onInfo;
         break;
       case 'RECEIVED':
       case 'CLOSED':
-        bg = Colors.green.shade100;
-        fg = Colors.green.shade800;
+        bg = cs.secondaryContainer;
+        fg = cs.onSecondaryContainer;
         break;
       default:
-        bg = Colors.amber.shade100;
-        fg = Colors.amber.shade900;
+        bg = context.status.warning.withValues(alpha: 0.18);
+        fg = context.status.warning;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

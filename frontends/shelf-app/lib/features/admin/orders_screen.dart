@@ -7,6 +7,7 @@ import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import '../../core/format.dart';
+import '../../core/theme.dart';
 import 'providers/admin_providers.dart';
 import 'providers/orders_pagination.dart';
 
@@ -177,16 +178,16 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                             horizontal: 16, vertical: 8),
                         leading: CircleAvatar(
                           backgroundColor: o.channel == 'POS'
-                              ? Colors.orange.shade100
-                              : Colors.blue.shade100,
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : context.status.info,
                           child: Icon(
                             o.channel == 'POS'
                                 ? Icons.point_of_sale
                                 : Icons.shopping_bag_outlined,
                             size: 18,
                             color: o.channel == 'POS'
-                                ? Colors.orange.shade700
-                                : Colors.blue.shade700,
+                                ? Theme.of(context).colorScheme.onPrimaryContainer
+                                : context.status.onInfo,
                           ),
                         ),
                         title: Row(
@@ -791,26 +792,22 @@ class _ChannelBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final Color base =
+        channel == 'POS' ? cs.onPrimaryContainer : context.status.info;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: channel == 'POS'
-            ? Colors.orange.shade50
-            : Colors.blue.shade50,
+        color: base.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(
-          color: channel == 'POS'
-              ? Colors.orange.shade200
-              : Colors.blue.shade200,
-        ),
+        border: Border.all(color: base.withValues(alpha: 0.4)),
       ),
       child: Text(
         channel,
         style: TextStyle(
           fontSize: 10,
           fontWeight: FontWeight.bold,
-          color:
-              channel == 'POS' ? Colors.orange.shade800 : Colors.blue.shade800,
+          color: base,
         ),
       ),
     );
@@ -823,29 +820,30 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     Color bg;
     Color fg;
     switch (status.toUpperCase()) {
       case 'PLACED':
-        bg = Colors.blue.shade100;
-        fg = Colors.blue.shade800;
+        bg = context.status.info;
+        fg = context.status.onInfo;
         break;
       case 'CONFIRMED':
-        bg = Colors.green.shade100;
-        fg = Colors.green.shade800;
+        bg = cs.secondaryContainer;
+        fg = cs.onSecondaryContainer;
         break;
       case 'FULFILLED':
-        bg = Colors.teal.shade100;
-        fg = Colors.teal.shade800;
+        bg = cs.tertiaryContainer;
+        fg = cs.onTertiaryContainer;
         break;
       case 'CANCELLED':
       case 'VOIDED':
-        bg = Colors.red.shade100;
-        fg = Colors.red.shade800;
+        bg = cs.errorContainer;
+        fg = cs.onErrorContainer;
         break;
       default:
-        bg = Colors.grey.shade200;
-        fg = Colors.grey.shade700;
+        bg = cs.surfaceContainerHighest;
+        fg = cs.onSurfaceVariant;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

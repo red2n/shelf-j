@@ -398,14 +398,14 @@ class _StatusChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: active ? Colors.green.shade100 : cs.errorContainer,
+        color: active ? cs.secondaryContainer : cs.errorContainer,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(label,
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.bold,
-            color: active ? Colors.green.shade800 : cs.onErrorContainer,
+            color: active ? cs.onSecondaryContainer : cs.onErrorContainer,
           )),
     );
   }
