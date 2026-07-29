@@ -37,7 +37,16 @@ public class StoreStatusChangedHandler {
       LOG.log(Level.WARNING, "Malformed StoreStatusChanged payload skipped: " + e.getMessage());
       return;
     }
-    storeStatus.upsertStoreStatus(storeId, tenantId, status, occurredAt);
-    LOG.log(Level.INFO, "Store {0} projection updated to {1}", storeId, status);
+    boolean applied = storeStatus.upsertStoreStatus(storeId, tenantId, status, occurredAt);
+    if (applied) {
+      LOG.log(Level.INFO, "Store {0} projection updated to {1}", storeId, status);
+    } else {
+      LOG.log(
+          Level.DEBUG,
+          "Store {0} projection left unchanged — stale/out-of-order event ({1} at {2})",
+          storeId,
+          status,
+          occurredAt);
+    }
   }
 }

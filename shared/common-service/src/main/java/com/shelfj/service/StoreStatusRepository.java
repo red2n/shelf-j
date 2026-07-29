@@ -14,7 +14,16 @@ import java.util.UUID;
 @ApplicationScoped
 public class StoreStatusRepository extends BaseJdbcRepository {
 
-  public void upsertStoreStatus(UUID storeId, UUID tenantId, String status, Instant changedAt) {
+  /**
+   * Applies the projection write and reports whether it actually took effect. The {@code WHERE}
+   * clause silently no-ops a stale/out-of-order event (an older {@code changedAt} than what's
+   * already stored), which callers need to know — logging "updated" regardless would misrepresent
+   * the actual projection state after a reordered redelivery.
+   *
+   * @return {@code true} if the row was inserted or updated; {@code false} if an existing, newer
+   *     row was left untouched.
+   */
+  public boolean upsertStoreStatus(UUID storeId, UUID tenantId, String status, Instant changedAt) {
     try (var c = dataSource.getConnection();
         var ps =
             c.prepareStatement(
@@ -28,7 +37,7 @@ public class StoreStatusRepository extends BaseJdbcRepository {
       ps.setObject(2, tenantId);
       ps.setString(3, status);
       ps.setObject(4, changedAt.atOffset(ZoneOffset.UTC));
-      ps.executeUpdate();
+      return ps.executeUpdate() > 0;
     } catch (SQLException e) {
       throw dbError("upsert store status", e);
     }

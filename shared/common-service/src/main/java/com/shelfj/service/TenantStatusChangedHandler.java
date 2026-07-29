@@ -35,7 +35,16 @@ public class TenantStatusChangedHandler {
       LOG.log(Level.WARNING, "Malformed TenantStatusChanged payload skipped: " + e.getMessage());
       return;
     }
-    tenantStatus.upsertTenantStatus(tenantId, status, occurredAt);
-    LOG.log(Level.INFO, "Tenant {0} projection updated to {1}", tenantId, status);
+    boolean applied = tenantStatus.upsertTenantStatus(tenantId, status, occurredAt);
+    if (applied) {
+      LOG.log(Level.INFO, "Tenant {0} projection updated to {1}", tenantId, status);
+    } else {
+      LOG.log(
+          Level.DEBUG,
+          "Tenant {0} projection left unchanged — stale/out-of-order event ({1} at {2})",
+          tenantId,
+          status,
+          occurredAt);
+    }
   }
 }
