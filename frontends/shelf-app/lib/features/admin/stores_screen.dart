@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -129,7 +130,7 @@ class StoresScreen extends ConsumerWidget {
                                     horizontal: 8, vertical: 3),
                                 decoration: BoxDecoration(
                                   color: active
-                                      ? Colors.green.shade100
+                                      ? cs.secondaryContainer
                                       : cs.errorContainer,
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -139,7 +140,7 @@ class StoresScreen extends ConsumerWidget {
                                     fontSize: 11,
                                     fontWeight: FontWeight.bold,
                                     color: active
-                                        ? Colors.green.shade800
+                                        ? cs.onSecondaryContainer
                                         : cs.onErrorContainer,
                                   ),
                                 ),
@@ -309,7 +310,7 @@ class _ZonesDialog extends ConsumerWidget {
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
-                            color: active ? Colors.green.shade700 : cs.error,
+                            color: active ? context.status.success : cs.error,
                           )),
                       IconButton(
                         tooltip: 'Edit',
@@ -320,7 +321,7 @@ class _ZonesDialog extends ConsumerWidget {
                         tooltip: active ? 'Deactivate' : 'Activate',
                         icon: Icon(
                           active ? Icons.toggle_on : Icons.toggle_off_outlined,
-                          color: active ? Colors.green.shade700 : cs.outline,
+                          color: active ? context.status.success : cs.outline,
                         ),
                         onPressed: () => _toggleStatus(context, ref, z, active),
                       ),

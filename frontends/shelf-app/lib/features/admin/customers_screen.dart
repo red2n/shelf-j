@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'customer_providers.dart';
@@ -415,8 +416,8 @@ class _CustomerDetailDialog extends ConsumerWidget {
                                     : Icons.arrow_downward,
                                 size: 16,
                                 color: e.points >= 0
-                                    ? Colors.green
-                                    : Colors.red,
+                                    ? context.status.success
+                                    : cs.error,
                               ),
                               title: Text(e.type),
                               subtitle:

@@ -33,7 +33,7 @@ class PlatformShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return AdaptiveNavShell(
-      title: 'outwhale.com',
+      title: 'storeql.com',
       destinations: _destinations,
       selectedIndex: _selectedIndex,
       onDestinationSelected: (i) => context.go(_routes[i]),

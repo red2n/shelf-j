@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
@@ -458,16 +459,18 @@ class _WideTable extends StatelessWidget {
                           ? Icons.check_circle_outline
                           : Icons.remove_circle_outline,
                       size: 18,
-                      color:
-                          p.sellableOnline ? Colors.green : cs.outlineVariant,
+                      color: p.sellableOnline
+                          ? context.status.success
+                          : cs.outlineVariant,
                     )),
                     DataCell(Icon(
                       p.sellablePos
                           ? Icons.check_circle_outline
                           : Icons.remove_circle_outline,
                       size: 18,
-                      color:
-                          p.sellablePos ? Colors.green : cs.outlineVariant,
+                      color: p.sellablePos
+                          ? context.status.success
+                          : cs.outlineVariant,
                     )),
                     DataCell(_StatusChip(active: active, label: p.status)),
                     DataCell(PopupMenuButton<String>(
@@ -648,14 +651,14 @@ class _StatusChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: active ? Colors.green.shade100 : cs.errorContainer,
+        color: active ? cs.secondaryContainer : cs.errorContainer,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(label,
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.bold,
-            color: active ? Colors.green.shade800 : cs.onErrorContainer,
+            color: active ? cs.onSecondaryContainer : cs.onErrorContainer,
           )),
     );
   }

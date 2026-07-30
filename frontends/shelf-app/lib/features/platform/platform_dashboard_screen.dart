@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/auth/auth_state.dart';
+import '../../core/theme.dart';
 
 class PlatformDashboardScreen extends ConsumerWidget {
   const PlatformDashboardScreen({super.key});
@@ -241,7 +242,8 @@ class _ApiRow extends StatelessWidget {
             width: 44,
             padding: const EdgeInsets.symmetric(vertical: 2),
             decoration: BoxDecoration(
-              color: isGet ? Colors.green.withValues(alpha: 0.15) : Colors.blue.withValues(alpha: 0.15),
+              color: (isGet ? context.status.success : context.status.info)
+                  .withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
@@ -250,7 +252,7 @@ class _ApiRow extends StatelessWidget {
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.bold,
-                color: isGet ? Colors.green.shade700 : Colors.blue.shade700,
+                color: isGet ? context.status.success : context.status.info,
               ),
             ),
           ),

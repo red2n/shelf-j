@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets/error_view.dart';
 import 'providers/admin_providers.dart';
 import 'providers/inventory_levels_pagination.dart';
@@ -171,16 +172,16 @@ class DashboardScreen extends ConsumerWidget {
                           return ListTile(
                             leading: CircleAvatar(
                               backgroundColor: o.channel == 'POS'
-                                  ? Colors.orange.shade100
-                                  : Colors.blue.shade100,
+                                  ? Theme.of(context).colorScheme.primaryContainer
+                                  : context.status.info,
                               child: Icon(
                                 o.channel == 'POS'
                                     ? Icons.point_of_sale
                                     : Icons.shopping_bag_outlined,
                                 size: 18,
                                 color: o.channel == 'POS'
-                                    ? Colors.orange.shade700
-                                    : Colors.blue.shade700,
+                                    ? Theme.of(context).colorScheme.onPrimaryContainer
+                                    : context.status.onInfo,
                               ),
                             ),
                             title: Text('#${o.id.length >= 8 ? o.id.substring(0, 8) : o.id}…',
@@ -385,29 +386,30 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     Color bg;
     Color fg;
     switch (status.toUpperCase()) {
       case 'PLACED':
-        bg = Colors.blue.shade100;
-        fg = Colors.blue.shade800;
+        bg = context.status.info;
+        fg = context.status.onInfo;
         break;
       case 'CONFIRMED':
-        bg = Colors.green.shade100;
-        fg = Colors.green.shade800;
+        bg = cs.secondaryContainer;
+        fg = cs.onSecondaryContainer;
         break;
       case 'FULFILLED':
-        bg = Colors.teal.shade100;
-        fg = Colors.teal.shade800;
+        bg = cs.tertiaryContainer;
+        fg = cs.onTertiaryContainer;
         break;
       case 'CANCELLED':
       case 'VOIDED':
-        bg = Colors.red.shade100;
-        fg = Colors.red.shade800;
+        bg = cs.errorContainer;
+        fg = cs.onErrorContainer;
         break;
       default:
-        bg = Colors.grey.shade200;
-        fg = Colors.grey.shade700;
+        bg = cs.surfaceContainerHighest;
+        fg = cs.onSurfaceVariant;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -425,6 +427,7 @@ class _StoreStatusDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = status.toUpperCase() == 'ACTIVE';
+    final color = active ? context.status.success : context.status.warning;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -432,15 +435,12 @@ class _StoreStatusDot extends StatelessWidget {
           width: 6,
           height: 6,
           decoration: BoxDecoration(
-            color: active ? Colors.green : Colors.orange,
+            color: color,
             shape: BoxShape.circle,
           ),
         ),
         const SizedBox(width: 4),
-        Text(status,
-            style: TextStyle(
-                fontSize: 11,
-                color: active ? Colors.green.shade700 : Colors.orange.shade700)),
+        Text(status, style: TextStyle(fontSize: 11, color: color)),
       ],
     );
   }

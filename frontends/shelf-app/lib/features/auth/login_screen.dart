@@ -70,7 +70,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       Icon(Icons.storefront_rounded, size: 52, color: cs.primary),
                       const SizedBox(height: 8),
                       Text(
-                        'outwhale.com',
+                        'storeql.com',
                         style: Theme.of(context)
                             .textTheme
                             .headlineMedium

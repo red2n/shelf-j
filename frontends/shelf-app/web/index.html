@@ -4,17 +4,17 @@
   <base href="$FLUTTER_BASE_HREF">
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="Shelf-J — multi-tenant retail platform">
+  <meta name="description" content="storeql.com — multi-tenant retail platform">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <!-- PWA manifest -->
   <link rel="manifest" href="manifest.json">
   <!-- Favicon placeholder -->
   <link rel="icon" type="image/png" href="icons/Icon-192.png">
-  <title>Shelf-J</title>
+  <title>storeql.com</title>
   <style>
     body {
       margin: 0;
-      background-color: #F5F5F5;
+      background-color: #FFFFF0;
     }
     #loading {
       display: flex;
@@ -22,18 +22,37 @@
       justify-content: center;
       height: 100vh;
       font-family: sans-serif;
-      color: #1A5276;
+      color: #575757;
       font-size: 1.1rem;
       gap: 12px;
+    }
+    #loading .spinner {
+      width: 32px;
+      height: 32px;
+      animation: spinner-rotate 1.4s linear infinite;
+    }
+    #loading .spinner circle {
+      fill: none;
+      stroke: #575757;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-dasharray: 80;
+      stroke-dashoffset: 60;
+      transform-origin: center;
+    }
+    @keyframes spinner-rotate {
+      100% {
+        transform: rotate(360deg);
+      }
     }
   </style>
 </head>
 <body>
   <div id="loading">
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="#1A5276">
-      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
+    <svg class="spinner" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" />
     </svg>
-    Loading Shelf-J…
+    Loading Store…
   </div>
   <script>
     window.addEventListener('flutter-first-frame', () => {

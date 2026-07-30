@@ -112,7 +112,7 @@ class _PriceListsTab extends ConsumerWidget {
                         if (l.currency != null) l.currency,
                         if (l.effectiveFrom != null) 'from ${l.effectiveFrom}',
                       ].whereType<String>().join(' · ')),
-                      trailing: _activeBadge(l.active),
+                      trailing: _activeBadge(context, l.active),
                     ),
                   );
                 },
@@ -445,7 +445,7 @@ class _PromotionsTab extends ConsumerWidget {
                         if (p.minOrderAmount != null)
                           'min ${p.minOrderAmount!.toStringAsFixed(0)}',
                       ].whereType<String>().join(' · ')),
-                      trailing: _activeBadge(p.active),
+                      trailing: _activeBadge(context, p.active),
                     ),
                   );
                 },
@@ -1011,18 +1011,21 @@ Widget _empty(ColorScheme cs, IconData icon, String text) => Center(
       ),
     );
 
-Widget _activeBadge(bool active) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: active ? Colors.green.shade100 : Colors.grey.shade200,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(active ? 'ACTIVE' : 'INACTIVE',
-          style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: active ? Colors.green.shade800 : Colors.grey.shade700)),
-    );
+Widget _activeBadge(BuildContext context, bool active) {
+  final cs = Theme.of(context).colorScheme;
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+      color: active ? cs.secondaryContainer : cs.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Text(active ? 'ACTIVE' : 'INACTIVE',
+        style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: active ? cs.onSecondaryContainer : cs.onSurfaceVariant)),
+  );
+}
 
 Widget _errorBox(BuildContext context, String? error) {
   if (error == null) return const SizedBox.shrink();

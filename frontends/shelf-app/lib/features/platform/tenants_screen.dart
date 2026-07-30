@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../admin/providers/admin_providers.dart';
 import '../../core/constants.dart';
+import '../../core/theme.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
@@ -257,7 +258,7 @@ class _WideTable extends StatelessWidget {
                                   size: 18,
                                   color: active
                                       ? cs.error
-                                      : Colors.green.shade700,
+                                      : context.status.success,
                                 ),
                                 const SizedBox(width: 8),
                                 Text(active ? 'Deactivate' : 'Activate'),
@@ -328,7 +329,7 @@ class _NarrowList extends StatelessWidget {
                             size: 18,
                             color: active
                                 ? cs.error
-                                : Colors.green.shade700,
+                                : context.status.success,
                           ),
                           const SizedBox(width: 8),
                           Text(active ? 'Deactivate' : 'Activate'),
@@ -358,7 +359,7 @@ class _StatusChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: active ? Colors.green.shade100 : cs.errorContainer,
+        color: active ? cs.secondaryContainer : cs.errorContainer,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
@@ -366,7 +367,7 @@ class _StatusChip extends StatelessWidget {
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.bold,
-          color: active ? Colors.green.shade800 : cs.onErrorContainer,
+          color: active ? cs.onSecondaryContainer : cs.onErrorContainer,
         ),
       ),
     );
