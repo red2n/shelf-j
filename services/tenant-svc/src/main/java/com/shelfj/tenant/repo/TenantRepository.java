@@ -1,5 +1,6 @@
 package com.shelfj.tenant.repo;
 
+import com.shelfj.events.EventPayload;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.tenant.domain.Domain.DeliveryArea;
@@ -127,17 +128,37 @@ public class TenantRepository extends BaseOutboxRepository {
             }
           }
           // Cascade: when a tenant is suspended, mark all its ACTIVE stores SUSPENDED too so
-          // the gateway's TenantStatusGate cache refresh reflects closure immediately.
+          // the gateway's TenantStatusGate cache refresh reflects closure immediately, AND
+          // publish a StoreStatusChanged per affected store — otherwise every other service's
+          // *local* store_status projection (cart-svc, order-svc, iam-svc) never learns of the
+          // cascade and keeps reporting those stores as ACTIVE.
           // Stores are NOT auto-reactivated when the tenant is re-enabled — that is an
           // explicit operator action (PATCH /admin/stores/{id}/status).
           if (!"ACTIVE".equals(status)) {
             try (PreparedStatement ps =
                 c.prepareStatement(
                     "UPDATE stores SET status = 'SUSPENDED', updated_at = ?"
-                        + " WHERE tenant_id = ? AND status = 'ACTIVE'")) {
+                        + " WHERE tenant_id = ? AND status = 'ACTIVE' RETURNING id")) {
               ps.setObject(1, now.atOffset(ZoneOffset.UTC));
               ps.setObject(2, tenantId);
-              ps.executeUpdate();
+              try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                  UUID storeId = rs.getObject("id", UUID.class);
+                  String payload =
+                      EventPayload.base("StoreStatusChanged", tenantId, storeId)
+                          + ",\"storeId\":\""
+                          + storeId
+                          + "\",\"status\":\"SUSPENDED\"}";
+                  insertOutbox(
+                      c,
+                      new OutboxRow(
+                          "StoreStatusChanged",
+                          "shelfj.tenant.store-status-changed",
+                          tenantId,
+                          storeId,
+                          payload));
+                }
+              }
             }
           }
           insertOutbox(c, event);

@@ -11,6 +11,7 @@ import com.shelfj.iam.dto.Dtos.TokenResponse;
 import com.shelfj.iam.repo.RefreshTokenRepository;
 import com.shelfj.iam.repo.UserRepository;
 import com.shelfj.service.OutboxRow;
+import com.shelfj.service.TenantStatusRepository;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -36,6 +37,7 @@ public class AuthService {
   @Inject UserRepository users;
   @Inject RefreshTokenRepository refreshTokens;
   @Inject MqttSessionRevoker mqttSessions;
+  @Inject TenantStatusRepository tenantStatus;
 
   /** Customer self-signup → creates a CUSTOMER (global, tenantId null) and returns a token pair. */
   public TokenResponse register(String email, String password, String phone) {
@@ -154,7 +156,7 @@ public class AuthService {
         // A staff user whose tenant has been deactivated must not be able to log in, even with the
         // right password and an ACTIVE user row. (Customers carry tenantId=null and are
         // unaffected.)
-        if (user.tenantId() != null && !users.isTenantActive(user.tenantId())) {
+        if (user.tenantId() != null && !tenantStatus.isActive(user.tenantId())) {
           users.audit(user.tenantId(), user.id(), "LOGIN_BLOCKED_TENANT_INACTIVE", email);
           throw ApiException.forbidden(
               "TENANT_INACTIVE", "This business account is suspended. Contact support.");
@@ -236,7 +238,7 @@ public class AuthService {
                 () -> ApiException.unauthorized("INVALID_REFRESH", "User no longer exists"));
     // Block token refresh for a suspended tenant too — otherwise a staff member with a live refresh
     // token could keep minting access tokens after their business was deactivated.
-    if (user.tenantId() != null && !users.isTenantActive(user.tenantId())) {
+    if (user.tenantId() != null && !tenantStatus.isActive(user.tenantId())) {
       throw ApiException.forbidden(
           "TENANT_INACTIVE", "This business account is suspended. Contact support.");
     }

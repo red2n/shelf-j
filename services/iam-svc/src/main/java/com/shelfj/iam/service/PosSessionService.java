@@ -4,6 +4,7 @@ import com.shelfj.iam.domain.PosSession;
 import com.shelfj.iam.dto.Dtos.StartPosSessionRequest;
 import com.shelfj.iam.repo.PosSessionRepository;
 import com.shelfj.service.StoreStatusRepository;
+import com.shelfj.service.TenantStatusRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -17,6 +18,7 @@ import java.util.UUID;
 public class PosSessionService {
 
   @Inject PosSessionRepository repo;
+  @Inject TenantStatusRepository tenantStatusRepo;
   @Inject StoreStatusRepository storeStatusRepo;
 
   public PosSession start(TenantContext ctx, StartPosSessionRequest req) {
@@ -26,6 +28,13 @@ public class PosSessionService {
           "POS_SESSION_INVALID_TIMEOUT", "idleTimeoutSeconds must be 60–86400");
     UUID storeId = UUID.fromString(req.storeId());
     UUID tenantId = ctx.requireTenantId();
+    // Checked in addition to store status: tenant suspension in tenant-svc cascades to the
+    // stores' own status column locally, but does not fan out a StoreStatusChanged event per
+    // store, so this projection's store_status row can still read ACTIVE after a suspension.
+    if (!tenantStatusRepo.isActive(tenantId))
+      throw ApiException.conflict(
+          "TENANT_NOT_OPERATIONAL",
+          "Tenant is suspended or blocked — POS sessions are unavailable");
     if (!storeStatusRepo.isActive(tenantId, storeId))
       throw ApiException.conflict(
           "STORE_NOT_OPERATIONAL",
