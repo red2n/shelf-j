@@ -7,29 +7,14 @@ import '../features/auth/login_screen.dart';
 import '../features/platform/platform_login_screen.dart';
 import '../features/onboarding/onboarding_wizard.dart';
 import '../features/admin/admin_shell.dart';
-import '../features/admin/catalog_screen.dart';
-import '../features/admin/dashboard_screen.dart';
-import '../features/admin/inventory_screen.dart';
-import '../features/admin/orders_screen.dart';
-import '../features/admin/customers_screen.dart';
-import '../features/admin/pricing_screen.dart';
-import '../features/admin/procurement_screen.dart';
-import '../features/admin/reports_screen.dart';
-import '../features/admin/sales_screen.dart';
-import '../features/admin/staff_screen.dart';
-import '../features/admin/stores_screen.dart';
+import '../features/admin/admin_screens.dart' deferred as admin_lib;
 import '../features/platform/platform_shell.dart';
-import '../features/platform/platform_dashboard_screen.dart';
-import '../features/platform/tenants_screen.dart';
+import '../features/platform/platform_screens.dart' deferred as platform_lib;
 import '../features/pos/pos_shell.dart';
-import '../features/pos/cart_screen.dart';
-import '../features/pos/tender_screen.dart';
-import '../features/pos/cash_screen.dart';
+import '../features/pos/pos_screens.dart' deferred as pos_lib;
 import '../features/storefront/storefront_shell.dart';
-import '../features/storefront/product_list_screen.dart';
-import '../features/storefront/product_detail_screen.dart';
-import '../features/storefront/cart_screen.dart';
-import '../features/storefront/orders_screen.dart';
+import '../shared/widgets/deferred_widget.dart';
+import '../features/storefront/storefront_screens.dart' deferred as storefront_lib;
 
 final routerProvider = Provider<GoRouter>((ref) {
   final router = GoRouter(
@@ -108,11 +93,19 @@ final routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(path: '/platform', redirect: (_, _) => '/platform/overview'),
           GoRoute(
-              path: '/platform/overview',
-              builder: (_, _) => const PlatformDashboardScreen()),
+            path: '/platform/overview',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: platform_lib.loadLibrary,
+              builder: (_) => platform_lib.PlatformDashboardScreen(),
+            ),
+          ),
           GoRoute(
-              path: '/platform/tenants',
-              builder: (_, _) => const TenantsScreen()),
+            path: '/platform/tenants',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: platform_lib.loadLibrary,
+              builder: (_) => platform_lib.TenantsScreen(),
+            ),
+          ),
         ],
       ),
 
@@ -122,24 +115,83 @@ final routerProvider = Provider<GoRouter>((ref) {
             AdminShell(currentLocation: state.matchedLocation, child: child),
         routes: [
           GoRoute(path: '/admin', redirect: (_, _) => '/admin/dashboard'),
-          GoRoute(path: '/admin/dashboard', builder: (_, _) => const DashboardScreen()),
-          GoRoute(path: '/admin/catalog', builder: (_, _) => const CatalogScreen()),
-          GoRoute(path: '/admin/inventory', builder: (_, _) => const InventoryScreen()),
-          GoRoute(path: '/admin/stores', builder: (_, _) => const StoresScreen()),
-          GoRoute(path: '/admin/orders', builder: (_, _) => const AdminOrdersScreen()),
           GoRoute(
-              path: '/admin/procurement',
-              builder: (_, _) => const ProcurementScreen()),
+            path: '/admin/dashboard',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.DashboardScreen(),
+            ),
+          ),
           GoRoute(
-              path: '/admin/pricing',
-              builder: (_, _) => const PricingScreen()),
-          GoRoute(path: '/admin/reports', builder: (_, _) => const ReportsScreen()),
+            path: '/admin/catalog',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.CatalogScreen(),
+            ),
+          ),
           GoRoute(
-              path: '/admin/customers',
-              builder: (_, _) => const CustomersScreen()),
+            path: '/admin/inventory',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.InventoryScreen(),
+            ),
+          ),
           GoRoute(
-              path: '/admin/sales', builder: (_, _) => const SalesScreen()),
-          GoRoute(path: '/admin/staff', builder: (_, _) => const StaffScreen()),
+            path: '/admin/stores',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.StoresScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/orders',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.AdminOrdersScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/procurement',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.ProcurementScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/pricing',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.PricingScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/reports',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.ReportsScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/customers',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.CustomersScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/sales',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.SalesScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/staff',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.StaffScreen(),
+            ),
+          ),
         ],
       ),
 
@@ -149,9 +201,27 @@ final routerProvider = Provider<GoRouter>((ref) {
             PosShell(currentLocation: state.matchedLocation, child: child),
         routes: [
           GoRoute(path: '/pos', redirect: (_, _) => '/pos/cart'),
-          GoRoute(path: '/pos/cart', builder: (_, _) => const PosCartScreen()),
-          GoRoute(path: '/pos/tender', builder: (_, _) => const TenderScreen()),
-          GoRoute(path: '/pos/cash', builder: (_, _) => const CashScreen()),
+          GoRoute(
+            path: '/pos/cart',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: pos_lib.loadLibrary,
+              builder: (_) => pos_lib.PosCartScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/pos/tender',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: pos_lib.loadLibrary,
+              builder: (_) => pos_lib.TenderScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/pos/cash',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: pos_lib.loadLibrary,
+              builder: (_) => pos_lib.CashScreen(),
+            ),
+          ),
         ],
       ),
 
@@ -161,14 +231,36 @@ final routerProvider = Provider<GoRouter>((ref) {
             StorefrontShell(currentLocation: state.matchedLocation, child: child),
         routes: [
           GoRoute(path: '/store', redirect: (_, _) => '/store/products'),
-          GoRoute(path: '/store/products', builder: (_, _) => const ProductListScreen()),
+          GoRoute(
+            path: '/store/products',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: storefront_lib.loadLibrary,
+              builder: (_) => storefront_lib.ProductListScreen(),
+            ),
+          ),
           GoRoute(
             path: '/store/products/:id',
-            builder: (_, state) =>
-                ProductDetailScreen(productId: state.pathParameters['id']!),
+            builder: (_, state) => DeferredWidget(
+              libraryLoader: storefront_lib.loadLibrary,
+              builder: (_) => storefront_lib.ProductDetailScreen(
+                productId: state.pathParameters['id']!,
+              ),
+            ),
           ),
-          GoRoute(path: '/store/cart', builder: (_, _) => const StorefrontCartScreen()),
-          GoRoute(path: '/store/orders', builder: (_, _) => const StorefrontOrdersScreen()),
+          GoRoute(
+            path: '/store/cart',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: storefront_lib.loadLibrary,
+              builder: (_) => storefront_lib.StorefrontCartScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/store/orders',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: storefront_lib.loadLibrary,
+              builder: (_) => storefront_lib.StorefrontOrdersScreen(),
+            ),
+          ),
         ],
       ),
     ],
