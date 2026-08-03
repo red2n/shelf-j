@@ -127,6 +127,9 @@ public class TenantStoreClient {
     }
   }
 
+  // Only called reflectively by MicroProfile Fault Tolerance via @Fallback above; tenantId
+  // must stay in the signature to match fetch(...)'s parameter types even though it's unused.
+  @SuppressWarnings({"PMD.UnusedPrivateMethod", "PMD.UnusedFormalParameter"})
   private Optional<Set<String>> fetchUnavailable(UUID tenantId, UUID storeId) {
     LOG.log(
         Level.WARNING,

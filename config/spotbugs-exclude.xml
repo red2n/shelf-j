@@ -34,6 +34,17 @@
     </Match>
 
     <!--
+      ReserveOutcome/ReserveBatchItem are lightweight, immutable-by-convention records nested
+      inside InventoryRepository for the reserveBatch(...) batch-reservation result/input — the
+      same record-accessor pattern already exempted for dto/domain/service records above, just
+      declared in a repo class instead of one of those packages.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="~com\.shelfj\.inventory\.repo\.InventoryRepository\$(ReserveOutcome|ReserveBatchItem)"/>
+    </Match>
+
+    <!--
       aggregateDemand builds a PreparedStatement SQL string dynamically to embed a
       date_trunc literal (day/week/month). The literal is validated upstream against
       an allow-list (DAY|WEEK|MONTH) before reaching this method, so there is no SQL

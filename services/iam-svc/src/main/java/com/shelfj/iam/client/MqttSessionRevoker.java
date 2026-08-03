@@ -92,6 +92,8 @@ public class MqttSessionRevoker {
     }
   }
 
+  // Only called reflectively by MicroProfile Fault Tolerance via @Fallback above.
+  @SuppressWarnings("PMD.UnusedPrivateMethod")
   private void revokeSkipped(UUID tenantId, UUID userId) {
     LOG.log(
         Level.DEBUG,

@@ -86,6 +86,9 @@ public class CustomerClient {
     }
   }
 
+  // Only called reflectively by MicroProfile Fault Tolerance via @Fallback above; tenantId
+  // must stay in the signature to match emailOf(...)'s parameter types even though it's unused.
+  @SuppressWarnings({"PMD.UnusedPrivateMethod", "PMD.UnusedFormalParameter"})
   private Optional<String> emailUnavailable(UUID tenantId, UUID customerId) {
     LOG.log(
         Level.WARNING,
