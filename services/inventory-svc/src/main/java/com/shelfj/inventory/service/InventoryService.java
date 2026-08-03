@@ -1865,20 +1865,51 @@ public class InventoryService {
 
   public BulkReserveResult bulkReserve(
       UUID tenantId, List<com.shelfj.inventory.dto.Dtos.ReserveRequest> requests) {
-    List<Reservation> succeeded = new ArrayList<>();
-    int failed = 0;
+    List<InventoryRepository.ReserveBatchItem> items = new ArrayList<>(requests.size());
+    int parseFailed = 0;
     for (var req : requests) {
       try {
         UUID storeId = UUID.fromString(req.storeId());
         UUID variantId = UUID.fromString(req.variantId());
         UUID orderId = req.orderId() != null ? UUID.fromString(req.orderId()) : null;
-        succeeded.add(
-            reserve(tenantId, storeId, variantId, req.qty(), orderId, req.ttlSeconds(), null));
-      } catch (Exception ignored) {
-        failed++;
+        long ttl = req.ttlSeconds() == null ? config.reservationTtlSeconds() : req.ttlSeconds();
+        UUID id = UUID.randomUUID();
+        var reservation =
+            new Reservation(
+                id,
+                tenantId,
+                storeId,
+                variantId,
+                req.qty(),
+                orderId,
+                Reservation.HELD,
+                Instant.now().plusSeconds(ttl),
+                Instant.now());
+        var event =
+            new OutboxRow(
+                "StockReserved",
+                "shelfj.inventory.stock-reserved",
+                tenantId,
+                id,
+                Events.stockReserved(tenantId, storeId, variantId, id, req.qty()));
+        items.add(new InventoryRepository.ReserveBatchItem(reservation, event, null));
+      } catch (Exception e) {
+        parseFailed++;
       }
     }
-    return new BulkReserveResult(succeeded.size(), failed, succeeded);
+
+    List<Reservation> succeeded = new ArrayList<>();
+    int dbFailed = 0;
+    if (!items.isEmpty()) {
+      for (var outcome : repo.reserveBatch(items)) {
+        if (outcome.succeeded()) {
+          succeeded.add(outcome.reservation());
+        } else {
+          dbFailed++;
+        }
+      }
+    }
+    return new BulkReserveResult(succeeded.size(), parseFailed + dbFailed, succeeded);
   }
 
   // ── Tier-1 Gap #30: Purge transaction history ─────────────────────────────

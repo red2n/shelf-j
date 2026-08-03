@@ -56,6 +56,12 @@
             <artifactId>helidon-webclient</artifactId>
         </dependency>
 
+        <!-- MicroProfile Fault Tolerance: @CircuitBreaker + @Fallback on MqttSessionRevoker -->
+        <dependency>
+            <groupId>io.helidon.microprofile</groupId>
+            <artifactId>helidon-microprofile-fault-tolerance</artifactId>
+        </dependency>
+
         <!-- Shared modules -->
         <dependency>
             <groupId>com.shelfj</groupId>

@@ -51,6 +51,12 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- MicroProfile Fault Tolerance: @Retry + @CircuitBreaker + @Fallback on CustomerClient -->
+        <dependency>
+            <groupId>io.helidon.microprofile</groupId>
+            <artifactId>helidon-microprofile-fault-tolerance</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>com.shelfj</groupId>
             <artifactId>common-web</artifactId>

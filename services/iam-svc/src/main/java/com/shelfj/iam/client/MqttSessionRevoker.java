@@ -14,6 +14,8 @@ import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
+import org.eclipse.microprofile.faulttolerance.Fallback;
 
 /**
  * On logout, forces notification-svc's MQTT device-push channel to drop the user's live connection
@@ -57,29 +59,44 @@ public class MqttSessionRevoker {
             .build();
   }
 
+  /**
+   * {@code @CircuitBreaker}: trips after 60% failures in a 5-call window so a down/misconfigured
+   * broker doesn't cost every subsequent logout the full connect+read timeout. No {@code @Retry} —
+   * this runs inline in the interactive logout call, and a best-effort side effect shouldn't add
+   * retry latency to it. {@code @Fallback} restores the "logout never fails because of this"
+   * contract: once the method itself is allowed to throw (needed so the breaker can observe
+   * failures), a tripped breaker or any request failure falls back to a no-op instead of
+   * propagating to {@code AuthService.logout}.
+   */
+  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
+  @Fallback(fallbackMethod = "revokeSkipped")
   public void revoke(UUID tenantId, UUID userId) {
     if (apiKey.isEmpty() || apiSecret.isEmpty()) {
       return;
     }
     String clientId = "mqtt-" + tenantId + "-" + userId;
-    try {
-      String basic =
-          Base64.getEncoder()
-              .encodeToString(
-                  (apiKey.get() + ":" + apiSecret.get()).getBytes(StandardCharsets.UTF_8));
-      try (HttpClientResponse res =
-          webClient
-              .delete(apiUrl + "/api/v5/clients/" + clientId)
-              .header(HeaderNames.AUTHORIZATION, "Basic " + basic)
-              .request()) {
-        // 204 = kicked, 404 = no live session for this user (never connected, or on a different
-        // device) — both are fine, there's nothing further to do either way.
-        if (res.status().code() >= 500) {
-          LOG.log(Level.DEBUG, "MQTT session kick for {0} returned {1}", clientId, res.status());
-        }
+    String basic =
+        Base64.getEncoder()
+            .encodeToString(
+                (apiKey.get() + ":" + apiSecret.get()).getBytes(StandardCharsets.UTF_8));
+    try (HttpClientResponse res =
+        webClient
+            .delete(apiUrl + "/api/v5/clients/" + clientId)
+            .header(HeaderNames.AUTHORIZATION, "Basic " + basic)
+            .request()) {
+      // 204 = kicked, 404 = no live session for this user (never connected, or on a different
+      // device) — both are fine, there's nothing further to do either way.
+      if (res.status().code() >= 500) {
+        LOG.log(Level.DEBUG, "MQTT session kick for {0} returned {1}", clientId, res.status());
       }
-    } catch (RuntimeException e) {
-      LOG.log(Level.DEBUG, "MQTT session kick skipped for {0}: {1}", clientId, e.getMessage());
     }
+  }
+
+  private void revokeSkipped(UUID tenantId, UUID userId) {
+    LOG.log(
+        Level.DEBUG,
+        "MQTT session kick skipped for tenant {0}/user {1}: broker unreachable or circuit open",
+        tenantId,
+        userId);
   }
 }

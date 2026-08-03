@@ -20,6 +20,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
+import org.eclipse.microprofile.faulttolerance.Retry;
+import org.eclipse.microprofile.faulttolerance.exceptions.CircuitBreakerOpenException;
 
 /**
  * Calls inventory-svc {@code POST /admin/inventory/receive/batch} to receive stock for all
@@ -40,8 +43,8 @@ public class InventoryClient {
     registry = new ConsulClient(config.consulHost(), config.consulPort());
     webClient =
         WebClient.builder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .readTimeout(Duration.ofMinutes(5))
+            .connectTimeout(Duration.ofSeconds(2))
+            .readTimeout(Duration.ofSeconds(30))
             .build();
   }
 
@@ -56,7 +59,17 @@ public class InventoryClient {
   /**
    * Sends a single batch receive request to inventory-svc. Partial failures are non-fatal: the
    * return value reports how many lines succeeded and which failed.
+   *
+   * <p>{@code @Retry}/{@code @CircuitBreaker}: same pattern as order-svc's inventory client — up to
+   * 2 retries on transient errors, circuit trips after 60% failures in a 5-call window so a dead
+   * inventory-svc fails fast on repeated import attempts instead of blocking each one for the full
+   * read timeout.
    */
+  @Retry(
+      maxRetries = 2,
+      delay = 200,
+      abortOn = {ApiException.class})
+  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
   public BatchResult batchReceive(
       UUID tenantId, UUID storeId, String rolesHeader, List<ReceiveItem> items) {
     if (items.isEmpty()) return new BatchResult(0, List.of());
@@ -109,6 +122,8 @@ public class InventoryClient {
       }
     } catch (ApiException e) {
       throw e;
+    } catch (CircuitBreakerOpenException e) {
+      return new BatchResult(0, List.of("inventory-svc circuit open — too many recent failures"));
     } catch (RuntimeException e) {
       return new BatchResult(0, List.of("inventory-svc unreachable: " + e.getMessage()));
     }

@@ -21,6 +21,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
+import org.eclipse.microprofile.faulttolerance.Retry;
+import org.eclipse.microprofile.faulttolerance.exceptions.CircuitBreakerOpenException;
 
 /**
  * Calls pricing-svc to (a) ensure a default ALL-channel price list exists, then (b) batch-upsert
@@ -41,8 +44,8 @@ public class PricingClient {
     registry = new ConsulClient(config.consulHost(), config.consulPort());
     webClient =
         WebClient.builder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .readTimeout(Duration.ofMinutes(5))
+            .connectTimeout(Duration.ofSeconds(2))
+            .readTimeout(Duration.ofSeconds(30))
             .build();
   }
 
@@ -57,7 +60,17 @@ public class PricingClient {
   /**
    * Finds (or creates) a tenant's default ALL-channel price list, then batch-upserts selling
    * prices. Returns how many were upserted and any per-row error strings.
+   *
+   * <p>{@code @Retry}/{@code @CircuitBreaker}: same pattern as order-svc's pricing client — up to 2
+   * retries on transient errors, circuit trips after 60% failures in a 5-call window so a dead
+   * pricing-svc fails fast on repeated import attempts instead of blocking each one for the full
+   * read timeout.
    */
+  @Retry(
+      maxRetries = 2,
+      delay = 200,
+      abortOn = {ApiException.class})
+  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
   public BatchResult batchSetPrices(
       UUID tenantId, String currency, String rolesHeader, List<PriceItem> items) {
     if (items.isEmpty()) return new BatchResult(0, List.of());
@@ -112,6 +125,8 @@ public class PricingClient {
       }
     } catch (ApiException e) {
       throw e;
+    } catch (CircuitBreakerOpenException e) {
+      return new BatchResult(0, List.of("pricing-svc circuit open — too many recent failures"));
     } catch (RuntimeException e) {
       return new BatchResult(0, List.of("pricing-svc unreachable: " + e.getMessage()));
     }

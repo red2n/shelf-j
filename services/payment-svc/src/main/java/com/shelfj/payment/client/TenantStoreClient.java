@@ -25,6 +25,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
+import org.eclipse.microprofile.faulttolerance.Fallback;
 
 /**
  * Sync client for tenant-svc's public {@code GET /storefront/config?store=} — used to learn which
@@ -82,44 +84,54 @@ public class TenantStoreClient {
     return cached != null ? Optional.of(cached.methods()) : Optional.empty();
   }
 
-  private Optional<Set<String>> fetch(UUID tenantId, UUID storeId) {
-    try {
-      ServiceInstance instance = registry.resolve(TENANT_SERVICE).orElse(null);
-      if (instance == null) {
-        LOG.log(Level.WARNING, "no healthy tenant-svc instance — skipping method enforcement");
-        return Optional.empty();
-      }
-      try (HttpClientResponse res =
-          webClient
-              .get(instance.baseUri() + "/storefront/config")
-              .queryParam("store", storeId.toString())
-              .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
-              .request()) {
-        if (res.status().code() != 200) {
-          LOG.log(
-              Level.WARNING,
-              "tenant-svc store config returned HTTP {0} — skipping method enforcement",
-              res.status().code());
-          return Optional.empty();
-        }
-        String body = res.as(String.class);
-        try (JsonReader reader = Json.createReader(new StringReader(body))) {
-          JsonObject data = reader.readObject().getJsonObject("data");
-          var arr = data.getJsonArray("enabledPaymentMethods");
-          if (arr == null) return Optional.empty();
-          List<String> methods = new ArrayList<>(arr.size());
-          for (int i = 0; i < arr.size(); i++) {
-            methods.add(arr.getString(i));
-          }
-          return Optional.of(Set.copyOf(methods));
-        }
-      }
-    } catch (RuntimeException e) {
-      LOG.log(
-          Level.WARNING,
-          "tenant-svc store config lookup failed ({0}) — skipping method enforcement",
-          e.getMessage());
+  /**
+   * {@code @CircuitBreaker}: trips after 60% failures in a 5-call window so a down tenant-svc
+   * doesn't cost every cache-miss (once per store per {@link #CACHE_TTL_MILLIS}) the full
+   * connect+read timeout on this POS tender-capture hot path. No {@code @Retry} — {@link
+   * #enabledMethods} already serves stale cached data on failure, so retrying here would only add
+   * latency to card capture without changing the outcome. {@code @Fallback} preserves the existing
+   * "return empty, caller fails open" contract once the method is allowed to throw.
+   */
+  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
+  @Fallback(fallbackMethod = "fetchUnavailable")
+  Optional<Set<String>> fetch(UUID tenantId, UUID storeId) {
+    ServiceInstance instance = registry.resolve(TENANT_SERVICE).orElse(null);
+    if (instance == null) {
+      LOG.log(Level.WARNING, "no healthy tenant-svc instance — skipping method enforcement");
       return Optional.empty();
     }
+    try (HttpClientResponse res =
+        webClient
+            .get(instance.baseUri() + "/storefront/config")
+            .queryParam("store", storeId.toString())
+            .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
+            .request()) {
+      if (res.status().code() != 200) {
+        LOG.log(
+            Level.WARNING,
+            "tenant-svc store config returned HTTP {0} — skipping method enforcement",
+            res.status().code());
+        return Optional.empty();
+      }
+      String body = res.as(String.class);
+      try (JsonReader reader = Json.createReader(new StringReader(body))) {
+        JsonObject data = reader.readObject().getJsonObject("data");
+        var arr = data.getJsonArray("enabledPaymentMethods");
+        if (arr == null) return Optional.empty();
+        List<String> methods = new ArrayList<>(arr.size());
+        for (int i = 0; i < arr.size(); i++) {
+          methods.add(arr.getString(i));
+        }
+        return Optional.of(Set.copyOf(methods));
+      }
+    }
+  }
+
+  private Optional<Set<String>> fetchUnavailable(UUID tenantId, UUID storeId) {
+    LOG.log(
+        Level.WARNING,
+        "tenant-svc store config lookup skipped for store {0}: unreachable or circuit open",
+        storeId);
+    return Optional.empty();
   }
 }
