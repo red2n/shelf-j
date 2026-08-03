@@ -617,9 +617,11 @@ class InventoryIT {
 
   @Test
   void purgeMovements_tooRecent_returns400() {
-    // Trying to purge within 90 days must be rejected
-    Response r =
-        post("/admin/inventory/movements/purge", "{\"before\":\"2026-05-01T00:00:00Z\"}", T);
+    // Trying to purge within 90 days must be rejected. Computed relative to now (not hardcoded)
+    // so this test doesn't silently start passing for the wrong reason once real time moves the
+    // fixed date past the 90-day window.
+    String tooRecent = OffsetDateTime.now(java.time.ZoneOffset.UTC).minusDays(30).toString();
+    Response r = post("/admin/inventory/movements/purge", "{\"before\":\"" + tooRecent + "\"}", T);
     assertThat(r.getStatus(), is(400));
     assertThat(r.readEntity(String.class), containsString("PURGE_TOO_RECENT"));
   }
