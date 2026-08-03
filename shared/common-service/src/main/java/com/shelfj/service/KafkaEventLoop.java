@@ -65,6 +65,14 @@ public final class KafkaEventLoop implements AutoCloseable {
     int count;
   }
 
+  /**
+   * @param name identifies this loop in thread names and log lines, e.g. {@code
+   *     "store-status-changed"}
+   * @param bootstrap Kafka bootstrap servers, e.g. {@code "kafka:9092"}
+   * @param groupId Kafka consumer-group id; must be unique per logical consumer across the cluster
+   * @param topics the topics to subscribe to
+   * @param handler processes each record; see {@link Handler}'s contract for retry semantics
+   */
   public KafkaEventLoop(
       String name, String bootstrap, String groupId, List<String> topics, Handler handler) {
     this.name = name;
@@ -89,12 +97,22 @@ public final class KafkaEventLoop implements AutoCloseable {
             });
   }
 
+  /**
+   * Starts polling on a dedicated daemon thread, ticking every 2 seconds. Idempotent to call only
+   * once per instance — call {@link #close()} and construct a new loop to restart.
+   */
   public void start() {
     running = true;
     scheduler.scheduleWithFixedDelay(this::pollQuietly, 2, 2, TimeUnit.SECONDS);
     LOG.log(Level.INFO, "{0} started", name);
   }
 
+  /**
+   * One poll tick: fetch records, dispatch each to {@link #handler}, and commit offsets up to (but
+   * not including) the first failure per partition. Never throws — {@link WakeupException} (from
+   * {@link #close()}) and any other exception are caught and logged, so a bad tick never kills the
+   * scheduler.
+   */
   private void pollQuietly() {
     if (!running) {
       return;
@@ -155,6 +173,11 @@ public final class KafkaEventLoop implements AutoCloseable {
 
   /**
    * Returns the attempt count for this (partition, offset), resetting it if the offset moved on.
+   *
+   * @param tp the partition the failing record belongs to
+   * @param offset the failing record's offset
+   * @return the number of consecutive failed attempts at {@code offset} on {@code tp}, including
+   *     this one
    */
   private int recordAttempt(TopicPartition tp, long offset) {
     Attempt a = attempts.computeIfAbsent(tp, k -> new Attempt());
@@ -166,6 +189,15 @@ public final class KafkaEventLoop implements AutoCloseable {
     return a.count;
   }
 
+  /**
+   * Publishes a record that exhausted {@link #MAX_ATTEMPTS} to {@code <topic>.DLT}, lazily creating
+   * the producer on first use. A failure to publish the dead letter itself is logged (with the
+   * original cause) and swallowed — the record is skipped either way so the partition isn't stuck
+   * forever.
+   *
+   * @param rec the record that exhausted its retries
+   * @param cause the last handler failure for this record
+   */
   private void deadLetter(ConsumerRecord<String, String> rec, RuntimeException cause) {
     if (dlqProducer == null) {
       Properties props = new Properties();
@@ -191,6 +223,11 @@ public final class KafkaEventLoop implements AutoCloseable {
   // Try-with-resources doesn't fit: the consumer must be closed with a bounded timeout only
   // *after* the scheduler has been asked to stop and given a chance to terminate, and the
   // producer is closed afterwards too — there's no single resource a TWR clause can own here.
+  /**
+   * Stops polling, closes the consumer (leaving its consumer group) and the DLQ producer if one was
+   * created. Waits up to 3 seconds for the poll thread to terminate before forcing consumer
+   * closure, so an in-flight {@code handler.handle(...)} call isn't cut off mid-transaction.
+   */
   @SuppressWarnings("PMD.UseTryWithResources")
   @Override
   public void close() {

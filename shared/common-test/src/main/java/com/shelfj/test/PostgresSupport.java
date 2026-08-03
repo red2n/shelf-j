@@ -28,7 +28,13 @@ public final class PostgresSupport implements AutoCloseable {
     this.container = container;
   }
 
-  /** Start a Postgres 16 container. */
+  /**
+   * Start a Postgres 16 container.
+   *
+   * @return a started {@code PostgresSupport} with database {@code shelfj_test}, user/password
+   *     {@code shelfj}/{@code shelfj}; call {@link #close()} (or {@link #stop()}) when done
+   * @throws org.testcontainers.containers.ContainerLaunchException if the container fails to start
+   */
   public static PostgresSupport start() {
     @SuppressWarnings("resource")
     PostgreSQLContainer<?> c =
@@ -40,7 +46,13 @@ public final class PostgresSupport implements AutoCloseable {
     return new PostgresSupport(c);
   }
 
-  /** Run Flyway migrations from the given location (e.g. {@code "classpath:db/migration"}). */
+  /**
+   * Run Flyway migrations from the given location (e.g. {@code "classpath:db/migration"}).
+   *
+   * @param location the Flyway migration location to apply
+   * @return this, for chaining after {@link #start()}
+   * @throws org.flywaydb.core.api.FlywayException if a migration fails to apply
+   */
   public PostgresSupport migrate(String location) {
     Flyway.configure()
         .dataSource(container.getJdbcUrl(), container.getUsername(), container.getPassword())
@@ -50,6 +62,9 @@ public final class PostgresSupport implements AutoCloseable {
     return this;
   }
 
+  /**
+   * @return a fresh unpooled {@link DataSource} pointing at this container
+   */
   public DataSource dataSource() {
     PGSimpleDataSource ds = new PGSimpleDataSource();
     ds.setUrl(container.getJdbcUrl());
@@ -58,18 +73,28 @@ public final class PostgresSupport implements AutoCloseable {
     return ds;
   }
 
+  /**
+   * @return the JDBC URL of the running container
+   */
   public String jdbcUrl() {
     return container.getJdbcUrl();
   }
 
+  /**
+   * @return the database user ({@code shelfj})
+   */
   public String username() {
     return container.getUsername();
   }
 
+  /**
+   * @return the database password ({@code shelfj})
+   */
   public String password() {
     return container.getPassword();
   }
 
+  /** Stops and removes the container. */
   public void stop() {
     container.stop();
   }

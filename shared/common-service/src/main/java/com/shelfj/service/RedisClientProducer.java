@@ -19,10 +19,12 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @ApplicationScoped
 public class RedisClientProducer {
 
+  /** Redis host. Property: {@code shelfj.redis.host}. */
   @Inject
   @ConfigProperty(name = "shelfj.redis.host", defaultValue = "localhost")
   String redisHost;
 
+  /** Redis port. Property: {@code shelfj.redis.port}. */
   @Inject
   @ConfigProperty(name = "shelfj.redis.port", defaultValue = "6379")
   int redisPort;
@@ -31,6 +33,11 @@ public class RedisClientProducer {
   // empty-string defaultValue as "no value found" and fails CDI deployment. Optional is the
   // correct MicroProfile Config idiom for a property that may legitimately be absent (e.g. the
   // no-auth Redis Testcontainer used by RedisSupport in integration tests).
+  /**
+   * Redis auth password, if the target instance requires one. Property: {@code
+   * shelfj.redis.password}. Empty/absent connects without {@code AUTH} — normal for the no-auth
+   * Testcontainer used in integration tests.
+   */
   @Inject
   @ConfigProperty(name = "shelfj.redis.password")
   Optional<String> redisPassword;
@@ -38,6 +45,13 @@ public class RedisClientProducer {
   private RedisClient client;
   private StatefulRedisConnection<String, String> connection;
 
+  /**
+   * Builds the CDI-managed {@link RedisCommands} bean. Called lazily by CDI, only when some other
+   * bean actually injects {@code RedisCommands<String, String>}.
+   *
+   * @return synchronous commands over one connection to {@link #redisHost}:{@link #redisPort},
+   *     authenticated with {@link #redisPassword} if present and non-blank
+   */
   @Produces
   @ApplicationScoped
   public RedisCommands<String, String> redisCommands() {
@@ -50,6 +64,12 @@ public class RedisClientProducer {
     return connection.sync();
   }
 
+  /**
+   * Closes the connection and shuts down the client on application shutdown.
+   *
+   * @param commands the bean produced by {@link #redisCommands()} (unused directly — closes the
+   *     underlying connection/client fields instead)
+   */
   void close(@Disposes RedisCommands<String, String> commands) {
     if (connection != null) {
       connection.close();

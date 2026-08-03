@@ -21,6 +21,13 @@ public class DataSourceProducer {
 
   @Inject ServiceSettings settings;
 
+  /**
+   * Builds the CDI-managed {@link DataSource} bean from {@link ServiceSettings}. Called once by
+   * CDI; the resulting pool is shared for the application's lifetime.
+   *
+   * @return a Hikari-backed pool sized from {@link ServiceSettings#dbPoolMaxSize()}, scoped to
+   *     {@link ServiceSettings#dbSchema()}
+   */
   @Produces
   @ApplicationScoped
   public DataSource dataSource() {
@@ -37,6 +44,11 @@ public class DataSourceProducer {
     return new HikariDataSource(config);
   }
 
+  /**
+   * Closes the pool on application shutdown, releasing all pooled connections.
+   *
+   * @param ds the {@link DataSource} bean produced by {@link #dataSource()}
+   */
   @SuppressWarnings("PMD.CloseResource") // this IS the close — CDI calls it on shutdown
   void close(@Disposes DataSource ds) {
     if (ds instanceof HikariDataSource hikari) {

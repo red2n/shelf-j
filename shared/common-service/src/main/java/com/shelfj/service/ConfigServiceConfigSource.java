@@ -47,11 +47,22 @@ public final class ConfigServiceConfigSource implements ConfigSource {
 
   private Properties classpathDefaults; // bootstrap fallback, loaded lazily
 
+  /**
+   * Instantiated by the {@code ServiceLoader} MicroProfile Config discovers on the classpath — do
+   * not construct directly. Performs the one blocking HTTP fetch (or no-op) at construction time,
+   * since {@link ConfigSource}s are built once and cached by the config provider.
+   */
   public ConfigServiceConfigSource() {
     this.ordinal = parseInt(bootstrap("shelfj.config.ordinal"), DEFAULT_ORDINAL);
     this.properties = load();
   }
 
+  /**
+   * @return the fetched config key/value map, or {@link Map#of()} if {@code shelfj.config.url} is
+   *     unset, {@code shelfj.service.name} is unknown, config-svc returns 404/non-200, or
+   *     config-svc is unreachable — every failure mode degrades to "no central config" rather than
+   *     throwing, per the class doc
+   */
   private Map<String, String> load() {
     String url = bootstrap("shelfj.config.url");
     if (url == null || url.isBlank()) {
@@ -110,6 +121,10 @@ public final class ConfigServiceConfigSource implements ConfigSource {
 
   /**
    * Extracts the {@code data} object of the config-svc response envelope into a flat string map.
+   *
+   * @param body the raw JSON response body from config-svc
+   * @return the flattened {@code data} object's entries as strings; empty if {@code data} is
+   *     missing or not a JSON object
    */
   private static Map<String, String> parseData(String body) {
     Map<String, String> out = new HashMap<>();
@@ -130,6 +145,9 @@ public final class ConfigServiceConfigSource implements ConfigSource {
    * Resolve a bootstrap value before MP Config exists: system property → dotted env var (how
    * compose sets keys) → UPPER_SNAKE env var → the bundled {@code microprofile-config.properties}
    * (source of {@code shelfj.service.name}). Returns {@code null} if unset everywhere.
+   *
+   * @param key the dotted MicroProfile Config key, e.g. {@code "shelfj.config.url"}
+   * @return the resolved value, or {@code null} if not set in any of the four sources checked
    */
   private String bootstrap(String key) {
     String v = System.getProperty(key);
@@ -141,6 +159,10 @@ public final class ConfigServiceConfigSource implements ConfigSource {
     return classpathDefaults().getProperty(key);
   }
 
+  /**
+   * @return the bundled {@code META-INF/microprofile-config.properties}, loaded once and cached;
+   *     empty (never {@code null}) if the resource is missing or unreadable
+   */
   private Properties classpathDefaults() {
     if (classpathDefaults == null) {
       Properties p = new Properties();
@@ -157,14 +179,28 @@ public final class ConfigServiceConfigSource implements ConfigSource {
     return classpathDefaults;
   }
 
+  /**
+   * @param v the candidate value; may be {@code null}/blank
+   * @param def the fallback
+   * @return {@code v} if non-null and non-blank, otherwise {@code def}
+   */
   private static String orDefault(String v, String def) {
     return v == null || v.isBlank() ? def : v;
   }
 
+  /**
+   * @param s a URL, possibly ending in {@code /}
+   * @return {@code s} with any single trailing slash removed
+   */
   private static String stripTrailingSlash(String s) {
     return s.endsWith("/") ? s.substring(0, s.length() - 1) : s;
   }
 
+  /**
+   * @param s the string to parse; may be {@code null} or non-numeric
+   * @param def the fallback
+   * @return the parsed int, or {@code def} if {@code s} is {@code null} or not a valid integer
+   */
   private static int parseInt(String s, int def) {
     try {
       return s == null ? def : Integer.parseInt(s.trim());
@@ -173,26 +209,45 @@ public final class ConfigServiceConfigSource implements ConfigSource {
     }
   }
 
+  /**
+   * @return an unmodifiable view of the fetched (or empty) config map
+   */
   @Override
   public Map<String, String> getProperties() {
     return Collections.unmodifiableMap(properties);
   }
 
+  /**
+   * @return the keys this source can resolve; empty if central config wasn't fetched
+   */
   @Override
   public Set<String> getPropertyNames() {
     return properties.keySet();
   }
 
+  /**
+   * @param key the MicroProfile Config key being resolved
+   * @return the fetched value for {@code key}, or {@code null} if not present in central config
+   *     (MicroProfile Config then falls through to the next-lower-ordinal source)
+   */
   @Override
   public String getValue(String key) {
     return properties.get(key);
   }
 
+  /**
+   * @return {@value #NAME}, this source's identifier in MicroProfile Config diagnostics
+   */
   @Override
   public String getName() {
     return NAME;
   }
 
+  /**
+   * @return this source's ordinal (default {@value #DEFAULT_ORDINAL}, overridable via {@code
+   *     shelfj.config.ordinal}) — higher wins ties over the classpath properties file (100) but
+   *     loses to env vars/system properties (300/400)
+   */
   @Override
   public int getOrdinal() {
     return ordinal;

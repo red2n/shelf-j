@@ -18,6 +18,13 @@ public abstract class BaseOutboxRepository extends BaseJdbcRepository implements
 
   /**
    * Insert one outbox row into the already-open connection {@code c}. No-op if {@code o} is null.
+   *
+   * @param c the caller's open transaction connection (typically from within {@link #inTx}) — the
+   *     insert commits atomically with whatever else runs on {@code c}, satisfying golden rule #6
+   * @param o the row to insert, or {@code null} to no-op (a repo method that doesn't always emit an
+   *     event can pass a possibly-null row unconditionally)
+   * @throws SQLException on any JDBC failure; propagates to the caller's transaction, which will be
+   *     rolled back
    */
   protected void insertOutbox(Connection c, OutboxRow o) throws SQLException {
     if (o == null) return;
@@ -35,6 +42,14 @@ public abstract class BaseOutboxRepository extends BaseJdbcRepository implements
     }
   }
 
+  /**
+   * @param limit max rows to claim in one drain
+   * @param publish sends the claimed rows and returns the ids that were confirmed delivered
+   * @return the ids that were claimed, published, and marked {@code published_at} (a subset of, or
+   *     all of, what {@code publish} was given — rows {@code publish} doesn't confirm stay
+   *     unpublished for the next drain)
+   * @throws com.shelfj.web.ApiException 500 {@code DB_ERROR} if the claim/mark queries fail
+   */
   @Override
   public List<UUID> drainAndPublish(int limit, Function<List<PendingOutbox>, List<UUID>> publish) {
     return inTx(

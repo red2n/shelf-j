@@ -16,6 +16,7 @@ public abstract class BaseTenantStatusChangedConsumer extends BaseKafkaConsumer 
 
   @Inject TenantStatusChangedHandler handler;
 
+  /** Topic to subscribe to. Property: {@code shelfj.kafka.topics.tenant-status-changed}. */
   @Inject
   @ConfigProperty(
       name = "shelfj.kafka.topics.tenant-status-changed",

@@ -29,6 +29,16 @@ public final class EmqxSupport implements AutoCloseable {
     this.container = container;
   }
 
+  /**
+   * Starts the broker and blocks until it logs its startup-complete banner.
+   *
+   * @param jwtSecret the HMAC secret EMQX validates MQTT JWT auth against (must match the secret
+   *     the service under test signs client JWTs with); injected as {@code
+   *     EMQX_AUTHENTICATION__1__SECRET}, overriding the placeholder in {@code infra/emqx.conf}
+   * @return a started {@code EmqxSupport}; call {@link #close()} (or {@link #stop()}) when done
+   * @throws org.testcontainers.containers.ContainerLaunchException if the container fails to start
+   *     or doesn't log the expected banner within 90 seconds
+   */
   public static EmqxSupport start(String jwtSecret) {
     @SuppressWarnings("resource")
     GenericContainer<?> c =
@@ -57,19 +67,30 @@ public final class EmqxSupport implements AutoCloseable {
     return new EmqxSupport(c);
   }
 
+  /**
+   * @return the container host to connect the MQTT client to
+   */
   public String host() {
     return container.getHost();
   }
 
+  /**
+   * @return the host-mapped MQTT port (not necessarily {@value #MQTT_PORT})
+   */
   public int port() {
     return container.getMappedPort(MQTT_PORT);
   }
 
-  /** HTTP Management API (kick a client, etc.) — see {@code infra/emqx-api-key.conf}. */
+  /**
+   * HTTP Management API (kick a client, etc.) — see {@code infra/emqx-api-key.conf}.
+   *
+   * @return the host-mapped management API port (not necessarily {@value #API_PORT})
+   */
   public int apiPort() {
     return container.getMappedPort(API_PORT);
   }
 
+  /** Stops and removes the container. */
   public void stop() {
     container.stop();
   }

@@ -17,7 +17,12 @@ public final class RedisSupport implements AutoCloseable {
     this.container = container;
   }
 
-  /** Start a Redis 7 container (no password — auth is not what these tests exercise). */
+  /**
+   * Start a Redis 7 container (no password — auth is not what these tests exercise).
+   *
+   * @return a started {@code RedisSupport}; call {@link #close()} (or {@link #stop()}) when done
+   * @throws org.testcontainers.containers.ContainerLaunchException if the container fails to start
+   */
   public static RedisSupport start() {
     @SuppressWarnings("resource")
     GenericContainer<?> c =
@@ -26,14 +31,21 @@ public final class RedisSupport implements AutoCloseable {
     return new RedisSupport(c);
   }
 
+  /**
+   * @return the container host to connect the Redis client to
+   */
   public String host() {
     return container.getHost();
   }
 
+  /**
+   * @return the host-mapped Redis port (not necessarily 6379)
+   */
   public int port() {
     return container.getMappedPort(6379);
   }
 
+  /** Stops and removes the container. */
   public void stop() {
     container.stop();
   }

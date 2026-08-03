@@ -16,6 +16,22 @@ import javax.sql.DataSource;
  * one-shot helpers, and shared functional interfaces — once, so repos don't each carry them.
  *
  * <p>CDI injects the superclass {@code dataSource} field when the concrete repo bean is resolved.
+ *
+ * <p>Typical subclass:
+ *
+ * <pre>{@code
+ * @ApplicationScoped
+ * public class StoreRepository extends BaseOutboxRepository {
+ *     public Store findById(UUID tenantId, UUID id) {
+ *         return query(
+ *                 "SELECT * FROM stores WHERE tenant_id = ? AND id = ?",
+ *                 ps -> { ps.setObject(1, tenantId); ps.setObject(2, id); },
+ *                 this::mapRow,
+ *                 "find store")
+ *             .stream().findFirst().orElseThrow(() -> ApiException.notFound(...));
+ *     }
+ * }
+ * }</pre>
  */
 public abstract class BaseJdbcRepository {
 
@@ -26,18 +42,36 @@ public abstract class BaseJdbcRepository {
 
   // ── Functional interfaces ─────────────────────────────────────────────────
 
+  /** A unit of work run inside {@link #inTx}, given the transaction's open connection. */
   @FunctionalInterface
   protected interface TxWork<R> {
+    /**
+     * @param c the open, auto-commit-disabled connection for this transaction
+     * @return the result to hand back from {@link #inTx}
+     * @throws SQLException on any JDBC failure; triggers rollback and is mapped via {@link
+     *     #handleTxSqlException}
+     */
     R run(Connection c) throws SQLException;
   }
 
+  /** Binds parameters onto a prepared statement before it executes. */
   @FunctionalInterface
   protected interface Binder {
+    /**
+     * @param ps the prepared statement to bind parameters onto
+     * @throws SQLException if a {@code setXxx} call fails (e.g. wrong parameter index/type)
+     */
     void bind(PreparedStatement ps) throws SQLException;
   }
 
+  /** Maps one JDBC result-set row to a domain object. */
   @FunctionalInterface
   protected interface RowMapper<T> {
+    /**
+     * @param rs the result set, positioned on the row to map (do not call {@code next()})
+     * @return the mapped row
+     * @throws SQLException if a column read fails (e.g. wrong column name/type)
+     */
     T map(ResultSet rs) throws SQLException;
   }
 
@@ -48,6 +82,14 @@ public abstract class BaseJdbcRepository {
    * rollback (so domain-level 4xx/5xx exceptions propagate cleanly). Routes SQL exceptions through
    * {@link #handleTxSqlException} so subclasses can map unique-violation codes to service-specific
    * error responses.
+   *
+   * @param work the transactional unit of work
+   * @param what a short present-tense description used in error messages, e.g. {@code "create
+   *     store"}
+   * @return whatever {@code work} returns
+   * @throws ApiException the exact exception thrown by {@code work} (after rollback), the result of
+   *     {@link #handleTxSqlException} for a {@link SQLException}, or a generic {@code 500 DB_ERROR}
+   *     if the connection itself could not be acquired
    */
   protected <R> R inTx(TxWork<R> work, String what) {
     try (Connection c = acquireConnection()) {
@@ -76,6 +118,10 @@ public abstract class BaseJdbcRepository {
    * pgbouncer-gotchas} note: same call retried 1-2x always succeeded). This only retries the
    * acquire step itself, never {@code work.run(c)}, so a retry can never double-execute business
    * logic.
+   *
+   * @return a pooled connection, ready for {@code setAutoCommit(false)}
+   * @throws SQLException the last acquisition failure if all 3 attempts (with 100/200/300ms
+   *     backoff) fail, or immediately if the wait is interrupted
    */
   private Connection acquireConnection() throws SQLException {
     final int maxAttempts = 3;
@@ -100,6 +146,10 @@ public abstract class BaseJdbcRepository {
   /**
    * Override to map a transaction-level {@link SQLException} to a service-specific exception (e.g.
    * check {@link #UNIQUE_VIOLATION} and return a domain 409). Default: generic DB_ERROR 500.
+   *
+   * @param what the description passed to the failing {@link #inTx} call
+   * @param e the SQL exception that aborted the transaction (already rolled back)
+   * @return the exception {@link #inTx} should throw to the caller
    */
   protected RuntimeException handleTxSqlException(String what, SQLException e) {
     return dbError(what, e);
@@ -107,7 +157,16 @@ public abstract class BaseJdbcRepository {
 
   // ── One-shot helpers ──────────────────────────────────────────────────────
 
-  /** Execute a single DML statement. Converts unique-constraint violations to a generic 409. */
+  /**
+   * Execute a single DML statement outside any caller-managed transaction (opens and commits its
+   * own connection). Converts unique-constraint violations to a generic 409.
+   *
+   * @param sql the DML statement to execute
+   * @param binder binds the statement's parameters
+   * @param what a short present-tense description used in error messages
+   * @throws ApiException 409 {@code DUPLICATE} on a unique-constraint violation ({@link
+   *     #UNIQUE_VIOLATION}); 500 {@code DB_ERROR} on any other {@link SQLException}
+   */
   protected void exec(String sql, Binder binder, String what) {
     try (Connection c = dataSource.getConnection();
         PreparedStatement ps = c.prepareStatement(sql)) {
@@ -120,7 +179,16 @@ public abstract class BaseJdbcRepository {
     }
   }
 
-  /** Execute a SELECT and map each row; returns an empty list when nothing matches. */
+  /**
+   * Execute a SELECT and map each row, outside any caller-managed transaction.
+   *
+   * @param sql the query to execute
+   * @param binder binds the query's parameters
+   * @param mapper maps each result row to a {@code T}
+   * @param what a short present-tense description used in error messages
+   * @return the mapped rows, in result-set order; empty (never {@code null}) when nothing matches
+   * @throws ApiException 500 {@code DB_ERROR} on any {@link SQLException}
+   */
   protected <T> List<T> query(String sql, Binder binder, RowMapper<T> mapper, String what) {
     try (Connection c = dataSource.getConnection();
         PreparedStatement ps = c.prepareStatement(sql)) {
@@ -142,6 +210,13 @@ public abstract class BaseJdbcRepository {
    * row was inserted (first time seen); {@code false} if it was already present (duplicate). Common
    * to every service that consumes Kafka events — defined once here so it doesn't need to be copied
    * into each repo.
+   *
+   * @param eventId the event's {@link com.shelfj.events.DomainEvent#eventId()}
+   * @param consumer a name identifying this consumer (so the same event can be independently
+   *     processed by different consumers)
+   * @return {@code true} if this is the first time this (eventId, consumer) pair was seen; {@code
+   *     false} if it was already marked processed
+   * @throws ApiException 500 {@code DB_ERROR} on any {@link SQLException}
    */
   public boolean markProcessedIfNew(UUID eventId, String consumer) {
     try (Connection c = dataSource.getConnection()) {
@@ -155,6 +230,13 @@ public abstract class BaseJdbcRepository {
    * Transaction-scoped variant of {@link #markProcessedIfNew}: runs on the caller's connection so
    * the dedupe mark commits (or rolls back) atomically WITH the business write. Marking in a
    * separate transaction first would permanently swallow the event if the write then failed.
+   *
+   * @param c the caller's open transaction connection (typically from within {@link #inTx})
+   * @param eventId the event's {@link com.shelfj.events.DomainEvent#eventId()}
+   * @param consumer a name identifying this consumer
+   * @return {@code true} if this is the first time this (eventId, consumer) pair was seen
+   * @throws SQLException on any JDBC failure; propagates to the caller's transaction, which will be
+   *     rolled back
    */
   protected static boolean markProcessedIfNewTx(Connection c, UUID eventId, String consumer)
       throws SQLException {
@@ -170,6 +252,14 @@ public abstract class BaseJdbcRepository {
 
   // ── Error ─────────────────────────────────────────────────────────────────
 
+  /**
+   * @param what a short present-tense description of the failed operation, e.g. {@code "create
+   *     store"}
+   * @param cause the underlying JDBC failure
+   * @return a {@code 500 DB_ERROR} {@link ApiException} wrapping {@code cause}, with a message that
+   *     never leaks {@code cause}'s SQL/driver detail to the client (golden rule: never leak
+   *     stack/SQL) — the full detail is only visible server-side via {@code cause}'s stack trace
+   */
   protected static ApiException dbError(String what, Throwable cause) {
     return new ApiException(500, "DB_ERROR", "Failed to " + what, List.of(), cause);
   }

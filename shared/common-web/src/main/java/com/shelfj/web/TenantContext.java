@@ -28,14 +28,23 @@ public class TenantContext {
   private Set<UUID> storeIds = Set.of();
   private String requestId;
 
+  /**
+   * @return the caller's tenant id, or {@code null} if the request carried none
+   */
   public UUID tenantId() {
     return tenantId;
   }
 
+  /**
+   * @return the caller's user id, or {@code null} if the request carried no authenticated user
+   */
   public UUID userId() {
     return userId;
   }
 
+  /**
+   * @return the caller's roles; empty (never {@code null}) if the request carried none
+   */
   public Set<String> roles() {
     return roles;
   }
@@ -45,13 +54,17 @@ public class TenantContext {
     return storeIds;
   }
 
+  /**
+   * @return the correlation id for this request ({@link HttpHeaders#REQUEST_ID})
+   */
   public String requestId() {
     return requestId;
   }
 
   /**
-   * Tenant id, or throw 401 if the request carried no tenant (e.g. a protected route reached
-   * unauthenticated).
+   * @return the tenant id
+   * @throws ApiException 401 {@code NO_TENANT} if the request carried no tenant (e.g. a protected
+   *     route reached unauthenticated)
    */
   public UUID requireTenantId() {
     if (tenantId == null) {
@@ -61,8 +74,9 @@ public class TenantContext {
   }
 
   /**
-   * User id, or throw 401 if the request carried no authenticated user (e.g. a route that requires
-   * a principal reached without one).
+   * @return the user id
+   * @throws ApiException 401 {@code NO_USER} if the request carried no authenticated user (e.g. a
+   *     route that requires a principal reached without one)
    */
   public UUID requireUserId() {
     if (userId == null) {
@@ -71,6 +85,10 @@ public class TenantContext {
     return userId;
   }
 
+  /**
+   * @param role the role to check for, e.g. {@code "MANAGER"}
+   * @return {@code true} if the caller has {@code role}
+   */
   public boolean hasRole(String role) {
     return roles.contains(role);
   }
@@ -79,6 +97,9 @@ public class TenantContext {
    * Throw 403 unless the caller has at least one of the supplied roles.
    *
    * <pre>{@code ctx.requireAnyRole("ADMIN", "STAFF"); }</pre>
+   *
+   * @param required the acceptable roles; the caller must have at least one
+   * @throws ApiException 403 {@code FORBIDDEN} if the caller has none of {@code required}
    */
   public void requireAnyRole(String... required) {
     for (String r : required) {
@@ -93,6 +114,10 @@ public class TenantContext {
    * PLATFORM_ADMIN) may operate on any store in their tenant, so this is a no-op for them.
    *
    * <pre>{@code ctx.requireStoreAccess(storeId); }</pre>
+   *
+   * @param storeId the store the caller is about to operate on
+   * @throws ApiException 403 {@code STORE_ACCESS_DENIED} if the caller is store-restricted and
+   *     {@code storeId} is not one of their assigned stores
    */
   public void requireStoreAccess(UUID storeId) {
     if (!storeIds.isEmpty() && !storeIds.contains(storeId)) {
@@ -100,7 +125,17 @@ public class TenantContext {
     }
   }
 
-  // --- populated by the filter ---
+  /**
+   * Populates this request-scoped context from identity headers. Called once per request by {@link
+   * TenantContextFilter}; not for use outside the filter chain.
+   *
+   * @param tenantId the caller's tenant, or {@code null} if unauthenticated
+   * @param userId the caller's user id, or {@code null} if unauthenticated
+   * @param roles the caller's roles; {@code null} is stored as empty
+   * @param storeIds the stores the caller may operate in; {@code null} is stored as empty (=
+   *     unrestricted)
+   * @param requestId the correlation id for this request
+   */
   void set(UUID tenantId, UUID userId, Set<String> roles, Set<UUID> storeIds, String requestId) {
     this.tenantId = tenantId;
     this.userId = userId;

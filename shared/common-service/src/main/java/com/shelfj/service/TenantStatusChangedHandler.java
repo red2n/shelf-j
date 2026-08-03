@@ -22,6 +22,15 @@ public class TenantStatusChangedHandler {
 
   @Inject TenantStatusRepository tenantStatus;
 
+  /**
+   * Parses the event payload and upserts the local projection.
+   *
+   * @param json the raw Kafka record value; expected fields: {@code tenantId}, {@code status},
+   *     {@code occurredAt} (ISO-8601 instant)
+   * @implNote never throws — a malformed payload (missing field, bad UUID, unparseable instant) is
+   *     logged at {@code WARNING} and the record is skipped (acked, not retried), since a
+   *     redelivered malformed payload would fail identically forever
+   */
   public void handle(String json) {
     UUID tenantId;
     String status;

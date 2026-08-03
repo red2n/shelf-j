@@ -18,9 +18,19 @@ public interface OutboxStore {
    * re-publish the same rows), hands them to {@code publish}, and — inside that same transaction —
    * marks published exactly the ids it returns. Rows {@code publish} doesn't report back stay
    * unpublished and are claimable again (by any replica) on the next drain.
+   *
+   * @param limit max rows to claim in one call
+   * @param publish sends the claimed rows and returns the ids that were confirmed delivered
+   * @return the ids that were claimed and successfully marked published
    */
   List<UUID> drainAndPublish(int limit, Function<List<PendingOutbox>, List<UUID>> publish);
 
-  /** A pending outbox row: where to publish ({@code topic}) and what ({@code payload}). */
+  /**
+   * A pending outbox row: where to publish and what.
+   *
+   * @param id the outbox row's primary key, used as the Kafka record key
+   * @param topic destination Kafka topic
+   * @param payload the serialized event JSON, sent verbatim as the Kafka record value
+   */
   record PendingOutbox(UUID id, String topic, String payload) {}
 }

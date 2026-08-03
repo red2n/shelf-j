@@ -16,6 +16,7 @@ public abstract class BaseStoreStatusChangedConsumer extends BaseKafkaConsumer {
 
   @Inject StoreStatusChangedHandler handler;
 
+  /** Topic to subscribe to. Property: {@code shelfj.kafka.topics.store-status-changed}. */
   @Inject
   @ConfigProperty(
       name = "shelfj.kafka.topics.store-status-changed",

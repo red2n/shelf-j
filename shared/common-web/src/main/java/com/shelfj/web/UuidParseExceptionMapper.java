@@ -30,6 +30,11 @@ public class UuidParseExceptionMapper implements ExtendedExceptionMapper<Illegal
   /** A bounded scan is enough: the boundary → service → parse chain is shallow. */
   private static final int MAX_FRAMES = 20;
 
+  /**
+   * @param ex the exception Jersey is deciding whether to route to this mapper
+   * @return {@code true} iff {@code ex}'s stack trace shows it originated from {@code
+   *     UUID.fromString} within the first {@link #MAX_FRAMES} frames
+   */
   @Override
   public boolean isMappable(IllegalArgumentException ex) {
     StackTraceElement[] frames = ex.getStackTrace();
@@ -43,6 +48,11 @@ public class UuidParseExceptionMapper implements ExtendedExceptionMapper<Illegal
     return false;
   }
 
+  /**
+   * @param ex the malformed-UUID exception (unused beyond confirming the type — the response never
+   *     echoes {@code ex}'s message, to avoid leaking internals)
+   * @return a {@code 400} envelope with {@link ErrorCodes#INVALID_UUID}
+   */
   @Override
   public Response toResponse(IllegalArgumentException ex) {
     return Response.status(Response.Status.BAD_REQUEST)

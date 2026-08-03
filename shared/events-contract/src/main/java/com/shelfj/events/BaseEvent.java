@@ -25,6 +25,13 @@ public abstract class BaseEvent implements DomainEvent {
   private final UUID aggregateId;
   private final Instant occurredAt;
 
+  /**
+   * @param eventId globally-unique id for this event instance; consumers dedupe on this
+   * @param eventType PascalCase past-tense event type name, e.g. {@code "OrderPlaced"}
+   * @param tenantId tenant this event belongs to
+   * @param aggregateId id of the aggregate the event is about (e.g. orderId, storeId)
+   * @param occurredAt when the fact occurred, UTC
+   */
   protected BaseEvent(
       UUID eventId, String eventType, UUID tenantId, UUID aggregateId, Instant occurredAt) {
     this.eventId = eventId;
