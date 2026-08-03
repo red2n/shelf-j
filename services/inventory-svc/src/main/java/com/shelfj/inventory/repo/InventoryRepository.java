@@ -21,6 +21,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Savepoint;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -255,46 +256,92 @@ public class InventoryRepository extends BaseOutboxRepository {
    * fully-successful reservation look like it's short on stock.
    */
   public Reservation reserve(Reservation r, OutboxRow event, String idempotencyKey) {
+    return inTx(c -> reserveTx(c, r, event, idempotencyKey), "reserve stock");
+  }
+
+  /** One item of a {@link #reserveBatch} call. */
+  public record ReserveBatchItem(Reservation reservation, OutboxRow event, String idempotencyKey) {}
+
+  /** Per-item result of {@link #reserveBatch}: exactly one of the two fields is set. */
+  public record ReserveOutcome(Reservation reservation, RuntimeException error) {
+    static ReserveOutcome success(Reservation r) {
+      return new ReserveOutcome(r, null);
+    }
+
+    static ReserveOutcome failure(RuntimeException e) {
+      return new ReserveOutcome(null, e);
+    }
+
+    public boolean succeeded() {
+      return error == null;
+    }
+  }
+
+  /**
+   * Batch form of {@link #reserve}: holds stock for every item within ONE transaction instead of
+   * one {@code BEGIN}/{@code COMMIT} (and connection-pool checkout) per item — {@code bulkReserve}
+   * used to loop calling {@link #reserve} once per line, fanning a single "bulk" request out into N
+   * separate round trips. A {@code SAVEPOINT} per item preserves the original partial-success
+   * behavior: a short/failing line rolls back only its own work, leaving earlier and later items in
+   * the batch unaffected.
+   */
+  public List<ReserveOutcome> reserveBatch(List<ReserveBatchItem> items) {
     return inTx(
         c -> {
-          if (idempotencyKey != null) {
-            Reservation existing =
-                findReservationByIdempotencyKeyTx(c, r.tenantId(), idempotencyKey);
-            if (existing != null) {
-              return existing;
+          List<ReserveOutcome> outcomes = new ArrayList<>(items.size());
+          for (ReserveBatchItem item : items) {
+            Savepoint sp = c.setSavepoint();
+            try {
+              Reservation r = reserveTx(c, item.reservation(), item.event(), item.idempotencyKey());
+              outcomes.add(ReserveOutcome.success(r));
+            } catch (ApiException e) {
+              c.rollback(sp);
+              outcomes.add(ReserveOutcome.failure(e));
+            } catch (SQLException e) {
+              c.rollback(sp);
+              outcomes.add(
+                  ReserveOutcome.failure(handleTxSqlException("reserve stock (batch item)", e)));
             }
           }
-          BigDecimal available = availableForUpdate(c, r.tenantId(), r.storeId(), r.variantId());
-          if (available.compareTo(r.qty()) < 0) {
-            throw ApiException.unprocessable(
-                "INSUFFICIENT_STOCK",
-                "Only "
-                    + available.toPlainString()
-                    + " available, requested "
-                    + r.qty().toPlainString());
-          }
-          try {
-            insertReservation(c, r, idempotencyKey);
-          } catch (SQLException sqle) {
-            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
-              throw new ApiException(
-                  409, "RESERVATION_DUPLICATE_KEY", "duplicate idempotency key", List.of(), sqle);
-            throw sqle;
-          }
-          insertMovement(
-              c,
-              r.tenantId(),
-              r.storeId(),
-              r.variantId(),
-              null,
-              MoveType.RESERVE,
-              r.qty().negate(),
-              "RESERVATION",
-              r.id());
-          insertOutbox(c, event);
-          return r;
+          return outcomes;
         },
-        "reserve stock");
+        "bulk reserve stock");
+  }
+
+  private Reservation reserveTx(Connection c, Reservation r, OutboxRow event, String idempotencyKey)
+      throws SQLException {
+    if (idempotencyKey != null) {
+      Reservation existing = findReservationByIdempotencyKeyTx(c, r.tenantId(), idempotencyKey);
+      if (existing != null) {
+        return existing;
+      }
+    }
+    BigDecimal available = availableForUpdate(c, r.tenantId(), r.storeId(), r.variantId());
+    if (available.compareTo(r.qty()) < 0) {
+      throw ApiException.unprocessable(
+          "INSUFFICIENT_STOCK",
+          "Only " + available.toPlainString() + " available, requested " + r.qty().toPlainString());
+    }
+    try {
+      insertReservation(c, r, idempotencyKey);
+    } catch (SQLException sqle) {
+      if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+        throw new ApiException(
+            409, "RESERVATION_DUPLICATE_KEY", "duplicate idempotency key", List.of(), sqle);
+      throw sqle;
+    }
+    insertMovement(
+        c,
+        r.tenantId(),
+        r.storeId(),
+        r.variantId(),
+        null,
+        MoveType.RESERVE,
+        r.qty().negate(),
+        "RESERVATION",
+        r.id());
+    insertOutbox(c, event);
+    return r;
   }
 
   // ---------------------------------------------------------------- consume (FIFO deduct)
