@@ -59,12 +59,25 @@ public abstract class BaseKafkaConsumer {
    */
   protected abstract void handle(String topic, String value);
 
-  /** CDI observer — makes the bean eager so polling starts at application startup. */
+  /**
+   * CDI observer — makes the bean eager so polling starts at application startup.
+   * {@code @ApplicationScoped} beans are otherwise lazy and would never be instantiated (so {@link
+   * #start()} would never run) without something observing them.
+   *
+   * @param e the CDI initialization event payload; unused, only its firing matters
+   */
   void onStart(
       @Observes @Initialized(jakarta.enterprise.context.ApplicationScoped.class) Object e) {
     /* eager init trigger only */
   }
 
+  /**
+   * Builds and starts this consumer's {@link KafkaEventLoop}, or no-ops if {@code
+   * shelfj.kafka.enabled=false}. A failure to start (bad bootstrap config, broker unreachable at
+   * boot, ...) is caught and does not fail the deployment — instead it's recorded in {@link
+   * KafkaConsumerRegistry#markFailed} so {@link HealthChecks.KafkaConsumerReadiness} reports the
+   * service as not-ready rather than silently never processing events.
+   */
   @PostConstruct
   final void start() {
     if (!kafkaEnabled) {
@@ -85,6 +98,7 @@ public abstract class BaseKafkaConsumer {
     }
   }
 
+  /** Clears this consumer's registry entry and closes its {@link KafkaEventLoop}, if started. */
   @PreDestroy
   final void stop() {
     KafkaConsumerRegistry.clear(consumerName());

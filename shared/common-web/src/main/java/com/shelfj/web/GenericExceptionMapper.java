@@ -25,11 +25,23 @@ public class GenericExceptionMapper implements ExtendedExceptionMapper<Throwable
 
   private static final Logger LOG = System.getLogger(GenericExceptionMapper.class.getName());
 
+  /**
+   * @param ex the exception Jersey is deciding whether to route to this mapper
+   * @return {@code false} for {@link WebApplicationException} (left to framework/JAX-RS routing,
+   *     including the 404s Jersey throws for unmatched paths); {@code true} for everything else
+   */
   @Override
   public boolean isMappable(Throwable ex) {
     return !(ex instanceof WebApplicationException);
   }
 
+  /**
+   * Logs the full exception server-side, then returns a sanitized 500.
+   *
+   * @param ex the unhandled exception
+   * @return a {@code 500} envelope with code {@code INTERNAL_ERROR} and no exception detail (never
+   *     leaks {@code ex}'s message or stack trace to the client)
+   */
   @Override
   public Response toResponse(Throwable ex) {
     LOG.log(Level.ERROR, "Unhandled exception", ex);

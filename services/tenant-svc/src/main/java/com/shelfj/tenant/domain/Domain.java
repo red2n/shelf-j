@@ -52,6 +52,11 @@ public final class Domain {
     public static final java.util.List<String> PAYMENT_METHODS =
         java.util.List.of("CASH", "CARD", "UPI", "WALLET");
     public static final String DEFAULT_PAYMENT_METHODS = "CASH,CARD";
+    public static final String STATUS_ACTIVE = "ACTIVE";
+    public static final String STATUS_SUSPENDED = "SUSPENDED";
+    public static final String STATUS_CLOSED = "CLOSED";
+    public static final java.util.List<String> STATUSES =
+        java.util.List.of(STATUS_ACTIVE, STATUS_SUSPENDED, STATUS_CLOSED);
   }
 
   public record Zone(

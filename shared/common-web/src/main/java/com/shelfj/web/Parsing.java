@@ -15,7 +15,15 @@ public final class Parsing {
 
   private Parsing() {}
 
-  /** Parse a UUID field; throws a 400 {@code INVALID_UUID} naming the field on failure. */
+  /**
+   * Parse a UUID field.
+   *
+   * @param value the raw string to parse, e.g. from a path/query/body field
+   * @param field the field name, used only to build the error message (e.g. {@code "storeId"})
+   * @return the parsed {@link UUID}
+   * @throws ApiException 400 {@link ErrorCodes#INVALID_UUID} if {@code value} is {@code null} or
+   *     not a valid UUID
+   */
   public static UUID uuid(String value, String field) {
     try {
       return UUID.fromString(value);
@@ -24,7 +32,15 @@ public final class Parsing {
     }
   }
 
-  /** Parse a {@code yyyy-MM-dd} date field; throws a 400 {@code INVALID_DATE} on failure. */
+  /**
+   * Parse a {@code yyyy-MM-dd} date field.
+   *
+   * @param value the raw string to parse
+   * @param field the field name, used only to build the error message
+   * @return the parsed {@link LocalDate}
+   * @throws ApiException 400 {@link ErrorCodes#INVALID_DATE} if {@code value} is {@code null} or
+   *     not in {@code yyyy-MM-dd} format
+   */
   public static LocalDate date(String value, String field) {
     try {
       return LocalDate.parse(value);
@@ -34,7 +50,15 @@ public final class Parsing {
     }
   }
 
-  /** Parse an ISO-8601 instant field; throws a 400 {@code INVALID_DATE} on failure. */
+  /**
+   * Parse an ISO-8601 instant field.
+   *
+   * @param value the raw string to parse, e.g. {@code "2025-01-01T00:00:00Z"}
+   * @param field the field name, used only to build the error message
+   * @return the parsed {@link Instant}
+   * @throws ApiException 400 {@link ErrorCodes#INVALID_DATE} if {@code value} is {@code null} or
+   *     not a valid ISO-8601 instant
+   */
   public static Instant instant(String value, String field) {
     try {
       return Instant.parse(value);

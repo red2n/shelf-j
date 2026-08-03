@@ -29,6 +29,14 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
 
   @Inject TenantContext context;
 
+  /**
+   * Populates {@link TenantContext} from the request's identity headers and ensures a request id
+   * exists (generating one if the caller/gateway didn't supply one).
+   *
+   * @param req the incoming request
+   * @throws IOException never thrown by this implementation; declared by {@link
+   *     ContainerRequestFilter}
+   */
   @Override
   public void filter(ContainerRequestContext req) throws IOException {
     String requestId = req.getHeaderString(HttpHeaders.REQUEST_ID);
@@ -46,6 +54,14 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
     req.setProperty(HttpHeaders.REQUEST_ID, requestId);
   }
 
+  /**
+   * Echoes the request id computed in {@link #filter(ContainerRequestContext)} onto the response.
+   *
+   * @param req the completed request (used only to read back the stashed request id)
+   * @param resp the outgoing response
+   * @throws IOException never thrown by this implementation; declared by {@link
+   *     ContainerResponseFilter}
+   */
   @Override
   public void filter(ContainerRequestContext req, ContainerResponseContext resp)
       throws IOException {
@@ -55,6 +71,11 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
     }
   }
 
+  /**
+   * @param value the raw header value; may be {@code null}/blank/malformed
+   * @return the parsed UUID, or {@code null} if {@code value} is absent or not a valid UUID (never
+   *     throws — a malformed identity header degrades to "no identity", not a 500)
+   */
   private static UUID parseUuid(String value) {
     if (value == null || value.isBlank()) {
       return null;
@@ -66,6 +87,11 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
     }
   }
 
+  /**
+   * @param value the raw {@code X-Roles} header value, comma-separated
+   * @return the trimmed, non-empty role names as a set; empty (never {@code null}) if {@code value}
+   *     is absent
+   */
   private static Set<String> parseRoles(String value) {
     if (value == null || value.isBlank()) {
       return Set.of();
@@ -76,6 +102,12 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
         .collect(Collectors.toUnmodifiableSet());
   }
 
+  /**
+   * @param value the raw {@code X-Store-Ids} header value, comma-separated
+   * @return the parsed store ids as a set; empty (never {@code null}) if {@code value} is absent;
+   *     any comma-separated segment that isn't a valid UUID is silently dropped rather than failing
+   *     the request
+   */
   private static Set<UUID> parseUuids(String value) {
     if (value == null || value.isBlank()) {
       return Set.of();

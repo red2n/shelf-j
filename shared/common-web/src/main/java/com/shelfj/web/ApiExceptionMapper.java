@@ -11,6 +11,10 @@ import jakarta.ws.rs.ext.Provider;
 @Provider
 public class ApiExceptionMapper implements ExceptionMapper<ApiException> {
 
+  /**
+   * @param ex the API exception thrown by service-layer code
+   * @return a response with {@code ex}'s status and an {@link ApiResponse#error} envelope
+   */
   @Override
   public Response toResponse(ApiException ex) {
     return Response.status(ex.status())

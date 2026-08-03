@@ -408,6 +408,9 @@ public class TenantService {
   public Store patchStoreStatus(UUID tenantId, UUID storeId, PatchStatusRequest req) {
     getStore(tenantId, storeId);
     String status = req.status().toUpperCase(Locale.ROOT);
+    if (!Store.STATUSES.contains(status)) {
+      throw ApiException.badRequest("INVALID_STATUS", "status must be one of " + Store.STATUSES);
+    }
     // Publish so iam-svc can terminate POS sessions for this store and other consumers can react.
     var event =
         new OutboxRow(

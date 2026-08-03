@@ -65,6 +65,16 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
 
   @Inject TenantContext ctx;
 
+  /**
+   * Evaluates the request path/method against the management, staff-admin, and default-deny rules
+   * described in the class doc, aborting with {@code 403} when the caller's roles (from {@link
+   * TenantContext}, populated earlier by {@link TenantContextFilter}) don't satisfy them.
+   *
+   * @param req the incoming request; aborted in place via {@link ContainerRequestContext#abortWith}
+   *     rather than by throwing, so this method never signals failure via its return
+   * @throws IOException never thrown by this implementation; declared by {@link
+   *     ContainerRequestFilter}
+   */
   @Override
   public void filter(ContainerRequestContext req) throws IOException {
     // UriInfo.getPath() has no leading slash; normalize so "/admin/" matches top-level paths.
@@ -91,6 +101,11 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     }
   }
 
+  /**
+   * @param allowed roles that would satisfy the check
+   * @return {@code true} if the current caller ({@link TenantContext#roles()}) has at least one
+   *     role in {@code allowed}
+   */
   private boolean hasAny(Set<String> allowed) {
     for (String r : ctx.roles()) {
       if (allowed.contains(r)) return true;
@@ -111,6 +126,11 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     return afterService >= 0 ? path.substring(afterService) : "/";
   }
 
+  /**
+   * @param method the HTTP method of the request
+   * @return {@code true} for POST/PUT/PATCH/DELETE (case-insensitive); {@code false} for GET/HEAD
+   *     and anything else
+   */
   private static boolean isMutating(String method) {
     return "POST".equalsIgnoreCase(method)
         || "PUT".equalsIgnoreCase(method)
@@ -118,6 +138,12 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || "DELETE".equalsIgnoreCase(method);
   }
 
+  /**
+   * @param path the service-local request path (after {@link #stripGatewayPrefix})
+   * @return {@code true} if {@code path} is on the explicit allowlist of mutations reachable
+   *     without any staff role (bootstrap/identity/guest-checkout flows — see the exhaustive
+   *     rationale on each branch below)
+   */
   private static boolean isOpenMutation(String path) {
     return IDENTITY_PATHS.contains(path)
         // One-shot platform bootstrap: creates the very first PLATFORM_ADMIN before any JWT exists.
@@ -157,6 +183,11 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || (path.startsWith("/inventory/reservations/") && path.endsWith("/release"));
   }
 
+  /**
+   * @param path the service-local request path
+   * @param method the HTTP method
+   * @return {@code true} if this request requires a {@link #MANAGEMENT_ROLES} role
+   */
   private static boolean requiresManagement(String path, String method) {
     // Bootstrap carve-out — see isOpenMutation.
     if (path.endsWith("/admin/tenant") && "POST".equalsIgnoreCase(method)) return false;
@@ -190,10 +221,18 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     return false;
   }
 
+  /**
+   * @param path the service-local request path
+   * @param prefix the path prefix to test against, e.g. {@code "/admin/inventory"}
+   * @return {@code true} if {@code path} equals {@code prefix} or is nested under it
+   */
   private static boolean pathEqualsOrUnder(String path, String prefix) {
     return path.equals(prefix) || path.startsWith(prefix + "/");
   }
 
+  /**
+   * @return a {@code 403 FORBIDDEN} envelope response
+   */
   private static Response forbidden() {
     return Response.status(Response.Status.FORBIDDEN)
         .type(MediaType.APPLICATION_JSON)

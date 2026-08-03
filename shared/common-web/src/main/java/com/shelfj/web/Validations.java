@@ -23,7 +23,14 @@ public final class Validations {
 
   private Validations() {}
 
-  /** Validate a bean; throw a 400 ApiException with field-level details if it fails. */
+  /**
+   * Validate a bean against its Bean Validation ({@code jakarta.validation}) annotations.
+   *
+   * @param bean the DTO to validate, typically a deserialized request body
+   * @throws ApiException 400 {@link ErrorCodes#BODY_REQUIRED} if {@code bean} is {@code null}; 400
+   *     {@link ErrorCodes#VALIDATION_FAILED} with one {@code "<field>: <message>"} detail per
+   *     failed constraint, sorted, if validation fails
+   */
   public static <T> void validate(T bean) {
     if (bean == null) {
       throw ApiException.badRequest(ErrorCodes.BODY_REQUIRED, "Request body required");
@@ -37,6 +44,11 @@ public final class Validations {
     throw new ApiException(400, ErrorCodes.VALIDATION_FAILED, "Request validation failed", details);
   }
 
+  /**
+   * @param v a constraint violation
+   * @return just the last path segment of {@code v}'s property path, e.g. {@code "email"} rather
+   *     than {@code "address.email"}
+   */
   private static String leafField(ConstraintViolation<?> v) {
     String path = v.getPropertyPath().toString();
     int dot = path.lastIndexOf('.');

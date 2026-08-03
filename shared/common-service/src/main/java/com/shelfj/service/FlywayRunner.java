@@ -20,6 +20,18 @@ public class FlywayRunner {
 
   @Inject ServiceSettings settings;
 
+  /**
+   * Runs pending migrations from {@code classpath:db/migration} into {@link
+   * ServiceSettings#dbSchema()}, creating the schema and baselining if needed.
+   *
+   * <p>Failure (DB unreachable, a bad migration, etc.) is caught and logged at {@code WARNING} — it
+   * does not fail application startup. This is intentional for local/dev "start in any order"
+   * (docs/ARCHITECTURE.md §17): a service booting before Postgres is ready should keep retrying via
+   * readiness, not crash-loop. In production, migrations run as a separate one-shot Job before any
+   * service starts, so this path is dev/template convenience only.
+   *
+   * @param event the CDI initialization event payload; unused, only its firing matters
+   */
   void onStart(@Observes @Initialized(ApplicationScoped.class) Object event) {
     try {
       var result =

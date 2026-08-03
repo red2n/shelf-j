@@ -16,10 +16,21 @@ public record ErrorBody(String code, String message, List<String> details) {
     details = details == null ? List.of() : List.copyOf(details);
   }
 
+  /**
+   * @param code stable machine-readable error code
+   * @param message human-readable summary
+   * @return an error body with no field-level details
+   */
   public static ErrorBody of(String code, String message) {
     return new ErrorBody(code, message, List.of());
   }
 
+  /**
+   * @param code stable machine-readable error code
+   * @param message human-readable summary
+   * @param details field-level detail messages; {@code null} is treated as empty
+   * @return an error body carrying the given details
+   */
   public static ErrorBody of(String code, String message, List<String> details) {
     return new ErrorBody(code, message, details == null ? List.of() : List.copyOf(details));
   }

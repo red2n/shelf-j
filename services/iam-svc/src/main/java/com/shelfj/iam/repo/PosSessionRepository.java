@@ -44,17 +44,35 @@ public class PosSessionRepository extends BaseJdbcRepository {
         "end pos session");
   }
 
-  /** End all active POS sessions for a tenant (called when the tenant is suspended/blocked). */
+  /**
+   * End all active POS sessions for a tenant and revoke the refresh tokens of the affected cashiers
+   * in the same transaction (called when the tenant is suspended/blocked).
+   */
   public int endAllForTenant(UUID tenantId) {
     return inTx(
         c -> {
+          int count = 0;
           try (var ps =
               c.prepareStatement(
                   "UPDATE pos_sessions SET status = 'ENDED', ended_at = now()"
-                      + " WHERE tenant_id = ? AND status = 'ACTIVE'")) {
+                      + " WHERE tenant_id = ? AND status = 'ACTIVE'"
+                      + " RETURNING user_id")) {
             ps.setObject(1, tenantId);
-            return ps.executeUpdate();
+            try (var rs = ps.executeQuery()) {
+              while (rs.next()) {
+                count++;
+                UUID userId = rs.getObject("user_id", UUID.class);
+                try (var rev =
+                    c.prepareStatement(
+                        "UPDATE refresh_tokens SET revoked = true"
+                            + " WHERE user_id = ? AND revoked = false")) {
+                  rev.setObject(1, userId);
+                  rev.executeUpdate();
+                }
+              }
+            }
           }
+          return count;
         },
         "end all pos sessions for tenant");
   }

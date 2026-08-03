@@ -284,48 +284,6 @@ public class UserRepository extends BaseOutboxRepository {
     }
   }
 
-  // --- tenant status projection (fed by tenant-status-changed events) ---
-
-  /**
-   * Upsert the local tenant-status projection. Guarded by {@code status_changed_at} so an
-   * out-of-order (stale) event can never overwrite a newer status.
-   */
-  public void upsertTenantStatus(UUID tenantId, String status, java.time.Instant changedAt) {
-    try (var c = dataSource.getConnection();
-        var ps =
-            c.prepareStatement(
-                "INSERT INTO tenant_status (tenant_id, status, status_changed_at)"
-                    + " VALUES (?,?,?)"
-                    + " ON CONFLICT (tenant_id) DO UPDATE SET"
-                    + "   status = EXCLUDED.status,"
-                    + "   status_changed_at = EXCLUDED.status_changed_at"
-                    + " WHERE EXCLUDED.status_changed_at >= tenant_status.status_changed_at")) {
-      ps.setObject(1, tenantId);
-      ps.setString(2, status);
-      ps.setObject(3, changedAt.atOffset(ZoneOffset.UTC));
-      ps.executeUpdate();
-    } catch (SQLException e) {
-      throw dbError("upsert tenant status", e);
-    }
-  }
-
-  /**
-   * Whether a tenant may authenticate. A missing row means ACTIVE (back-compat for tenants that
-   * existed before this projection); only an explicit non-ACTIVE status blocks login.
-   */
-  public boolean isTenantActive(UUID tenantId) {
-    try (var c = dataSource.getConnection();
-        var ps = c.prepareStatement("SELECT status FROM tenant_status WHERE tenant_id = ?")) {
-      ps.setObject(1, tenantId);
-      try (var rs = ps.executeQuery()) {
-        if (!rs.next()) return true; // no projection row → treat as active
-        return "ACTIVE".equalsIgnoreCase(rs.getString("status"));
-      }
-    } catch (SQLException e) {
-      throw dbError("check tenant status", e);
-    }
-  }
-
   private static User map(ResultSet rs) throws SQLException {
     OffsetDateTime updOdt = rs.getObject("updated_at", OffsetDateTime.class);
     return new User(

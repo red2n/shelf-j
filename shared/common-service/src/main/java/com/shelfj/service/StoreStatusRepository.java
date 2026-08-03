@@ -20,8 +20,13 @@ public class StoreStatusRepository extends BaseJdbcRepository {
    * already stored), which callers need to know — logging "updated" regardless would misrepresent
    * the actual projection state after a reordered redelivery.
    *
+   * @param storeId the store whose status changed
+   * @param tenantId the tenant that owns {@code storeId}
+   * @param status the new status, e.g. {@code "ACTIVE"}, {@code "CLOSED"}
+   * @param changedAt when the status change occurred, per the source event's {@code occurredAt}
    * @return {@code true} if the row was inserted or updated; {@code false} if an existing, newer
    *     row was left untouched.
+   * @throws com.shelfj.web.ApiException 500 {@code DB_ERROR} on any {@link SQLException}
    */
   public boolean upsertStoreStatus(UUID storeId, UUID tenantId, String status, Instant changedAt) {
     try (var c = dataSource.getConnection();
@@ -53,6 +58,13 @@ public class StoreStatusRepository extends BaseJdbcRepository {
    * UUID from any tenant and this method would confirm it, since {@code store_id} alone (the old
    * signature) can't tell a wrong-tenant store apart from one this projection just hasn't heard
    * about yet.
+   *
+   * @param tenantId the tenant the caller expects to own {@code storeId}
+   * @param storeId the store to check
+   * @return {@code true} if the projection has no row for {@code storeId} (fail-open), or the row
+   *     exists under {@code tenantId} with status {@code "ACTIVE"} (case-insensitive); {@code
+   *     false} if the row belongs to a different tenant or has a non-active status
+   * @throws com.shelfj.web.ApiException 500 {@code DB_ERROR} on any {@link SQLException}
    */
   public boolean isActive(UUID tenantId, UUID storeId) {
     try (var c = dataSource.getConnection();

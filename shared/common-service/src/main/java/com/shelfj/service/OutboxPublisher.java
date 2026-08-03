@@ -44,10 +44,21 @@ public class OutboxPublisher {
   private KafkaProducer<String, String> producer;
   private ScheduledExecutorService scheduler;
 
+  /**
+   * CDI observer — makes this {@code @ApplicationScoped} bean eager so {@link #start()} runs at
+   * application startup instead of never (lazy beans are only instantiated on first injection, and
+   * nothing injects {@code OutboxPublisher} directly).
+   *
+   * @param event the CDI initialization event payload; unused, only its firing matters
+   */
   void onStart(@Observes @Initialized(ApplicationScoped.class) Object event) {
     /* makes the bean eager */
   }
 
+  /**
+   * Builds the Kafka producer and starts the drain-timer, or no-ops if Kafka is disabled or this
+   * service has no {@link OutboxStore} bean (no outbox table).
+   */
   @PostConstruct
   void start() {
     if (!settings.kafkaEnabled()) {
@@ -84,6 +95,11 @@ public class OutboxPublisher {
     LOG.log(Level.INFO, "Outbox publisher started (bootstrap={0})", settings.kafkaBootstrap());
   }
 
+  /**
+   * One drain tick: claims up to 100 pending rows via {@link #store} and publishes them. Never
+   * throws — any failure (claim query error, Kafka unreachable) is logged and deferred to the next
+   * tick, since rows that aren't confirmed published simply stay pending.
+   */
   private void drainQuietly() {
     try {
       // The claim (FOR UPDATE SKIP LOCKED) and the published-mark below run in the repo's single
@@ -98,6 +114,10 @@ public class OutboxPublisher {
    * Pipelines the whole batch (one flush) instead of awaiting each send, returning exactly the ids
    * that were confirmed delivered — N Kafka roundtrips become ~1. A row that fails to send isn't
    * returned, so it stays unpublished and retries next tick (at-least-once).
+   *
+   * @param rows the pending rows claimed by {@link #drainQuietly()}
+   * @return the ids of {@code rows} whose send was confirmed by the broker; a subset when some
+   *     sends failed or timed out
    */
   private List<UUID> publishBatch(List<OutboxStore.PendingOutbox> rows) {
     var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>(rows.size());
@@ -122,6 +142,7 @@ public class OutboxPublisher {
     return published;
   }
 
+  /** Stops the drain timer and closes the producer, if either was started. */
   @PreDestroy
   void stop() {
     if (scheduler != null) scheduler.shutdownNow();
