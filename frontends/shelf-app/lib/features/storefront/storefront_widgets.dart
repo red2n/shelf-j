@@ -1,6 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme.dart';
+import '../../shared/util/image_budget.dart';
 import 'storefront_providers.dart';
 
 /// A lively deterministic product placeholder (colored tile + initials) so the
@@ -67,6 +70,39 @@ class ProductThumb extends StatelessWidget {
   }
 }
 
+/// Slack applied to the decode target so [BoxFit.cover] has pixels to crop.
+///
+/// The decode preserves aspect ratio, so asking for the box's longest edge alone leaves
+/// a landscape photo short on the other axis in a square tile — 4:3 into a square box
+/// lands 25% under, and cover then upscales it back, which reads as soft. 1.35 covers
+/// 4:3 either way round with a little to spare, and costs ~1.8x the ideal decode against
+/// the ~59x it is saving.
+const double _coverAspectAllowance = 1.35;
+
+/// Physical-pixel width to decode a product image at, for a box of [constraints] on a
+/// screen of [devicePixelRatio].
+///
+/// Returns null when there is no bounded edge to size against, in which case the caller
+/// should decode at native size rather than guess. Clamped to [kProductImageMaxEdge] —
+/// the widest we ever store — so a legacy oversized row cannot pull a huge decode back
+/// in through the cache.
+///
+/// Decoding is what dominates image memory on the device: bytes on the wire are capped
+/// at [kProductImageMaxBytes], but a 1280x960 photo is ~4.9 MB of RGBA once decoded,
+/// regardless of how well it compressed. Flutter's default ImageCache is 100 MB, so
+/// roughly twenty full-size product photos would fill it and start thrashing.
+int? productImageDecodeWidth(BoxConstraints constraints, double devicePixelRatio) {
+  final bounded = <double>[
+    if (constraints.hasBoundedWidth) constraints.maxWidth,
+    if (constraints.hasBoundedHeight) constraints.maxHeight,
+  ].where((edge) => edge.isFinite && edge > 0);
+  if (bounded.isEmpty) return null;
+
+  final longestEdge = bounded.reduce(math.max);
+  final target = (longestEdge * devicePixelRatio * _coverAspectAllowance).ceil();
+  return math.min(math.max(target, 1), kProductImageMaxEdge);
+}
+
 /// The product's real image when the owner uploaded one, falling back to the
 /// [ProductThumb] colour tile while loading or when there is none.
 class ProductImageThumb extends ConsumerWidget {
@@ -93,14 +129,21 @@ class ProductImageThumb extends ConsumerWidget {
     );
     final bytes = ref.watch(productImageProvider(productId)).value;
     if (bytes == null) return fallback;
+    // LayoutBuilder rather than a fixed size: this widget is used at 72x72 in the phone
+    // list, at whatever the grid card gives it, and at 220-high on the detail screen, so
+    // the decode target has to come from the box it actually lands in.
     return ClipRRect(
       borderRadius: borderRadius,
-      child: Image.memory(
-        bytes,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (_, _, _) => fallback,
+      child: LayoutBuilder(
+        builder: (context, constraints) => Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+          cacheWidth: productImageDecodeWidth(
+              constraints, MediaQuery.devicePixelRatioOf(context)),
+          errorBuilder: (_, _, _) => fallback,
+        ),
       ),
     );
   }

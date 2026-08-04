@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import '../../core/constants.dart';
 import '../../core/storage/app_storage.dart';
+import '../../shared/util/image_byte_cache.dart';
 
 /// Dev seam for "subdomain → tenant". In production the gateway derives the
 /// tenant from the storefront's domain; here we read `?tenant=<id>` from the URL
@@ -420,28 +421,54 @@ final storefrontProductsProvider =
   return list;
 });
 
+/// Bounded LRU holding fetched product image bytes, shared by every [productImageProvider].
+///
+/// Deliberately not autoDispose: this is the thing that must outlive the per-product
+/// providers watching it.
+final productImageCacheProvider = Provider<ImageByteCache>((ref) => ImageByteCache());
+
 /// The product's uploaded image bytes, or null when it has none (the UI then renders the
 /// deterministic colour tile). Fetched through Dio (not Image.network) so the storefront tenant
-/// header rides along — a plain browser <img> request can't carry it on web. Not autoDispose:
-/// bytes are cached for the session so scrolling the catalog doesn't refetch images.
+/// header rides along — a plain browser <img> request can't carry it on web.
+///
+/// autoDispose, with the bytes held in [productImageCacheProvider] instead. Keeping the
+/// providers themselves alive was what cached images for the session, but that cache had no
+/// ceiling: it grew with every product the shopper ever scrolled past and was never released.
+/// The LRU keeps the same "scrolling doesn't refetch" behaviour — which is what stops the
+/// catalog tripping the gateway's per-IP rate limit — against a bounded ceiling.
+///
+/// Returns synchronously on a cache hit (hence FutureOr, not async) so scrolling back over a
+/// seen product paints the image immediately rather than flashing the colour tile for a frame.
 final productImageProvider =
-    FutureProvider.family<Uint8List?, String>((ref, productId) async {
-  final dio = ref.watch(storefrontDioProvider);
+    FutureProvider.autoDispose.family<Uint8List?, String>((ref, productId) {
+  final cache = ref.watch(productImageCacheProvider);
+  final hit = cache.lookup(productId);
+  if (hit != null) return hit.bytes;
+  return _fetchProductImage(ref.watch(storefrontDioProvider), cache, productId);
+});
+
+Future<Uint8List?> _fetchProductImage(
+    Dio dio, ImageByteCache cache, String productId) async {
   try {
     final resp = await dio.get(
       '/${ApiConstants.product}/catalog/products/$productId/image',
       options: Options(responseType: ResponseType.bytes),
     );
     final data = resp.data;
-    if (data is List<int> && data.isNotEmpty) {
-      return Uint8List.fromList(data);
-    }
+    final bytes =
+        data is List<int> && data.isNotEmpty ? Uint8List.fromList(data) : null;
+    cache.store(productId, bytes);
+    return bytes;
+  } on DioException catch (e) {
+    // A 404 is a real answer — this product has no image — so cache it and stop asking.
+    // Anything else is transient: leave it uncached so a later rebuild can retry, and
+    // fall back to the colour tile meanwhile.
+    if (e.response?.statusCode == 404) cache.store(productId, null);
     return null;
   } catch (_) {
-    // 404 (no image) and transient failures both fall back to the colour tile.
     return null;
   }
-});
+}
 
 final storefrontProductProvider =
     FutureProvider.autoDispose.family<StoreProduct, String>((ref, id) async {

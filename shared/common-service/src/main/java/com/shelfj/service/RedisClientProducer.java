@@ -8,6 +8,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Disposes;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
+import java.time.Duration;
 import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
@@ -52,10 +53,21 @@ public class RedisClientProducer {
    * @return synchronous commands over one connection to {@link #redisHost}:{@link #redisPort},
    *     authenticated with {@link #redisPassword} if present and non-blank
    */
+  /**
+   * Command timeout for every cache operation.
+   *
+   * <p>Lettuce defaults to 60 seconds, which is catastrophic for a cache: a hung Redis — worse than
+   * a dead one, because nothing fails fast — would pin a request thread for a minute per call while
+   * the answer sits available in Postgres. A cache lookup that has not returned in this long has
+   * already cost more than the query it was meant to save, so give up and read through.
+   */
+  private static final Duration COMMAND_TIMEOUT = Duration.ofMillis(250);
+
   @Produces
   @ApplicationScoped
   public RedisCommands<String, String> redisCommands() {
-    RedisURI.Builder uriBuilder = RedisURI.Builder.redis(redisHost, redisPort);
+    RedisURI.Builder uriBuilder =
+        RedisURI.Builder.redis(redisHost, redisPort).withTimeout(COMMAND_TIMEOUT);
     if (redisPassword.isPresent() && !redisPassword.get().isBlank()) {
       uriBuilder.withPassword(redisPassword.get().toCharArray());
     }

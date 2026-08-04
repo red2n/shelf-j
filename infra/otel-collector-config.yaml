@@ -16,6 +16,20 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
+  # MUST stay first in every pipeline. A collector holds telemetry in memory between receiving
+  # and exporting, so when Tempo or Loki slows down the backlog is what grows — and with 14
+  # services exporting, that grows fast. This refuses new data and pushes back on the receivers
+  # once the process crosses the limit, so the collector sheds load instead of being OOM-killed
+  # and losing everything already buffered.
+  #
+  # limit_mib is ~80% of the container's mem_limit (512m in docker-compose.yml); spike_limit_mib
+  # is the headroom for a burst between checks, so hard-limiting begins at limit - spike = 320.
+  # Keep these in step with mem_limit — sized above it, the container dies before the processor
+  # ever engages, which is exactly the failure this is here to prevent.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 80
   batch:
     timeout: 5s
     send_batch_size: 512
@@ -25,14 +39,24 @@ processors:
         value: shelf-j
         action: upsert
 
+# Every exporter buffers batches in memory while its backend is unavailable. The default queue
+# is 1000 batches per exporter — at send_batch_size 512 that is up to half a million records
+# each, which is the other way this process grows without bound. Bound it explicitly and let
+# memory_limiter above catch what is left.
 exporters:
   otlp/tempo:
     endpoint: tempo:4317
     tls:
       insecure: true
+    sending_queue:
+      enabled: true
+      queue_size: 200
   zipkin:
     endpoint: http://zipkin:9411/api/v2/spans
     format: proto
+    sending_queue:
+      enabled: true
+      queue_size: 200
   loki:
     endpoint: http://loki:3100/loki/api/v1/push
     default_labels_enabled:
@@ -40,6 +64,9 @@ exporters:
       job: true
       instance: true
       level: true
+    sending_queue:
+      enabled: true
+      queue_size: 200
   debug:
     verbosity: basic
 
@@ -47,9 +74,9 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch, resource]
+      processors: [memory_limiter, batch, resource]
       exporters: [otlp/tempo, zipkin]
     logs:
       receivers: [otlp]
-      processors: [batch, resource]
+      processors: [memory_limiter, batch, resource]
       exporters: [loki]

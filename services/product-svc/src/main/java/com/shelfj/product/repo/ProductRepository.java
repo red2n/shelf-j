@@ -5,9 +5,8 @@ import com.shelfj.product.domain.Domain.Variant;
 import com.shelfj.product.domain.Domain.VariantWithProduct;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
+import com.shelfj.service.RedisCache;
 import com.shelfj.web.ApiException;
-import io.lettuce.core.SetArgs;
-import io.lettuce.core.api.sync.RedisCommands;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.sql.Connection;
@@ -45,7 +44,7 @@ public class ProductRepository extends BaseOutboxRepository {
    */
   private static final long PRODUCT_TTL_SECONDS = 300;
 
-  @Inject RedisCommands<String, String> redis;
+  @Inject RedisCache cache;
 
   private static String productKey(UUID tenantId, UUID id) {
     return "product:" + tenantId + ":" + id;
@@ -122,13 +121,13 @@ public class ProductRepository extends BaseOutboxRepository {
               return p;
             },
             "update product");
-    redis.del(productKey(p.tenantId(), p.id()));
+    cache.evict(productKey(p.tenantId(), p.id()));
     return updated;
   }
 
   public Optional<Product> findProduct(UUID tenantId, UUID id) {
     String cacheKey = productKey(tenantId, id);
-    String cached = redis.get(cacheKey);
+    String cached = cache.get(cacheKey);
     if (cached != null) return Optional.of(decodeProduct(cached));
     Optional<Product> fresh =
         query(
@@ -143,8 +142,7 @@ public class ProductRepository extends BaseOutboxRepository {
                 "find product")
             .stream()
             .findFirst();
-    fresh.ifPresent(
-        p -> redis.set(cacheKey, encodeProduct(p), SetArgs.Builder.ex(PRODUCT_TTL_SECONDS)));
+    fresh.ifPresent(p -> cache.put(cacheKey, encodeProduct(p), PRODUCT_TTL_SECONDS));
     return fresh;
   }
 

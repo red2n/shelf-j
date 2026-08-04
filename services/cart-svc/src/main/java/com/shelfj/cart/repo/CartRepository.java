@@ -3,9 +3,8 @@ package com.shelfj.cart.repo;
 import com.shelfj.cart.domain.Domain.Cart;
 import com.shelfj.cart.domain.Domain.CartItem;
 import com.shelfj.service.BaseJdbcRepository;
+import com.shelfj.service.RedisCache;
 import com.shelfj.web.ApiException;
-import io.lettuce.core.SetArgs;
-import io.lettuce.core.api.sync.RedisCommands;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
@@ -42,7 +41,7 @@ public class CartRepository extends BaseJdbcRepository {
   private static final long CART_TTL_SECONDS = 60;
   private static final long ITEMS_TTL_SECONDS = 60;
 
-  @Inject RedisCommands<String, String> redis;
+  @Inject RedisCache cache;
 
   // ── Cache ─────────────────────────────────────────────────────────────────
 
@@ -63,12 +62,12 @@ public class CartRepository extends BaseJdbcRepository {
   }
 
   private Optional<Cart> cachedCart(UUID tenantId, UUID cartId) {
-    String cached = redis.get(cartKey(tenantId, cartId));
+    String cached = cache.get(cartKey(tenantId, cartId));
     return cached == null ? Optional.empty() : Optional.of(decodeCart(cached));
   }
 
   private void cacheCart(Cart c) {
-    redis.set(cartKey(c.tenantId(), c.id()), encodeCart(c), SetArgs.Builder.ex(CART_TTL_SECONDS));
+    cache.put(cartKey(c.tenantId(), c.id()), encodeCart(c), CART_TTL_SECONDS);
   }
 
   /**
@@ -76,11 +75,11 @@ public class CartRepository extends BaseJdbcRepository {
    * only the cart id and re-validate the row's status on next read.
    */
   private void evictCart(UUID tenantId, UUID cartId) {
-    redis.del(cartKey(tenantId, cartId));
+    cache.evict(cartKey(tenantId, cartId));
   }
 
   private Optional<List<CartItem>> cachedItems(UUID tenantId, UUID cartId) {
-    String cached = redis.get(itemsKey(tenantId, cartId));
+    String cached = cache.get(itemsKey(tenantId, cartId));
     if (cached == null) return Optional.empty();
     if (cached.isEmpty()) return Optional.of(List.of());
     return Optional.of(Arrays.stream(cached.split(RS)).map(CartRepository::decodeItem).toList());
@@ -88,11 +87,11 @@ public class CartRepository extends BaseJdbcRepository {
 
   private void cacheItems(UUID tenantId, UUID cartId, List<CartItem> items) {
     String encoded = items.stream().map(CartRepository::encodeItem).collect(Collectors.joining(RS));
-    redis.set(itemsKey(tenantId, cartId), encoded, SetArgs.Builder.ex(ITEMS_TTL_SECONDS));
+    cache.put(itemsKey(tenantId, cartId), encoded, ITEMS_TTL_SECONDS);
   }
 
   private void evictItems(UUID tenantId, UUID cartId) {
-    redis.del(itemsKey(tenantId, cartId));
+    cache.evict(itemsKey(tenantId, cartId));
   }
 
   private static String encodeCart(Cart c) {
@@ -190,11 +189,11 @@ public class CartRepository extends BaseJdbcRepository {
    */
   public Optional<Cart> findActiveByCustomer(UUID tenantId, UUID customerId) {
     String pointerKey = activeByCustomerKey(tenantId, customerId);
-    String pointedId = redis.get(pointerKey);
+    String pointedId = cache.get(pointerKey);
     if (pointedId != null) {
       Optional<Cart> cart = findById(tenantId, UUID.fromString(pointedId));
       if (cart.isPresent() && Cart.STATUS_ACTIVE.equals(cart.get().status())) return cart;
-      redis.del(pointerKey);
+      cache.evict(pointerKey);
     }
     Optional<Cart> fresh =
         query(
@@ -212,7 +211,7 @@ public class CartRepository extends BaseJdbcRepository {
     fresh.ifPresent(
         c -> {
           cacheCart(c);
-          redis.set(pointerKey, c.id().toString(), SetArgs.Builder.ex(CART_TTL_SECONDS));
+          cache.put(pointerKey, c.id().toString(), CART_TTL_SECONDS);
         });
     return fresh;
   }
@@ -220,11 +219,11 @@ public class CartRepository extends BaseJdbcRepository {
   /** See {@link #findActiveByCustomer} for the pointer-cache + status-recheck rationale. */
   public Optional<Cart> findActiveBySession(UUID tenantId, String sessionId) {
     String pointerKey = activeBySessionKey(tenantId, sessionId);
-    String pointedId = redis.get(pointerKey);
+    String pointedId = cache.get(pointerKey);
     if (pointedId != null) {
       Optional<Cart> cart = findById(tenantId, UUID.fromString(pointedId));
       if (cart.isPresent() && Cart.STATUS_ACTIVE.equals(cart.get().status())) return cart;
-      redis.del(pointerKey);
+      cache.evict(pointerKey);
     }
     Optional<Cart> fresh =
         query(
@@ -242,7 +241,7 @@ public class CartRepository extends BaseJdbcRepository {
     fresh.ifPresent(
         c -> {
           cacheCart(c);
-          redis.set(pointerKey, c.id().toString(), SetArgs.Builder.ex(CART_TTL_SECONDS));
+          cache.put(pointerKey, c.id().toString(), CART_TTL_SECONDS);
         });
     return fresh;
   }
@@ -286,7 +285,7 @@ public class CartRepository extends BaseJdbcRepository {
               }
             },
             "mark cart checked out");
-    redis.del(activeByCustomerKey(tenantId, customerId));
+    cache.evict(activeByCustomerKey(tenantId, customerId));
     if (cartId != null) {
       evictCart(tenantId, cartId);
       evictItems(tenantId, cartId);

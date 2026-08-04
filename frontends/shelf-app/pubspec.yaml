@@ -29,6 +29,11 @@ dependencies:
   shared_preferences: ^2.3.2
   # file picking (web + mobile + desktop)
   file_picker: ^11.0.2
+  # pure-Dart image codecs — used ONLY by the non-web half of
+  # lib/shared/util/image_compress.dart to downscale/re-encode owner-uploaded product
+  # photos before upload. Web uses the browser's canvas encoder instead and never
+  # loads this.
+  image: ^4.9.1
   # camera barcode/QR scanning (Android, iOS, web via getUserMedia + BarcodeDetector/zxing)
   mobile_scanner: ^7.2.0
   # open external URLs in the system browser
