@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -283,19 +284,30 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
   // rotation timer always reads a valid length.
   List<_Offer> _offers = _fallbackOffers;
 
-  final _controller = CarouselController();
+  // A PageView (not CarouselView) so every banner keeps the full viewport
+  // width instead of being squeezed by the Material "uncontained" carousel
+  // layout, and so a plain page-snap drag drives it.
+  final _controller = PageController(viewportFraction: 0.92);
   int _page = 0;
   Timer? _timer;
+  // Set while the user is dragging so auto-rotation doesn't fight the gesture.
+  bool _paused = false;
 
   @override
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (!_controller.hasClients || _offers.length < 2) return;
+      if (_paused || !_controller.hasClients || _offers.length < 2) return;
       final next = (_page + 1) % _offers.length;
-      _controller.animateToItem(next,
+      _controller.animateToPage(next,
           duration: const Duration(milliseconds: 450), curve: Curves.easeInOut);
     });
+  }
+
+  void _goTo(int i) {
+    if (!_controller.hasClients) return;
+    _controller.animateToPage(i,
+        duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
   }
 
   @override
@@ -324,58 +336,98 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
   Widget build(BuildContext context) {
     final promos = ref.watch(storefrontPromotionsProvider).value ?? const [];
     _offers = _offersFrom(promos);
-    if (_page >= _offers.length) _page = 0;
+    if (_page >= _offers.length) {
+      // Promotions arrived/expired and shrank the list under the current page —
+      // snap back to the first banner once this frame is laid out.
+      _page = 0;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _controller.hasClients) _controller.jumpToPage(0);
+      });
+    }
+    // Give the banner more room on wide viewports so it doesn't read as a
+    // squashed strip across a desktop-width shell.
+    final width = MediaQuery.sizeOf(context).width;
+    final height = width < 600 ? 150.0 : (width < 1024 ? 170.0 : 190.0);
     return Column(
       children: [
         const SizedBox(height: 12),
         SizedBox(
-          height: 150,
-          child: LayoutBuilder(
-            builder: (context, constraints) => CarouselView(
-              controller: _controller,
-              itemExtent: constraints.maxWidth * 0.92,
-              itemSnapping: true,
-              enableSplash: false,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              onIndexChanged: (i) => setState(() => _page = i),
-              children: [
-                for (final o in _offers)
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: o.colors,
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
+          height: height,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (n) {
+              if (n is ScrollStartNotification && n.dragDetails != null) {
+                _paused = true;
+              } else if (n is ScrollEndNotification) {
+                _paused = false;
+              }
+              return false;
+            },
+            // Flutter's default web/desktop scroll behaviour excludes the mouse
+            // from drag devices, which left this carousel unswipeable in the
+            // browser. Opt the pointer devices back in.
+            child: ScrollConfiguration(
+              behavior: ScrollConfiguration.of(context).copyWith(
+                dragDevices: const {
+                  PointerDeviceKind.touch,
+                  PointerDeviceKind.mouse,
+                  PointerDeviceKind.trackpad,
+                  PointerDeviceKind.stylus,
+                },
+                scrollbars: false,
+                overscroll: false,
+              ),
+              child: PageView.builder(
+                controller: _controller,
+                itemCount: _offers.length,
+                onPageChanged: (i) => setState(() => _page = i),
+                itemBuilder: (context, i) {
+                  final o = _offers[i];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        gradient: LinearGradient(
+                          colors: o.colors,
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(o.title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold)),
+                                  const SizedBox(height: 6),
+                                  Text(o.subtitle,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          color: Colors.white.withAlpha(220),
+                                          fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                            Icon(o.icon,
+                                color: Colors.white.withAlpha(220), size: 48),
+                          ],
+                        ),
                       ),
                     ),
-                    padding: const EdgeInsets.all(20),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(o.title,
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 6),
-                              Text(o.subtitle,
-                                  style: TextStyle(
-                                      color: Colors.white.withAlpha(220),
-                                      fontSize: 13)),
-                            ],
-                          ),
-                        ),
-                        Icon(o.icon, color: Colors.white.withAlpha(220), size: 48),
-                      ],
-                    ),
-                  ),
-              ],
+                  );
+                },
+              ),
             ),
           ),
         ),
@@ -384,16 +436,26 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(_offers.length, (i) {
             final active = i == _page;
-            return AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              width: active ? 18 : 6,
-              height: 6,
-              decoration: BoxDecoration(
-                color: active
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.outlineVariant,
-                borderRadius: BorderRadius.circular(3),
+            return Semantics(
+              button: true,
+              label: 'Offer ${i + 1} of ${_offers.length}',
+              child: InkWell(
+                onTap: () => _goTo(i),
+                customBorder: const CircleBorder(),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    width: active ? 18 : 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: active
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                ),
               ),
             );
           }),
@@ -584,7 +646,8 @@ class _ProductRow extends ConsumerWidget {
 
 // ── Sponsored ad widgets ──────────────────────────────────────────────────────
 
-const _kAdUrl = 'https://storeql.com';
+const _kAdUrl = 'https://featurefragment.com/';
+const _kAdBrand = 'FeatureFragment';
 const _kAdGradient = LinearGradient(
   colors: [Color(0xFF1A237E), Color(0xFF3F51B5)],
   begin: Alignment.topLeft,
@@ -594,7 +657,7 @@ const _kAdGradient = LinearGradient(
 Future<void> _openAd() =>
     launchUrl(Uri.parse(_kAdUrl), mode: LaunchMode.externalApplication);
 
-/// Grid-card variant of the StoreQL ad tile.
+/// Grid-card variant of the sponsored ad tile.
 class _AdCard extends StatelessWidget {
   const _AdCard();
 
@@ -630,7 +693,7 @@ class _AdCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('StoreQL',
+                  const Text(_kAdBrand,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontWeight: FontWeight.w600)),
@@ -649,7 +712,7 @@ class _AdCard extends StatelessWidget {
   }
 }
 
-/// List-row variant of the StoreQL ad tile.
+/// List-row variant of the sponsored ad tile.
 class _AdRow extends StatelessWidget {
   const _AdRow();
 
@@ -687,7 +750,7 @@ class _AdRow extends StatelessWidget {
                     Row(
                       children: [
                         const Expanded(
-                          child: Text('StoreQL',
+                          child: Text(_kAdBrand,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
