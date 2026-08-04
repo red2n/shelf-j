@@ -27,7 +27,7 @@ Future<CompressedImage> compressProductImage(
   required String sourceContentType,
 }) async {
   final blob = web.Blob(
-    <JSAny?>[source.toJS].toJS,
+    <JSAny>[source.toJS].toJS,
     web.BlobPropertyBag(type: sourceContentType),
   );
   final objectUrl = web.URL.createObjectURL(blob);
