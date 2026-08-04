@@ -59,7 +59,7 @@ CompressedImage _compress(({Uint8List bytes, String contentType}) input) {
       contentType: 'image/jpeg',
     );
 
-    if (encoded.bytes.length <= kProductImageMaxBytes) return encoded;
+    if (encoded.bytes.length < kProductImageMaxBytes) return encoded;
     smallest = encoded;
   }
 

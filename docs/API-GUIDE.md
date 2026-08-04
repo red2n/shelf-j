@@ -401,7 +401,7 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `GET /admin/products/variants/resolve?ids=` — batch-resolve up to 200 variant ids to name/SKU/product context.
 
 **Images & Store Assortment**
-- `PUT/DELETE /admin/products/{id}/image` — upload/replace (raw bytes, ≤512KB) or remove a product's primary image.
+- `PUT/DELETE /admin/products/{id}/image` — upload/replace (raw bytes, strictly <256KB) or remove a product's primary image. The admin app downscales and re-encodes to that budget before uploading; the service rejects anything at or above it, and a CHECK constraint on `product_images` enforces the same bound at the storage layer.
 - `GET/PUT /admin/products/{id}/stores` — get/replace a product's per-store assortment (empty list = sold everywhere).
 
 **Units of Measure**

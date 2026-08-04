@@ -268,16 +268,18 @@ public class AdminResource {
 
   /**
    * Upload/replace the product's primary image. Raw body (not multipart): the admin app PUTs the
-   * bytes with the image's own Content-Type (image/jpeg | image/png | image/webp), max 512 KB.
+   * bytes with the image's own Content-Type (image/jpeg | image/png | image/webp), strictly under
+   * 256 KB. The admin app downscales and re-encodes to that budget client-side; the cap here is
+   * what makes it an invariant rather than a convention.
    */
   @Operation(
       summary = "Upload or replace a product's primary image",
       description =
           "Raw body (not multipart): PUT the bytes with the image's own Content-Type"
-              + " (image/jpeg | image/png | image/webp), max 512 KB.")
+              + " (image/jpeg | image/png | image/webp), strictly under 256 KB.")
   @APIResponse(
       responseCode = "400",
-      description = "Content-Type not an accepted image type, body empty, or over 512 KB")
+      description = "Content-Type not an accepted image type, body empty, or 256 KB or larger")
   @APIResponse(responseCode = "404", description = "No such product")
   @Tag(name = "Product Images")
   @PUT

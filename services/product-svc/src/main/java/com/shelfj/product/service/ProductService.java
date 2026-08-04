@@ -230,8 +230,16 @@ public class ProductService {
 
   // ── product image ─────────────────────────────────────────────────────────
 
-  /** Max upload size. Thumbnails only — the stack has no object store; bytes live in Postgres. */
-  public static final int MAX_IMAGE_BYTES = 512 * 1024;
+  /**
+   * Hard ceiling on a stored product image: every image in the system is strictly smaller than
+   * this. Thumbnails only — the stack has no object store, so bytes live in Postgres and are read
+   * back in full on every storefront render.
+   *
+   * <p>Enforced here at the boundary and again as a CHECK constraint on {@code product_images} (see
+   * V15), so the invariant holds whichever client writes — the admin app compresses to the same
+   * budget before uploading, but nothing may depend on a client having done so.
+   */
+  public static final int MAX_IMAGE_BYTES = 256 * 1024;
 
   private static final java.util.Set<String> IMAGE_CONTENT_TYPES =
       java.util.Set.of("image/jpeg", "image/png", "image/webp");
@@ -249,10 +257,11 @@ public class ProductService {
           "Content-Type must be image/jpeg, image/png or image/webp — got: " + contentType);
     if (bytes == null || bytes.length == 0)
       throw ApiException.badRequest("PRODUCT_IMAGE_EMPTY", "image body is empty");
-    if (bytes.length > MAX_IMAGE_BYTES)
+    // Strictly less than the ceiling — an image of exactly MAX_IMAGE_BYTES is rejected too.
+    if (bytes.length >= MAX_IMAGE_BYTES)
       throw ApiException.badRequest(
           "PRODUCT_IMAGE_TOO_LARGE",
-          "image is " + bytes.length + " bytes; max is " + MAX_IMAGE_BYTES + " (512 KB)");
+          "image is " + bytes.length + " bytes; must be under " + MAX_IMAGE_BYTES + " (256 KB)");
     repo.upsertProductImage(tenantId, productId, normalized, bytes);
   }
 

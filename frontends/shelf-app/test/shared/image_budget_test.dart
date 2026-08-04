@@ -71,13 +71,26 @@ void main() {
         isFalse,
       );
     });
+
+    test('rejects a PNG of exactly the cap — the budget is strictly under', () {
+      expect(
+        canUploadUnchanged(
+          byteLength: kProductImageMaxBytes,
+          width: 800,
+          height: 600,
+          contentType: 'image/png',
+        ),
+        isFalse,
+      );
+    });
   });
 
   group('the ladder', () {
-    test('stays within what product-svc accepts', () {
-      // product-svc's own cap is 512 KB (ProductService.MAX_IMAGE_BYTES); the client
-      // budget must sit under it so a compressed upload is never server-rejected.
-      expect(kProductImageMaxBytes, lessThan(512 * 1024));
+    test('matches the cap product-svc enforces', () {
+      // Must equal ProductService.MAX_IMAGE_BYTES, which rejects anything at or above
+      // it and is backed by a CHECK constraint on product_images. If these drift, the
+      // owner gets a server rejection the client promised would not happen.
+      expect(kProductImageMaxBytes, 256 * 1024);
     });
 
     test('descends monotonically, so the first fit is the best-quality fit', () {

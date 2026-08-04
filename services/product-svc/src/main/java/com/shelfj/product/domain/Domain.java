@@ -44,7 +44,7 @@ public final class Domain {
     public static final String STATUS_DELISTED = "DELISTED";
   }
 
-  /** The product's primary image (owner-uploaded, one per product, capped at 512 KB). */
+  /** The product's primary image (owner-uploaded, one per product, always under 256 KB). */
   public record ProductImage(UUID productId, String contentType, byte[] bytes) {}
 
   /** UOM class (system reference — no tenant_id). */

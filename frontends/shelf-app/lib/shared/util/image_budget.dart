@@ -16,8 +16,13 @@ library;
 
 import 'dart:typed_data';
 
-/// Hard ceiling for the bytes we upload. Anything the ladder cannot squeeze under this
-/// is rejected rather than sent.
+/// Hard ceiling for the bytes we upload. Anything the ladder cannot squeeze *strictly
+/// under* this is rejected rather than sent.
+///
+/// Mirrors `ProductService.MAX_IMAGE_BYTES` in product-svc, which rejects anything at or
+/// above the same number and is backed by a CHECK constraint on `product_images`. Keep
+/// the two identical: this side exists so the owner never sees a rejection, not to
+/// define the rule.
 const int kProductImageMaxBytes = 256 * 1024;
 
 /// Longest edge we ever keep. Sources smaller than this are never upscaled.
@@ -78,7 +83,7 @@ bool canUploadUnchanged({
   required int height,
   required String contentType,
 }) =>
-    byteLength <= kProductImageMaxBytes &&
+    byteLength < kProductImageMaxBytes &&
     width <= kProductImageMaxEdge &&
     height <= kProductImageMaxEdge &&
     (contentType == 'image/png' || contentType == 'image/webp');

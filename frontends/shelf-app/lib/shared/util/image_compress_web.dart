@@ -72,7 +72,7 @@ Future<CompressedImage> compressProductImage(
         encoded = _encode(image, size, requestedType, attempt.quality);
       }
 
-      if (encoded.bytes.length <= kProductImageMaxBytes) return encoded;
+      if (encoded.bytes.length < kProductImageMaxBytes) return encoded;
       smallest = encoded;
     }
 
