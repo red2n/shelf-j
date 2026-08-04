@@ -68,6 +68,11 @@ volumes:
 # ── YAML anchors — shared blocks to avoid repeating 8 env vars per service ──
 x-svc-env: &svc-env
   server.port: "8080"
+  # Application log level, applied to com.shelfj at startup by LogLevelConfigurer. INFO keeps
+  # steady-state volume sane — every record here is formatted, shipped over OTLP and stored, so
+  # FINE across 14 services is paid for three times. Set SHELFJ_LOG_LEVEL=FINE (or DEBUG) in .env
+  # while debugging; it needs no rebuild, only a restart of the affected service.
+  SHELFJ_LOG_LEVEL: ${SHELFJ_LOG_LEVEL:-INFO}
   # Runtime app pool goes through PgBouncer (golden rule: don't orphan provisioned infra).
   # Flyway gets its own direct-to-Postgres URL below — its DDL migrations run as multi-statement
   # transactions that need full session affinity, which PgBouncer's transaction pool_mode breaks.
@@ -588,6 +593,8 @@ services:
     restart: unless-stopped
     environment:
       server.port: "8080"
+      # Not covered by x-svc-env (config declares its own environment) — see that anchor.
+      SHELFJ_LOG_LEVEL: ${SHELFJ_LOG_LEVEL:-INFO}
       JAVA_TOOL_OPTIONS: "${CONFIG_JAVA_OPTS:--Xms64m -Xmx256m -XX:+UseG1GC}"
       SHELFJ_CONFIG_TOKEN: ${SHELFJ_CONFIG_TOKEN:?SHELFJ_CONFIG_TOKEN must be set (>= 32 chars) - see .env.example}
       otel.exporter.otlp.endpoint: http://otel-collector:4317
@@ -880,6 +887,8 @@ services:
     restart: unless-stopped
     environment:
       server.port: "8080"
+      # Not covered by x-svc-env (the gateway declares its own environment) — see that anchor.
+      SHELFJ_LOG_LEVEL: ${SHELFJ_LOG_LEVEL:-INFO}
       JAVA_TOOL_OPTIONS: "${GATEWAY_JAVA_OPTS:--Xms128m -Xmx512m -XX:+UseG1GC}"
       shelfj.consul.host: consul
       shelfj.consul.port: "8500"
