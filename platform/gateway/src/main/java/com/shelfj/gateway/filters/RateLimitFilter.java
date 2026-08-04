@@ -2,6 +2,7 @@ package com.shelfj.gateway.filters;
 
 import com.shelfj.gateway.GatewayConfig;
 import io.helidon.webserver.http.ServerRequest;
+import io.lettuce.core.RedisException;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.sync.RedisCommands;
 import jakarta.annotation.Priority;
@@ -13,6 +14,8 @@ import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.Provider;
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 
 @Provider
 @ApplicationScoped
@@ -20,6 +23,8 @@ import java.io.IOException;
 // shed unauthenticated floods cheaply, so it cannot sit behind the auth check.
 @Priority(100)
 public class RateLimitFilter implements ContainerRequestFilter {
+
+  private static final Logger LOG = System.getLogger(RateLimitFilter.class.getName());
 
   /**
    * Fixed window: a key's counter resets WINDOW_SECONDS after the request that first created it
@@ -66,13 +71,32 @@ public class RateLimitFilter implements ContainerRequestFilter {
     }
   }
 
+  /**
+   * Returns this IP's count within the current window, or 0 when Redis cannot answer.
+   *
+   * <p>Fails <b>open</b>: an unreachable counter store means requests are allowed through
+   * unmetered. The alternative — treating "cannot count" as "over the limit" — turns a Redis outage
+   * into a total outage of the public door, which is a far worse failure than briefly unmetered
+   * traffic. Rate limiting sheds load; it is not an authorisation control, and every request still
+   * passes JWT validation and the upstream circuit breakers behind this.
+   *
+   * <p>Logged at WARNING so a silently unmetered gateway is visible rather than assumed.
+   */
   private long consume(String ip) {
-    Long current =
-        redis.eval(
-            INCR_WITH_EXPIRE_SCRIPT,
-            ScriptOutputType.INTEGER,
-            new String[] {"ratelimit:" + ip},
-            String.valueOf(WINDOW_SECONDS));
-    return current == null ? 0L : current;
+    try {
+      Long current =
+          redis.eval(
+              INCR_WITH_EXPIRE_SCRIPT,
+              ScriptOutputType.INTEGER,
+              new String[] {"ratelimit:" + ip},
+              String.valueOf(WINDOW_SECONDS));
+      return current == null ? 0L : current;
+    } catch (RedisException e) {
+      LOG.log(
+          Level.WARNING,
+          "Rate-limit counter unavailable — allowing request unmetered: {0}",
+          e.toString());
+      return 0L;
+    }
   }
 }
