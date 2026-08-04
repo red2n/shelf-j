@@ -410,6 +410,16 @@ services:
     volumes:
       - ./infra/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     ports: ["127.0.0.1:4317:4317"]
+    environment:
+      # The collector is Go, so there is no -Xmx equivalent: without a limit the runtime sizes the
+      # heap against the HOST's memory and only collects once it is already past the container cap.
+      # Set just under mem_limit so GC gets aggressive before the cgroup OOM-killer intervenes.
+      GOMEMLIMIT: "460MiB"
+    # Paired with the memory_limiter processor in infra/otel-collector-config.yaml, whose
+    # limit_mib (400) is ~80% of this. Change one and change the other: sized above this, the
+    # container is killed before the processor can shed load. This was the only telemetry
+    # container without a cap while receiving traces AND logs from all 14 services.
+    mem_limit: ${OTEL_COLLECTOR_MEM_LIMIT:-512m}
     depends_on:
       zipkin: { condition: service_healthy }
       loki:   { condition: service_healthy }
