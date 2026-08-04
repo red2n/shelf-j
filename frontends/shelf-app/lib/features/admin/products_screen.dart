@@ -6,6 +6,7 @@ import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
+import '../../shared/util/image_compress.dart';
 import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
@@ -258,8 +259,13 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     );
   }
 
-  /// Owner uploads (or removes) the product's storefront image. JPEG/PNG/WebP, max 512 KB —
-  /// matching product-svc's PUT /admin/products/{id}/image contract.
+  /// Owner uploads (or removes) the product's storefront image, via product-svc's
+  /// PUT /admin/products/{id}/image contract.
+  ///
+  /// The picked file is downscaled and re-encoded locally before it leaves the browser
+  /// (see shared/util/image_compress.dart), so the owner can pick a full-size camera
+  /// photo instead of being told to go and resize it. That keeps the upload, the BYTEA
+  /// row in Postgres, and every storefront render small, and strips EXIF GPS on the way.
   Future<void> _manageImage(
       BuildContext context, WidgetRef ref, ProductInfo product) async {
     final action = await showDialog<String>(
@@ -267,8 +273,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       builder: (ctx) => AlertDialog(
         title: Text('Image for "${product.name}"'),
         content: const Text(
-            'Upload a JPEG, PNG or WebP up to 512 KB. It appears on the '
-            'storefront catalog and product page.'),
+            'Pick a JPEG, PNG or WebP — any size. It is optimised for the web '
+            'automatically, then appears on the storefront catalog and product page.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
@@ -307,31 +313,32 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       final file = picked?.files.firstOrNull;
       final bytes = file?.bytes;
       if (file == null || bytes == null) return;
-      if (bytes.length > 512 * 1024) {
+
+      final CompressedImage upload;
+      try {
+        upload = await compressProductImage(
+          bytes,
+          sourceContentType: contentTypeForExtension(file.extension),
+        );
+      } on ImageCompressException catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-                'Image is ${(bytes.length / 1024).round()} KB — max is 512 KB. '
-                'Please resize it and try again.'),
+            content: Text(e.message),
             backgroundColor: Theme.of(context).colorScheme.error,
           ));
         }
         return;
       }
-      final ext = (file.extension ?? '').toLowerCase();
-      final contentType = switch (ext) {
-        'png' => 'image/png',
-        'webp' => 'image/webp',
-        _ => 'image/jpeg',
-      };
+
       await dio.put(
         '/${ApiConstants.product}/admin/products/${product.id}/image',
-        data: bytes,
-        options: Options(contentType: contentType),
+        data: upload.bytes,
+        options: Options(contentType: upload.contentType),
       );
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Product image uploaded.')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                'Product image uploaded (${formatBytes(upload.bytes.length)}).')));
       }
     } catch (e) {
       if (context.mounted) {
