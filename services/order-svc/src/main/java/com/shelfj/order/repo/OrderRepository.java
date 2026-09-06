@@ -6,6 +6,7 @@ import com.shelfj.order.domain.Domain.Layaway;
 import com.shelfj.order.domain.Domain.LayawayDeposit;
 import com.shelfj.order.domain.Domain.LayawayItem;
 import com.shelfj.order.domain.Domain.Order;
+import com.shelfj.order.domain.Domain.OrderDiscount;
 import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.domain.Domain.OrderReceipt;
 import com.shelfj.order.domain.Domain.OrderStatusHistory;
@@ -39,7 +40,13 @@ public class OrderRepository extends BaseOutboxRepository {
 
   // ── Orders ────────────────────────────────────────────────────────────────
 
-  public Order createOrder(Order order, List<OrderItem> items, OutboxRow event) {
+  /**
+   * Persists an order, its items, its status history and its outbox event; when {@code discount} is
+   * non-null, the discount audit row commits in the same transaction, so an order can never carry a
+   * discount that no record explains (SJ-D6).
+   */
+  public Order createOrder(
+      Order order, List<OrderItem> items, OutboxRow event, OrderDiscount discount) {
     return inTx(
         c -> {
           try (PreparedStatement ps =
@@ -89,10 +96,34 @@ public class OrderRepository extends BaseOutboxRepository {
           for (OrderItem item : items) insertOrderItem(c, item);
           appendStatusHistory(
               c, order.tenantId(), order.id(), null, order.status(), "created", null);
+          if (discount != null) insertOrderDiscount(c, discount);
           insertOutbox(c, event);
           return order;
         },
         "create order");
+  }
+
+  /** Append-only (golden rule #8): inserted with the order, never updated or deleted. */
+  private static void insertOrderDiscount(java.sql.Connection c, OrderDiscount d)
+      throws java.sql.SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO order_discounts"
+                + " (id,tenant_id,order_id,store_id,subtotal,discount_amount,discount_pct,"
+                + "  reason,granted_by,granted_role)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, d.id());
+      ps.setObject(2, d.tenantId());
+      ps.setObject(3, d.orderId());
+      ps.setObject(4, d.storeId());
+      ps.setBigDecimal(5, d.subtotal());
+      ps.setBigDecimal(6, d.discountAmount());
+      ps.setBigDecimal(7, d.discountPct());
+      ps.setString(8, d.reason());
+      ps.setObject(9, d.grantedBy());
+      ps.setString(10, d.grantedRole());
+      ps.executeUpdate();
+    }
   }
 
   /** Look up an order by its idempotency key — used to replay a retried checkout. */

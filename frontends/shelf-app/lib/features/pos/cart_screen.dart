@@ -118,6 +118,7 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       );
       ref.read(posCartProvider.notifier).clear();
       ref.read(posDiscountProvider.notifier).state = 0;
+      ref.read(posDiscountReasonProvider.notifier).state = '';
       ref.invalidate(parkedSalesProvider);
       _snack('Sale held.');
     } catch (e) {
@@ -843,32 +844,60 @@ class _TotalsBar extends ConsumerWidget {
         text: ref.read(posDiscountProvider) > 0
             ? ref.read(posDiscountProvider).toStringAsFixed(2)
             : '');
-    final result = await showDialog<double>(
+    final reasonCtrl =
+        TextEditingController(text: ref.read(posDiscountReasonProvider));
+    // The server refuses a discount with no reason and records the one given against the cashier,
+    // so Apply stays disabled until both fields are filled rather than failing at tender time.
+    final result = await showDialog<(double, String)>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Order discount'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(
-              labelText: 'Discount amount', prefixText: '$currency '),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, 0.0),
-              child: const Text('Clear')),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(ctx, double.tryParse(ctrl.text) ?? 0.0),
-            child: const Text('Apply'),
-          ),
-        ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final amount = double.tryParse(ctrl.text) ?? 0;
+          final reason = reasonCtrl.text.trim();
+          final canApply = amount > 0 && reason.isNotEmpty;
+          return AlertDialog(
+            title: const Text('Order discount'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: ctrl,
+                  autofocus: true,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                      labelText: 'Discount amount', prefixText: '$currency '),
+                  onChanged: (_) => setDialogState(() {}),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: reasonCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason',
+                    hintText: 'e.g. damaged packaging',
+                  ),
+                  onChanged: (_) => setDialogState(() {}),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, (0.0, '')),
+                  child: const Text('Clear')),
+              FilledButton(
+                onPressed:
+                    canApply ? () => Navigator.pop(ctx, (amount, reason)) : null,
+                child: const Text('Apply'),
+              ),
+            ],
+          );
+        },
       ),
     );
     if (result == null) return;
     ref.read(posDiscountProvider.notifier).state =
-        result.clamp(0, subtotal).toDouble();
+        result.$1.clamp(0, subtotal).toDouble();
+    ref.read(posDiscountReasonProvider.notifier).state = result.$2;
   }
 
   @override

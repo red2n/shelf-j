@@ -63,6 +63,26 @@ public final class Domain {
       BigDecimal lineTotal,
       String notes) {}
 
+  /**
+   * Append-only record of a manual discount granted on an order (SJ-D6).
+   *
+   * <p>{@code grantedRole} is the caller role whose ceiling authorised the amount. It is stored
+   * rather than looked up later because role assignments change: without it, "was this discount
+   * within the grantor's authority at the time?" becomes unanswerable.
+   */
+  public record OrderDiscount(
+      UUID id,
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      BigDecimal subtotal,
+      BigDecimal discountAmount,
+      BigDecimal discountPct,
+      String reason,
+      UUID grantedBy,
+      String grantedRole,
+      Instant createdAt) {}
+
   /** Append-only status audit log. */
   public record OrderStatusHistory(
       UUID id,

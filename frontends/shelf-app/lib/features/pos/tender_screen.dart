@@ -135,6 +135,8 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
           'fulfilmentType': 'PICKUP',
           'currency': currency,
           if (discount > 0) 'discountAmount': discount,
+          if (discount > 0)
+            'discountReason': ref.read(posDiscountReasonProvider).trim(),
           if (customer != null) 'customerId': customer.id,
           'contactPhone': customer != null ? '' : walkInPhone,
           'items': [
@@ -193,6 +195,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       ref.read(posCartProvider.notifier).clear();
       ref.read(posCustomerProvider.notifier).state = null;
       ref.read(posDiscountProvider.notifier).state = 0;
+      ref.read(posDiscountReasonProvider.notifier).state = '';
       ref.read(posWalkInPhoneProvider.notifier).state = '';
       _tenders.clear();
       if (!mounted) return;
@@ -435,6 +438,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       ref.read(posCartProvider.notifier).clear();
       ref.read(posCustomerProvider.notifier).state = null;
       ref.read(posDiscountProvider.notifier).state = 0;
+      ref.read(posDiscountReasonProvider.notifier).state = '';
       ref.read(posWalkInPhoneProvider.notifier).state = '';
       if (!mounted) return;
       setState(() => _processing = false);

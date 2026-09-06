@@ -6,6 +6,7 @@ import com.shelfj.order.domain.Domain.Layaway;
 import com.shelfj.order.domain.Domain.LayawayDeposit;
 import com.shelfj.order.domain.Domain.LayawayItem;
 import com.shelfj.order.domain.Domain.Order;
+import com.shelfj.order.domain.Domain.OrderDiscount;
 import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.domain.Domain.OrderReceipt;
 import com.shelfj.order.domain.Domain.OrderStatusHistory;
@@ -99,6 +100,76 @@ public class OrderService {
     }
     return tenantCurrency;
   }
+
+  /**
+   * Authorises a manual discount and builds its audit row (SJ-D6).
+   *
+   * <p>Three checks, in the order that gives the caller the most useful failure. A non-staff caller
+   * is refused outright -- an online or guest checkout self-applying a discount would let the buyer
+   * name their own price. A staff caller must give a reason, because a discount with no stated
+   * reason is unauditable and the discount is the most common internal-theft vector at a till.
+   * Finally the amount must sit within the caller's own authority: every staff role could
+   * previously have taken 100% off, with only the subtotal as a ceiling.
+   *
+   * @return the audit row to commit alongside the order; never null (callers skip a zero discount)
+   * @throws ApiException 403 {@code ORDER_DISCOUNT_NOT_ALLOWED} for a non-staff caller or a staff
+   *     role with no configured ceiling; 400 {@code ORDER_DISCOUNT_REASON_REQUIRED} when no reason
+   *     is given; 403 {@code ORDER_DISCOUNT_EXCEEDS_AUTHORITY} when it is above the ceiling
+   */
+  private OrderDiscount authorizeDiscount(
+      TenantContext ctx,
+      UUID orderId,
+      UUID storeId,
+      BigDecimal subtotal,
+      BigDecimal disc,
+      PlaceOrderRequest req) {
+    var ceilings = config.discountCeilings();
+    String bestRole = null;
+    BigDecimal bestCeiling = null;
+    for (String role : ctx.roles()) {
+      BigDecimal ceiling = ceilings.get(role.toUpperCase(Locale.ROOT));
+      if (ceiling != null && (bestCeiling == null || ceiling.compareTo(bestCeiling) > 0)) {
+        bestCeiling = ceiling;
+        bestRole = role.toUpperCase(Locale.ROOT);
+      }
+    }
+    if (bestRole == null)
+      throw ApiException.forbidden(
+          "ORDER_DISCOUNT_NOT_ALLOWED", "discounts can only be applied by authorised staff");
+
+    if (isBlank(req.discountReason()))
+      throw ApiException.badRequest(
+          "ORDER_DISCOUNT_REASON_REQUIRED", "discountReason is required when applying a discount");
+
+    // Percentage of subtotal, not of total: tax follows the discounted price, so measuring against
+    // the post-tax figure would let the same cash discount pass or fail depending on the VAT rate.
+    BigDecimal pct = disc.multiply(HUNDRED).divide(subtotal, 3, java.math.RoundingMode.HALF_UP);
+    if (pct.compareTo(bestCeiling) > 0)
+      throw ApiException.forbidden(
+          "ORDER_DISCOUNT_EXCEEDS_AUTHORITY",
+          "discount of "
+              + pct
+              + "% exceeds the "
+              + bestCeiling
+              + "% limit for role "
+              + bestRole
+              + " — a more senior member of staff must authorise it");
+
+    return new OrderDiscount(
+        UUID.randomUUID(),
+        ctx.requireTenantId(),
+        orderId,
+        storeId,
+        subtotal,
+        disc,
+        pct,
+        req.discountReason().trim(),
+        ctx.userId(),
+        bestRole,
+        Instant.now());
+  }
+
+  private static final BigDecimal HUNDRED = new BigDecimal("100");
 
   public Order placeOrder(PlaceOrderRequest req, TenantContext ctx, String idempotencyKey) {
     if (req.items() == null || req.items().isEmpty())
@@ -230,29 +301,29 @@ public class OrderService {
               tenantId, orderId, storeId, reserveLines, config.reservationTtlSeconds(), idemBase);
     }
 
-    boolean staff = ctx.hasRole("CASHIER") || ctx.hasRole("MANAGER") || ctx.hasRole("OWNER");
-
     BigDecimal tax;
-    BigDecimal disc;
+    // A manual discount is honoured under pricing enforcement, not discarded (SJ-D6). Enforcement
+    // still owns unit prices -- the resolved price above is authoritative and the client cannot
+    // name its own -- but the till's discount is a separate, deliberate staff act on top of it.
+    // Zeroing it here meant the till tendered subtotal - discount against an order stored at full
+    // price, so paid_amount never covered the total, the order never confirmed, and the sweeper
+    // cancelled a sale the customer had already paid for.
+    BigDecimal disc = req.discountAmount() != null ? req.discountAmount() : BigDecimal.ZERO;
     if (enforcePricing) {
-      // Tax is derived server-side from pricing-svc's per-line VAT; any promotion discount is
-      // already baked into the resolved unitPrice above, so there is no separate discount left to
-      // apply. Client-supplied taxAmount/discountAmount are never trusted here.
       tax = serverTax.setScale(2, java.math.RoundingMode.HALF_UP);
-      disc = BigDecimal.ZERO;
     } else {
       tax = req.taxAmount() != null ? req.taxAmount() : BigDecimal.ZERO;
-      disc = req.discountAmount() != null ? req.discountAmount() : BigDecimal.ZERO;
-      // Manual discounts are a staff privilege (POS). A non-staff caller (online/guest checkout)
-      // self-applying a discount would let them name their own price.
-      if (!staff && disc.signum() != 0)
-        throw ApiException.forbidden(
-            "ORDER_DISCOUNT_NOT_ALLOWED", "discounts can only be applied by staff");
     }
+    if (disc.signum() < 0)
+      throw ApiException.badRequest(
+          "ORDER_DISCOUNT_NEGATIVE", "discountAmount cannot be negative — got " + disc);
     if (disc.compareTo(subtotal) > 0)
       throw ApiException.badRequest(
           "ORDER_DISCOUNT_EXCEEDS_SUBTOTAL",
           "discountAmount " + disc + " exceeds order subtotal " + subtotal);
+
+    OrderDiscount discountAudit =
+        disc.signum() == 0 ? null : authorizeDiscount(ctx, orderId, storeId, subtotal, disc, req);
     BigDecimal total = subtotal.add(tax).subtract(disc);
 
     boolean taxExempt = req.taxExempt() != null && req.taxExempt();
@@ -287,7 +358,10 @@ public class OrderService {
 
     try {
       return repo.createOrder(
-          order, items, Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId));
+          order,
+          items,
+          Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId),
+          discountAudit);
     } catch (ApiException e) {
       // Idempotent replay: a retried checkout with the same key gets the original order back
       // instead of an error (golden rule #11). The stock holds are NOT released here — the

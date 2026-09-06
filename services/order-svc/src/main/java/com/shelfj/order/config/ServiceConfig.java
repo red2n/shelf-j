@@ -6,6 +6,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.math.BigDecimal;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 @ApplicationScoped
@@ -56,6 +60,59 @@ public class ServiceConfig extends BaseServiceConfig {
   }
 
   /**
+   * Per-role ceiling on a manual order discount, as a percentage of subtotal (SJ-D6).
+   *
+   * <p>A discount is the most common internal-theft vector at a till, so retail tiers the
+   * authority: a cashier may take a little off, a manager may take a lot, and anything beyond a
+   * role's ceiling needs someone more senior to ring it. Format is {@code ROLE:percent} pairs; a
+   * role absent from the map may not discount at all. A caller with several roles gets the highest
+   * ceiling among them, and that role is what lands in the audit row.
+   */
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.order.discount.max-percent",
+      defaultValue = "CASHIER:10,STOREKEEPER:10,MANAGER:50,OWNER:100,PLATFORM_ADMIN:100")
+  String discountMaxPercentCfg;
+
+  private Map<String, BigDecimal> discountCeilings = Map.of();
+
+  public Map<String, BigDecimal> discountCeilings() {
+    return discountCeilings;
+  }
+
+  /**
+   * Parses the ceiling map once at startup and fails the boot on a malformed or out-of-range entry.
+   * A silently-dropped entry would mean a role quietly loses its discount authority, which surfaces
+   * as a confusing 403 at a till rather than as a config error.
+   */
+  void parseDiscountCeilings() {
+    Map<String, BigDecimal> parsed = new LinkedHashMap<>();
+    for (String pair : discountMaxPercentCfg.split(",")) {
+      String entry = pair.trim();
+      if (entry.isEmpty()) continue;
+      int colon = entry.indexOf(':');
+      if (colon < 0)
+        throw new IllegalStateException(
+            "shelfj.order.discount.max-percent entry is not ROLE:percent — got: " + entry);
+      String role = entry.substring(0, colon).trim().toUpperCase(Locale.ROOT);
+      BigDecimal percent;
+      try {
+        percent = new BigDecimal(entry.substring(colon + 1).trim());
+      } catch (NumberFormatException e) {
+        throw new IllegalStateException(
+            "shelfj.order.discount.max-percent has a non-numeric percent for " + role, e);
+      }
+      if (percent.signum() < 0 || percent.compareTo(HUNDRED) > 0)
+        throw new IllegalStateException(
+            "shelfj.order.discount.max-percent for " + role + " must be 0-100 — got: " + percent);
+      parsed.put(role, percent);
+    }
+    discountCeilings = Map.copyOf(parsed);
+  }
+
+  private static final BigDecimal HUNDRED = new BigDecimal("100");
+
+  /**
    * When true, placeOrder holds stock in inventory-svc for every ONLINE order line and rejects the
    * order when stock is short or inventory-svc is unreachable (fail-closed). Override to false only
    * in local dev rigs with no seeded inventory.
@@ -87,7 +144,11 @@ public class ServiceConfig extends BaseServiceConfig {
    * and discounts without it showing up in the startup log.
    */
   @PostConstruct
-  void warnIfPricingEnforcementDisabled() {
+  void onStartup() {
+    // CDI permits exactly one @PostConstruct per bean, so startup validation and startup warnings
+    // share this method. Parsing first means a malformed ceiling map fails the boot before anything
+    // depends on it.
+    parseDiscountCeilings();
     if (!pricingEnforce) {
       LOG.log(
           Level.WARNING,
