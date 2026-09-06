@@ -31,6 +31,8 @@ import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
+import com.shelfj.inventory.domain.Domain.ShrinkageGrouping;
+import com.shelfj.inventory.domain.Domain.ShrinkageRow;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.domain.Domain.TransactionSourceType;
@@ -76,6 +78,7 @@ public class InventoryService {
 
   @Inject ServiceConfig config;
   @Inject InventoryRepository repo;
+  @Inject com.shelfj.inventory.repo.ShrinkageRepository shrinkageRepo;
   @Inject LotGenealogyRepository lotGenealogyRepo;
   @Inject ThresholdRepository thresholdRepo;
   @Inject SuggestionRepository suggestionRepo;
@@ -276,6 +279,44 @@ public class InventoryService {
         batch.id(),
         Events.stockReceived(
             batch.tenantId(), batch.storeId(), batch.variantId(), batch.id(), batch.receivedQty()));
+  }
+
+  // ---- shrinkage report ----
+
+  /**
+   * Write-offs over a period, grouped by reason code, by member of staff, or by store.
+   *
+   * <p>This is the report SJ-D4's attribution work exists to feed: until adjustments carried a
+   * reason and an actor there was nothing to group by, and the reason-code reference table had no
+   * reader. Grouping by ACTOR is the loss-prevention view — a cashier whose write-offs sit well
+   * above their peers is the pattern this surfaces.
+   *
+   * @param grouping validated by the resource against {@link ShrinkageGrouping}
+   */
+  public List<ShrinkageRow> shrinkageReport(
+      UUID tenantId, UUID storeId, Instant from, Instant to, ShrinkageGrouping grouping) {
+    if (from != null && to != null && !from.isBefore(to))
+      throw ApiException.badRequest(
+          "INVENTORY_INVALID_PERIOD", "from must be before to — got " + from + " and " + to);
+    return shrinkageRepo.aggregate(tenantId, storeId, from, to, grouping);
+  }
+
+  /**
+   * The variants behind a summary line, so an investigation can go from "this member of staff wrote
+   * off 400 units" to what they actually wrote off.
+   */
+  public List<ShrinkageRow> shrinkageByVariant(
+      UUID tenantId,
+      UUID storeId,
+      Instant from,
+      Instant to,
+      String reasonCode,
+      UUID actorId,
+      int limit) {
+    if (from != null && to != null && !from.isBefore(to))
+      throw ApiException.badRequest(
+          "INVENTORY_INVALID_PERIOD", "from must be before to — got " + from + " and " + to);
+    return shrinkageRepo.topVariants(tenantId, storeId, from, to, reasonCode, actorId, limit);
   }
 
   // ---- adjust ----

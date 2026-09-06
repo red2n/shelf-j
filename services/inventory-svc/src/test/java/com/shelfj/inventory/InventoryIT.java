@@ -831,6 +831,20 @@ class InventoryIT {
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
+  /**
+   * Like {@link #field} but for unquoted JSON values (numbers, booleans) — the report DTO's
+   * quantities and counts are numeric, so the string-only helper cannot read them.
+   */
+  private static String numericField(String json, String name) {
+    String key = "\"" + name + "\":";
+    int i = json.indexOf(key);
+    if (i < 0) throw new AssertionError(name + " not in " + json);
+    int start = i + key.length();
+    int end = start;
+    while (end < json.length() && ",}]".indexOf(json.charAt(end)) < 0) end++;
+    return json.substring(start, end).trim();
+  }
+
   private static String field(String json, String name) {
     String key = "\"" + name + "\":\"";
     int i = json.indexOf(key);
@@ -902,6 +916,150 @@ class InventoryIT {
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
+  // ── Shrinkage report ─────────────────────────────────────────────────────────
+
+  /**
+   * The report SJ-D4's attribution work exists to feed. Two members of staff write off stock for
+   * different reasons, one also finds some, and the report has to separate all of that correctly.
+   */
+  @Test
+  void shrinkageReportGroupsWriteOffsByReasonActorAndStore() {
+    String v1 = "d0000001-0000-0000-0000-000000000000";
+    String v2 = "d0000002-0000-0000-0000-000000000000";
+    String alice = "e0000001-0000-0000-0000-000000000000";
+    String bob = "e0000002-0000-0000-0000-000000000000";
+    String tenant = "f0000001-0000-0000-0000-000000000000";
+
+    assertThat(
+        postAs("/admin/inventory/receive", receiveJson(v1, "100"), tenant, alice).getStatus(),
+        is(201));
+    assertThat(
+        postAs("/admin/inventory/receive", receiveJson(v2, "100"), tenant, alice).getStatus(),
+        is(201));
+
+    adjust(tenant, alice, v1, "-30", "THEFT");
+    adjust(tenant, bob, v1, "-5", "DAMAGED");
+    adjust(tenant, bob, v2, "-10", "THEFT");
+    // A find is a gain, not a negative loss — it must not cancel out the THEFT total.
+    adjust(tenant, bob, v2, "8", "FOUND");
+
+    String byReason = shrinkage(tenant, "REASON");
+    // THEFT: 30 + 10 = 40 across two movements, and it outweighs DAMAGED so it sorts first.
+    assertThat(byReason.indexOf("THEFT") < byReason.indexOf("DAMAGED"), is(true));
+    assertThat(numericFieldNear(byReason, "THEFT", "qtyWrittenOff"), is("40.000"));
+    assertThat(numericFieldNear(byReason, "DAMAGED", "qtyWrittenOff"), is("5.000"));
+    // FOUND is a gain: it appears with nothing written off and 8 found.
+    assertThat(numericFieldNear(byReason, "FOUND", "qtyWrittenOff"), is("0.000"));
+    assertThat(numericFieldNear(byReason, "FOUND", "qtyFound"), is("8.000"));
+
+    // Grouped by actor: bob wrote off 15 across three movements, alice 30 across one.
+    String byActor = shrinkage(tenant, "ACTOR");
+    assertThat(numericFieldNear(byActor, alice, "qtyWrittenOff"), is("30.000"));
+    assertThat(numericFieldNear(byActor, bob, "qtyWrittenOff"), is("15.000"));
+    assertThat(numericFieldNear(byActor, bob, "movements"), is("3"));
+
+    // Grouped by store, everything lands on the one store used here: 45 off, 8 found, net -37.
+    String byStore = shrinkage(tenant, "STORE");
+    assertThat(numericFieldNear(byStore, S, "qtyWrittenOff"), is("45.000"));
+    assertThat(numericFieldNear(byStore, S, "netQty"), is("-37.000"));
+
+    // Receipts are not adjustments and must never appear as shrinkage.
+    assertThat(byReason, not(containsString("\"groupKey\":\"RECEIVE\"")));
+  }
+
+  /** Drill-down answers "what did this person actually write off?". */
+  @Test
+  void shrinkageDrillsDownToVariantsForOneActor() {
+    String v1 = "d0000003-0000-0000-0000-000000000000";
+    String v2 = "d0000004-0000-0000-0000-000000000000";
+    String carol = "e0000003-0000-0000-0000-000000000000";
+    String tenant = "f0000002-0000-0000-0000-000000000000";
+
+    assertThat(
+        postAs("/admin/inventory/receive", receiveJson(v1, "50"), tenant, carol).getStatus(),
+        is(201));
+    assertThat(
+        postAs("/admin/inventory/receive", receiveJson(v2, "50"), tenant, carol).getStatus(),
+        is(201));
+    adjust(tenant, carol, v1, "-20", "THEFT");
+    adjust(tenant, carol, v2, "-3", "THEFT");
+
+    String body =
+        target
+            .path("/admin/inventory/reports/shrinkage/by-variant")
+            .queryParam("actorId", carol)
+            .queryParam("reasonCode", "theft")
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    // Heaviest first, and reasonCode is matched case-insensitively.
+    assertThat(body.indexOf(v1) < body.indexOf(v2), is(true));
+    assertThat(numericFieldNear(body, v1, "qtyWrittenOff"), is("20.000"));
+  }
+
+  /**
+   * A report is only as trustworthy as its isolation, and a bad period is a 400 not a silent empty.
+   */
+  @Test
+  void shrinkageIsTenantScopedAndValidatesItsInputs() {
+    String v = "d0000005-0000-0000-0000-000000000000";
+    String dave = "e0000004-0000-0000-0000-000000000000";
+    String tenant = "f0000003-0000-0000-0000-000000000000";
+    assertThat(
+        postAs("/admin/inventory/receive", receiveJson(v, "40"), tenant, dave).getStatus(),
+        is(201));
+    adjust(tenant, dave, v, "-9", "EXPIRY");
+
+    assertThat(shrinkage(tenant, "REASON"), containsString("EXPIRY"));
+    // Another tenant sees none of it.
+    assertThat(shrinkage(OTHER, "REASON"), not(containsString("EXPIRY")));
+
+    assertThat(shrinkageStatus(tenant, "groupBy", "SUPPLIER"), is(400));
+    assertThat(shrinkageStatus(tenant, "from", "last-tuesday"), is(400));
+    assertThat(shrinkageStatus(tenant, "storeId", "not-a-uuid"), is(400));
+  }
+
+  private void adjust(
+      String tenant, String actor, String variantId, String delta, String reasonCode) {
+    Response r =
+        postAs(
+            "/admin/inventory/adjust",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + variantId
+                + "\",\"delta\":"
+                + delta
+                + ",\"reasonCode\":\""
+                + reasonCode
+                + "\"}",
+            tenant,
+            actor);
+    assertThat(r.getStatus(), is(200));
+  }
+
+  private String shrinkage(String tenant, String groupBy) {
+    return target
+        .path("/admin/inventory/reports/shrinkage")
+        .queryParam("groupBy", groupBy)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get(String.class);
+  }
+
+  private int shrinkageStatus(String tenant, String param, String value) {
+    return target
+        .path("/admin/inventory/reports/shrinkage")
+        .queryParam(param, value)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get()
+        .getStatus();
+  }
+
   /** Movements for one variant, filtered by type. */
   private String movements(String variantId, String type) {
     return target
@@ -919,6 +1077,15 @@ class InventoryIT {
   }
 
   /** Find the value of {@code name} in the JSON object that contains {@code marker}. */
+  /** {@link #fieldNear} for an unquoted numeric value. */
+  private static String numericFieldNear(String json, String marker, String name) {
+    int m = json.indexOf(marker);
+    if (m < 0) throw new AssertionError(marker + " not found in " + json);
+    int objStart = json.lastIndexOf('{', m);
+    int objEnd = json.indexOf('}', m);
+    return numericField(json.substring(objStart, objEnd + 1), name);
+  }
+
   private static String fieldNear(String json, String marker, String name) {
     int m = json.indexOf(marker);
     if (m < 0) throw new AssertionError(marker + " not found in " + json);

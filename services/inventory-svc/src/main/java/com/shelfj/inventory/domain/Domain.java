@@ -94,6 +94,32 @@ public final class Domain {
     }
   }
 
+  /** How a shrinkage report groups its rows. An enum, so no request text ever reaches the SQL. */
+  public enum ShrinkageGrouping {
+    REASON,
+    ACTOR,
+    STORE
+  }
+
+  /**
+   * One aggregated line of the shrinkage report.
+   *
+   * <p>Losses and gains stay separate rather than collapsing into {@code netQty} alone: a store
+   * that wrote off 100 units and found 100 more is not the same as a store that did nothing.
+   *
+   * @param groupKey the reason code, actor id, store id or variant id this line sums
+   * @param qtyWrittenOff total quantity removed, as a positive number
+   * @param qtyFound total quantity added back
+   * @param netQty signed net of the two
+   * @param movements how many adjustment movements the line covers
+   */
+  public record ShrinkageRow(
+      String groupKey,
+      BigDecimal qtyWrittenOff,
+      BigDecimal qtyFound,
+      BigDecimal netQty,
+      long movements) {}
+
   public record Movement(
       UUID id,
       UUID tenantId,

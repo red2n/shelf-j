@@ -29,6 +29,7 @@ import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
+import com.shelfj.inventory.domain.Domain.ShrinkageRow;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.domain.Domain.TransactionSourceType;
@@ -65,6 +66,7 @@ import com.shelfj.inventory.dto.Dtos.RopPlanResponse;
 import com.shelfj.inventory.dto.Dtos.SafetyStockParamsResponse;
 import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
+import com.shelfj.inventory.dto.Dtos.ShrinkageRowResponse;
 import com.shelfj.inventory.dto.Dtos.SourceTypeResponse;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
@@ -117,6 +119,11 @@ public final class Mappers {
         r.status(),
         r.expiresAt() == null ? null : r.expiresAt().toString(),
         ts(r.createdAt()));
+  }
+
+  public static ShrinkageRowResponse toShrinkageRow(ShrinkageRow r) {
+    return new ShrinkageRowResponse(
+        r.groupKey(), r.qtyWrittenOff(), r.qtyFound(), r.netQty(), r.movements());
   }
 
   public static MovementResponse toMovement(Movement m) {

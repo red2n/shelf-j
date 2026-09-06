@@ -218,7 +218,27 @@ public class InventoryRepository extends BaseOutboxRepository {
               null,
               null);
       insertBatch(c, b);
+      // A positive adjustment creates a batch but no deduction, so this is the only movement it
+      // writes. Negative adjustments are recorded below instead, per batch.
+      insertMovement(
+          c,
+          tenantId,
+          storeId,
+          variantId,
+          null,
+          MoveType.ADJUST,
+          delta,
+          "ADJUSTMENT",
+          null,
+          attribution);
     } else {
+      // deductFifo writes one ADJUST movement per batch it draws down, each carrying its batch_id.
+      // A summary movement on top of those used to be written unconditionally, which double-counted
+      // every negative adjustment in the ledger: a write-off of 30 units appeared as 60 across two
+      // rows. Stock levels were unaffected (only one deduction ever happened), but every
+      // movement-based read was wrong -- the movements list, movement-stats, and now the shrinkage
+      // report. The per-batch rows are also strictly more informative, since they tie the write-off
+      // to the batches it actually came out of.
       deductFifo(
           c,
           tenantId,
@@ -231,17 +251,6 @@ public class InventoryRepository extends BaseOutboxRepository {
           attribution);
       checkThresholdTx(c, tenantId, storeId, variantId);
     }
-    insertMovement(
-        c,
-        tenantId,
-        storeId,
-        variantId,
-        null,
-        MoveType.ADJUST,
-        delta,
-        "ADJUSTMENT",
-        null,
-        attribution);
     insertOutbox(c, event);
   }
 

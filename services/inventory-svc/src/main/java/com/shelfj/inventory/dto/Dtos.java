@@ -124,6 +124,23 @@ public final class Dtos {
       @Schema(description = "Instant after which the hold auto-expires.") String expiresAt,
       String createdAt) {}
 
+  @Schema(
+      name = "ShrinkageRowResponse",
+      description = "One aggregated line of the stock write-off report.")
+  public record ShrinkageRowResponse(
+      @Schema(
+              description =
+                  "What this line sums: a reason code, an actor id, a store id or a variant id,"
+                      + " depending on the grouping. UNSPECIFIED covers adjustments made with no"
+                      + " reason code; SYSTEM covers those with no human actor.")
+          String groupKey,
+      @Schema(description = "Total quantity written off, as a positive number.")
+          BigDecimal qtyWrittenOff,
+      @Schema(description = "Total quantity added back, e.g. stock found during a count.")
+          BigDecimal qtyFound,
+      @Schema(description = "Signed net of write-offs and finds.") BigDecimal netQty,
+      @Schema(description = "How many adjustment movements this line covers.") long movements) {}
+
   @Schema(name = "MovementResponse", description = "One append-only stock movement ledger entry.")
   public record MovementResponse(
       String id,
