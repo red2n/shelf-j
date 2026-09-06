@@ -4,6 +4,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -62,6 +64,66 @@ public class TenantStatusRepository extends BaseJdbcRepository {
       }
     } catch (SQLException e) {
       throw dbError("check tenant status", e);
+    }
+  }
+
+  /**
+   * Projects the tenant's trading currency from a {@code TenantCreated} event, deduped on {@code
+   * eventId} in the same transaction as the write so a redelivery is a no-op (golden rule #7).
+   *
+   * <p>Upserts onto the same row {@link #upsertTenantStatus} maintains: a tenant's currency and its
+   * operational status are both tenant-level facts fed by tenant-svc events, and keeping them on
+   * one row means the checkout path reads both in a single lookup. The status column keeps its
+   * schema default when this event arrives first, so ordering between the two events does not
+   * matter.
+   *
+   * @param eventId the source event's id, used for consumer-level deduplication
+   * @param consumer the consumer identity recorded against {@code eventId}
+   * @param tenantId the tenant whose currency is being projected
+   * @param currency ISO-4217 alpha-3 code, stored upper-cased
+   * @return {@code true} if this call applied the projection; {@code false} if the event had
+   *     already been processed by this consumer
+   * @throws com.shelfj.web.ApiException 500 {@code DB_ERROR} on any {@link SQLException}
+   */
+  public boolean projectTenantCurrencyOnce(
+      UUID eventId, String consumer, UUID tenantId, String currency) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumer)) return false;
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO tenant_status (tenant_id, currency)"
+                      + " VALUES (?,?)"
+                      + " ON CONFLICT (tenant_id) DO UPDATE SET currency = EXCLUDED.currency")) {
+            ps.setObject(1, tenantId);
+            ps.setString(2, currency.toUpperCase(Locale.ROOT));
+            ps.executeUpdate();
+          }
+          return true;
+        },
+        "project tenant currency");
+  }
+
+  /**
+   * @param tenantId the tenant to look up
+   * @return the projected ISO-4217 currency, or empty when no {@code TenantCreated} has been
+   *     projected for this tenant yet (a tenant onboarded before the projection existed, or
+   *     event-delivery lag). Callers fall back to their configured default rather than guessing.
+   * @throws com.shelfj.web.ApiException 500 {@code DB_ERROR} on any {@link SQLException}
+   */
+  public Optional<String> findCurrency(UUID tenantId) {
+    try (var c = dataSource.getConnection();
+        var ps = c.prepareStatement("SELECT currency FROM tenant_status WHERE tenant_id = ?")) {
+      ps.setObject(1, tenantId);
+      try (var rs = ps.executeQuery()) {
+        if (!rs.next()) return Optional.empty();
+        String currency = rs.getString("currency");
+        return currency == null || currency.isBlank()
+            ? Optional.empty()
+            : Optional.of(currency.trim().toUpperCase(Locale.ROOT));
+      }
+    } catch (SQLException e) {
+      throw dbError("read tenant currency", e);
     }
   }
 }

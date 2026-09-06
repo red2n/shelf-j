@@ -39,6 +39,23 @@ public class ServiceConfig extends BaseServiceConfig {
   }
 
   /**
+   * Fallback currency for a tenant whose {@code TenantCreated} has not been projected yet — a
+   * tenant onboarded before the projection existed, or plain event-delivery lag. This is the ONLY
+   * currency literal left in the service; every money-bearing write resolves through {@code
+   * OrderService.resolveCurrency}, which prefers the tenant's own projected currency.
+   *
+   * <p>GBP matches the default every other service already uses (pricing, purchase, customer); the
+   * three divergent literals this replaces were the bug (SJ-D2).
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.order.currency.default", defaultValue = "GBP")
+  String defaultCurrency;
+
+  public String defaultCurrency() {
+    return defaultCurrency;
+  }
+
+  /**
    * When true, placeOrder holds stock in inventory-svc for every ONLINE order line and rejects the
    * order when stock is short or inventory-svc is unreachable (fail-closed). Override to false only
    * in local dev rigs with no seeded inventory.

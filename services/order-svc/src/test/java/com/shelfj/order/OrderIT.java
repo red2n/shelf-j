@@ -48,6 +48,7 @@ class OrderIT {
 
   @Inject WebTarget target;
   @Inject OrderService orderService;
+  @Inject com.shelfj.service.TenantStatusRepository tenantStatus;
 
   @AfterAll
   static void stopDb() {
@@ -846,5 +847,103 @@ class OrderIT {
     int start = json.indexOf("\"code\":\"") + 8;
     int end = json.indexOf("\"", start);
     return json.substring(start, end);
+  }
+
+  // ── SJ-D2: currency comes from the tenant, not a hardcoded literal ──────────
+
+  /**
+   * Orders, gift cards and special orders each used to stamp their own literal ("USD", "USD",
+   * "GBP") while pricing-svc priced lines in the price list's currency. All three now resolve
+   * through the tenant's projected currency, a request naming a different one is rejected, and a
+   * tenant with no projection yet falls back to the single configured default.
+   */
+  @Test
+  void currencyResolvesFromTheTenantNotAHardcodedLiteral() {
+    // A tenant whose TenantCreated has been projected — the normal case in a running system.
+    String tenant = UUID.randomUUID().toString();
+    boolean projected =
+        tenantStatus.projectTenantCurrencyOnce(
+            UUID.randomUUID(), "order-svc/tenant-created", UUID.fromString(tenant), "gbp");
+    assertThat(projected, is(true));
+
+    // Omitting currency stamps the tenant's own, not "USD".
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}]}",
+            tenant,
+            "it-currency-from-tenant");
+    assertThat(placed.getStatus(), is(201));
+    assertThat(placed.readEntity(String.class), containsString("\"currency\":\"GBP\""));
+
+    // A gift card for the same tenant agrees — it used to default to "USD" independently.
+    Response giftCard = post("/gift-cards", "{\"storeId\":\"" + S + "\",\"amount\":25.00}", tenant);
+    assertThat(giftCard.getStatus(), is(201));
+    assertThat(giftCard.readEntity(String.class), containsString("\"currency\":\"GBP\""));
+
+    // A special order too — it used to default to "GBP", i.e. right by accident, wrong in general.
+    Response specialOrder =
+        post(
+            "/admin/special-orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":5.00}]}",
+            tenant);
+    assertThat(specialOrder.getStatus(), is(201));
+    assertThat(specialOrder.readEntity(String.class), containsString("\"currency\":\"GBP\""));
+
+    // Naming a currency the tenant does not trade in is rejected, not silently overridden —
+    // otherwise a mispriced basket would be hidden rather than surfaced.
+    Response mismatch =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
+            tenant,
+            "it-currency-mismatch");
+    assertThat(mismatch.getStatus(), is(400));
+    assertThat(mismatch.readEntity(String.class), containsString("ORDER_CURRENCY_MISMATCH"));
+
+    // A tenant with no projection yet (onboarded before this existed, or event lag) falls back to
+    // the one configured default rather than to three different literals.
+    String unprojected = UUID.randomUUID().toString();
+    Response fallback =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}]}",
+            unprojected,
+            "it-currency-fallback");
+    assertThat(fallback.getStatus(), is(201));
+    assertThat(fallback.readEntity(String.class), containsString("\"currency\":\"GBP\""));
+  }
+
+  /** A redelivered TenantCreated must not re-apply the projection (golden rule #7). */
+  @Test
+  void tenantCurrencyProjectionIsIdempotent() {
+    UUID tenant = UUID.randomUUID();
+    UUID eventId = UUID.randomUUID();
+    assertThat(
+        tenantStatus.projectTenantCurrencyOnce(eventId, "order-svc/tenant-created", tenant, "EUR"),
+        is(true));
+    assertThat(
+        tenantStatus.projectTenantCurrencyOnce(eventId, "order-svc/tenant-created", tenant, "EUR"),
+        is(false));
+    assertThat(tenantStatus.findCurrency(tenant).orElseThrow(), is("EUR"));
   }
 }

@@ -62,6 +62,44 @@ public class OrderService {
     return s == null || s.isBlank();
   }
 
+  /**
+   * Resolves the currency to stamp on a money-bearing row (SJ-D2).
+   *
+   * <p>Previously three call sites each picked their own literal — {@code "USD"} for orders and
+   * gift cards, {@code "GBP"} for special orders — while pricing-svc resolved every line in the
+   * price list's own currency. A GBP tenant could therefore end up with GBP-priced lines on a
+   * USD-stamped order, and a USD-stamped POSLog entry underneath it. The tenant's currency has been
+   * captured at onboarding since tenant-svc V1 and published on {@code TenantCreated}; nothing read
+   * it.
+   *
+   * <p>Precedence: the tenant's projected currency wins. A request that names a different one is
+   * rejected rather than silently overridden — a client asking to be billed in a currency the
+   * tenant does not trade in is a bug on the caller's side, and silently correcting it would hide a
+   * mispriced basket. When the projection has no row yet (a tenant onboarded before this projection
+   * existed, or event-delivery lag) the request's currency is honoured if given, else the
+   * configured platform default — the same fail-open convention the status projection uses.
+   *
+   * @param tenantId the tenant the row belongs to
+   * @param requested the client-supplied currency, or {@code null} when the request omitted it
+   * @return the ISO-4217 code to persist, upper-cased
+   * @throws ApiException 400 {@code ORDER_CURRENCY_MISMATCH} if {@code requested} contradicts the
+   *     tenant's own currency
+   */
+  private String resolveCurrency(UUID tenantId, String requested) {
+    String asked = isBlank(requested) ? null : requested.trim().toUpperCase(Locale.ROOT);
+    String tenantCurrency = tenantStatusRepo.findCurrency(tenantId).orElse(null);
+
+    if (tenantCurrency == null) {
+      return asked != null ? asked : config.defaultCurrency().toUpperCase(Locale.ROOT);
+    }
+    if (asked != null && !asked.equals(tenantCurrency)) {
+      throw ApiException.badRequest(
+          "ORDER_CURRENCY_MISMATCH",
+          "currency " + asked + " does not match the tenant's currency " + tenantCurrency);
+    }
+    return tenantCurrency;
+  }
+
   public Order placeOrder(PlaceOrderRequest req, TenantContext ctx, String idempotencyKey) {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest("ORDER_NO_ITEMS", "order must have at least one item");
@@ -83,7 +121,7 @@ public class OrderService {
     } else {
       customerId = req.customerId() != null ? Parsing.uuid(req.customerId(), "customerId") : null;
     }
-    String currency = req.currency() != null ? req.currency() : "USD";
+    String currency = resolveCurrency(tenantId, req.currency());
     String fulfilment =
         req.fulfilmentType() != null ? req.fulfilmentType() : Order.FULFILMENT_INSTORE;
     boolean delivery = Order.FULFILMENT_DELIVERY.equals(fulfilment);
@@ -624,7 +662,7 @@ public class OrderService {
     ctx.requireStoreAccess(storeId);
     UUID gcId = UUID.randomUUID();
     String code = generateGiftCardCode();
-    String currency = req.currency() != null ? req.currency() : "USD";
+    String currency = resolveCurrency(tenantId, req.currency());
     Instant expiresAt = req.expiresAt() != null ? Instant.parse(req.expiresAt()) : null;
 
     GiftCard gc =
@@ -800,7 +838,7 @@ public class OrderService {
     ctx.requireStoreAccess(storeId);
     UUID customerId =
         req.customerId() != null ? Parsing.uuid(req.customerId(), "customerId") : null;
-    String currency = req.currency() != null ? req.currency() : "GBP";
+    String currency = resolveCurrency(tenantId, req.currency());
 
     java.math.BigDecimal subtotal = java.math.BigDecimal.ZERO;
     List<SpecialOrderItem> items = new ArrayList<>();
