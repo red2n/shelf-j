@@ -839,6 +839,85 @@ class InventoryIT {
     return json.substring(start, json.indexOf('"', start));
   }
 
+  // ── SJ-D4: who adjusted stock, and why ───────────────────────────────────────
+
+  /** A manual adjustment records the acting user and the reason code on the movement row. */
+  @Test
+  void manualAdjustmentRecordsActorAndReasonCode() {
+    String variant = "b0000001-0000-0000-0000-000000000000";
+    String actor = "c0000001-0000-0000-0000-000000000000";
+
+    // Stock in, then written off as theft by a named user.
+    assertThat(
+        postAs("/admin/inventory/receive", receiveJson(variant, "20"), T, actor).getStatus(),
+        is(201));
+    assertThat(
+        postAs(
+                "/admin/inventory/adjust",
+                "{\"storeId\":\""
+                    + S
+                    + "\",\"variantId\":\""
+                    + variant
+                    + "\",\"delta\":-5,\"reason\":\"missing from shelf\","
+                    + "\"reasonCode\":\"THEFT\"}",
+                T,
+                actor)
+            .getStatus(),
+        is(200));
+
+    String movements = movements(variant, "ADJUST");
+    assertThat(movements, containsString("THEFT"));
+    assertThat(movements, containsString(actor));
+  }
+
+  /**
+   * System-caused movements stay unattributed on purpose: they already cite the record that caused
+   * them. Asserting this pins the distinction, so a later change cannot quietly start stamping the
+   * requesting user onto a sale and make "who adjusted this" ambiguous again.
+   */
+  @Test
+  void systemCausedMovementsCarryNoActor() {
+    String variant = "b0000002-0000-0000-0000-000000000000";
+    String actor = "c0000002-0000-0000-0000-000000000000";
+    assertThat(
+        postAs("/admin/inventory/receive", receiveJson(variant, "7"), T, actor).getStatus(),
+        is(201));
+
+    String movements = movements(variant, "RECEIVE");
+    assertThat(movements, containsString("RECEIVE"));
+    // The requesting user must not be stamped onto a system-caused movement: attribution here
+    // would be misleading, since the receipt is explained by its refType/refId, not by whoever
+    // happened to call the endpoint.
+    assertThat(movements, not(containsString(actor)));
+  }
+
+  /** Like {@link #post} but with an authenticated user id, as the gateway would stamp it. */
+  private Response postAs(String path, String json, String tenant, String userId) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-User-Id", userId)
+        .header("X-Roles", "OWNER")
+        .post(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
+  /** Movements for one variant, filtered by type. */
+  private String movements(String variantId, String type) {
+    return target
+        .path("/admin/inventory/movements")
+        .queryParam("variantId", variantId)
+        .queryParam("type", type)
+        .request()
+        .header("X-Tenant-Id", T)
+        .header("X-Roles", "OWNER")
+        .get(String.class);
+  }
+
+  private static String receiveJson(String variantId, String qty) {
+    return "{\"storeId\":\"" + S + "\",\"variantId\":\"" + variantId + "\",\"qty\":" + qty + "}";
+  }
+
   /** Find the value of {@code name} in the JSON object that contains {@code marker}. */
   private static String fieldNear(String json, String marker, String name) {
     int m = json.indexOf(marker);

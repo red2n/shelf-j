@@ -136,7 +136,16 @@ public final class Dtos {
       @Schema(description = "Signed movement quantity.") BigDecimal qty,
       String refType,
       String refId,
-      String reasonCode,
+      @Schema(
+              description =
+                  "Reason code for the movement, e.g. THEFT or DAMAGED. Set on adjustments; null"
+                      + " for system-caused movements, which cite refType/refId instead.")
+          String reasonCode,
+      @Schema(
+              description =
+                  "UUID of the user who made this adjustment. Null for system-caused movements --"
+                      + " trace those through refType/refId to the record that names its actor.")
+          String actorId,
       String createdAt) {}
 
   @Schema(name = "ThresholdResponse", description = "A configured reorder threshold.")

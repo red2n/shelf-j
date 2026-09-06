@@ -26,9 +26,9 @@ public class MovementArchiveRepository extends BaseJdbcRepository {
               c.prepareStatement(
                   "INSERT INTO stock_movements_archive"
                       + " (id, tenant_id, store_id, variant_id, batch_id, type, qty,"
-                      + " ref_type, ref_id, reason_code, created_at)"
+                      + " ref_type, ref_id, reason_code, actor_id, created_at)"
                       + " SELECT id, tenant_id, store_id, variant_id, batch_id, type, qty,"
-                      + " ref_type, ref_id, reason_code, created_at FROM stock_movements"
+                      + " ref_type, ref_id, reason_code, actor_id, created_at FROM stock_movements"
                       + " WHERE tenant_id=? AND created_at < ?")) {
             insert.setObject(1, tenantId);
             insert.setObject(2, cutoff);

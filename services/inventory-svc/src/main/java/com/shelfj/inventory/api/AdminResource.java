@@ -151,6 +151,8 @@ public class AdminResource {
         uuid(req.variantId(), "variantId"),
         req.delta(),
         req.reason(),
+        req.reasonCode(),
+        ctx.userId(),
         idempotencyKey);
     return ApiResponse.ok("adjusted");
   }

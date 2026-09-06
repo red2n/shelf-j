@@ -61,6 +61,39 @@ public final class Domain {
     public static final String RELEASED = "RELEASED";
   }
 
+  /**
+   * Who caused a stock movement, and why (SJ-D4).
+   *
+   * <p>{@link #system()} is the common case: a movement caused by an order, GRN or transfer already
+   * carries {@code refType}/{@code refId} pointing at that record, which names its own actor, so
+   * repeating it here would duplicate rather than add. Adjustments are the exception -- they are
+   * written with no {@code refId}, so without this nothing links a stock correction to a person or
+   * a reason, and shrinkage cannot be attributed.
+   *
+   * @param reasonCode a {@code transaction_reason_codes} code, or null
+   * @param actorId the authenticated user who performed the adjustment, or null for a system flow
+   */
+  public record MovementAttribution(String reasonCode, UUID actorId) {
+
+    /**
+     * Reason code for a cycle-count variance write-off. Not seeded in {@code
+     * transaction_reason_codes} because it is not operator-chosen -- the engine assigns it.
+     */
+    public static final String CYCLE_COUNT_VARIANCE = "CYCLE_COUNT_VARIANCE";
+
+    private static final MovementAttribution SYSTEM = new MovementAttribution(null, null);
+
+    /** A movement caused by a system flow, traceable through its {@code refType}/{@code refId}. */
+    public static MovementAttribution system() {
+      return SYSTEM;
+    }
+
+    /** A movement a person deliberately made: records who, and why. */
+    public static MovementAttribution by(UUID actorId, String reasonCode) {
+      return new MovementAttribution(reasonCode, actorId);
+    }
+  }
+
   public record Movement(
       UUID id,
       UUID tenantId,
@@ -72,6 +105,7 @@ public final class Domain {
       String refType,
       UUID refId,
       String reasonCode,
+      UUID actorId,
       Instant createdAt) {}
 
   public record Threshold(

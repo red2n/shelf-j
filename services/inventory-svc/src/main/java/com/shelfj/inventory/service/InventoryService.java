@@ -18,6 +18,7 @@ import com.shelfj.inventory.domain.Domain.LotUomConversion;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
+import com.shelfj.inventory.domain.Domain.MovementAttribution;
 import com.shelfj.inventory.domain.Domain.ParLevelConfig;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
@@ -278,12 +279,23 @@ public class InventoryService {
   }
 
   // ---- adjust ----
+  /**
+   * Manual stock correction. {@code reasonCode} and {@code actorId} land on the movement row so a
+   * shrinkage investigation can ask who wrote off what, and why (SJ-D4). Both were previously
+   * dropped -- {@code reasonCode} was accepted and documented on the request DTO but never read,
+   * and there was no actor column at all.
+   *
+   * @param reasonCode a {@code transaction_reason_codes} code, e.g. THEFT or DAMAGED; may be null
+   * @param actorId the authenticated user making the correction; null only for a system caller
+   */
   public void adjust(
       UUID tenantId,
       UUID storeId,
       UUID variantId,
       BigDecimal delta,
       String reason,
+      String reasonCode,
+      UUID actorId,
       String idempotencyKey) {
     var event =
         new OutboxRow(
@@ -292,7 +304,15 @@ public class InventoryService {
             tenantId,
             variantId,
             Events.stockAdjusted(tenantId, storeId, variantId, delta));
-    repo.adjust(tenantId, storeId, variantId, delta, reason, event, idempotencyKey);
+    repo.adjust(
+        tenantId,
+        storeId,
+        variantId,
+        delta,
+        reason,
+        event,
+        idempotencyKey,
+        MovementAttribution.by(actorId, reasonCode));
   }
 
   // ---- reserve ----
@@ -1054,7 +1074,7 @@ public class InventoryService {
   }
 
   /** Apply stock adjustments for all APPROVED lines, then close the count header. */
-  public int adjustCycleCount(UUID tenantId, UUID headerId) {
+  public int adjustCycleCount(UUID tenantId, UUID headerId, UUID actorId) {
     CycleCountHeader header =
         cycleCountRepo
             .findCycleCountHeader(tenantId, headerId)
@@ -1072,7 +1092,7 @@ public class InventoryService {
             tenantId,
             headerId,
             Events.cycleCountAdjusted(tenantId, headerId));
-    return repo.applyAdjustments(tenantId, headerId, event);
+    return repo.applyAdjustments(tenantId, headerId, event, actorId);
   }
 
   // ---- Lot Genealogy (Gap #11) ----
@@ -1735,7 +1755,12 @@ public class InventoryService {
   public record LotMergeResult(Batch targetBatch, LotAction action) {}
 
   public LotMergeResult mergeLot(
-      UUID tenantId, UUID sourceBatchId, UUID targetBatchId, BigDecimal qty, String notes) {
+      UUID tenantId,
+      UUID sourceBatchId,
+      UUID targetBatchId,
+      BigDecimal qty,
+      String notes,
+      UUID actorId) {
     Batch source =
         repo.getBatch(tenantId, sourceBatchId)
             .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Source batch not found"));
@@ -1769,7 +1794,8 @@ public class InventoryService {
         target.storeId(),
         target.variantId(),
         addEvent,
-        qty);
+        qty,
+        MovementAttribution.by(actorId, null));
     Batch updated =
         repo.getBatch(tenantId, targetBatchId)
             .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));

@@ -130,6 +130,7 @@ public final class Mappers {
         m.refType(),
         m.refId() == null ? null : m.refId().toString(),
         m.reasonCode(),
+        m.actorId() == null ? null : m.actorId().toString(),
         ts(m.createdAt()));
   }
 

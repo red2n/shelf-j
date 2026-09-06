@@ -129,7 +129,7 @@ public class CycleCountResource {
   @Path("/cycle-counts/{id}/adjust")
   public ApiResponse<CycleCountAdjustResult> adjustCycleCount(@PathParam("id") UUID headerId) {
     UUID tenantId = ctx.requireTenantId();
-    int adjusted = service.adjustCycleCount(tenantId, headerId);
+    int adjusted = service.adjustCycleCount(tenantId, headerId, ctx.userId());
     return ApiResponse.ok(
         new CycleCountAdjustResult(adjusted), ApiResponse.Meta.of(ctx.requestId()));
   }
