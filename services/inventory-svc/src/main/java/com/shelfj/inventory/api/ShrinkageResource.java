@@ -127,8 +127,12 @@ public class ShrinkageResource {
     try {
       return ShrinkageGrouping.valueOf(raw.trim().toUpperCase(Locale.ROOT));
     } catch (IllegalArgumentException e) {
-      throw ApiException.badRequest(
-          "INVENTORY_INVALID_GROUPING", "groupBy must be REASON, ACTOR or STORE — got: " + raw);
+      throw new ApiException(
+          400,
+          "INVENTORY_INVALID_GROUPING",
+          "groupBy must be REASON, ACTOR or STORE — got: " + raw,
+          List.of(),
+          e);
     }
   }
 
@@ -137,7 +141,8 @@ public class ShrinkageResource {
     try {
       return UUID.fromString(raw.trim());
     } catch (IllegalArgumentException e) {
-      throw ApiException.badRequest("INVENTORY_INVALID_UUID", field + " is not a valid UUID");
+      throw new ApiException(
+          400, "INVENTORY_INVALID_UUID", field + " is not a valid UUID", List.of(), e);
     }
   }
 
@@ -146,9 +151,12 @@ public class ShrinkageResource {
     try {
       return Instant.parse(raw.trim());
     } catch (DateTimeParseException e) {
-      throw ApiException.badRequest(
+      throw new ApiException(
+          400,
           "INVENTORY_INVALID_TIMESTAMP",
-          field + " must be an ISO-8601 instant, e.g. 2026-01-31T00:00:00Z");
+          field + " must be an ISO-8601 instant, e.g. 2026-01-31T00:00:00Z",
+          List.of(),
+          e);
     }
   }
 }

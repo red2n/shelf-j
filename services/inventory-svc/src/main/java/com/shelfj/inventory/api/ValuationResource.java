@@ -74,8 +74,12 @@ public class ValuationResource {
     try {
       return ValuationGrouping.valueOf(raw.trim().toUpperCase(Locale.ROOT));
     } catch (IllegalArgumentException e) {
-      throw ApiException.badRequest(
-          "INVENTORY_INVALID_GROUPING", "groupBy must be STORE or VARIANT — got: " + raw);
+      throw new ApiException(
+          400,
+          "INVENTORY_INVALID_GROUPING",
+          "groupBy must be STORE or VARIANT — got: " + raw,
+          List.of(),
+          e);
     }
   }
 
@@ -84,7 +88,8 @@ public class ValuationResource {
     try {
       return UUID.fromString(raw.trim());
     } catch (IllegalArgumentException e) {
-      throw ApiException.badRequest("INVENTORY_INVALID_UUID", "storeId is not a valid UUID");
+      throw new ApiException(
+          400, "INVENTORY_INVALID_UUID", "storeId is not a valid UUID", List.of(), e);
     }
   }
 }

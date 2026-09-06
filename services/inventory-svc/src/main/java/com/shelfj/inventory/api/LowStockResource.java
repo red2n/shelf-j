@@ -68,7 +68,8 @@ public class LowStockResource {
     try {
       return UUID.fromString(raw.trim());
     } catch (IllegalArgumentException e) {
-      throw ApiException.badRequest("INVENTORY_INVALID_UUID", "storeId is not a valid UUID");
+      throw new ApiException(
+          400, "INVENTORY_INVALID_UUID", "storeId is not a valid UUID", List.of(), e);
     }
   }
 }
