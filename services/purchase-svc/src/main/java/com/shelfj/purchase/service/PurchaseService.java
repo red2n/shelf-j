@@ -9,6 +9,7 @@ import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import com.shelfj.purchase.domain.Domain.Supplier;
 import com.shelfj.purchase.dto.Dtos.AddPurchaseOrderLineRequest;
+import com.shelfj.purchase.dto.Dtos.CancelPurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreateGoodsReceiptRequest;
 import com.shelfj.purchase.dto.Dtos.CreatePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreateSupplierRequest;
@@ -80,7 +81,9 @@ public class PurchaseService {
             BigDecimal.ZERO,
             req.expectedDelivery() != null ? LocalDate.parse(req.expectedDelivery()) : null,
             Instant.now(),
-            Instant.now());
+            Instant.now(),
+            null,
+            null);
     return repo.createPurchaseOrder(
         po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
   }
@@ -125,6 +128,47 @@ public class PurchaseService {
     if (!Domain.PO_DRAFT.equals(po.status()))
       throw ApiException.badRequest("PURCHASE_PO_NOT_DRAFT", "Only DRAFT orders can be submitted");
     repo.updatePurchaseOrderStatus(ctx.requireTenantId(), poId, Domain.PO_SUBMITTED);
+    return getPurchaseOrder(ctx, poId);
+  }
+
+  /**
+   * Cancels a purchase order raised in error (SJ-D3).
+   *
+   * <p>{@code CANCELLED} was declared in V1's CHECK constraint and in {@link Domain} from the
+   * start, but nothing ever wrote it -- the only transitions in the service were DRAFT to SUBMITTED
+   * here and SUBMITTED to RECEIVED inside {@code createGoodsReceipt}. A purchase order raised by
+   * mistake was therefore stuck forever, and a stuck SUBMITTED order stays receivable indefinitely.
+   *
+   * <p>Cancellable from DRAFT and SUBMITTED only. A RECEIVED order has stock booked against it, so
+   * cancelling it would silently orphan that stock -- reverse it with a return to vendor instead
+   * (not yet built). Re-cancelling an already-cancelled order is refused rather than treated as
+   * idempotent: the second caller's reason would be discarded, and a cancellation whose stated
+   * reason is not the one recorded is worse than an error.
+   *
+   * <p>The state guard is enforced in the UPDATE's WHERE clause, not by the read above it, so a
+   * cancel racing a goods receipt cannot both succeed. The read exists only to distinguish 404 from
+   * 409 for the caller.
+   *
+   * @param ctx the caller's tenant context
+   * @param poId the purchase order to cancel
+   * @param req the cancellation request, carrying the required reason
+   * @return the cancelled purchase order
+   * @throws ApiException 404 {@code PURCHASE_PO_NOT_FOUND} if no such order exists for this tenant;
+   *     409 {@code PURCHASE_PO_NOT_CANCELLABLE} if it is already RECEIVED or CANCELLED
+   */
+  public PurchaseOrder cancelPurchaseOrder(
+      TenantContext ctx, UUID poId, CancelPurchaseOrderRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    PurchaseOrder po = getPurchaseOrder(ctx, poId);
+    String reason = req.reason().trim();
+
+    boolean cancelled =
+        repo.cancelPurchaseOrder(
+            tenantId, poId, reason, Events.purchaseOrderCancelled(tenantId, poId, reason));
+    if (!cancelled)
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_CANCELLABLE",
+          "Only DRAFT or SUBMITTED purchase orders can be cancelled (status: " + po.status() + ")");
     return getPurchaseOrder(ctx, poId);
   }
 

@@ -291,6 +291,146 @@ class PurchaseIT {
     assertThat(rBad.getStatus(), is(400));
   }
 
+  // ── SJ-D3: CANCELLED was an unreachable state ────────────────────────────────
+
+  /** A DRAFT purchase order raised in error can be cancelled, with its reason recorded. */
+  @Test
+  void draftPurchaseOrderCanBeCancelled() {
+    String poId = draftPurchaseOrder("Cancel Me Ltd");
+
+    Response cancelled =
+        post(
+            "/purchase-orders/" + poId + "/cancel",
+            "{\"reason\":\"raised against wrong store\"}",
+            T);
+    assertThat(cancelled.getStatus(), is(200));
+    String body = cancelled.readEntity(String.class);
+    assertThat(body, containsString("CANCELLED"));
+    assertThat(body, containsString("raised against wrong store"));
+
+    // The cancellation survives a re-read, and the reason is on the order itself.
+    String reread = get("/purchase-orders/" + poId, T).readEntity(String.class);
+    assertThat(reread, containsString("CANCELLED"));
+    assertThat(reread, containsString("raised against wrong store"));
+  }
+
+  /** A SUBMITTED order is still cancellable, and cancelling it closes it to further receipts. */
+  @Test
+  void submittedPurchaseOrderCanBeCancelledAndIsThenUnreceivable() {
+    String poId = draftPurchaseOrder("Submitted Then Cancelled Ltd");
+    assertThat(post("/purchase-orders/" + poId + "/lines", line(), T).getStatus(), is(201));
+    assertThat(post("/purchase-orders/" + poId + "/submit", "{}", T).getStatus(), is(200));
+
+    assertThat(
+        post("/purchase-orders/" + poId + "/cancel", "{\"reason\":\"supplier out of stock\"}", T)
+            .getStatus(),
+        is(200));
+
+    // Receiving against a cancelled order must fail -- otherwise stock would be booked against a
+    // commitment that no longer exists.
+    Response received =
+        post(
+            "/goods-receipts",
+            "{\"poId\":\""
+                + poId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"lines\":[{\"variantId\":\""
+                + VARIANT
+                + "\",\"qtyReceived\":5}]}",
+            T);
+    assertThat(received.getStatus(), is(400));
+  }
+
+  /**
+   * A received order holds stock booked against it, so cancelling would orphan that stock; and a
+   * second cancel is refused rather than silently discarding the new caller's reason.
+   */
+  @Test
+  void receivedOrCancelledPurchaseOrdersCannotBeCancelled() {
+    // RECEIVED → 409
+    String receivedPo = draftPurchaseOrder("Already Received Ltd");
+    assertThat(post("/purchase-orders/" + receivedPo + "/lines", line(), T).getStatus(), is(201));
+    assertThat(post("/purchase-orders/" + receivedPo + "/submit", "{}", T).getStatus(), is(200));
+    assertThat(
+        post(
+                "/goods-receipts",
+                "{\"poId\":\""
+                    + receivedPo
+                    + "\",\"storeId\":\""
+                    + STORE_A
+                    + "\",\"lines\":[{\"variantId\":\""
+                    + VARIANT
+                    + "\",\"qtyReceived\":10}]}",
+                T)
+            .getStatus(),
+        is(201));
+    Response afterReceipt =
+        post("/purchase-orders/" + receivedPo + "/cancel", "{\"reason\":\"too late\"}", T);
+    assertThat(afterReceipt.getStatus(), is(409));
+    assertThat(
+        afterReceipt.readEntity(String.class), containsString("PURCHASE_PO_NOT_CANCELLABLE"));
+
+    // Already CANCELLED → 409, so the first reason recorded is the one that stands.
+    String cancelledPo = draftPurchaseOrder("Double Cancel Ltd");
+    assertThat(
+        post("/purchase-orders/" + cancelledPo + "/cancel", "{\"reason\":\"first\"}", T)
+            .getStatus(),
+        is(200));
+    Response second =
+        post("/purchase-orders/" + cancelledPo + "/cancel", "{\"reason\":\"second\"}", T);
+    assertThat(second.getStatus(), is(409));
+    assertThat(
+        get("/purchase-orders/" + cancelledPo, T).readEntity(String.class),
+        containsString("first"));
+  }
+
+  /** A cancellation with no stated reason is unauditable, so it is rejected. */
+  @Test
+  void cancellationRequiresAReason() {
+    String poId = draftPurchaseOrder("No Reason Ltd");
+    assertThat(
+        post("/purchase-orders/" + poId + "/cancel", "{\"reason\":\"  \"}", T).getStatus(),
+        is(400));
+    assertThat(post("/purchase-orders/" + poId + "/cancel", "{}", T).getStatus(), is(400));
+    // Still cancellable afterwards -- a rejected request must not have moved the state.
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class), containsString("DRAFT"));
+  }
+
+  /** Cancelling is tenant-scoped: another tenant cannot reach this order at all. */
+  @Test
+  void cancellationIsTenantScoped() {
+    String poId = draftPurchaseOrder("Isolated Ltd");
+    assertThat(
+        post("/purchase-orders/" + poId + "/cancel", "{\"reason\":\"not yours\"}", T2).getStatus(),
+        is(404));
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class), containsString("DRAFT"));
+  }
+
+  /** Creates a supplier and a DRAFT purchase order against it, returning the PO id. */
+  private String draftPurchaseOrder(String supplierName) {
+    Response sup = post("/suppliers", "{\"name\":\"" + supplierName + "\"}", T);
+    assertThat(sup.getStatus(), is(201));
+    String supId = extractId(sup.readEntity(String.class));
+    Response po =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"currency\":\"GBP\"}",
+            T);
+    assertThat(po.getStatus(), is(201));
+    return extractId(po.readEntity(String.class));
+  }
+
+  private static String line() {
+    return "{\"variantId\":\"" + VARIANT + "\",\"qty\":10,\"unitPrice\":2.50}";
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────────
 
   private static String extractId(String json) {

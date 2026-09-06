@@ -58,7 +58,9 @@ public final class Domain {
       BigDecimal totalGross,
       LocalDate expectedDelivery,
       Instant createdAt,
-      Instant updatedAt) {}
+      Instant updatedAt,
+      Instant cancelledAt,
+      String cancelledReason) {}
 
   public record PurchaseOrderLine(
       UUID id,

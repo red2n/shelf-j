@@ -59,20 +59,36 @@ public final class Dtos {
       @NotNull @DecimalMin("0.01") BigDecimal unitPrice,
       @Schema(description = "UK VAT code, e.g. T1. Defaults to T1.") String vatCode) {}
 
+  @Schema(
+      name = "CancelPurchaseOrderRequest",
+      description = "Cancel a purchase order that has not yet been received against.")
+  public record CancelPurchaseOrderRequest(
+      @Schema(
+              description =
+                  "Why the order is being cancelled. Recorded on the order and carried on the"
+                      + " PurchaseOrderCancelled event; required, because a cancelled order with no"
+                      + " stated reason is unauditable.")
+          @NotBlank
+          String reason) {}
+
   @Schema(name = "PurchaseOrderResponse")
   public record PurchaseOrderResponse(
       UUID id,
       UUID tenantId,
       UUID supplierId,
       UUID storeId,
-      @Schema(description = "DRAFT or SUBMITTED.") String status,
+      @Schema(description = "DRAFT, SUBMITTED, RECEIVED or CANCELLED.") String status,
       String currency,
       BigDecimal totalNet,
       BigDecimal totalVat,
       BigDecimal totalGross,
       LocalDate expectedDelivery,
       Instant createdAt,
-      Instant updatedAt) {}
+      Instant updatedAt,
+      @Schema(description = "When the order was cancelled; null unless status is CANCELLED.")
+          Instant cancelledAt,
+      @Schema(description = "Why the order was cancelled; null unless status is CANCELLED.")
+          String cancelledReason) {}
 
   @Schema(name = "PurchaseOrderLineResponse")
   public record PurchaseOrderLineResponse(
