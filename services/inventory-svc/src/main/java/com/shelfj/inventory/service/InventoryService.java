@@ -15,6 +15,7 @@ import com.shelfj.inventory.domain.Domain.LevelSummary;
 import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.LotUomConversion;
+import com.shelfj.inventory.domain.Domain.LowStockRow;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
@@ -82,6 +83,7 @@ public class InventoryService {
   @Inject InventoryRepository repo;
   @Inject com.shelfj.inventory.repo.ShrinkageRepository shrinkageRepo;
   @Inject com.shelfj.inventory.repo.ValuationRepository valuationRepo;
+  @Inject com.shelfj.inventory.repo.LowStockRepository lowStockRepo;
   @Inject LotGenealogyRepository lotGenealogyRepo;
   @Inject ThresholdRepository thresholdRepo;
   @Inject SuggestionRepository suggestionRepo;
@@ -282,6 +284,19 @@ public class InventoryService {
         batch.id(),
         Events.stockReceived(
             batch.tenantId(), batch.storeId(), batch.variantId(), batch.id(), batch.receivedQty()));
+  }
+
+  // ---- low stock report ----
+
+  /**
+   * Items currently below a configured reorder level, live.
+   *
+   * <p>Distinct from the planning suggestions, which return the min/max engine's persisted output
+   * from the last {@code POST /planning/run} and ignore safety stock and reorder points; and from
+   * {@code levelsSummary}, which counts SKUs under one flat number for a dashboard tile.
+   */
+  public List<LowStockRow> lowStockReport(UUID tenantId, UUID storeId, int limit) {
+    return lowStockRepo.lowStock(tenantId, storeId, limit);
   }
 
   // ---- valuation report ----

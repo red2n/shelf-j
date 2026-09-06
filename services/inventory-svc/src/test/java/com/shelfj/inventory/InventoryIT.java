@@ -1,6 +1,7 @@
 package com.shelfj.inventory;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
@@ -914,6 +915,135 @@ class InventoryIT {
         .header("X-User-Id", userId)
         .header("X-Roles", "OWNER")
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
+  // ── Low stock report ─────────────────────────────────────────────────────────
+
+  /**
+   * The case a naive query drops: an item that has run out has no batch rows at all, so joining
+   * from the batches would silently omit the most urgent line in the report.
+   */
+  @Test
+  void lowStockIncludesItemsThatHaveRunOutEntirely() {
+    String stocked = "d2000001-0000-0000-0000-000000000000";
+    String soldOut = "d2000002-0000-0000-0000-000000000000";
+    String tenant = "f2000001-0000-0000-0000-000000000000";
+
+    setThreshold(tenant, stocked, "10");
+    setThreshold(tenant, soldOut, "10");
+    // Only one of them is ever received, so soldOut has no inventory_batches row.
+    assertThat(
+        post("/admin/inventory/receive", receiveJson(stocked, "4"), tenant).getStatus(), is(201));
+
+    String body = lowStock(tenant);
+    assertThat(body, containsString(soldOut));
+    assertThat(numericFieldNear(body, soldOut, "availableQty"), is("0.000"));
+    assertThat(numericFieldNear(body, soldOut, "shortfall"), is("10.000"));
+    // 4 on hand against a threshold of 10 is a shortfall of 6.
+    assertThat(numericFieldNear(body, stocked, "shortfall"), is("6.000"));
+    // Deepest shortfall first.
+    assertThat(body.indexOf(soldOut) < body.indexOf(stocked), is(true));
+  }
+
+  /** Stock at or above its level is not low, and reserved stock does not count as available. */
+  @Test
+  void lowStockExcludesHealthyItemsAndDiscountsHeldReservations() {
+    String healthy = "d2000003-0000-0000-0000-000000000000";
+    String tenant = "f2000002-0000-0000-0000-000000000000";
+
+    setThreshold(tenant, healthy, "10");
+    assertThat(
+        post("/admin/inventory/receive", receiveJson(healthy, "12"), tenant).getStatus(), is(201));
+    // 12 available against a level of 10 — not low.
+    assertThat(lowStock(tenant), not(containsString(healthy)));
+
+    // Hold 5, leaving 7 available: reserved stock is spoken for, so this now IS low.
+    Response held =
+        post(
+            "/inventory/reservations",
+            "{\"storeId\":\"" + S + "\",\"variantId\":\"" + healthy + "\",\"qty\":5}",
+            tenant);
+    assertThat(held.getStatus(), is(201));
+    String body = lowStock(tenant);
+    assertThat(numericFieldNear(body, healthy, "availableQty"), is("7.000"));
+    assertThat(numericFieldNear(body, healthy, "shortfall"), is("3.000"));
+  }
+
+  /**
+   * Where several reorder signals are configured the highest binds, and the response names which
+   * one — quietly picking a lower level would under-order against a level a planner had set.
+   */
+  @Test
+  void lowStockTakesTheHighestConfiguredSignalAndNamesIt() {
+    String v = "d2000004-0000-0000-0000-000000000000";
+    String tenant = "f2000003-0000-0000-0000-000000000000";
+
+    setThreshold(tenant, v, "10");
+    // safety_stock_qty is only ever written by the compute job, which needs 30 days of demand
+    // history to produce a non-zero figure. Seeding it directly is the same approach the archive
+    // test above takes for a value the API cannot produce on demand.
+    try (var c = PG.dataSource().getConnection();
+        var ps =
+            c.prepareStatement(
+                "INSERT INTO inventory.safety_stock_params (tenant_id, store_id, variant_id,"
+                    + " method, safety_stock_qty, computed_at) VALUES (?,?,?,'USER_DEFINED',25,now())")) {
+      ps.setObject(1, UUID.fromString(tenant));
+      ps.setObject(2, UUID.fromString(S));
+      ps.setObject(3, UUID.fromString(v));
+      ps.executeUpdate();
+    } catch (java.sql.SQLException e) {
+      throw new AssertionError("could not seed safety stock", e);
+    }
+
+    assertThat(post("/admin/inventory/receive", receiveJson(v, "15"), tenant).getStatus(), is(201));
+
+    // 15 on hand clears the threshold of 10 but not the safety stock of 25.
+    String body = lowStock(tenant);
+    assertThat(fieldNear(body, v, "signal"), is("SAFETY_STOCK"));
+    assertThat(numericFieldNear(body, v, "reorderLevel"), is("25.000"));
+    assertThat(numericFieldNear(body, v, "shortfall"), is("10.000"));
+  }
+
+  /** An item with no configured level anywhere is not low, however little of it there is. */
+  @Test
+  void lowStockIgnoresItemsWithNoConfiguredLevelAndIsTenantScoped() {
+    String unmanaged = "d2000005-0000-0000-0000-000000000000";
+    String managed = "d2000006-0000-0000-0000-000000000000";
+    String tenant = "f2000004-0000-0000-0000-000000000000";
+
+    assertThat(
+        post("/admin/inventory/receive", receiveJson(unmanaged, "1"), tenant).getStatus(), is(201));
+    setThreshold(tenant, managed, "5");
+
+    String body = lowStock(tenant);
+    assertThat(body, containsString(managed));
+    assertThat(body, not(containsString(unmanaged)));
+    // Another tenant sees none of it.
+    assertThat(lowStock(OTHER), not(containsString(managed)));
+  }
+
+  private void setThreshold(String tenant, String variantId, String threshold) {
+    Response r =
+        post(
+            "/admin/inventory/thresholds",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + variantId
+                + "\",\"threshold\":"
+                + threshold
+                + "}",
+            tenant);
+    assertThat(r.getStatus(), anyOf(is(200), is(201)));
+  }
+
+  private String lowStock(String tenant) {
+    return target
+        .path("/admin/inventory/reports/low-stock")
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get(String.class);
   }
 
   // ── Valuation report ─────────────────────────────────────────────────────────

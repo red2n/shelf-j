@@ -94,6 +94,22 @@ public final class Domain {
     }
   }
 
+  /**
+   * One line of the live low-stock report.
+   *
+   * @param signal which configured level bound this row — THRESHOLD, SAFETY_STOCK or REORDER_POINT
+   * @param reorderLevel the binding level: the highest of whichever signals are configured
+   * @param availableQty on hand minus held reservations, matching the levels list's definition
+   * @param shortfall how far below the level the item is
+   */
+  public record LowStockRow(
+      String storeId,
+      String variantId,
+      String signal,
+      BigDecimal reorderLevel,
+      BigDecimal availableQty,
+      BigDecimal shortfall) {}
+
   /** How the valuation report groups its rows. An enum, so no request text reaches the SQL. */
   public enum ValuationGrouping {
     STORE,

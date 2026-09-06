@@ -125,6 +125,22 @@ public final class Dtos {
       @Schema(description = "Instant after which the hold auto-expires.") String expiresAt,
       String createdAt) {}
 
+  @Schema(
+      name = "LowStockRowResponse",
+      description = "One item currently below a configured reorder level.")
+  public record LowStockRowResponse(
+      @Schema(description = "UUID of the store.") String storeId,
+      @Schema(description = "UUID of the product variant.") String variantId,
+      @Schema(
+              description =
+                  "Which configured level bound this row: THRESHOLD (manual min/max),"
+                      + " SAFETY_STOCK, or REORDER_POINT. The highest configured level wins.")
+          String signal,
+      @Schema(description = "The binding reorder level.") BigDecimal reorderLevel,
+      @Schema(description = "On hand minus held reservations, as the levels list reports it.")
+          BigDecimal availableQty,
+      @Schema(description = "How far below the level this item is.") BigDecimal shortfall) {}
+
   @Schema(name = "ValuationRowResponse", description = "One line of the stock valuation report.")
   public record ValuationRowResponse(
       @Schema(description = "The store id or variant id this line values.") String groupKey,

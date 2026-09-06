@@ -14,6 +14,7 @@ import com.shelfj.inventory.domain.Domain.LevelSummary;
 import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.LotUomConversion;
+import com.shelfj.inventory.domain.Domain.LowStockRow;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
@@ -52,6 +53,7 @@ import com.shelfj.inventory.dto.Dtos.LevelSummaryResponse;
 import com.shelfj.inventory.dto.Dtos.LotActionResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
 import com.shelfj.inventory.dto.Dtos.LotUomConversionResponse;
+import com.shelfj.inventory.dto.Dtos.LowStockRowResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderLineResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
@@ -121,6 +123,11 @@ public final class Mappers {
         r.status(),
         r.expiresAt() == null ? null : r.expiresAt().toString(),
         ts(r.createdAt()));
+  }
+
+  public static LowStockRowResponse toLowStockRow(LowStockRow r) {
+    return new LowStockRowResponse(
+        r.storeId(), r.variantId(), r.signal(), r.reorderLevel(), r.availableQty(), r.shortfall());
   }
 
   public static ValuationRowResponse toValuationRow(ValuationRow r) {
