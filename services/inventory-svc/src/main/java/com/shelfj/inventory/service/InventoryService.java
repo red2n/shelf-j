@@ -38,6 +38,8 @@ import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.domain.Domain.TransactionSourceType;
 import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.domain.Domain.ValuationGrouping;
+import com.shelfj.inventory.domain.Domain.ValuationRow;
 import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
 import com.shelfj.inventory.repo.AbcAnalysisRepository;
 import com.shelfj.inventory.repo.CostingRepository;
@@ -79,6 +81,7 @@ public class InventoryService {
   @Inject ServiceConfig config;
   @Inject InventoryRepository repo;
   @Inject com.shelfj.inventory.repo.ShrinkageRepository shrinkageRepo;
+  @Inject com.shelfj.inventory.repo.ValuationRepository valuationRepo;
   @Inject LotGenealogyRepository lotGenealogyRepo;
   @Inject ThresholdRepository thresholdRepo;
   @Inject SuggestionRepository suggestionRepo;
@@ -279,6 +282,20 @@ public class InventoryService {
         batch.id(),
         Events.stockReceived(
             batch.tenantId(), batch.storeId(), batch.variantId(), batch.id(), batch.receivedQty()));
+  }
+
+  // ---- valuation report ----
+
+  /**
+   * Values stock on hand, grouped by store or by variant.
+   *
+   * <p>Named in the reporting gap analysis as designed but unbuilt. Stock with no cost is returned
+   * as {@code unvaluedQty} rather than valued at zero — this figure ends up on a balance sheet, and
+   * silently costing unknown stock at nothing understates it.
+   */
+  public List<ValuationRow> valuationReport(
+      UUID tenantId, UUID storeId, ValuationGrouping grouping, int limit) {
+    return valuationRepo.value(tenantId, storeId, grouping, limit);
   }
 
   // ---- shrinkage report ----
@@ -1656,9 +1673,13 @@ public class InventoryService {
   // ── Gap #17: Costing Methods ────────────────────────────────────────────────
 
   public CostingMethod upsertCostingMethod(
-      UUID tenantId, UUID storeId, UUID variantId, String method) {
+      UUID tenantId, UUID storeId, UUID variantId, String method, BigDecimal averageCost) {
     if (!"FIFO".equals(method) && !"AVERAGE".equals(method)) {
       throw ApiException.badRequest("INVALID_COSTING_METHOD", "method must be FIFO or AVERAGE");
+    }
+    if (averageCost != null && averageCost.signum() < 0) {
+      throw ApiException.badRequest(
+          "INVALID_AVERAGE_COST", "averageCost cannot be negative — got " + averageCost);
     }
     var event =
         new OutboxRow(
@@ -1667,7 +1688,8 @@ public class InventoryService {
             tenantId,
             variantId,
             Events.costingMethodUpdated(tenantId, storeId, variantId, method));
-    return costingRepo.upsertCostingMethod(tenantId, storeId, variantId, method, event);
+    return costingRepo.upsertCostingMethod(
+        tenantId, storeId, variantId, method, averageCost, event);
   }
 
   public CostingMethod getCostingMethod(UUID tenantId, UUID storeId, UUID variantId) {

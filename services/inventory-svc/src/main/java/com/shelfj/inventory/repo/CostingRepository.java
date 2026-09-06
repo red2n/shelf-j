@@ -6,6 +6,7 @@ import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -24,21 +25,45 @@ import java.util.UUID;
 @ApplicationScoped
 public class CostingRepository extends BaseOutboxRepository {
 
+  /**
+   * Sets the costing method, and the standard cost the AVERAGE method uses.
+   *
+   * <p>{@code average_cost} previously had no writer at all: this statement set only {@code
+   * method}, nothing recomputed the column from receipts, and the request DTO had no field for it —
+   * so it sat at its schema default of 0 forever and choosing AVERAGE silently did nothing. The
+   * valuation report is what surfaced it, since an AVERAGE row with a zero cost cannot be valued.
+   *
+   * <p>A null {@code averageCost} leaves the stored value alone rather than resetting it to zero,
+   * so changing method between FIFO and AVERAGE does not discard a cost the operator set earlier.
+   * The casts are needed because Postgres cannot infer a bare parameter's type inside COALESCE.
+   *
+   * @param averageCost the standard unit cost for AVERAGE costing, or null to leave it unchanged
+   */
   public CostingMethod upsertCostingMethod(
-      UUID tenantId, UUID storeId, UUID variantId, String method, OutboxRow event) {
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      String method,
+      BigDecimal averageCost,
+      OutboxRow event) {
     return inTx(
         c -> {
           String sql =
-              "INSERT INTO costing_methods (id, tenant_id, store_id, variant_id, method)"
-                  + " VALUES (gen_random_uuid(),?,?,?,?)"
+              "INSERT INTO costing_methods"
+                  + " (id, tenant_id, store_id, variant_id, method, average_cost)"
+                  + " VALUES (gen_random_uuid(),?,?,?,?,COALESCE(?::numeric,0))"
                   + " ON CONFLICT (tenant_id, store_id, variant_id)"
-                  + " DO UPDATE SET method=EXCLUDED.method, updated_at=now()"
+                  + " DO UPDATE SET method=EXCLUDED.method,"
+                  + "   average_cost=COALESCE(?::numeric, costing_methods.average_cost),"
+                  + "   updated_at=now()"
                   + " RETURNING id, tenant_id, store_id, variant_id, method, average_cost, updated_at";
           try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, tenantId);
             ps.setObject(2, storeId);
             ps.setObject(3, variantId);
             ps.setString(4, method);
+            ps.setBigDecimal(5, averageCost);
+            ps.setBigDecimal(6, averageCost);
             ResultSet rs = ps.executeQuery();
             if (!rs.next())
               throw ApiException.unprocessable(

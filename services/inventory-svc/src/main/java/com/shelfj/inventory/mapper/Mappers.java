@@ -35,6 +35,7 @@ import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.domain.Domain.TransactionSourceType;
 import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.domain.Domain.ValuationRow;
 import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
 import com.shelfj.inventory.dto.Dtos.AbcAssignmentResponse;
 import com.shelfj.inventory.dto.Dtos.AbcCompileRunResponse;
@@ -72,6 +73,7 @@ import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderLineResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderResponse;
+import com.shelfj.inventory.dto.Dtos.ValuationRowResponse;
 import com.shelfj.inventory.dto.Dtos.ZoneGlMappingResponse;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -119,6 +121,11 @@ public final class Mappers {
         r.status(),
         r.expiresAt() == null ? null : r.expiresAt().toString(),
         ts(r.createdAt()));
+  }
+
+  public static ValuationRowResponse toValuationRow(ValuationRow r) {
+    return new ValuationRowResponse(
+        r.groupKey(), r.method(), r.onHandQty(), r.unvaluedQty(), r.value());
   }
 
   public static ShrinkageRowResponse toShrinkageRow(ShrinkageRow r) {

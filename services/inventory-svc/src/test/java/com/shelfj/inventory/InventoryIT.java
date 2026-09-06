@@ -916,6 +916,133 @@ class InventoryIT {
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
+  // ── Valuation report ─────────────────────────────────────────────────────────
+
+  /** FIFO values each batch at its own cost; the store rollup is the sum of its variants. */
+  @Test
+  void valuationCostsEachBatchAtItsOwnPriceUnderFifo() {
+    String v1 = "d1000001-0000-0000-0000-000000000000";
+    String v2 = "d1000002-0000-0000-0000-000000000000";
+    String tenant = "f1000001-0000-0000-0000-000000000000";
+
+    // Two batches of v1 bought at different prices — FIFO must value each at its own, not at an
+    // average: 10 × 2.00 + 5 × 3.00 = 35.00.
+    receiveCosted(tenant, v1, "10", "2.00");
+    receiveCosted(tenant, v1, "5", "3.00");
+    receiveCosted(tenant, v2, "4", "1.50"); // 6.00
+
+    String byVariant = valuation(tenant, "VARIANT", null);
+    assertThat(numericFieldNear(byVariant, v1, "value"), is("35.00"));
+    assertThat(numericFieldNear(byVariant, v1, "onHandQty"), is("15.000"));
+    assertThat(numericFieldNear(byVariant, v2, "value"), is("6.00"));
+    // Largest holding first.
+    assertThat(byVariant.indexOf(v1) < byVariant.indexOf(v2), is(true));
+    assertThat(fieldNear(byVariant, v1, "method"), is("FIFO"));
+
+    // The store rollup is the sum of both variants.
+    String byStore = valuation(tenant, "STORE", null);
+    assertThat(numericFieldNear(byStore, S, "value"), is("41.00"));
+    assertThat(numericFieldNear(byStore, S, "onHandQty"), is("19.000"));
+  }
+
+  /**
+   * The case worth getting right: cost_price is optional on both receipt paths, so stock can have
+   * no cost. Valuing it at zero would silently understate a balance-sheet figure, so it has to come
+   * back as unvaluedQty instead.
+   */
+  @Test
+  void stockWithNoCostIsReportedAsUnvaluedNotValuedAtZero() {
+    String v = "d1000003-0000-0000-0000-000000000000";
+    String tenant = "f1000002-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, v, "10", "4.00"); // 40.00, valued
+    // Same variant, no cost supplied — 6 units that cannot be costed.
+    assertThat(post("/admin/inventory/receive", receiveJson(v, "6"), tenant).getStatus(), is(201));
+
+    String body = valuation(tenant, "VARIANT", null);
+    assertThat(numericFieldNear(body, v, "onHandQty"), is("16.000"));
+    assertThat(numericFieldNear(body, v, "value"), is("40.00"));
+    // The 6 uncosted units are declared, not folded into the value as zero.
+    assertThat(numericFieldNear(body, v, "unvaluedQty"), is("6.000"));
+  }
+
+  /** An AVERAGE row values the whole holding at the configured standard cost. */
+  @Test
+  void averageCostingValuesTheWholeHoldingAtTheConfiguredCost() {
+    String v = "d1000004-0000-0000-0000-000000000000";
+    String tenant = "f1000003-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, v, "10", "2.00");
+    receiveCosted(tenant, v, "10", "8.00"); // FIFO would say 100.00
+
+    Response cm =
+        target
+            .path("/admin/inventory/costing-methods")
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-Roles", "OWNER")
+            .put(
+                Entity.entity(
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"variantId\":\""
+                        + v
+                        + "\",\"method\":\"AVERAGE\",\"averageCost\":3.50}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(cm.getStatus(), is(200));
+
+    // 20 units × 3.50 = 70.00, not the 100.00 FIFO would give.
+    String body = valuation(tenant, "VARIANT", null);
+    assertThat(fieldNear(body, v, "method"), is("AVERAGE"));
+    assertThat(numericFieldNear(body, v, "value"), is("70.00"));
+    assertThat(numericFieldNear(body, v, "unvaluedQty"), is("0.000"));
+  }
+
+  /** Tenant scoping, and a bad grouping is a 400 rather than a silently different report. */
+  @Test
+  void valuationIsTenantScopedAndValidatesItsInputs() {
+    String v = "d1000005-0000-0000-0000-000000000000";
+    String tenant = "f1000004-0000-0000-0000-000000000000";
+    receiveCosted(tenant, v, "3", "5.00");
+
+    assertThat(valuation(tenant, "VARIANT", null), containsString(v));
+    assertThat(valuation(OTHER, "VARIANT", null), not(containsString(v)));
+
+    assertThat(
+        target
+            .path("/admin/inventory/reports/valuation")
+            .queryParam("groupBy", "SUPPLIER")
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-Roles", "OWNER")
+            .get()
+            .getStatus(),
+        is(400));
+  }
+
+  private void receiveCosted(String tenant, String variantId, String qty, String costPrice) {
+    Response r =
+        post(
+            "/admin/inventory/receive",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + variantId
+                + "\",\"qty\":"
+                + qty
+                + ",\"costPrice\":"
+                + costPrice
+                + "}",
+            tenant);
+    assertThat(r.getStatus(), is(201));
+  }
+
+  private String valuation(String tenant, String groupBy, String storeId) {
+    var t = target.path("/admin/inventory/reports/valuation").queryParam("groupBy", groupBy);
+    if (storeId != null) t = t.queryParam("storeId", storeId);
+    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get(String.class);
+  }
+
   // ── Shrinkage report ─────────────────────────────────────────────────────────
 
   /**

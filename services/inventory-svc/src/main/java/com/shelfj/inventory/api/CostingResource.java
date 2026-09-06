@@ -55,7 +55,8 @@ public class CostingResource {
     UUID variantId = uuid(req.variantId(), "variantId");
     return ApiResponse.ok(
         Mappers.toCostingMethod(
-            service.upsertCostingMethod(tenantId, storeId, variantId, req.method())));
+            service.upsertCostingMethod(
+                tenantId, storeId, variantId, req.method(), req.averageCost())));
   }
 
   @Operation(summary = "List costing methods for a store")

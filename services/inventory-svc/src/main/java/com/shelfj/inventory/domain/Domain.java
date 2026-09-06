@@ -94,6 +94,29 @@ public final class Domain {
     }
   }
 
+  /** How the valuation report groups its rows. An enum, so no request text reaches the SQL. */
+  public enum ValuationGrouping {
+    STORE,
+    VARIANT
+  }
+
+  /**
+   * One line of the inventory valuation report.
+   *
+   * @param groupKey the store id or variant id this line values
+   * @param method the costing basis used — FIFO, AVERAGE, or MIXED for a store rollup spanning both
+   * @param onHandQty total remaining quantity
+   * @param unvaluedQty how much of {@code onHandQty} carries no cost and is therefore excluded from
+   *     {@code value}; reported rather than valued at zero, which would understate the holding
+   * @param value the money value of the quantity that could be costed
+   */
+  public record ValuationRow(
+      String groupKey,
+      String method,
+      BigDecimal onHandQty,
+      BigDecimal unvaluedQty,
+      BigDecimal value) {}
+
   /** How a shrinkage report groups its rows. An enum, so no request text ever reaches the SQL. */
   public enum ShrinkageGrouping {
     REASON,
