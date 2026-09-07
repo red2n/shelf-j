@@ -6,6 +6,7 @@ import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -16,11 +17,8 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import java.time.Instant;
-import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Locale;
-import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
@@ -73,9 +71,9 @@ public class ShrinkageResource {
         service
             .shrinkageReport(
                 ctx.requireTenantId(),
-                optionalUuid(storeId, "storeId"),
-                instant(from, "from"),
-                instant(to, "to"),
+                Parsing.optionalUuid(storeId, "storeId"),
+                Parsing.optionalInstant(from, "from"),
+                Parsing.optionalInstant(to, "to"),
                 grouping(groupBy))
             .stream()
             .map(Mappers::toShrinkageRow)
@@ -107,13 +105,13 @@ public class ShrinkageResource {
         service
             .shrinkageByVariant(
                 ctx.requireTenantId(),
-                optionalUuid(storeId, "storeId"),
-                instant(from, "from"),
-                instant(to, "to"),
+                Parsing.optionalUuid(storeId, "storeId"),
+                Parsing.optionalInstant(from, "from"),
+                Parsing.optionalInstant(to, "to"),
                 reasonCode == null || reasonCode.isBlank()
                     ? null
                     : reasonCode.trim().toUpperCase(Locale.ROOT),
-                optionalUuid(actorId, "actorId"),
+                Parsing.optionalUuid(actorId, "actorId"),
                 clamped)
             .stream()
             .map(Mappers::toShrinkageRow)
@@ -131,30 +129,6 @@ public class ShrinkageResource {
           400,
           "INVENTORY_INVALID_GROUPING",
           "groupBy must be REASON, ACTOR or STORE — got: " + raw,
-          List.of(),
-          e);
-    }
-  }
-
-  private static UUID optionalUuid(String raw, String field) {
-    if (raw == null || raw.isBlank()) return null;
-    try {
-      return UUID.fromString(raw.trim());
-    } catch (IllegalArgumentException e) {
-      throw new ApiException(
-          400, "INVENTORY_INVALID_UUID", field + " is not a valid UUID", List.of(), e);
-    }
-  }
-
-  private static Instant instant(String raw, String field) {
-    if (raw == null || raw.isBlank()) return null;
-    try {
-      return Instant.parse(raw.trim());
-    } catch (DateTimeParseException e) {
-      throw new ApiException(
-          400,
-          "INVENTORY_INVALID_TIMESTAMP",
-          field + " must be an ISO-8601 instant, e.g. 2026-01-31T00:00:00Z",
           List.of(),
           e);
     }

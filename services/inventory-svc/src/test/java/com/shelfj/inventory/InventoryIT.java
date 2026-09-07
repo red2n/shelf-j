@@ -1275,6 +1275,16 @@ class InventoryIT {
     assertThat(shrinkageStatus(tenant, "groupBy", "SUPPLIER"), is(400));
     assertThat(shrinkageStatus(tenant, "from", "last-tuesday"), is(400));
     assertThat(shrinkageStatus(tenant, "storeId", "not-a-uuid"), is(400));
+
+    // The code a caller switches on: groupBy is this service's own vocabulary and keeps a
+    // service-scoped code, but a malformed uuid or timestamp means the same thing on every
+    // endpoint in the platform, so it answers with the shared one rather than an inventory-
+    // specific variant of it.
+    assertThat(
+        shrinkageError(tenant, "groupBy", "SUPPLIER"),
+        containsString("INVENTORY_INVALID_GROUPING"));
+    assertThat(shrinkageError(tenant, "from", "last-tuesday"), containsString("\"INVALID_DATE\""));
+    assertThat(shrinkageError(tenant, "storeId", "not-a-uuid"), containsString("\"INVALID_UUID\""));
   }
 
   private void adjust(
@@ -1304,6 +1314,17 @@ class InventoryIT {
         .header("X-Tenant-Id", tenant)
         .header("X-Roles", "OWNER")
         .get(String.class);
+  }
+
+  private String shrinkageError(String tenant, String param, String value) {
+    return target
+        .path("/admin/inventory/reports/shrinkage")
+        .queryParam(param, value)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get()
+        .readEntity(String.class);
   }
 
   private int shrinkageStatus(String tenant, String param, String value) {

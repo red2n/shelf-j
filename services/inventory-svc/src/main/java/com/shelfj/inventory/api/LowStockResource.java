@@ -3,8 +3,8 @@ package com.shelfj.inventory.api;
 import com.shelfj.inventory.dto.Dtos.LowStockRowResponse;
 import com.shelfj.inventory.mapper.Mappers;
 import com.shelfj.inventory.service.InventoryService;
-import com.shelfj.web.ApiException;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -16,7 +16,6 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
-import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
@@ -57,19 +56,12 @@ public class LowStockResource {
       @QueryParam("storeId") String storeId, @QueryParam("limit") Integer limit) {
     int clamped = limit == null ? DEFAULT_LIMIT : Math.max(1, Math.min(MAX_LIMIT, limit));
     List<LowStockRowResponse> rows =
-        service.lowStockReport(ctx.requireTenantId(), storeUuid(storeId), clamped).stream()
+        service
+            .lowStockReport(
+                ctx.requireTenantId(), Parsing.optionalUuid(storeId, "storeId"), clamped)
+            .stream()
             .map(Mappers::toLowStockRow)
             .toList();
     return Response.ok(ApiResponse.ok(rows, ApiResponse.Meta.of(ctx.requestId()))).build();
-  }
-
-  private static UUID storeUuid(String raw) {
-    if (raw == null || raw.isBlank()) return null;
-    try {
-      return UUID.fromString(raw.trim());
-    } catch (IllegalArgumentException e) {
-      throw new ApiException(
-          400, "INVENTORY_INVALID_UUID", "storeId is not a valid UUID", List.of(), e);
-    }
   }
 }
