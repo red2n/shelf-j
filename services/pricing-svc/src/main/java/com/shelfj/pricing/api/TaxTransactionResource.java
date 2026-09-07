@@ -52,8 +52,13 @@ public class TaxTransactionResource {
       description = "All tax transaction journal entries recorded for the given order.")
   @APIResponse(responseCode = "200", description = "List of tax transactions")
   @APIResponse(responseCode = "400", description = "orderId query param missing")
+  @APIResponse(responseCode = "403", description = "Caller has no staff role")
   @GET
   public Response listByOrder(@QueryParam("orderId") UUID orderId) {
+    // Any order's tax lines, addressable by id, and this path is not under /admin/ — so nothing
+    // gated it. Staff rather than management: a cashier querying a receipt is legitimate, a
+    // signed-in customer reading another customer's order is not.
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
     if (orderId == null)
       throw ApiException.badRequest("PRICING_MISSING_ORDER_ID", "orderId query param required");
     return Response.ok(

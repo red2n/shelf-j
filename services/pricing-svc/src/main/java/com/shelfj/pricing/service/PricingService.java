@@ -8,6 +8,10 @@ import com.shelfj.pricing.domain.Domain.ProductVatCategory;
 import com.shelfj.pricing.domain.Domain.Promotion;
 import com.shelfj.pricing.domain.Domain.PromotionItem;
 import com.shelfj.pricing.domain.Domain.ResolvedPrice;
+import com.shelfj.pricing.domain.Domain.TaxGrouping;
+import com.shelfj.pricing.domain.Domain.TaxSummary;
+import com.shelfj.pricing.domain.Domain.TaxSummaryRow;
+import com.shelfj.pricing.domain.Domain.TaxSummaryTotals;
 import com.shelfj.pricing.domain.Domain.TaxTransaction;
 import com.shelfj.pricing.domain.Domain.VatRate;
 import com.shelfj.pricing.domain.Domain.VatReturn;
@@ -24,6 +28,7 @@ import com.shelfj.pricing.dto.Dtos.UpsertCustomerVatStatusRequest;
 import com.shelfj.pricing.dto.Dtos.UpsertPriceListItemRequest;
 import com.shelfj.pricing.dto.Dtos.UpsertProductVatCategoryRequest;
 import com.shelfj.pricing.repo.PricingRepository;
+import com.shelfj.pricing.repo.TaxReportRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.Cursor;
 import com.shelfj.web.Parsing;
@@ -41,6 +46,7 @@ import java.util.UUID;
 public class PricingService {
 
   @Inject PricingRepository repo;
+  @Inject TaxReportRepository taxReportRepo;
 
   // ── VAT Rates ─────────────────────────────────────────────────────────────
 
@@ -419,6 +425,80 @@ public class PricingService {
             key == null ? null : key.id(),
             limit + 1);
     return Cursor.page(rows, limit, o -> o.createdAt() + "|" + o.id());
+  }
+
+  /**
+   * The tax summary report: the working behind the VAT return's single figures.
+   *
+   * <p>Box 1 and Box 6 are each one number computed over the same rows this groups. An accountant
+   * filing the return needs to see which rate bands, sites or months make them up — both to sanity
+   * check the figure and to explain it if HMRC asks.
+   *
+   * <p>Totals are folded from the returned rows rather than queried separately, so the summary can
+   * never disagree with its own detail. They also expose one thing the return hides: Box 1 filters
+   * to non-exempt supplies, so VAT sitting on a row marked exempt vanishes from it silently. Here
+   * that shows up as {@code vatAmount} differing from {@code outputVat}.
+   *
+   * @param ctx caller context; tenant comes from the verified JWT, never the request
+   * @param fromStr inclusive ISO-8601 lower bound on the tax point
+   * @param toStr exclusive ISO-8601 upper bound
+   * @param storeIdStr restrict to one store, or null/blank for all
+   * @param groupByStr CODE, STORE or MONTH; defaults to CODE
+   * @throws ApiException 400 when the period is malformed or not strictly increasing
+   */
+  public TaxSummary taxSummary(
+      TenantContext ctx, String fromStr, String toStr, String storeIdStr, String groupByStr) {
+    Instant from = Parsing.instant(fromStr, "from");
+    Instant to = Parsing.instant(toStr, "to");
+    if (!from.isBefore(to))
+      throw ApiException.badRequest("PRICING_INVALID_PERIOD", "from must be before to");
+
+    List<TaxSummaryRow> rows =
+        taxReportRepo.aggregate(
+            ctx.tenantId(),
+            Parsing.optionalUuid(storeIdStr, "storeId"),
+            from,
+            to,
+            grouping(groupByStr));
+
+    BigDecimal net = BigDecimal.ZERO;
+    BigDecimal vat = BigDecimal.ZERO;
+    BigDecimal outputVat = BigDecimal.ZERO;
+    BigDecimal gross = BigDecimal.ZERO;
+    long transactions = 0;
+    for (TaxSummaryRow r : rows) {
+      net = net.add(r.netAmount());
+      vat = vat.add(r.vatAmount());
+      if (!r.exempt()) outputVat = outputVat.add(r.vatAmount());
+      gross = gross.add(r.grossAmount());
+      transactions += r.transactions();
+    }
+
+    return new TaxSummary(
+        rows,
+        new TaxSummaryTotals(
+            net.setScale(2, RoundingMode.HALF_UP),
+            vat.setScale(2, RoundingMode.HALF_UP),
+            outputVat.setScale(2, RoundingMode.HALF_UP),
+            gross.setScale(2, RoundingMode.HALF_UP),
+            transactions),
+        fromStr,
+        toStr);
+  }
+
+  /** Defaults to CODE — "which rate bands is my VAT made of" is what this is opened for. */
+  private static TaxGrouping grouping(String raw) {
+    if (raw == null || raw.isBlank()) return TaxGrouping.CODE;
+    try {
+      return TaxGrouping.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(
+          400,
+          "PRICING_INVALID_GROUPING",
+          "groupBy must be CODE, STORE or MONTH — got: " + raw,
+          List.of(),
+          e);
+    }
   }
 
   public VatReturn computeVatReturn(TenantContext ctx, String fromStr, String toStr) {
