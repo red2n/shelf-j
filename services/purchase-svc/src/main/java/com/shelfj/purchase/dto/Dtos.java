@@ -49,7 +49,10 @@ public final class Dtos {
       @NotNull UUID supplierId,
       @NotNull UUID storeId,
       @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
-      @Schema(description = "ISO-8601 date the goods are expected to arrive.")
+      @Schema(
+              description =
+                  "Date the goods are expected to arrive, as yyyy-MM-dd (e.g. 2026-01-31). A"
+                      + " value carrying a time is rejected with INVALID_DATE.")
           String expectedDelivery) {}
 
   @Schema(name = "AddPurchaseOrderLineRequest")

@@ -409,6 +409,54 @@ class PurchaseIT {
         get("/purchase-orders/" + poId, T).readEntity(String.class), containsString("DRAFT"));
   }
 
+  // ── SJ-D9: a mistyped date is the caller's mistake, not a server fault ───────
+
+  /**
+   * A malformed date must come back 400 naming the field it came from, never 500. These three
+   * inputs reached {@code LocalDate.parse} raw, so a caller's typo threw out of business code and
+   * fell through to GenericExceptionMapper as INTERNAL_ERROR — wrong per golden rule #15, and it
+   * makes a client error look like an outage to alerting.
+   */
+  @Test
+  void malformedDatesAreRejectedAsBadRequestNamingTheField() {
+    Response sup = post("/suppliers", "{\"name\":\"Typo Traders Ltd\"}", T);
+    assertThat(sup.getStatus(), is(201));
+    String supId = extractId(sup.readEntity(String.class));
+
+    // A full instant where the field takes yyyy-MM-dd: the plausible wrong guess, and the shape
+    // that produced the 500 in pricing-svc when its own @Schema said only "ISO-8601 date".
+    Response bad =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"expectedDelivery\":\"2026-12-31T00:00:00Z\"}",
+            T);
+    assertThat(bad.getStatus(), is(400));
+    String body = bad.readEntity(String.class);
+    assertThat(body, containsString("INVALID_DATE"));
+    assertThat(body, containsString("expectedDelivery must be yyyy-MM-dd"));
+
+    // The nominal-ledger range is the same class of input and names itself the same way.
+    Response badRange = get("/nominal-ledger?from=last-tuesday", T);
+    assertThat(badRange.getStatus(), is(400));
+    assertThat(badRange.readEntity(String.class), containsString("from must be yyyy-MM-dd"));
+
+    // ...and the documented form still works, so the guard did not simply reject everything.
+    Response ok =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"expectedDelivery\":\"2026-12-31\"}",
+            T);
+    assertThat(ok.getStatus(), is(201));
+  }
+
   /** Creates a supplier and a DRAFT purchase order against it, returning the PO id. */
   private String draftPurchaseOrder(String supplierName) {
     Response sup = post("/suppliers", "{\"name\":\"" + supplierName + "\"}", T);

@@ -16,6 +16,7 @@ import com.shelfj.purchase.dto.Dtos.CreateSupplierRequest;
 import com.shelfj.purchase.dto.Dtos.RaiseIntercompanyInvoiceRequest;
 import com.shelfj.purchase.repo.PurchaseRepository;
 import com.shelfj.web.ApiException;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -79,7 +80,9 @@ public class PurchaseService {
             BigDecimal.ZERO,
             BigDecimal.ZERO,
             BigDecimal.ZERO,
-            req.expectedDelivery() != null ? LocalDate.parse(req.expectedDelivery()) : null,
+            req.expectedDelivery() != null
+                ? Parsing.date(req.expectedDelivery(), "expectedDelivery")
+                : null,
             Instant.now(),
             Instant.now(),
             null,
@@ -489,8 +492,8 @@ public class PurchaseService {
       String toStr,
       String after,
       int limit) {
-    LocalDate from = fromStr != null ? LocalDate.parse(fromStr) : null;
-    LocalDate to = toStr != null ? LocalDate.parse(toStr) : null;
+    LocalDate from = fromStr != null ? Parsing.date(fromStr, "from") : null;
+    LocalDate to = toStr != null ? Parsing.date(toStr, "to") : null;
     String rawKey = com.shelfj.web.Cursor.decode(after);
     LocalDate afterEntryDate = null;
     java.time.Instant afterCreatedAt = null;
