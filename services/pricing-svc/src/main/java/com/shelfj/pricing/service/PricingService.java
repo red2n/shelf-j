@@ -26,6 +26,7 @@ import com.shelfj.pricing.dto.Dtos.UpsertProductVatCategoryRequest;
 import com.shelfj.pricing.repo.PricingRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.Cursor;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -55,7 +56,7 @@ public class PricingService {
             req.rate(),
             req.exempt(),
             req.description(),
-            Instant.parse(req.effectiveFrom()),
+            Parsing.instant(req.effectiveFrom(), "effectiveFrom"),
             null,
             Instant.now());
     return repo.createVatRate(r);
@@ -77,7 +78,9 @@ public class PricingService {
     if (req.rate().compareTo(BigDecimal.ONE) > 0)
       throw ApiException.badRequest("PRICING_INVALID_RATE", "VAT rate must be between 0 and 1");
     Instant newEffectiveFrom =
-        req.effectiveFrom() != null ? Instant.parse(req.effectiveFrom()) : existing.effectiveFrom();
+        req.effectiveFrom() != null
+            ? Parsing.instant(req.effectiveFrom(), "effectiveFrom")
+            : existing.effectiveFrom();
     VatRate updated =
         new VatRate(
             existing.id(),
@@ -160,8 +163,8 @@ public class PricingService {
             req.name(),
             req.channel() != null ? req.channel() : PriceList.CHANNEL_ALL,
             req.currency() != null ? req.currency() : "GBP",
-            Instant.parse(req.effectiveFrom()),
-            req.effectiveTo() != null ? Instant.parse(req.effectiveTo()) : null,
+            Parsing.instant(req.effectiveFrom(), "effectiveFrom"),
+            req.effectiveTo() != null ? Parsing.instant(req.effectiveTo(), "effectiveTo") : null,
             true,
             Instant.now());
     return repo.createPriceList(pl);
@@ -328,8 +331,8 @@ public class PricingService {
                 ? req.channel().toUpperCase(java.util.Locale.ROOT)
                 : PriceList.CHANNEL_ALL,
             true,
-            Instant.parse(req.startsAt()),
-            req.endsAt() != null ? Instant.parse(req.endsAt()) : null,
+            Parsing.instant(req.startsAt(), "startsAt"),
+            req.endsAt() != null ? Parsing.instant(req.endsAt(), "endsAt") : null,
             Instant.now());
     return repo.createPromotion(p, Events.promotionActivated(ctx.tenantId(), p.id()));
   }
@@ -365,7 +368,7 @@ public class PricingService {
             req.vatAmount(),
             req.grossAmount(),
             req.exempt(),
-            Instant.parse(req.taxPointDate()),
+            Parsing.instant(req.taxPointDate(), "taxPointDate"),
             req.invoiceRef(),
             Instant.now());
     return repo.recordTaxTransaction(tt);
@@ -420,8 +423,8 @@ public class PricingService {
 
   public VatReturn computeVatReturn(TenantContext ctx, String fromStr, String toStr) {
     UUID tenantId = ctx.tenantId();
-    Instant from = Instant.parse(fromStr);
-    Instant to = Instant.parse(toStr);
+    Instant from = Parsing.instant(fromStr, "from");
+    Instant to = Parsing.instant(toStr, "to");
     if (!from.isBefore(to))
       throw ApiException.badRequest("PRICING_INVALID_PERIOD", "from must be before to");
 

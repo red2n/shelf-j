@@ -660,7 +660,7 @@ public class OrderService {
       throw ApiException.conflict(
           "DEPOSIT_EXCEEDS_TOTAL", "initial deposit cannot exceed total amount");
 
-    Instant dueDate = req.dueDate() != null ? Instant.parse(req.dueDate()) : null;
+    Instant dueDate = req.dueDate() != null ? Parsing.instant(req.dueDate(), "dueDate") : null;
     Layaway layaway =
         new Layaway(
             layawayId,
@@ -737,7 +737,8 @@ public class OrderService {
     UUID gcId = UUID.randomUUID();
     String code = generateGiftCardCode();
     String currency = resolveCurrency(tenantId, req.currency());
-    Instant expiresAt = req.expiresAt() != null ? Instant.parse(req.expiresAt()) : null;
+    Instant expiresAt =
+        req.expiresAt() != null ? Parsing.instant(req.expiresAt(), "expiresAt") : null;
 
     GiftCard gc =
         new GiftCard(
@@ -933,7 +934,7 @@ public class OrderService {
 
     java.time.LocalDate delivDate = null;
     if (req.requestedDeliveryDate() != null && !req.requestedDeliveryDate().isBlank())
-      delivDate = java.time.LocalDate.parse(req.requestedDeliveryDate());
+      delivDate = Parsing.date(req.requestedDeliveryDate(), "requestedDeliveryDate");
 
     var so =
         new SpecialOrder(

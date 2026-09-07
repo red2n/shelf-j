@@ -1720,7 +1720,7 @@ public class InventoryService {
 
   public AccountingPeriod openPeriod(
       UUID tenantId, UUID storeId, String periodName, String periodDate) {
-    LocalDate date = LocalDate.parse(periodDate);
+    LocalDate date = com.shelfj.web.Parsing.date(periodDate, "periodDate");
     var event =
         new OutboxRow(
             "AccountingPeriodOpened",

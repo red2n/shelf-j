@@ -26,7 +26,8 @@ public final class Dtos {
           BigDecimal rate,
       @Schema(description = "True if this code is VAT-exempt (no VAT charged).") boolean exempt,
       String description,
-      @Schema(description = "ISO-8601 date this rate takes effect.") @NotBlank
+      @Schema(description = "ISO-8601 instant this rate takes effect, e.g. 2026-01-01T00:00:00Z.")
+          @NotBlank
           String effectiveFrom) {}
 
   @Schema(name = "VatRateResponse")
@@ -92,7 +93,12 @@ public final class Dtos {
       @NotBlank String name,
       @Schema(description = "ALL, ONLINE, or POS. Defaults to ALL.") String channel,
       @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
-      @Schema(description = "ISO-8601 date this price list takes effect.") @NotBlank
+      @Schema(
+              description =
+                  "ISO-8601 instant this price list takes effect, e.g."
+                      + " 2026-01-01T00:00:00Z. The column is TIMESTAMPTZ; a bare date is"
+                      + " rejected with INVALID_DATE.")
+          @NotBlank
           String effectiveFrom,
       String effectiveTo) {}
 
@@ -238,7 +244,11 @@ public final class Dtos {
       BigDecimal vatAmount,
       BigDecimal grossAmount,
       boolean exempt,
-      @Schema(description = "ISO-8601 date of the VAT tax point (chargeable event).") @NotBlank
+      @Schema(
+              description =
+                  "ISO-8601 instant of the VAT tax point (chargeable event), e.g."
+                      + " 2026-01-01T00:00:00Z.")
+          @NotBlank
           String taxPointDate,
       String invoiceRef) {}
 
