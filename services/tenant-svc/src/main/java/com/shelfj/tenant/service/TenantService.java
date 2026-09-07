@@ -345,6 +345,39 @@ public class TenantService {
     return repo.updateTenantStatusWithOutbox(tenantId, status, event);
   }
 
+  /**
+   * Re-announces tenants' declared currencies so downstream projections can be rebuilt.
+   *
+   * <p>Exists because a projection fed only by TenantCreated can never cover a tenant that was
+   * onboarded before the consumer did. order-svc stamps every money-bearing row with the tenant's
+   * currency read from such a projection, and falls back to a platform-wide default when it is
+   * missing — so a tenant predating that consumer trades in the wrong currency indefinitely, with
+   * nothing to signal it. There was no way to fill that gap without either a cross-service read of
+   * this service's tables or a synchronous call on the checkout path; this is the third option.
+   *
+   * <p>Safe to run repeatedly. Consumers dedupe on eventId and each replay carries fresh ones, so a
+   * second run re-applies the same projection rather than being skipped — which is what makes it a
+   * repair tool rather than a one-shot migration.
+   *
+   * @param scope a single tenant to re-announce, or {@code null} for every tenant
+   * @return how many tenants were announced; zero when {@code scope} names a tenant with no
+   *     currency recorded, or no tenant at all
+   */
+  public int republishTenantCurrencies(UUID scope) {
+    List<OutboxRow> events =
+        repo.findTenantCurrencies(scope).stream()
+            .map(
+                tc ->
+                    new OutboxRow(
+                        "TenantCurrencyDeclared",
+                        "shelfj.tenant.tenant-currency-declared",
+                        tc.tenantId(),
+                        tc.tenantId(),
+                        Events.tenantCurrencyDeclared(tc.tenantId(), tc.currency())))
+            .toList();
+    return repo.publishEvents(events);
+  }
+
   public Tenant updateTenant(UUID tenantId, UpdateTenantRequest req) {
     getTenant(tenantId);
     return repo.updateTenant(

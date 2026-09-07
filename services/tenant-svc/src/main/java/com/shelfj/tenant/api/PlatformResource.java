@@ -1,11 +1,13 @@
 package com.shelfj.tenant.api;
 
+import com.shelfj.tenant.dto.Dtos.CurrencyRepublishResponse;
 import com.shelfj.tenant.dto.Dtos.PatchStatusRequest;
 import com.shelfj.tenant.dto.Dtos.TenantResponse;
 import com.shelfj.tenant.mapper.Mappers;
 import com.shelfj.tenant.service.TenantService;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.Cursor;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -13,6 +15,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.PATCH;
+import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
@@ -66,5 +69,26 @@ public class PlatformResource {
     ctx.requireAnyRole("PLATFORM_ADMIN");
     Validations.validate(req);
     return ApiResponse.ok(Mappers.toTenant(service.patchTenantStatus(tenantId, req)));
+  }
+
+  @Operation(
+      summary = "Re-announce tenants' declared currencies",
+      description =
+          "Publishes TenantCurrencyDeclared for every tenant that has a currency recorded, or for"
+              + " one tenant with ?tenantId=. Consumers keep a local projection of this so they can"
+              + " stamp money-bearing rows without calling this service; a tenant onboarded before"
+              + " such a consumer existed has no projection and silently falls back to a default"
+              + " currency. This is how that is repaired. Safe to run repeatedly. Requires"
+              + " PLATFORM_ADMIN.")
+  @APIResponse(responseCode = "200", description = "Number of tenants announced")
+  @APIResponse(responseCode = "400", description = "tenantId is not a UUID")
+  @APIResponse(responseCode = "403", description = "Caller is not a PLATFORM_ADMIN")
+  @POST
+  @Path("/tenants/republish-currency")
+  public ApiResponse<CurrencyRepublishResponse> republishCurrency(
+      @QueryParam("tenantId") String tenantId) {
+    ctx.requireAnyRole("PLATFORM_ADMIN");
+    int announced = service.republishTenantCurrencies(Parsing.optionalUuid(tenantId, "tenantId"));
+    return ApiResponse.ok(new CurrencyRepublishResponse(announced));
   }
 }

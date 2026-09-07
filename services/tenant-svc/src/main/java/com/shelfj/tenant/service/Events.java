@@ -32,6 +32,22 @@ final class Events {
             esc(currency));
   }
 
+  /**
+   * Re-announces a tenant's declared trading currency.
+   *
+   * <p>Separate from {@link #tenantCreated} on purpose. The currency is also carried on
+   * TenantCreated, but that event is consumed by iam-svc to provision the owner's user record, so
+   * replaying it to fix a currency projection would re-run unrelated onboarding work — the
+   * consumer-side dedupe is keyed on eventId, and a replay necessarily carries a fresh one. This
+   * event states one fact and nothing else, so it is safe to emit as often as needed.
+   */
+  static String tenantCurrencyDeclared(UUID tenantId, String currency) {
+    return """
+                {"eventId":"%s","eventType":"TenantCurrencyDeclared","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
+                "currency":"%s"}"""
+        .formatted(UUID.randomUUID(), tenantId, tenantId, Instant.now(), esc(currency));
+  }
+
   static String storeCreated(
       UUID tenantId, UUID storeId, String code, String type, boolean isDefault) {
     return """

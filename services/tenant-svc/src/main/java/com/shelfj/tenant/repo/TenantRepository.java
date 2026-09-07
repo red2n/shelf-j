@@ -8,6 +8,7 @@ import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.StoreWithZone;
 import com.shelfj.tenant.domain.Domain.Tenant;
+import com.shelfj.tenant.domain.Domain.TenantCurrency;
 import com.shelfj.tenant.domain.Domain.TenantInventoryConfig;
 import com.shelfj.tenant.domain.Domain.Zone;
 import com.shelfj.web.ApiException;
@@ -763,6 +764,48 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getBoolean("auto_reserve_on_order"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
         rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  /**
+   * Every tenant's declared currency, or just one when {@code scope} is given.
+   *
+   * <p>Tenants with no currency recorded are skipped in SQL rather than filtered in Java: they have
+   * nothing to announce, and emitting an event with a null currency would only give the consumer
+   * something to reject.
+   *
+   * @param scope a single tenant to read, or {@code null} for every tenant on the platform
+   * @return one row per tenant that has a currency, ordered so a replay is reproducible
+   */
+  public List<TenantCurrency> findTenantCurrencies(UUID scope) {
+    String sql =
+        "SELECT id, currency FROM tenants WHERE currency IS NOT NULL"
+            + (scope == null ? "" : " AND id = ?")
+            + " ORDER BY created_at, id";
+    return query(
+        sql,
+        ps -> {
+          if (scope != null) ps.setObject(1, scope);
+        },
+        rs -> new TenantCurrency(rs.getObject("id", UUID.class), rs.getString("currency")),
+        "list tenant currencies");
+  }
+
+  /**
+   * Write a batch of events to the outbox in one transaction, so a replay either announces every
+   * tenant or none of them. A partial replay is the worst outcome: it leaves some projections fixed
+   * and some not, with nothing to say which.
+   *
+   * @param events the outbox rows to write; an empty list is a no-op
+   * @return the number of rows written
+   */
+  public int publishEvents(List<OutboxRow> events) {
+    if (events.isEmpty()) return 0;
+    return inTx(
+        c -> {
+          for (OutboxRow event : events) insertOutbox(c, event);
+          return events.size();
+        },
+        "publish event batch");
   }
 
   /**
