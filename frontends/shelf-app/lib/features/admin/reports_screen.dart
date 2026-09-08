@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 
 import '../../core/network/api_error.dart';
 import '../../shared/util/file_download.dart';
@@ -7,7 +8,17 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 
-enum _ReportType { sales, salesByDay, onHand, supplyDemand, movements }
+enum _ReportType {
+  sales,
+  salesByDay,
+  onHand,
+  supplyDemand,
+  movements,
+  lowStock,
+  valuation,
+  shrinkage,
+  taxSummary,
+}
 
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
@@ -94,25 +105,29 @@ class _ReportSidebar extends StatelessWidget {
           child: Text('Reports',
               style: Theme.of(context).textTheme.headlineMedium),
         ),
+        // The selected tile's background is ListTile's own, not a DecoratedBox
+        // wrapped around it: ListTile paints its ink on the nearest Material
+        // ancestor, so a coloured box in between hides the splash entirely and
+        // tapping the selected report gives no feedback at all. Flutter asserts
+        // on exactly this, which is also what made the screen untestable.
         ..._ReportType.values.map((r) {
           final active = selected == r;
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: active ? cs.secondaryContainer : null,
-              borderRadius: BorderRadius.circular(8),
-            ),
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             child: ListTile(
               dense: true,
-              leading: Icon(_reportIcon(r),
-                  color: active ? cs.onSecondaryContainer : cs.onSurfaceVariant),
+              selected: active,
+              selectedTileColor: cs.secondaryContainer,
+              selectedColor: cs.onSecondaryContainer,
+              iconColor: cs.onSurfaceVariant,
+              textColor: cs.onSurfaceVariant,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+              leading: Icon(_reportIcon(r)),
               title: Text(_reportLabel(r),
                   style: TextStyle(
                       fontWeight:
-                          active ? FontWeight.bold : FontWeight.normal,
-                      color: active
-                          ? cs.onSecondaryContainer
-                          : cs.onSurfaceVariant)),
+                          active ? FontWeight.bold : FontWeight.normal)),
               onTap: () => onSelect(r),
             ),
           );
@@ -139,6 +154,14 @@ class _ReportContent extends ConsumerWidget {
         return _SupplyDemandReport();
       case _ReportType.movements:
         return _MovementStatsReport();
+      case _ReportType.lowStock:
+        return _LowStockReport();
+      case _ReportType.valuation:
+        return _ValuationReport();
+      case _ReportType.shrinkage:
+        return _ShrinkageReport();
+      case _ReportType.taxSummary:
+        return _TaxSummaryReport();
     }
   }
 }
@@ -706,6 +729,14 @@ String _reportLabel(_ReportType r) {
       return 'Supply / Demand';
     case _ReportType.movements:
       return 'Movement Stats';
+    case _ReportType.lowStock:
+      return 'Low Stock';
+    case _ReportType.valuation:
+      return 'Stock Valuation';
+    case _ReportType.shrinkage:
+      return 'Shrinkage';
+    case _ReportType.taxSummary:
+      return 'Tax Summary';
   }
 }
 
@@ -721,5 +752,474 @@ IconData _reportIcon(_ReportType r) {
       return Icons.balance_outlined;
     case _ReportType.movements:
       return Icons.swap_horiz;
+    case _ReportType.lowStock:
+      return Icons.production_quantity_limits_outlined;
+    case _ReportType.valuation:
+      return Icons.savings_outlined;
+    case _ReportType.shrinkage:
+      return Icons.trending_down;
+    case _ReportType.taxSummary:
+      return Icons.receipt_long_outlined;
+  }
+}
+
+// ── The four reports built in horizon 1, finally given a screen ──────────────
+//
+// Each of these endpoints has existed and been tested server-side for a while.
+// None had a client, so nobody using the product could reach them. Everything
+// below is the half that was missing.
+
+/// Grouping chips shared by the three reports that offer a `groupBy`.
+class _GroupingBar extends ConsumerWidget {
+  final StateProvider<String> provider;
+  final Map<String, String> options;
+
+  const _GroupingBar({required this.provider, required this.options});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selected = ref.watch(provider);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final entry in options.entries)
+            ChoiceChip(
+              label: Text(entry.value),
+              selected: selected == entry.key,
+              onSelected: (_) =>
+                  ref.read(provider.notifier).state = entry.key,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LowStockReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final async = ref.watch(lowStockReportProvider);
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading low stock…'),
+      error: (e, _) => ErrorView(
+        message: friendlyError(e, fallback: 'Could not load low-stock report.'),
+        onRetry: () => ref.invalidate(lowStockReportProvider),
+      ),
+      data: (rows) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ReportHeader(
+            title: 'Low Stock',
+            subtitle: 'Items below their own reorder level, worst shortfall first',
+            onRefresh: () => ref.invalidate(lowStockReportProvider),
+            onExportCsv: rows.isEmpty
+                ? null
+                : () {
+                    final buf = StringBuffer(
+                        'storeId,variantId,signal,reorderLevel,availableQty,shortfall\n');
+                    for (final r in rows) {
+                      buf.writeln([
+                        _csvEscape(r.storeId),
+                        _csvEscape(r.variantId),
+                        _csvEscape(r.signal),
+                        r.reorderLevel,
+                        r.availableQty,
+                        r.shortfall,
+                      ].join(','));
+                    }
+                    _downloadCsv('low-stock.csv', buf.toString());
+                  },
+          ),
+          if (rows.isEmpty)
+            const Expanded(
+                child: Center(child: Text('Nothing is below its reorder level.')))
+          else
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Card(
+                  child: DataTable(
+                    headingRowColor:
+                        WidgetStatePropertyAll(cs.surfaceContainerHigh),
+                    columnSpacing: 24,
+                    columns: const [
+                      DataColumn(label: Text('Store')),
+                      DataColumn(label: Text('Variant')),
+                      // Which configured level bound the row: without this a
+                      // manager cannot tell a hand-set minimum from a computed
+                      // reorder point, and so cannot tell what to change.
+                      DataColumn(label: Text('Signal')),
+                      DataColumn(label: Text('Level'), numeric: true),
+                      DataColumn(label: Text('Available'), numeric: true),
+                      DataColumn(label: Text('Short by'), numeric: true),
+                    ],
+                    rows: rows
+                        .map((r) => DataRow(cells: [
+                              DataCell(Text(_short(r.storeId), style: _idStyle)),
+                              DataCell(Text(_short(r.variantId), style: _idStyle)),
+                              DataCell(Chip(
+                                label: Text(r.signal,
+                                    style: const TextStyle(fontSize: 11)),
+                                visualDensity: VisualDensity.compact,
+                              )),
+                              DataCell(Text(r.reorderLevel.toStringAsFixed(0))),
+                              DataCell(Text(r.availableQty.toStringAsFixed(0))),
+                              DataCell(Text(r.shortfall.toStringAsFixed(0),
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: cs.error))),
+                            ]))
+                        .toList(),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ValuationReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final async = ref.watch(valuationReportProvider);
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading valuation…'),
+      error: (e, _) => ErrorView(
+        message: friendlyError(e, fallback: 'Could not load valuation report.'),
+        onRetry: () => ref.invalidate(valuationReportProvider),
+      ),
+      data: (rows) {
+        final totalValue = rows.fold<double>(0, (s, r) => s + r.value);
+        final totalUnvalued = rows.fold<double>(0, (s, r) => s + r.unvaluedQty);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _ReportHeader(
+              title: 'Stock Valuation',
+              subtitle: 'What the holding is worth on its configured cost basis',
+              onRefresh: () => ref.invalidate(valuationReportProvider),
+              onExportCsv: rows.isEmpty
+                  ? null
+                  : () {
+                      final buf = StringBuffer(
+                          'groupKey,method,onHandQty,unvaluedQty,value\n');
+                      for (final r in rows) {
+                        buf.writeln([
+                          _csvEscape(r.groupKey),
+                          _csvEscape(r.method),
+                          r.onHandQty,
+                          r.unvaluedQty,
+                          r.value,
+                        ].join(','));
+                      }
+                      _downloadCsv('valuation.csv', buf.toString());
+                    },
+            ),
+            _GroupingBar(
+              provider: valuationGroupingProvider,
+              options: const {'STORE': 'By store', 'VARIANT': 'By variant'},
+            ),
+            // Uncosted stock is called out rather than folded into the total:
+            // valuing it at zero would quietly understate the holding, which is
+            // the one number this report exists to get right.
+            if (totalUnvalued > 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                child: Row(children: [
+                  Icon(Icons.info_outline, size: 16, color: cs.outline),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${totalUnvalued.toStringAsFixed(0)} units carry no cost and are '
+                      'excluded from the value below, not counted as zero.',
+                      style: TextStyle(color: cs.outline, fontSize: 13),
+                    ),
+                  ),
+                ]),
+              ),
+            const SizedBox(height: 8),
+            if (rows.isEmpty)
+              const Expanded(child: Center(child: Text('No stock to value.')))
+            else
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Card(
+                    child: DataTable(
+                      headingRowColor:
+                          WidgetStatePropertyAll(cs.surfaceContainerHigh),
+                      columnSpacing: 24,
+                      columns: const [
+                        DataColumn(label: Text('Group')),
+                        DataColumn(label: Text('Basis')),
+                        DataColumn(label: Text('On hand'), numeric: true),
+                        DataColumn(label: Text('Uncosted'), numeric: true),
+                        DataColumn(label: Text('Value'), numeric: true),
+                      ],
+                      rows: [
+                        ...rows.map((r) => DataRow(cells: [
+                              DataCell(Text(_short(r.groupKey), style: _idStyle)),
+                              DataCell(Text(r.method)),
+                              DataCell(Text(r.onHandQty.toStringAsFixed(0))),
+                              DataCell(Text(r.unvaluedQty.toStringAsFixed(0),
+                                  style: TextStyle(
+                                      color: r.unvaluedQty > 0
+                                          ? cs.outline
+                                          : null))),
+                              DataCell(Text(r.value.toStringAsFixed(2))),
+                            ])),
+                        DataRow(cells: [
+                          const DataCell(Text('Total',
+                              style: TextStyle(fontWeight: FontWeight.bold))),
+                          const DataCell(Text('')),
+                          const DataCell(Text('')),
+                          DataCell(Text(totalUnvalued.toStringAsFixed(0))),
+                          DataCell(Text(totalValue.toStringAsFixed(2),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold))),
+                        ]),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ShrinkageReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final range = ref.watch(reportDateRangeProvider);
+    final async = ref.watch(shrinkageReportProvider);
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading shrinkage…'),
+      error: (e, _) => ErrorView(
+        message: friendlyError(e, fallback: 'Could not load shrinkage report.'),
+        onRetry: () => ref.invalidate(shrinkageReportProvider),
+      ),
+      data: (rows) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ReportHeader(
+            title: 'Shrinkage',
+            subtitle:
+                'Stock written off and found${range.from != null ? ' · ${range.from} → ${range.to}' : ''}',
+            onRefresh: () => ref.invalidate(shrinkageReportProvider),
+            onExportCsv: rows.isEmpty
+                ? null
+                : () {
+                    final buf = StringBuffer(
+                        'groupKey,qtyWrittenOff,qtyFound,netQty,movements\n');
+                    for (final r in rows) {
+                      buf.writeln([
+                        _csvEscape(r.groupKey),
+                        r.qtyWrittenOff,
+                        r.qtyFound,
+                        r.netQty,
+                        r.movements,
+                      ].join(','));
+                    }
+                    _downloadCsv('shrinkage.csv', buf.toString());
+                  },
+          ),
+          _GroupingBar(
+            provider: shrinkageGroupingProvider,
+            options: const {
+              'REASON': 'By reason',
+              'ACTOR': 'By staff member',
+              'STORE': 'By store',
+            },
+          ),
+          const _DateRangeBar(),
+          const SizedBox(height: 12),
+          if (rows.isEmpty)
+            const Expanded(
+                child: Center(child: Text('No stock adjustments in this range.')))
+          else
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Card(
+                  child: DataTable(
+                    headingRowColor:
+                        WidgetStatePropertyAll(cs.surfaceContainerHigh),
+                    columnSpacing: 24,
+                    columns: const [
+                      DataColumn(label: Text('Group')),
+                      // Written off and found are kept apart on purpose: a store
+                      // that wrote off 100 and found 100 others is not a store
+                      // that did nothing, and a net column alone would say it was.
+                      DataColumn(label: Text('Written off'), numeric: true),
+                      DataColumn(label: Text('Found'), numeric: true),
+                      DataColumn(label: Text('Net'), numeric: true),
+                      DataColumn(label: Text('Movements'), numeric: true),
+                    ],
+                    rows: rows
+                        .map((r) => DataRow(cells: [
+                              DataCell(Text(_short(r.groupKey, 18))),
+                              DataCell(Text(r.qtyWrittenOff.toStringAsFixed(0),
+                                  style: TextStyle(
+                                      color: r.qtyWrittenOff > 0
+                                          ? cs.error
+                                          : null))),
+                              DataCell(Text(r.qtyFound.toStringAsFixed(0))),
+                              DataCell(Text(r.netQty.toStringAsFixed(0),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold))),
+                              DataCell(Text('${r.movements}')),
+                            ]))
+                        .toList(),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TaxSummaryReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final async = ref.watch(taxSummaryReportProvider);
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading tax summary…'),
+      error: (e, _) => ErrorView(
+        message: friendlyError(e, fallback: 'Could not load tax summary.'),
+        onRetry: () => ref.invalidate(taxSummaryReportProvider),
+      ),
+      data: (report) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ReportHeader(
+            title: 'Tax Summary',
+            subtitle:
+                'Reconciles to VAT return boxes 1 and 6${report.periodFrom != null ? ' · ${report.periodFrom!.split('T').first} → ${report.periodTo!.split('T').first}' : ''}',
+            onRefresh: () => ref.invalidate(taxSummaryReportProvider),
+            onExportCsv: report.rows.isEmpty
+                ? null
+                : () {
+                    final buf = StringBuffer(
+                        'groupKey,exempt,netAmount,vatAmount,grossAmount,transactions\n');
+                    for (final r in report.rows) {
+                      buf.writeln([
+                        _csvEscape(r.groupKey),
+                        r.exempt,
+                        r.netAmount,
+                        r.vatAmount,
+                        r.grossAmount,
+                        r.transactions,
+                      ].join(','));
+                    }
+                    _downloadCsv('tax-summary.csv', buf.toString());
+                  },
+          ),
+          _GroupingBar(
+            provider: taxGroupingProvider,
+            options: const {
+              'CODE': 'By rate',
+              'STORE': 'By store',
+              'MONTH': 'By month',
+            },
+          ),
+          const _DateRangeBar(),
+          // The server's own DTO notes that a mismatch here means an exempt line
+          // is carrying VAT, and that the Box 1 query drops it silently. Silent
+          // is the one thing it must not be on the screen a return is filed from.
+          if (report.boxOneDisagrees)
+            Container(
+              margin: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: cs.errorContainer,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(children: [
+                Icon(Icons.warning_amber_outlined, color: cs.onErrorContainer),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Box 1 (${report.totals.outputVat.toStringAsFixed(2)}) does not match total VAT '
+                    '(${report.totals.vatAmount.toStringAsFixed(2)}): a line marked exempt is carrying VAT. '
+                    'Check the rows below before filing.',
+                    style: TextStyle(color: cs.onErrorContainer, fontSize: 13),
+                  ),
+                ),
+              ]),
+            ),
+          const SizedBox(height: 12),
+          if (report.rows.isEmpty)
+            const Expanded(
+                child: Center(child: Text('No tax transactions in this range.')))
+          else
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Card(
+                  child: DataTable(
+                    headingRowColor:
+                        WidgetStatePropertyAll(cs.surfaceContainerHigh),
+                    columnSpacing: 24,
+                    columns: const [
+                      DataColumn(label: Text('Group')),
+                      DataColumn(label: Text('Net'), numeric: true),
+                      DataColumn(label: Text('VAT'), numeric: true),
+                      DataColumn(label: Text('Gross'), numeric: true),
+                      DataColumn(label: Text('Txns'), numeric: true),
+                    ],
+                    rows: [
+                      ...report.rows.map((r) => DataRow(cells: [
+                            DataCell(Row(children: [
+                              Text(_short(r.groupKey, 18)),
+                              if (r.exempt) ...[
+                                const SizedBox(width: 6),
+                                const Chip(
+                                  label: Text('exempt',
+                                      style: TextStyle(fontSize: 10)),
+                                  visualDensity: VisualDensity.compact,
+                                  padding: EdgeInsets.zero,
+                                ),
+                              ],
+                            ])),
+                            DataCell(Text(r.netAmount.toStringAsFixed(2))),
+                            DataCell(Text(r.vatAmount.toStringAsFixed(2))),
+                            DataCell(Text(r.grossAmount.toStringAsFixed(2))),
+                            DataCell(Text('${r.transactions}')),
+                          ])),
+                      DataRow(cells: [
+                        const DataCell(Text('Total (Box 6 / Box 1)',
+                            style: TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(report.totals.netAmount.toStringAsFixed(2),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(report.totals.outputVat.toStringAsFixed(2),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(
+                            Text(report.totals.grossAmount.toStringAsFixed(2))),
+                        DataCell(Text('${report.totals.transactions}')),
+                      ]),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }

@@ -151,12 +151,22 @@ Left-hand navigation: **Dashboard · Catalog · Inventory · Stores · Orders ·
 
 ### 4.7 Reports
 
-A sidebar (wide) / chip selector (narrow) between four read-only tables, each with a refresh button (no date-range picker or CSV export in the UI today):
+A sidebar (wide) / chip selector (narrow) between nine read-only tables, each with a refresh button and, where it has rows, a **CSV export**. Reports that cover a period carry a from/to date bar; those that group carry grouping chips.
+
+*Business-wide, from reporting-svc:*
 
 1. **On-Hand Inventory** — total units on hand per store/variant.
-2. **Sales Revenue** — orders, gross, refunded, and net revenue by currency.
-3. **Supply / Demand Netting** — on-hand + in-transit → net available, per store/variant.
-4. **Movement Statistics** — stock in / out / net per period, per store/variant.
+2. **Sales Revenue** — orders, gross, refunded, and net revenue by currency. Date range.
+3. **Sales by Day** — daily revenue buckets. Date range.
+4. **Supply / Demand Netting** — on-hand + in-transit → net available, per store/variant.
+5. **Movement Statistics** — stock in / out / net per period, per store/variant.
+
+*From the service that owns the data:*
+
+6. **Low Stock** (inventory-svc) — items below their own reorder level, worst shortfall first. Names the **signal** that bound each row (THRESHOLD / SAFETY_STOCK / REORDER_POINT), so a manager can see *why* an item is flagged and therefore what to change.
+7. **Stock Valuation** (inventory-svc) — holding value on the configured FIFO or AVERAGE basis, grouped by store or variant. Stock carrying no cost is reported **separately and excluded** from the value rather than counted as zero, which would understate the holding; the screen says so when there is any.
+8. **Shrinkage** (inventory-svc) — stock written off and found over a period, grouped by reason, staff member or store. Write-offs and finds are shown as separate columns on purpose: a store that wrote off 100 units and found 100 others is not a store that did nothing, and a net figure alone would say it was. Date range.
+9. **Tax Summary** (pricing-svc) — net / VAT / gross by rate band, store or month, reconciling to VAT return boxes 1 and 6. Exempt lines are marked, because the return counts their net in Box 6 and their VAT in no box at all. When Box 1 and total VAT disagree an exempt line is carrying VAT — the screen warns before the return is filed rather than dropping it silently. Date range (**required** here; pricing-svc rejects the call without one).
 
 ### 4.8 Customers
 
@@ -261,7 +271,7 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 - **Receipts:** generated as printable HTML opened in a new browser tab that auto-invokes the browser's print dialog (a web-first design); the POS "email receipt" action records the audit row **and** delivers a plain-text receipt via notification-svc (SMTP when `shelfj.notification.channel=email`, otherwise the APP log channel).
 - **Auditable "soft" cash/inventory actions:** POS "No sale" and cash drop/pay-in/pay-out are explicit, logged, non-sale operations distinct from a Charge — a loss-prevention/reconciliation feature.
 - **Reliability touches:** temp passwords for newly-provisioned staff accounts are shown exactly once (masked by default, explicit reveal + copy, with a "clear your clipboard" reminder); a few sensitive create actions (special orders, POS payment collection) are safe to retry without double effect; tenant deactivation is enforced end-to-end (the storefront shows a "closed" notice rather than a raw error).
-- **Reports:** sales summary and sales-by-day support date range filters and client-side CSV export; inventory reports remain whole-business snapshots.
+- **Reports:** every report with rows offers client-side CSV export; period reports carry a date bar and grouped reports carry grouping chips. One format trap is handled in the client rather than left to the caller: the date pickers speak `yyyy-MM-dd`, but the inventory and pricing report endpoints parse `from`/`to` with `Instant.parse` and reject a bare date, so the client widens a day to `T00:00:00Z`/`T23:59:59Z` — `to` covering the *end* of its day, or a report run "to today" would silently exclude today.
 
 ### 7.1 Material 3 conventions
 
@@ -290,7 +300,7 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 | `/admin/orders` | Orders (all channels) + Return/Refund + Collect Payment |
 | `/admin/procurement` | Procurement (Purchase Orders / Suppliers tabs) |
 | `/admin/pricing` | Pricing (Price Lists / Promotions / VAT Rates tabs) |
-| `/admin/reports` | Reports (On-Hand / Sales / Supply-Demand / Movements) |
+| `/admin/reports` | Reports (On-Hand / Sales / Sales by Day / Supply-Demand / Movements / Low Stock / Valuation / Shrinkage / Tax Summary) |
 | `/admin/customers` | Customers + loyalty/credit + addresses |
 | `/admin/sales` | Sales tools (Gift Cards / Layaways / Special Orders tabs) |
 | `/admin/staff` | Staff |

@@ -1203,3 +1203,263 @@ final deliveryAreasProvider =
   final data = (resp.data['data'] as List?) ?? [];
   return data.map((e) => DeliveryArea.fromJson(e as Map<String, dynamic>)).toList();
 });
+
+// ── Shrinkage · valuation · low stock · tax summary ──────────────────────────
+//
+// These four reports were built server-side and had no client at all: the admin
+// app called reports/inventory and reports/sales and nothing else, so an
+// endpoint a developer could curl was being counted as a report a store manager
+// had. Everything below is the missing half.
+
+/// The date pickers speak `yyyy-MM-dd`. inventory-svc and pricing-svc parse the
+/// `from`/`to` params on these reports with `Instant.parse`, which rejects a bare
+/// date outright — the exact mismatch SJ-D9 was about, on the other side of the
+/// wire. So widen a day to the instant that opens it.
+String? _dayStartInstant(String? day) =>
+    (day == null || day.isEmpty) ? null : '${day}T00:00:00Z';
+
+/// …and `to` to the instant that *closes* its day. Sending `T00:00:00Z` would
+/// make "to today" exclude everything that happened today, which reads as a
+/// report that silently loses the most recent day.
+String? _dayEndInstant(String? day) =>
+    (day == null || day.isEmpty) ? null : '${day}T23:59:59Z';
+
+/// One line of the shrinkage report. [groupKey] is a reason code, an actor id or
+/// a store id depending on the grouping; `UNSPECIFIED` means an adjustment made
+/// with no reason code and `SYSTEM` one with no human actor.
+class ShrinkageRow {
+  final String groupKey;
+  final double qtyWrittenOff;
+  final double qtyFound;
+  final double netQty;
+  final int movements;
+
+  const ShrinkageRow({
+    required this.groupKey,
+    required this.qtyWrittenOff,
+    required this.qtyFound,
+    required this.netQty,
+    required this.movements,
+  });
+
+  factory ShrinkageRow.fromJson(Map<String, dynamic> j) => ShrinkageRow(
+        groupKey: j['groupKey'] as String? ?? '-',
+        qtyWrittenOff: (j['qtyWrittenOff'] as num?)?.toDouble() ?? 0,
+        qtyFound: (j['qtyFound'] as num?)?.toDouble() ?? 0,
+        netQty: (j['netQty'] as num?)?.toDouble() ?? 0,
+        movements: (j['movements'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// REASON (what stock is lost to) · ACTOR (who is writing it off) · STORE.
+final shrinkageGroupingProvider = StateProvider<String>((ref) => 'REASON');
+
+final shrinkageReportProvider =
+    FutureProvider.autoDispose<List<ShrinkageRow>>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final params = <String, dynamic>{'groupBy': ref.watch(shrinkageGroupingProvider)};
+  final from = _dayStartInstant(range.from);
+  final to = _dayEndInstant(range.to);
+  if (from != null) params['from'] = from;
+  if (to != null) params['to'] = to;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.inventory}/admin/inventory/reports/shrinkage',
+        queryParameters: params,
+      );
+  final rows = (resp.data['data'] as List?) ?? [];
+  return rows
+      .map((e) => ShrinkageRow.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+/// One line of the stock valuation report. [unvaluedQty] is stock carrying no
+/// cost — reported separately rather than valued at zero, which would understate
+/// the holding.
+class ValuationRow {
+  final String groupKey;
+  final String method;
+  final double onHandQty;
+  final double unvaluedQty;
+  final double value;
+
+  const ValuationRow({
+    required this.groupKey,
+    required this.method,
+    required this.onHandQty,
+    required this.unvaluedQty,
+    required this.value,
+  });
+
+  factory ValuationRow.fromJson(Map<String, dynamic> j) => ValuationRow(
+        groupKey: j['groupKey'] as String? ?? '-',
+        method: j['method'] as String? ?? '-',
+        onHandQty: (j['onHandQty'] as num?)?.toDouble() ?? 0,
+        unvaluedQty: (j['unvaluedQty'] as num?)?.toDouble() ?? 0,
+        value: (j['value'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// STORE ("what is our stock worth") before VARIANT (line level).
+final valuationGroupingProvider = StateProvider<String>((ref) => 'STORE');
+
+final valuationReportProvider =
+    FutureProvider.autoDispose<List<ValuationRow>>((ref) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+    '/${ApiConstants.inventory}/admin/inventory/reports/valuation',
+    queryParameters: {'groupBy': ref.watch(valuationGroupingProvider), 'limit': 200},
+  );
+  final rows = (resp.data['data'] as List?) ?? [];
+  return rows
+      .map((e) => ValuationRow.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+/// One line of the low-stock report. [signal] names which configured level bound
+/// this row — THRESHOLD, SAFETY_STOCK or REORDER_POINT — so a manager can see
+/// *why* an item is flagged, not just that it is.
+class LowStockRow {
+  final String storeId;
+  final String variantId;
+  final String signal;
+  final double reorderLevel;
+  final double availableQty;
+  final double shortfall;
+
+  const LowStockRow({
+    required this.storeId,
+    required this.variantId,
+    required this.signal,
+    required this.reorderLevel,
+    required this.availableQty,
+    required this.shortfall,
+  });
+
+  factory LowStockRow.fromJson(Map<String, dynamic> j) => LowStockRow(
+        storeId: j['storeId'] as String? ?? '-',
+        variantId: j['variantId'] as String? ?? '-',
+        signal: j['signal'] as String? ?? '-',
+        reorderLevel: (j['reorderLevel'] as num?)?.toDouble() ?? 0,
+        availableQty: (j['availableQty'] as num?)?.toDouble() ?? 0,
+        shortfall: (j['shortfall'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+final lowStockReportProvider =
+    FutureProvider.autoDispose<List<LowStockRow>>((ref) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.inventory}/admin/inventory/reports/low-stock',
+        queryParameters: {'limit': 200},
+      );
+  final rows = (resp.data['data'] as List?) ?? [];
+  return rows
+      .map((e) => LowStockRow.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+/// One line of the tax summary. Exempt lines are kept separate because the VAT
+/// return counts their net in Box 6 but their VAT in no box at all.
+class TaxSummaryRow {
+  final String groupKey;
+  final bool exempt;
+  final double netAmount;
+  final double vatAmount;
+  final double grossAmount;
+  final int transactions;
+
+  const TaxSummaryRow({
+    required this.groupKey,
+    required this.exempt,
+    required this.netAmount,
+    required this.vatAmount,
+    required this.grossAmount,
+    required this.transactions,
+  });
+
+  factory TaxSummaryRow.fromJson(Map<String, dynamic> j) => TaxSummaryRow(
+        groupKey: j['groupKey'] as String? ?? '-',
+        exempt: j['exempt'] as bool? ?? false,
+        netAmount: (j['netAmount'] as num?)?.toDouble() ?? 0,
+        vatAmount: (j['vatAmount'] as num?)?.toDouble() ?? 0,
+        grossAmount: (j['grossAmount'] as num?)?.toDouble() ?? 0,
+        transactions: (j['transactions'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// [outputVat] is VAT on taxable lines only and ties to VAT return Box 1;
+/// [vatAmount] includes exempt lines. The two differing means a line marked
+/// exempt is carrying VAT, which is a data fault worth surfacing rather than
+/// hiding — see [TaxSummaryReport.boxOneDisagrees].
+class TaxSummaryTotals {
+  final double netAmount;
+  final double vatAmount;
+  final double outputVat;
+  final double grossAmount;
+  final int transactions;
+
+  const TaxSummaryTotals({
+    required this.netAmount,
+    required this.vatAmount,
+    required this.outputVat,
+    required this.grossAmount,
+    required this.transactions,
+  });
+
+  factory TaxSummaryTotals.fromJson(Map<String, dynamic> j) => TaxSummaryTotals(
+        netAmount: (j['netAmount'] as num?)?.toDouble() ?? 0,
+        vatAmount: (j['vatAmount'] as num?)?.toDouble() ?? 0,
+        outputVat: (j['outputVat'] as num?)?.toDouble() ?? 0,
+        grossAmount: (j['grossAmount'] as num?)?.toDouble() ?? 0,
+        transactions: (j['transactions'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class TaxSummaryReport {
+  final List<TaxSummaryRow> rows;
+  final TaxSummaryTotals totals;
+  final String? periodFrom;
+  final String? periodTo;
+
+  const TaxSummaryReport({
+    required this.rows,
+    required this.totals,
+    this.periodFrom,
+    this.periodTo,
+  });
+
+  /// True when Box 1 and total VAT disagree — an exempt line is carrying VAT.
+  /// The server's own DTO calls this out as "a data fault the Box 1 query drops
+  /// silently"; silent is exactly what it must not be on a screen someone files
+  /// a return from.
+  bool get boxOneDisagrees =>
+      (totals.vatAmount - totals.outputVat).abs() > 0.005;
+
+  factory TaxSummaryReport.fromJson(Map<String, dynamic> j) => TaxSummaryReport(
+        rows: ((j['rows'] as List?) ?? [])
+            .map((e) => TaxSummaryRow.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        totals: TaxSummaryTotals.fromJson(
+            Map<String, dynamic>.from((j['totals'] as Map?) ?? const {})),
+        periodFrom: j['periodFrom'] as String?,
+        periodTo: j['periodTo'] as String?,
+      );
+}
+
+/// CODE (by VAT rate band) · STORE · MONTH.
+final taxGroupingProvider = StateProvider<String>((ref) => 'CODE');
+
+/// Unlike the other three, `from` and `to` are required here — pricing-svc
+/// rejects the call without them — so the date bar is not optional on this one.
+final taxSummaryReportProvider =
+    FutureProvider.autoDispose<TaxSummaryReport>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final resp = await ref.read(apiClientProvider).dio.get(
+    '/${ApiConstants.pricing}/admin/reports/tax-summary',
+    queryParameters: {
+      'from': _dayStartInstant(range.from),
+      'to': _dayEndInstant(range.to),
+      'groupBy': ref.watch(taxGroupingProvider),
+    },
+  );
+  return TaxSummaryReport.fromJson(
+      Map<String, dynamic>.from(resp.data['data'] as Map));
+});
