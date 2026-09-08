@@ -670,6 +670,70 @@ class OrderIT {
     assertThat(rIso.getStatus(), is(404));
   }
 
+  /**
+   * A POS sale captured while the till is offline is replayed later by re-sending every write in
+   * the sale. Order placement and tender capture already replay on their Idempotency-Key; gift-card
+   * redemption had no key at all and simply decremented, so a replay took the money twice. Redeem
+   * is now idempotent per (card, order).
+   */
+  @Test
+  void giftCardRedeemIsIdempotentPerOrder() {
+    String gcBody =
+        post("/gift-cards", "{\"storeId\":\"" + S + "\",\"amount\":50.00}", T)
+            .readEntity(String.class);
+    String code = extractCode(gcBody);
+
+    String orderId =
+        extractId(
+            post(
+                    "/orders",
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"POS\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,\"unitPrice\":5.00}]}",
+                    T,
+                    "it-gc-replay")
+                .readEntity(String.class));
+
+    String redeem = "{\"amount\":30.00,\"orderId\":\"" + orderId + "\"}";
+    Response first = post("/gift-cards/" + code + "/redeem", redeem, T);
+    assertThat(first.getStatus(), is(200));
+    assertThat(first.readEntity(String.class), containsString("\"currentBalance\":20.0"));
+
+    // The replay must be a no-op, not a second deduction.
+    Response replay = post("/gift-cards/" + code + "/redeem", redeem, T);
+    assertThat(replay.getStatus(), is(200));
+    assertThat(replay.readEntity(String.class), containsString("\"currentBalance\":20.0"));
+
+    assertThat(
+        get("/gift-cards/" + code, T).readEntity(String.class),
+        containsString("\"currentBalance\":20.0"));
+
+    // A different order genuinely redeems again — the guard is per order, not per card.
+    String otherOrder =
+        extractId(
+            post(
+                    "/orders",
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"POS\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,\"unitPrice\":5.00}]}",
+                    T,
+                    "it-gc-replay-2")
+                .readEntity(String.class));
+    Response second =
+        post(
+            "/gift-cards/" + code + "/redeem",
+            "{\"amount\":5.00,\"orderId\":\"" + otherOrder + "\"}",
+            T);
+    assertThat(second.getStatus(), is(200));
+    assertThat(second.readEntity(String.class), containsString("\"currentBalance\":15.0"));
+  }
+
   @Test
   void voidOnlineOrderFails() {
     Response r1 =

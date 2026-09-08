@@ -787,12 +787,21 @@ public class OrderRepository extends BaseOutboxRepository {
         "reload gift card");
   }
 
+  /**
+   * Redeem gift-card value toward an order. Idempotent per (card, order): a repeat redemption for
+   * the same order returns the card unchanged rather than deducting again — the balance is money,
+   * and a retried request whose response was lost must not charge the customer twice. This is the
+   * same shape payment-svc uses to make a STORE_CREDIT tender idempotent, and it is what lets a POS
+   * sale captured offline be replayed safely. A redemption with no orderId (a manual back-office
+   * adjustment) has no natural key and is not deduplicated.
+   */
   public GiftCard redeemGiftCard(
       UUID tenantId, String code, BigDecimal amount, UUID orderId, String reference) {
     return inTx(
         c -> {
           GiftCard gc = findGiftCardByCodeInTx(c, tenantId, code);
           if (gc == null) throw ApiException.notFound("GIFT_CARD_NOT_FOUND", "gift card not found");
+          if (orderId != null && hasRedeemedForOrderTx(c, tenantId, gc.id(), orderId)) return gc;
           if (!GiftCard.STATUS_ACTIVE.equals(gc.status()))
             throw ApiException.conflict("GIFT_CARD_NOT_ACTIVE", "gift card is not active");
           if (gc.currentBalance().compareTo(amount) < 0)
@@ -830,6 +839,23 @@ public class OrderRepository extends BaseOutboxRepository {
           return findGiftCardByCodeInTx(c, tenantId, code);
         },
         "redeem gift card");
+  }
+
+  /** True when this card has already been redeemed against this order (replay guard). */
+  private static boolean hasRedeemedForOrderTx(
+      java.sql.Connection c, UUID tenantId, UUID giftCardId, UUID orderId) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT 1 FROM gift_card_transactions"
+                + " WHERE tenant_id=? AND gift_card_id=? AND order_id=? AND tx_type=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, giftCardId);
+      ps.setObject(3, orderId);
+      ps.setString(4, GiftCardTransaction.TX_REDEEM);
+      try (var rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
   }
 
   public List<GiftCardTransaction> findGiftCardTransactions(UUID tenantId, UUID giftCardId) {
