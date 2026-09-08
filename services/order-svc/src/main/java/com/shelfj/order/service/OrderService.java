@@ -16,6 +16,8 @@ import com.shelfj.order.domain.Domain.PosLogEntry;
 import com.shelfj.order.domain.Domain.PosVoidLog;
 import com.shelfj.order.domain.Domain.Return;
 import com.shelfj.order.domain.Domain.ReturnItem;
+import com.shelfj.order.domain.Domain.SalesByHourRow;
+import com.shelfj.order.domain.Domain.SalesByStaffRow;
 import com.shelfj.order.domain.Domain.SpecialOrder;
 import com.shelfj.order.domain.Domain.SpecialOrderItem;
 import com.shelfj.order.dto.Dtos.AddDepositRequest;
@@ -37,8 +39,12 @@ import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.security.SecureRandom;
+import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,6 +59,7 @@ public class OrderService {
   private static final System.Logger LOG = System.getLogger(OrderService.class.getName());
 
   @Inject OrderRepository repo;
+  @Inject com.shelfj.order.repo.SalesAnalyticsRepository salesAnalyticsRepo;
   @Inject TenantStatusRepository tenantStatusRepo;
   @Inject StoreStatusRepository storeStatusRepo;
   @Inject com.shelfj.order.config.ServiceConfig config;
@@ -1132,6 +1139,109 @@ public class OrderService {
   /** Null actor or store ids are bucketed, never dropped. */
   private static String key(Object raw) {
     return raw == null ? "UNATTRIBUTED" : raw.toString();
+  }
+
+  // ---- sales by hour / by staff ----
+
+  /**
+   * Takings bucketed by hour of the trading day, on the clock of a named timezone.
+   *
+   * <p>The timezone is validated here rather than in the resource because getting it wrong is a
+   * domain error, not a parsing one: {@code Europe/Londn} parses fine as a string and would reach
+   * Postgres, which rejects it with an error that surfaces as a 500. {@link ZoneId#of} knows the
+   * same tz database Postgres does, so validating with it turns that into the 400 it always was.
+   *
+   * @param tz an IANA zone name such as {@code Europe/London}; defaults to UTC when absent
+   */
+  public List<SalesByHourRow> salesByHour(
+      UUID tenantId, UUID storeId, String channel, Instant from, Instant to, String tz) {
+    requireOrderedPeriod(from, to);
+    String normalisedChannel = normaliseChannel(channel);
+    return salesAnalyticsRepo
+        .salesByHour(tenantId, storeId, normalisedChannel, from, to, zone(tz))
+        .stream()
+        .map(
+            r ->
+                new SalesByHourRow(
+                    r.hourOfDay(),
+                    r.orders(),
+                    r.grossAmount(),
+                    r.discountAmount(),
+                    // An hour with no orders produces no row, so the divisor is never zero.
+                    r.grossAmount()
+                        .divide(BigDecimal.valueOf(r.orders()), 2, RoundingMode.HALF_UP)))
+        .toList();
+  }
+
+  /**
+   * Takings by the cashier who rang them up, from the POS transaction journal.
+   *
+   * <p>Online orders have no cashier and are therefore not here at all. That is a property of the
+   * data rather than a filter — the journal only ever covers the till.
+   */
+  public List<SalesByStaffRow> salesByStaff(
+      UUID tenantId, UUID storeId, Instant from, Instant to, int limit) {
+    requireOrderedPeriod(from, to);
+    return salesAnalyticsRepo.salesByStaff(tenantId, storeId, from, to, limit).stream()
+        .map(OrderService::withStaffRatios)
+        .toList();
+  }
+
+  /**
+   * Average basket and discount rate for one cashier.
+   *
+   * <p>The discount rate divides by what the sales would have been worth undiscounted, not by what
+   * they fetched: discounting £50 off £100 is half the ticket given away, and dividing by the £50
+   * that was actually taken would call it 100%.
+   */
+  private static SalesByStaffRow withStaffRatios(SalesByStaffRow r) {
+    BigDecimal basket =
+        r.sales() == 0
+            ? null
+            : r.grossAmount().divide(BigDecimal.valueOf(r.sales()), 2, RoundingMode.HALF_UP);
+    BigDecimal undiscounted = r.grossAmount().add(r.discountAmount());
+    BigDecimal rate =
+        undiscounted.signum() <= 0
+            ? null
+            : r.discountAmount()
+                .multiply(BigDecimal.valueOf(100))
+                .divide(undiscounted, 1, RoundingMode.HALF_UP);
+    return new SalesByStaffRow(
+        r.groupKey(), r.sales(), r.grossAmount(), r.discountAmount(), basket, rate);
+  }
+
+  private static ZoneId zone(String tz) {
+    if (tz == null || tz.isBlank()) return ZoneOffset.UTC;
+    try {
+      return ZoneId.of(tz.trim());
+    } catch (DateTimeException e) {
+      // Cause preserved, as the grouping parsers do: what ZoneId disliked about the string is
+      // the only thing that distinguishes a typo from an offset in a form it will not take.
+      throw new ApiException(
+          400,
+          "ORDER_INVALID_TIMEZONE",
+          "tz must be an IANA zone name such as Europe/London, or an ISO offset such as"
+              + " +05:30 — got: "
+              + tz,
+          List.of(),
+          e);
+    }
+  }
+
+  /** Only the two channels exist; anything else is a caller error, not an empty result. */
+  private static String normaliseChannel(String channel) {
+    if (channel == null || channel.isBlank()) return null;
+    String c = channel.trim().toUpperCase(Locale.ROOT);
+    if (!Order.CHANNEL_ONLINE.equals(c) && !Order.CHANNEL_POS.equals(c))
+      throw ApiException.badRequest(
+          "ORDER_INVALID_CHANNEL", "channel must be ONLINE or POS — got: " + channel);
+    return c;
+  }
+
+  private static void requireOrderedPeriod(Instant from, Instant to) {
+    if (from != null && to != null && !from.isBefore(to))
+      throw ApiException.badRequest(
+          "ORDER_INVALID_PERIOD", "from must be before to — got " + from + " and " + to);
   }
 
   /** One page of POSLog entries plus the opaque cursor for the next page (null when exhausted). */

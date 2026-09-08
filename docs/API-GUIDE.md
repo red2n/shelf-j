@@ -243,6 +243,14 @@ Called by order-svc during checkout to hold stock before it's actually deducted.
 - `POST /admin/inventory/picking-rule-assignments` / `GET` / `DELETE .../{id}` — assign/list/remove a picking rule's scope (store/category/variant).
 - `GET /admin/inventory/picking-rules/resolve` — resolve which picking rule/zone order applies to a given store + variant.
 
+### Reports (`/admin/inventory/reports`)
+These are answered from inventory-svc's own tables rather than from reporting-svc, whose projections carry neither the reason code, the actor, nor any cost. See [reporting-api-gap-analysis.md](reporting-api-gap-analysis.md) for why each landed where it did.
+- `GET /admin/inventory/reports/low-stock?storeId&limit` — items below their **own** reorder level, live, with `signal` naming which of threshold / safety stock / reorder point bound the row. Items that have run out entirely are included: they have no batch rows at all, and they are the most urgent line in the report.
+- `GET /admin/inventory/reports/valuation?storeId&groupBy=STORE|VARIANT&limit` — what the holding is worth on its configured FIFO or AVERAGE basis. Stock carrying no cost comes back as `unvaluedQty` rather than valued at zero, which would understate a balance-sheet figure.
+- `GET /admin/inventory/reports/shrinkage?storeId&from&to&groupBy=REASON|ACTOR|STORE` — write-offs over a period. Losses and finds stay on separate columns: a store that wrote off 100 units and found 100 others is not one that did nothing. `.../shrinkage/by-variant` drills a summary row down to what was actually written off.
+- `GET /admin/inventory/reports/stock-turn?from&to&storeId&groupBy=STORE|VARIANT&limit` — cost of goods sold over a window against the average value held to produce it, plus `turnoverRatio` and `daysOnHand`. **`from` and `to` are required** — a turnover ratio has no meaning without a window, and `daysOnHand` divides by its length; both take a full ISO-8601 instant, not a bare date. COGS is taken from the cost price of the batches each sale actually drew down, so a historical window is answered with the costs of the day. Two fields say when a figure should not be trusted: `historyComplete` is false when the movement ledger was purged past the window's start, making opening values a floor; `uncostedSaleQty` reports quantity sold out of batches with no cost price, excluded from COGS rather than costed at zero. `turnoverRatio` and `daysOnHand` are **null**, not zero, when there was no stock to turn.
+- `GET /admin/inventory/reports/dead-stock?storeId&asOf&groupBy=BUCKET|STORE|VARIANT&limit` — stock on hand aged into the 0-30 / 31-60 / 61-90 / 91-180 / 180+ ladder. Age runs from the last **sale** of that item at that store, not from receipt: stock that arrived two years ago and sold this morning is not dead. Where nothing has ever sold, age runs from the oldest remaining batch's arrival and `neverSold` says so. `asOf` pins the instant ages are measured from, so a re-run against the same date gives the same answer.
+
 ### Public Storefront Availability (`/inventory/availability`)
 - `GET /inventory/availability` — public in-stock (yes/no) flag per variant for a store; no quantities are ever exposed.
 
@@ -286,6 +294,8 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `POST /orders` — place a new order (POS or ONLINE channel); requires an `Idempotency-Key`.
 - `POST /pos/log/orders/{orderId}` — journal a completed POS sale to the transaction log. **Staff-reachable** (CASHIER/MANAGER/OWNER) and idempotent on the order, so a retry or a replayed offline sale returns the existing entry. This write used to sit under `/admin/pos-log`, which is management-gated — the cashier who took the sale could not journal it, so nothing ever did and the table was empty for the life of the product. The read side stays at `GET /admin/pos-log`.
 - `GET /admin/reports/exceptions?from&to&storeId&groupBy=ACTOR|STORE` — staff exception report: discounts, voids and no-sale drawer opens per staff member or store, with journalled sales as the denominator. Check `journalCoverage` before reading any rate; when false, nothing journalled a sale in the period and the counts have nothing to divide by.
+- `GET /admin/reports/sales-by-hour?from&to&storeId&channel&tz` — takings bucketed by hour of the trading day, so a manager can staff to the actual peak. `tz` takes an IANA zone name (`Europe/London`) or a bare ISO offset (`+05:30`); without it the hours are counted in UTC, which puts a shop outside UTC at the wrong time of day. Only CONFIRMED and FULFILLED orders count. Hours with no trade are absent rather than returned as zero.
+- `GET /admin/reports/sales-by-staff?from&to&storeId&limit` — takings per cashier with average basket and discount rate, biggest taker first. Read from the POS transaction journal, so **in-store only** — an online order has no cashier, and these totals will not reconcile to the sales summary for that reason. `UNATTRIBUTED` buckets journal entries naming nobody.
 - `GET /orders/{id}` — get an order with its line items.
 - `POST /orders/{id}/confirm` — confirm an order (e.g. once payment settles).
 - `POST /orders/{id}/cancel` — cancel an order pre-fulfilment.
@@ -337,6 +347,9 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `POST /admin/cash/till-sessions/{id}/close` — Z-report: end-of-day till close.
 - `POST /admin/cash/movements`, `GET /admin/cash/movements` — record/list pay-in / pay-out (petty cash) movements against an open till.
 - `POST /admin/cash/z-report`, `GET /admin/cash/z-report` — generate/retrieve the daily store-level Z-report reconciliation.
+
+### Tender Mix (`/admin/reports`)
+- `GET /admin/reports/tender-mix?from&to` — how the take split across payment methods: captured and refunded amounts per method, each method's share of the net, and a count of tenders that failed to capture. Refunds are subtracted **within their own method** rather than netted globally — a card sale refunded to store credit is not a zero-card day, and the split is what a merchant statement reconciles against. `shareOfNet` is null when the window's total is zero or negative, where a percentage would be misleading rather than merely odd.
 
 **Business rules**
 - Online storefront payments must be cashless (`CARD`/`UPI`/`WALLET`); cash tenders are POS-staff-only via the in-person endpoint.

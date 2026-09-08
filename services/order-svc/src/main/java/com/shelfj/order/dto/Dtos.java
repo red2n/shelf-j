@@ -478,4 +478,42 @@ public final class Dtos {
                       + " — a cashier who took a thousand sales and one who took three are not"
                       + " distinguishable.")
           boolean journalCoverage) {}
+
+  @Schema(
+      name = "SalesByHourRowResponse",
+      description = "One hour of the trading day, on the clock of the requested timezone.")
+  public record SalesByHourRowResponse(
+      @Schema(
+              description =
+                  "Hour 0-23 in the timezone the report was asked for, not UTC. Hours with no"
+                      + " trade are absent rather than zero: a row of zeroes would assert the shop"
+                      + " was open and empty.")
+          int hourOfDay,
+      @Schema(description = "How many revenue orders fell in this hour.") long orders,
+      @Schema(description = "Their total, after discount.") BigDecimal grossAmount,
+      @Schema(description = "How much was discounted away inside this hour.")
+          BigDecimal discountAmount,
+      @Schema(description = "grossAmount divided by orders.") BigDecimal averageBasket) {}
+
+  @Schema(
+      name = "SalesByStaffRowResponse",
+      description =
+          "One member of staff's takings, from the POS transaction journal. In-store only — an"
+              + " online order has no cashier.")
+  public record SalesByStaffRowResponse(
+      @Schema(
+              description =
+                  "The cashier's user id. UNATTRIBUTED covers journal entries naming nobody —"
+                      + " bucketed rather than dropped, because a sale with no cashier is a gap in"
+                      + " the audit trail.")
+          String groupKey,
+      @Schema(description = "How many sales they journalled.") long sales,
+      @Schema(description = "What those sales came to, after discount.") BigDecimal grossAmount,
+      @Schema(description = "How much they discounted away.") BigDecimal discountAmount,
+      @Schema(description = "grossAmount divided by sales.") BigDecimal averageBasket,
+      @Schema(
+              description =
+                  "Discount as a percentage of what the sales would have fetched undiscounted."
+                      + " Null when there is nothing to take a percentage of.")
+          BigDecimal discountRate) {}
 }

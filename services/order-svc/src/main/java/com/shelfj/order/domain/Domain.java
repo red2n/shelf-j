@@ -285,6 +285,50 @@ public final class Domain {
     STORE
   }
 
+  /**
+   * One hour of the trading day.
+   *
+   * <p>Hours with no trade are absent from the report rather than present as zeroes: a row of
+   * zeroes asserts the shop was open and nobody came, which is a different fact from the shop being
+   * shut, and only the caller knows which.
+   *
+   * @param hourOfDay 0-23 on the clock of the timezone the report was asked for, not UTC
+   * @param orders how many revenue orders fell in this hour
+   * @param grossAmount their total, after any discount
+   * @param discountAmount how much was discounted away inside it
+   * @param averageBasket gross divided by orders — null is impossible here, since an hour with no
+   *     orders produces no row at all
+   */
+  public record SalesByHourRow(
+      int hourOfDay,
+      long orders,
+      java.math.BigDecimal grossAmount,
+      java.math.BigDecimal discountAmount,
+      java.math.BigDecimal averageBasket) {}
+
+  /**
+   * One member of staff's takings.
+   *
+   * <p>Sourced from the POS transaction journal, so it covers in-store sales only — an online order
+   * has no cashier. {@code UNATTRIBUTED} buckets journal entries that name nobody rather than
+   * dropping them.
+   *
+   * @param groupKey the cashier's user id, or UNATTRIBUTED
+   * @param sales how many sales they journalled
+   * @param grossAmount what those sales came to
+   * @param discountAmount how much they discounted away
+   * @param averageBasket gross divided by sales
+   * @param discountRate discount as a percentage of gross plus discount — what the sale would have
+   *     been worth undiscounted. Null when there is nothing to take a percentage of.
+   */
+  public record SalesByStaffRow(
+      String groupKey,
+      long sales,
+      java.math.BigDecimal grossAmount,
+      java.math.BigDecimal discountAmount,
+      java.math.BigDecimal averageBasket,
+      java.math.BigDecimal discountRate) {}
+
   public record PosLogEntry(
       UUID id,
       UUID tenantId,

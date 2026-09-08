@@ -3,6 +3,7 @@ package com.shelfj.inventory.domain;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /** Domain records for inventory. Quantities are BigDecimal (exact). */
@@ -158,6 +159,94 @@ public final class Domain {
       BigDecimal qtyFound,
       BigDecimal netQty,
       long movements) {}
+
+  /**
+   * How the stock-turn and dead-stock reports group their rows. An enum, so no request text reaches
+   * the SQL.
+   */
+  public enum StockTurnGrouping {
+    STORE,
+    VARIANT
+  }
+
+  /**
+   * One line of the stock-turn report.
+   *
+   * <p>Cost of goods sold is taken from the movement ledger rather than from revenue: every SALE
+   * movement names the batch it drew down, and a batch's {@code cost_price} never changes after
+   * receipt, so the cost of a sale is exactly recoverable however long ago it happened.
+   *
+   * <p>Opening and closing values are reconstructed the same way — a batch's quantity at any
+   * instant is the sum of its own movements before that instant — which makes the report correct
+   * for a historical window, not only for one ending today.
+   *
+   * @param groupKey the store id or variant id this line covers
+   * @param cogs cost of the stock sold during the window
+   * @param uncostedSaleQty quantity sold out of batches carrying no cost price, and therefore
+   *     excluded from {@code cogs}; reported rather than costed at zero, which would overstate
+   *     margin and understate turns
+   * @param openingValue value of the holding at the window's start
+   * @param closingValue value of the holding at the window's end
+   * @param averageValue mean of opening and closing — the denominator of {@code turnoverRatio}
+   * @param turnoverRatio {@code cogs / averageValue}; null when there was no stock to turn, which
+   *     is not the same as turning it zero times
+   * @param daysOnHand how many days the average holding would last at this rate of sale; null
+   *     whenever {@code turnoverRatio} is
+   */
+  public record StockTurnRow(
+      String groupKey,
+      BigDecimal cogs,
+      BigDecimal uncostedSaleQty,
+      BigDecimal openingValue,
+      BigDecimal closingValue,
+      BigDecimal averageValue,
+      BigDecimal turnoverRatio,
+      BigDecimal daysOnHand) {}
+
+  /**
+   * The stock-turn report plus the one fact that decides whether its opening figures can be
+   * trusted.
+   *
+   * @param rows one line per store or variant, slowest-turning first
+   * @param historyComplete false when the movement ledger has been purged past the window's start
+   *     ({@code stock_movements_archive}), so the replay cannot see every movement that preceded it
+   *     and opening value is understated. The rows are still returned — a partial answer that says
+   *     so beats no answer — but the ratio should not be read as exact.
+   * @param windowDays length of the requested window, the numerator of {@code daysOnHand}
+   */
+  public record StockTurnReport(List<StockTurnRow> rows, boolean historyComplete, int windowDays) {}
+
+  /** How the dead-stock report groups its rows. An enum, so no request text reaches the SQL. */
+  public enum DeadStockGrouping {
+    BUCKET,
+    STORE,
+    VARIANT
+  }
+
+  /**
+   * One line of the dead-stock ageing report.
+   *
+   * <p>Age is measured from the last <em>sale</em> of that item at that store, not from receipt:
+   * stock that arrived two years ago and sold yesterday is not dead. Stock that has never sold ages
+   * from the receipt of its oldest remaining batch, which is the only date it has.
+   *
+   * @param groupKey the ageing bucket, store id or variant id this line covers
+   * @param onHandQty quantity still on hand
+   * @param value value of that quantity at batch cost
+   * @param uncostedQty how much of {@code onHandQty} carries no cost and is excluded from {@code
+   *     value}
+   * @param daysSinceLastSale days since the item last sold; for a group, the largest such age in it
+   *     — the oldest thing in the bucket is what a manager acts on
+   * @param neverSold true when nothing in this line has ever sold, so its age is measured from
+   *     receipt instead
+   */
+  public record DeadStockRow(
+      String groupKey,
+      BigDecimal onHandQty,
+      BigDecimal value,
+      BigDecimal uncostedQty,
+      Integer daysSinceLastSale,
+      boolean neverSold) {}
 
   public record Movement(
       UUID id,

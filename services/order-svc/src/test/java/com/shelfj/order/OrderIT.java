@@ -850,6 +850,173 @@ class OrderIT {
         is(200));
   }
 
+  // ── Sales by hour / by staff ───────────────────────────────────────────────
+
+  /**
+   * The timezone is the whole report. The same order, bucketed on two different clocks, has to land
+   * in two different hours — otherwise a shop outside UTC is being told its peak is at the wrong
+   * time of day, which is the one thing the report is for.
+   */
+  @Test
+  void salesByHourBucketsOnTheRequestedTimezoneNotUtc() {
+    String tenant = "51000000-0000-0000-0000-000000000001";
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":2,\"unitPrice\":15.00}]}",
+            tenant,
+            "it-hour-1");
+    assertThat(placed.getStatus(), is(201));
+    confirm(tenant, extractId(placed.readEntity(String.class)));
+
+    int utcHour = hourOf(salesByHour(tenant, "UTC"));
+    // Asia/Dubai is UTC+4 all year and never observes DST, so the shift is exactly four hours
+    // whenever this test happens to run. A half-hour zone like Asia/Kolkata would have been the
+    // more interesting case and a worse assertion: whether its hour lands +5 or +6 depends on
+    // the minute the test started. Modulo 24 because the day can roll over.
+    int dubaiHour = hourOf(salesByHour(tenant, "Asia/Dubai"));
+    assertThat(dubaiHour, is((utcHour + 4) % 24));
+
+    // The admin app cannot read the browser's IANA zone name, so it sends a fixed offset. The
+    // form matters and the trap is silent: Postgres reads "UTC+04:00" under the POSIX
+    // convention, where the sign is INVERTED, while Java's ZoneId.of accepts it meaning the
+    // opposite — so that spelling would validate and then bucket every hour eight hours out.
+    // "+04:00" is an ISO offset to both. This pins that the form the client sends agrees with a
+    // named zone at the same offset.
+    assertThat(hourOf(salesByHour(tenant, "+04:00")), is(dubaiHour));
+
+    // 2 x 15.00 in one order: the basket average is the order value, not the line value.
+    String body = salesByHour(tenant, "UTC");
+    assertThat(body, containsString("\"orders\":1"));
+    assertThat(body, containsString("\"averageBasket\":30.00"));
+
+    // An unparseable zone is the caller's error, not a 500 from Postgres rejecting it.
+    Response bad = getQuery("/admin/reports/sales-by-hour", tenant, "tz", "Europe/Londn");
+    assertThat(bad.getStatus(), is(400));
+    assertThat(bad.readEntity(String.class), containsString("ORDER_INVALID_TIMEZONE"));
+
+    Response badChannel = getQuery("/admin/reports/sales-by-hour", tenant, "channel", "CARRIER");
+    assertThat(badChannel.getStatus(), is(400));
+    assertThat(badChannel.readEntity(String.class), containsString("ORDER_INVALID_CHANNEL"));
+  }
+
+  /**
+   * Only money that was actually taken counts. A PENDING order has not been paid for and a
+   * cancelled one has been unmade — including either would put a trading peak where none happened.
+   */
+  @Test
+  void salesByHourCountsOnlyRevenueOrders() {
+    String tenant = "51000000-0000-0000-0000-000000000002";
+    // Placed and left PENDING: no money has changed hands.
+    Response pending =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":99.00}]}",
+            tenant,
+            "it-hour-2");
+    assertThat(pending.getStatus(), is(201));
+
+    assertThat(salesByHour(tenant, "UTC"), not(containsString("\"orders\"")));
+
+    // Confirming the same order makes it revenue, and now it counts.
+    confirm(tenant, extractId(pending.readEntity(String.class)));
+    assertThat(salesByHour(tenant, "UTC"), containsString("\"grossAmount\":99.00"));
+  }
+
+  /**
+   * Takings per cashier come from the POS journal, which is the only place that knows who served
+   * whom. A cashier who journalled nothing is absent rather than zero, and the discount rate is a
+   * share of the undiscounted ticket, not of what was left after the discount.
+   */
+  @Test
+  void salesByStaffAttributesTakingsToTheCashierWhoJournalledThem() {
+    String tenant = "51000000-0000-0000-0000-000000000003";
+    String cashier = "aaaaaaaa-0000-0000-0000-0000000000b1";
+
+    // 20.00 ticket with 5.00 off: 15.00 taken, 25% of the ticket given away.
+    String orderId =
+        extractId(
+            postAs(
+                    "/orders",
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"POS\","
+                        + "\"discountAmount\":5.00,\"discountReason\":\"damaged box\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,\"unitPrice\":20.00}]}",
+                    tenant,
+                    cashier,
+                    "MANAGER",
+                    "it-staff-1")
+                .readEntity(String.class));
+    assertThat(
+        postAs("/pos/log/orders/" + orderId, "{}", tenant, cashier, "CASHIER", null).getStatus(),
+        is(201));
+
+    String body = get("/admin/reports/sales-by-staff", tenant).readEntity(String.class);
+    assertThat(body, containsString(cashier));
+    assertThat(body, containsString("\"sales\":1"));
+    assertThat(body, containsString("\"grossAmount\":15.00"));
+    assertThat(body, containsString("\"discountAmount\":5.00"));
+    assertThat(body, containsString("\"averageBasket\":15.00"));
+    // 5 of the 20 the ticket would have fetched: 25.0%, not 33.3% of the 15 taken.
+    assertThat(body, containsString("\"discountRate\":25.0"));
+
+    // Another tenant's takings are never in this one's report.
+    assertThat(
+        get("/admin/reports/sales-by-staff", "51000000-0000-0000-0000-000000000004")
+            .readEntity(String.class),
+        not(containsString(cashier)));
+  }
+
+  /** A backwards window is rejected before either query runs, on both endpoints. */
+  @Test
+  void salesReportsRejectABackwardsWindow() {
+    for (String path :
+        new String[] {"/admin/reports/sales-by-hour", "/admin/reports/sales-by-staff"}) {
+      Response r =
+          target
+              .path(path)
+              .queryParam("from", "2026-02-01T00:00:00Z")
+              .queryParam("to", "2026-01-01T00:00:00Z")
+              .request()
+              .header("X-Tenant-Id", T)
+              .header("X-Roles", "OWNER")
+              .get();
+      assertThat(r.getStatus(), is(400));
+      assertThat(r.readEntity(String.class), containsString("ORDER_INVALID_PERIOD"));
+    }
+  }
+
+  /** Move a placed order to CONFIRMED, which is what makes it revenue. */
+  private void confirm(String tenant, String orderId) {
+    assertThat(post("/orders/" + orderId + "/confirm", "{}", tenant).getStatus(), is(200));
+  }
+
+  private String salesByHour(String tenant, String tz) {
+    return getQuery("/admin/reports/sales-by-hour", tenant, "tz", tz).readEntity(String.class);
+  }
+
+  /** The single hourOfDay in a one-row sales-by-hour response. */
+  private static int hourOf(String json) {
+    String key = "\"hourOfDay\":";
+    int i = json.indexOf(key);
+    if (i < 0) throw new AssertionError("no hourOfDay in " + json);
+    int start = i + key.length();
+    int end = start;
+    while (end < json.length() && ",}]".indexOf(json.charAt(end)) < 0) end++;
+    return Integer.parseInt(json.substring(start, end).trim());
+  }
+
   // ── Staff exception report ─────────────────────────────────────────────────
 
   /**

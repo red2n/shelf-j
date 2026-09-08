@@ -1542,3 +1542,313 @@ final exceptionReportProvider =
   return ExceptionReport.fromJson(
       Map<String, dynamic>.from(resp.data['data'] as Map));
 });
+
+// ── Stock turn ───────────────────────────────────────────────────────────────
+
+/// One line of the stock-turn report. [turnoverRatio] and [daysOnHand] are null
+/// when the group held nothing to turn — which is not the same as turning it
+/// zero times, so the screen shows a dash rather than a 0.
+class StockTurnRow {
+  final String groupKey;
+  final double cogs;
+  final double uncostedSaleQty;
+  final double openingValue;
+  final double closingValue;
+  final double averageValue;
+  final double? turnoverRatio;
+  final double? daysOnHand;
+
+  const StockTurnRow({
+    required this.groupKey,
+    required this.cogs,
+    required this.uncostedSaleQty,
+    required this.openingValue,
+    required this.closingValue,
+    required this.averageValue,
+    this.turnoverRatio,
+    this.daysOnHand,
+  });
+
+  factory StockTurnRow.fromJson(Map<String, dynamic> j) => StockTurnRow(
+        groupKey: j['groupKey'] as String? ?? '-',
+        cogs: (j['cogs'] as num?)?.toDouble() ?? 0,
+        uncostedSaleQty: (j['uncostedSaleQty'] as num?)?.toDouble() ?? 0,
+        openingValue: (j['openingValue'] as num?)?.toDouble() ?? 0,
+        closingValue: (j['closingValue'] as num?)?.toDouble() ?? 0,
+        averageValue: (j['averageValue'] as num?)?.toDouble() ?? 0,
+        turnoverRatio: (j['turnoverRatio'] as num?)?.toDouble(),
+        daysOnHand: (j['daysOnHand'] as num?)?.toDouble(),
+      );
+}
+
+class StockTurnReport {
+  final List<StockTurnRow> rows;
+
+  /// False when the movement ledger was purged past the start of the window, so
+  /// every opening value is a floor rather than a figure. The screen says so.
+  final bool historyComplete;
+  final int windowDays;
+
+  const StockTurnReport({
+    required this.rows,
+    required this.historyComplete,
+    required this.windowDays,
+  });
+
+  factory StockTurnReport.fromJson(Map<String, dynamic> j) => StockTurnReport(
+        rows: ((j['rows'] as List?) ?? [])
+            .map((e) => StockTurnRow.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        historyComplete: j['historyComplete'] as bool? ?? true,
+        windowDays: (j['windowDays'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// STORE (compare sites) · VARIANT (find the slow lines).
+final stockTurnGroupingProvider = StateProvider<String>((ref) => 'STORE');
+
+/// Stock turn. Unlike the other period reports, from/to are REQUIRED by the
+/// endpoint — a turnover ratio has no meaning without a window and daysOnHand
+/// divides by its length — so the date range falls back to the provider default
+/// rather than being omitted.
+final stockTurnReportProvider =
+    FutureProvider.autoDispose<StockTurnReport>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final resp = await ref.read(apiClientProvider).dio.get(
+    '/${ApiConstants.inventory}/admin/inventory/reports/stock-turn',
+    queryParameters: {
+      'from': _dayStartInstant(range.from),
+      'to': _dayEndInstant(range.to),
+      'groupBy': ref.watch(stockTurnGroupingProvider),
+    },
+  );
+  return StockTurnReport.fromJson(
+      Map<String, dynamic>.from(resp.data['data'] as Map));
+});
+
+// ── Dead stock ───────────────────────────────────────────────────────────────
+
+/// One line of the dead-stock ageing report. [neverSold] means the age is
+/// measured from receipt because the line has never sold at all.
+class DeadStockRow {
+  final String groupKey;
+  final double onHandQty;
+  final double value;
+  final double uncostedQty;
+  final int? daysSinceLastSale;
+  final bool neverSold;
+
+  const DeadStockRow({
+    required this.groupKey,
+    required this.onHandQty,
+    required this.value,
+    required this.uncostedQty,
+    this.daysSinceLastSale,
+    required this.neverSold,
+  });
+
+  factory DeadStockRow.fromJson(Map<String, dynamic> j) => DeadStockRow(
+        groupKey: j['groupKey'] as String? ?? '-',
+        onHandQty: (j['onHandQty'] as num?)?.toDouble() ?? 0,
+        value: (j['value'] as num?)?.toDouble() ?? 0,
+        uncostedQty: (j['uncostedQty'] as num?)?.toDouble() ?? 0,
+        daysSinceLastSale: (j['daysSinceLastSale'] as num?)?.toInt(),
+        neverSold: j['neverSold'] as bool? ?? false,
+      );
+}
+
+/// BUCKET (the ageing ladder) · STORE · VARIANT.
+final deadStockGroupingProvider = StateProvider<String>((ref) => 'BUCKET');
+
+/// Dead stock takes no date range — it is a question about now, not a period.
+final deadStockReportProvider =
+    FutureProvider.autoDispose<List<DeadStockRow>>((ref) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+    '/${ApiConstants.inventory}/admin/inventory/reports/dead-stock',
+    queryParameters: {'groupBy': ref.watch(deadStockGroupingProvider)},
+  );
+  final rows = (resp.data['data'] as List?) ?? [];
+  return rows
+      .map((e) => DeadStockRow.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+// ── Tender mix ───────────────────────────────────────────────────────────────
+
+/// One payment method's share of the take. [shareOfNet] is null when the
+/// window's total is zero or negative, where a percentage means nothing.
+class TenderMixRow {
+  final String method;
+  final double capturedAmount;
+  final int capturedCount;
+  final double refundedAmount;
+  final int refundedCount;
+  final int failedCount;
+  final double netAmount;
+  final double? shareOfNet;
+
+  const TenderMixRow({
+    required this.method,
+    required this.capturedAmount,
+    required this.capturedCount,
+    required this.refundedAmount,
+    required this.refundedCount,
+    required this.failedCount,
+    required this.netAmount,
+    this.shareOfNet,
+  });
+
+  factory TenderMixRow.fromJson(Map<String, dynamic> j) => TenderMixRow(
+        method: j['method'] as String? ?? '-',
+        capturedAmount: (j['capturedAmount'] as num?)?.toDouble() ?? 0,
+        capturedCount: (j['capturedCount'] as num?)?.toInt() ?? 0,
+        refundedAmount: (j['refundedAmount'] as num?)?.toDouble() ?? 0,
+        refundedCount: (j['refundedCount'] as num?)?.toInt() ?? 0,
+        failedCount: (j['failedCount'] as num?)?.toInt() ?? 0,
+        netAmount: (j['netAmount'] as num?)?.toDouble() ?? 0,
+        shareOfNet: (j['shareOfNet'] as num?)?.toDouble(),
+      );
+}
+
+final tenderMixReportProvider =
+    FutureProvider.autoDispose<List<TenderMixRow>>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final params = <String, dynamic>{};
+  final from = _dayStartInstant(range.from);
+  final to = _dayEndInstant(range.to);
+  if (from != null) params['from'] = from;
+  if (to != null) params['to'] = to;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.payment}/admin/reports/tender-mix',
+        queryParameters: params,
+      );
+  final rows = (resp.data['data'] as List?) ?? [];
+  return rows
+      .map((e) => TenderMixRow.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+// ── Sales by hour ────────────────────────────────────────────────────────────
+
+/// One hour of the trading day, on the clock of the timezone asked for.
+class SalesByHourRow {
+  final int hourOfDay;
+  final int orders;
+  final double grossAmount;
+  final double discountAmount;
+  final double averageBasket;
+
+  const SalesByHourRow({
+    required this.hourOfDay,
+    required this.orders,
+    required this.grossAmount,
+    required this.discountAmount,
+    required this.averageBasket,
+  });
+
+  factory SalesByHourRow.fromJson(Map<String, dynamic> j) => SalesByHourRow(
+        hourOfDay: (j['hourOfDay'] as num?)?.toInt() ?? 0,
+        orders: (j['orders'] as num?)?.toInt() ?? 0,
+        grossAmount: (j['grossAmount'] as num?)?.toDouble() ?? 0,
+        discountAmount: (j['discountAmount'] as num?)?.toDouble() ?? 0,
+        averageBasket: (j['averageBasket'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// Empty string means both channels; otherwise ONLINE or POS.
+final salesByHourChannelProvider = StateProvider<String>((ref) => '');
+
+final salesByHourReportProvider =
+    FutureProvider.autoDispose<List<SalesByHourRow>>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final channel = ref.watch(salesByHourChannelProvider);
+  final params = <String, dynamic>{
+    // The browser's own zone, so "when are we busy" is answered on the clock
+    // the manager reads. Without it the server buckets in UTC and a shop
+    // outside it is told its peak is at the wrong time of day.
+    'tz': _localZoneId(),
+  };
+  final from = _dayStartInstant(range.from);
+  final to = _dayEndInstant(range.to);
+  if (from != null) params['from'] = from;
+  if (to != null) params['to'] = to;
+  if (channel.isNotEmpty) params['channel'] = channel;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.order}/admin/reports/sales-by-hour',
+        queryParameters: params,
+      );
+  final rows = (resp.data['data'] as List?) ?? [];
+  return rows
+      .map((e) => SalesByHourRow.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+/// Dart has no way to read the host's IANA zone name, and the server needs a
+/// zone to do the conversion. A fixed offset is the honest fallback: it is
+/// exactly right for the window being viewed and makes no claim about a DST
+/// boundary it cannot know where to put.
+///
+/// The form matters. `+05:30` is an ISO offset and means five and a half hours
+/// *ahead* of UTC to both Java's ZoneId and Postgres's AT TIME ZONE. Writing it
+/// as `UTC+05:30` would be read by Postgres under the POSIX convention, where
+/// the sign is inverted — Java would validate it happily and every hour would
+/// come back on the wrong side of UTC. A test pins that this form agrees with a
+/// named zone at the same offset.
+String _localZoneId() {
+  final minutes = DateTime.now().timeZoneOffset.inMinutes;
+  if (minutes == 0) return 'UTC';
+  final sign = minutes < 0 ? '-' : '+';
+  final abs = minutes.abs();
+  final hh = (abs ~/ 60).toString().padLeft(2, '0');
+  final mm = (abs % 60).toString().padLeft(2, '0');
+  return '$sign$hh:$mm';
+}
+
+// ── Sales by staff ───────────────────────────────────────────────────────────
+
+/// One cashier's takings from the POS transaction journal. In-store only — an
+/// online order has no cashier, so these will not add up to the sales summary.
+class SalesByStaffRow {
+  final String groupKey;
+  final int sales;
+  final double grossAmount;
+  final double discountAmount;
+  final double? averageBasket;
+  final double? discountRate;
+
+  const SalesByStaffRow({
+    required this.groupKey,
+    required this.sales,
+    required this.grossAmount,
+    required this.discountAmount,
+    this.averageBasket,
+    this.discountRate,
+  });
+
+  factory SalesByStaffRow.fromJson(Map<String, dynamic> j) => SalesByStaffRow(
+        groupKey: j['groupKey'] as String? ?? '-',
+        sales: (j['sales'] as num?)?.toInt() ?? 0,
+        grossAmount: (j['grossAmount'] as num?)?.toDouble() ?? 0,
+        discountAmount: (j['discountAmount'] as num?)?.toDouble() ?? 0,
+        averageBasket: (j['averageBasket'] as num?)?.toDouble(),
+        discountRate: (j['discountRate'] as num?)?.toDouble(),
+      );
+}
+
+final salesByStaffReportProvider =
+    FutureProvider.autoDispose<List<SalesByStaffRow>>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final params = <String, dynamic>{};
+  final from = _dayStartInstant(range.from);
+  final to = _dayEndInstant(range.to);
+  if (from != null) params['from'] = from;
+  if (to != null) params['to'] = to;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.order}/admin/reports/sales-by-staff',
+        queryParameters: params,
+      );
+  final rows = (resp.data['data'] as List?) ?? [];
+  return rows
+      .map((e) => SalesByStaffRow.fromJson(e as Map<String, dynamic>))
+      .toList();
+});

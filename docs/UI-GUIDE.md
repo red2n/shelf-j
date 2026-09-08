@@ -151,7 +151,7 @@ Left-hand navigation: **Dashboard · Catalog · Inventory · Stores · Orders ·
 
 ### 4.7 Reports
 
-A sidebar (wide) / chip selector (narrow) between ten read-only tables, each with a refresh button and, where it has rows, a **CSV export**. Reports that cover a period carry a from/to date bar; those that group carry grouping chips.
+A sidebar (wide) / chip selector (narrow) between fifteen read-only tables, each with a refresh button and, where it has rows, a **CSV export**. Reports that cover a period carry a from/to date bar; those that group carry grouping chips. The sidebar scrolls — the list outgrew a laptop window, and a plain column does not merely hide the overflow but makes it unreachable.
 
 *Business-wide, from reporting-svc:*
 
@@ -168,6 +168,11 @@ A sidebar (wide) / chip selector (narrow) between ten read-only tables, each wit
 8. **Shrinkage** (inventory-svc) — stock written off and found over a period, grouped by reason, staff member or store. Write-offs and finds are shown as separate columns on purpose: a store that wrote off 100 units and found 100 others is not a store that did nothing, and a net figure alone would say it was. Date range.
 9. **Staff Exceptions** (order-svc) — loss prevention's view: discounts granted, sales voided and no-sale drawer opens over a period, grouped by staff member or store, most exceptions first. Each row carries the staff member's journalled sales so the counts read as a rate (`per 100`) rather than a ranking of who worked the most shifts; when nothing journalled a sale the rate shows `—` and the screen says why, because a zero there would read as "impeccably behaved". Exceptions recorded with no actor are shown as **Unattributed** rather than dropped. Date range.
 10. **Tax Summary** (pricing-svc) — net / VAT / gross by rate band, store or month, reconciling to VAT return boxes 1 and 6. Exempt lines are marked, because the return counts their net in Box 6 and their VAT in no box at all. When Box 1 and total VAT disagree an exempt line is carrying VAT — the screen warns before the return is filed rather than dropping it silently. Date range (**required** here; pricing-svc rejects the call without one).
+11. **Sales by Hour** (order-svc) — takings bucketed by hour of the trading day with a bar per hour, so a manager can staff to the actual peak rather than to a guess. Counted on the **browser's own clock**: the client sends its timezone, because the server stores UTC and a shop outside it would otherwise be told it is busiest at the wrong time of day. Channel chips compare the till against the website. Hours with no trade produce no row, and the screen says how many of the 24 are absent rather than letting a short table read as a quiet day. Date range.
+12. **Sales by Staff** (order-svc) — what each cashier rang up, their average basket, and their discount rate as a share of the *undiscounted* ticket. Read from the POS transaction journal, so **in-store only** — a note on the screen says so, because a manager comparing it against Sales Revenue will otherwise be chasing the online orders that have no cashier to attribute. Entries naming nobody show as **Unattributed** rather than being dropped. Date range.
+13. **Tender Mix** (payment-svc) — how the take split across cash, card, gift card and the rest, with each method's share of the net. Refunds are subtracted **within their own method**: a card sale refunded to store credit is not a zero-card day, and the split is what reconciles against a merchant statement. Failed tenders are counted in their own column and called out above the table, because a method whose declines climb against healthy volume is a terminal problem no sales report would show. Date range.
+14. **Stock Turn** (inventory-svc) — cost of goods sold against the average value held to produce it, with turns and days-on-hand, slowest first. Two separate caveats appear when they apply and mean different things: that the movement ledger was archived past the window's start, so opening values are a floor; and that some quantity sold out of batches with no cost price, excluded from COGS rather than costed at zero. Turns show `—` rather than `0` where there was nothing to turn — a different finding. Date range (**required**; the endpoint rejects the call without one).
+15. **Dead Stock** (inventory-svc) — stock on hand aged into the 0-30 / 31-60 / 61-90 / 91-180 / 180+ ladder, with the value sitting in each band and the total at risk in the header. A **Since** column names which date each age is measured from — "last sale", or "received" where the line has never sold — because 400 days since receipt and 400 days since a sale are not the same claim. No date bar: dead stock is a question about now, not about a period.
 
 ### 4.8 Customers
 
@@ -301,7 +306,7 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 | `/admin/orders` | Orders (all channels) + Return/Refund + Collect Payment |
 | `/admin/procurement` | Procurement (Purchase Orders / Suppliers tabs) |
 | `/admin/pricing` | Pricing (Price Lists / Promotions / VAT Rates tabs) |
-| `/admin/reports` | Reports (On-Hand / Sales / Sales by Day / Supply-Demand / Movements / Low Stock / Valuation / Shrinkage / Staff Exceptions / Tax Summary) |
+| `/admin/reports` | Reports (On-Hand / Sales / Sales by Day / Supply-Demand / Movements / Low Stock / Valuation / Shrinkage / Staff Exceptions / Tax Summary / Sales by Hour / Sales by Staff / Tender Mix / Stock Turn / Dead Stock) |
 | `/admin/customers` | Customers + loyalty/credit + addresses |
 | `/admin/sales` | Sales tools (Gift Cards / Layaways / Special Orders tabs) |
 | `/admin/staff` | Staff |

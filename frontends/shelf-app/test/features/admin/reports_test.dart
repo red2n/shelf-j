@@ -337,5 +337,159 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Export CSV'), findsOneWidget);
     });
+
+    testWidgets('the four that finish the pack are reachable too', (tester) async {
+      await pump(tester, _RecordingAdapter());
+      for (final label in [
+        'Sales by Hour',
+        'Sales by Staff',
+        'Tender Mix',
+        'Stock Turn',
+        'Dead Stock',
+      ]) {
+        expect(find.text(label), findsWidgets, reason: '$label is not reachable');
+      }
+    });
+
+    testWidgets('sales by hour says how many hours are absent, not zero',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['sales-by-hour'] = '{"data":[{"hourOfDay":9,"orders":4,'
+            '"grossAmount":120.00,"discountAmount":5.00,"averageBasket":30.00}]}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Sales by Hour').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('09:00–10:00'), findsOneWidget);
+      expect(find.text('30.00'), findsOneWidget);
+      // The other 23 hours produced no row. Reading that as "we sold nothing"
+      // rather than "the shop was shut" is the mistake this line prevents.
+      expect(find.textContaining('23 of the 24 are absent'), findsOneWidget);
+    });
+
+    testWidgets('sales by staff warns that online orders are not in it',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['sales-by-staff'] = '{"data":[{"groupKey":"UNATTRIBUTED",'
+            '"sales":2,"grossAmount":40.00,"discountAmount":10.00,'
+            '"averageBasket":20.00,"discountRate":20.0}]}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Sales by Staff').last);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('In-store sales only'), findsOneWidget);
+      expect(find.text('Unattributed'), findsOneWidget);
+      expect(find.text('20.0%'), findsOneWidget);
+    });
+
+    testWidgets('tender mix surfaces declines as their own signal',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['tender-mix'] = '{"data":[{"method":"CARD",'
+            '"capturedAmount":100.00,"capturedCount":2,"refundedAmount":40.00,'
+            '"refundedCount":1,"failedCount":3,"netAmount":60.00,"shareOfNet":50.0}]}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Tender Mix').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('CARD'), findsOneWidget);
+      expect(find.text('50.0%'), findsOneWidget);
+      expect(find.textContaining('3 tenders did not capture'), findsOneWidget);
+    });
+
+    testWidgets('stock turn shows a dash, not a zero, when nothing turned',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['stock-turn'] = '{"data":{"rows":[{"groupKey":"s-1","cogs":0,'
+            '"uncostedSaleQty":4.000,"openingValue":0,"closingValue":0,'
+            '"averageValue":0,"turnoverRatio":null,"daysOnHand":null}],'
+            '"historyComplete":false,"windowDays":30}}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Stock Turn').last);
+      await tester.pumpAndSettle();
+
+      // Nothing to turn is a different finding from turning it zero times.
+      expect(find.text('—'), findsNWidgets(2));
+      // Both caveats are live and they mean different things.
+      expect(find.textContaining('has been archived'), findsOneWidget);
+      expect(find.textContaining('no cost price'), findsOneWidget);
+    });
+
+    testWidgets('dead stock says which date each age is measured from',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['dead-stock'] = '{"data":['
+            '{"groupKey":"0-30","onHandQty":10.000,"value":50.00,'
+            '"uncostedQty":0,"daysSinceLastSale":12,"neverSold":false},'
+            '{"groupKey":"180+","onHandQty":4.000,"value":90.00,'
+            '"uncostedQty":0,"daysSinceLastSale":400,"neverSold":true}]}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Dead Stock').last);
+      await tester.pumpAndSettle();
+
+      // 400 days since *receipt* and 12 since a *sale* are not the same claim.
+      expect(find.text('received'), findsOneWidget);
+      expect(find.text('last sale'), findsOneWidget);
+      expect(find.textContaining('140.00 at risk'), findsOneWidget);
+    });
+  });
+
+  group('the reports that finish the pack — requests', () {
+    test('stock turn always sends a window, because the endpoint requires one',
+        () async {
+      final h = _harness(bodies: {
+        'stock-turn': '{"data":{"rows":[],"historyComplete":true,"windowDays":30}}'
+      });
+      await h.container.read(stockTurnReportProvider.future);
+
+      final call = h.adapter.callTo('/reports/stock-turn');
+      expect(call.query['from'], '2026-08-01T00:00:00Z');
+      expect(call.query['to'], '2026-08-31T23:59:59Z');
+      expect(call.query['groupBy'], 'STORE');
+    });
+
+    test('dead stock sends no window — it is a question about now', () async {
+      final h = _harness();
+      await h.container.read(deadStockReportProvider.future);
+
+      final call = h.adapter.callTo('/reports/dead-stock');
+      expect(call.query.containsKey('from'), isFalse);
+      expect(call.query.containsKey('to'), isFalse);
+      expect(call.query['groupBy'], 'BUCKET');
+    });
+
+    test('sales by hour sends a timezone the server reads the same way',
+        () async {
+      final h = _harness();
+      await h.container.read(salesByHourReportProvider.future);
+
+      // The form is load-bearing: Postgres reads "UTC+04:00" under the POSIX
+      // convention, where the sign is inverted, so a UTC-prefixed offset would
+      // bucket every hour on the wrong side of the meridian.
+      final tz = h.adapter.callTo('/sales-by-hour').query['tz'] as String;
+      expect(tz == 'UTC' || RegExp(r'^[+-]\d{2}:\d{2}$').hasMatch(tz), isTrue,
+          reason: 'tz was "$tz" — must be UTC or a bare ISO offset');
+    });
+
+    test('a channel filter is sent only when one is chosen', () async {
+      final h = _harness();
+      await h.container.read(salesByHourReportProvider.future);
+      expect(h.adapter.callTo('/sales-by-hour').query.containsKey('channel'),
+          isFalse);
+
+      h.container.read(salesByHourChannelProvider.notifier).state = 'POS';
+      await h.container.read(salesByHourReportProvider.future);
+      expect(h.adapter.calls.last.query['channel'], 'POS');
+    });
+
+    test('tender mix widens the picker range to instants like the rest',
+        () async {
+      final h = _harness();
+      await h.container.read(tenderMixReportProvider.future);
+
+      final call = h.adapter.callTo('/tender-mix');
+      expect(call.query['from'], '2026-08-01T00:00:00Z');
+      expect(call.query['to'], '2026-08-31T23:59:59Z');
+    });
   });
 }
