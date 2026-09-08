@@ -34,6 +34,9 @@ public class OrderClient {
 
   private static final String ORDER_SERVICE = "order-svc";
 
+  /** See the header comment in {@link #getOrder}. */
+  private static final String INTERNAL_ROLE = "CASHIER";
+
   @Inject ServiceConfig config;
 
   private ServiceRegistry registry;
@@ -75,6 +78,11 @@ public class OrderClient {
         webClient
             .get(instance.baseUri() + "/orders/" + orderId)
             .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
+            // Trusted service-to-service call behind the gateway. It stamps a staff role for the
+            // same reason CustomerClient does: reading an order is now staff-gated, and taking
+            // payment for one is a till action. Without this the call reads as an anonymous
+            // customer and order-svc's object-level check refuses it.
+            .header(HeaderNames.create(HttpHeaders.ROLES), INTERNAL_ROLE)
             .request()) {
       int status = res.status().code();
       if (status == 404) {

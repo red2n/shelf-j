@@ -37,6 +37,9 @@ public class CustomerClient {
   private static final Logger LOG = System.getLogger(CustomerClient.class.getName());
   private static final String CUSTOMER_SERVICE = "customer-svc";
 
+  /** See the header comment in {@link #emailOf}. */
+  private static final String INTERNAL_ROLE = "CASHIER";
+
   @Inject ServiceConfig config;
 
   private ServiceRegistry registry;
@@ -71,6 +74,11 @@ public class CustomerClient {
         webClient
             .get(instance.baseUri() + "/customers/" + customerId)
             .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
+            // Trusted service-to-service call behind the gateway. Customer records are now
+            // staff-gated, and looking one up to email them about their own order is a staff-level
+            // read; without this the lookup fails and every email silently falls back to "no
+            // address", which the @Fallback would make indistinguishable from a missing email.
+            .header(HeaderNames.create(HttpHeaders.ROLES), INTERNAL_ROLE)
             .request()) {
       if (res.status().code() != 200) {
         return Optional.empty();
