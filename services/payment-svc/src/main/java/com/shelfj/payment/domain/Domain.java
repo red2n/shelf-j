@@ -34,6 +34,71 @@ public final class Domain {
     public static final String STATUS_FAILED = "FAILED";
   }
 
+  /**
+   * A request to a payment service provider to take money for an order.
+   *
+   * <p>Distinct from {@link PaymentTender} on purpose: a tender is an append-only statement that
+   * money <em>was</em> taken (golden rule #8), while an intent is mutable and moves through {@code
+   * REQUIRES_ACTION → AUTHORIZED → CAPTURED} as the customer completes SCA and the provider
+   * confirms. Capturing writes exactly one tender and records it in {@link #paymentId()}.
+   */
+  public record PaymentIntent(
+      UUID id,
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      String provider,
+      String providerRef,
+      BigDecimal amount,
+      BigDecimal capturedAmount,
+      String currency,
+      String status,
+      String nextActionUrl,
+      String failureCode,
+      String failureMessage,
+      UUID paymentId,
+      String idempotencyKey,
+      Instant createdAt,
+      Instant updatedAt) {
+
+    /**
+     * Created with the provider; the customer must complete SCA / 3-D Secure before it can move.
+     */
+    public static final String STATUS_REQUIRES_ACTION = "REQUIRES_ACTION";
+
+    /** Funds are held on the customer's card but not yet taken. */
+    public static final String STATUS_AUTHORIZED = "AUTHORIZED";
+
+    /** Money has been taken; {@link #paymentId()} names the tender that records it. */
+    public static final String STATUS_CAPTURED = "CAPTURED";
+
+    /** The provider declined, or the customer failed SCA. Terminal. */
+    public static final String STATUS_FAILED = "FAILED";
+
+    /** Abandoned before capture — by the customer, or by the sweeper. Terminal. */
+    public static final String STATUS_CANCELLED = "CANCELLED";
+
+    /**
+     * No real provider: the intent authorises and captures in one step, which is exactly what
+     * {@code POST /payments/online} did before this existed. Keeps local dev and cash-only tenants
+     * working without credentials, and is the reason nothing in this service assumes a PSP is
+     * configured.
+     */
+    public static final String PROVIDER_MANUAL = "MANUAL";
+
+    public static final String PROVIDER_STRIPE = "STRIPE";
+    public static final String PROVIDER_RAZORPAY = "RAZORPAY";
+
+    /**
+     * @return {@code true} if this intent can no longer change state.
+     */
+    public boolean isTerminal() {
+      return STATUS_CAPTURED.equals(status)
+          || STATUS_FAILED.equals(status)
+          || STATUS_CANCELLED.equals(status);
+    }
+  }
+
   public record RefundTender(
       UUID id,
       UUID tenantId,

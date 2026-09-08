@@ -45,6 +45,7 @@ public class PaymentService {
 
   @Inject PaymentRepository repo;
   @Inject OrderClient orderClient;
+  @Inject OrderPaymentGuard guard;
   @Inject com.shelfj.payment.client.TenantStoreClient storeClient;
   @Inject com.shelfj.payment.client.CustomerClient customerClient;
 
@@ -69,35 +70,8 @@ public class PaymentService {
       RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
     UUID tenantId = ctx.requireTenantId();
     UUID orderId = UUID.fromString(req.orderId());
-    OrderClient.OrderInfo order = orderClient.getOrder(tenantId, orderId);
-
-    if (!"ONLINE".equalsIgnoreCase(order.channel())) {
-      throw ApiException.notFound("PAYMENT_ORDER_NOT_FOUND", "order " + orderId + " not found");
-    }
-    // Only a PENDING order is awaiting payment — capturing against an order that's already
-    // confirmed (e.g. a split/earlier tender already covered it), cancelled, or otherwise
-    // resolved would record a stray/duplicate tender with no order-side effect to match it.
-    if (!"PENDING".equalsIgnoreCase(order.status())) {
-      throw ApiException.conflict(
-          "PAYMENT_ORDER_NOT_PAYABLE",
-          "order " + orderId + " is not awaiting payment (status: " + order.status() + ")");
-    }
-    UUID callerId = ctx.userId();
-    if (callerId != null
-        && order.customerId() != null
-        && !order.customerId().equals(callerId.toString())) {
-      throw ApiException.notFound("PAYMENT_ORDER_NOT_FOUND", "order " + orderId + " not found");
-    }
-    if (order.total().compareTo(req.amount()) != 0) {
-      throw ApiException.badRequest(
-          "PAYMENT_AMOUNT_MISMATCH",
-          "tendered amount " + req.amount() + " does not match order total " + order.total());
-    }
-
-    // The order's own storeId is authoritative here, not the client-supplied req.storeId() — this
-    // endpoint has no staff role to trust, so an unverified store would let a guest attribute the
-    // payment to an arbitrary store and corrupt that store's Z-report/reporting.
-    UUID storeId = order.storeId() == null ? null : UUID.fromString(order.storeId());
+    // Shared with the payment-intent path — see OrderPaymentGuard for what is checked and why.
+    UUID storeId = guard.verifyOnlineClaim(tenantId, orderId, req.amount(), ctx).storeId();
     return capture(req, tenantId, orderId, storeId, idempotencyKey);
   }
 

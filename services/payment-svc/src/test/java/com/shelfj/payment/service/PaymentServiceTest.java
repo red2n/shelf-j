@@ -68,6 +68,20 @@ class PaymentServiceTest {
     };
   }
 
+  /**
+   * Wires one fake order into both places that consult order-svc: the guard (which the
+   * online-payment path now delegates its checks to, shared with payment intents) and the client
+   * directly (which the object-level read checks still use). One order, both readers, so a test
+   * cannot accidentally exercise a half-wired service.
+   */
+  private static void wireOrder(PaymentService svc, OrderClient.OrderInfo info) {
+    OrderClient client = fakeOrderClient(info);
+    svc.orderClient = client;
+    OrderPaymentGuard guard = new OrderPaymentGuard();
+    guard.orderClient = client;
+    svc.guard = guard;
+  }
+
   private static OrderClient fakeOrderClient(OrderClient.OrderInfo info) {
     return new OrderClient() {
       @Override
@@ -120,10 +134,10 @@ class PaymentServiceTest {
   void onlinePayment_rejectsAPosOrder() {
     PaymentService svc = new PaymentService();
     UUID orderId = UUID.randomUUID();
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                null, "POS", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            null, "POS", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
 
     var ex =
         assertThrows(
@@ -139,14 +153,14 @@ class PaymentServiceTest {
     PaymentService svc = new PaymentService();
     UUID orderId = UUID.randomUUID();
     UUID ownerId = UUID.randomUUID();
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                ownerId.toString(),
-                "ONLINE",
-                new BigDecimal("10.00"),
-                "PENDING",
-                UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            ownerId.toString(),
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "PENDING",
+            UUID.randomUUID().toString()));
 
     var ex =
         assertThrows(
@@ -163,14 +177,10 @@ class PaymentServiceTest {
   void onlinePayment_rejectsAnAlreadyConfirmedOrder() {
     PaymentService svc = new PaymentService();
     UUID orderId = UUID.randomUUID();
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                null,
-                "ONLINE",
-                new BigDecimal("10.00"),
-                "CONFIRMED",
-                UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            null, "ONLINE", new BigDecimal("10.00"), "CONFIRMED", UUID.randomUUID().toString()));
 
     var ex =
         assertThrows(
@@ -185,10 +195,10 @@ class PaymentServiceTest {
   void onlinePayment_rejectsAmountMismatch() {
     PaymentService svc = new PaymentService();
     UUID orderId = UUID.randomUUID();
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                null, "ONLINE", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            null, "ONLINE", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
 
     var ex =
         assertThrows(
@@ -203,10 +213,10 @@ class PaymentServiceTest {
   void onlinePayment_capturesAGuestOrderWhenChannelAndAmountMatch() {
     PaymentService svc = new PaymentService();
     UUID orderId = UUID.randomUUID();
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                null, "ONLINE", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            null, "ONLINE", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
     svc.repo = capturingRepo();
     svc.storeClient = permissiveStoreClient();
 
@@ -222,14 +232,14 @@ class PaymentServiceTest {
     PaymentService svc = new PaymentService();
     UUID orderId = UUID.randomUUID();
     UUID customerId = UUID.randomUUID();
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                customerId.toString(),
-                "ONLINE",
-                new BigDecimal("25.50"),
-                "PENDING",
-                UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            customerId.toString(),
+            "ONLINE",
+            new BigDecimal("25.50"),
+            "PENDING",
+            UUID.randomUUID().toString()));
     svc.repo = capturingRepo();
     svc.storeClient = permissiveStoreClient();
 
@@ -385,14 +395,14 @@ class PaymentServiceTest {
     UUID customerId = UUID.randomUUID();
     UUID tenderId = UUID.randomUUID();
     svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                customerId.toString(),
-                "ONLINE",
-                new BigDecimal("10.00"),
-                "CONFIRMED",
-                UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            customerId.toString(),
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "CONFIRMED",
+            UUID.randomUUID().toString()));
 
     var result = svc.getTender(tenantId, tenderId, ctx(tenantId, customerId));
     assertEquals(tenderId, result.id());
@@ -406,14 +416,14 @@ class PaymentServiceTest {
     UUID ownerId = UUID.randomUUID();
     UUID tenderId = UUID.randomUUID();
     svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                ownerId.toString(),
-                "ONLINE",
-                new BigDecimal("10.00"),
-                "CONFIRMED",
-                UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            ownerId.toString(),
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "CONFIRMED",
+            UUID.randomUUID().toString()));
 
     var ex =
         assertThrows(
@@ -449,14 +459,14 @@ class PaymentServiceTest {
     UUID orderId = UUID.randomUUID();
     UUID tenderId = UUID.randomUUID();
     svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                UUID.randomUUID().toString(),
-                "ONLINE",
-                new BigDecimal("10.00"),
-                "CONFIRMED",
-                UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            UUID.randomUUID().toString(),
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "CONFIRMED",
+            UUID.randomUUID().toString()));
 
     ApiException e =
         assertThrows(
@@ -471,14 +481,14 @@ class PaymentServiceTest {
     UUID orderId = UUID.randomUUID();
     UUID ownerId = UUID.randomUUID();
     svc.repo = findableRepo(tender(UUID.randomUUID(), tenantId, orderId));
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                ownerId.toString(),
-                "ONLINE",
-                new BigDecimal("10.00"),
-                "CONFIRMED",
-                UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            ownerId.toString(),
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "CONFIRMED",
+            UUID.randomUUID().toString()));
 
     assertEquals(1, svc.listTendersByOrder(tenantId, orderId, ctx(tenantId, ownerId)).size());
     var ex =
@@ -507,14 +517,14 @@ class PaymentServiceTest {
             "return",
             Instant.now());
     svc.repo = findableRefundsRepo(refund);
-    svc.orderClient =
-        fakeOrderClient(
-            new OrderClient.OrderInfo(
-                ownerId.toString(),
-                "ONLINE",
-                new BigDecimal("10.00"),
-                "CONFIRMED",
-                UUID.randomUUID().toString()));
+    wireOrder(
+        svc,
+        new OrderClient.OrderInfo(
+            ownerId.toString(),
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "CONFIRMED",
+            UUID.randomUUID().toString()));
 
     assertEquals(1, svc.listRefundsByOrder(tenantId, orderId, ctx(tenantId, ownerId)).size());
     var ex =
