@@ -442,14 +442,20 @@ public class OrderService {
    * Object-level authorization for order-by-id reads (mirrors CartService.requireOwnership): an
    * order id alone is not proof of ownership. Staff may read any order in their tenant; an
    * authenticated customer may only read an order placed against their own customerId. Denials are
-   * 404 (not 403) so order ids can't be probed for existence. A caller with no principal at all (no
-   * userId, no roles — only X-Tenant-Id) is a service-to-service lookup (e.g. payment-svc verifying
-   * an online payment claim); the gateway never forwards a tenant to these paths without a verified
-   * user, so that shape cannot originate from outside.
+   * 404 (not 403) so order ids can't be probed for existence.
+   *
+   * <p>There is deliberately no exemption for a caller with no principal. That branch existed for
+   * service-to-service lookups and assumed the gateway never forwards a tenant here without a
+   * verified user — but guest checkout does exactly that, so any order id could be read by anyone
+   * holding one. payment-svc's OrderClient stamps a staff role instead.
    */
   private static void requireReadAccess(Order order, TenantContext ctx) {
     if (isStaff(ctx)) return;
-    if (ctx.userId() == null && ctx.roles().isEmpty()) return;
+    // No service-to-service exemption. This used to return early for a caller with no principal
+    // at all, on the reasoning that only the mesh could produce that shape — but a guest storefront
+    // request carries a tenant and no principal too, so the shape was reachable from outside and
+    // any id could be read by anyone who had one. The internal callers now stamp a staff role
+    // (payment-svc OrderClient, notification-svc CustomerClient), so nothing needs the exemption.
     if (order.customerId() == null || !order.customerId().equals(ctx.userId()))
       throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
   }

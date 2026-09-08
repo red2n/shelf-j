@@ -729,13 +729,16 @@ class OrderIT {
         getAs("/orders/" + orderId + "/returns", T, otherCustomer, "CUSTOMER").getStatus(),
         is(404));
 
-    // Staff read any order in the tenant.
-    assertThat(get("/orders/" + orderId, T).getStatus(), is(200));
+    // Staff read any order in the tenant. Stated with an actual role: this assertion used to send
+    // none and pass through the service-to-service exemption below, so it was not testing staff.
+    assertThat(getAs("/orders/" + orderId, T, null, "CASHIER").getStatus(), is(200));
 
-    // A service-to-service lookup (X-Tenant-Id only, no principal) keeps working — payment-svc
-    // verifies online payment claims through this exact shape (see payment-svc OrderClient).
-    Response s2s = target.path("/orders/" + orderId).request().header("X-Tenant-Id", T).get();
-    assertThat(s2s.getStatus(), is(200));
+    // A caller with no principal at all is now refused. That exemption existed for payment-svc,
+    // and rested on the gateway never forwarding a tenant here without a verified user — but guest
+    // checkout does exactly that, so any order id could be read by anyone holding one. payment-svc
+    // stamps a staff role instead (see payment-svc OrderClient).
+    Response anonymous = target.path("/orders/" + orderId).request().header("X-Tenant-Id", T).get();
+    assertThat(anonymous.getStatus(), is(404));
   }
 
   @Test

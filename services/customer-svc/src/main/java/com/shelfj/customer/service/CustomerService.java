@@ -98,15 +98,21 @@ public class CustomerService {
    * Object-level authorization for customer-scoped reads (mirrors OrderService.requireReadAccess):
    * a customer id in the path is not proof of ownership. Staff may read any customer in their
    * tenant; an authenticated customer may only read their own record. Denials are 404 (not 403) so
-   * customer ids can't be probed for existence. A caller with no principal at all (no userId, no
-   * roles — only X-Tenant-Id) is a service-to-service lookup (e.g. notification-svc resolving an
-   * email, payment-svc redeeming store credit); the gateway never forwards a tenant to customer-svc
-   * paths without a verified user or an internal service call, so that shape cannot originate from
-   * an external caller impersonating another customer.
+   * customer ids can't be probed for existence.
+   *
+   * <p>There is deliberately no exemption for a caller with no principal. That branch assumed the
+   * gateway never forwards a tenant here without a verified user; a guest storefront request does.
+   * The filter now denies these paths outright, and the internal callers (notification-svc
+   * CustomerClient, payment-svc CustomerClient) stamp a staff role — so if this shape is ever
+   * allowlisted for an account self-service screen, it does not reopen with it.
    */
   private static void requireReadAccess(UUID customerId, TenantContext ctx) {
     if (isStaff(ctx)) return;
-    if (ctx.userId() == null && ctx.roles().isEmpty()) return;
+    // No service-to-service exemption. This used to return early for a caller with no principal
+    // at all, on the reasoning that only the mesh could produce that shape — but a guest storefront
+    // request carries a tenant and no principal too, so the shape was reachable from outside and
+    // any id could be read by anyone who had one. The internal callers now stamp a staff role
+    // (payment-svc OrderClient, notification-svc CustomerClient), so nothing needs the exemption.
     if (!customerId.equals(ctx.userId()))
       throw ApiException.notFound("CUSTOMER_NOT_FOUND", "Customer not found");
   }

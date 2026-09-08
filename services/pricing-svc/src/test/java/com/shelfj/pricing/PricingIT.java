@@ -159,12 +159,12 @@ class PricingIT {
     assertThat(r2.getStatus(), is(201));
 
     // Get specific rate
-    Response r3 = get("/vat-rates/T1", T);
+    Response r3 = getAs("/vat-rates/T1", T, "OWNER");
     assertThat(r3.getStatus(), is(200));
     assertThat(r3.readEntity(String.class), containsString("Standard Rate"));
 
     // Tenant isolation — other tenant cannot see T1
-    Response rIso = get("/vat-rates/T1", "99999999-9999-9999-9999-999999999999");
+    Response rIso = getAs("/vat-rates/T1", "99999999-9999-9999-9999-999999999999", "OWNER");
     assertThat(rIso.getStatus(), is(404));
 
     // Duplicate code is 409
@@ -511,7 +511,7 @@ class PricingIT {
     int pages = 0;
     do {
       String path = "/price-lists?limit=2" + (cursor == null ? "" : "&after=" + cursor);
-      String body = get(path, T).readEntity(String.class);
+      String body = getAs(path, T, "OWNER").readEntity(String.class);
       pages++;
       for (int i = 1; i <= 5; i++) {
         String name = "\"name\":\"List " + i + "\"";

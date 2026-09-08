@@ -435,17 +435,33 @@ class PaymentServiceTest {
     assertEquals(tenderId, result.id());
   }
 
+  /**
+   * A caller with no principal used to be waved through as a service-to-service lookup. Nothing
+   * reads payments service-to-service, so that branch served no caller — and a guest storefront
+   * request carries a tenant with no principal too, so the shape was reachable from outside. It is
+   * now treated like any other unidentified caller: ownership is resolved against the order, and
+   * with no userId to match, the tender is not found.
+   */
   @Test
-  void getTender_serviceToServiceCallSkipsOrderVerification() {
+  void getTender_aCallerWithNoPrincipalIsNotWavedThrough() {
     PaymentService svc = new PaymentService();
     UUID tenantId = UUID.randomUUID();
     UUID orderId = UUID.randomUUID();
     UUID tenderId = UUID.randomUUID();
     svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
-    // orderClient deliberately left null — a no-principal (tenant-only) caller must never touch it.
+    svc.orderClient =
+        fakeOrderClient(
+            new OrderClient.OrderInfo(
+                UUID.randomUUID().toString(),
+                "ONLINE",
+                new BigDecimal("10.00"),
+                "CONFIRMED",
+                UUID.randomUUID().toString()));
 
-    var result = svc.getTender(tenantId, tenderId, ctx(tenantId, null));
-    assertEquals(tenderId, result.id());
+    ApiException e =
+        assertThrows(
+            ApiException.class, () -> svc.getTender(tenantId, tenderId, ctx(tenantId, null)));
+    assertEquals(404, e.status());
   }
 
   @Test

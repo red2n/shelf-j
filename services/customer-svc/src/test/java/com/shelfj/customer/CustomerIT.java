@@ -14,6 +14,7 @@ import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -378,8 +379,27 @@ class CustomerIT {
     assertThat(credit, not(containsString("\"balance\":40")));
   }
 
+  /**
+   * Customer records are staff-only over HTTP since SJ-D10 made reads default-deny.
+   *
+   * <p>{@code CustomerService.requireReadAccess} is still correct and still enforced — staff read
+   * anyone in their tenant, and it 404s rather than 403s so ids cannot be probed for existence.
+   * What changed is that its other two branches are no longer reachable from outside the mesh:
+   *
+   * <ul>
+   *   <li>Its <b>customer-reads-their-own-record</b> branch has no caller. The storefront has no
+   *       account self-service screen, so allowing {@code /customers/&#123;id&#125;} through the
+   *       filter would widen the surface for nobody. When that screen is built, the fix is to
+   *       allowlist the shape in the filter — not to loosen this check, which is already right.
+   *   <li>Its <b>no-principal means service-to-service</b> branch rested on the gateway never
+   *       forwarding an anonymous request here. That was an assumption, and it was wrong: an
+   *       anonymous caller reached these reads. It is now enforced rather than assumed, which is
+   *       why {@link com.shelfj.notification.client.CustomerClient} and payment-svc's {@code
+   *       CustomerClient} stamp a staff role on their internal lookups.
+   * </ul>
+   */
   @Test
-  void customerReadsAreObjectLevelAuthorized() {
+  void customerReadsAreStaffOnlyAndStillObjectLevelAuthorizedForStaff() {
     Response created =
         post(
             "/customers",
@@ -387,7 +407,6 @@ class CustomerIT {
     assertThat(created.getStatus(), is(201));
     String id = field(created.readEntity(String.class), "id");
 
-    // Wire up loyalty/store-credit balances so the reads below have something to check.
     assertThat(
         post("/customers/" + id + "/loyalty/earn", "{\"points\":10,\"reason\":\"seed\"}")
             .getStatus(),
@@ -397,29 +416,29 @@ class CustomerIT {
             .getStatus(),
         is(200));
 
-    // The customer themself (X-User-Id == the customer's own id) may read their own record.
-    assertThat(getAs("/customers/" + id, id, "CUSTOMER").getStatus(), is(200));
-    assertThat(getAs("/customers/" + id + "/addresses", id, "CUSTOMER").getStatus(), is(200));
-    assertThat(getAs("/customers/" + id + "/loyalty", id, "CUSTOMER").getStatus(), is(200));
-    assertThat(getAs("/customers/" + id + "/loyalty/ledger", id, "CUSTOMER").getStatus(), is(200));
-    assertThat(getAs("/customers/" + id + "/store-credit", id, "CUSTOMER").getStatus(), is(200));
+    // A CUSTOMER token is refused at the filter, before the record is looked up at all — including
+    // for the caller's own record, which no client currently asks for.
+    for (String path :
+        new String[] {
+          "", "/addresses", "/loyalty", "/loyalty/ledger", "/store-credit",
+        }) {
+      assertThat(
+          "own record, customer token: " + path,
+          getAs("/customers/" + id + path, id, "CUSTOMER").getStatus(),
+          is(403));
+      assertThat(
+          "another customer's record: " + path,
+          getAs("/customers/" + id + path, UUID.randomUUID().toString(), "CUSTOMER").getStatus(),
+          is(403));
+    }
 
-    // A different authenticated customer in the same tenant gets 404 (not 403 — no existence
-    // oracle), even though the id is otherwise a valid path parameter.
-    String otherCustomer = java.util.UUID.randomUUID().toString();
-    assertThat(getAs("/customers/" + id, otherCustomer, "CUSTOMER").getStatus(), is(404));
+    // The branch that actually leaked: no principal at all. This used to be served, on the
+    // assumption that only the service mesh could produce the shape.
     assertThat(
-        getAs("/customers/" + id + "/addresses", otherCustomer, "CUSTOMER").getStatus(), is(404));
-    assertThat(
-        getAs("/customers/" + id + "/loyalty", otherCustomer, "CUSTOMER").getStatus(), is(404));
-    assertThat(
-        getAs("/customers/" + id + "/loyalty/ledger", otherCustomer, "CUSTOMER").getStatus(),
-        is(404));
-    assertThat(
-        getAs("/customers/" + id + "/store-credit", otherCustomer, "CUSTOMER").getStatus(),
-        is(404));
+        target.path("/customers/" + id).request().header("X-Tenant-Id", TENANT).get().getStatus(),
+        is(403));
 
-    // Staff read any customer in their tenant.
+    // Staff read any customer in their tenant — the object-level check's staff branch, still live.
     assertThat(
         target
             .path("/customers/" + id)
@@ -430,10 +449,16 @@ class CustomerIT {
             .getStatus(),
         is(200));
 
-    // A service-to-service lookup (X-Tenant-Id only, no principal) keeps working — notification-svc
-    // resolves emails and payment-svc redeems store credit through this exact shape.
-    Response s2s = target.path("/customers/" + id).request().header("X-Tenant-Id", TENANT).get();
-    assertThat(s2s.getStatus(), is(200));
+    // Which is exactly how the internal clients now reach it: a stamped staff role, not anonymity.
+    assertThat(
+        target
+            .path("/customers/" + id)
+            .request(MediaType.APPLICATION_JSON)
+            .header("X-Tenant-Id", TENANT)
+            .header("X-Roles", "CASHIER")
+            .get()
+            .readEntity(String.class),
+        containsString("liam@example.com"));
   }
 
   @Test

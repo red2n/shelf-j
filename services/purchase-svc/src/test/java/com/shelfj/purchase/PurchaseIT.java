@@ -70,7 +70,16 @@ class PurchaseIT {
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
+  /**
+   * Reads carry a staff role because every read here is staff work — suppliers, purchase orders,
+   * goods receipts and the nominal ledger are all back-office data. Before SJ-D10 this helper sent
+   * no role and the requests still succeeded, which is precisely what was wrong.
+   */
   private Response get(String pathAndQuery, String tenant) {
+    return getAs(pathAndQuery, tenant, "OWNER");
+  }
+
+  private Response getAs(String pathAndQuery, String tenant, String roles) {
     int q = pathAndQuery.indexOf('?');
     WebTarget t = target.path(q < 0 ? pathAndQuery : pathAndQuery.substring(0, q));
     if (q >= 0) {
@@ -79,7 +88,9 @@ class PurchaseIT {
         t = t.queryParam(param.substring(0, eq), param.substring(eq + 1));
       }
     }
-    return t.request().header("X-Tenant-Id", tenant).get();
+    var req = t.request().header("X-Tenant-Id", tenant);
+    if (roles != null) req = req.header("X-Roles", roles);
+    return req.get();
   }
 
   // ── Gap #20 Test 1: Supplier CRUD + tenant isolation ─────────────────────────
@@ -455,6 +466,32 @@ class PurchaseIT {
                 + "\",\"expectedDelivery\":\"2026-12-31\"}",
             T);
     assertThat(ok.getStatus(), is(201));
+  }
+
+  // ── SJ-D10: procurement is back-office data, not storefront data ────────────
+
+  /**
+   * Every read in this service used to answer any caller holding a token for the tenant, because
+   * none of these paths sits under /admin/ and nothing in purchase-svc called requireAnyRole. A
+   * signed-in storefront shopper could list the tenant's suppliers and their payment terms, its
+   * purchase orders, and its nominal ledger.
+   */
+  @Test
+  void procurementReadsRequireAStaffRole() {
+    for (String path :
+        new String[] {
+          "/suppliers",
+          "/purchase-orders",
+          "/goods-receipts?purchaseOrderId=" + STORE_A,
+          "/intercompany-invoices",
+          "/nominal-ledger"
+        }) {
+      assertThat("no role: " + path, getAs(path, T, null).getStatus(), is(403));
+      assertThat("customer: " + path, getAs(path, T, "CUSTOMER").getStatus(), is(403));
+    }
+    // Staff still work, or the gate would just be an outage.
+    assertThat(getAs("/suppliers", T, "STOREKEEPER").getStatus(), is(200));
+    assertThat(getAs("/purchase-orders", T, "OWNER").getStatus(), is(200));
   }
 
   /** Creates a supplier and a DRAFT purchase order against it, returning the PO id. */
