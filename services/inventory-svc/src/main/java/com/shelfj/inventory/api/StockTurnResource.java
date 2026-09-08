@@ -37,6 +37,15 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
  * <p>Under {@code /admin/} so the authorisation filter gates them by path rather than by a role
  * check written into each method — the distinction that produced SJ-D10, and the reason SJ-D11 made
  * reads default-deny.
+ *
+ * <p><b>That sentence was not true when it was first written, and SJ-D19 is why it is now.</b>
+ * {@code /admin/inventory/**} is the filter's <em>staff-operable</em> tier — a storekeeper has to
+ * be able to receive stock — so these reports inherited it and answered a CASHIER with 200: stock
+ * valuation, cost of goods sold, and by extension the shrinkage report naming which colleague wrote
+ * off what. The prefix was right and the subtree was wrong, and only running it showed the
+ * difference. {@code AdminAuthorizationFilter} now carves {@code /admin/inventory/reports} back out
+ * to management, so this class and the three report resources beside it are gated by path after
+ * all.
  */
 @Path("/admin/inventory")
 @ApplicationScoped
