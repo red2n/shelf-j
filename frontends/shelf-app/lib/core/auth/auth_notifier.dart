@@ -80,7 +80,9 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
         );
       } catch (_) {}
     }
-    await _storage.deleteAll();
+    // Everything except the POS offline queue: unreplayed sales are money the
+    // server has not been told about, and they outlive the cashier's shift.
+    await _storage.deleteAll(keep: const {StorageKeys.posOfflineSales});
     state = const AsyncValue.data(AuthUnauthenticated());
   }
 

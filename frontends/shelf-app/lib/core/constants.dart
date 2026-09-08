@@ -49,6 +49,11 @@ class StorageKeys {
 
   /// Last delivery address used at checkout — prefills the form on the next order.
   static const String sfSavedAddress = 'sf_saved_address';
+
+  /// POS sales taken while the server was unreachable, waiting to be replayed.
+  /// Device-local and never cleared on sign-out: this is money the server has not
+  /// been told about yet, and it must outlive the cashier's shift.
+  static const String posOfflineSales = 'pos_offline_sales';
 }
 
 /// Backend role codes (iam-svc seed). Do not invent client-only roles.

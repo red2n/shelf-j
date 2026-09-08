@@ -7,6 +7,8 @@ import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../core/offline/offline_queue.dart';
+import '../../core/offline/offline_sale.dart';
 import '../../core/theme.dart';
 import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
@@ -124,55 +126,84 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     setState(() => _processing = true);
     final dio = ref.read(apiClientProvider).dio;
     final currency = _currency;
+
+    // One idempotency base for the whole sale, fixed here rather than per attempt.
+    // If the network drops partway it is carried into the offline queue with the
+    // sale, so every later replay presents the same keys — which is what makes
+    // replaying a half-finished sale safe rather than a double charge.
     final idemBase = 'pos-${DateTime.now().millisecondsSinceEpoch}';
+    var sale = OfflineSale(
+      id: idemBase,
+      capturedAt: DateTime.now(),
+      storeId: storeId,
+      currency: currency,
+      total: _due,
+      itemCount: cart.fold<int>(0, (s, l) => s + l.qty),
+      orderRequest: {
+        'storeId': storeId,
+        'channel': 'POS',
+        'fulfilmentType': 'PICKUP',
+        'currency': currency,
+        if (discount > 0) 'discountAmount': discount,
+        if (discount > 0)
+          'discountReason': ref.read(posDiscountReasonProvider).trim(),
+        if (customer != null) 'customerId': customer.id,
+        'contactPhone': customer != null ? '' : walkInPhone,
+        'items': [
+          for (final l in cart)
+            {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
+        ],
+      },
+      // STORE_CREDIT redemption is done server-side by payment-svc (it redeems the
+      // customer's balance as part of capturing the tender), so only GIFT_CARD
+      // carries a redemption step of its own here.
+      tenders: [
+        for (final t in _tenders)
+          OfflineTender(
+            amount: t.amount,
+            giftCardCode: t.method == 'GIFT_CARD' ? t.giftCardCode : null,
+            body: {
+              'amount': t.amount,
+              'method': t.paymentMethod,
+              'storeId': storeId,
+              if (t.method == 'GIFT_CARD') 'reference': t.giftCardCode,
+              if (t.method == 'STORE_CREDIT') 'reference': 'STORE_CREDIT',
+              if (t.method == 'STORE_CREDIT') 'customerId': t.customerId,
+              if (t.method == 'STORE_CREDIT') 'currency': currency,
+            },
+          ),
+      ],
+    );
+
     try {
       // 1. Place the POS order (server is authoritative for the total).
       final orderResp = await dio.post(
         '/${ApiConstants.order}/orders',
-        data: {
-          'storeId': storeId,
-          'channel': 'POS',
-          'fulfilmentType': 'PICKUP',
-          'currency': currency,
-          if (discount > 0) 'discountAmount': discount,
-          if (discount > 0)
-            'discountReason': ref.read(posDiscountReasonProvider).trim(),
-          if (customer != null) 'customerId': customer.id,
-          'contactPhone': customer != null ? '' : walkInPhone,
-          'items': [
-            for (final l in cart)
-              {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
-          ],
-        },
+        data: sale.orderRequest,
         options: Options(headers: {'Idempotency-Key': '$idemBase-order'}),
       );
       final order = orderResp.data['data'] as Map<String, dynamic>;
       final orderId = order['id'] as String? ?? '';
+      sale = sale.copyWith(orderId: orderId);
 
-      // 2. Record each tender against the order. STORE_CREDIT redemption is done server-side by
-      // payment-svc (it redeems the customer's balance as part of capturing the tender), so the
-      // client no longer redeems directly — it just supplies the customer + currency.
-      for (var i = 0; i < _tenders.length; i++) {
-        final t = _tenders[i];
+      // 2. Record each tender against the order, then redeem any gift card it drew
+      // on. Progress is tracked on `sale` step by step, so if the network drops
+      // here only the steps that have not landed are queued.
+      for (var i = 0; i < sale.tenders.length; i++) {
+        final t = sale.tenders[i];
         await dio.post(
           '/${ApiConstants.payment}/payments',
-          data: {
-            'orderId': orderId,
-            'amount': t.amount,
-            'method': t.paymentMethod,
-            'storeId': storeId,
-            if (t.method == 'GIFT_CARD') 'reference': t.giftCardCode,
-            if (t.method == 'STORE_CREDIT') 'reference': 'STORE_CREDIT',
-            if (t.method == 'STORE_CREDIT') 'customerId': t.customerId,
-            if (t.method == 'STORE_CREDIT') 'currency': currency,
-          },
+          data: {...t.body, 'orderId': orderId},
           options: Options(headers: {'Idempotency-Key': '$idemBase-pay$i'}),
         );
-        if (t.method == 'GIFT_CARD' && t.giftCardCode != null) {
+        sale = sale.markTender(i, tenderDone: true);
+        final code = t.giftCardCode;
+        if (code != null) {
           await dio.post(
-            '/${ApiConstants.order}/gift-cards/${t.giftCardCode}/redeem',
+            '/${ApiConstants.order}/gift-cards/$code/redeem',
             data: {'amount': t.amount, 'orderId': orderId},
           );
+          sale = sale.markTender(i, redeemDone: true);
         }
       }
 
@@ -206,10 +237,114 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
 
       await _showReceiptDialog(orderId, currency, change, email, receiptData: receiptData);
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _processing = false);
-      _snack(friendlyError(e, fallback: 'Sale failed.'), error: true);
+      if (!isOfflineError(e)) {
+        // The server answered and said no. Replaying would get the same answer,
+        // so the sale must not be queued — the cashier has to deal with it now.
+        if (!mounted) return;
+        setState(() => _processing = false);
+        _snack(friendlyError(e, fallback: 'Sale failed.'), error: true);
+        return;
+      }
+      // The server could not be reached. The customer has paid and is standing
+      // there, so the sale completes at the till and whatever it still owes the
+      // server is held until the network is back.
+      await ref.read(offlineQueueProvider.notifier).enqueue(sale);
+      await _finishOffline(sale, [...cart], discount, currency, customer);
     }
+  }
+
+  /// Finish a sale the server was never told about: print the receipt, clear the
+  /// till, and say plainly that it is held rather than sent.
+  Future<void> _finishOffline(
+    OfflineSale sale,
+    List<PosLine> cartSnapshot,
+    double discount,
+    String currency,
+    Customer? customer,
+  ) async {
+    // The total here is the till's own (subtotal − discount) rather than the
+    // server's, which is not knowable offline. It is the amount actually
+    // tendered, which is what the customer's paper receipt has to show.
+    final receiptData = _buildReceiptData(
+      orderId: sale.reference,
+      cartSnapshot: cartSnapshot,
+      tenderSnapshot: [..._tenders],
+      discount: discount,
+      total: sale.total,
+      currency: currency,
+      customerName: customer?.fullName.isNotEmpty == true
+          ? customer!.fullName
+          : customer?.email,
+    );
+    final change = _change;
+    // No session heartbeat here: it exists to tell the server the till is active,
+    // which is exactly what cannot be done right now — and awaiting it would sit
+    // on the connect timeout with the customer waiting for their receipt.
+    ref.read(posCartProvider.notifier).clear();
+    ref.read(posCustomerProvider.notifier).state = null;
+    ref.read(posDiscountProvider.notifier).state = 0;
+    ref.read(posDiscountReasonProvider.notifier).state = '';
+    ref.read(posWalkInPhoneProvider.notifier).state = '';
+    _tenders.clear();
+    if (!mounted) return;
+    setState(() => _processing = false);
+
+    openReceiptPrint(receiptData);
+    await _showOfflineSavedDialog(sale, currency, change, receiptData);
+  }
+
+  Future<void> _showOfflineSavedDialog(
+    OfflineSale sale,
+    String currency,
+    double change,
+    PosReceiptData receiptData,
+  ) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.cloud_off_outlined,
+            color: Theme.of(ctx).colorScheme.tertiary, size: 40),
+        title: const Text('Saved offline'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Sale #${sale.reference}'),
+            if (change > 0) ...[
+              const SizedBox(height: 8),
+              Text('Change due: $currency ${change.toStringAsFixed(2)}',
+                  style: TextStyle(
+                      color: Theme.of(ctx).colorScheme.primary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18)),
+            ],
+            const SizedBox(height: 12),
+            Text(
+              "The server couldn't be reached. This sale is held on this till and "
+              'sent automatically when the network is back — see Pending.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Theme.of(ctx).colorScheme.outline),
+            ),
+            const SizedBox(height: 16),
+            // No "Email receipt": that needs the server this sale is waiting for.
+            OutlinedButton.icon(
+              onPressed: () => openReceiptPrint(receiptData),
+              icon: const Icon(Icons.print_outlined, size: 18),
+              label: const Text('Reprint'),
+            ),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              context.go('/pos/cart');
+            },
+            child: const Text('New sale'),
+          ),
+        ],
+      ),
+    );
   }
 
   PosReceiptData _buildReceiptData({
@@ -404,22 +539,37 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     setState(() => _processing = true);
     final dio = ref.read(apiClientProvider).dio;
     final currency = _currency;
-    final idem = 'pos-${DateTime.now().millisecondsSinceEpoch}-order';
+
+    // Same shape as the tendered path: one idempotency base per sale, kept with
+    // the sale so a queued order replays under the key it was placed with. A
+    // catalog-mode sale takes no payment, so it queues with no tenders.
+    final idemBase = 'pos-${DateTime.now().millisecondsSinceEpoch}';
+    final idem = '$idemBase-order';
+    final sale = OfflineSale(
+      id: idemBase,
+      capturedAt: DateTime.now(),
+      storeId: storeId,
+      currency: currency,
+      total: 0,
+      itemCount: cart.fold<int>(0, (s, l) => s + l.qty),
+      tenders: const [],
+      orderRequest: {
+        'storeId': storeId,
+        'channel': 'POS',
+        'fulfilmentType': 'PICKUP',
+        'currency': currency,
+        if (customer != null) 'customerId': customer.id,
+        'contactPhone': customer != null ? '' : walkInPhone,
+        'items': [
+          for (final l in cart)
+            {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
+        ],
+      },
+    );
     try {
       final resp = await dio.post(
         '/${ApiConstants.order}/orders',
-        data: {
-          'storeId': storeId,
-          'channel': 'POS',
-          'fulfilmentType': 'PICKUP',
-          'currency': currency,
-          if (customer != null) 'customerId': customer.id,
-          'contactPhone': customer != null ? '' : walkInPhone,
-          'items': [
-            for (final l in cart)
-              {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
-          ],
-        },
+        data: sale.orderRequest,
         options: Options(headers: {'Idempotency-Key': idem}),
       );
       final order = resp.data['data'] as Map<String, dynamic>;
@@ -445,9 +595,16 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       openReceiptPrint(receiptData);
       await _showOrderPlacedDialog(orderId, email, receiptData: receiptData);
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _processing = false);
-      _snack(friendlyError(e, fallback: 'Could not place order.'), error: true);
+      if (!isOfflineError(e)) {
+        if (!mounted) return;
+        setState(() => _processing = false);
+        _snack(friendlyError(e, fallback: 'Could not place order.'), error: true);
+        return;
+      }
+      // Catalog mode takes no money, but the order is still a commitment the
+      // customer has been given a ticket for — queue it rather than losing it.
+      await ref.read(offlineQueueProvider.notifier).enqueue(sale);
+      await _finishOffline(sale, [...cart], 0, currency, customer);
     }
   }
 

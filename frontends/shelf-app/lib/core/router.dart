@@ -222,6 +222,13 @@ final routerProvider = Provider<GoRouter>((ref) {
               builder: (_) => pos_lib.CashScreen(),
             ),
           ),
+          GoRoute(
+            path: '/pos/pending',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: pos_lib.loadLibrary,
+              builder: (_) => pos_lib.OfflineQueueScreen(),
+            ),
+          ),
         ],
       ),
 

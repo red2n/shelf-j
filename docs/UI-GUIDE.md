@@ -196,7 +196,7 @@ A sidebar (wide) / chip selector (narrow) between four read-only tables, each wi
 
 **Entry point — Clock-in:** the whole terminal is gated behind clocking in — a cashier picks a store/terminal before any sale can start; a background heartbeat keeps the session alive while clocked in, and "Clock out" is one tap away (with a confirmation that in-progress sales are preserved). Once clocked in, the default landing is the Sale screen.
 
-Navigation: **Sale · Tender · Cash** (a distinct amber accent branding sets the POS apart from the Admin Console's look).
+Navigation: **Sale · Tender · Cash · Pending** (a distinct amber accent branding sets the POS apart from the Admin Console's look). *Pending* carries a badge with the number of sales the server has not accepted yet, so an unsynced sale is visible from anywhere in the terminal.
 
 | Screen | What the user does |
 |---|---|
@@ -204,14 +204,18 @@ Navigation: **Sale · Tender · Cash** (a distinct amber accent branding sets th
 | **Tender** | **Split/multi-tender payment**: add one or more payments (Cash, Card, UPI, Wallet, Gift Card, Store Credit) until the balance clears; cash/card entries offer quick preset amounts or "Exact," cash shows change due; gift-card/store-credit entries look up and cap against the actual balance. Added tenders can be removed before completing. On completion: a "Sale complete" confirmation with order number and change due, plus **Reprint** and **Email** receipt actions, then "New sale." (The Email action records the receipt + address against the order and reports success, but no email is actually dispatched today — there's no receipt consumer behind it.) |
 | **Tender** *(Catalog-mode store)* | Skips payment entirely when the clocked-in store has prices hidden: lists the items and a single **Place order** button — no prices, no tender, just an order record for later fulfilment/pricing. |
 | **Cash / Till** | **Open till**: enter a starting cash float. Once open: **Cash drop**, **Pay in**, **Pay out** (each a reason + amount mini-dialog), and **Close till (Z-report)** — shows expected cash, prompts for the counted amount, and produces a "till closed" confirmation. |
+| **Pending** | Sales taken while the server was unreachable, held on the till until it accepts them. Each row shows the sale reference printed on the customer's receipt, the total, when it was taken, and how many attempts it has had. Waiting sales retry on their own; a sale the server has *refused* is parked with the reason and offers **Try again** and **Discard** (confirmed, because the customer has already paid). **Sync now** forces a replay. |
 
 **Flows:**
 - *Start of shift:* Clock in (pick store) → Sale screen unlocked.
 - *Ring up a sale:* scan/search items → attach customer or walk-in phone (required) → Hold or Charge → Tender (splitting across methods as needed) → receipt → New sale.
 - *Interrupted sale:* Hold → serve another customer → Resume (discarding or completing the interrupted cart).
+- *Network drops mid-shift:* the sale completes at the till — the customer pays, the receipt prints with an offline reference — and the writes it owes the server are queued. The till keeps selling; the queue drains by itself when the line comes back. Sales that are still waiting survive a sign-out and an app restart, and clocking out warns how many are outstanding.
 - *End of shift:* Close till → count cash → Z-report → Clock out.
 
-**Notable UX/product features:** camera + hardware-scanner + manual-entry barcode input all funnel through the same lookup; "No sale" and cash drop/pay-in/pay-out give the till an auditable cash-management trail; receipts are printable HTML opened in a browser tab (a web-first, browser-print workflow rather than direct receipt-printer integration); Catalog-mode stores turn the POS into an order-taking terminal with no payment step at all.
+**Notable UX/product features:** camera + hardware-scanner + manual-entry barcode input all funnel through the same lookup; "No sale" and cash drop/pay-in/pay-out give the till an auditable cash-management trail; receipts are printable HTML opened in a browser tab (a web-first, browser-print workflow rather than direct receipt-printer integration); Catalog-mode stores turn the POS into an order-taking terminal with no payment step at all; an offline store-and-forward queue means a dropped network stops the *syncing*, not the *selling*.
+
+**Offline limits, stated plainly.** The queue covers completing a sale, not starting one: scanning still resolves the barcode and price against the server, so an offline till can finish a sale whose lines are already in the cart but cannot ring up a new item. A cached catalog is the separate, larger piece of work. Gift-card and store-credit tenders can only be *staged* while online (the balance lookup needs the server), so they never enter the queue from a cold-offline till — but a sale interrupted after they were staged carries them, and a balance that has since gone is surfaced as a parked sale rather than silently swallowed.
 
 ---
 
