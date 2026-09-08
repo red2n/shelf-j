@@ -16,6 +16,57 @@ public final class Dtos {
   private Dtos() {}
 
   @Schema(
+      name = "CreatePaymentIntentRequest",
+      description =
+          "Opens a payment intent with the configured provider for an ONLINE order. The response"
+              + " carries the SCA redirect the customer must complete, when the provider requires"
+              + " one.")
+  public record CreatePaymentIntentRequest(
+      @Schema(description = "UUID of the order to be paid for.") @NotBlank String orderId,
+      @Schema(
+              description =
+                  "Amount to authorise, in the order's currency. Must equal the order total"
+                      + " exactly; it is checked against order-svc, not trusted.")
+          @NotNull
+          @DecimalMin("0.01")
+          BigDecimal amount,
+      @Schema(
+              description =
+                  "Where the provider should return the customer after SCA. Must be one of the"
+                      + " configured allowed return URLs.")
+          String returnUrl,
+      @Schema(
+              description =
+                  "Client-supplied idempotency key; the Idempotency-Key header takes precedence"
+                      + " when both are present. A replay returns the original intent rather than"
+                      + " placing a second hold on the customer's card.")
+          String idempotencyKey) {}
+
+  @Schema(
+      name = "PaymentIntentResponse",
+      description = "State of a payment intent, including any customer action still outstanding.")
+  public record PaymentIntentResponse(
+      String id,
+      String orderId,
+      @Schema(description = "MANUAL, STRIPE or RAZORPAY.") String provider,
+      @Schema(description = "REQUIRES_ACTION, AUTHORIZED, CAPTURED, FAILED or CANCELLED.")
+          String status,
+      BigDecimal amount,
+      BigDecimal capturedAmount,
+      @Schema(description = "ISO-4217 code, resolved from the order.") String currency,
+      @Schema(
+              description =
+                  "Send the customer here to complete SCA / 3-D Secure. Null when no customer"
+                      + " action is outstanding.")
+          String nextActionUrl,
+      @Schema(description = "Provider failure code, when the intent failed.") String failureCode,
+      @Schema(description = "Provider failure reason, when the intent failed.")
+          String failureMessage,
+      @Schema(description = "UUID of the tender written on capture; null until then.")
+          String paymentId,
+      String createdAt) {}
+
+  @Schema(
       name = "RecordTenderRequest",
       description =
           "Payment tender to capture for an order, either staff-recorded (POS) or online.")

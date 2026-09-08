@@ -176,6 +176,48 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("OPTIONS", "/customers"));
   }
 
+  // ── Payment intents (PSP integration) ──────────────────────────────────────
+
+  /**
+   * A shopper opens an intent at the same point in checkout that POST /payments/online already
+   * serves, and polls it after being sent away for SCA. Both are reachable with no staff role;
+   * payment-svc verifies the order against order-svc rather than trusting the caller.
+   */
+  @Test
+  void aShopperCanOpenAndPollTheirOwnPaymentIntent() throws Exception {
+    assertNotAborted(invoke("POST", "/payments/intents"));
+    assertNotAborted(invoke("GET", "/payments/intents/abc"));
+  }
+
+  /**
+   * The provider has to reach this with no JWT and no tenant. It is authenticated by the signature
+   * over the raw body instead — see PaymentProvider.verifyWebhook.
+   */
+  @Test
+  void providerWebhooksAreReachableWithoutAnyRole() throws Exception {
+    assertNotAborted(invoke("POST", "/payments/webhooks/stripe"));
+    assertNotAborted(invoke("POST", "/payments/webhooks/razorpay"));
+  }
+
+  /** Taking the money is the business's act, not the shopper's. */
+  @Test
+  void capturingAnIntentRequiresStaff() throws Exception {
+    assertAborted(invoke("POST", "/payments/intents/abc/capture"), 403);
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("POST", "/payments/intents/abc/capture"), 403);
+  }
+
+  /** The same lookalike trap as /catalog and /orders: a prefix match would hand these away. */
+  @Test
+  void paymentLookalikePathsDoNotInheritTheExemption() throws Exception {
+    // Not the exempted shape: only GET /payments/intents/{id} is open.
+    assertAborted(invoke("GET", "/payments/intents"), 403);
+    assertAborted(invoke("GET", "/payments/intents/abc/audit"), 403);
+    // A route merely starting with the same characters is a different route.
+    assertAborted(invoke("POST", "/payments/intents-bulk"), 403);
+    assertAborted(invoke("POST", "/payments/webhooks-replay"), 403);
+  }
+
   // ── Staff-operable admin surfaces (STOREKEEPER inventory + CASHIER till) ──
 
   @Test

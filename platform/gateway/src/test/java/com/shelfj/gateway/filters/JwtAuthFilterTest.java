@@ -42,6 +42,78 @@ class JwtAuthFilterTest {
     lenient().when(requestContext.getHeaders()).thenReturn(headers);
   }
 
+  // ── Payment provider webhooks ──────────────────────────────────────────────
+  // These bypass token validation entirely, so the shape they match has to be exact. The provider
+  // calls them from its own infrastructure with no JWT and no storefront header; authentication is
+  // the provider's signature over the raw body, checked inside payment-svc.
+
+  @Test
+  void providerWebhookBypassesTokenValidation() throws IOException {
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(uriInfo.getPath()).thenReturn("api/payment-svc/payments/webhooks/stripe");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
+  @Test
+  void versionedProviderWebhookAlsoBypasses() throws IOException {
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(uriInfo.getPath()).thenReturn("api/v1/payment-svc/payments/webhooks/stripe");
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+  }
+
+  /** A GET on the webhook path is not a delivery, so it gets no exemption. */
+  @Test
+  void webhookExemptionIsPostOnly() throws IOException {
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(uriInfo.getPath()).thenReturn("api/payment-svc/payments/webhooks/stripe");
+
+    filter.filter(requestContext);
+
+    verify(requestContext).abortWith(any());
+  }
+
+  /**
+   * The exemption is for exactly one segment after /webhooks/. Anything deeper, or a route that
+   * merely starts with the same characters, still needs a token — the same trap the public-suffix
+   * test above guards.
+   */
+  @Test
+  void pathsBeyondTheWebhookShapeStillRequireAToken() throws IOException {
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(uriInfo.getPath()).thenReturn("api/payment-svc/payments/webhooks/stripe/replay");
+
+    filter.filter(requestContext);
+
+    verify(requestContext).abortWith(any());
+  }
+
+  @Test
+  void webhookLookalikePathStillRequiresAToken() throws IOException {
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(uriInfo.getPath()).thenReturn("api/payment-svc/payments/webhooks-replay");
+
+    filter.filter(requestContext);
+
+    verify(requestContext).abortWith(any());
+  }
+
+  /** A bare /webhooks/ with no provider names nothing, so it is not a delivery. */
+  @Test
+  void webhookWithNoProviderRequiresAToken() throws IOException {
+    when(requestContext.getMethod()).thenReturn("POST");
+    when(uriInfo.getPath()).thenReturn("api/payment-svc/payments/webhooks/");
+
+    filter.filter(requestContext);
+
+    verify(requestContext).abortWith(any());
+  }
+
   @Test
   void publicLoginPathBypassesTokenValidation() throws IOException {
     when(uriInfo.getPath()).thenReturn("api/iam-svc/auth/login");

@@ -97,6 +97,16 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       return;
     }
 
+    // Payment provider webhooks. The provider calls these from its own infrastructure: no JWT, no
+    // storefront header, and no tenant to resolve — the intent named in the body is what says
+    // which tenant the event concerns. They are authenticated instead by the provider's signature
+    // over the raw body, verified inside payment-svc before anything is applied. Identity headers
+    // have already been stripped above, so the request reaches the service with no role, which is
+    // exactly right: it should be able to do nothing except be verified.
+    if (isProviderWebhook(normalizedPath, ctx.getMethod())) {
+      return;
+    }
+
     // OpenAPI contract documents are not sensitive (no tenant data) and need to be reachable by
     // an unauthenticated browser (Swagger UI) for API discovery/docs.
     if ("GET".equals(ctx.getMethod()) && isOpenApiSpec(normalizedPath)) {
@@ -212,6 +222,15 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if ("POST".equals(method) && "api/order-svc/orders".equals(path)) {
       return true;
     }
+    // Opening a payment intent, and polling it after the customer returns from SCA. Same shopper
+    // and same point in checkout as api/payment-svc/payments/online below. Capturing is absent on
+    // purpose: POST .../capture is staff-only and goes through normal Bearer verification.
+    if ("POST".equals(method) && "api/payment-svc/payments/intents".equals(path)) {
+      return true;
+    }
+    if ("GET".equals(method) && isPaymentIntentRead(path)) {
+      return true;
+    }
     if ("GET".equals(method) && "api/order-svc/orders/mine".equals(path)) {
       return true;
     }
@@ -254,6 +273,41 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     // supply X-Storefront-Tenant on mutating endpoints would let any party inject orders or
     // payment records into any tenant's namespace without authentication.
     return false;
+  }
+
+  /**
+   * {@code POST api/payment-svc/payments/webhooks/{provider}} — exactly five segments, so nothing
+   * deeper inherits the exemption.
+   *
+   * @param path the normalized request path
+   * @param method the HTTP method
+   * @return {@code true} if this is a provider webhook delivery
+   */
+  private static boolean isProviderWebhook(String path, String method) {
+    if (!"POST".equals(method)) {
+      return false;
+    }
+    String prefix = "api/payment-svc/payments/webhooks/";
+    if (!path.startsWith(prefix)) {
+      return false;
+    }
+    String provider = path.substring(prefix.length());
+    return !provider.isEmpty() && provider.indexOf('/') < 0;
+  }
+
+  /**
+   * {@code api/payment-svc/payments/intents/{id}} and nothing under it.
+   *
+   * @param path the normalized request path
+   * @return {@code true} for exactly that shape
+   */
+  private static boolean isPaymentIntentRead(String path) {
+    String prefix = "api/payment-svc/payments/intents/";
+    if (!path.startsWith(prefix)) {
+      return false;
+    }
+    String rest = path.substring(prefix.length());
+    return !rest.isEmpty() && rest.indexOf('/') < 0;
   }
 
   private static boolean isPublic(String path) {

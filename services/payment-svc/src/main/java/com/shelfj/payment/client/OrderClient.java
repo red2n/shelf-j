@@ -54,7 +54,12 @@ public class OrderClient {
 
   /** The order-svc fields needed to validate a payment claim against the order it targets. */
   public record OrderInfo(
-      String customerId, String channel, BigDecimal total, String status, String storeId) {}
+      String customerId,
+      String channel,
+      BigDecimal total,
+      String status,
+      String storeId,
+      String currency) {}
 
   /**
    * Throws 404 when the order doesn't exist in the tenant, 503 when order-svc cannot be reached.
@@ -123,14 +128,31 @@ public class OrderClient {
     try (JsonReader reader = Json.createReader(new StringReader(body))) {
       JsonObject data = reader.readObject().getJsonObject("data");
       return new OrderInfo(
-          data.containsKey("customerId") && !data.isNull("customerId")
-              ? data.getString("customerId")
-              : null,
+          optionalString(data, "customerId"),
           data.getString("channel"),
           data.getJsonNumber("total").bigDecimalValue(),
           data.getString("status"),
-          data.getString("storeId"));
+          optionalString(data, "storeId"),
+          optionalString(data, "currency"));
     }
+  }
+
+  /**
+   * Reads a field that may be absent or null.
+   *
+   * <p>Both cases have to be handled and neither is handled by {@code getString}: JSON-B omits a
+   * null field from a DTO entirely rather than serialising it as null, and {@code isNull} throws on
+   * an absent key rather than returning true. Getting this wrong on {@code customerId} turned every
+   * guest order into a 503 (SJ-D14); {@code storeId} and {@code currency} are read the same way
+   * here because the same two shapes apply to them, and the caller already treats a null store as
+   * legitimate.
+   *
+   * @param data the order object
+   * @param field field name
+   * @return the value, or null if the field is absent or JSON null
+   */
+  private static String optionalString(JsonObject data, String field) {
+    return data.containsKey(field) && !data.isNull(field) ? data.getString(field) : null;
   }
 
   private static ApiException unavailable(String message, Throwable cause) {
