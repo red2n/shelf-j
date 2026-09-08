@@ -40,6 +40,11 @@ class OfflineSale {
   final double total;
   final int itemCount;
 
+  /// Whether the POS transaction journal entry has been written. Journalling is
+  /// the last step of a sale and is idempotent on the order id, so it replays
+  /// with everything else.
+  final bool posLogDone;
+
   final int attempts;
   final String? lastError;
   final OfflineSaleStatus status;
@@ -54,6 +59,7 @@ class OfflineSale {
     required this.total,
     required this.itemCount,
     this.orderId,
+    this.posLogDone = false,
     this.attempts = 0,
     this.lastError,
     this.status = OfflineSaleStatus.pending,
@@ -61,7 +67,7 @@ class OfflineSale {
 
   /// Every write in this sale has landed.
   bool get isComplete =>
-      orderId != null && tenders.every((t) => t.isComplete);
+      orderId != null && tenders.every((t) => t.isComplete) && posLogDone;
 
   /// Short human reference, printed on the offline receipt and shown in the
   /// pending list, so a cashier holding a piece of paper can find the sale.
@@ -78,6 +84,7 @@ class OfflineSale {
   OfflineSale copyWith({
     String? orderId,
     List<OfflineTender>? tenders,
+    bool? posLogDone,
     int? attempts,
     String? lastError,
     bool clearError = false,
@@ -93,6 +100,7 @@ class OfflineSale {
         total: total,
         itemCount: itemCount,
         orderId: orderId ?? this.orderId,
+        posLogDone: posLogDone ?? this.posLogDone,
         attempts: attempts ?? this.attempts,
         lastError: clearError ? null : (lastError ?? this.lastError),
         status: status ?? this.status,
@@ -106,6 +114,7 @@ class OfflineSale {
         'orderRequest': orderRequest,
         'tenders': tenders.map((t) => t.toJson()).toList(),
         'orderId': orderId,
+        'posLogDone': posLogDone,
         'total': total,
         'itemCount': itemCount,
         'attempts': attempts,
@@ -124,6 +133,10 @@ class OfflineSale {
             .map((e) => OfflineTender.fromJson(Map<String, dynamic>.from(e as Map)))
             .toList(),
         orderId: j['orderId'] as String?,
+        // Defaulted rather than required: a sale queued by a build before
+        // journalling existed must still replay, and re-journalling is a no-op
+        // server-side anyway.
+        posLogDone: j['posLogDone'] as bool? ?? false,
         total: (j['total'] as num?)?.toDouble() ?? 0,
         itemCount: (j['itemCount'] as num?)?.toInt() ?? 0,
         attempts: (j['attempts'] as num?)?.toInt() ?? 0,

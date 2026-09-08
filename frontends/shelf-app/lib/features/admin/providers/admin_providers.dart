@@ -1463,3 +1463,82 @@ final taxSummaryReportProvider =
   return TaxSummaryReport.fromJson(
       Map<String, dynamic>.from(resp.data['data'] as Map));
 });
+
+// ── Staff exception report ───────────────────────────────────────────────────
+
+/// One group's staff-initiated exceptions. [sales] is the denominator from the
+/// POS transaction journal — see [ExceptionReport.journalCoverage] before
+/// reading any rate off it.
+class ExceptionRow {
+  final String groupKey;
+  final int discounts;
+  final double discountAmount;
+  final int voids;
+  final int noSales;
+  final int sales;
+  final double salesValue;
+
+  const ExceptionRow({
+    required this.groupKey,
+    required this.discounts,
+    required this.discountAmount,
+    required this.voids,
+    required this.noSales,
+    required this.sales,
+    required this.salesValue,
+  });
+
+  int get totalExceptions => discounts + voids + noSales;
+
+  /// Exceptions per hundred sales, or null when there is no denominator to
+  /// divide by. Null is the honest answer: zero would read as "well behaved".
+  double? get ratePerHundredSales =>
+      sales == 0 ? null : (totalExceptions * 100) / sales;
+
+  factory ExceptionRow.fromJson(Map<String, dynamic> j) => ExceptionRow(
+        groupKey: j['groupKey'] as String? ?? '-',
+        discounts: (j['discounts'] as num?)?.toInt() ?? 0,
+        discountAmount: (j['discountAmount'] as num?)?.toDouble() ?? 0,
+        voids: (j['voids'] as num?)?.toInt() ?? 0,
+        noSales: (j['noSales'] as num?)?.toInt() ?? 0,
+        sales: (j['sales'] as num?)?.toInt() ?? 0,
+        salesValue: (j['salesValue'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+class ExceptionReport {
+  final List<ExceptionRow> rows;
+
+  /// False when nothing journalled a sale in the period, so every [ExceptionRow.sales]
+  /// is zero for want of data rather than want of selling. The screen says so
+  /// instead of showing rates computed from nothing.
+  final bool journalCoverage;
+
+  const ExceptionReport({required this.rows, required this.journalCoverage});
+
+  factory ExceptionReport.fromJson(Map<String, dynamic> j) => ExceptionReport(
+        rows: ((j['rows'] as List?) ?? [])
+            .map((e) => ExceptionRow.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        journalCoverage: j['journalCoverage'] as bool? ?? false,
+      );
+}
+
+/// ACTOR (which member of staff) · STORE.
+final exceptionGroupingProvider = StateProvider<String>((ref) => 'ACTOR');
+
+final exceptionReportProvider =
+    FutureProvider.autoDispose<ExceptionReport>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final params = <String, dynamic>{'groupBy': ref.watch(exceptionGroupingProvider)};
+  final from = _dayStartInstant(range.from);
+  final to = _dayEndInstant(range.to);
+  if (from != null) params['from'] = from;
+  if (to != null) params['to'] = to;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.order}/admin/reports/exceptions',
+        queryParameters: params,
+      );
+  return ExceptionReport.fromJson(
+      Map<String, dynamic>.from(resp.data['data'] as Map));
+});

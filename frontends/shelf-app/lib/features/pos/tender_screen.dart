@@ -207,6 +207,20 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         }
       }
 
+      // 3. Journal the sale to the POS transaction journal. Its own try: by this
+      // point the money is taken and the order is confirmed, so a journal that
+      // fails must not be reported to the cashier as a failed sale. A *network*
+      // failure is rethrown so the sale is queued and the journal replays with
+      // it; anything else means the server answered and refused, which no retry
+      // fixes and which the customer must not be made to wait for.
+      try {
+        await dio.post('/${ApiConstants.order}/pos/log/orders/$orderId');
+        sale = sale.copyWith(posLogDone: true);
+      } catch (e) {
+        if (isOfflineError(e)) rethrow;
+        debugPrint('Sale $orderId completed but was not journalled: $e');
+      }
+
       // A completed sale is the strongest activity signal — keep the session alive.
       ref.read(posSessionProvider.notifier).touch();
 

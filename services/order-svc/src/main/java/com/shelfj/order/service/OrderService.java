@@ -1,5 +1,7 @@
 package com.shelfj.order.service;
 
+import com.shelfj.order.domain.Domain.ExceptionGrouping;
+import com.shelfj.order.domain.Domain.ExceptionRow;
 import com.shelfj.order.domain.Domain.GiftCard;
 import com.shelfj.order.domain.Domain.GiftCardTransaction;
 import com.shelfj.order.domain.Domain.Layaway;
@@ -38,8 +40,10 @@ import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 /** Business logic for order-svc. Thin resource → this service → repository. */
@@ -1061,7 +1065,73 @@ public class OrderService {
             order.exemptReason(),
             Instant.now(),
             Instant.now());
-    return repo.insertPosLogEntry(entry);
+    // Idempotent on the order: the till calls this straight after taking money, so it is on
+    // the retry path — and an offline sale replays it along with everything else.
+    return repo.recordPosLogOnce(entry);
+  }
+
+  // ── Staff exception report ────────────────────────────────────────────────
+
+  /**
+   * What loss prevention actually asks: which cashier is an outlier. Sums the three append-only
+   * logs that record staff-initiated exceptions — discounts granted, sales voided, drawer opened
+   * with no sale — against the transaction journal that says how much each person sold, so a result
+   * can be read as a rate rather than a ranking of who worked the most shifts.
+   *
+   * <p>Rows are merged on the key rather than joined in SQL: these are four independent logs, and a
+   * join would multiply a cashier's 3 discounts by their 2 voids into 6 of each. Merging also means
+   * someone who appears in only one log still gets a row, which is the case that matters — the
+   * cashier with no sales and four no-sales is the whole point of the report.
+   *
+   * <p>A null actor buckets as {@code UNATTRIBUTED} rather than being dropped. An exception nobody
+   * is accountable for is the last thing this report should hide.
+   */
+  public List<ExceptionRow> exceptionReport(
+      UUID tenantId, UUID storeId, Instant from, Instant to, ExceptionGrouping grouping) {
+    boolean byActor = grouping == ExceptionGrouping.ACTOR;
+    Map<String, BigDecimal[]> money = new LinkedHashMap<>();
+    Map<String, long[]> counts = new LinkedHashMap<>();
+
+    for (Object[] r : repo.aggregateDiscounts(tenantId, storeId, from, to, byActor)) {
+      String k = key(r[0]);
+      counts.computeIfAbsent(k, x -> new long[4])[0] = (Long) r[1];
+      money.computeIfAbsent(k, x -> newMoney())[0] = (BigDecimal) r[2];
+    }
+    for (Object[] r : repo.aggregateVoids(tenantId, storeId, from, to, byActor)) {
+      counts.computeIfAbsent(key(r[0]), x -> new long[4])[1] = (Long) r[1];
+    }
+    for (Object[] r : repo.aggregateNoSales(tenantId, storeId, from, to, byActor)) {
+      counts.computeIfAbsent(key(r[0]), x -> new long[4])[2] = (Long) r[1];
+    }
+    for (Object[] r : repo.aggregateJournalledSales(tenantId, storeId, from, to, byActor)) {
+      String k = key(r[0]);
+      counts.computeIfAbsent(k, x -> new long[4])[3] = (Long) r[1];
+      money.computeIfAbsent(k, x -> newMoney())[1] = (BigDecimal) r[2];
+    }
+
+    List<ExceptionRow> rows = new ArrayList<>();
+    for (Map.Entry<String, long[]> e : counts.entrySet()) {
+      long[] c = e.getValue();
+      BigDecimal[] m = money.getOrDefault(e.getKey(), newMoney());
+      rows.add(new ExceptionRow(e.getKey(), c[0], m[0], c[1], c[2], c[3], m[1]));
+    }
+    // Most exceptions first, money breaking the tie: two cashiers with three exceptions each are
+    // not equally interesting if one of them discounted a hundred times more.
+    rows.sort(
+        java.util.Comparator.comparingLong(
+                (ExceptionRow r) -> r.discounts() + r.voids() + r.noSales())
+            .thenComparing(ExceptionRow::discountAmount)
+            .reversed());
+    return rows;
+  }
+
+  private static BigDecimal[] newMoney() {
+    return new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO};
+  }
+
+  /** Null actor or store ids are bucketed, never dropped. */
+  private static String key(Object raw) {
+    return raw == null ? "UNATTRIBUTED" : raw.toString();
   }
 
   /** One page of POSLog entries plus the opaque cursor for the next page (null when exhausted). */

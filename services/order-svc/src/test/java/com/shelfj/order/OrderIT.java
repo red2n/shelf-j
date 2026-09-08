@@ -477,7 +477,7 @@ class OrderIT {
               "it-poslog-" + i);
       assertThat(placed.getStatus(), is(201));
       String orderId = extractId(placed.readEntity(String.class));
-      Response logged = post("/admin/pos-log/orders/" + orderId, "", tenant);
+      Response logged = post("/pos/log/orders/" + orderId, "", tenant);
       assertThat(logged.getStatus(), is(201));
       allIds.add(extractId(logged.readEntity(String.class)));
     }
@@ -850,7 +850,162 @@ class OrderIT {
         is(200));
   }
 
+  // ── Staff exception report ─────────────────────────────────────────────────
+
+  /**
+   * The report exists to answer "which cashier is an outlier". These pin the two things that make
+   * it an answer rather than a table: the three logs are merged rather than joined, and a group
+   * that appears in only one of them still gets a row.
+   */
+  @Test
+  void exceptionReportMergesTheThreeLogsPerActor() {
+    String cashier = "aaaaaaaa-0000-0000-0000-000000000001";
+    String other = "aaaaaaaa-0000-0000-0000-000000000002";
+
+    // One discounted POS sale by `cashier`.
+    String orderId =
+        extractId(
+            postAs(
+                    "/orders",
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"POS\","
+                        + "\"discountAmount\":2.00,\"discountReason\":\"damaged box\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,"
+                        + "\"unitPrice\":20.00}]}",
+                    T,
+                    cashier,
+                    "MANAGER",
+                    "it-exc-1")
+                .readEntity(String.class));
+
+    // Two no-sales: one by the same cashier, one by somebody else who sold nothing at all.
+    for (String who : new String[] {cashier, other}) {
+      Response ns =
+          postAs(
+              "/pos/no-sale",
+              "{\"storeId\":\"" + S + "\",\"reason\":\"drawer check\"}",
+              T,
+              who,
+              "CASHIER",
+              null);
+      assertThat(ns.getStatus(), is(201));
+    }
+
+    // Journal the sale, so the report has a denominator for `cashier`.
+    Response journal = postAs("/pos/log/orders/" + orderId, "{}", T, cashier, "CASHIER", null);
+    assertThat(journal.getStatus(), is(201));
+
+    String body =
+        getQuery("/admin/reports/exceptions", T, "groupBy", "ACTOR").readEntity(String.class);
+
+    // The discounting cashier: one discount worth 2.00, one no-sale, one journalled sale.
+    assertThat(body, containsString(cashier));
+    assertThat(body, containsString("\"discounts\":1"));
+    assertThat(body, containsString("\"noSales\":1"));
+    assertThat(body, containsString("\"sales\":1"));
+
+    // The second cashier sold nothing and opened the drawer anyway — the case the report is for.
+    // A join across the three logs would have dropped this row entirely.
+    assertThat(body, containsString(other));
+
+    // A denominator exists, so rates are meaningful.
+    assertThat(body, containsString("\"journalCoverage\":true"));
+  }
+
+  /**
+   * With nothing journalled there is no denominator, and the report has to say so rather than
+   * present zeroes that read as "this cashier made no sales".
+   */
+  @Test
+  void exceptionReportDeclaresWhenItHasNoDenominator() {
+    Response ns =
+        postAs(
+            "/pos/no-sale",
+            "{\"storeId\":\"" + S + "\",\"reason\":\"no journal here\"}",
+            "44444444-4444-4444-4444-444444444444",
+            "aaaaaaaa-0000-0000-0000-000000000009",
+            "CASHIER",
+            null);
+    assertThat(ns.getStatus(), is(201));
+
+    String body =
+        get("/admin/reports/exceptions", "44444444-4444-4444-4444-444444444444")
+            .readEntity(String.class);
+    assertThat(body, containsString("\"noSales\":1"));
+    assertThat(body, containsString("\"sales\":0"));
+    assertThat(body, containsString("\"journalCoverage\":false"));
+  }
+
+  @Test
+  void exceptionReportRejectsAnUnknownGrouping() {
+    Response r = getQuery("/admin/reports/exceptions", T, "groupBy", "WEATHER");
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("ORDER_INVALID_GROUPING"));
+  }
+
+  /**
+   * The journal write used to sit under /admin/, which is management-gated — so the cashier who
+   * took the sale could not journal it and nothing ever did. It is now on the till's own path.
+   */
+  @Test
+  void aCashierCanJournalTheirOwnSaleAndReplayIsANoOp() {
+    String cashier = "aaaaaaaa-0000-0000-0000-00000000000a";
+    String orderId =
+        extractId(
+            postAs(
+                    "/orders",
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"POS\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,"
+                        + "\"unitPrice\":9.00}]}",
+                    T,
+                    cashier,
+                    "CASHIER",
+                    "it-poslog-1")
+                .readEntity(String.class));
+
+    Response first = postAs("/pos/log/orders/" + orderId, "{}", T, cashier, "CASHIER", null);
+    assertThat(first.getStatus(), is(201));
+    String firstId = extractId(first.readEntity(String.class));
+
+    // A retry — or an offline sale replayed later — returns the same entry, not a 409.
+    Response replay = postAs("/pos/log/orders/" + orderId, "{}", T, cashier, "CASHIER", null);
+    assertThat(replay.getStatus(), is(201));
+    assertThat(extractId(replay.readEntity(String.class)), is(firstId));
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────
+
+  /** GET with one query parameter — `get` bakes its argument into the path, which encodes '?'. */
+  private Response getQuery(String path, String tenant, String key, String value) {
+    return target
+        .path(path)
+        .queryParam(key, value)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get();
+  }
+
+  /** POST as a specific principal and role, which the OWNER-stamped helpers cannot express. */
+  private Response postAs(
+      String path, String json, String tenant, String userId, String roles, String idempotencyKey) {
+    var req =
+        target
+            .path(path)
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-User-Id", userId)
+            .header("X-Roles", roles);
+    if (idempotencyKey != null) req = req.header("Idempotency-Key", idempotencyKey);
+    return req.post(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
 
   private Response getAs(String path, String tenant, String userId, String roles) {
     return target

@@ -188,6 +188,14 @@ class OfflineQueueNotifier extends StateNotifier<List<OfflineSale>> {
         }
       }
 
+      // 3. Journal the sale. Last because it describes a completed transaction,
+      //    and idempotent on the order id, so a replay returns the same entry.
+      if (!current.posLogDone) {
+        await dio.post('/${ApiConstants.order}/pos/log/orders/${current.orderId}');
+        current = current.copyWith(posLogDone: true);
+        await _replace(current);
+      }
+
       // Everything landed — the server now knows about this sale.
       await discard(current.id);
       _consecutiveFailures = 0;

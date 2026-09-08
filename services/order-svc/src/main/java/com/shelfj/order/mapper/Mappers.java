@@ -1,5 +1,6 @@
 package com.shelfj.order.mapper;
 
+import com.shelfj.order.domain.Domain.ExceptionRow;
 import com.shelfj.order.domain.Domain.GiftCard;
 import com.shelfj.order.domain.Domain.GiftCardTransaction;
 import com.shelfj.order.domain.Domain.Layaway;
@@ -15,6 +16,7 @@ import com.shelfj.order.domain.Domain.Return;
 import com.shelfj.order.domain.Domain.ReturnItem;
 import com.shelfj.order.domain.Domain.SpecialOrder;
 import com.shelfj.order.domain.Domain.SpecialOrderItem;
+import com.shelfj.order.dto.Dtos.ExceptionRowResponse;
 import com.shelfj.order.dto.Dtos.GiftCardResponse;
 import com.shelfj.order.dto.Dtos.GiftCardTransactionResponse;
 import com.shelfj.order.dto.Dtos.LayawayDepositResponse;
@@ -202,6 +204,17 @@ public final class Mappers {
         ts(so.createdAt()),
         ts(so.updatedAt()),
         items.stream().map(Mappers::toDto).toList());
+  }
+
+  public static ExceptionRowResponse toDto(ExceptionRow r) {
+    return new ExceptionRowResponse(
+        r.groupKey(),
+        r.discounts(),
+        r.discountAmount(),
+        r.voids(),
+        r.noSales(),
+        r.sales(),
+        r.salesValue());
   }
 
   public static PosLogEntryResponse toDto(PosLogEntry e) {

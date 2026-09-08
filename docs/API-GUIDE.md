@@ -284,6 +284,8 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `GET /orders` — list orders for the tenant (filter by store/channel/status/date range).
 - `GET /orders/mine` — the signed-in customer's own order history (never another customer's, never the tenant's full book).
 - `POST /orders` — place a new order (POS or ONLINE channel); requires an `Idempotency-Key`.
+- `POST /pos/log/orders/{orderId}` — journal a completed POS sale to the transaction log. **Staff-reachable** (CASHIER/MANAGER/OWNER) and idempotent on the order, so a retry or a replayed offline sale returns the existing entry. This write used to sit under `/admin/pos-log`, which is management-gated — the cashier who took the sale could not journal it, so nothing ever did and the table was empty for the life of the product. The read side stays at `GET /admin/pos-log`.
+- `GET /admin/reports/exceptions?from&to&storeId&groupBy=ACTOR|STORE` — staff exception report: discounts, voids and no-sale drawer opens per staff member or store, with journalled sales as the denominator. Check `journalCoverage` before reading any rate; when false, nothing journalled a sale in the period and the counts have nothing to divide by.
 - `GET /orders/{id}` — get an order with its line items.
 - `POST /orders/{id}/confirm` — confirm an order (e.g. once payment settles).
 - `POST /orders/{id}/cancel` — cancel an order pre-fulfilment.

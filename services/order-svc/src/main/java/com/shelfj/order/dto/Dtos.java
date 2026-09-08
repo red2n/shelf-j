@@ -438,4 +438,44 @@ public final class Dtos {
 
   @Schema(name = "NoSaleResponse")
   public record NoSaleResponse(String id, String storeId, String reason, String loggedAt) {}
+
+  // ── Staff exception report ────────────────────────────────────────────────
+
+  @Schema(
+      name = "ExceptionRowResponse",
+      description =
+          "One cashier's, or one store's, staff-initiated exceptions over the period, with the"
+              + " journalled sales that make them a rate rather than a ranking of who worked most.")
+  public record ExceptionRowResponse(
+      @Schema(
+              description =
+                  "The actor id or store id this line covers. UNATTRIBUTED covers exceptions"
+                      + " recorded with no actor — bucketed rather than dropped, because an"
+                      + " exception nobody is accountable for is the last one to hide.")
+          String groupKey,
+      @Schema(description = "How many discounts this group granted.") long discounts,
+      @Schema(description = "Total value discounted.") BigDecimal discountAmount,
+      @Schema(description = "How many sales this group voided.") long voids,
+      @Schema(description = "How many times the drawer was opened with no sale.") long noSales,
+      @Schema(
+              description =
+                  "Journalled POS sales for this group. Zero means nothing journalled the sale,"
+                      + " which is NOT the same as no sales having happened — see"
+                      + " ExceptionReportResponse.journalCoverage before reading any rate.")
+          long sales,
+      @Schema(description = "Value of those journalled sales.") BigDecimal salesValue) {}
+
+  @Schema(
+      name = "ExceptionReportResponse",
+      description = "Staff exception report: discounts, voids and no-sales over a period.")
+  public record ExceptionReportResponse(
+      List<ExceptionRowResponse> rows,
+      @Schema(
+              description =
+                  "True when the POS transaction journal has entries for this period. When false"
+                      + " every sales figure above is zero because nothing journalled anything,"
+                      + " and the exception counts must be read as raw counts with no denominator"
+                      + " — a cashier who took a thousand sales and one who took three are not"
+                      + " distinguishable.")
+          boolean journalCoverage) {}
 }

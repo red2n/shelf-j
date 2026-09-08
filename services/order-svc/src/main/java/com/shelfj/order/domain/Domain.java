@@ -261,6 +261,30 @@ public final class Domain {
 
   // ── Gap #43: POSLog entry (append-only) ───────────────────────────────────
 
+  /**
+   * One line of the staff exception report: everything one cashier (or one store) did over the
+   * period that loss prevention cares about, with the sales count that makes it a rate rather than
+   * a ranking of who worked hardest.
+   *
+   * <p>{@code sales} and {@code salesValue} come from the POS transaction journal. They are zero
+   * when nothing journalled the sale, which is not the same as "this person made no sales" — the
+   * report says so rather than dividing by it.
+   */
+  public record ExceptionRow(
+      String groupKey,
+      long discounts,
+      java.math.BigDecimal discountAmount,
+      long voids,
+      long noSales,
+      long sales,
+      java.math.BigDecimal salesValue) {}
+
+  /** How the exception report buckets its rows. */
+  public enum ExceptionGrouping {
+    ACTOR,
+    STORE
+  }
+
   public record PosLogEntry(
       UUID id,
       UUID tenantId,

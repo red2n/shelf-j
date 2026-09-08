@@ -151,7 +151,10 @@ void main() {
       expect(after.tenders[1].giftCardCode, 'GC-1');
     });
 
-    test('isComplete needs the gift-card redemption, not just the tender', () {
+    test('isComplete walks every step, in order', () {
+      // A sale is only off the queue once the order, each tender, any gift-card
+      // redemption AND the transaction journal have all landed. Each of these
+      // being separately trackable is what lets a replay resume rather than redo.
       final tendered = _sale(orderId: 'order-9', tenders: const [
         OfflineTender(
             body: {'method': 'GIFT_CARD'},
@@ -159,8 +162,31 @@ void main() {
             giftCardCode: 'GC-1',
             tenderDone: true),
       ]);
-      expect(tendered.isComplete, isFalse);
-      expect(tendered.markTender(0, redeemDone: true).isComplete, isTrue);
+      expect(tendered.isComplete, isFalse, reason: 'the card is not redeemed');
+
+      final redeemed = tendered.markTender(0, redeemDone: true);
+      expect(redeemed.isComplete, isFalse, reason: 'the sale is not journalled');
+
+      expect(redeemed.copyWith(posLogDone: true).isComplete, isTrue);
+    });
+
+    test('an older queued sale replays rather than being stuck unjournalled', () {
+      // posLogDone defaults to false when absent, so a sale written by a build
+      // that predates journalling replays the journal write instead of failing
+      // to parse. Re-journalling is a no-op server-side.
+      final legacy = OfflineSale.fromJson({
+        'id': 'pos-1700000123456',
+        'capturedAt': '2026-09-08T11:30:00.000Z',
+        'storeId': 'store-1',
+        'currency': 'GBP',
+        'orderRequest': const {'storeId': 'store-1'},
+        'tenders': const [],
+        'total': 5.0,
+        'itemCount': 1,
+        'orderId': 'order-9',
+      });
+      expect(legacy.posLogDone, isFalse);
+      expect(legacy.isComplete, isFalse);
     });
 
     test('the reference a cashier reads off the receipt is stable', () {

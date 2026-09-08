@@ -18,6 +18,7 @@ enum _ReportType {
   valuation,
   shrinkage,
   taxSummary,
+  exceptions,
 }
 
 class ReportsScreen extends ConsumerStatefulWidget {
@@ -162,6 +163,8 @@ class _ReportContent extends ConsumerWidget {
         return _ShrinkageReport();
       case _ReportType.taxSummary:
         return _TaxSummaryReport();
+      case _ReportType.exceptions:
+        return _ExceptionReport();
     }
   }
 }
@@ -737,6 +740,8 @@ String _reportLabel(_ReportType r) {
       return 'Shrinkage';
     case _ReportType.taxSummary:
       return 'Tax Summary';
+    case _ReportType.exceptions:
+      return 'Staff Exceptions';
   }
 }
 
@@ -760,6 +765,8 @@ IconData _reportIcon(_ReportType r) {
       return Icons.trending_down;
     case _ReportType.taxSummary:
       return Icons.receipt_long_outlined;
+    case _ReportType.exceptions:
+      return Icons.gpp_maybe_outlined;
   }
 }
 
@@ -1214,6 +1221,132 @@ class _TaxSummaryReport extends ConsumerWidget {
                         DataCell(Text('${report.totals.transactions}')),
                       ]),
                     ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Loss prevention's view: who is discounting, voiding and opening the drawer
+/// without a sale, against how much they actually sold.
+class _ExceptionReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final range = ref.watch(reportDateRangeProvider);
+    final async = ref.watch(exceptionReportProvider);
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading staff exceptions…'),
+      error: (e, _) => ErrorView(
+        message: friendlyError(e, fallback: 'Could not load the exception report.'),
+        onRetry: () => ref.invalidate(exceptionReportProvider),
+      ),
+      data: (report) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ReportHeader(
+            title: 'Staff Exceptions',
+            subtitle:
+                'Discounts, voids and no-sales${range.from != null ? ' · ${range.from} → ${range.to}' : ''}',
+            onRefresh: () => ref.invalidate(exceptionReportProvider),
+            onExportCsv: report.rows.isEmpty
+                ? null
+                : () {
+                    final buf = StringBuffer(
+                        'groupKey,discounts,discountAmount,voids,noSales,sales,salesValue\n');
+                    for (final r in report.rows) {
+                      buf.writeln([
+                        _csvEscape(r.groupKey),
+                        r.discounts,
+                        r.discountAmount,
+                        r.voids,
+                        r.noSales,
+                        r.sales,
+                        r.salesValue,
+                      ].join(','));
+                    }
+                    _downloadCsv('staff-exceptions.csv', buf.toString());
+                  },
+          ),
+          _GroupingBar(
+            provider: exceptionGroupingProvider,
+            options: const {'ACTOR': 'By staff member', 'STORE': 'By store'},
+          ),
+          const _DateRangeBar(),
+          // Without a denominator this table ranks people by how much they
+          // worked. Saying so is the difference between a report and a list that
+          // looks like evidence.
+          if (!report.journalCoverage && report.rows.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: cs.tertiaryContainer,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(children: [
+                Icon(Icons.info_outline, color: cs.onTertiaryContainer),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'No sales were journalled in this period, so these are raw counts with '
+                    'nothing to divide by — a cashier who served a hundred customers and one '
+                    'who served three look the same here. Compare rates only once the Sales '
+                    'column is populated.',
+                    style: TextStyle(color: cs.onTertiaryContainer, fontSize: 13),
+                  ),
+                ),
+              ]),
+            ),
+          const SizedBox(height: 12),
+          if (report.rows.isEmpty)
+            const Expanded(
+                child: Center(child: Text('No staff exceptions in this range.')))
+          else
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Card(
+                  child: DataTable(
+                    headingRowColor:
+                        WidgetStatePropertyAll(cs.surfaceContainerHigh),
+                    columnSpacing: 20,
+                    columns: const [
+                      DataColumn(label: Text('Who')),
+                      DataColumn(label: Text('Discounts'), numeric: true),
+                      DataColumn(label: Text('Value'), numeric: true),
+                      DataColumn(label: Text('Voids'), numeric: true),
+                      DataColumn(label: Text('No-sales'), numeric: true),
+                      DataColumn(label: Text('Sales'), numeric: true),
+                      DataColumn(label: Text('Per 100'), numeric: true),
+                    ],
+                    rows: report.rows.map((r) {
+                      final rate = r.ratePerHundredSales;
+                      final unattributed = r.groupKey == 'UNATTRIBUTED';
+                      return DataRow(cells: [
+                        DataCell(unattributed
+                            // Kept and labelled rather than dropped: exceptions
+                            // nobody is accountable for are the ones to look at.
+                            ? Text('Unattributed',
+                                style: TextStyle(
+                                    fontStyle: FontStyle.italic, color: cs.outline))
+                            : Text(_short(r.groupKey), style: _idStyle)),
+                        DataCell(Text('${r.discounts}')),
+                        DataCell(Text(r.discountAmount.toStringAsFixed(2))),
+                        DataCell(Text('${r.voids}')),
+                        DataCell(Text('${r.noSales}')),
+                        DataCell(Text('${r.sales}')),
+                        DataCell(Text(
+                          rate == null ? '—' : rate.toStringAsFixed(1),
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, color: cs.outline),
+                        )),
+                      ]);
+                    }).toList(),
                   ),
                 ),
               ),

@@ -167,6 +167,7 @@ void main() {
     expect(h.adapter.calls.map((c) => c.idempotencyKey), [
       'pos-1700000123456-order',
       'pos-1700000123456-pay0',
+      null, // the journal write is idempotent on the order id, so it needs no key
     ]);
     expect(h.container.read(offlineQueueProvider), isEmpty,
         reason: 'a fully accepted sale leaves the queue');
@@ -181,8 +182,11 @@ void main() {
     await notifier.enqueue(_sale(orderId: 'order-1'));
     await notifier.sync();
 
-    expect(h.adapter.countOf('/orders'), 0);
+    // `/orders` must not be re-posted — but `/pos/log/orders/…` legitimately
+    // contains it, so match the placement path exactly rather than by substring.
+    expect(h.adapter.paths.where((p) => p.endsWith('/orders')), isEmpty);
     expect(h.adapter.countOf('/payments'), 1);
+    expect(h.adapter.countOf('/pos/log/orders/'), 1);
   });
 
   test('a tender that already landed is not recorded twice', () async {
@@ -195,7 +199,7 @@ void main() {
     await notifier.sync();
 
     expect(h.adapter.countOf('/payments'), 1);
-    expect(h.adapter.calls.single.idempotencyKey, 'pos-1700000123456-pay1',
+    expect(h.adapter.calls.first.idempotencyKey, 'pos-1700000123456-pay1',
         reason: 'the key is positional, so the second tender keeps its own key');
   });
 
@@ -212,7 +216,34 @@ void main() {
       '/${ApiConstants.order}/orders',
       '/${ApiConstants.payment}/payments',
       '/${ApiConstants.order}/gift-cards/GC-1/redeem',
+      '/${ApiConstants.order}/pos/log/orders/order-1',
     ]);
+  });
+
+  test('a sale that only owes its journal replays just that', () async {
+    // The money landed and the line died before the journal. Re-sending the
+    // order or the tender would be wasted work; the queue knows what is left.
+    final h = _harness();
+    final notifier = h.container.read(offlineQueueProvider.notifier);
+    await notifier.enqueue(_sale(orderId: 'order-1', tenders: const [
+      OfflineTender(body: {'method': 'CASH'}, amount: 5.0, tenderDone: true),
+    ]));
+    await notifier.sync();
+
+    expect(h.adapter.paths, ['/${ApiConstants.order}/pos/log/orders/order-1']);
+    expect(h.container.read(offlineQueueProvider), isEmpty);
+  });
+
+  test('a journalled sale is not journalled again', () async {
+    final h = _harness();
+    final notifier = h.container.read(offlineQueueProvider.notifier);
+    await notifier.enqueue(_sale(orderId: 'order-1', tenders: const [
+      OfflineTender(body: {'method': 'CASH'}, amount: 5.0, tenderDone: true),
+    ]).copyWith(posLogDone: true));
+    await notifier.sync();
+
+    expect(h.adapter.calls, isEmpty, reason: 'nothing was owed');
+    expect(h.container.read(offlineQueueProvider), isEmpty);
   });
 
   test('progress is kept when the line drops mid-sale', () async {
@@ -234,7 +265,7 @@ void main() {
     h.adapter.offline = false;
     h.adapter.calls.clear();
     await notifier.sync();
-    expect(h.adapter.countOf('/orders'), 0);
+    expect(h.adapter.paths.where((p) => p.endsWith('/orders')), isEmpty);
     expect(h.container.read(offlineQueueProvider), isEmpty);
   });
 

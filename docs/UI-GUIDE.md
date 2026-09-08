@@ -151,7 +151,7 @@ Left-hand navigation: **Dashboard · Catalog · Inventory · Stores · Orders ·
 
 ### 4.7 Reports
 
-A sidebar (wide) / chip selector (narrow) between nine read-only tables, each with a refresh button and, where it has rows, a **CSV export**. Reports that cover a period carry a from/to date bar; those that group carry grouping chips.
+A sidebar (wide) / chip selector (narrow) between ten read-only tables, each with a refresh button and, where it has rows, a **CSV export**. Reports that cover a period carry a from/to date bar; those that group carry grouping chips.
 
 *Business-wide, from reporting-svc:*
 
@@ -166,7 +166,8 @@ A sidebar (wide) / chip selector (narrow) between nine read-only tables, each wi
 6. **Low Stock** (inventory-svc) — items below their own reorder level, worst shortfall first. Names the **signal** that bound each row (THRESHOLD / SAFETY_STOCK / REORDER_POINT), so a manager can see *why* an item is flagged and therefore what to change.
 7. **Stock Valuation** (inventory-svc) — holding value on the configured FIFO or AVERAGE basis, grouped by store or variant. Stock carrying no cost is reported **separately and excluded** from the value rather than counted as zero, which would understate the holding; the screen says so when there is any.
 8. **Shrinkage** (inventory-svc) — stock written off and found over a period, grouped by reason, staff member or store. Write-offs and finds are shown as separate columns on purpose: a store that wrote off 100 units and found 100 others is not a store that did nothing, and a net figure alone would say it was. Date range.
-9. **Tax Summary** (pricing-svc) — net / VAT / gross by rate band, store or month, reconciling to VAT return boxes 1 and 6. Exempt lines are marked, because the return counts their net in Box 6 and their VAT in no box at all. When Box 1 and total VAT disagree an exempt line is carrying VAT — the screen warns before the return is filed rather than dropping it silently. Date range (**required** here; pricing-svc rejects the call without one).
+9. **Staff Exceptions** (order-svc) — loss prevention's view: discounts granted, sales voided and no-sale drawer opens over a period, grouped by staff member or store, most exceptions first. Each row carries the staff member's journalled sales so the counts read as a rate (`per 100`) rather than a ranking of who worked the most shifts; when nothing journalled a sale the rate shows `—` and the screen says why, because a zero there would read as "impeccably behaved". Exceptions recorded with no actor are shown as **Unattributed** rather than dropped. Date range.
+10. **Tax Summary** (pricing-svc) — net / VAT / gross by rate band, store or month, reconciling to VAT return boxes 1 and 6. Exempt lines are marked, because the return counts their net in Box 6 and their VAT in no box at all. When Box 1 and total VAT disagree an exempt line is carrying VAT — the screen warns before the return is filed rather than dropping it silently. Date range (**required** here; pricing-svc rejects the call without one).
 
 ### 4.8 Customers
 
@@ -300,7 +301,7 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 | `/admin/orders` | Orders (all channels) + Return/Refund + Collect Payment |
 | `/admin/procurement` | Procurement (Purchase Orders / Suppliers tabs) |
 | `/admin/pricing` | Pricing (Price Lists / Promotions / VAT Rates tabs) |
-| `/admin/reports` | Reports (On-Hand / Sales / Sales by Day / Supply-Demand / Movements / Low Stock / Valuation / Shrinkage / Tax Summary) |
+| `/admin/reports` | Reports (On-Hand / Sales / Sales by Day / Supply-Demand / Movements / Low Stock / Valuation / Shrinkage / Staff Exceptions / Tax Summary) |
 | `/admin/customers` | Customers + loyalty/credit + addresses |
 | `/admin/sales` | Sales tools (Gift Cards / Layaways / Special Orders tabs) |
 | `/admin/staff` | Staff |

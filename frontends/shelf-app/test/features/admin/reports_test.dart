@@ -189,6 +189,58 @@ void main() {
     });
   });
 
+  group('staff exception report', () {
+    test('a rate needs a denominator, and says so when it has none', () {
+      const noDenominator = ExceptionRow(
+          groupKey: 'a-1',
+          discounts: 3,
+          discountAmount: 40,
+          voids: 1,
+          noSales: 2,
+          sales: 0,
+          salesValue: 0);
+      // Null, not zero: zero would read as "impeccably behaved", which is the
+      // opposite of what an absent denominator means.
+      expect(noDenominator.ratePerHundredSales, isNull);
+      expect(noDenominator.totalExceptions, 6);
+
+      const withSales = ExceptionRow(
+          groupKey: 'a-1',
+          discounts: 3,
+          discountAmount: 40,
+          voids: 1,
+          noSales: 2,
+          sales: 200,
+          salesValue: 5000);
+      expect(withSales.ratePerHundredSales, 3.0);
+    });
+
+    test('the report reads coverage from the server, not from the rows', () async {
+      final h = _harness(bodies: {
+        'exceptions': '{"data":{"rows":[{"groupKey":"a-1","discounts":2,'
+            '"discountAmount":15.5,"voids":0,"noSales":1,"sales":0,"salesValue":0}],'
+            '"journalCoverage":false}}'
+      });
+      final report = await h.container.read(exceptionReportProvider.future);
+
+      expect(report.journalCoverage, isFalse);
+      expect(report.rows.single.discounts, 2);
+      expect(report.rows.single.ratePerHundredSales, isNull);
+    });
+
+    test('it widens the picker dates to instants like the others', () async {
+      final h = _harness(bodies: {
+        'exceptions': '{"data":{"rows":[],"journalCoverage":false}}'
+      });
+      await h.container.read(exceptionReportProvider.future);
+
+      final call = h.adapter.callTo('/reports/exceptions');
+      expect(call.query['from'], '2026-08-01T00:00:00Z');
+      expect(call.query['to'], '2026-08-31T23:59:59Z');
+      expect(call.query['groupBy'], 'ACTOR');
+    });
+  });
+
   group('the screen', () {
     Future<void> pump(WidgetTester tester, _RecordingAdapter adapter) async {
       tester.view.physicalSize = const Size(1400, 1000);
@@ -246,6 +298,34 @@ void main() {
 
       expect(find.textContaining('40 units carry no cost'), findsOneWidget);
       expect(find.textContaining('not counted as zero'), findsOneWidget);
+    });
+
+    testWidgets('an exception report with no denominator warns before it is read',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['exceptions'] = '{"data":{"rows":[{"groupKey":"a-1","discounts":2,'
+            '"discountAmount":15.5,"voids":1,"noSales":3,"sales":0,"salesValue":0}],'
+            '"journalCoverage":false}}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Staff Exceptions').last);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('No sales were journalled'), findsOneWidget);
+      expect(find.text('—'), findsOneWidget, reason: 'no rate without a denominator');
+    });
+
+    testWidgets('an unattributed row is labelled, not hidden', (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['exceptions'] = '{"data":{"rows":[{"groupKey":"UNATTRIBUTED",'
+            '"discounts":0,"discountAmount":0,"voids":4,"noSales":0,"sales":50,'
+            '"salesValue":900}],"journalCoverage":true}}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Staff Exceptions').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Unattributed'), findsOneWidget);
+      expect(find.textContaining('No sales were journalled'), findsNothing);
+      expect(find.text('8.0'), findsOneWidget, reason: '4 exceptions per 50 sales');
     });
 
     testWidgets('a report with rows offers the CSV export', (tester) async {

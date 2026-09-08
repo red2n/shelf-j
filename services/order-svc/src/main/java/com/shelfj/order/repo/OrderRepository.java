@@ -1469,6 +1469,164 @@ public class OrderRepository extends BaseOutboxRepository {
         "insert pos log entry");
   }
 
+  /**
+   * Journal a completed POS sale, returning the existing entry if this order is already journalled
+   * rather than failing.
+   *
+   * <p>The till calls this after taking the money, so it is on the retry path: a lost response, or
+   * a sale captured offline and replayed later, must not turn into an error the cashier has to
+   * interpret. The order id is the natural key and already carries a unique index, so this is the
+   * same shape as the gift-card redeem guard — a replay is a no-op, not a 409.
+   */
+  public PosLogEntry recordPosLogOnce(PosLogEntry e) {
+    return inTx(
+        c -> {
+          PosLogEntry existing = findPosLogByOrderTx(c, e.tenantId(), e.orderId());
+          if (existing != null) return existing;
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO pos_log_entries"
+                      + " (id,tenant_id,order_id,store_id,cashier_id,subtotal,tax_amount,"
+                      + "  discount_amount,total,currency,tax_exempt,exempt_reason,transaction_ts)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, e.id());
+            ps.setObject(2, e.tenantId());
+            ps.setObject(3, e.orderId());
+            ps.setObject(4, e.storeId());
+            ps.setObject(5, e.cashierId());
+            ps.setBigDecimal(6, e.subtotal());
+            ps.setBigDecimal(7, e.taxAmount());
+            ps.setBigDecimal(8, e.discountAmount());
+            ps.setBigDecimal(9, e.total());
+            ps.setString(10, e.currency());
+            ps.setBoolean(11, e.taxExempt());
+            ps.setString(12, e.exemptReason());
+            ps.setObject(13, e.transactionTs().atOffset(java.time.ZoneOffset.UTC));
+            ps.executeUpdate();
+          } catch (java.sql.SQLException sqle) {
+            // Two tills journalling the same order at once: the loser re-reads the winner's row.
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState())) {
+              PosLogEntry raced = findPosLogByOrderTx(c, e.tenantId(), e.orderId());
+              if (raced != null) return raced;
+            }
+            throw sqle;
+          }
+          return e;
+        },
+        "record pos log entry");
+  }
+
+  private PosLogEntry findPosLogByOrderTx(java.sql.Connection c, UUID tenantId, UUID orderId)
+      throws java.sql.SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
+                + " discount_amount, total, currency, tax_exempt, exempt_reason,"
+                + " transaction_ts, created_at"
+                + " FROM pos_log_entries WHERE tenant_id=? AND order_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      try (var rs = ps.executeQuery()) {
+        return rs.next() ? mapPosLogEntry(rs) : null;
+      }
+    }
+  }
+
+  // ── Staff exception report ──────────────────────────────────────────────────
+  //
+  // Four separate aggregates rather than one joined query, because these are four
+  // independent append-only logs with no join key between them beyond the actor or store
+  // they name. Joining them would multiply rows: a cashier with 3 discounts and 2 voids
+  // would report 6 of each. They are summed separately and merged on the key in the
+  // service, which is also what lets a cashier who only appears in one log still get a row.
+
+  /** discounts: count and total value, keyed by actor or store. */
+  public List<Object[]> aggregateDiscounts(
+      UUID tenantId, UUID storeId, Instant from, Instant to, boolean byActor) {
+    String key = byActor ? "granted_by" : "store_id";
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT "
+                + key
+                + ", COUNT(*), COALESCE(SUM(discount_amount),0)"
+                + " FROM order_discounts WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (from != null) sql.append(" AND created_at >= ?");
+    if (to != null) sql.append(" AND created_at <= ?");
+    sql.append(" GROUP BY ").append(key);
+    return query(
+        sql.toString(),
+        ps -> bindPeriod(ps, tenantId, storeId, from, to),
+        rs -> new Object[] {rs.getObject(1), rs.getLong(2), rs.getBigDecimal(3)},
+        "aggregate discounts");
+  }
+
+  /** voids: count only — a void has no money on it, only an order it removed. */
+  public List<Object[]> aggregateVoids(
+      UUID tenantId, UUID storeId, Instant from, Instant to, boolean byActor) {
+    String key = byActor ? "voided_by" : "store_id";
+    StringBuilder sql =
+        new StringBuilder("SELECT " + key + ", COUNT(*) FROM pos_void_log WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (from != null) sql.append(" AND voided_at >= ?");
+    if (to != null) sql.append(" AND voided_at <= ?");
+    sql.append(" GROUP BY ").append(key);
+    return query(
+        sql.toString(),
+        ps -> bindPeriod(ps, tenantId, storeId, from, to),
+        rs -> new Object[] {rs.getObject(1), rs.getLong(2)},
+        "aggregate voids");
+  }
+
+  /** no-sales: drawer opened with no transaction. */
+  public List<Object[]> aggregateNoSales(
+      UUID tenantId, UUID storeId, Instant from, Instant to, boolean byActor) {
+    String key = byActor ? "cashier_id" : "store_id";
+    StringBuilder sql =
+        new StringBuilder("SELECT " + key + ", COUNT(*) FROM pos_no_sale_log WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (from != null) sql.append(" AND logged_at >= ?");
+    if (to != null) sql.append(" AND logged_at <= ?");
+    sql.append(" GROUP BY ").append(key);
+    return query(
+        sql.toString(),
+        ps -> bindPeriod(ps, tenantId, storeId, from, to),
+        rs -> new Object[] {rs.getObject(1), rs.getLong(2)},
+        "aggregate no-sales");
+  }
+
+  /** The denominator: journalled sales, so exceptions can be read as a rate. */
+  public List<Object[]> aggregateJournalledSales(
+      UUID tenantId, UUID storeId, Instant from, Instant to, boolean byActor) {
+    String key = byActor ? "cashier_id" : "store_id";
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT "
+                + key
+                + ", COUNT(*), COALESCE(SUM(total),0)"
+                + " FROM pos_log_entries WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (from != null) sql.append(" AND transaction_ts >= ?");
+    if (to != null) sql.append(" AND transaction_ts <= ?");
+    sql.append(" GROUP BY ").append(key);
+    return query(
+        sql.toString(),
+        ps -> bindPeriod(ps, tenantId, storeId, from, to),
+        rs -> new Object[] {rs.getObject(1), rs.getLong(2), rs.getBigDecimal(3)},
+        "aggregate journalled sales");
+  }
+
+  /** tenant_id first (golden rule #3), then the optional store and period, in SQL order. */
+  private static void bindPeriod(
+      PreparedStatement ps, UUID tenantId, UUID storeId, Instant from, Instant to)
+      throws java.sql.SQLException {
+    int i = 1;
+    ps.setObject(i++, tenantId);
+    if (storeId != null) ps.setObject(i++, storeId);
+    if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
+    if (to != null) ps.setObject(i++, to.atOffset(java.time.ZoneOffset.UTC));
+  }
+
   public List<PosLogEntry> findPosLogByOrder(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
