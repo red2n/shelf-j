@@ -29,6 +29,15 @@ public interface PaymentProvider {
   String name();
 
   /**
+   * The header this provider signs its webhooks with — {@code Stripe-Signature} for Stripe, {@code
+   * X-Razorpay-Signature} for Razorpay. Named by the provider rather than fixed by us, because the
+   * provider chooses it and reading the wrong one means every delivery is rejected.
+   *
+   * @return the header name to pass to {@link #verifyWebhook}
+   */
+  String signatureHeaderName();
+
+  /**
    * Asks the provider to authorise {@code amount} for an order.
    *
    * <p>Called once per intent, inside the request that creates it. Implementations must pass {@code
@@ -133,6 +142,8 @@ public interface PaymentProvider {
 
   /** A provider call failed. Mapped to 502/503 by the service, never to a 500. */
   class ProviderException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
     private final boolean retryable;
 
     /**

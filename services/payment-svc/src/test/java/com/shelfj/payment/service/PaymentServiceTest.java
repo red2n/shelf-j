@@ -137,7 +137,7 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null, "POS", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
+            null, "POS", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString(), "GBP"));
 
     var ex =
         assertThrows(
@@ -160,7 +160,8 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "PENDING",
-            UUID.randomUUID().toString()));
+            UUID.randomUUID().toString(),
+            "GBP"));
 
     var ex =
         assertThrows(
@@ -180,7 +181,12 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null, "ONLINE", new BigDecimal("10.00"), "CONFIRMED", UUID.randomUUID().toString()));
+            null,
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "CONFIRMED",
+            UUID.randomUUID().toString(),
+            "GBP"));
 
     var ex =
         assertThrows(
@@ -198,7 +204,12 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null, "ONLINE", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
+            null,
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "PENDING",
+            UUID.randomUUID().toString(),
+            "GBP"));
 
     var ex =
         assertThrows(
@@ -216,7 +227,12 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null, "ONLINE", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString()));
+            null,
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "PENDING",
+            UUID.randomUUID().toString(),
+            "GBP"));
     svc.repo = capturingRepo();
     svc.storeClient = permissiveStoreClient();
 
@@ -239,7 +255,8 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("25.50"),
             "PENDING",
-            UUID.randomUUID().toString()));
+            UUID.randomUUID().toString(),
+            "GBP"));
     svc.repo = capturingRepo();
     svc.storeClient = permissiveStoreClient();
 
@@ -402,7 +419,8 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
-            UUID.randomUUID().toString()));
+            UUID.randomUUID().toString(),
+            "GBP"));
 
     var result = svc.getTender(tenantId, tenderId, ctx(tenantId, customerId));
     assertEquals(tenderId, result.id());
@@ -423,7 +441,8 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
-            UUID.randomUUID().toString()));
+            UUID.randomUUID().toString(),
+            "GBP"));
 
     var ex =
         assertThrows(
@@ -439,7 +458,16 @@ class PaymentServiceTest {
     UUID orderId = UUID.randomUUID();
     UUID tenderId = UUID.randomUUID();
     svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
-    // orderClient deliberately left null — a staff read must never touch it.
+    // The guard is wired with a client that fails on contact, so this still proves what it always
+    // did: a staff read short-circuits before the order lookup and must never reach order-svc.
+    svc.guard = new OrderPaymentGuard();
+    svc.guard.orderClient =
+        new OrderClient() {
+          @Override
+          public OrderInfo getOrder(UUID t, UUID o) {
+            throw new AssertionError("a staff read must not call order-svc");
+          }
+        };
 
     var result = svc.getTender(tenantId, tenderId, staffCtx(tenantId));
     assertEquals(tenderId, result.id());
@@ -466,7 +494,8 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
-            UUID.randomUUID().toString()));
+            UUID.randomUUID().toString(),
+            "GBP"));
 
     ApiException e =
         assertThrows(
@@ -488,7 +517,8 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
-            UUID.randomUUID().toString()));
+            UUID.randomUUID().toString(),
+            "GBP"));
 
     assertEquals(1, svc.listTendersByOrder(tenantId, orderId, ctx(tenantId, ownerId)).size());
     var ex =
@@ -524,7 +554,8 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
-            UUID.randomUUID().toString()));
+            UUID.randomUUID().toString(),
+            "GBP"));
 
     assertEquals(1, svc.listRefundsByOrder(tenantId, orderId, ctx(tenantId, ownerId)).size());
     var ex =

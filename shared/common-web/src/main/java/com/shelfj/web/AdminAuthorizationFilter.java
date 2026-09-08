@@ -154,6 +154,18 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   }
 
   /**
+   * {@code GET /payments/intents/{id}} and nothing else under it.
+   *
+   * @param path the service-local request path
+   * @return {@code true} for exactly that shape
+   */
+  private static boolean isPaymentIntentSelfRead(String path) {
+    if (!path.startsWith("/payments/intents/")) return false;
+    String rest = path.substring("/payments/intents/".length());
+    return !rest.isEmpty() && rest.indexOf('/') < 0;
+  }
+
+  /**
    * Reads reachable without a staff role. The counterpart of {@link #isOpenMutation}, and curated
    * the same way: every entry is either something the public storefront genuinely needs, or a
    * service-to-service read that carries no identity headers.
@@ -192,6 +204,13 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // would apply, and a blanket staff requirement here would stop a shopper reading their own
         // order. GET /orders, the tenant-wide list, has no such check and is deliberately excluded.
         || isOrderSelfRead(path)
+        // A shopper polling their own payment intent after being sent away for SCA — without this
+        // they cannot learn whether the payment they just completed succeeded. Not unguarded:
+        // PaymentIntentService applies the same object-level check as the tender reads, resolving
+        // ownership through order-svc, and answers 404 rather than 403 so intent ids cannot be
+        // probed. Matched by shape, like the order reads, so a sub-resource added later stays
+        // denied until someone decides what it should be.
+        || isPaymentIntentSelfRead(path)
         // Storefront promotions, the read side of what /prices/resolve already exposes.
         || "/promotions".equals(path)
         // The caller's own principal — it describes the caller, so it leaks nothing new.
@@ -281,6 +300,18 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // Guest storefront online payment (cashless). The staff cash-tender path is POST /payments,
         // which stays role-gated; this is the customer-facing online capture only.
         || "/payments/online".equals(path)
+        // Opening a payment intent: the same shopper, at the same point in checkout, as
+        // /payments/online above. payment-svc verifies the order against order-svc before it
+        // authorises anything — the caller's claim about amount and ownership is never trusted.
+        // Capturing is NOT here: POST /payments/intents/{id}/capture stays staff-gated, because
+        // taking the money is the business's act, not the shopper's.
+        || "/payments/intents".equals(path)
+        // Provider webhooks. Necessarily public — the provider has to reach it, and carries no JWT
+        // and no tenant. It is authenticated instead by the provider's signature over the raw
+        // body, verified in PaymentProvider.verifyWebhook before anything else happens. That check
+        // is the entire security boundary of this path: without it, anyone could mark any order
+        // paid by POSTing a plausible body.
+        || path.startsWith("/payments/webhooks/")
         // Internal checkout stock hold: order-svc calls inventory-svc service-to-service (only
         // X-Tenant-Id, no staff role) to hold stock when ANY caller places an ONLINE order —
         // mirrors /prices/resolve. A customer with no staff role can already tie up stock for the

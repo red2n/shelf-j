@@ -201,23 +201,11 @@ public class PaymentService {
    * tenant with no principal, so it was reachable from outside rather than only from the mesh.
    */
   private void requireReadAccess(UUID tenantId, UUID orderId, TenantContext ctx) {
-    if (isStaff(ctx)) return;
-    OrderClient.OrderInfo order = orderClient.getOrder(tenantId, orderId);
-    // ctx.userId() is null for an unidentified caller. It used to be impossible to reach this line
-    // with a null — the service-to-service exemption returned first — so the .toString() below was
-    // an NPE waiting for that exemption to go away. Compare from the order's side instead.
-    if (order.customerId() == null
-        || ctx.userId() == null
-        || !order.customerId().equals(ctx.userId().toString()))
-      throw ApiException.notFound("PAYMENT_NOT_FOUND", "payment tender not found");
-  }
-
-  private static boolean isStaff(TenantContext ctx) {
-    return ctx.hasRole("PLATFORM_ADMIN")
-        || ctx.hasRole("OWNER")
-        || ctx.hasRole("MANAGER")
-        || ctx.hasRole("STOREKEEPER")
-        || ctx.hasRole("CASHIER");
+    guard.requireOrderReadAccess(
+        tenantId,
+        orderId,
+        ctx,
+        () -> ApiException.notFound("PAYMENT_NOT_FOUND", "payment tender not found"));
   }
 
   public RefundTender recordRefund(

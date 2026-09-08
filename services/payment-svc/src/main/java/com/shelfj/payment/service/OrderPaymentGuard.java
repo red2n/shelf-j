@@ -79,4 +79,50 @@ public class OrderPaymentGuard {
     UUID storeId = order.storeId() == null ? null : UUID.fromString(order.storeId());
     return new VerifiedOrder(order, storeId);
   }
+
+  /**
+   * Object-level authorization for payment reads, shared by tenders and intents.
+   *
+   * <p>Neither a tender nor an intent carries the buyer's identity directly — only the order it is
+   * against — so ownership is resolved one hop away via order-svc (golden rule #1: never trust a
+   * caller-supplied customerId, ask the owning service). Staff may read anything in their tenant;
+   * an authenticated customer may read only what is against their own order. Denials are 404 rather
+   * than 403 so ids cannot be probed for existence.
+   *
+   * <p>There is deliberately no exemption for a caller with no principal. No other service reads
+   * payments, so that branch had no caller to serve — and a guest storefront request carries a
+   * tenant with no principal, so it was reachable from outside rather than only from the mesh
+   * (SJ-D13).
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order the record is against
+   * @param ctx caller identity
+   * @param notFound supplies the exception to throw, so each caller reports its own resource
+   * @throws ApiException whatever {@code notFound} supplies, when the caller may not read it
+   */
+  public void requireOrderReadAccess(
+      UUID tenantId,
+      UUID orderId,
+      TenantContext ctx,
+      java.util.function.Supplier<ApiException> notFound) {
+    if (isStaff(ctx)) {
+      return;
+    }
+    OrderClient.OrderInfo order = orderClient.getOrder(tenantId, orderId);
+    // ctx.userId() is null for an unidentified caller. Compare from the order's side so a null
+    // principal cannot reach a .toString() — the NPE SJ-D13 uncovered when the exemption went away.
+    if (order.customerId() == null
+        || ctx.userId() == null
+        || !order.customerId().equals(ctx.userId().toString())) {
+      throw notFound.get();
+    }
+  }
+
+  private static boolean isStaff(TenantContext ctx) {
+    return ctx.hasRole("PLATFORM_ADMIN")
+        || ctx.hasRole("OWNER")
+        || ctx.hasRole("MANAGER")
+        || ctx.hasRole("STOREKEEPER")
+        || ctx.hasRole("CASHIER");
+  }
 }

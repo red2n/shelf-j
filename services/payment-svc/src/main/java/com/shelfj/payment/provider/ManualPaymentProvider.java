@@ -28,6 +28,11 @@ public class ManualPaymentProvider implements PaymentProvider {
     return PaymentIntent.PROVIDER_MANUAL;
   }
 
+  @Override
+  public String signatureHeaderName() {
+    return "X-Provider-Signature";
+  }
+
   /**
    * Authorises the full amount immediately, with no customer action.
    *

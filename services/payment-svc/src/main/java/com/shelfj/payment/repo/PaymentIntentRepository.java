@@ -254,6 +254,34 @@ public class PaymentIntentRepository extends BaseOutboxRepository {
         "record webhook event");
   }
 
+  /**
+   * The tender an already-captured intent points at.
+   *
+   * @param tenantId owning tenant
+   * @param intentId the captured intent
+   * @return the tender, or null if the intent is unknown or not captured
+   */
+  public PaymentTender findCapturedTender(UUID tenantId, UUID intentId) {
+    return inTx(
+        c -> {
+          PaymentIntent intent = findByIdTx(c, tenantId, intentId);
+          return intent == null ? null : findTenderTx(c, tenantId, intent.paymentId());
+        },
+        "find captured tender");
+  }
+
+  private PaymentIntent findByIdTx(Connection c, UUID tenantId, UUID id) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT " + COLUMNS + " FROM payment_intents WHERE tenant_id = ? AND id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, id);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? map(rs) : null;
+      }
+    }
+  }
+
   private PaymentIntent lockTx(Connection c, UUID tenantId, UUID id) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
