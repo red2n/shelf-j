@@ -85,7 +85,10 @@ public class CustomerClient {
       }
       try (JsonReader reader = Json.createReader(new StringReader(res.as(String.class)))) {
         JsonObject data = reader.readObject().getJsonObject("data");
-        if (data == null || data.isNull("email")) {
+        // containsKey first: JSON-B omits a null field from the DTO rather than serialising it
+        // as null, and isNull throws on an absent key. A customer with no email address is
+        // ordinary (POS walk-ins are created from a phone number).
+        if (data == null || !data.containsKey("email") || data.isNull("email")) {
           return Optional.empty();
         }
         String email = data.getString("email", null);
