@@ -35,6 +35,12 @@ import java.util.Set;
  *       Without this tier, STOREKEEPER could not receive stock and CASHIER could not open a till,
  *       even though the resource classes intentionally allow those roles.
  *   <li>Every other mutating request requires any staff role — i.e. not a plain {@code CUSTOMER}.
+ *   <li><b>Every other read requires any staff role too</b>, unless it is on the open-read
+ *       allowlist ({@link #isOpenRead}). Reads were previously left entirely to each resource to
+ *       remember, and 24 of them forgot — serving a tenant's customer list, order book, supplier
+ *       terms, price lists and nominal ledger to any caller holding a token for that tenant, a
+ *       signed-in storefront shopper included (SJ-D11, generalising the two endpoints SJ-D10 closed
+ *       by hand). Denying by default makes forgetting fail closed.
  *   <li>Open mutations (no staff role yet, or no role headers at all): the iam identity endpoints,
  *       tenant bootstrap ({@code POST /onboarding/tenants}, {@code POST /admin/tenant} — the caller
  *       only becomes OWNER via the TenantCreated event), and {@code POST /prices/resolve}/{@code
@@ -96,9 +102,110 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
       }
       return;
     }
-    if (isMutating(method) && !isOpenMutation(path) && !hasAny(STAFF_ROLES)) {
+    if (isMutating(method)) {
+      if (!isOpenMutation(path) && !hasAny(STAFF_ROLES)) {
+        req.abortWith(forbidden());
+      }
+      return;
+    }
+    // Reads, default-deny, mirroring mutations above. Only GET/HEAD: OPTIONS is CORS preflight and
+    // carries no credentials by design, so denying it would break every browser client.
+    if (("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method))
+        && !isInfrastructure(path)
+        && !isOpenRead(path)
+        && !hasAny(STAFF_ROLES)) {
       req.abortWith(forbidden());
     }
+  }
+
+  /**
+   * Probes, metrics and the API description. Served by Helidon rather than JAX-RS in most
+   * configurations, so this filter usually never sees them — but a readiness probe that starts
+   * returning 403 takes every replica out of rotation, which is too expensive a way to find out.
+   *
+   * @param path the service-local request path
+   * @return {@code true} if this is an infrastructure endpoint, never business data
+   */
+  private static boolean isInfrastructure(String path) {
+    return pathEqualsOrUnder(path, "/health")
+        || pathEqualsOrUnder(path, "/metrics")
+        || pathEqualsOrUnder(path, "/openapi");
+  }
+
+  /**
+   * The order reads that carry their own object-level authorization: {@code /orders/mine} and the
+   * id-addressed {@code /orders/{id}}, {@code /orders/{id}/history}, {@code /orders/{id}/returns}.
+   *
+   * <p>Matched by shape rather than by prefix, so anything else added under {@code /orders/} later
+   * is denied until someone decides what it should be — the point of this whole change is that
+   * forgetting fails closed.
+   *
+   * @param path the service-local request path
+   * @return {@code true} for exactly those four shapes
+   */
+  private static boolean isOrderSelfRead(String path) {
+    if (!path.startsWith("/orders/")) return false;
+    String rest = path.substring("/orders/".length());
+    if (rest.isEmpty()) return false;
+    int slash = rest.indexOf('/');
+    if (slash < 0) return true;
+    String tail = rest.substring(slash + 1);
+    return "history".equals(tail) || "returns".equals(tail);
+  }
+
+  /**
+   * Reads reachable without a staff role. The counterpart of {@link #isOpenMutation}, and curated
+   * the same way: every entry is either something the public storefront genuinely needs, or a
+   * service-to-service read that carries no identity headers.
+   *
+   * <p>An entry here means "any authenticated caller in the tenant may read this". Anything
+   * carrying another customer's PII, a supplier's terms, or the tenant's own commercial position
+   * must not be on this list — the eight services that had such data readable are exactly what
+   * prompted the default-deny above.
+   *
+   * <p>Deliberately absent, and the asymmetry is the point: {@code /customers/{id}} and its
+   * sub-resources carry object-level authorization every bit as strong as the {@code /orders/{id}}
+   * carve-out below — {@code CustomerService.requireReadAccess} serves a customer their own record
+   * and 404s them on anyone else's. They are still denied here, because no client asks for them:
+   * the storefront has no account self-service screen, so an entry would widen the surface for
+   * nobody. When that screen is built, add the shapes here rather than loosening the guard in
+   * customer-svc, which is already correct.
+   *
+   * @param path the service-local request path
+   * @return {@code true} if {@code path} may be read without a staff role
+   */
+  private static boolean isOpenRead(String path) {
+    return
+    // ── public storefront ────────────────────────────────────────────────
+    // The shopper-facing catalogue: categories, product search, one product, its variants and
+    // its image. Public by definition — this is the shop window.
+    pathEqualsOrUnder(path, "/catalog")
+        // Per-store storefront configuration and the list of stores a shopper may buy from,
+        // plus the transact-or-not flow guard. Also read service-to-service by payment-svc.
+        || pathEqualsOrUnder(path, "/storefront")
+        // Stock display on a product page. Availability only — no cost, no batch, no location.
+        || "/inventory/availability".equals(path)
+        // /orders/mine and the id-addressed order reads. These are NOT unguarded: order-svc
+        // applies object-level authorization to each — the owning customer gets their order, a
+        // different customer in the same tenant gets 404 rather than 403, so the endpoint is not
+        // an existence oracle either. That is strictly stronger than the role check this filter
+        // would apply, and a blanket staff requirement here would stop a shopper reading their own
+        // order. GET /orders, the tenant-wide list, has no such check and is deliberately excluded.
+        || isOrderSelfRead(path)
+        // Storefront promotions, the read side of what /prices/resolve already exposes.
+        || "/promotions".equals(path)
+        // The caller's own principal — it describes the caller, so it leaks nothing new.
+        || "/auth/me".equals(path)
+        // Own cart, mirroring the /cart mutation carve-out. Object-level authorization (owning
+        // session or customer) lives in CartService, not here.
+        || pathEqualsOrUnder(path, "/cart")
+        // Onboarding progress, read by a freshly registered user who is not OWNER yet — the same
+        // race the /onboarding mutation carve-outs exist for.
+        || "/onboarding/status".equals(path)
+        // ── service-to-service ───────────────────────────────────────────
+        // order-svc asks tenant-svc which store serves a pincode. No identity headers, and the
+        // answer (which shop delivers where) is storefront-public anyway.
+        || "/fulfilment/resolve".equals(path);
   }
 
   /**

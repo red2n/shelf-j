@@ -6,6 +6,7 @@ import com.shelfj.order.domain.Domain.Layaway;
 import com.shelfj.order.domain.Domain.LayawayDeposit;
 import com.shelfj.order.domain.Domain.LayawayItem;
 import com.shelfj.order.domain.Domain.Order;
+import com.shelfj.order.domain.Domain.OrderDiscount;
 import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.domain.Domain.OrderReceipt;
 import com.shelfj.order.domain.Domain.OrderStatusHistory;
@@ -62,6 +63,114 @@ public class OrderService {
     return s == null || s.isBlank();
   }
 
+  /**
+   * Resolves the currency to stamp on a money-bearing row (SJ-D2).
+   *
+   * <p>Previously three call sites each picked their own literal — {@code "USD"} for orders and
+   * gift cards, {@code "GBP"} for special orders — while pricing-svc resolved every line in the
+   * price list's own currency. A GBP tenant could therefore end up with GBP-priced lines on a
+   * USD-stamped order, and a USD-stamped POSLog entry underneath it. The tenant's currency has been
+   * captured at onboarding since tenant-svc V1 and published on {@code TenantCreated}; nothing read
+   * it.
+   *
+   * <p>Precedence: the tenant's projected currency wins. A request that names a different one is
+   * rejected rather than silently overridden — a client asking to be billed in a currency the
+   * tenant does not trade in is a bug on the caller's side, and silently correcting it would hide a
+   * mispriced basket. When the projection has no row yet (a tenant onboarded before this projection
+   * existed, or event-delivery lag) the request's currency is honoured if given, else the
+   * configured platform default — the same fail-open convention the status projection uses.
+   *
+   * @param tenantId the tenant the row belongs to
+   * @param requested the client-supplied currency, or {@code null} when the request omitted it
+   * @return the ISO-4217 code to persist, upper-cased
+   * @throws ApiException 400 {@code ORDER_CURRENCY_MISMATCH} if {@code requested} contradicts the
+   *     tenant's own currency
+   */
+  private String resolveCurrency(UUID tenantId, String requested) {
+    String asked = isBlank(requested) ? null : requested.trim().toUpperCase(Locale.ROOT);
+    String tenantCurrency = tenantStatusRepo.findCurrency(tenantId).orElse(null);
+
+    if (tenantCurrency == null) {
+      return asked != null ? asked : config.defaultCurrency().toUpperCase(Locale.ROOT);
+    }
+    if (asked != null && !asked.equals(tenantCurrency)) {
+      throw ApiException.badRequest(
+          "ORDER_CURRENCY_MISMATCH",
+          "currency " + asked + " does not match the tenant's currency " + tenantCurrency);
+    }
+    return tenantCurrency;
+  }
+
+  /**
+   * Authorises a manual discount and builds its audit row (SJ-D6).
+   *
+   * <p>Three checks, in the order that gives the caller the most useful failure. A non-staff caller
+   * is refused outright -- an online or guest checkout self-applying a discount would let the buyer
+   * name their own price. A staff caller must give a reason, because a discount with no stated
+   * reason is unauditable and the discount is the most common internal-theft vector at a till.
+   * Finally the amount must sit within the caller's own authority: every staff role could
+   * previously have taken 100% off, with only the subtotal as a ceiling.
+   *
+   * @return the audit row to commit alongside the order; never null (callers skip a zero discount)
+   * @throws ApiException 403 {@code ORDER_DISCOUNT_NOT_ALLOWED} for a non-staff caller or a staff
+   *     role with no configured ceiling; 400 {@code ORDER_DISCOUNT_REASON_REQUIRED} when no reason
+   *     is given; 403 {@code ORDER_DISCOUNT_EXCEEDS_AUTHORITY} when it is above the ceiling
+   */
+  private OrderDiscount authorizeDiscount(
+      TenantContext ctx,
+      UUID orderId,
+      UUID storeId,
+      BigDecimal subtotal,
+      BigDecimal disc,
+      PlaceOrderRequest req) {
+    var ceilings = config.discountCeilings();
+    String bestRole = null;
+    BigDecimal bestCeiling = null;
+    for (String role : ctx.roles()) {
+      BigDecimal ceiling = ceilings.get(role.toUpperCase(Locale.ROOT));
+      if (ceiling != null && (bestCeiling == null || ceiling.compareTo(bestCeiling) > 0)) {
+        bestCeiling = ceiling;
+        bestRole = role.toUpperCase(Locale.ROOT);
+      }
+    }
+    if (bestRole == null)
+      throw ApiException.forbidden(
+          "ORDER_DISCOUNT_NOT_ALLOWED", "discounts can only be applied by authorised staff");
+
+    if (isBlank(req.discountReason()))
+      throw ApiException.badRequest(
+          "ORDER_DISCOUNT_REASON_REQUIRED", "discountReason is required when applying a discount");
+
+    // Percentage of subtotal, not of total: tax follows the discounted price, so measuring against
+    // the post-tax figure would let the same cash discount pass or fail depending on the VAT rate.
+    BigDecimal pct = disc.multiply(HUNDRED).divide(subtotal, 3, java.math.RoundingMode.HALF_UP);
+    if (pct.compareTo(bestCeiling) > 0)
+      throw ApiException.forbidden(
+          "ORDER_DISCOUNT_EXCEEDS_AUTHORITY",
+          "discount of "
+              + pct
+              + "% exceeds the "
+              + bestCeiling
+              + "% limit for role "
+              + bestRole
+              + " — a more senior member of staff must authorise it");
+
+    return new OrderDiscount(
+        UUID.randomUUID(),
+        ctx.requireTenantId(),
+        orderId,
+        storeId,
+        subtotal,
+        disc,
+        pct,
+        req.discountReason().trim(),
+        ctx.userId(),
+        bestRole,
+        Instant.now());
+  }
+
+  private static final BigDecimal HUNDRED = new BigDecimal("100");
+
   public Order placeOrder(PlaceOrderRequest req, TenantContext ctx, String idempotencyKey) {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest("ORDER_NO_ITEMS", "order must have at least one item");
@@ -83,7 +192,7 @@ public class OrderService {
     } else {
       customerId = req.customerId() != null ? Parsing.uuid(req.customerId(), "customerId") : null;
     }
-    String currency = req.currency() != null ? req.currency() : "USD";
+    String currency = resolveCurrency(tenantId, req.currency());
     String fulfilment =
         req.fulfilmentType() != null ? req.fulfilmentType() : Order.FULFILMENT_INSTORE;
     boolean delivery = Order.FULFILMENT_DELIVERY.equals(fulfilment);
@@ -192,29 +301,29 @@ public class OrderService {
               tenantId, orderId, storeId, reserveLines, config.reservationTtlSeconds(), idemBase);
     }
 
-    boolean staff = ctx.hasRole("CASHIER") || ctx.hasRole("MANAGER") || ctx.hasRole("OWNER");
-
     BigDecimal tax;
-    BigDecimal disc;
+    // A manual discount is honoured under pricing enforcement, not discarded (SJ-D6). Enforcement
+    // still owns unit prices -- the resolved price above is authoritative and the client cannot
+    // name its own -- but the till's discount is a separate, deliberate staff act on top of it.
+    // Zeroing it here meant the till tendered subtotal - discount against an order stored at full
+    // price, so paid_amount never covered the total, the order never confirmed, and the sweeper
+    // cancelled a sale the customer had already paid for.
+    BigDecimal disc = req.discountAmount() != null ? req.discountAmount() : BigDecimal.ZERO;
     if (enforcePricing) {
-      // Tax is derived server-side from pricing-svc's per-line VAT; any promotion discount is
-      // already baked into the resolved unitPrice above, so there is no separate discount left to
-      // apply. Client-supplied taxAmount/discountAmount are never trusted here.
       tax = serverTax.setScale(2, java.math.RoundingMode.HALF_UP);
-      disc = BigDecimal.ZERO;
     } else {
       tax = req.taxAmount() != null ? req.taxAmount() : BigDecimal.ZERO;
-      disc = req.discountAmount() != null ? req.discountAmount() : BigDecimal.ZERO;
-      // Manual discounts are a staff privilege (POS). A non-staff caller (online/guest checkout)
-      // self-applying a discount would let them name their own price.
-      if (!staff && disc.signum() != 0)
-        throw ApiException.forbidden(
-            "ORDER_DISCOUNT_NOT_ALLOWED", "discounts can only be applied by staff");
     }
+    if (disc.signum() < 0)
+      throw ApiException.badRequest(
+          "ORDER_DISCOUNT_NEGATIVE", "discountAmount cannot be negative — got " + disc);
     if (disc.compareTo(subtotal) > 0)
       throw ApiException.badRequest(
           "ORDER_DISCOUNT_EXCEEDS_SUBTOTAL",
           "discountAmount " + disc + " exceeds order subtotal " + subtotal);
+
+    OrderDiscount discountAudit =
+        disc.signum() == 0 ? null : authorizeDiscount(ctx, orderId, storeId, subtotal, disc, req);
     BigDecimal total = subtotal.add(tax).subtract(disc);
 
     boolean taxExempt = req.taxExempt() != null && req.taxExempt();
@@ -249,7 +358,10 @@ public class OrderService {
 
     try {
       return repo.createOrder(
-          order, items, Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId));
+          order,
+          items,
+          Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId),
+          discountAudit);
     } catch (ApiException e) {
       // Idempotent replay: a retried checkout with the same key gets the original order back
       // instead of an error (golden rule #11). The stock holds are NOT released here — the
@@ -330,14 +442,20 @@ public class OrderService {
    * Object-level authorization for order-by-id reads (mirrors CartService.requireOwnership): an
    * order id alone is not proof of ownership. Staff may read any order in their tenant; an
    * authenticated customer may only read an order placed against their own customerId. Denials are
-   * 404 (not 403) so order ids can't be probed for existence. A caller with no principal at all (no
-   * userId, no roles — only X-Tenant-Id) is a service-to-service lookup (e.g. payment-svc verifying
-   * an online payment claim); the gateway never forwards a tenant to these paths without a verified
-   * user, so that shape cannot originate from outside.
+   * 404 (not 403) so order ids can't be probed for existence.
+   *
+   * <p>There is deliberately no exemption for a caller with no principal. That branch existed for
+   * service-to-service lookups and assumed the gateway never forwards a tenant here without a
+   * verified user — but guest checkout does exactly that, so any order id could be read by anyone
+   * holding one. payment-svc's OrderClient stamps a staff role instead.
    */
   private static void requireReadAccess(Order order, TenantContext ctx) {
     if (isStaff(ctx)) return;
-    if (ctx.userId() == null && ctx.roles().isEmpty()) return;
+    // No service-to-service exemption. This used to return early for a caller with no principal
+    // at all, on the reasoning that only the mesh could produce that shape — but a guest storefront
+    // request carries a tenant and no principal too, so the shape was reachable from outside and
+    // any id could be read by anyone who had one. The internal callers now stamp a staff role
+    // (payment-svc OrderClient, notification-svc CustomerClient), so nothing needs the exemption.
     if (order.customerId() == null || !order.customerId().equals(ctx.userId()))
       throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
   }
@@ -548,7 +666,7 @@ public class OrderService {
       throw ApiException.conflict(
           "DEPOSIT_EXCEEDS_TOTAL", "initial deposit cannot exceed total amount");
 
-    Instant dueDate = req.dueDate() != null ? Instant.parse(req.dueDate()) : null;
+    Instant dueDate = req.dueDate() != null ? Parsing.instant(req.dueDate(), "dueDate") : null;
     Layaway layaway =
         new Layaway(
             layawayId,
@@ -624,8 +742,9 @@ public class OrderService {
     ctx.requireStoreAccess(storeId);
     UUID gcId = UUID.randomUUID();
     String code = generateGiftCardCode();
-    String currency = req.currency() != null ? req.currency() : "USD";
-    Instant expiresAt = req.expiresAt() != null ? Instant.parse(req.expiresAt()) : null;
+    String currency = resolveCurrency(tenantId, req.currency());
+    Instant expiresAt =
+        req.expiresAt() != null ? Parsing.instant(req.expiresAt(), "expiresAt") : null;
 
     GiftCard gc =
         new GiftCard(
@@ -800,7 +919,7 @@ public class OrderService {
     ctx.requireStoreAccess(storeId);
     UUID customerId =
         req.customerId() != null ? Parsing.uuid(req.customerId(), "customerId") : null;
-    String currency = req.currency() != null ? req.currency() : "GBP";
+    String currency = resolveCurrency(tenantId, req.currency());
 
     java.math.BigDecimal subtotal = java.math.BigDecimal.ZERO;
     List<SpecialOrderItem> items = new ArrayList<>();
@@ -821,7 +940,7 @@ public class OrderService {
 
     java.time.LocalDate delivDate = null;
     if (req.requestedDeliveryDate() != null && !req.requestedDeliveryDate().isBlank())
-      delivDate = java.time.LocalDate.parse(req.requestedDeliveryDate());
+      delivDate = Parsing.date(req.requestedDeliveryDate(), "requestedDeliveryDate");
 
     var so =
         new SpecialOrder(

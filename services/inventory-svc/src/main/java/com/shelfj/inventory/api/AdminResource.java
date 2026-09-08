@@ -151,6 +151,8 @@ public class AdminResource {
         uuid(req.variantId(), "variantId"),
         req.delta(),
         req.reason(),
+        req.reasonCode(),
+        ctx.userId(),
         idempotencyKey);
     return ApiResponse.ok("adjusted");
   }
@@ -271,7 +273,7 @@ public class AdminResource {
   public ApiResponse<PurgeResult> purgeMovements(PurgeMovementsRequest req) {
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
-    java.time.Instant before = java.time.Instant.parse(req.before());
+    java.time.Instant before = com.shelfj.web.Parsing.instant(req.before(), "before");
     int purged = service.purgeMovementsBefore(tenantId, before);
     return ApiResponse.ok(new PurgeResult(purged));
   }

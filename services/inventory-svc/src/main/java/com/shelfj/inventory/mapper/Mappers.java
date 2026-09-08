@@ -14,6 +14,7 @@ import com.shelfj.inventory.domain.Domain.LevelSummary;
 import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.LotUomConversion;
+import com.shelfj.inventory.domain.Domain.LowStockRow;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
@@ -29,11 +30,13 @@ import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
+import com.shelfj.inventory.domain.Domain.ShrinkageRow;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.domain.Domain.TransactionSourceType;
 import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.domain.Domain.ValuationRow;
 import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
 import com.shelfj.inventory.dto.Dtos.AbcAssignmentResponse;
 import com.shelfj.inventory.dto.Dtos.AbcCompileRunResponse;
@@ -50,6 +53,7 @@ import com.shelfj.inventory.dto.Dtos.LevelSummaryResponse;
 import com.shelfj.inventory.dto.Dtos.LotActionResponse;
 import com.shelfj.inventory.dto.Dtos.LotGenealogyLinkResponse;
 import com.shelfj.inventory.dto.Dtos.LotUomConversionResponse;
+import com.shelfj.inventory.dto.Dtos.LowStockRowResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderLineResponse;
 import com.shelfj.inventory.dto.Dtos.MoveOrderResponse;
 import com.shelfj.inventory.dto.Dtos.MovementResponse;
@@ -65,11 +69,13 @@ import com.shelfj.inventory.dto.Dtos.RopPlanResponse;
 import com.shelfj.inventory.dto.Dtos.SafetyStockParamsResponse;
 import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
+import com.shelfj.inventory.dto.Dtos.ShrinkageRowResponse;
 import com.shelfj.inventory.dto.Dtos.SourceTypeResponse;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderLineResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderResponse;
+import com.shelfj.inventory.dto.Dtos.ValuationRowResponse;
 import com.shelfj.inventory.dto.Dtos.ZoneGlMappingResponse;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -119,6 +125,21 @@ public final class Mappers {
         ts(r.createdAt()));
   }
 
+  public static LowStockRowResponse toLowStockRow(LowStockRow r) {
+    return new LowStockRowResponse(
+        r.storeId(), r.variantId(), r.signal(), r.reorderLevel(), r.availableQty(), r.shortfall());
+  }
+
+  public static ValuationRowResponse toValuationRow(ValuationRow r) {
+    return new ValuationRowResponse(
+        r.groupKey(), r.method(), r.onHandQty(), r.unvaluedQty(), r.value());
+  }
+
+  public static ShrinkageRowResponse toShrinkageRow(ShrinkageRow r) {
+    return new ShrinkageRowResponse(
+        r.groupKey(), r.qtyWrittenOff(), r.qtyFound(), r.netQty(), r.movements());
+  }
+
   public static MovementResponse toMovement(Movement m) {
     return new MovementResponse(
         m.id().toString(),
@@ -130,6 +151,7 @@ public final class Mappers {
         m.refType(),
         m.refId() == null ? null : m.refId().toString(),
         m.reasonCode(),
+        m.actorId() == null ? null : m.actorId().toString(),
         ts(m.createdAt()));
   }
 

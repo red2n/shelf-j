@@ -2,6 +2,7 @@ package com.shelfj.pricing.domain;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /** Pure domain records — no HTTP, no persistence annotations. */
@@ -168,6 +169,63 @@ public final class Domain {
    * (post-Brexit=0), 3=total due, 4=input VAT reclaimed, 5=net payable, 6=total sales ex-VAT,
    * 7=total purchases ex-VAT, 8=EU goods supplied, 9=EU goods acquired.
    */
+  /** How a tax summary groups its rows. An enum, so no request text ever reaches the SQL. */
+  public enum TaxGrouping {
+    CODE,
+    STORE,
+    MONTH
+  }
+
+  /**
+   * One aggregated line of the tax summary.
+   *
+   * <p>{@code exempt} is part of the grouping key rather than folded into the totals, because the
+   * VAT return treats the two differently: Box 1 counts output VAT on taxable supplies only, while
+   * Box 6 counts the net of every supply including exempt ones. Collapsing them would leave neither
+   * box derivable from the report that exists to show their working.
+   *
+   * @param groupKey the VAT code, store id or {@code YYYY-MM} month this line sums
+   * @param exempt whether this line covers exempt supplies
+   * @param netAmount total net (ex-VAT) consideration
+   * @param vatAmount total VAT charged
+   * @param grossAmount total gross consideration
+   * @param transactions how many tax transactions the line covers
+   */
+  public record TaxSummaryRow(
+      String groupKey,
+      boolean exempt,
+      BigDecimal netAmount,
+      BigDecimal vatAmount,
+      BigDecimal grossAmount,
+      long transactions) {}
+
+  /**
+   * Period totals, summed from the same rows the report returns so the two cannot disagree.
+   *
+   * @param netAmount net across every line — ties to VAT return Box 6
+   * @param vatAmount VAT across every line, exempt lines included
+   * @param outputVat VAT across taxable lines only — ties to VAT return Box 1. Differs from {@code
+   *     vatAmount} only if a line marked exempt carries VAT, which is a data fault worth seeing
+   *     rather than silently dropping the way the Box 1 query does
+   * @param grossAmount gross across every line
+   * @param transactions total tax transactions in the period
+   */
+  public record TaxSummaryTotals(
+      BigDecimal netAmount,
+      BigDecimal vatAmount,
+      BigDecimal outputVat,
+      BigDecimal grossAmount,
+      long transactions) {}
+
+  /**
+   * @param rows one line per group, largest VAT first
+   * @param totals the period totals, which reconcile to the VAT return
+   * @param periodFrom inclusive lower bound, echoed back as supplied
+   * @param periodTo exclusive upper bound, echoed back as supplied
+   */
+  public record TaxSummary(
+      List<TaxSummaryRow> rows, TaxSummaryTotals totals, String periodFrom, String periodTo) {}
+
   public record VatReturn(
       BigDecimal box1,
       BigDecimal box2,

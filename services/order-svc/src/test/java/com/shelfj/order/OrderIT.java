@@ -48,6 +48,7 @@ class OrderIT {
 
   @Inject WebTarget target;
   @Inject OrderService orderService;
+  @Inject com.shelfj.service.TenantStatusRepository tenantStatus;
 
   @AfterAll
   static void stopDb() {
@@ -728,13 +729,16 @@ class OrderIT {
         getAs("/orders/" + orderId + "/returns", T, otherCustomer, "CUSTOMER").getStatus(),
         is(404));
 
-    // Staff read any order in the tenant.
-    assertThat(get("/orders/" + orderId, T).getStatus(), is(200));
+    // Staff read any order in the tenant. Stated with an actual role: this assertion used to send
+    // none and pass through the service-to-service exemption below, so it was not testing staff.
+    assertThat(getAs("/orders/" + orderId, T, null, "CASHIER").getStatus(), is(200));
 
-    // A service-to-service lookup (X-Tenant-Id only, no principal) keeps working — payment-svc
-    // verifies online payment claims through this exact shape (see payment-svc OrderClient).
-    Response s2s = target.path("/orders/" + orderId).request().header("X-Tenant-Id", T).get();
-    assertThat(s2s.getStatus(), is(200));
+    // A caller with no principal at all is now refused. That exemption existed for payment-svc,
+    // and rested on the gateway never forwarding a tenant here without a verified user — but guest
+    // checkout does exactly that, so any order id could be read by anyone holding one. payment-svc
+    // stamps a staff role instead (see payment-svc OrderClient).
+    Response anonymous = target.path("/orders/" + orderId).request().header("X-Tenant-Id", T).get();
+    assertThat(anonymous.getStatus(), is(404));
   }
 
   @Test
@@ -846,5 +850,103 @@ class OrderIT {
     int start = json.indexOf("\"code\":\"") + 8;
     int end = json.indexOf("\"", start);
     return json.substring(start, end);
+  }
+
+  // ── SJ-D2: currency comes from the tenant, not a hardcoded literal ──────────
+
+  /**
+   * Orders, gift cards and special orders each used to stamp their own literal ("USD", "USD",
+   * "GBP") while pricing-svc priced lines in the price list's currency. All three now resolve
+   * through the tenant's projected currency, a request naming a different one is rejected, and a
+   * tenant with no projection yet falls back to the single configured default.
+   */
+  @Test
+  void currencyResolvesFromTheTenantNotAHardcodedLiteral() {
+    // A tenant whose TenantCreated has been projected — the normal case in a running system.
+    String tenant = UUID.randomUUID().toString();
+    boolean projected =
+        tenantStatus.projectTenantCurrencyOnce(
+            UUID.randomUUID(), "order-svc/tenant-created", UUID.fromString(tenant), "gbp");
+    assertThat(projected, is(true));
+
+    // Omitting currency stamps the tenant's own, not "USD".
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}]}",
+            tenant,
+            "it-currency-from-tenant");
+    assertThat(placed.getStatus(), is(201));
+    assertThat(placed.readEntity(String.class), containsString("\"currency\":\"GBP\""));
+
+    // A gift card for the same tenant agrees — it used to default to "USD" independently.
+    Response giftCard = post("/gift-cards", "{\"storeId\":\"" + S + "\",\"amount\":25.00}", tenant);
+    assertThat(giftCard.getStatus(), is(201));
+    assertThat(giftCard.readEntity(String.class), containsString("\"currency\":\"GBP\""));
+
+    // A special order too — it used to default to "GBP", i.e. right by accident, wrong in general.
+    Response specialOrder =
+        post(
+            "/admin/special-orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":5.00}]}",
+            tenant);
+    assertThat(specialOrder.getStatus(), is(201));
+    assertThat(specialOrder.readEntity(String.class), containsString("\"currency\":\"GBP\""));
+
+    // Naming a currency the tenant does not trade in is rejected, not silently overridden —
+    // otherwise a mispriced basket would be hidden rather than surfaced.
+    Response mismatch =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
+            tenant,
+            "it-currency-mismatch");
+    assertThat(mismatch.getStatus(), is(400));
+    assertThat(mismatch.readEntity(String.class), containsString("ORDER_CURRENCY_MISMATCH"));
+
+    // A tenant with no projection yet (onboarded before this existed, or event lag) falls back to
+    // the one configured default rather than to three different literals.
+    String unprojected = UUID.randomUUID().toString();
+    Response fallback =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}]}",
+            unprojected,
+            "it-currency-fallback");
+    assertThat(fallback.getStatus(), is(201));
+    assertThat(fallback.readEntity(String.class), containsString("\"currency\":\"GBP\""));
+  }
+
+  /** A redelivered TenantCreated must not re-apply the projection (golden rule #7). */
+  @Test
+  void tenantCurrencyProjectionIsIdempotent() {
+    UUID tenant = UUID.randomUUID();
+    UUID eventId = UUID.randomUUID();
+    assertThat(
+        tenantStatus.projectTenantCurrencyOnce(eventId, "order-svc/tenant-created", tenant, "EUR"),
+        is(true));
+    assertThat(
+        tenantStatus.projectTenantCurrencyOnce(eventId, "order-svc/tenant-created", tenant, "EUR"),
+        is(false));
+    assertThat(tenantStatus.findCurrency(tenant).orElseThrow(), is("EUR"));
   }
 }

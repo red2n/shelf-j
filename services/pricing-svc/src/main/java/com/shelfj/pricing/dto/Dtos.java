@@ -26,7 +26,8 @@ public final class Dtos {
           BigDecimal rate,
       @Schema(description = "True if this code is VAT-exempt (no VAT charged).") boolean exempt,
       String description,
-      @Schema(description = "ISO-8601 date this rate takes effect.") @NotBlank
+      @Schema(description = "ISO-8601 instant this rate takes effect, e.g. 2026-01-01T00:00:00Z.")
+          @NotBlank
           String effectiveFrom) {}
 
   @Schema(name = "VatRateResponse")
@@ -92,7 +93,12 @@ public final class Dtos {
       @NotBlank String name,
       @Schema(description = "ALL, ONLINE, or POS. Defaults to ALL.") String channel,
       @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
-      @Schema(description = "ISO-8601 date this price list takes effect.") @NotBlank
+      @Schema(
+              description =
+                  "ISO-8601 instant this price list takes effect, e.g."
+                      + " 2026-01-01T00:00:00Z. The column is TIMESTAMPTZ; a bare date is"
+                      + " rejected with INVALID_DATE.")
+          @NotBlank
           String effectiveFrom,
       String effectiveTo) {}
 
@@ -238,7 +244,11 @@ public final class Dtos {
       BigDecimal vatAmount,
       BigDecimal grossAmount,
       boolean exempt,
-      @Schema(description = "ISO-8601 date of the VAT tax point (chargeable event).") @NotBlank
+      @Schema(
+              description =
+                  "ISO-8601 instant of the VAT tax point (chargeable event), e.g."
+                      + " 2026-01-01T00:00:00Z.")
+          @NotBlank
           String taxPointDate,
       String invoiceRef) {}
 
@@ -314,4 +324,44 @@ public final class Dtos {
       String overrideReason,
       String overriddenBy,
       String createdAt) {}
+
+  @Schema(name = "TaxSummaryRow", description = "One aggregated line of the tax summary.")
+  public record TaxSummaryRowResponse(
+      @Schema(description = "The VAT code, store id, or YYYY-MM month this line sums.")
+          String groupKey,
+      @Schema(
+              description =
+                  "True for exempt supplies. Exempt lines are reported separately because the VAT"
+                      + " return counts their net in Box 6 but their VAT in no box at all.")
+          boolean exempt,
+      BigDecimal netAmount,
+      BigDecimal vatAmount,
+      BigDecimal grossAmount,
+      @Schema(description = "How many tax transactions this line covers.") long transactions) {}
+
+  @Schema(
+      name = "TaxSummaryTotals",
+      description = "Period totals, summed from the returned rows so the two cannot disagree.")
+  public record TaxSummaryTotalsResponse(
+      @Schema(description = "Net across every line. Ties to VAT return Box 6.")
+          BigDecimal netAmount,
+      @Schema(description = "VAT across every line, exempt lines included.") BigDecimal vatAmount,
+      @Schema(
+              description =
+                  "VAT across taxable lines only. Ties to VAT return Box 1. If this differs from"
+                      + " vatAmount, a line marked exempt is carrying VAT — a data fault the Box 1"
+                      + " query drops silently.")
+          BigDecimal outputVat,
+      BigDecimal grossAmount,
+      long transactions) {}
+
+  @Schema(
+      name = "TaxSummaryReport",
+      description =
+          "VAT collected over a period, grouped, with totals that reconcile to the VAT return.")
+  public record TaxSummaryResponse(
+      List<TaxSummaryRowResponse> rows,
+      TaxSummaryTotalsResponse totals,
+      String periodFrom,
+      String periodTo) {}
 }

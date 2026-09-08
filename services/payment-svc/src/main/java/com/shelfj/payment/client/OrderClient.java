@@ -34,6 +34,9 @@ public class OrderClient {
 
   private static final String ORDER_SERVICE = "order-svc";
 
+  /** See the header comment in {@link #getOrder}. */
+  private static final String INTERNAL_ROLE = "CASHIER";
+
   @Inject ServiceConfig config;
 
   private ServiceRegistry registry;
@@ -75,6 +78,11 @@ public class OrderClient {
         webClient
             .get(instance.baseUri() + "/orders/" + orderId)
             .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
+            // Trusted service-to-service call behind the gateway. It stamps a staff role for the
+            // same reason CustomerClient does: reading an order is now staff-gated, and taking
+            // payment for one is a till action. Without this the call reads as an anonymous
+            // customer and order-svc's object-level check refuses it.
+            .header(HeaderNames.create(HttpHeaders.ROLES), INTERNAL_ROLE)
             .request()) {
       int status = res.status().code();
       if (status == 404) {
@@ -84,14 +92,8 @@ public class OrderClient {
         throw unavailable("order-svc returned HTTP " + status, null);
       }
       String body = res.as(String.class);
-      try (JsonReader reader = Json.createReader(new StringReader(body))) {
-        JsonObject data = reader.readObject().getJsonObject("data");
-        return new OrderInfo(
-            data.isNull("customerId") ? null : data.getString("customerId"),
-            data.getString("channel"),
-            data.getJsonNumber("total").bigDecimalValue(),
-            data.getString("status"),
-            data.getString("storeId"));
+      try {
+        return parseOrder(body);
       } catch (RuntimeException e) {
         throw unavailable("malformed response from order-svc", e);
       }
@@ -101,6 +103,33 @@ public class OrderClient {
       throw unavailable("order-svc circuit open — too many recent failures", e);
     } catch (RuntimeException e) {
       throw unavailable("order-svc unreachable", e);
+    }
+  }
+
+  /**
+   * Parses an order response body into the fields payment needs.
+   *
+   * <p>{@code customerId} is read with {@code containsKey} rather than {@code isNull} alone,
+   * because JSON-B omits null fields from a DTO entirely rather than serialising them as null — and
+   * a guest order has no customer. {@code isNull} throws on an absent key, so the previous form
+   * turned every guest order into "malformed response from order-svc" and a 503, which is the
+   * entire guest online checkout path. Events are unaffected and were the reason this went
+   * unnoticed: the outbox payloads are hand-built and do emit {@code "customerId":null}.
+   *
+   * @param body the raw {@code {"data":{...}}} response
+   * @return the parsed fields; {@code customerId} null for a guest order
+   */
+  static OrderInfo parseOrder(String body) {
+    try (JsonReader reader = Json.createReader(new StringReader(body))) {
+      JsonObject data = reader.readObject().getJsonObject("data");
+      return new OrderInfo(
+          data.containsKey("customerId") && !data.isNull("customerId")
+              ? data.getString("customerId")
+              : null,
+          data.getString("channel"),
+          data.getJsonNumber("total").bigDecimalValue(),
+          data.getString("status"),
+          data.getString("storeId"));
     }
   }
 

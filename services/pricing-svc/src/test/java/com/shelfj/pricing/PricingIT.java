@@ -82,6 +82,19 @@ class PricingIT {
     return t.request().header("X-Tenant-Id", tenant).get();
   }
 
+  /** A GET carrying roles — the financial reports are gated, so callers must state who they are. */
+  private Response getAs(String pathAndQuery, String tenant, String roles) {
+    int q = pathAndQuery.indexOf('?');
+    WebTarget t = target.path(q < 0 ? pathAndQuery : pathAndQuery.substring(0, q));
+    if (q >= 0) {
+      for (String param : pathAndQuery.substring(q + 1).split("&")) {
+        int eq = param.indexOf('=');
+        t = t.queryParam(param.substring(0, eq), param.substring(eq + 1));
+      }
+    }
+    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", roles).get();
+  }
+
   private Response put(String path, String json, String tenant) {
     return target
         .path(path)
@@ -146,12 +159,12 @@ class PricingIT {
     assertThat(r2.getStatus(), is(201));
 
     // Get specific rate
-    Response r3 = get("/vat-rates/T1", T);
+    Response r3 = getAs("/vat-rates/T1", T, "OWNER");
     assertThat(r3.getStatus(), is(200));
     assertThat(r3.readEntity(String.class), containsString("Standard Rate"));
 
     // Tenant isolation — other tenant cannot see T1
-    Response rIso = get("/vat-rates/T1", "99999999-9999-9999-9999-999999999999");
+    Response rIso = getAs("/vat-rates/T1", "99999999-9999-9999-9999-999999999999", "OWNER");
     assertThat(rIso.getStatus(), is(404));
 
     // Duplicate code is 409
@@ -263,12 +276,13 @@ class PricingIT {
     assertThat(r1.readEntity(String.class), containsString("T1"));
 
     // List by order
-    Response r2 = get("/tax-transactions?orderId=" + ORDER_ID, T);
+    Response r2 = getAs("/tax-transactions?orderId=" + ORDER_ID, T, "CASHIER");
     assertThat(r2.getStatus(), is(200));
     assertThat(r2.readEntity(String.class), containsString("100"));
 
     // MTD VAT return for Q1 2024
-    Response vr = get("/vat-return?from=2024-04-01T00:00:00Z&to=2024-07-01T00:00:00Z", T);
+    Response vr =
+        getAs("/vat-return?from=2024-04-01T00:00:00Z&to=2024-07-01T00:00:00Z", T, "OWNER");
     assertThat(vr.getStatus(), is(200));
     String vrBody = vr.readEntity(String.class);
     // Box 1 = 20.00, Box 6 = 100.00
@@ -278,11 +292,157 @@ class PricingIT {
 
     // Tenant isolation — other tenant's VAT return is zero
     Response vrIso =
-        get(
+        getAs(
             "/vat-return?from=2024-04-01T00:00:00Z&to=2024-07-01T00:00:00Z",
-            "99999999-9999-9999-9999-999999999999");
+            "99999999-9999-9999-9999-999999999999",
+            "OWNER");
     assertThat(vrIso.getStatus(), is(200));
     assertThat(vrIso.readEntity(String.class), containsString("0.00"));
+  }
+
+  // ── the tax summary report, and the gate the VAT return never had ───────────
+
+  private Response recordTax(
+      String order,
+      String store,
+      String code,
+      String rate,
+      String net,
+      String vat,
+      String gross,
+      boolean exempt,
+      String taxPoint) {
+    return post(
+        "/tax-transactions",
+        "{\"orderId\":\""
+            + order
+            + "\",\"orderLineId\":\""
+            + java.util.UUID.randomUUID()
+            + "\",\"variantId\":\""
+            + V
+            + "\",\"storeId\":\""
+            + store
+            + "\",\"vatCode\":\""
+            + code
+            + "\",\"vatRate\":"
+            + rate
+            + ",\"netAmount\":"
+            + net
+            + ",\"vatAmount\":"
+            + vat
+            + ",\"grossAmount\":"
+            + gross
+            + ",\"exempt\":"
+            + exempt
+            + ",\"taxPointDate\":\""
+            + taxPoint
+            + "\"}",
+        T);
+  }
+
+  /**
+   * The report's whole claim is that it reconciles: its totals must equal the VAT return computed
+   * over the same rows and the same period, or it is worse than useless to the person filing.
+   */
+  @Test
+  void taxSummaryGroupsByCodeAndReconcilesWithTheVatReturn() {
+    // £100 net + £20 VAT standard-rated, twice; plus a £50 exempt supply carrying no VAT.
+    recordTax(
+        ORDER_ID, S, "T1", "0.20", "100.00", "20.00", "120.00", false, "2024-04-01T10:00:00Z");
+    recordTax(
+        ORDER_ID, S, "T1", "0.20", "100.00", "20.00", "120.00", false, "2024-05-02T10:00:00Z");
+    recordTax(ORDER_ID, S, "T0", "0.00", "50.00", "0.00", "50.00", true, "2024-04-03T10:00:00Z");
+
+    String period = "from=2024-04-01T00:00:00Z&to=2024-07-01T00:00:00Z";
+    Response r = getAs("/admin/reports/tax-summary?" + period, T, "OWNER");
+    assertThat(r.getStatus(), is(200));
+    String body = r.readEntity(String.class);
+
+    // Grouped by code by default, and the exempt supply is its own line rather than being folded
+    // into the standard-rated one.
+    assertThat(body, containsString("\"groupKey\":\"T1\""));
+    assertThat(body, containsString("\"groupKey\":\"T0\""));
+    assertThat(body, containsString("\"exempt\":true"));
+
+    // Totals: net 100+100+50 = 250.00, output VAT 20+20 = 40.00 (the exempt line adds none).
+    assertThat(body, containsString("\"netAmount\":250.00"));
+    assertThat(body, containsString("\"outputVat\":40.00"));
+    assertThat(body, containsString("\"transactions\":3"));
+
+    // The reconciliation, asserted rather than asserted-about: Box 6 is total net, Box 1 is
+    // output VAT, over the same period.
+    String vat = getAs("/vat-return?" + period, T, "OWNER").readEntity(String.class);
+    assertThat(vat, containsString("\"box6\":250.00"));
+    assertThat(vat, containsString("\"box1\":40.00"));
+  }
+
+  /** MONTH grouping is what shows a rate change, or a supply landing in the wrong VAT quarter. */
+  @Test
+  void taxSummaryCanGroupByMonthAndByStore() {
+    String otherStore = "11111111-2222-3333-4444-555555555555";
+    recordTax(
+        ORDER_ID, S, "T1", "0.20", "100.00", "20.00", "120.00", false, "2024-04-01T10:00:00Z");
+    recordTax(
+        ORDER_ID,
+        otherStore,
+        "T1",
+        "0.20",
+        "10.00",
+        "2.00",
+        "12.00",
+        false,
+        "2024-05-02T10:00:00Z");
+
+    String period = "from=2024-04-01T00:00:00Z&to=2024-07-01T00:00:00Z";
+    String byMonth =
+        getAs("/admin/reports/tax-summary?" + period + "&groupBy=MONTH", T, "OWNER")
+            .readEntity(String.class);
+    assertThat(byMonth, containsString("\"groupKey\":\"2024-04\""));
+    assertThat(byMonth, containsString("\"groupKey\":\"2024-05\""));
+
+    String byStore =
+        getAs("/admin/reports/tax-summary?" + period + "&groupBy=STORE", T, "OWNER")
+            .readEntity(String.class);
+    assertThat(byStore, containsString(S));
+    assertThat(byStore, containsString(otherStore));
+
+    // storeId narrows to one site; the other store's £2 must not appear in the total.
+    String oneStore =
+        getAs("/admin/reports/tax-summary?" + period + "&storeId=" + S, T, "OWNER")
+            .readEntity(String.class);
+    assertThat(oneStore, containsString("\"outputVat\":20.00"));
+
+    // Unknown groupBy is the caller's mistake, and storeId must be a UUID.
+    assertThat(
+        getAs("/admin/reports/tax-summary?" + period + "&groupBy=SUPPLIER", T, "OWNER").getStatus(),
+        is(400));
+    assertThat(
+        getAs("/admin/reports/tax-summary?" + period + "&storeId=nope", T, "OWNER").getStatus(),
+        is(400));
+  }
+
+  /**
+   * Both of these served a tenant's tax position to any authenticated caller, because neither path
+   * sits under /admin/ and so AdminAuthorizationFilter never looked at them. A signed-in storefront
+   * customer could read the VAT return.
+   */
+  @Test
+  void theFinancialReadsAreNoLongerOpenToAnyCaller() {
+    String period = "from=2024-04-01T00:00:00Z&to=2024-07-01T00:00:00Z";
+
+    assertThat(getAs("/vat-return?" + period, T, "CUSTOMER").getStatus(), is(403));
+    assertThat(getAs("/vat-return?" + period, T, "CASHIER").getStatus(), is(403));
+    assertThat(get("/vat-return?" + period, T).getStatus(), is(403));
+    assertThat(getAs("/vat-return?" + period, T, "MANAGER").getStatus(), is(200));
+
+    // The tax journal stays reachable by staff — a cashier querying a receipt is legitimate — but
+    // not by a customer who happens to know an order id.
+    assertThat(getAs("/tax-transactions?orderId=" + ORDER_ID, T, "CUSTOMER").getStatus(), is(403));
+    assertThat(getAs("/tax-transactions?orderId=" + ORDER_ID, T, "CASHIER").getStatus(), is(200));
+
+    // The new report is gated by its path, so it needs no check of its own.
+    assertThat(getAs("/admin/reports/tax-summary?" + period, T, "CASHIER").getStatus(), is(403));
+    assertThat(getAs("/admin/reports/tax-summary?" + period, T, "OWNER").getStatus(), is(200));
   }
 
   @Test
@@ -351,7 +511,7 @@ class PricingIT {
     int pages = 0;
     do {
       String path = "/price-lists?limit=2" + (cursor == null ? "" : "&after=" + cursor);
-      String body = get(path, T).readEntity(String.class);
+      String body = getAs(path, T, "OWNER").readEntity(String.class);
       pages++;
       for (int i = 1; i <= 5; i++) {
         String name = "\"name\":\"List " + i + "\"";

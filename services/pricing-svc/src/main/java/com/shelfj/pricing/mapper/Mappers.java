@@ -8,6 +8,8 @@ import com.shelfj.pricing.domain.Domain.ProductVatCategory;
 import com.shelfj.pricing.domain.Domain.Promotion;
 import com.shelfj.pricing.domain.Domain.PromotionItem;
 import com.shelfj.pricing.domain.Domain.ResolvedPrice;
+import com.shelfj.pricing.domain.Domain.TaxSummary;
+import com.shelfj.pricing.domain.Domain.TaxSummaryRow;
 import com.shelfj.pricing.domain.Domain.TaxTransaction;
 import com.shelfj.pricing.domain.Domain.VatRate;
 import com.shelfj.pricing.domain.Domain.VatReturn;
@@ -19,6 +21,9 @@ import com.shelfj.pricing.dto.Dtos.ProductVatCategoryResponse;
 import com.shelfj.pricing.dto.Dtos.PromotionItemResponse;
 import com.shelfj.pricing.dto.Dtos.PromotionResponse;
 import com.shelfj.pricing.dto.Dtos.ResolvedPriceResponse;
+import com.shelfj.pricing.dto.Dtos.TaxSummaryResponse;
+import com.shelfj.pricing.dto.Dtos.TaxSummaryRowResponse;
+import com.shelfj.pricing.dto.Dtos.TaxSummaryTotalsResponse;
 import com.shelfj.pricing.dto.Dtos.TaxTransactionResponse;
 import com.shelfj.pricing.dto.Dtos.VatRateResponse;
 import com.shelfj.pricing.dto.Dtos.VatReturnResponse;
@@ -175,5 +180,23 @@ public final class Mappers {
         p.overrideReason(),
         p.overriddenBy() != null ? p.overriddenBy().toString() : null,
         p.createdAt() != null ? p.createdAt().toString() : null);
+  }
+
+  public static TaxSummaryResponse toDto(TaxSummary ts) {
+    return new TaxSummaryResponse(
+        ts.rows().stream().map(Mappers::toDto).toList(),
+        new TaxSummaryTotalsResponse(
+            ts.totals().netAmount(),
+            ts.totals().vatAmount(),
+            ts.totals().outputVat(),
+            ts.totals().grossAmount(),
+            ts.totals().transactions()),
+        ts.periodFrom(),
+        ts.periodTo());
+  }
+
+  public static TaxSummaryRowResponse toDto(TaxSummaryRow r) {
+    return new TaxSummaryRowResponse(
+        r.groupKey(), r.exempt(), r.netAmount(), r.vatAmount(), r.grossAmount(), r.transactions());
   }
 }

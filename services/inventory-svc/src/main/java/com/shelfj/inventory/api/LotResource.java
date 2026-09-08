@@ -144,7 +144,8 @@ public class LotResource {
             UUID.fromString(req.sourceBatchId()),
             UUID.fromString(req.targetBatchId()),
             req.qty(),
-            req.notes());
+            req.notes(),
+            ctx.userId());
     return ApiResponse.ok(Mappers.toLotAction(result.action()));
   }
 

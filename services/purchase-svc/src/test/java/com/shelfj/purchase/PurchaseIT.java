@@ -70,7 +70,16 @@ class PurchaseIT {
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
+  /**
+   * Reads carry a staff role because every read here is staff work — suppliers, purchase orders,
+   * goods receipts and the nominal ledger are all back-office data. Before SJ-D10 this helper sent
+   * no role and the requests still succeeded, which is precisely what was wrong.
+   */
   private Response get(String pathAndQuery, String tenant) {
+    return getAs(pathAndQuery, tenant, "OWNER");
+  }
+
+  private Response getAs(String pathAndQuery, String tenant, String roles) {
     int q = pathAndQuery.indexOf('?');
     WebTarget t = target.path(q < 0 ? pathAndQuery : pathAndQuery.substring(0, q));
     if (q >= 0) {
@@ -79,7 +88,9 @@ class PurchaseIT {
         t = t.queryParam(param.substring(0, eq), param.substring(eq + 1));
       }
     }
-    return t.request().header("X-Tenant-Id", tenant).get();
+    var req = t.request().header("X-Tenant-Id", tenant);
+    if (roles != null) req = req.header("X-Roles", roles);
+    return req.get();
   }
 
   // ── Gap #20 Test 1: Supplier CRUD + tenant isolation ─────────────────────────
@@ -289,6 +300,220 @@ class PurchaseIT {
                 + "\"currency\":\"GBP\"}",
             T);
     assertThat(rBad.getStatus(), is(400));
+  }
+
+  // ── SJ-D3: CANCELLED was an unreachable state ────────────────────────────────
+
+  /** A DRAFT purchase order raised in error can be cancelled, with its reason recorded. */
+  @Test
+  void draftPurchaseOrderCanBeCancelled() {
+    String poId = draftPurchaseOrder("Cancel Me Ltd");
+
+    Response cancelled =
+        post(
+            "/purchase-orders/" + poId + "/cancel",
+            "{\"reason\":\"raised against wrong store\"}",
+            T);
+    assertThat(cancelled.getStatus(), is(200));
+    String body = cancelled.readEntity(String.class);
+    assertThat(body, containsString("CANCELLED"));
+    assertThat(body, containsString("raised against wrong store"));
+
+    // The cancellation survives a re-read, and the reason is on the order itself.
+    String reread = get("/purchase-orders/" + poId, T).readEntity(String.class);
+    assertThat(reread, containsString("CANCELLED"));
+    assertThat(reread, containsString("raised against wrong store"));
+  }
+
+  /** A SUBMITTED order is still cancellable, and cancelling it closes it to further receipts. */
+  @Test
+  void submittedPurchaseOrderCanBeCancelledAndIsThenUnreceivable() {
+    String poId = draftPurchaseOrder("Submitted Then Cancelled Ltd");
+    assertThat(post("/purchase-orders/" + poId + "/lines", line(), T).getStatus(), is(201));
+    assertThat(post("/purchase-orders/" + poId + "/submit", "{}", T).getStatus(), is(200));
+
+    assertThat(
+        post("/purchase-orders/" + poId + "/cancel", "{\"reason\":\"supplier out of stock\"}", T)
+            .getStatus(),
+        is(200));
+
+    // Receiving against a cancelled order must fail -- otherwise stock would be booked against a
+    // commitment that no longer exists.
+    Response received =
+        post(
+            "/goods-receipts",
+            "{\"poId\":\""
+                + poId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"lines\":[{\"variantId\":\""
+                + VARIANT
+                + "\",\"qtyReceived\":5}]}",
+            T);
+    assertThat(received.getStatus(), is(400));
+  }
+
+  /**
+   * A received order holds stock booked against it, so cancelling would orphan that stock; and a
+   * second cancel is refused rather than silently discarding the new caller's reason.
+   */
+  @Test
+  void receivedOrCancelledPurchaseOrdersCannotBeCancelled() {
+    // RECEIVED → 409
+    String receivedPo = draftPurchaseOrder("Already Received Ltd");
+    assertThat(post("/purchase-orders/" + receivedPo + "/lines", line(), T).getStatus(), is(201));
+    assertThat(post("/purchase-orders/" + receivedPo + "/submit", "{}", T).getStatus(), is(200));
+    assertThat(
+        post(
+                "/goods-receipts",
+                "{\"poId\":\""
+                    + receivedPo
+                    + "\",\"storeId\":\""
+                    + STORE_A
+                    + "\",\"lines\":[{\"variantId\":\""
+                    + VARIANT
+                    + "\",\"qtyReceived\":10}]}",
+                T)
+            .getStatus(),
+        is(201));
+    Response afterReceipt =
+        post("/purchase-orders/" + receivedPo + "/cancel", "{\"reason\":\"too late\"}", T);
+    assertThat(afterReceipt.getStatus(), is(409));
+    assertThat(
+        afterReceipt.readEntity(String.class), containsString("PURCHASE_PO_NOT_CANCELLABLE"));
+
+    // Already CANCELLED → 409, so the first reason recorded is the one that stands.
+    String cancelledPo = draftPurchaseOrder("Double Cancel Ltd");
+    assertThat(
+        post("/purchase-orders/" + cancelledPo + "/cancel", "{\"reason\":\"first\"}", T)
+            .getStatus(),
+        is(200));
+    Response second =
+        post("/purchase-orders/" + cancelledPo + "/cancel", "{\"reason\":\"second\"}", T);
+    assertThat(second.getStatus(), is(409));
+    assertThat(
+        get("/purchase-orders/" + cancelledPo, T).readEntity(String.class),
+        containsString("first"));
+  }
+
+  /** A cancellation with no stated reason is unauditable, so it is rejected. */
+  @Test
+  void cancellationRequiresAReason() {
+    String poId = draftPurchaseOrder("No Reason Ltd");
+    assertThat(
+        post("/purchase-orders/" + poId + "/cancel", "{\"reason\":\"  \"}", T).getStatus(),
+        is(400));
+    assertThat(post("/purchase-orders/" + poId + "/cancel", "{}", T).getStatus(), is(400));
+    // Still cancellable afterwards -- a rejected request must not have moved the state.
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class), containsString("DRAFT"));
+  }
+
+  /** Cancelling is tenant-scoped: another tenant cannot reach this order at all. */
+  @Test
+  void cancellationIsTenantScoped() {
+    String poId = draftPurchaseOrder("Isolated Ltd");
+    assertThat(
+        post("/purchase-orders/" + poId + "/cancel", "{\"reason\":\"not yours\"}", T2).getStatus(),
+        is(404));
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class), containsString("DRAFT"));
+  }
+
+  // ── SJ-D9: a mistyped date is the caller's mistake, not a server fault ───────
+
+  /**
+   * A malformed date must come back 400 naming the field it came from, never 500. These three
+   * inputs reached {@code LocalDate.parse} raw, so a caller's typo threw out of business code and
+   * fell through to GenericExceptionMapper as INTERNAL_ERROR — wrong per golden rule #15, and it
+   * makes a client error look like an outage to alerting.
+   */
+  @Test
+  void malformedDatesAreRejectedAsBadRequestNamingTheField() {
+    Response sup = post("/suppliers", "{\"name\":\"Typo Traders Ltd\"}", T);
+    assertThat(sup.getStatus(), is(201));
+    String supId = extractId(sup.readEntity(String.class));
+
+    // A full instant where the field takes yyyy-MM-dd: the plausible wrong guess, and the shape
+    // that produced the 500 in pricing-svc when its own @Schema said only "ISO-8601 date".
+    Response bad =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"expectedDelivery\":\"2026-12-31T00:00:00Z\"}",
+            T);
+    assertThat(bad.getStatus(), is(400));
+    String body = bad.readEntity(String.class);
+    assertThat(body, containsString("INVALID_DATE"));
+    assertThat(body, containsString("expectedDelivery must be yyyy-MM-dd"));
+
+    // The nominal-ledger range is the same class of input and names itself the same way.
+    Response badRange = get("/nominal-ledger?from=last-tuesday", T);
+    assertThat(badRange.getStatus(), is(400));
+    assertThat(badRange.readEntity(String.class), containsString("from must be yyyy-MM-dd"));
+
+    // ...and the documented form still works, so the guard did not simply reject everything.
+    Response ok =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"expectedDelivery\":\"2026-12-31\"}",
+            T);
+    assertThat(ok.getStatus(), is(201));
+  }
+
+  // ── SJ-D10: procurement is back-office data, not storefront data ────────────
+
+  /**
+   * Every read in this service used to answer any caller holding a token for the tenant, because
+   * none of these paths sits under /admin/ and nothing in purchase-svc called requireAnyRole. A
+   * signed-in storefront shopper could list the tenant's suppliers and their payment terms, its
+   * purchase orders, and its nominal ledger.
+   */
+  @Test
+  void procurementReadsRequireAStaffRole() {
+    for (String path :
+        new String[] {
+          "/suppliers",
+          "/purchase-orders",
+          "/goods-receipts?purchaseOrderId=" + STORE_A,
+          "/intercompany-invoices",
+          "/nominal-ledger"
+        }) {
+      assertThat("no role: " + path, getAs(path, T, null).getStatus(), is(403));
+      assertThat("customer: " + path, getAs(path, T, "CUSTOMER").getStatus(), is(403));
+    }
+    // Staff still work, or the gate would just be an outage.
+    assertThat(getAs("/suppliers", T, "STOREKEEPER").getStatus(), is(200));
+    assertThat(getAs("/purchase-orders", T, "OWNER").getStatus(), is(200));
+  }
+
+  /** Creates a supplier and a DRAFT purchase order against it, returning the PO id. */
+  private String draftPurchaseOrder(String supplierName) {
+    Response sup = post("/suppliers", "{\"name\":\"" + supplierName + "\"}", T);
+    assertThat(sup.getStatus(), is(201));
+    String supId = extractId(sup.readEntity(String.class));
+    Response po =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"currency\":\"GBP\"}",
+            T);
+    assertThat(po.getStatus(), is(201));
+    return extractId(po.readEntity(String.class));
+  }
+
+  private static String line() {
+    return "{\"variantId\":\"" + VARIANT + "\",\"qty\":10,\"unitPrice\":2.50}";
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────────

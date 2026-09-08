@@ -173,6 +173,10 @@ final posWalkInPhoneProvider = StateProvider<String>((ref) => '');
 /// Order-level discount (absolute amount) applied to the in-progress sale.
 final posDiscountProvider = StateProvider<double>((ref) => 0);
 
+/// Why the order discount was given. The server requires it whenever a discount is applied and
+/// records it against the cashier who granted it, so the till must collect it up front.
+final posDiscountReasonProvider = StateProvider<String>((ref) => '');
+
 /// A single tender (part-payment) staged against the sale before completion.
 /// POS supports splitting one sale across several tenders of different methods.
 class PosTender {

@@ -12,6 +12,7 @@ import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.sql.DriverManager;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -364,6 +365,107 @@ class OnboardingIT {
             .get();
     assertThat(bad.getStatus(), is(400));
     assertThat(bad.readEntity(String.class), containsString("INVALID_CURSOR"));
+  }
+
+  // ── SJ-D2 repair: re-announcing a tenant's declared currency ────────────────
+
+  /**
+   * order-svc stamps money onto orders using a currency it projects from TenantCreated. A tenant
+   * onboarded before that consumer existed has no projection and silently trades in the platform
+   * default, and TenantCreated cannot simply be replayed to fix it — iam-svc consumes it too, and
+   * would re-run onboarding work. This endpoint re-announces just the currency.
+   */
+  @Test
+  void republishCurrencyEmitsOneEventPerTenantWithACurrency() throws Exception {
+    Response created =
+        post(
+            "/onboarding/tenants",
+            "{\"businessName\":\"Replay Ltd\",\"country\":\"gb\",\"currency\":\"gbp\"}",
+            "X-User-Id",
+            OWNER);
+    assertThat(created.getStatus(), is(201));
+    String tenantId = field(created.readEntity(String.class), "id");
+
+    int before = outboxCount("TenantCurrencyDeclared", tenantId);
+
+    Response replay =
+        target
+            .path("/platform/tenants/republish-currency")
+            .queryParam("tenantId", tenantId)
+            .request()
+            .header("X-Roles", "PLATFORM_ADMIN")
+            .post(Entity.entity("", MediaType.APPLICATION_JSON));
+    assertThat(replay.getStatus(), is(200));
+    assertThat(replay.readEntity(String.class), containsString("\"tenantsAnnounced\":1"));
+    assertThat(outboxCount("TenantCurrencyDeclared", tenantId), is(before + 1));
+
+    // Repeatable by design: consumers dedupe on eventId and each replay carries fresh ones, so a
+    // second run re-applies the projection rather than being swallowed as a redelivery.
+    target
+        .path("/platform/tenants/republish-currency")
+        .queryParam("tenantId", tenantId)
+        .request()
+        .header("X-Roles", "PLATFORM_ADMIN")
+        .post(Entity.entity("", MediaType.APPLICATION_JSON));
+    assertThat(outboxCount("TenantCurrencyDeclared", tenantId), is(before + 2));
+
+    // The payload has to carry the currency, or the consumer has nothing to project.
+    assertThat(lastCurrencyEvent(tenantId), containsString("\"currency\":\"GBP\""));
+  }
+
+  /** Cross-tenant reach, so it is PLATFORM_ADMIN only — an OWNER must not be able to run it. */
+  @Test
+  void republishCurrencyIsPlatformAdminOnly() {
+    Response asOwner =
+        target
+            .path("/platform/tenants/republish-currency")
+            .request()
+            .header("X-Tenant-Id", TENANT_B)
+            .header("X-Roles", "OWNER")
+            .post(Entity.entity("", MediaType.APPLICATION_JSON));
+    assertThat(asOwner.getStatus(), is(403));
+  }
+
+  /** A tenantId that is not a UUID is the caller's mistake, so 400 rather than 500. */
+  @Test
+  void republishCurrencyRejectsAMalformedTenantId() {
+    Response bad =
+        target
+            .path("/platform/tenants/republish-currency")
+            .queryParam("tenantId", "not-a-uuid")
+            .request()
+            .header("X-Roles", "PLATFORM_ADMIN")
+            .post(Entity.entity("", MediaType.APPLICATION_JSON));
+    assertThat(bad.getStatus(), is(400));
+    assertThat(bad.readEntity(String.class), containsString("INVALID_UUID"));
+  }
+
+  private static int outboxCount(String eventType, String tenantId) throws Exception {
+    try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT count(*) FROM tenant.outbox WHERE event_type = ? AND tenant_id = ?::uuid")) {
+      ps.setString(1, eventType);
+      ps.setString(2, tenantId);
+      try (var rs = ps.executeQuery()) {
+        rs.next();
+        return rs.getInt(1);
+      }
+    }
+  }
+
+  private static String lastCurrencyEvent(String tenantId) throws Exception {
+    try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT payload FROM tenant.outbox WHERE event_type = 'TenantCurrencyDeclared'"
+                    + " AND tenant_id = ?::uuid ORDER BY created_at DESC LIMIT 1")) {
+      ps.setString(1, tenantId);
+      try (var rs = ps.executeQuery()) {
+        rs.next();
+        return rs.getString(1);
+      }
+    }
   }
 
   private static String field(String json, String name) {

@@ -100,6 +100,15 @@ public final class Domain {
 
   public record TenantWithStore(Tenant tenant, Store store) {}
 
+  /**
+   * Just the two columns a currency replay needs. Deliberately not {@link Tenant}: a replay over
+   * every tenant on the platform should not pull ten unused columns per row into memory.
+   *
+   * @param tenantId the tenant whose currency is being re-announced
+   * @param currency ISO-4217 alpha-3 code, as declared at onboarding
+   */
+  public record TenantCurrency(UUID tenantId, String currency) {}
+
   /** Pincode → store fulfilment mapping (one row per store coverage). */
   public record DeliveryArea(
       UUID id, UUID tenantId, UUID storeId, String pincode, int priority, Instant createdAt) {}

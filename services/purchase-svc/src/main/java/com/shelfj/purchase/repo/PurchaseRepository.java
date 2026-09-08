@@ -133,7 +133,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
   public List<PurchaseOrder> findPurchaseOrders(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
-            + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at"
+            + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,cancelled_reason"
             + " FROM purchase_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
@@ -147,7 +147,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
     var rows =
         query(
             "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
-                + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at"
+                + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,cancelled_reason"
                 + " FROM purchase_orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -169,6 +169,42 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "update po status");
   }
 
+  /**
+   * Cancels a purchase order and publishes the event in one transaction (golden rule #6).
+   *
+   * <p>The guard lives in the {@code WHERE} clause rather than in a preceding read, so two
+   * concurrent cancels -- or a cancel racing a goods receipt -- cannot both win: whichever commits
+   * first moves the row out of the cancellable set and the other sees zero rows updated. A
+   * check-then-act in the service layer would leave exactly that window open.
+   *
+   * @param tenantId the owning tenant
+   * @param id the purchase order to cancel
+   * @param reason caller-supplied cancellation reason, already validated as non-blank
+   * @param event the {@code PurchaseOrderCancelled} outbox row, written in the same transaction
+   * @return {@code true} if this call cancelled the order; {@code false} if it was already RECEIVED
+   *     or CANCELLED and therefore not cancellable
+   */
+  public boolean cancelPurchaseOrder(UUID tenantId, UUID id, String reason, OutboxRow event) {
+    return inTx(
+        c -> {
+          int rows;
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE purchase_orders SET status='CANCELLED', cancelled_at=now(),"
+                      + " cancelled_reason=?, updated_at=now()"
+                      + " WHERE tenant_id=? AND id=? AND status IN ('DRAFT','SUBMITTED')")) {
+            ps.setString(1, reason);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, id);
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) return false;
+          insertOutbox(c, event);
+          return true;
+        },
+        "cancel purchase order");
+  }
+
   private PurchaseOrder mapPurchaseOrder(ResultSet rs) throws SQLException {
     return new PurchaseOrder(
         rs.getObject("id", UUID.class),
@@ -182,7 +218,11 @@ public class PurchaseRepository extends BaseOutboxRepository {
         rs.getBigDecimal("total_gross"),
         rs.getObject("expected_delivery", LocalDate.class),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
-        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("cancelled_at", OffsetDateTime.class) == null
+            ? null
+            : rs.getObject("cancelled_at", OffsetDateTime.class).toInstant(),
+        rs.getString("cancelled_reason"));
   }
 
   // ── PO Lines ──────────────────────────────────────────────────────────────────

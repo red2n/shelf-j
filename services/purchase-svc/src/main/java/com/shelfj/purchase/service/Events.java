@@ -1,5 +1,6 @@
 package com.shelfj.purchase.service;
 
+import com.shelfj.events.EventPayload;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
 import com.shelfj.service.OutboxRow;
 import java.util.List;
@@ -17,6 +18,21 @@ final class Events {
         tenantId,
         poId,
         "{\"poId\":\"" + poId + "\"}");
+  }
+
+  /**
+   * Cancellation carries the reason, not just the id: a consumer reconciling open commitments needs
+   * to distinguish a supplier-side failure from a buyer-side change of mind without calling back.
+   * The reason is caller-supplied text, so it goes through {@link EventPayload#esc} — a quote in it
+   * must not be able to corrupt the event JSON.
+   */
+  static OutboxRow purchaseOrderCancelled(UUID tenantId, UUID poId, String reason) {
+    return new OutboxRow(
+        "PurchaseOrderCancelled",
+        "shelfj.purchase.purchase-order-cancelled",
+        tenantId,
+        poId,
+        "{\"poId\":\"" + poId + "\",\"reason\":\"" + EventPayload.esc(reason) + "\"}");
   }
 
   static OutboxRow goodsReceived(

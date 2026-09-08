@@ -44,6 +44,138 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("POST", "/cart-something"));
   }
 
+  // ── SJ-D11: reads default-deny, like mutations always have ──────────────────
+
+  /**
+   * The gap that prompted the read tier, sampled across all eight services that had one. The filter
+   * now gates 38 non-{@code /admin/} GETs; they were not equally exposed beforehand, and the
+   * difference is worth keeping straight:
+   *
+   * <ul>
+   *   <li><b>24 were open to any authenticated caller in the tenant</b>, a signed-in storefront
+   *       CUSTOMER included — every path in this test except the two noted below. The service layer
+   *       took {@code TenantContext} only to read {@code tenantId} off it, so tenant isolation held
+   *       and nothing else did.
+   *   <li><b>8 already had object-level authorization</b> ({@code /customers/{id}} and its
+   *       sub-resources, {@code /payments/{id}}, {@code /payments/by-order/…}). A signed-in
+   *       customer reading someone else's record already got a 404 — but a caller with no principal
+   *       at all fell through their "no userId, no roles means a trusted service-to-service lookup"
+   *       branch and was served. That branch is now unreachable from outside the mesh, which is why
+   *       {@code CustomerClient} and {@code OrderClient} stamp a role on their internal reads.
+   *   <li><b>6 already required a role of their own</b> — the two pricing reads SJ-D10 closed,
+   *       {@code /pos/parked-sales}, and {@code /platform/tenants}. For those this tier is only
+   *       belt-and-braces.
+   * </ul>
+   */
+  @Test
+  void businessReadsAreDeniedWithoutAStaffRole() throws Exception {
+    for (String path :
+        new String[] {
+          // Open: the customer list and the email/phone lookup behind it.
+          "/customers",
+          "/customers/lookup",
+          // Object-level guarded, but served to a caller with no principal at all.
+          "/customers/abc/loyalty",
+          "/payments/abc",
+          // Open: the tenant-wide order book, and the till's gift card and layaway balances.
+          "/orders",
+          "/gift-cards/GC-1234",
+          "/layaways/abc",
+          // Open: who is signed in at which till.
+          "/auth/pos/sessions",
+          // Open: stock held for other people's in-flight checkouts.
+          "/inventory/reservations",
+          // Open: the tenant's own commercial position — what it charges and what it pays.
+          "/price-lists",
+          "/vat-rates",
+          "/suppliers",
+          "/purchase-orders",
+          "/goods-receipts",
+          "/nominal-ledger",
+          // Role-guarded already; this tier is belt-and-braces.
+          "/vat-return"
+        }) {
+      assertAborted(invoke("GET", path), 403);
+    }
+  }
+
+  @Test
+  void theSameReadsPassForStaff() throws Exception {
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertNotAborted(invoke("GET", "/customers"));
+    assertNotAborted(invoke("GET", "/orders"));
+    assertNotAborted(invoke("GET", "/suppliers"));
+  }
+
+  /** A CUSTOMER is not staff — that is the whole point, since storefront tokens carry it. */
+  @Test
+  void aCustomerRoleIsNotStaff() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/customers"), 403);
+    assertAborted(invoke("GET", "/orders"), 403);
+  }
+
+  /** Everything the storefront actually calls must still work with no role whatsoever. */
+  @Test
+  void theStorefrontReadSurfaceStaysOpen() throws Exception {
+    for (String path :
+        new String[] {
+          "/catalog/categories",
+          "/catalog/products",
+          "/catalog/products/abc",
+          "/catalog/products/abc/variants",
+          "/catalog/products/abc/image",
+          "/storefront/config",
+          "/storefront/stores",
+          "/storefront/active",
+          "/inventory/availability",
+          "/orders/mine",
+          "/orders/abc",
+          "/orders/abc/history",
+          "/orders/abc/returns",
+          "/promotions",
+          "/auth/me",
+          "/cart",
+          "/cart/items",
+          "/onboarding/status",
+          "/fulfilment/resolve"
+        }) {
+      assertNotAborted(invoke("GET", path));
+    }
+  }
+
+  /**
+   * The same lookalike trap the cart carve-out has: a bare prefix match would hand an unrelated
+   * future route the storefront's open-read exemption.
+   */
+  @Test
+  void lookalikePublicPathsDoNotInheritTheExemption() throws Exception {
+    assertAborted(invoke("GET", "/catalog-exports"), 403);
+    assertAborted(invoke("GET", "/storefront-admin"), 403);
+    // Anything new under /orders/ that is not one of the four object-level-authorized shapes
+    // stays denied, so a future sub-resource cannot inherit the exemption by accident.
+    assertAborted(invoke("GET", "/orders/abc/audit-trail"), 403);
+    assertAborted(invoke("GET", "/orders/abc/history/all"), 403);
+  }
+
+  /**
+   * A readiness probe that starts returning 403 takes every replica out of rotation. Helidon
+   * usually serves these outside JAX-RS, but the filter must not be the thing that finds out.
+   */
+  @Test
+  void probesAndMetricsAreNeverDenied() throws Exception {
+    assertNotAborted(invoke("GET", "/health"));
+    assertNotAborted(invoke("GET", "/health/ready"));
+    assertNotAborted(invoke("GET", "/metrics"));
+    assertNotAborted(invoke("GET", "/openapi"));
+  }
+
+  /** CORS preflight carries no credentials by design; denying it breaks every browser client. */
+  @Test
+  void corsPreflightIsNotDenied() throws Exception {
+    assertNotAborted(invoke("OPTIONS", "/customers"));
+  }
+
   // ── Staff-operable admin surfaces (STOREKEEPER inventory + CASHIER till) ──
 
   @Test

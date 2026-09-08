@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
 import java.util.List;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
@@ -124,6 +125,56 @@ public final class Dtos {
       @Schema(description = "Instant after which the hold auto-expires.") String expiresAt,
       String createdAt) {}
 
+  @Schema(
+      name = "LowStockRowResponse",
+      description = "One item currently below a configured reorder level.")
+  public record LowStockRowResponse(
+      @Schema(description = "UUID of the store.") String storeId,
+      @Schema(description = "UUID of the product variant.") String variantId,
+      @Schema(
+              description =
+                  "Which configured level bound this row: THRESHOLD (manual min/max),"
+                      + " SAFETY_STOCK, or REORDER_POINT. The highest configured level wins.")
+          String signal,
+      @Schema(description = "The binding reorder level.") BigDecimal reorderLevel,
+      @Schema(description = "On hand minus held reservations, as the levels list reports it.")
+          BigDecimal availableQty,
+      @Schema(description = "How far below the level this item is.") BigDecimal shortfall) {}
+
+  @Schema(name = "ValuationRowResponse", description = "One line of the stock valuation report.")
+  public record ValuationRowResponse(
+      @Schema(description = "The store id or variant id this line values.") String groupKey,
+      @Schema(
+              description =
+                  "Costing basis used: FIFO (each batch at its own cost), AVERAGE (the configured"
+                      + " standard cost), or MIXED where a store rollup spans both.")
+          String method,
+      @Schema(description = "Total remaining quantity.") BigDecimal onHandQty,
+      @Schema(
+              description =
+                  "How much of onHandQty carries no cost and is excluded from value. Reported"
+                      + " rather than valued at zero, which would understate the holding.")
+          BigDecimal unvaluedQty,
+      @Schema(description = "Money value of the quantity that could be costed.")
+          BigDecimal value) {}
+
+  @Schema(
+      name = "ShrinkageRowResponse",
+      description = "One aggregated line of the stock write-off report.")
+  public record ShrinkageRowResponse(
+      @Schema(
+              description =
+                  "What this line sums: a reason code, an actor id, a store id or a variant id,"
+                      + " depending on the grouping. UNSPECIFIED covers adjustments made with no"
+                      + " reason code; SYSTEM covers those with no human actor.")
+          String groupKey,
+      @Schema(description = "Total quantity written off, as a positive number.")
+          BigDecimal qtyWrittenOff,
+      @Schema(description = "Total quantity added back, e.g. stock found during a count.")
+          BigDecimal qtyFound,
+      @Schema(description = "Signed net of write-offs and finds.") BigDecimal netQty,
+      @Schema(description = "How many adjustment movements this line covers.") long movements) {}
+
   @Schema(name = "MovementResponse", description = "One append-only stock movement ledger entry.")
   public record MovementResponse(
       String id,
@@ -136,7 +187,16 @@ public final class Dtos {
       @Schema(description = "Signed movement quantity.") BigDecimal qty,
       String refType,
       String refId,
-      String reasonCode,
+      @Schema(
+              description =
+                  "Reason code for the movement, e.g. THEFT or DAMAGED. Set on adjustments; null"
+                      + " for system-caused movements, which cite refType/refId instead.")
+          String reasonCode,
+      @Schema(
+              description =
+                  "UUID of the user who made this adjustment. Null for system-caused movements --"
+                      + " trace those through refType/refId to the record that names its actor.")
+          String actorId,
       String createdAt) {}
 
   @Schema(name = "ThresholdResponse", description = "A configured reorder threshold.")
@@ -564,7 +624,13 @@ public final class Dtos {
   public record UpsertCostingMethodRequest(
       @Schema(description = "UUID of the store.") @NotBlank String storeId,
       @Schema(description = "UUID of the product variant.") @NotBlank String variantId,
-      @Schema(description = "FIFO or AVERAGE.") @NotBlank String method) {}
+      @Schema(description = "FIFO or AVERAGE.") @NotBlank String method,
+      @Schema(
+              description =
+                  "Standard unit cost used when method is AVERAGE. Omit to leave the stored value"
+                      + " unchanged. Ignored for FIFO, which values each batch at its own cost.")
+          @PositiveOrZero
+          BigDecimal averageCost) {}
 
   @Schema(name = "CostingMethodResponse", description = "A variant's assigned costing method.")
   public record CostingMethodResponse(
@@ -572,7 +638,10 @@ public final class Dtos {
       @Schema(description = "UUID of the store.") String storeId,
       @Schema(description = "UUID of the product variant.") String variantId,
       @Schema(description = "FIFO or AVERAGE.") String method,
-      @Schema(description = "Running average unit cost, maintained when method is AVERAGE.")
+      @Schema(
+              description =
+                  "Standard unit cost used when method is AVERAGE. Operator-set, not recomputed"
+                      + " from receipts.")
           BigDecimal averageCost,
       String updatedAt) {}
 

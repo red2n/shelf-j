@@ -83,13 +83,13 @@ void main() {
     });
 
     test('carries the assigned stores for store-bound staff', () {
-      final auth = AuthAuthenticated(
+      final auth = const AuthAuthenticated(
         accessToken: 'a',
         refreshToken: 'r',
         userId: 'u-1',
         tenantId: 't-1',
-        roles: const [UserRoles.cashier],
-        storeIds: const ['store-1'],
+        roles: [UserRoles.cashier],
+        storeIds: ['store-1'],
       );
       expect(auth.storeIds, ['store-1']);
     });

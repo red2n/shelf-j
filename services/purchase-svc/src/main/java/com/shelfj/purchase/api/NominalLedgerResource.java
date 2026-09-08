@@ -31,8 +31,11 @@ public class NominalLedgerResource {
       summary = "List nominal ledger entries",
       description =
           "Read-only double-entry journal view, optionally filtered by nominal code and date range"
-              + " (?code=&from=&to=). Cursor-paginated: ?after=<meta.nextCursor>&limit=1-100.")
-  @APIResponse(responseCode = "400", description = "Malformed pagination cursor")
+              + " (?code=&from=&to=), where from and to are yyyy-MM-dd. Cursor-paginated:"
+              + " ?after=<meta.nextCursor>&limit=1-100.")
+  @APIResponse(
+      responseCode = "400",
+      description = "Malformed pagination cursor, or from/to not in yyyy-MM-dd form")
   @GET
   public Response list(
       @QueryParam("code") String code,

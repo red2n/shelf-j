@@ -7,6 +7,7 @@ import com.shelfj.inventory.domain.Domain.LevelSummary;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.MoveType;
+import com.shelfj.inventory.domain.Domain.MovementAttribution;
 import com.shelfj.inventory.domain.Domain.PickingRule;
 import com.shelfj.inventory.domain.Domain.PickingRuleZonePriority;
 import com.shelfj.inventory.domain.Domain.Reservation;
@@ -66,7 +67,8 @@ public class InventoryRepository extends BaseOutboxRepository {
               MoveType.RECEIVE,
               batch.receivedQty(),
               refType,
-              refId);
+              refId,
+              MovementAttribution.system());
           insertOutbox(c, event);
           return batch;
         },
@@ -119,7 +121,8 @@ public class InventoryRepository extends BaseOutboxRepository {
               MoveType.RECEIVE,
               batch.receivedQty(),
               refType,
-              refId);
+              refId,
+              MovementAttribution.system());
           insertOutbox(c, event);
           return true;
         },
@@ -137,8 +140,9 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID variantId,
       BigDecimal delta,
       String reason,
-      OutboxRow event) {
-    adjust(tenantId, storeId, variantId, delta, reason, event, null);
+      OutboxRow event,
+      MovementAttribution attribution) {
+    adjust(tenantId, storeId, variantId, delta, reason, event, null, attribution);
   }
 
   /**
@@ -154,7 +158,8 @@ public class InventoryRepository extends BaseOutboxRepository {
       BigDecimal delta,
       String reason,
       OutboxRow event,
-      String idempotencyKey) {
+      String idempotencyKey,
+      MovementAttribution attribution) {
     inTx(
         c -> {
           if (idempotencyKey != null) {
@@ -172,7 +177,7 @@ public class InventoryRepository extends BaseOutboxRepository {
               throw sqle;
             }
           }
-          adjustTx(c, tenantId, storeId, variantId, delta, reason, event);
+          adjustTx(c, tenantId, storeId, variantId, delta, reason, event, attribution);
           return null;
         },
         "adjust stock");
@@ -191,7 +196,8 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID variantId,
       BigDecimal delta,
       String reason,
-      OutboxRow event)
+      OutboxRow event,
+      MovementAttribution attribution)
       throws SQLException {
     if (delta.signum() >= 0) {
       Batch b =
@@ -212,13 +218,39 @@ public class InventoryRepository extends BaseOutboxRepository {
               null,
               null);
       insertBatch(c, b);
+      // A positive adjustment creates a batch but no deduction, so this is the only movement it
+      // writes. Negative adjustments are recorded below instead, per batch.
+      insertMovement(
+          c,
+          tenantId,
+          storeId,
+          variantId,
+          null,
+          MoveType.ADJUST,
+          delta,
+          "ADJUSTMENT",
+          null,
+          attribution);
     } else {
+      // deductFifo writes one ADJUST movement per batch it draws down, each carrying its batch_id.
+      // A summary movement on top of those used to be written unconditionally, which double-counted
+      // every negative adjustment in the ledger: a write-off of 30 units appeared as 60 across two
+      // rows. Stock levels were unaffected (only one deduction ever happened), but every
+      // movement-based read was wrong -- the movements list, movement-stats, and now the shrinkage
+      // report. The per-batch rows are also strictly more informative, since they tie the write-off
+      // to the batches it actually came out of.
       deductFifo(
-          c, tenantId, storeId, variantId, delta.negate(), MoveType.ADJUST, "ADJUSTMENT", null);
+          c,
+          tenantId,
+          storeId,
+          variantId,
+          delta.negate(),
+          MoveType.ADJUST,
+          "ADJUSTMENT",
+          null,
+          attribution);
       checkThresholdTx(c, tenantId, storeId, variantId);
     }
-    insertMovement(
-        c, tenantId, storeId, variantId, null, MoveType.ADJUST, delta, "ADJUSTMENT", null);
     insertOutbox(c, event);
   }
 
@@ -236,12 +268,28 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID targetStoreId,
       UUID targetVariantId,
       OutboxRow inEvent,
-      BigDecimal qty) {
+      BigDecimal qty,
+      MovementAttribution attribution) {
     inTx(
         c -> {
           adjustTx(
-              c, tenantId, sourceStoreId, sourceVariantId, qty.negate(), "LOT_MERGE_OUT", outEvent);
-          adjustTx(c, tenantId, targetStoreId, targetVariantId, qty, "LOT_MERGE_IN", inEvent);
+              c,
+              tenantId,
+              sourceStoreId,
+              sourceVariantId,
+              qty.negate(),
+              "LOT_MERGE_OUT",
+              outEvent,
+              attribution);
+          adjustTx(
+              c,
+              tenantId,
+              targetStoreId,
+              targetVariantId,
+              qty,
+              "LOT_MERGE_IN",
+              inEvent,
+              attribution);
           return null;
         },
         "merge lot");
@@ -339,7 +387,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         MoveType.RESERVE,
         r.qty().negate(),
         "RESERVATION",
-        r.id());
+        r.id(),
+        MovementAttribution.system());
     insertOutbox(c, event);
     return r;
   }
@@ -400,7 +449,8 @@ public class InventoryRepository extends BaseOutboxRepository {
         r.orderId(),
         rule.map(PickingRule::strategy).orElse(null),
         rule.map(PickingRule::gradePreference).orElse(null),
-        zonePriorities);
+        zonePriorities,
+        MovementAttribution.system());
     checkThresholdTx(c, tenantId, r.storeId(), r.variantId());
     setReservationStatus(c, reservationId, Reservation.CONSUMED);
     // Event built here (not in service layer) because storeId/variantId/qty are only
@@ -426,7 +476,16 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId, OutboxRow event) {
     inTx(
         c -> {
-          deductFifo(c, tenantId, storeId, variantId, qty, MoveType.SALE, "ORDER", orderId);
+          deductFifo(
+              c,
+              tenantId,
+              storeId,
+              variantId,
+              qty,
+              MoveType.SALE,
+              "ORDER",
+              orderId,
+              MovementAttribution.system());
           checkThresholdTx(c, tenantId, storeId, variantId);
           insertOutbox(c, event);
           return null;
@@ -452,7 +511,16 @@ public class InventoryRepository extends BaseOutboxRepository {
           if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
             return false;
           }
-          deductFifo(c, tenantId, storeId, variantId, qty, MoveType.SALE, "ORDER", orderId);
+          deductFifo(
+              c,
+              tenantId,
+              storeId,
+              variantId,
+              qty,
+              MoveType.SALE,
+              "ORDER",
+              orderId,
+              MovementAttribution.system());
           checkThresholdTx(c, tenantId, storeId, variantId);
           insertOutbox(c, event);
           return true;
@@ -480,7 +548,8 @@ public class InventoryRepository extends BaseOutboxRepository {
               MoveType.RELEASE,
               r.qty(),
               "RESERVATION",
-              reservationId);
+              reservationId,
+              MovementAttribution.system());
           setReservationStatus(c, reservationId, Reservation.RELEASED);
           insertOutbox(c, event);
           return true;
@@ -824,7 +893,9 @@ public class InventoryRepository extends BaseOutboxRepository {
    * Apply stock adjustments for all APPROVED lines and mark them ADJUSTED in one transaction.
    * Returns the number of lines adjusted.
    */
-  public int applyAdjustments(UUID tenantId, UUID headerId, OutboxRow event) {
+  public int applyAdjustments(UUID tenantId, UUID headerId, OutboxRow event, UUID actorId) {
+    MovementAttribution attribution =
+        MovementAttribution.by(actorId, MovementAttribution.CYCLE_COUNT_VARIANCE);
     return inTx(
         c -> {
           List<CycleCountLine> approved =
@@ -867,7 +938,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                   MoveType.ADJUST,
                   line.variance(),
                   "CYCLE_COUNT",
-                  headerId);
+                  headerId,
+                  attribution);
             } else {
               // negative variance: system over-counted — deduct stock
               deductFifo(
@@ -878,7 +950,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                   line.variance().negate(),
                   MoveType.ADJUST,
                   "CYCLE_COUNT",
-                  headerId);
+                  headerId,
+                  attribution);
             }
           }
           if (!approved.isEmpty()) {
@@ -970,9 +1043,22 @@ public class InventoryRepository extends BaseOutboxRepository {
       BigDecimal qty,
       String moveType,
       String refType,
-      UUID refId)
+      UUID refId,
+      MovementAttribution attribution)
       throws SQLException {
-    deductBatches(c, tenantId, storeId, variantId, qty, moveType, refType, refId, null, null, null);
+    deductBatches(
+        c,
+        tenantId,
+        storeId,
+        variantId,
+        qty,
+        moveType,
+        refType,
+        refId,
+        null,
+        null,
+        null,
+        attribution);
   }
 
   void deductBatches(
@@ -986,7 +1072,8 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID refId,
       String strategy,
       String gradePreference,
-      List<UUID> zonePriorityOrder)
+      List<UUID> zonePriorityOrder,
+      MovementAttribution attribution)
       throws SQLException {
     String orderBy = pickOrderClause(strategy, gradePreference, zonePriorityOrder);
     BigDecimal toDeduct = qty;
@@ -1021,7 +1108,16 @@ public class InventoryRepository extends BaseOutboxRepository {
         ps.executeUpdate();
       }
       insertMovement(
-          c, tenantId, storeId, variantId, batchId, moveType, take.negate(), refType, refId);
+          c,
+          tenantId,
+          storeId,
+          variantId,
+          batchId,
+          moveType,
+          take.negate(),
+          refType,
+          refId,
+          attribution);
       toDeduct = toDeduct.subtract(take);
     }
     if (toDeduct.signum() > 0) {
@@ -1106,6 +1202,16 @@ public class InventoryRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Writes one append-only stock movement (golden rule #8).
+   *
+   * <p>System-caused movements pass {@code null} for both {@code reasonCode} and {@code actorId}:
+   * they already carry {@code refType}/{@code refId} pointing at the order, GRN or transfer header
+   * that caused them, and that record names its own actor. NULL here therefore means "see the
+   * referenced record", not "unknown". Adjustments are the exception -- they are written with
+   * {@code refId = null}, so without these two columns nothing links a stock correction to a person
+   * or a reason (SJ-D4).
+   */
   private void insertMovement(
       Connection c,
       UUID tenantId,
@@ -1115,13 +1221,15 @@ public class InventoryRepository extends BaseOutboxRepository {
       String type,
       BigDecimal qty,
       String refType,
-      UUID refId)
+      UUID refId,
+      MovementAttribution attribution)
       throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO stock_movements"
-                + " (id, tenant_id, store_id, variant_id, batch_id, type, qty, ref_type, ref_id)"
-                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+                + " (id, tenant_id, store_id, variant_id, batch_id, type, qty, ref_type, ref_id,"
+                + "  reason_code, actor_id)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, UUID.randomUUID());
       ps.setObject(2, tenantId);
       ps.setObject(3, storeId);
@@ -1131,6 +1239,8 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setBigDecimal(7, qty);
       ps.setString(8, refType);
       ps.setObject(9, refId);
+      ps.setString(10, attribution.reasonCode());
+      ps.setObject(11, attribution.actorId());
       ps.executeUpdate();
     }
   }
@@ -1269,7 +1379,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                 line.requestedQty(),
                 MoveType.TRANSFER,
                 "MOVE_ORDER",
-                orderId);
+                orderId,
+                MovementAttribution.system());
             Batch dest =
                 new Batch(
                     UUID.randomUUID(),
@@ -1297,7 +1408,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                 MoveType.TRANSFER,
                 line.requestedQty(),
                 "MOVE_ORDER",
-                orderId);
+                orderId,
+                MovementAttribution.system());
           }
           MoveOrder completed;
           try (PreparedStatement ps =
@@ -1516,7 +1628,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                 line.requestedQty(),
                 MoveType.TRANSFER,
                 "TRANSFER_ORDER",
-                orderId);
+                orderId,
+                MovementAttribution.system());
             if (isDirect) {
               Batch dest =
                   new Batch(
@@ -1545,7 +1658,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                   MoveType.TRANSFER,
                   line.requestedQty(),
                   "TRANSFER_ORDER",
-                  orderId);
+                  orderId,
+                  MovementAttribution.system());
             }
           }
 
@@ -1635,7 +1749,8 @@ public class InventoryRepository extends BaseOutboxRepository {
                 MoveType.TRANSFER,
                 qty,
                 "TRANSFER_ORDER",
-                orderId);
+                orderId,
+                MovementAttribution.system());
           }
           try (PreparedStatement ps =
               c.prepareStatement(

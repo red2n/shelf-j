@@ -220,14 +220,21 @@ public class PaymentService {
    * order it was captured against — so ownership is resolved one hop away via order-svc (golden
    * rule #1: never trust a caller-supplied customerId, ask the owning service). Staff may read any
    * payment in their tenant; an authenticated customer may only read payments on their own order.
-   * Denials are 404 (not 403) so tender/order ids can't be probed for existence. A caller with no
-   * principal at all (only X-Tenant-Id) is a service-to-service shape and stays tenant-scoped.
+   * Denials are 404 (not 403) so tender/order ids can't be probed for existence.
+   *
+   * <p>There is deliberately no exemption for a caller with no principal. No other service reads
+   * payments, so that branch had no caller to serve — and a guest storefront request carries a
+   * tenant with no principal, so it was reachable from outside rather than only from the mesh.
    */
   private void requireReadAccess(UUID tenantId, UUID orderId, TenantContext ctx) {
     if (isStaff(ctx)) return;
-    if (ctx.userId() == null && ctx.roles().isEmpty()) return;
     OrderClient.OrderInfo order = orderClient.getOrder(tenantId, orderId);
-    if (order.customerId() == null || !order.customerId().equals(ctx.userId().toString()))
+    // ctx.userId() is null for an unidentified caller. It used to be impossible to reach this line
+    // with a null — the service-to-service exemption returned first — so the .toString() below was
+    // an NPE waiting for that exemption to go away. Compare from the order's side instead.
+    if (order.customerId() == null
+        || ctx.userId() == null
+        || !order.customerId().equals(ctx.userId().toString()))
       throw ApiException.notFound("PAYMENT_NOT_FOUND", "payment tender not found");
   }
 

@@ -22,7 +22,7 @@ public class MovementRepository extends BaseJdbcRepository {
     StringBuilder sb =
         new StringBuilder(
             "SELECT id, tenant_id, store_id, variant_id, batch_id, type, qty, ref_type, ref_id,"
-                + " reason_code, created_at FROM stock_movements WHERE tenant_id = ?");
+                + " reason_code, actor_id, created_at FROM stock_movements WHERE tenant_id = ?");
     if (storeId != null) sb.append(" AND store_id = ?");
     if (variantId != null) sb.append(" AND variant_id = ?");
     if (type != null) sb.append(" AND type = ?");
@@ -64,6 +64,7 @@ public class MovementRepository extends BaseJdbcRepository {
         rs.getString("ref_type"),
         rs.getObject("ref_id", UUID.class),
         rs.getString("reason_code"),
+        rs.getObject("actor_id", UUID.class),
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 }

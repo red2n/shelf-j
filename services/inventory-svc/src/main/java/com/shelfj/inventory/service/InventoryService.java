@@ -15,9 +15,11 @@ import com.shelfj.inventory.domain.Domain.LevelSummary;
 import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.inventory.domain.Domain.LotGenealogyLink;
 import com.shelfj.inventory.domain.Domain.LotUomConversion;
+import com.shelfj.inventory.domain.Domain.LowStockRow;
 import com.shelfj.inventory.domain.Domain.MoveOrder;
 import com.shelfj.inventory.domain.Domain.MoveOrderLine;
 import com.shelfj.inventory.domain.Domain.Movement;
+import com.shelfj.inventory.domain.Domain.MovementAttribution;
 import com.shelfj.inventory.domain.Domain.ParLevelConfig;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
@@ -30,11 +32,15 @@ import com.shelfj.inventory.domain.Domain.Reservation;
 import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
+import com.shelfj.inventory.domain.Domain.ShrinkageGrouping;
+import com.shelfj.inventory.domain.Domain.ShrinkageRow;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.domain.Domain.TransactionSourceType;
 import com.shelfj.inventory.domain.Domain.TransferOrder;
 import com.shelfj.inventory.domain.Domain.TransferOrderLine;
+import com.shelfj.inventory.domain.Domain.ValuationGrouping;
+import com.shelfj.inventory.domain.Domain.ValuationRow;
 import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
 import com.shelfj.inventory.repo.AbcAnalysisRepository;
 import com.shelfj.inventory.repo.CostingRepository;
@@ -75,6 +81,9 @@ public class InventoryService {
 
   @Inject ServiceConfig config;
   @Inject InventoryRepository repo;
+  @Inject com.shelfj.inventory.repo.ShrinkageRepository shrinkageRepo;
+  @Inject com.shelfj.inventory.repo.ValuationRepository valuationRepo;
+  @Inject com.shelfj.inventory.repo.LowStockRepository lowStockRepo;
   @Inject LotGenealogyRepository lotGenealogyRepo;
   @Inject ThresholdRepository thresholdRepo;
   @Inject SuggestionRepository suggestionRepo;
@@ -277,13 +286,89 @@ public class InventoryService {
             batch.tenantId(), batch.storeId(), batch.variantId(), batch.id(), batch.receivedQty()));
   }
 
+  // ---- low stock report ----
+
+  /**
+   * Items currently below a configured reorder level, live.
+   *
+   * <p>Distinct from the planning suggestions, which return the min/max engine's persisted output
+   * from the last {@code POST /planning/run} and ignore safety stock and reorder points; and from
+   * {@code levelsSummary}, which counts SKUs under one flat number for a dashboard tile.
+   */
+  public List<LowStockRow> lowStockReport(UUID tenantId, UUID storeId, int limit) {
+    return lowStockRepo.lowStock(tenantId, storeId, limit);
+  }
+
+  // ---- valuation report ----
+
+  /**
+   * Values stock on hand, grouped by store or by variant.
+   *
+   * <p>Named in the reporting gap analysis as designed but unbuilt. Stock with no cost is returned
+   * as {@code unvaluedQty} rather than valued at zero — this figure ends up on a balance sheet, and
+   * silently costing unknown stock at nothing understates it.
+   */
+  public List<ValuationRow> valuationReport(
+      UUID tenantId, UUID storeId, ValuationGrouping grouping, int limit) {
+    return valuationRepo.value(tenantId, storeId, grouping, limit);
+  }
+
+  // ---- shrinkage report ----
+
+  /**
+   * Write-offs over a period, grouped by reason code, by member of staff, or by store.
+   *
+   * <p>This is the report SJ-D4's attribution work exists to feed: until adjustments carried a
+   * reason and an actor there was nothing to group by, and the reason-code reference table had no
+   * reader. Grouping by ACTOR is the loss-prevention view — a cashier whose write-offs sit well
+   * above their peers is the pattern this surfaces.
+   *
+   * @param grouping validated by the resource against {@link ShrinkageGrouping}
+   */
+  public List<ShrinkageRow> shrinkageReport(
+      UUID tenantId, UUID storeId, Instant from, Instant to, ShrinkageGrouping grouping) {
+    if (from != null && to != null && !from.isBefore(to))
+      throw ApiException.badRequest(
+          "INVENTORY_INVALID_PERIOD", "from must be before to — got " + from + " and " + to);
+    return shrinkageRepo.aggregate(tenantId, storeId, from, to, grouping);
+  }
+
+  /**
+   * The variants behind a summary line, so an investigation can go from "this member of staff wrote
+   * off 400 units" to what they actually wrote off.
+   */
+  public List<ShrinkageRow> shrinkageByVariant(
+      UUID tenantId,
+      UUID storeId,
+      Instant from,
+      Instant to,
+      String reasonCode,
+      UUID actorId,
+      int limit) {
+    if (from != null && to != null && !from.isBefore(to))
+      throw ApiException.badRequest(
+          "INVENTORY_INVALID_PERIOD", "from must be before to — got " + from + " and " + to);
+    return shrinkageRepo.topVariants(tenantId, storeId, from, to, reasonCode, actorId, limit);
+  }
+
   // ---- adjust ----
+  /**
+   * Manual stock correction. {@code reasonCode} and {@code actorId} land on the movement row so a
+   * shrinkage investigation can ask who wrote off what, and why (SJ-D4). Both were previously
+   * dropped -- {@code reasonCode} was accepted and documented on the request DTO but never read,
+   * and there was no actor column at all.
+   *
+   * @param reasonCode a {@code transaction_reason_codes} code, e.g. THEFT or DAMAGED; may be null
+   * @param actorId the authenticated user making the correction; null only for a system caller
+   */
   public void adjust(
       UUID tenantId,
       UUID storeId,
       UUID variantId,
       BigDecimal delta,
       String reason,
+      String reasonCode,
+      UUID actorId,
       String idempotencyKey) {
     var event =
         new OutboxRow(
@@ -292,7 +377,15 @@ public class InventoryService {
             tenantId,
             variantId,
             Events.stockAdjusted(tenantId, storeId, variantId, delta));
-    repo.adjust(tenantId, storeId, variantId, delta, reason, event, idempotencyKey);
+    repo.adjust(
+        tenantId,
+        storeId,
+        variantId,
+        delta,
+        reason,
+        event,
+        idempotencyKey,
+        MovementAttribution.by(actorId, reasonCode));
   }
 
   // ---- reserve ----
@@ -1054,7 +1147,7 @@ public class InventoryService {
   }
 
   /** Apply stock adjustments for all APPROVED lines, then close the count header. */
-  public int adjustCycleCount(UUID tenantId, UUID headerId) {
+  public int adjustCycleCount(UUID tenantId, UUID headerId, UUID actorId) {
     CycleCountHeader header =
         cycleCountRepo
             .findCycleCountHeader(tenantId, headerId)
@@ -1072,7 +1165,7 @@ public class InventoryService {
             tenantId,
             headerId,
             Events.cycleCountAdjusted(tenantId, headerId));
-    return repo.applyAdjustments(tenantId, headerId, event);
+    return repo.applyAdjustments(tenantId, headerId, event, actorId);
   }
 
   // ---- Lot Genealogy (Gap #11) ----
@@ -1595,9 +1688,13 @@ public class InventoryService {
   // ── Gap #17: Costing Methods ────────────────────────────────────────────────
 
   public CostingMethod upsertCostingMethod(
-      UUID tenantId, UUID storeId, UUID variantId, String method) {
+      UUID tenantId, UUID storeId, UUID variantId, String method, BigDecimal averageCost) {
     if (!"FIFO".equals(method) && !"AVERAGE".equals(method)) {
       throw ApiException.badRequest("INVALID_COSTING_METHOD", "method must be FIFO or AVERAGE");
+    }
+    if (averageCost != null && averageCost.signum() < 0) {
+      throw ApiException.badRequest(
+          "INVALID_AVERAGE_COST", "averageCost cannot be negative — got " + averageCost);
     }
     var event =
         new OutboxRow(
@@ -1606,7 +1703,8 @@ public class InventoryService {
             tenantId,
             variantId,
             Events.costingMethodUpdated(tenantId, storeId, variantId, method));
-    return costingRepo.upsertCostingMethod(tenantId, storeId, variantId, method, event);
+    return costingRepo.upsertCostingMethod(
+        tenantId, storeId, variantId, method, averageCost, event);
   }
 
   public CostingMethod getCostingMethod(UUID tenantId, UUID storeId, UUID variantId) {
@@ -1622,7 +1720,7 @@ public class InventoryService {
 
   public AccountingPeriod openPeriod(
       UUID tenantId, UUID storeId, String periodName, String periodDate) {
-    LocalDate date = LocalDate.parse(periodDate);
+    LocalDate date = com.shelfj.web.Parsing.date(periodDate, "periodDate");
     var event =
         new OutboxRow(
             "AccountingPeriodOpened",
@@ -1735,7 +1833,12 @@ public class InventoryService {
   public record LotMergeResult(Batch targetBatch, LotAction action) {}
 
   public LotMergeResult mergeLot(
-      UUID tenantId, UUID sourceBatchId, UUID targetBatchId, BigDecimal qty, String notes) {
+      UUID tenantId,
+      UUID sourceBatchId,
+      UUID targetBatchId,
+      BigDecimal qty,
+      String notes,
+      UUID actorId) {
     Batch source =
         repo.getBatch(tenantId, sourceBatchId)
             .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Source batch not found"));
@@ -1769,7 +1872,8 @@ public class InventoryService {
         target.storeId(),
         target.variantId(),
         addEvent,
-        qty);
+        qty,
+        MovementAttribution.by(actorId, null));
     Batch updated =
         repo.getBatch(tenantId, targetBatchId)
             .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "Target batch not found"));

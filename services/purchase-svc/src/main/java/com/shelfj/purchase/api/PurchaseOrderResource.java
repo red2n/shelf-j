@@ -1,6 +1,7 @@
 package com.shelfj.purchase.api;
 
 import com.shelfj.purchase.dto.Dtos.AddPurchaseOrderLineRequest;
+import com.shelfj.purchase.dto.Dtos.CancelPurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreatePurchaseOrderRequest;
 import com.shelfj.purchase.mapper.Mappers;
 import com.shelfj.purchase.service.PurchaseService;
@@ -74,6 +75,25 @@ public class PurchaseOrderResource {
   @Path("/{id}/submit")
   public Response submit(@PathParam("id") UUID id) {
     return Response.ok(ApiResponse.ok(Mappers.toDto(svc.submitPurchaseOrder(ctx, id)))).build();
+  }
+
+  @Operation(
+      summary = "Cancel a purchase order",
+      description =
+          "Transitions a DRAFT or SUBMITTED purchase order to CANCELLED, recording the reason. A"
+              + " RECEIVED order cannot be cancelled -- stock is already booked against it.")
+  @APIResponse(responseCode = "200", description = "Purchase order cancelled")
+  @APIResponse(responseCode = "400", description = "Cancellation reason missing or blank")
+  @APIResponse(responseCode = "404", description = "Purchase order not found")
+  @APIResponse(
+      responseCode = "409",
+      description = "Purchase order is already RECEIVED or CANCELLED")
+  @POST
+  @Path("/{id}/cancel")
+  public Response cancel(@PathParam("id") UUID id, CancelPurchaseOrderRequest req) {
+    Validations.validate(req);
+    return Response.ok(ApiResponse.ok(Mappers.toDto(svc.cancelPurchaseOrder(ctx, id, req))))
+        .build();
   }
 
   @Operation(

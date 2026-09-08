@@ -61,6 +61,104 @@ public final class Domain {
     public static final String RELEASED = "RELEASED";
   }
 
+  /**
+   * Who caused a stock movement, and why (SJ-D4).
+   *
+   * <p>{@link #system()} is the common case: a movement caused by an order, GRN or transfer already
+   * carries {@code refType}/{@code refId} pointing at that record, which names its own actor, so
+   * repeating it here would duplicate rather than add. Adjustments are the exception -- they are
+   * written with no {@code refId}, so without this nothing links a stock correction to a person or
+   * a reason, and shrinkage cannot be attributed.
+   *
+   * @param reasonCode a {@code transaction_reason_codes} code, or null
+   * @param actorId the authenticated user who performed the adjustment, or null for a system flow
+   */
+  public record MovementAttribution(String reasonCode, UUID actorId) {
+
+    /**
+     * Reason code for a cycle-count variance write-off. Not seeded in {@code
+     * transaction_reason_codes} because it is not operator-chosen -- the engine assigns it.
+     */
+    public static final String CYCLE_COUNT_VARIANCE = "CYCLE_COUNT_VARIANCE";
+
+    private static final MovementAttribution SYSTEM = new MovementAttribution(null, null);
+
+    /** A movement caused by a system flow, traceable through its {@code refType}/{@code refId}. */
+    public static MovementAttribution system() {
+      return SYSTEM;
+    }
+
+    /** A movement a person deliberately made: records who, and why. */
+    public static MovementAttribution by(UUID actorId, String reasonCode) {
+      return new MovementAttribution(reasonCode, actorId);
+    }
+  }
+
+  /**
+   * One line of the live low-stock report.
+   *
+   * @param signal which configured level bound this row — THRESHOLD, SAFETY_STOCK or REORDER_POINT
+   * @param reorderLevel the binding level: the highest of whichever signals are configured
+   * @param availableQty on hand minus held reservations, matching the levels list's definition
+   * @param shortfall how far below the level the item is
+   */
+  public record LowStockRow(
+      String storeId,
+      String variantId,
+      String signal,
+      BigDecimal reorderLevel,
+      BigDecimal availableQty,
+      BigDecimal shortfall) {}
+
+  /** How the valuation report groups its rows. An enum, so no request text reaches the SQL. */
+  public enum ValuationGrouping {
+    STORE,
+    VARIANT
+  }
+
+  /**
+   * One line of the inventory valuation report.
+   *
+   * @param groupKey the store id or variant id this line values
+   * @param method the costing basis used — FIFO, AVERAGE, or MIXED for a store rollup spanning both
+   * @param onHandQty total remaining quantity
+   * @param unvaluedQty how much of {@code onHandQty} carries no cost and is therefore excluded from
+   *     {@code value}; reported rather than valued at zero, which would understate the holding
+   * @param value the money value of the quantity that could be costed
+   */
+  public record ValuationRow(
+      String groupKey,
+      String method,
+      BigDecimal onHandQty,
+      BigDecimal unvaluedQty,
+      BigDecimal value) {}
+
+  /** How a shrinkage report groups its rows. An enum, so no request text ever reaches the SQL. */
+  public enum ShrinkageGrouping {
+    REASON,
+    ACTOR,
+    STORE
+  }
+
+  /**
+   * One aggregated line of the shrinkage report.
+   *
+   * <p>Losses and gains stay separate rather than collapsing into {@code netQty} alone: a store
+   * that wrote off 100 units and found 100 more is not the same as a store that did nothing.
+   *
+   * @param groupKey the reason code, actor id, store id or variant id this line sums
+   * @param qtyWrittenOff total quantity removed, as a positive number
+   * @param qtyFound total quantity added back
+   * @param netQty signed net of the two
+   * @param movements how many adjustment movements the line covers
+   */
+  public record ShrinkageRow(
+      String groupKey,
+      BigDecimal qtyWrittenOff,
+      BigDecimal qtyFound,
+      BigDecimal netQty,
+      long movements) {}
+
   public record Movement(
       UUID id,
       UUID tenantId,
@@ -72,6 +170,7 @@ public final class Domain {
       String refType,
       UUID refId,
       String reasonCode,
+      UUID actorId,
       Instant createdAt) {}
 
   public record Threshold(

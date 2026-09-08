@@ -245,4 +245,14 @@ public final class Dtos {
       String storeCode,
       String pincode,
       int priority) {}
+
+  @Schema(
+      name = "CurrencyRepublishResponse",
+      description = "How many tenants had their declared currency re-announced.")
+  public record CurrencyRepublishResponse(
+      @Schema(
+              description =
+                  "Tenants announced. Zero means no tenant in scope has a currency recorded, not"
+                      + " that the replay failed.")
+          int tenantsAnnounced) {}
 }

@@ -25,3 +25,48 @@ jobs:
 
       - name: Build and verify
         run: mvn -U -B -V clean install
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  # Separate job, not a step: it shares nothing with the Maven build and both
+  # should report independently. Until this existed, `flutter analyze` and
+  # `flutter test` ran nowhere — the only Flutter in CI was the release build in
+  # docker-publish.yml, which runs after merge and skips tests. A Dart compile
+  # error therefore surfaced on main, not on the PR that introduced it, which is
+  # exactly how a top-level browser-only import (dart:js_interop, unavailable on
+  # the VM and on mobile) sat unnoticed long enough to break every Android and
+  # iOS build.
+  flutter:
+    name: Flutter analyze & test
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          # Must match docker-publish.yml's pin and the SDK devs run locally —
+          # flutter_localizations pins an exact intl per SDK, so a mismatch makes
+          # `pub get` unsolvable rather than merely different. pubspec.lock is
+          # resolved by this version.
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        working-directory: frontends/shelf-app
+        run: flutter pub get
+
+      # --fatal-infos because the tree is clean today and lint drift is only
+      # cheap to fix while it is one line old. Drop the flag, don't delete the
+      # step, if that ever becomes the wrong trade.
+      - name: Flutter analyze
+        working-directory: frontends/shelf-app
+        run: flutter analyze --fatal-infos
+
+      - name: Flutter test
+        working-directory: frontends/shelf-app
+        run: flutter test

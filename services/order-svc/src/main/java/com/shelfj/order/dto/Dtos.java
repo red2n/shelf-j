@@ -43,9 +43,20 @@ public final class Dtos {
       @NotNull @Valid List<OrderItemRequest> items,
       @Schema(description = "Ignored when server-side pricing enforcement is on.") @PositiveOrZero
           BigDecimal taxAmount,
-      @Schema(description = "Ignored when server-side pricing enforcement is on.") @PositiveOrZero
+      @Schema(
+              description =
+                  "Manual staff discount off the subtotal. Honoured whether or not pricing"
+                      + " enforcement is on: staff only, never above the subtotal, and never above"
+                      + " the caller role's configured percentage ceiling. Requires"
+                      + " discountReason.")
+          @PositiveOrZero
           BigDecimal discountAmount,
-      @Schema(description = "ISO 4217 currency code. Defaults to USD.") String currency,
+      @Schema(description = "Why the discount was given. Required whenever discountAmount is set.")
+          String discountReason,
+      @Schema(
+              description =
+                  "ISO 4217 currency code. Defaults to the tenant's own currency; a value that contradicts it is rejected with ORDER_CURRENCY_MISMATCH.")
+          String currency,
       String notes,
       @Schema(description = "Legacy fallback for the Idempotency-Key header.")
           String idempotencyKey,
@@ -229,7 +240,10 @@ public final class Dtos {
   public record IssueGiftCardRequest(
       @NotBlank String storeId,
       @Schema(description = "Initial stored-value amount.") @NotNull @Positive BigDecimal amount,
-      @Schema(description = "ISO 4217 currency code. Defaults to USD.") String currency,
+      @Schema(
+              description =
+                  "ISO 4217 currency code. Defaults to the tenant's own currency; a value that contradicts it is rejected with ORDER_CURRENCY_MISMATCH.")
+          String currency,
       String expiresAt) {}
 
   @Schema(name = "ReloadGiftCardRequest")
@@ -289,7 +303,10 @@ public final class Dtos {
           String requestedDeliveryDate,
       String notes,
       @NotNull @Valid List<SpecialOrderItemRequest> items,
-      @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
+      @Schema(
+              description =
+                  "ISO 4217 currency code. Defaults to the tenant's own currency; a value that contradicts it is rejected with ORDER_CURRENCY_MISMATCH.")
+          String currency,
       String idempotencyKey) {}
 
   @Schema(name = "SpecialOrderItemResponse")

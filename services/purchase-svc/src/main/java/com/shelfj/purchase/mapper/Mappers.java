@@ -48,7 +48,9 @@ public final class Mappers {
         po.totalGross(),
         po.expectedDelivery(),
         po.createdAt(),
-        po.updatedAt());
+        po.updatedAt(),
+        po.cancelledAt(),
+        po.cancelledReason());
   }
 
   public static PurchaseOrderLineResponse toDto(PurchaseOrderLine line) {

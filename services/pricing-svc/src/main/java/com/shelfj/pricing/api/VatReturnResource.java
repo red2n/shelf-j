@@ -36,8 +36,13 @@ public class VatReturnResource {
   @APIResponse(
       responseCode = "400",
       description = "from/to query params missing, or from is not before to")
+  @APIResponse(responseCode = "403", description = "Caller is not OWNER, MANAGER or PLATFORM_ADMIN")
   @GET
   public Response compute(@QueryParam("from") String from, @QueryParam("to") String to) {
+    // A tenant's statutory tax position, and this path is not under /admin/, so
+    // AdminAuthorizationFilter never gated it: any authenticated caller in the tenant could read
+    // it, a CASHIER or a signed-in storefront customer included. Management roles only.
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
     if (from == null || from.isBlank())
       throw ApiException.badRequest("PRICING_MISSING_FROM", "from query param required (ISO-8601)");
     if (to == null || to.isBlank())
