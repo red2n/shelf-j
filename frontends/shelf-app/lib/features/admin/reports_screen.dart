@@ -1,11 +1,8 @@
-import 'dart:js_interop';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-// ignore: avoid_web_libraries_in_flutter
-import 'package:web/web.dart' as web;
 
 import '../../core/network/api_error.dart';
+import '../../shared/util/file_download.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -263,20 +260,8 @@ class _DateRangeBar extends ConsumerWidget {
   }
 }
 
-void _downloadCsv(String filename, String csv) {
-  final blob = web.Blob(
-    [csv.toJS].toJS,
-    web.BlobPropertyBag(type: 'text/csv;charset=utf-8'),
-  );
-  final url = web.URL.createObjectURL(blob);
-  final anchor = web.HTMLAnchorElement()
-    ..href = url
-    ..download = filename;
-  web.document.body?.append(anchor);
-  anchor.click();
-  anchor.remove();
-  web.URL.revokeObjectURL(url);
-}
+void _downloadCsv(String filename, String csv) =>
+    downloadTextFile(filename, csv, mimeType: 'text/csv;charset=utf-8');
 
 String _csvEscape(Object? v) {
   final s = v?.toString() ?? '';
