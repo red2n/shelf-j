@@ -163,7 +163,10 @@ jobs:
           # pins an exact intl version per-SDK, and pubspec.yaml's intl constraint is set
           # for the dev-machine SDK. A CI/dev version mismatch makes `pub get` unsolvable
           # (two different exact intl pins) — bump this together with local Flutter upgrades.
-          flutter-version: '3.44.2'
+          # Keep in lockstep with ci.yml's flutter job: that one runs analyze and test, this
+          # one ships the bundle, and a build that was never analysed on the same SDK is
+          # exactly the gap this pair exists to close.
+          flutter-version: '3.47.2'
           channel: stable
           cache: true
 
