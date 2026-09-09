@@ -471,11 +471,11 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 ## purchase-svc
 
 ### Suppliers & Purchase Orders
-- `POST /suppliers`, `GET /suppliers`, `GET /suppliers/{id}` — onboard/list/get suppliers.
-- `POST /purchase-orders` — create a purchase order for a supplier.
+- `POST /suppliers`, `GET /suppliers`, `GET /suppliers/{id}` — onboard/list/get suppliers. `currency` is the currency **this supplier invoices in**, defaulting to the tenant's own declared currency; set it explicitly for an overseas supplier (a Japanese supplier billing a UK tenant in JPY).
+- `POST /purchase-orders` — create a purchase order for a supplier. **The order's currency comes from the supplier**, not the tenant and not a default — a purchase order is a commitment to pay whoever invoices (SJ-D24). Naming a currency that contradicts the supplier's is refused with `PURCHASE_CURRENCY_MISMATCH` rather than silently overridden; a non-ISO-4217 code is `PURCHASE_INVALID_CURRENCY`.
 - `GET /purchase-orders`, `GET /purchase-orders/{id}` — list/get purchase orders.
 - `POST /purchase-orders/{id}/submit` — submit a draft PO.
-- `POST /purchase-orders/{id}/lines`, `GET /purchase-orders/{id}/lines` — add/list PO line items.
+- `POST /purchase-orders/{id}/lines`, `GET /purchase-orders/{id}/lines` — add/list PO line items. **Adding a line restates the order's totals** in the same transaction (SJ-D22): `totalNet` from the lines, `totalVat` from each line's VAT code rated against pricing-svc's table for the tenant, `totalGross` from the two. Before this the three columns were inserted as zero and never written again, so every purchase order in the product reported a value of `0.00`. A VAT code with no configured rate contributes zero rather than refusing the line — VAT rates are tenant configuration nothing seeds, so a fresh tenant genuinely has none.
 - `POST /purchase-orders/{id}/cancel` — cancel a DRAFT or SUBMITTED order with a required reason. A RECEIVED one is refused: stock is booked against it (SJ-D3).
 - `GET /purchase-orders/{id}/progress` — **ordered against received, line by line, with the balance still due.** This is what a `PARTIALLY_RECEIVED` status does not tell you: a buyer chasing a supplier needs to know *what* is missing. Receipts are matched to order lines by variant rather than by line id, because a delivery note names products, not order rows.
 - `POST /purchase-orders/{id}/close` — short-close a `PARTIALLY_RECEIVED` order with a required reason: the balance is never arriving and we have stopped waiting. Refused on any other status — nothing delivered is a cancellation, everything delivered is already RECEIVED.

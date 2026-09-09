@@ -696,6 +696,237 @@ class PurchaseIT {
     return "{\"variantId\":\"" + VARIANT + "\",\"qty\":10,\"unitPrice\":2.50}";
   }
 
+  // ── SJ-D22 / SJ-D23 / SJ-D24: totals and currency, across markets ────────────
+
+  /**
+   * The defect itself, through the API. Before this change the assertion below read {@code
+   * "totalGross":0.00} on an order committing £999 — and that is what the procurement screen
+   * rendered, in two places, for every purchase order ever raised.
+   *
+   * <p>No VAT rates are reachable in this harness (Consul is disabled, so the pricing lookup falls
+   * back to an empty table), which makes gross equal net here. That is the correct answer for a
+   * tenant with no VAT configured, and it is the same code path a fresh tenant takes in production.
+   */
+  @Test
+  void purchaseOrderTotalsAreComputedFromItsLines() {
+    String supId = supplier("Totals Test Ltd", "GBP");
+    String poId = poFor(supId);
+
+    // An order with no lines is genuinely zero — and at sterling's own scale.
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class),
+        containsString("\"totalNet\":0.00"));
+
+    addLine(poId, "100", "9.99");
+    String afterOne = get("/purchase-orders/" + poId, T).readEntity(String.class);
+    assertThat(afterOne, containsString("\"totalNet\":999.00"));
+    assertThat(afterOne, containsString("\"totalGross\":999.00"));
+    assertThat(afterOne, not(containsString("\"totalNet\":0.00")));
+
+    // A second line restates the order rather than replacing the figure.
+    addLine(poId, "3", "0.50");
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class),
+        containsString("\"totalNet\":1000.50"));
+  }
+
+  /**
+   * Japan. The yen has no minor unit, so a JPY order must total in whole yen — the one currency of
+   * the five that a hardcoded {@code setScale(2)} would silently get wrong.
+   */
+  @Test
+  void japaneseSupplierOrdersInWholeYen() {
+    String supId = supplier("Tokyo Trading KK", "JPY");
+    String poId = poFor(supId);
+
+    // The order inherits the supplier's currency without being told it (SJ-D24).
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class),
+        containsString("\"currency\":\"JPY\""));
+
+    addLine(poId, "3", "1234");
+    String body = get("/purchase-orders/" + poId, T).readEntity(String.class);
+    assertThat(body, containsString("\"totalNet\":3702"));
+    assertThat(body, not(containsString("3702.00")));
+  }
+
+  /** The four two-minor-unit markets, each an independent tenant's supplier. */
+  @Test
+  void suppliersInEveryMarketKeepTheirOwnCurrency() {
+    for (String[] market :
+        new String[][] {
+          {"US Wholesale Inc", "USD"}, {"Mumbai Supplies Pvt", "INR"},
+          {"Shenzhen Goods Co", "CNY"}, {"Brighton Provisions", "GBP"}
+        }) {
+      String supId = supplier(market[0], market[1]);
+      String poId = poFor(supId);
+      addLine(poId, "2", "10.00");
+
+      String body = get("/purchase-orders/" + poId, T).readEntity(String.class);
+      assertThat(market[1], body, containsString("\"currency\":\"" + market[1] + "\""));
+      assertThat(market[1], body, containsString("\"totalNet\":20.00"));
+    }
+  }
+
+  /**
+   * A purchase order cannot be denominated in a currency its supplier does not invoice in. Refused
+   * rather than silently overridden, on the SJ-D2 precedent.
+   */
+  @Test
+  void anOrderCannotContradictItsSuppliersCurrency() {
+    String supId = supplier("Osaka Parts KK", "JPY");
+
+    Response r =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"currency\":\"GBP\"}",
+            T);
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("PURCHASE_CURRENCY_MISMATCH"));
+
+    // Naming the supplier's own currency is fine — it agrees rather than contradicts.
+    Response ok =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"currency\":\"JPY\"}",
+            T);
+    assertThat(ok.getStatus(), is(201));
+  }
+
+  /** Currency is validated at the boundary rather than reaching the database (golden rule #15). */
+  @Test
+  void anInvalidCurrencyCodeIsRejected() {
+    Response r = post("/suppliers", "{\"name\":\"Bad Currency Ltd\",\"currency\":\"POUNDS\"}", T);
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("PURCHASE_INVALID_CURRENCY"));
+  }
+
+  /**
+   * Two tenants trading in different currencies do not contaminate each other, and neither can see
+   * the other's order — the same store id is deliberately used for both, because a shared store id
+   * is exactly the case where a missing tenant filter would show.
+   */
+  @Test
+  void twoTenantsInDifferentCurrenciesStaySeparate() {
+    String jpSupplier = supplier("Kyoto Imports KK", "JPY");
+    String jpPo = poFor(jpSupplier);
+    addLine(jpPo, "5", "500");
+
+    String usSupplier = supplierFor(T2, "Chicago Wholesale Inc", "USD");
+    Response usPoRes =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\"" + usSupplier + "\",\"storeId\":\"" + STORE_A + "\"}",
+            T2);
+    assertThat(usPoRes.getStatus(), is(201));
+    String usPo = extractId(usPoRes.readEntity(String.class));
+    Response usLine =
+        post(
+            "/purchase-orders/" + usPo + "/lines",
+            "{\"variantId\":\"" + VARIANT + "\",\"qty\":5,\"unitPrice\":500}",
+            T2);
+    assertThat(usLine.getStatus(), is(201));
+
+    assertThat(
+        get("/purchase-orders/" + jpPo, T).readEntity(String.class),
+        containsString("\"totalNet\":2500"));
+    assertThat(
+        get("/purchase-orders/" + usPo, T2).readEntity(String.class),
+        containsString("\"totalNet\":2500.00"));
+
+    // Neither tenant can read the other's order at all.
+    assertThat(get("/purchase-orders/" + usPo, T).getStatus(), is(404));
+    assertThat(get("/purchase-orders/" + jpPo, T2).getStatus(), is(404));
+  }
+
+  /**
+   * SJ-D25, and the reason it is a defect rather than a display quirk. The dinar has THREE minor
+   * units, and every money column in this service was NUMERIC(14,2) — so Postgres rounded the third
+   * decimal away on write, without an error, on every line and every total.
+   *
+   * <p>2 × 1.234 KWD is 2.468. Under the old column type it stored as 2.47: money gone, silently,
+   * on a tenant nobody had thought to test.
+   */
+  @Test
+  void aThreeMinorUnitCurrencyKeepsItsThirdDecimal() {
+    String supId = supplier("Kuwait Trading WLL", "KWD");
+    String poId = poFor(supId);
+    addLine(poId, "2", "1.234");
+
+    String body = get("/purchase-orders/" + poId, T).readEntity(String.class);
+    assertThat(body, containsString("\"currency\":\"KWD\""));
+    assertThat(body, containsString("\"totalNet\":2.468"));
+    assertThat(body, not(containsString("2.47")));
+  }
+
+  /**
+   * A unit price may legitimately carry more precision than the currency it is priced in — 1,000
+   * screws at £0.0125 each is an ordinary trade price. NUMERIC(14,2) rounded it to £0.01, a 25%
+   * error on the line before any currency question arises.
+   */
+  @Test
+  void aSubPennyUnitPriceSurvives() {
+    String supId = supplier("Fastener Wholesale Ltd", "GBP");
+    String poId = poFor(supId);
+    addLine(poId, "1000", "0.0125");
+
+    // The line keeps its true price, and the order total is still rounded to the penny it is
+    // actually invoiced in: 1000 × 0.0125 = £12.50 exactly.
+    assertThat(
+        get("/purchase-orders/" + poId + "/lines", T).readEntity(String.class),
+        containsString("0.0125"));
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class),
+        containsString("\"totalNet\":12.50"));
+  }
+
+  private String supplier(String name, String currency) {
+    return supplierFor(T, name, currency);
+  }
+
+  private String supplierFor(String tenant, String name, String currency) {
+    Response r =
+        post(
+            "/suppliers",
+            "{\"name\":\"" + name + "\",\"vatRegistered\":true,\"currency\":\"" + currency + "\"}",
+            tenant);
+    assertThat(r.getStatus(), is(201));
+    return extractId(r.readEntity(String.class));
+  }
+
+  private String poFor(String supplierId) {
+    Response r =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\"" + supplierId + "\",\"storeId\":\"" + STORE_A + "\"}",
+            T);
+    assertThat(r.getStatus(), is(201));
+    return extractId(r.readEntity(String.class));
+  }
+
+  private void addLine(String poId, String qty, String unitPrice) {
+    Response r =
+        post(
+            "/purchase-orders/" + poId + "/lines",
+            "{\"variantId\":\""
+                + VARIANT
+                + "\",\"qty\":"
+                + qty
+                + ",\"unitPrice\":"
+                + unitPrice
+                + ",\"vatCode\":\"T1\"}",
+            T);
+    assertThat(r.getStatus(), is(201));
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────────
 
   private static String extractId(String json) {

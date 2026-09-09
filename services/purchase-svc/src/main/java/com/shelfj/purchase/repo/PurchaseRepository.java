@@ -9,17 +9,20 @@ import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLineProgress;
 import com.shelfj.purchase.domain.Domain.Supplier;
+import com.shelfj.purchase.domain.Totals;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -236,22 +239,103 @@ public class PurchaseRepository extends BaseOutboxRepository {
 
   // ── PO Lines ──────────────────────────────────────────────────────────────────
 
-  public PurchaseOrderLine addPurchaseOrderLine(PurchaseOrderLine line) {
-    exec(
-        "INSERT INTO purchase_order_lines"
-            + " (id,tenant_id,po_id,variant_id,qty,unit_price,vat_code)"
-            + " VALUES (?,?,?,?,?,?,?)",
-        ps -> {
-          ps.setObject(1, line.id());
-          ps.setObject(2, line.tenantId());
-          ps.setObject(3, line.poId());
-          ps.setObject(4, line.variantId());
-          ps.setBigDecimal(5, line.qty());
-          ps.setBigDecimal(6, line.unitPrice());
-          ps.setString(7, line.vatCode());
+  /**
+   * Appends a line and restates the order's totals from every line it now has, atomically (SJ-D22).
+   *
+   * <p>The two halves must not be separable. A committed line whose order still shows the old total
+   * is a purchase order that understates what it commits — and once spend authority is enforced
+   * against that figure, an order could be approved against a total that its own lines contradict.
+   *
+   * <p>Recomputed from all lines rather than incremented by this one, so the stored figure is a
+   * function of the rows rather than of the sequence of calls that produced them. An increment that
+   * is missed, applied twice or applied against a since-changed rate drifts silently and for good;
+   * a recompute cannot.
+   *
+   * <p>The arithmetic itself is not done here — it is {@link Totals#of}, a pure function this
+   * method calls. Keeping money arithmetic out of the repository is what lets every rounding and
+   * VAT case be a unit test rather than a Testcontainers one.
+   *
+   * @param line the line to append
+   * @param currency the order's currency, which fixes the rounding scale
+   * @param vatRates VAT code to rate, resolved from pricing-svc by the caller
+   * @return the line as stored
+   */
+  public PurchaseOrderLine addPurchaseOrderLine(
+      PurchaseOrderLine line, String currency, java.util.Map<String, BigDecimal> vatRates) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO purchase_order_lines"
+                      + " (id,tenant_id,po_id,variant_id,qty,unit_price,vat_code)"
+                      + " VALUES (?,?,?,?,?,?,?)")) {
+            ps.setObject(1, line.id());
+            ps.setObject(2, line.tenantId());
+            ps.setObject(3, line.poId());
+            ps.setObject(4, line.variantId());
+            ps.setBigDecimal(5, line.qty());
+            ps.setBigDecimal(6, line.unitPrice());
+            ps.setString(7, line.vatCode());
+            ps.executeUpdate();
+          }
+          restateTotals(c, line.tenantId(), line.poId(), currency, vatRates);
+          return line;
         },
         "add po line");
-    return line;
+  }
+
+  /**
+   * Reads every line of the order and writes the three totals back onto it. Runs on the caller's
+   * connection so it joins their transaction.
+   *
+   * @param c the open connection, inside the caller's transaction
+   * @param tenantId the owning tenant — first condition of every query (golden rule #3)
+   * @param poId the order to restate
+   * @param currency the order's currency
+   * @param vatRates VAT code to rate
+   * @throws SQLException if either statement fails, aborting the caller's transaction
+   */
+  private void restateTotals(
+      Connection c,
+      UUID tenantId,
+      UUID poId,
+      String currency,
+      java.util.Map<String, BigDecimal> vatRates)
+      throws SQLException {
+    List<PurchaseOrderLine> lines = new ArrayList<>();
+    try (var ps =
+        c.prepareStatement(
+            "SELECT id,tenant_id,po_id,variant_id,qty,unit_price,vat_code,created_at"
+                + " FROM purchase_order_lines WHERE tenant_id=? AND po_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, poId);
+      try (var rs = ps.executeQuery()) {
+        while (rs.next()) {
+          lines.add(
+              new PurchaseOrderLine(
+                  rs.getObject("id", UUID.class),
+                  rs.getObject("tenant_id", UUID.class),
+                  rs.getObject("po_id", UUID.class),
+                  rs.getObject("variant_id", UUID.class),
+                  rs.getBigDecimal("qty"),
+                  rs.getBigDecimal("unit_price"),
+                  rs.getString("vat_code"),
+                  rs.getObject("created_at", OffsetDateTime.class).toInstant()));
+        }
+      }
+    }
+    Totals totals = Totals.of(lines, currency, vatRates);
+    try (var ps =
+        c.prepareStatement(
+            "UPDATE purchase_orders SET total_net=?, total_vat=?, total_gross=?, updated_at=now()"
+                + " WHERE tenant_id=? AND id=?")) {
+      ps.setBigDecimal(1, totals.net());
+      ps.setBigDecimal(2, totals.vat());
+      ps.setBigDecimal(3, totals.gross());
+      ps.setObject(4, tenantId);
+      ps.setObject(5, poId);
+      ps.executeUpdate();
+    }
   }
 
   public List<PurchaseOrderLine> findPurchaseOrderLines(UUID tenantId, UUID poId) {

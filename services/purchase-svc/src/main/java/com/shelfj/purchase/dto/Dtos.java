@@ -26,7 +26,13 @@ public final class Dtos {
       String vatNumber,
       boolean vatRegistered,
       @Schema(description = "ISO 3166-1 alpha-2 country code. Defaults to GB.") String countryCode,
-      @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
+      @Schema(
+              description =
+                  "ISO 4217 currency code — the currency this supplier invoices in. Defaults to"
+                      + " the tenant's own declared currency; set it explicitly for an overseas"
+                      + " supplier (a Japanese supplier billing a UK tenant in JPY). Every purchase"
+                      + " order raised against this supplier inherits it.")
+          String currency,
       @Schema(description = "Payment terms in days. Defaults to 30 (BACS standard).") @Min(1)
           Integer paymentTermsDays) {}
 
@@ -48,7 +54,13 @@ public final class Dtos {
   public record CreatePurchaseOrderRequest(
       @NotNull UUID supplierId,
       @NotNull UUID storeId,
-      @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
+      @Schema(
+              description =
+                  "ISO 4217 currency code. Optional, and taken from the supplier when omitted —"
+                      + " a purchase order is denominated in the currency its supplier invoices"
+                      + " in. Supplying one that differs from the supplier's is rejected with"
+                      + " PURCHASE_CURRENCY_MISMATCH rather than silently overridden.")
+          String currency,
       @Schema(
               description =
                   "Date the goods are expected to arrive, as yyyy-MM-dd (e.g. 2026-01-31). A"
@@ -176,7 +188,12 @@ public final class Dtos {
                   "True when both stores are in the same VAT group (HMRC VAT Notice 700/2) — no"
                       + " VAT nominal entries are posted.")
           boolean vatDisregarded,
-      @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency) {}
+      @Schema(
+              description =
+                  "ISO 4217 currency code. Defaults to the tenant's own declared currency —"
+                      + " intercompany invoicing is store-to-store inside one tenant, so there is"
+                      + " no outside counterparty whose currency could differ.")
+          String currency) {}
 
   @Schema(name = "IntercompanyInvoicePairResponse")
   public record IntercompanyInvoicePairResponse(

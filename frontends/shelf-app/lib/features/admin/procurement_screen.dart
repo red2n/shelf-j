@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
@@ -377,7 +378,8 @@ class _PurchaseOrdersTab extends ConsumerWidget {
                         ],
                       ),
                       subtitle: Text([
-                        '${po.currency} ${po.totalGross.toStringAsFixed(2)}',
+                        AppFormat.money(po.totalGross,
+                            currencyCode: po.currency),
                         if (po.expectedDelivery != null)
                           'ETA ${po.expectedDelivery}',
                       ].join(' · ')),
@@ -645,7 +647,10 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                                 style: const TextStyle(
                                     fontFamily: 'monospace', fontSize: 12)),
                             subtitle: Text([
-                              '${l.qty.toStringAsFixed(0)} × ${l.unitPrice.toStringAsFixed(2)}',
+                              // The unit price is shown at its own precision, not the
+                              // currency's: a trade price of 0.0125 per screw is ordinary, and
+                              // rounding it to the penny here would misreport the line by 25%.
+                              '${l.qty.toStringAsFixed(0)} × ${_trim(l.unitPrice)}',
                               if (l.vatCode != null) l.vatCode!,
                               // What is still owed, which the status alone cannot say.
                               if (p != null && owed > 0)
@@ -657,7 +662,8 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                                         ? context.status.warning
                                         : null)),
                             trailing: Text(
-                                (l.qty * l.unitPrice).toStringAsFixed(2),
+                                AppFormat.money(l.qty * l.unitPrice,
+                                    currencyCode: po?.currency),
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold)),
                           );
@@ -671,7 +677,9 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                   children: [
                     const Text('Total (gross)'),
                     const Spacer(),
-                    Text('${po.currency} ${po.totalGross.toStringAsFixed(2)}',
+                    Text(
+                        AppFormat.money(po.totalGross,
+                            currencyCode: po.currency),
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                   ],
                 ),
@@ -1220,3 +1228,16 @@ class _PoStatusBadge extends StatelessWidget {
 
 String _short(String s, [int n = 8]) =>
     s.length > n ? '${s.substring(0, n)}…' : s;
+
+/// A unit price at its own precision, with trailing zeroes removed.
+///
+/// Deliberately not [AppFormat.money]: that rounds to the currency's minor unit, which is right for
+/// a total and wrong for a unit price. Buying 1,000 screws at 0.0125 each is an ordinary trade
+/// price, and showing it as 0.01 misreports the line by 25% — the same defect SJ-D25 removed from
+/// the column type.
+String _trim(double v) {
+  final s = v.toStringAsFixed(4);
+  return s.contains('.')
+      ? s.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')
+      : s;
+}

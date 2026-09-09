@@ -1,5 +1,8 @@
 package com.shelfj.purchase.service;
 
+import com.shelfj.purchase.client.PricingClient;
+import com.shelfj.purchase.client.TenantClient;
+import com.shelfj.purchase.config.ServiceConfig;
 import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.GoodsReceipt;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
@@ -8,6 +11,8 @@ import com.shelfj.purchase.domain.Domain.NominalLedgerEntry;
 import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import com.shelfj.purchase.domain.Domain.Supplier;
+import com.shelfj.purchase.domain.Money;
+import com.shelfj.purchase.domain.Totals;
 import com.shelfj.purchase.dto.Dtos.AddPurchaseOrderLineRequest;
 import com.shelfj.purchase.dto.Dtos.CancelPurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreateGoodsReceiptRequest;
@@ -36,18 +41,60 @@ public class PurchaseService {
 
   @Inject PurchaseRepository repo;
 
+  @Inject TenantClient tenants;
+
+  @Inject PricingClient pricing;
+
+  @Inject ServiceConfig config;
+
+  // ── Currency ──────────────────────────────────────────────────────────────────
+
+  /**
+   * The tenant's own trading currency, for use when the caller names none (SJ-D23).
+   *
+   * <p>This service stamped a hardcoded {@code "GBP"} onto suppliers, purchase orders and
+   * intercompany invoices alike — the SJ-D2 defect, in the one service SJ-D2's sweep never reached.
+   * On a platform whose tenants trade in USD, JPY, INR and CNY, that is not a cosmetic default: it
+   * is one country's currency written onto another country's money, and every downstream figure
+   * built on it inherits the error.
+   *
+   * <p>Falls back to the configured platform default when tenant-svc cannot answer, rather than
+   * refusing the write — see {@link TenantClient} for why that trade is the right way round here.
+   *
+   * @param tenantId the tenant whose currency is wanted
+   * @return an ISO 4217 code, never null
+   */
+  private String resolveTenantCurrency(UUID tenantId) {
+    return tenants
+        .findCurrency(tenantId)
+        .orElseGet(() -> config.defaultCurrency().toUpperCase(java.util.Locale.ROOT));
+  }
+
   // ── Suppliers ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Registers a supplier.
+   *
+   * <p>The supplier's currency is the one they invoice in. It defaults to the tenant's own — most
+   * suppliers are domestic — but is deliberately settable, because the case that matters is the one
+   * that is not: a UK tenant buying from a Japanese supplier is invoiced in JPY, and every purchase
+   * order raised against that supplier is a JPY commitment.
+   */
   public Supplier createSupplier(CreateSupplierRequest req, TenantContext ctx) {
+    UUID tenantId = ctx.requireTenantId();
+    String currency =
+        req.currency() != null
+            ? Money.requireIso4217(req.currency())
+            : resolveTenantCurrency(tenantId);
     Supplier s =
         new Supplier(
             UUID.randomUUID(),
-            ctx.requireTenantId(),
+            tenantId,
             req.name(),
             req.vatNumber(),
             req.vatRegistered(),
             req.countryCode() != null ? req.countryCode().toUpperCase(java.util.Locale.ROOT) : "GB",
-            req.currency() != null ? req.currency().toUpperCase(java.util.Locale.ROOT) : "GBP",
+            currency,
             req.paymentTermsDays() != null ? req.paymentTermsDays() : BACS_TERMS_DAYS,
             Instant.now(),
             Instant.now());
@@ -67,8 +114,38 @@ public class PurchaseService {
 
   // ── Purchase Orders ───────────────────────────────────────────────────────────
 
+  /**
+   * Raises a draft purchase order against a supplier.
+   *
+   * <p><b>The order's currency is the supplier's</b>, not the tenant's and not a literal (SJ-D24).
+   * A purchase order is a commitment to pay whoever is going to invoice, so it is denominated in
+   * the currency that supplier bills in: a UK tenant ordering from a Japanese supplier commits to
+   * JPY, and stamping GBP on it would misstate the liability, the approval threshold and every
+   * downstream total.
+   *
+   * <p>A caller naming a different currency is refused rather than silently overridden, on the
+   * SJ-D2 precedent — a request whose stated currency is not the one recorded is worse than an
+   * error. Changing what a supplier invoices in is a change to the supplier, not to one order.
+   *
+   * @throws ApiException 404 if the supplier does not exist for this tenant; 400 {@code
+   *     PURCHASE_CURRENCY_MISMATCH} if an explicit currency contradicts the supplier's; 400 {@code
+   *     PURCHASE_INVALID_CURRENCY} if it is not an ISO 4217 code
+   */
   public PurchaseOrder createPurchaseOrder(CreatePurchaseOrderRequest req, TenantContext ctx) {
-    getSupplier(ctx, req.supplierId());
+    Supplier supplier = getSupplier(ctx, req.supplierId());
+    String currency = supplier.currency();
+    if (req.currency() != null) {
+      String asked = Money.requireIso4217(req.currency());
+      if (!asked.equals(currency))
+        throw ApiException.badRequest(
+            "PURCHASE_CURRENCY_MISMATCH",
+            "currency "
+                + asked
+                + " does not match supplier "
+                + supplier.name()
+                + "'s invoicing currency "
+                + currency);
+    }
     PurchaseOrder po =
         new PurchaseOrder(
             UUID.randomUUID(),
@@ -76,10 +153,12 @@ public class PurchaseService {
             req.supplierId(),
             req.storeId(),
             Domain.PO_DRAFT,
-            req.currency() != null ? req.currency().toUpperCase(java.util.Locale.ROOT) : "GBP",
-            BigDecimal.ZERO,
-            BigDecimal.ZERO,
-            BigDecimal.ZERO,
+            currency,
+            // Scaled to the currency rather than a bare ZERO, so a JPY order opens at 0 and a
+            // GBP one at 0.00 — the same figure every later restatement will produce.
+            Totals.zero(currency).net(),
+            Totals.zero(currency).vat(),
+            Totals.zero(currency).gross(),
             req.expectedDelivery() != null
                 ? Parsing.date(req.expectedDelivery(), "expectedDelivery")
                 : null,
@@ -104,6 +183,20 @@ public class PurchaseService {
                 ApiException.notFound("PURCHASE_PO_NOT_FOUND", "Purchase order not found: " + id));
   }
 
+  /**
+   * Appends a line to a draft purchase order and restates the order's totals (SJ-D22).
+   *
+   * <p>The totals were the defect. {@code total_net}, {@code total_vat} and {@code total_gross}
+   * were inserted as zero by {@link #createPurchaseOrder} and no code anywhere ever updated them,
+   * so every purchase order in the product reported a value of zero — on the API, and on the two
+   * places the procurement screen renders it. That is not a dormant column: it is a commitment
+   * figure a buyer reads before approving, and the spend authority built on top of it would have
+   * been authorising against nothing.
+   *
+   * <p>The VAT table is fetched before the transaction opens rather than inside it, so a slow
+   * pricing-svc holds no database transaction open. Its absence is not fatal — see {@link
+   * Totals#of} for why an unresolvable VAT code rates at zero instead of refusing the line.
+   */
   public PurchaseOrderLine addPurchaseOrderLine(
       TenantContext ctx, UUID poId, AddPurchaseOrderLineRequest req) {
     PurchaseOrder po = getPurchaseOrder(ctx, poId);
@@ -120,7 +213,8 @@ public class PurchaseService {
             req.unitPrice(),
             req.vatCode() != null ? req.vatCode().toUpperCase(java.util.Locale.ROOT) : "T1",
             Instant.now());
-    return repo.addPurchaseOrderLine(line);
+    return repo.addPurchaseOrderLine(
+        line, po.currency(), pricing.findVatRates(ctx.requireTenantId()));
   }
 
   public List<PurchaseOrderLine> listPurchaseOrderLines(TenantContext ctx, UUID poId) {
@@ -293,8 +387,13 @@ public class PurchaseService {
     UUID transferRef = req.transferRef() != null ? UUID.fromString(req.transferRef()) : null;
     String vatCode =
         req.vatCode() != null ? req.vatCode().toUpperCase(java.util.Locale.ROOT) : "T1";
+    // Intercompany invoicing is store-to-store inside one tenant, so the tenant's own currency is
+    // the right default here — unlike a purchase order, where the counterparty is an outside
+    // supplier who may invoice in their own (SJ-D23/SJ-D24).
     String currency =
-        req.currency() != null ? req.currency().toUpperCase(java.util.Locale.ROOT) : "GBP";
+        req.currency() != null
+            ? Money.requireIso4217(req.currency())
+            : resolveTenantCurrency(tenantId);
     LocalDate today = LocalDate.now();
     LocalDate dueDate = today.plusDays(BACS_TERMS_DAYS);
 
