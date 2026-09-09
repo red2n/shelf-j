@@ -19,7 +19,9 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /** JDBC persistence for pricing-svc. Every tenant query filters by tenant_id first. */
@@ -394,6 +396,27 @@ public class PricingRepository extends BaseOutboxRepository {
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
   }
 
+  /**
+   * Maps a unique-key clash to the 409 it is, rather than letting it surface as a 500.
+   *
+   * <p>The clash that matters is the coupon code: two promotions sharing one would put the engine
+   * back where this rebuild found it, with which offer a customer got decided by an accident of
+   * ordering. Without this the caller is told the server broke, which is both wrong and — per SJ-D9
+   * — indistinguishable from a real fault to whoever is reading the alerts.
+   */
+  @Override
+  protected RuntimeException handleTxSqlException(String what, SQLException e) {
+    if (UNIQUE_VIOLATION.equals(e.getSQLState()))
+      return new ApiException(
+          409,
+          "PRICING_COUPON_CODE_TAKEN",
+          "another promotion in this tenant already uses that coupon code (codes are matched"
+              + " case-insensitively)",
+          List.of(),
+          e);
+    return dbError(what, e);
+  }
+
   // ── Promotions ────────────────────────────────────────────────────────────
 
   public Promotion createPromotion(Promotion p, OutboxRow event) {
@@ -403,8 +426,9 @@ public class PricingRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO promotions"
                       + " (id,tenant_id,store_id,name,type,value,min_order_amount,"
-                      + "  channel,active,starts_at,ends_at)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  channel,active,starts_at,ends_at,priority,exclusive,coupon_code,"
+                      + "  max_redemptions,max_per_customer,buy_qty,get_qty,get_discount_pct)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, p.id());
             ps.setObject(2, p.tenantId());
             ps.setObject(3, p.storeId());
@@ -416,6 +440,14 @@ public class PricingRepository extends BaseOutboxRepository {
             ps.setBoolean(9, p.active());
             ps.setObject(10, toOdt(p.startsAt()));
             ps.setObject(11, toOdt(p.endsAt()));
+            ps.setInt(12, p.priority());
+            ps.setBoolean(13, p.exclusive());
+            ps.setString(14, p.couponCode());
+            setIntOrNull(ps, 15, p.maxRedemptions());
+            setIntOrNull(ps, 16, p.maxPerCustomer());
+            ps.setBigDecimal(17, p.buyQty());
+            ps.setBigDecimal(18, p.getQty());
+            ps.setBigDecimal(19, p.getDiscountPct());
             ps.executeUpdate();
           }
           insertOutbox(c, event);
@@ -424,38 +456,186 @@ public class PricingRepository extends BaseOutboxRepository {
         "create promotion");
   }
 
-  public List<Promotion> findActivePromotions(
-      UUID tenantId, UUID variantId, String channel, Instant now) {
+  /**
+   * Every promotion live for this tenant, store, channel and instant — the whole candidate list,
+   * for {@link com.shelfj.pricing.service.PromotionEngine} to choose between.
+   *
+   * <p>Replaces a query that ended {@code ORDER BY p.value DESC LIMIT 1}, which decided the winner
+   * in SQL by comparing a PERCENT's value (15, meaning 15%) against a FLAT's (20, meaning £20) as
+   * though they shared a unit. Which offer a customer got therefore depended on a comparison
+   * between a percentage and a sum of money. Ordering is now the engine's job and is done on an
+   * explicit {@code priority}.
+   *
+   * <p><b>The store filter is new and was a live defect.</b> {@code promotions.store_id} has been
+   * stored since V1 and filtered nowhere, so a promotion created for one shop ran in every shop of
+   * the tenant. A NULL store_id still means "all stores", which is what the column was for.
+   *
+   * @param storeId the store being priced, or null to consider only tenant-wide promotions
+   */
+  public List<Promotion> findCandidatePromotions(
+      UUID tenantId, UUID storeId, String channel, Instant now) {
     return query(
-        "SELECT DISTINCT p.id, p.tenant_id, p.store_id, p.name, p.type, p.value,"
-            + "  p.min_order_amount, p.channel, p.active, p.starts_at, p.ends_at, p.created_at"
+        "SELECT p.id, p.tenant_id, p.store_id, p.name, p.type, p.value,"
+            + "  p.min_order_amount, p.channel, p.active, p.starts_at, p.ends_at, p.created_at,"
+            + "  p.priority, p.exclusive, p.coupon_code, p.max_redemptions, p.max_per_customer,"
+            + "  p.buy_qty, p.get_qty, p.get_discount_pct"
             + " FROM promotions p"
-            + " JOIN promotion_items pi ON pi.promotion_id = p.id"
             + " WHERE p.tenant_id = ?"
             + "   AND p.active = TRUE"
             + "   AND p.starts_at <= ?"
             + "   AND (p.ends_at IS NULL OR p.ends_at > ?)"
             + "   AND (p.channel = ? OR p.channel = 'ALL')"
-            + "   AND (pi.scope_type = 'ALL'"
-            + "        OR (pi.scope_type = 'VARIANT' AND pi.scope_id = ?))"
-            + " ORDER BY p.value DESC"
-            + " LIMIT 1",
+            + "   AND (p.store_id IS NULL"
+            + (storeId != null ? " OR p.store_id = ?)" : ")")
+            + " ORDER BY p.priority ASC, p.id ASC",
         ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, toOdt(now));
-          ps.setObject(3, toOdt(now));
-          ps.setString(4, channel);
-          ps.setObject(5, variantId);
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          ps.setObject(i++, toOdt(now));
+          ps.setObject(i++, toOdt(now));
+          ps.setString(i++, channel);
+          if (storeId != null) ps.setObject(i, storeId);
         },
         this::mapPromotion,
-        "find active promotions");
+        "find candidate promotions");
+  }
+
+  /**
+   * The variants each of these promotions is scoped to.
+   *
+   * <p>A promotion with an ALL row, or with no scope rows at all, is absent from the result — the
+   * engine reads a missing entry as "everything", so an unscoped promotion cannot accidentally
+   * become a scoped-to-nothing one.
+   *
+   * <p><b>CATEGORY rows are deliberately not resolved here</b> and the service rejects creating
+   * them: the variant→category mapping belongs to product-svc, which publishes no catalogue event
+   * for pricing-svc to project (golden rule #1 forbids reading its tables). Until it does, a
+   * CATEGORY promotion cannot be honoured — and the previous engine's answer to that was to accept
+   * one, store it, and never fire it.
+   */
+  public Map<UUID, Set<UUID>> findPromotionVariantScopes(UUID tenantId, List<UUID> promotionIds) {
+    if (promotionIds.isEmpty()) return Map.of();
+    String placeholders = String.join(",", java.util.Collections.nCopies(promotionIds.size(), "?"));
+    Map<UUID, Set<UUID>> out = new java.util.LinkedHashMap<>();
+    Set<UUID> unscoped = new java.util.HashSet<>();
+    query(
+        "SELECT promotion_id, scope_type, scope_id FROM promotion_items"
+            + " WHERE tenant_id = ? AND promotion_id IN ("
+            + placeholders
+            + ")",
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          for (UUID id : promotionIds) ps.setObject(i++, id);
+        },
+        rs -> {
+          UUID promo = rs.getObject("promotion_id", UUID.class);
+          String scopeType = rs.getString("scope_type");
+          UUID scopeId = rs.getObject("scope_id", UUID.class);
+          if (PromotionItem.SCOPE_VARIANT.equals(scopeType) && scopeId != null) {
+            out.computeIfAbsent(promo, k -> new java.util.LinkedHashSet<>()).add(scopeId);
+          } else {
+            // ALL (or a malformed row): this promotion is not variant-scoped at all.
+            unscoped.add(promo);
+          }
+          return promo;
+        },
+        "find promotion scopes");
+    // An ALL row beats any VARIANT rows alongside it — "everything" is not narrowed by also
+    // naming a few things.
+    for (UUID id : unscoped) out.remove(id);
+    return out;
+  }
+
+  /**
+   * Usage already spent per promotion, so the engine can reject an exhausted coupon with a reason
+   * rather than skipping it silently.
+   *
+   * @param customerId the shopper, or null for a guest — a per-customer cap cannot bind on a caller
+   *     with no identity, and pretending otherwise would cap every guest collectively
+   * @return promotion id to a reason code, for the promotions that may no longer be used
+   */
+  public Map<UUID, String> findExhaustedPromotions(
+      UUID tenantId, List<Promotion> candidates, UUID customerId) {
+    Map<UUID, String> out = new java.util.LinkedHashMap<>();
+    for (Promotion p : candidates) {
+      if (p.maxRedemptions() != null) {
+        long used = countRedemptions(tenantId, p.id(), null);
+        if (used >= p.maxRedemptions()) {
+          out.put(p.id(), "COUPON_EXHAUSTED");
+          continue;
+        }
+      }
+      if (p.maxPerCustomer() != null && customerId != null) {
+        long mine = countRedemptions(tenantId, p.id(), customerId);
+        if (mine >= p.maxPerCustomer()) out.put(p.id(), "COUPON_LIMIT_REACHED");
+      }
+    }
+    return out;
+  }
+
+  private long countRedemptions(UUID tenantId, UUID promotionId, UUID customerId) {
+    List<Long> n =
+        query(
+            "SELECT COUNT(*) AS n FROM promotion_redemptions"
+                + " WHERE tenant_id = ? AND promotion_id = ?"
+                + (customerId != null ? " AND customer_id = ?" : ""),
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, promotionId);
+              if (customerId != null) ps.setObject(3, customerId);
+            },
+            rs -> rs.getLong("n"),
+            "count promotion redemptions");
+    return n.isEmpty() ? 0L : n.get(0);
+  }
+
+  /**
+   * Records that a promotion was used on an order.
+   *
+   * <p>Idempotent on {@code (tenant, promotion, order)} via a unique index: a retried checkout, or
+   * an offline POS sale replaying its writes, must not burn a second use of a coupon. That is
+   * SJ-D15's lesson applied before the defect rather than after it — the question is not whether
+   * this code is correct but what a replay of it does.
+   *
+   * @return true if this call recorded the redemption, false if it had already been recorded
+   */
+  public boolean recordRedemption(
+      UUID tenantId,
+      UUID promotionId,
+      UUID orderId,
+      UUID customerId,
+      java.math.BigDecimal amount,
+      String currency) {
+    try {
+      exec(
+          "INSERT INTO promotion_redemptions"
+              + " (tenant_id, promotion_id, order_id, customer_id, amount, currency)"
+              + " VALUES (?,?,?,?,?,?)"
+              + " ON CONFLICT (tenant_id, promotion_id, order_id) DO NOTHING",
+          ps -> {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, promotionId);
+            ps.setObject(3, orderId);
+            ps.setObject(4, customerId);
+            ps.setBigDecimal(5, amount);
+            ps.setString(6, currency);
+          },
+          "record promotion redemption");
+      return true;
+    } catch (RuntimeException e) {
+      // ON CONFLICT already makes this a no-op; the catch is for the race that beats it.
+      return false;
+    }
   }
 
   public List<Promotion> findAllActivePromotions(UUID tenantId) {
     return query(
         "SELECT id,tenant_id,store_id,name,type,value,min_order_amount,"
-            + "  channel,active,starts_at,ends_at,created_at"
-            + " FROM promotions WHERE tenant_id=? AND active=TRUE ORDER BY starts_at DESC",
+            + "  channel,active,starts_at,ends_at,created_at,priority,exclusive,coupon_code,"
+            + "  max_redemptions,max_per_customer,buy_qty,get_qty,get_discount_pct"
+            + " FROM promotions WHERE tenant_id=? AND active=TRUE"
+            + " ORDER BY priority ASC, starts_at DESC",
         ps -> ps.setObject(1, tenantId),
         this::mapPromotion,
         "list active promotions");
@@ -490,7 +670,28 @@ public class PricingRepository extends BaseOutboxRepository {
         rs.getBoolean("active"),
         rs.getObject("starts_at", OffsetDateTime.class).toInstant(),
         endsAt != null ? endsAt.toInstant() : null,
-        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getInt("priority"),
+        rs.getBoolean("exclusive"),
+        rs.getString("coupon_code"),
+        intOrNull(rs, "max_redemptions"),
+        intOrNull(rs, "max_per_customer"),
+        rs.getBigDecimal("buy_qty"),
+        rs.getBigDecimal("get_qty"),
+        rs.getBigDecimal("get_discount_pct"));
+  }
+
+  /** getInt returns 0 for SQL NULL, and 0 is a meaningful cap. */
+  private static Integer intOrNull(java.sql.ResultSet rs, String column)
+      throws java.sql.SQLException {
+    int v = rs.getInt(column);
+    return rs.wasNull() ? null : v;
+  }
+
+  private static void setIntOrNull(java.sql.PreparedStatement ps, int index, Integer v)
+      throws java.sql.SQLException {
+    if (v == null) ps.setNull(index, java.sql.Types.INTEGER);
+    else ps.setInt(index, v);
   }
 
   // ── Tax Transactions ──────────────────────────────────────────────────────

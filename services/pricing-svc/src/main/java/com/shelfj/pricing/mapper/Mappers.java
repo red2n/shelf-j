@@ -122,7 +122,15 @@ public final class Mappers {
         p.active(),
         p.startsAt() != null ? p.startsAt().toString() : null,
         p.endsAt() != null ? p.endsAt().toString() : null,
-        p.createdAt() != null ? p.createdAt().toString() : null);
+        p.createdAt() != null ? p.createdAt().toString() : null,
+        p.priority(),
+        p.exclusive(),
+        p.couponCode(),
+        p.maxRedemptions(),
+        p.maxPerCustomer(),
+        p.buyQty(),
+        p.getQty(),
+        p.getDiscountPct());
   }
 
   public static PromotionItemResponse toDto(PromotionItem pi) {

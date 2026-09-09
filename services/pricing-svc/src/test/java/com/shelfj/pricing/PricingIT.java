@@ -54,7 +54,8 @@ class PricingIT {
     try (var conn = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
         var st = conn.createStatement()) {
       st.execute(
-          "TRUNCATE TABLE pricing.promotion_items, pricing.promotions,"
+          "TRUNCATE TABLE pricing.promotion_redemptions, pricing.promotion_items,"
+              + " pricing.promotions,"
               + " pricing.tax_transactions, pricing.price_list_items, pricing.price_lists,"
               + " pricing.product_vat_categories, pricing.customer_vat_status,"
               + " pricing.vat_rates, pricing.outbox CASCADE");
@@ -489,6 +490,194 @@ class PricingIT {
     String res = resR.readEntity(String.class);
     assertThat(res, containsString("Summer Sale"));
     assertThat(res, containsString("90.00"));
+  }
+
+  // ── Basket quoting: the rules the old engine could not express ─────────────
+
+  /** Seeds a VAT rate, a price list and one priced variant. Returns nothing; the ids are fixed. */
+  private void seedPricedVariant(String variantId, String price) {
+    post(
+        "/vat-rates",
+        "{\"code\":\"T1\",\"name\":\"Standard Rate\",\"rate\":0.20,"
+            + "\"exempt\":false,\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+        T);
+    post("/product-vat-categories", "{\"variantId\":\"" + variantId + "\",\"vatCode\":\"T1\"}", T);
+    Response plR =
+        post(
+            "/price-lists",
+            "{\"name\":\"Basket Test\",\"channel\":\"ALL\",\"currency\":\"GBP\","
+                + "\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            T);
+    String plId = extractId(plR.readEntity(String.class));
+    post(
+        "/price-lists/" + plId + "/items",
+        "{\"variantId\":\"" + variantId + "\",\"price\":" + price + ",\"minQty\":1}",
+        T);
+  }
+
+  private String createPromotion(String json) {
+    Response r = post("/promotions", json, T);
+    assertThat(r.getStatus() + " " + json, r.getStatus(), is(201));
+    String id = extractId(r.readEntity(String.class));
+    assertThat(
+        post("/promotions/" + id + "/items", "{\"scopeType\":\"ALL\"}", T).getStatus(), is(201));
+    return id;
+  }
+
+  private String quote(String json) {
+    Response r = post("/prices/quote", json, T);
+    assertThat(r.getStatus(), is(200));
+    return r.readEntity(String.class);
+  }
+
+  /**
+   * The whole reason for the rebuild: a rule that needs the order total. The old engine priced each
+   * line with an independent call, so a spend threshold had no basket to be measured against and
+   * min_order_amount was never read at all.
+   */
+  @Test
+  void aSpendThresholdIsMeasuredAgainstTheWholeBasket() {
+    seedPricedVariant(V, "40.00");
+    createPromotion(
+        "{\"name\":\"£5 off over £100\",\"type\":\"SPEND_THRESHOLD\",\"value\":5,"
+            + "\"minOrderAmount\":100,\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+
+    // Two at 40 = 80: under the threshold, nothing comes off.
+    String under = quote("{\"lines\":[{\"variantId\":\"" + V + "\",\"qty\":2}]}");
+    assertThat(under, containsString("\"totalDiscount\":0"));
+
+    // Three at 40 = 120: the same basket, one item larger, now clears it.
+    String over = quote("{\"lines\":[{\"variantId\":\"" + V + "\",\"qty\":3}]}");
+    assertThat(over, containsString("\"totalDiscount\":5.00"));
+    assertThat(over, containsString("£5 off over £100"));
+    // 120 − 5 = 115, VAT 23.00, total 138.00.
+    assertThat(over, containsString("\"vatAmount\":23.00"));
+    assertThat(over, containsString("\"total\":138.00"));
+  }
+
+  /** A coupon does nothing until it is presented, and is matched case-insensitively. */
+  @Test
+  void aCouponAppliesOnlyWhenPresented() {
+    seedPricedVariant(V, "100.00");
+    createPromotion(
+        "{\"name\":\"Welcome\",\"type\":\"BASKET_PERCENT\",\"value\":10,"
+            + "\"couponCode\":\"SAVE10\",\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+
+    String without = quote("{\"lines\":[{\"variantId\":\"" + V + "\",\"qty\":1}]}");
+    assertThat(without, containsString("\"totalDiscount\":0"));
+
+    String with =
+        quote(
+            "{\"lines\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1}],"
+                + "\"couponCodes\":[\"save10\"]}");
+    assertThat(with, containsString("\"totalDiscount\":10.00"));
+  }
+
+  /**
+   * A code that does nothing has to say why — "nothing happened" is what generates support calls.
+   */
+  @Test
+  void aRejectedCouponComesBackWithAReason() {
+    seedPricedVariant(V, "100.00");
+    String body =
+        quote(
+            "{\"lines\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1}],"
+                + "\"couponCodes\":[\"NOPE\"]}");
+    assertThat(body, containsString("NO_SUCH_COUPON"));
+  }
+
+  /** Two coupon promotions cannot share a code, or which one applied would be an accident again. */
+  @Test
+  void couponCodesAreUniquePerTenantCaseInsensitively() {
+    createPromotion(
+        "{\"name\":\"First\",\"type\":\"BASKET_FLAT\",\"value\":5,"
+            + "\"couponCode\":\"DUPE\",\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+    Response second =
+        post(
+            "/promotions",
+            "{\"name\":\"Second\",\"type\":\"BASKET_FLAT\",\"value\":9,"
+                + "\"couponCode\":\"dupe\",\"startsAt\":\"2020-01-01T00:00:00Z\"}",
+            T);
+    assertThat(second.getStatus(), is(409));
+  }
+
+  /**
+   * A half-configured BOGO would apply to every basket and discount nothing — the exact shape of
+   * defect this rebuild exists to end, so it is refused at both the service and the database.
+   */
+  @Test
+  void anIncompleteBogoIsRefused() {
+    Response r =
+        post(
+            "/promotions",
+            "{\"name\":\"Half a BOGO\",\"type\":\"BOGO\",\"value\":1,"
+                + "\"buyQty\":2,\"startsAt\":\"2020-01-01T00:00:00Z\"}",
+            T);
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("PRICING_INCOMPLETE_BOGO"));
+  }
+
+  /** SPEND_THRESHOLD without a threshold would discount every basket. */
+  @Test
+  void aThresholdPromotionWithoutAThresholdIsRefused() {
+    Response r =
+        post(
+            "/promotions",
+            "{\"name\":\"No threshold\",\"type\":\"SPEND_THRESHOLD\",\"value\":5,"
+                + "\"startsAt\":\"2020-01-01T00:00:00Z\"}",
+            T);
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("PRICING_MISSING_THRESHOLD"));
+  }
+
+  /**
+   * CATEGORY scope was in the CHECK constraint, the domain constants, the request schema and the
+   * API guide, and the matching query handled only ALL and VARIANT — so it was accepted, stored,
+   * and never fired. Refusing it says so where the mistake is made.
+   */
+  @Test
+  void aCategoryScopeIsRefusedRatherThanSilentlyIgnored() {
+    String id =
+        createPromotion(
+            "{\"name\":\"Category test\",\"type\":\"PERCENT\",\"value\":10,"
+                + "\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+    Response r =
+        post(
+            "/promotions/" + id + "/items",
+            "{\"scopeType\":\"CATEGORY\",\"scopeId\":\"" + S + "\"}",
+            T);
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("PRICING_CATEGORY_SCOPE_UNSUPPORTED"));
+  }
+
+  /**
+   * promotions.store_id has been stored since V1 and filtered nowhere, so a promotion created for
+   * one shop ran in every shop of the tenant.
+   */
+  @Test
+  void aStoreScopedPromotionDoesNotApplyInAnotherStore() {
+    seedPricedVariant(V, "100.00");
+    createPromotion(
+        "{\"name\":\"Leeds only\",\"type\":\"BASKET_PERCENT\",\"value\":10,"
+            + "\"storeId\":\""
+            + S
+            + "\",\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+
+    String inStore =
+        quote("{\"lines\":[{\"variantId\":\"" + V + "\",\"qty\":1}],\"storeId\":\"" + S + "\"}");
+    assertThat(inStore, containsString("\"totalDiscount\":10.00"));
+
+    String otherStore =
+        quote(
+            "{\"lines\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1}],"
+                + "\"storeId\":\"11111111-2222-3333-4444-555555555555\"}");
+    assertThat(otherStore, containsString("\"totalDiscount\":0"));
   }
 
   @Test
