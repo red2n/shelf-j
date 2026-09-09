@@ -12,12 +12,14 @@ import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import com.shelfj.purchase.domain.Domain.Supplier;
 import com.shelfj.purchase.domain.Money;
+import com.shelfj.purchase.domain.SpendAuthority;
 import com.shelfj.purchase.domain.Totals;
 import com.shelfj.purchase.dto.Dtos.AddPurchaseOrderLineRequest;
 import com.shelfj.purchase.dto.Dtos.CancelPurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreateGoodsReceiptRequest;
 import com.shelfj.purchase.dto.Dtos.CreatePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreateSupplierRequest;
+import com.shelfj.purchase.dto.Dtos.DecidePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.RaiseIntercompanyInvoiceRequest;
 import com.shelfj.purchase.repo.PurchaseRepository;
 import com.shelfj.web.ApiException;
@@ -167,6 +169,11 @@ public class PurchaseService {
             null,
             null,
             null,
+            null,
+            // Who raised it, from the verified JWT — never from the request body. Identity is
+            // subject to golden rule #3 for the same reason tenant_id is.
+            ctx.userId(),
+            null,
             null);
     return repo.createPurchaseOrder(
         po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
@@ -222,12 +229,193 @@ public class PurchaseService {
     return repo.findPurchaseOrderLines(ctx.requireTenantId(), poId);
   }
 
+  /**
+   * Submits a draft purchase order, routing it for approval when it is above the submitter's own
+   * spend authority.
+   *
+   * <p>Before this, any staff role could commit the business to any amount: {@code
+   * /purchase-orders} is not under {@code /admin/}, so the authorisation filter asked only for
+   * "some staff role", and a cashier could submit an order for a million pounds. The order now
+   * lands in {@code SUBMITTED} if the submitter's authority covers it and {@code PENDING_APPROVAL}
+   * if it does not — and either way the submission is recorded in the append-only trail, so a
+   * question about who committed what has an answer.
+   *
+   * <p><b>Separation of duties falls out of this rather than being bolted on.</b> An order only
+   * reaches PENDING_APPROVAL because it exceeded the submitter's ceiling — so by construction that
+   * same person cannot approve it, because {@link #approvePurchaseOrder} applies the identical
+   * check. There is deliberately no separate "you may not approve your own order" rule: it would be
+   * redundant here, and it would deadlock a single-owner shop where one person legitimately raises
+   * and approves everything within their unlimited authority.
+   *
+   * @throws ApiException 400 {@code PURCHASE_PO_NOT_DRAFT} if the order is not DRAFT; 409 if it
+   *     stopped being DRAFT between the read and the write
+   */
   public PurchaseOrder submitPurchaseOrder(TenantContext ctx, UUID poId) {
+    UUID tenantId = ctx.requireTenantId();
     PurchaseOrder po = getPurchaseOrder(ctx, poId);
     if (!Domain.PO_DRAFT.equals(po.status()))
       throw ApiException.badRequest("PURCHASE_PO_NOT_DRAFT", "Only DRAFT orders can be submitted");
-    repo.updatePurchaseOrderStatus(ctx.requireTenantId(), poId, Domain.PO_SUBMITTED);
+
+    SpendAuthority authority =
+        SpendAuthority.decide(po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits());
+    String landing = authority.authorised() ? Domain.PO_SUBMITTED : Domain.PO_PENDING_APPROVAL;
+
+    boolean submitted =
+        repo.submitPurchaseOrder(
+            tenantId,
+            poId,
+            landing,
+            trailRow(ctx, po, Domain.APPROVAL_REQUESTED, authority, authority.reason()));
+    if (!submitted)
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_DRAFT", "The order stopped being DRAFT before it could be submitted");
     return getPurchaseOrder(ctx, poId);
+  }
+
+  /**
+   * Approves an order that was above its submitter's authority.
+   *
+   * <p>The approver's own authority is checked against the same figure by the same function — an
+   * approval by someone who could not have submitted the order themselves would defeat the entire
+   * control, and is the obvious way to get this wrong.
+   *
+   * <p>The order's total is re-read here rather than taken from the request, and stamped onto the
+   * trail row: an order can be edited after a rejection, so approving against a figure the caller
+   * supplied would let the amount change between the review and the decision.
+   *
+   * @throws ApiException 404 if no such order; 409 {@code PURCHASE_PO_NOT_PENDING_APPROVAL} if it
+   *     is not awaiting a decision; 403 {@code PURCHASE_APPROVAL_EXCEEDS_AUTHORITY} if the
+   *     approver's own ceiling does not cover it
+   */
+  public PurchaseOrder approvePurchaseOrder(
+      TenantContext ctx, UUID poId, DecidePurchaseOrderRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    PurchaseOrder po = requirePendingApproval(ctx, poId);
+
+    SpendAuthority authority =
+        SpendAuthority.decide(po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits());
+    if (!authority.authorised())
+      throw ApiException.forbidden("PURCHASE_APPROVAL_EXCEEDS_AUTHORITY", authority.reason());
+
+    boolean decided =
+        repo.decidePurchaseOrder(
+            tenantId,
+            poId,
+            true,
+            trailRow(
+                ctx,
+                po,
+                Domain.APPROVAL_APPROVED,
+                authority,
+                req == null ? null : trimmed(req.reason())));
+    if (!decided)
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_PENDING_APPROVAL",
+          "The order was decided by someone else before this approval landed");
+    return getPurchaseOrder(ctx, poId);
+  }
+
+  /**
+   * Rejects an order awaiting approval, returning it to DRAFT so it can be corrected and
+   * resubmitted.
+   *
+   * <p>A reason is required, and an approval's is not, because only the rejection leaves somebody
+   * with work to do and no idea what to change.
+   *
+   * <p>Rejecting needs no spend authority. Refusing to commit money is not itself a commitment, and
+   * requiring authority to say no would mean an order too large for anyone configured could never
+   * be cleared out of the queue at all.
+   *
+   * @throws ApiException 404 if no such order; 409 if it is not awaiting a decision; 400 {@code
+   *     PURCHASE_APPROVAL_REASON_REQUIRED} if no reason is given
+   */
+  public PurchaseOrder rejectPurchaseOrder(
+      TenantContext ctx, UUID poId, DecidePurchaseOrderRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    PurchaseOrder po = requirePendingApproval(ctx, poId);
+    String reason = req == null ? null : trimmed(req.reason());
+    if (reason == null)
+      throw ApiException.badRequest(
+          "PURCHASE_APPROVAL_REASON_REQUIRED",
+          "A rejection must say why, so the buyer knows what to change");
+
+    SpendAuthority authority =
+        SpendAuthority.decide(po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits());
+    boolean decided =
+        repo.decidePurchaseOrder(
+            tenantId, poId, false, trailRow(ctx, po, Domain.APPROVAL_REJECTED, authority, reason));
+    if (!decided)
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_PENDING_APPROVAL",
+          "The order was decided by someone else before this rejection landed");
+    return getPurchaseOrder(ctx, poId);
+  }
+
+  /**
+   * The order's complete approval history — every submission and every decision.
+   *
+   * @throws ApiException 404 if the order does not exist for this tenant
+   */
+  public List<Domain.PurchaseOrderApproval> purchaseOrderApprovals(TenantContext ctx, UUID poId) {
+    getPurchaseOrder(ctx, poId); // 404s another tenant's order before reading its trail
+    return repo.findApprovals(ctx.requireTenantId(), poId);
+  }
+
+  /**
+   * What the caller may commit in a given currency, so a UI can say so before the buyer has built
+   * the order rather than after they try to submit it.
+   *
+   * @param currency the currency to answer for; validated as ISO 4217
+   */
+  /** Whether spend authority is configured at all; false means submission is never routed. */
+  public boolean approvalEnabled() {
+    return config.approvalEnabled();
+  }
+
+  public SpendAuthority spendAuthority(TenantContext ctx, String currency) {
+    ctx.requireTenantId();
+    // A null total asks "what is my ceiling", not "may I spend this", and decide() answers both.
+    return SpendAuthority.decide(
+        null, Money.requireIso4217(currency), ctx.roles(), config.approvalLimits());
+  }
+
+  private PurchaseOrder requirePendingApproval(TenantContext ctx, UUID poId) {
+    PurchaseOrder po = getPurchaseOrder(ctx, poId);
+    if (!Domain.PO_PENDING_APPROVAL.equals(po.status()))
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_PENDING_APPROVAL",
+          "Only an order awaiting approval can be decided (status: " + po.status() + ")");
+    return po;
+  }
+
+  /**
+   * Builds one append-only trail row, capturing the figure and the authority as they stand at this
+   * moment rather than leaving either to be re-derived later from data that can change.
+   */
+  private Domain.PurchaseOrderApproval trailRow(
+      TenantContext ctx,
+      PurchaseOrder po,
+      String decision,
+      SpendAuthority authority,
+      String reason) {
+    return new Domain.PurchaseOrderApproval(
+        UUID.randomUUID(),
+        po.tenantId(),
+        po.id(),
+        decision,
+        po.totalNet(),
+        po.currency(),
+        authority.ceiling(),
+        ctx.userId(),
+        authority.role(),
+        reason,
+        Instant.now());
+  }
+
+  private static String trimmed(String s) {
+    if (s == null) return null;
+    String t = s.trim();
+    return t.isEmpty() ? null : t;
   }
 
   /**

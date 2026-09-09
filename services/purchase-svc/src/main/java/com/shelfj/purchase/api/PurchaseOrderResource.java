@@ -3,6 +3,7 @@ package com.shelfj.purchase.api;
 import com.shelfj.purchase.dto.Dtos.AddPurchaseOrderLineRequest;
 import com.shelfj.purchase.dto.Dtos.CancelPurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreatePurchaseOrderRequest;
+import com.shelfj.purchase.dto.Dtos.DecidePurchaseOrderRequest;
 import com.shelfj.purchase.mapper.Mappers;
 import com.shelfj.purchase.service.PurchaseService;
 import com.shelfj.web.ApiResponse;
@@ -16,6 +17,7 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.UUID;
@@ -68,13 +70,99 @@ public class PurchaseOrderResource {
 
   @Operation(
       summary = "Submit a purchase order to the supplier",
-      description = "Transitions a DRAFT purchase order to SUBMITTED.")
+      description =
+          "Transitions a DRAFT purchase order to SUBMITTED, or to PENDING_APPROVAL when its net"
+              + " value is above the submitter's own spend authority. Either way the submission is"
+              + " recorded in the order's append-only approval trail. Spend authority is configured"
+              + " per currency AND per role: there is no FX handling in Shelf-J, so a ceiling"
+              + " expressed in one currency cannot be meaningfully compared against an order in"
+              + " another. When no authority is configured at all, approval is off and this behaves"
+              + " as it did before the feature existed.")
+  @APIResponse(responseCode = "200", description = "Submitted, or routed for approval")
   @APIResponse(responseCode = "400", description = "Only DRAFT orders can be submitted")
   @APIResponse(responseCode = "404", description = "Purchase order not found")
   @POST
   @Path("/{id}/submit")
   public Response submit(@PathParam("id") UUID id) {
     return Response.ok(ApiResponse.ok(Mappers.toDto(svc.submitPurchaseOrder(ctx, id)))).build();
+  }
+
+  @Operation(
+      summary = "Approve a purchase order awaiting approval",
+      description =
+          "Moves a PENDING_APPROVAL order to SUBMITTED. The approver's own spend authority is"
+              + " checked against the same figure by the same rule that routed it here — an"
+              + " approval by someone who could not have submitted it themselves would defeat the"
+              + " control entirely. The total is re-read from the order rather than taken from the"
+              + " request, because a rejected order can be edited before it comes back.")
+  @APIResponse(responseCode = "200", description = "Approved and submitted")
+  @APIResponse(responseCode = "403", description = "Above the approver's own authority")
+  @APIResponse(responseCode = "404", description = "Purchase order not found")
+  @APIResponse(responseCode = "409", description = "Order is not awaiting approval")
+  @POST
+  @Path("/{id}/approve")
+  public Response approve(@PathParam("id") UUID id, DecidePurchaseOrderRequest req) {
+    return Response.ok(ApiResponse.ok(Mappers.toDto(svc.approvePurchaseOrder(ctx, id, req))))
+        .build();
+  }
+
+  @Operation(
+      summary = "Reject a purchase order awaiting approval",
+      description =
+          "Returns a PENDING_APPROVAL order to DRAFT so it can be corrected and resubmitted,"
+              + " recording the required reason in the approval trail. Rejecting needs no spend"
+              + " authority: refusing to commit money is not itself a commitment, and requiring it"
+              + " would leave an order too large for anyone configured stuck in the queue for good.")
+  @APIResponse(responseCode = "200", description = "Rejected and returned to DRAFT")
+  @APIResponse(responseCode = "400", description = "A rejection must state a reason")
+  @APIResponse(responseCode = "404", description = "Purchase order not found")
+  @APIResponse(responseCode = "409", description = "Order is not awaiting approval")
+  @POST
+  @Path("/{id}/reject")
+  public Response reject(@PathParam("id") UUID id, DecidePurchaseOrderRequest req) {
+    return Response.ok(ApiResponse.ok(Mappers.toDto(svc.rejectPurchaseOrder(ctx, id, req))))
+        .build();
+  }
+
+  @Operation(
+      summary = "A purchase order's approval history",
+      description =
+          "Every submission and every decision, newest first. Append-only: a rejection sends the"
+              + " order back to DRAFT to be resubmitted, so one order can cycle through several"
+              + " decisions, and a trail that kept only the last one would not be a trail. Each row"
+              + " carries the figure and the authority as they stood at the time, so it still"
+              + " answers 'was that person allowed to commit that much?' after the configuration"
+              + " has changed.")
+  @APIResponse(responseCode = "200", description = "The approval trail")
+  @APIResponse(responseCode = "404", description = "Purchase order not found")
+  @GET
+  @Path("/{id}/approvals")
+  public Response approvals(@PathParam("id") UUID id) {
+    return Response.ok(
+            ApiResponse.ok(
+                svc.purchaseOrderApprovals(ctx, id).stream().map(Mappers::toDto).toList()))
+        .build();
+  }
+
+  @Operation(
+      summary = "What the caller may commit, in one currency",
+      description =
+          "The caller's own spend ceiling, so a buyer learns their authority before building an"
+              + " order rather than after trying to submit it. Measured on the order's NET value:"
+              + " VAT is recoverable for a VAT-registered business and is therefore not spend.")
+  @APIResponse(responseCode = "200", description = "The caller's authority in that currency")
+  @APIResponse(responseCode = "400", description = "Not an ISO 4217 currency code")
+  @GET
+  @Path("/spend-authority")
+  public Response spendAuthority(@QueryParam("currency") String currency) {
+    var authority = svc.spendAuthority(ctx, currency);
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(
+                    authority,
+                    currency.trim().toUpperCase(java.util.Locale.ROOT),
+                    !svc.approvalEnabled())))
+        .build();
   }
 
   @Operation(

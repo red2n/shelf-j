@@ -116,8 +116,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO purchase_orders"
                       + " (id,tenant_id,supplier_id,store_id,status,currency,"
-                      + "  total_net,total_vat,total_gross,expected_delivery)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  total_net,total_vat,total_gross,expected_delivery,created_by)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, po.id());
             ps.setObject(2, po.tenantId());
             ps.setObject(3, po.supplierId());
@@ -128,6 +128,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ps.setBigDecimal(8, po.totalVat());
             ps.setBigDecimal(9, po.totalGross());
             ps.setObject(10, po.expectedDelivery());
+            ps.setObject(11, po.createdBy());
             ps.executeUpdate();
           }
           insertOutbox(c, event);
@@ -140,7 +141,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
     return query(
         "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
             + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
-            + "cancelled_reason,closed_at,closed_reason"
+            + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at"
             + " FROM purchase_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
@@ -155,7 +156,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
         query(
             "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
                 + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
-                + "cancelled_reason,closed_at,closed_reason"
+                + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at"
                 + " FROM purchase_orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -164,6 +165,135 @@ public class PurchaseRepository extends BaseOutboxRepository {
             this::mapPurchaseOrder,
             "find purchase order");
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /**
+   * Moves a DRAFT order to {@code SUBMITTED} or {@code PENDING_APPROVAL} and records the submission
+   * in the approval trail, atomically.
+   *
+   * <p>The guard is in the {@code WHERE} clause rather than in a preceding read, on the same
+   * reasoning as {@link #cancelPurchaseOrder}: two concurrent submits, or a submit racing a cancel,
+   * must not both win. Whichever commits first moves the row out of DRAFT and the other sees zero
+   * rows.
+   *
+   * @param tenantId the owning tenant
+   * @param id the order to submit
+   * @param status the state this submission lands in
+   * @param trail the {@code REQUESTED} row recording what was submitted and under whose authority
+   * @return {@code true} if this call submitted the order; {@code false} if it was not DRAFT
+   */
+  public boolean submitPurchaseOrder(
+      UUID tenantId, UUID id, String status, Domain.PurchaseOrderApproval trail) {
+    return inTx(
+        c -> {
+          int rows;
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE purchase_orders SET status=?, updated_at=now()"
+                      + " WHERE tenant_id=? AND id=? AND status='DRAFT'")) {
+            ps.setString(1, status);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, id);
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) return false;
+          insertApproval(c, trail);
+          return true;
+        },
+        "submit purchase order");
+  }
+
+  /**
+   * Records an approval decision and moves the order accordingly, atomically.
+   *
+   * <p>An approval takes the order to {@code SUBMITTED}; a rejection returns it to {@code DRAFT} so
+   * it can be corrected and resubmitted, and clears nothing else — the trail keeps the rejection,
+   * which is the point of it being append-only.
+   *
+   * @param tenantId the owning tenant
+   * @param id the order being decided on
+   * @param approve true to approve, false to reject
+   * @param decision the trail row, already carrying the decider, their authority and the figure
+   * @return {@code true} if this call decided the order; {@code false} if it was not awaiting one
+   */
+  public boolean decidePurchaseOrder(
+      UUID tenantId, UUID id, boolean approve, Domain.PurchaseOrderApproval decision) {
+    return inTx(
+        c -> {
+          int rows;
+          String sql =
+              approve
+                  ? "UPDATE purchase_orders SET status='SUBMITTED', approved_by=?, approved_at=now(),"
+                      + " updated_at=now() WHERE tenant_id=? AND id=? AND status='PENDING_APPROVAL'"
+                  : "UPDATE purchase_orders SET status='DRAFT', approved_by=NULL, approved_at=NULL,"
+                      + " updated_at=now() WHERE tenant_id=? AND id=? AND status='PENDING_APPROVAL'";
+          try (var ps = c.prepareStatement(sql)) {
+            int i = 1;
+            if (approve) ps.setObject(i++, decision.decidedBy());
+            ps.setObject(i++, tenantId);
+            ps.setObject(i, id);
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) return false;
+          insertApproval(c, decision);
+          return true;
+        },
+        approve ? "approve purchase order" : "reject purchase order");
+  }
+
+  private void insertApproval(Connection c, Domain.PurchaseOrderApproval a) throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "INSERT INTO purchase_order_approvals"
+                + " (id,tenant_id,po_id,decision,total_net,currency,authority,decided_by,"
+                + "  decided_role,reason)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, a.id());
+      ps.setObject(2, a.tenantId());
+      ps.setObject(3, a.poId());
+      ps.setString(4, a.decision());
+      ps.setBigDecimal(5, a.totalNet());
+      ps.setString(6, a.currency());
+      ps.setBigDecimal(7, a.authority());
+      ps.setObject(8, a.decidedBy());
+      ps.setString(9, a.decidedRole());
+      ps.setString(10, a.reason());
+      ps.executeUpdate();
+    }
+  }
+
+  /**
+   * The order's approval history, newest first. Append-only, so this is the complete record of
+   * every submission and decision the order has been through.
+   *
+   * @param tenantId the owning tenant — first condition (golden rule #3)
+   * @param poId the order
+   * @return every trail row for that order
+   */
+  public List<Domain.PurchaseOrderApproval> findApprovals(UUID tenantId, UUID poId) {
+    return query(
+        "SELECT id,tenant_id,po_id,decision,total_net,currency,authority,decided_by,decided_role,"
+            + "reason,decided_at"
+            + " FROM purchase_order_approvals WHERE tenant_id=? AND po_id=?"
+            + " ORDER BY decided_at DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, poId);
+        },
+        rs ->
+            new Domain.PurchaseOrderApproval(
+                rs.getObject("id", UUID.class),
+                rs.getObject("tenant_id", UUID.class),
+                rs.getObject("po_id", UUID.class),
+                rs.getString("decision"),
+                rs.getBigDecimal("total_net"),
+                rs.getString("currency"),
+                rs.getBigDecimal("authority"),
+                rs.getObject("decided_by", UUID.class),
+                rs.getString("decided_role"),
+                rs.getString("reason"),
+                rs.getObject("decided_at", OffsetDateTime.class).toInstant()),
+        "find purchase order approvals");
   }
 
   public void updatePurchaseOrderStatus(UUID tenantId, UUID id, String status) {
@@ -234,7 +364,12 @@ public class PurchaseRepository extends BaseOutboxRepository {
         rs.getObject("closed_at", OffsetDateTime.class) == null
             ? null
             : rs.getObject("closed_at", OffsetDateTime.class).toInstant(),
-        rs.getString("closed_reason"));
+        rs.getString("closed_reason"),
+        rs.getObject("created_by", UUID.class),
+        rs.getObject("approved_by", UUID.class),
+        rs.getObject("approved_at", OffsetDateTime.class) == null
+            ? null
+            : rs.getObject("approved_at", OffsetDateTime.class).toInstant());
   }
 
   // ── PO Lines ──────────────────────────────────────────────────────────────────

@@ -8,6 +8,8 @@ import com.shelfj.purchase.domain.Domain.NominalLedgerEntry;
 import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import com.shelfj.purchase.domain.Domain.Supplier;
+import com.shelfj.purchase.domain.SpendAuthority;
+import com.shelfj.purchase.dto.Dtos;
 import com.shelfj.purchase.dto.Dtos.GoodsReceiptLineResponse;
 import com.shelfj.purchase.dto.Dtos.GoodsReceiptResponse;
 import com.shelfj.purchase.dto.Dtos.IntercompanyInvoiceResponse;
@@ -54,7 +56,33 @@ public final class Mappers {
         po.cancelledAt(),
         po.cancelledReason(),
         po.closedAt(),
-        po.closedReason());
+        po.closedReason(),
+        po.createdBy(),
+        po.approvedBy(),
+        po.approvedAt());
+  }
+
+  public static Dtos.PurchaseOrderApprovalResponse toDto(Domain.PurchaseOrderApproval a) {
+    return new Dtos.PurchaseOrderApprovalResponse(
+        a.id(),
+        a.poId(),
+        a.decision(),
+        a.totalNet(),
+        a.currency(),
+        a.authority(),
+        a.decidedBy(),
+        a.decidedRole(),
+        a.reason(),
+        a.decidedAt());
+  }
+
+  /**
+   * @param currency the currency the authority was asked about, echoed so a client caching several
+   *     answers cannot mix them up
+   */
+  public static Dtos.SpendAuthorityResponse toDto(SpendAuthority a, String currency, boolean off) {
+    return new Dtos.SpendAuthorityResponse(
+        currency, a.ceiling(), a.unlimited(), a.role(), off, a.reason());
   }
 
   public static PurchaseOrderLineResponse toDto(PurchaseOrderLine line) {

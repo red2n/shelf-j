@@ -35,6 +35,10 @@ class PurchaseIT {
     System.setProperty("shelfj.db.schema", "purchase");
     System.setProperty("shelfj.consul.enabled", "false");
     System.setProperty("shelfj.kafka.enabled", "false");
+    // Approval OFF, stated rather than assumed. PurchaseApprovalIT sets this property in its own
+    // static block and both suites share a JVM, so leaving it unset would make this suite's
+    // behaviour depend on which class surefire happened to load first.
+    System.setProperty("shelfj.purchase.approval.limits", "");
   }
 
   private static final String T = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";

@@ -94,7 +94,8 @@ public final class Dtos {
       UUID storeId,
       @Schema(
               description =
-                  "DRAFT, SUBMITTED, PARTIALLY_RECEIVED (some arrived, more expected), RECEIVED"
+                  "DRAFT, PENDING_APPROVAL (above the submitter's spend authority), SUBMITTED,"
+                      + " PARTIALLY_RECEIVED (some arrived, more expected), RECEIVED"
                       + " (all arrived), CLOSED (short-closed — the balance is not coming) or"
                       + " CANCELLED (nothing was ever received).")
           String status,
@@ -112,7 +113,20 @@ public final class Dtos {
       @Schema(description = "When the order was short-closed; null unless status is CLOSED.")
           Instant closedAt,
       @Schema(description = "Why the balance was abandoned; null unless status is CLOSED.")
-          String closedReason) {}
+          String closedReason,
+      @Schema(
+              description =
+                  "Who raised the order, from the verified JWT. Null on orders raised before this"
+                      + " was captured — which means 'not recorded', not 'nobody'.")
+          UUID createdBy,
+      @Schema(
+              description =
+                  "Who approved it, when it needed approval. Null on an order that never did —"
+                      + " one within its submitter's own spend authority goes straight to"
+                      + " SUBMITTED.")
+          UUID approvedBy,
+      @Schema(description = "When it was approved; null unless it needed and received approval.")
+          Instant approvedAt) {}
 
   @Schema(
       name = "PurchaseOrderLineProgressResponse",
@@ -194,6 +208,72 @@ public final class Dtos {
                       + " intercompany invoicing is store-to-store inside one tenant, so there is"
                       + " no outside counterparty whose currency could differ.")
           String currency) {}
+
+  // ── Purchase order approval (spend authority) ─────────────────────────────────
+
+  @Schema(
+      name = "DecidePurchaseOrderRequest",
+      description = "Approve or reject a purchase order awaiting approval.")
+  public record DecidePurchaseOrderRequest(
+      @Schema(
+              description =
+                  "Why. Required on a rejection, because only a rejection leaves the buyer with"
+                      + " work to do and no idea what to change. Optional on an approval.")
+          String reason) {}
+
+  @Schema(
+      name = "PurchaseOrderApprovalResponse",
+      description = "One entry in a purchase order's append-only approval history.")
+  public record PurchaseOrderApprovalResponse(
+      UUID id,
+      UUID poId,
+      @Schema(description = "REQUESTED (submitted for approval), APPROVED or REJECTED.")
+          String decision,
+      @Schema(
+              description =
+                  "The order's net value as it stood when this decision was made, captured here"
+                      + " rather than read back from the order later — a rejected order can be"
+                      + " edited and resubmitted, so the figure a decision was made against is not"
+                      + " necessarily the one it carries now.")
+          BigDecimal totalNet,
+      String currency,
+      @Schema(
+              description =
+                  "What the decider was entitled to commit in this currency, so the trail still"
+                      + " answers 'were they allowed to?' after the configuration changes. Null"
+                      + " when they held unlimited authority or none at all.")
+          BigDecimal authority,
+      UUID decidedBy,
+      @Schema(description = "The role the decision was made under — the decider's most generous.")
+          String decidedRole,
+      String reason,
+      Instant decidedAt) {}
+
+  @Schema(
+      name = "SpendAuthorityResponse",
+      description =
+          "What the caller may commit in one currency, so a buyer is told before building the order"
+              + " rather than after trying to submit it.")
+  public record SpendAuthorityResponse(
+      String currency,
+      @Schema(
+              description =
+                  "The ceiling this caller may submit without anyone else's approval, measured on"
+                      + " the order's NET value — VAT is recoverable for a VAT-registered business"
+                      + " and is therefore not spend. Null when unlimited, or when the caller holds"
+                      + " no authority in this currency at all; check 'unlimited' to tell those"
+                      + " apart.")
+          BigDecimal ceiling,
+      boolean unlimited,
+      @Schema(description = "The role the ceiling comes from; null when the caller holds none.")
+          String role,
+      @Schema(
+              description =
+                  "True when approval is switched off platform-wide, in which case any staff role"
+                      + " may submit any amount — the behaviour before spend authority existed.")
+          boolean approvalDisabled,
+      @Schema(description = "Why the caller holds no authority here; null when they do.")
+          String reason) {}
 
   @Schema(name = "IntercompanyInvoicePairResponse")
   public record IntercompanyInvoicePairResponse(

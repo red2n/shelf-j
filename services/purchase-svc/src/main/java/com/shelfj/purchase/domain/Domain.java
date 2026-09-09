@@ -42,6 +42,15 @@ public final class Domain {
 
   // ── Purchase Order ────────────────────────────────────────────────────────────
   public static final String PO_DRAFT = "DRAFT";
+
+  /**
+   * Raised, but above the raiser's own spend authority — nobody entitled to commit this much has
+   * agreed to it yet. A state rather than a flag on SUBMITTED: "waiting for a decision" and
+   * "decided" are different facts, and a supplier must never be sent an order that is merely
+   * waiting.
+   */
+  public static final String PO_PENDING_APPROVAL = "PENDING_APPROVAL";
+
   public static final String PO_SUBMITTED = "SUBMITTED";
 
   /** Some of the order has arrived and more is still expected. Receivable, like SUBMITTED. */
@@ -75,7 +84,45 @@ public final class Domain {
       Instant cancelledAt,
       String cancelledReason,
       Instant closedAt,
-      String closedReason) {}
+      String closedReason,
+      UUID createdBy,
+      UUID approvedBy,
+      Instant approvedAt) {}
+
+  // ── Purchase order approval (spend authority) ─────────────────────────────────
+
+  /** A submission that exceeded the raiser's authority and is waiting for someone else's. */
+  public static final String APPROVAL_REQUESTED = "REQUESTED";
+
+  public static final String APPROVAL_APPROVED = "APPROVED";
+  public static final String APPROVAL_REJECTED = "REJECTED";
+
+  /**
+   * One decision in a purchase order's approval history. Append-only (golden rule #8).
+   *
+   * <p>A column pair on the order would have covered a single decision, the way V3 handled
+   * cancellation — but a rejection sends the order back to DRAFT to be corrected and resubmitted,
+   * so one order can cycle through several. A spend-authority trail that keeps only the last
+   * decision is not an audit trail.
+   *
+   * @param totalNet the figure the decision was made against, captured at decision time rather than
+   *     read back later: the order can be edited after a rejection, and an approval that silently
+   *     re-points at a larger total is the whole attack this feature exists to stop
+   * @param authority what the decider was entitled to commit, so the trail can still answer "were
+   *     they allowed to?" after the configuration has changed
+   */
+  public record PurchaseOrderApproval(
+      UUID id,
+      UUID tenantId,
+      UUID poId,
+      String decision,
+      BigDecimal totalNet,
+      String currency,
+      BigDecimal authority,
+      UUID decidedBy,
+      String decidedRole,
+      String reason,
+      Instant decidedAt) {}
 
   /**
    * How much of one ordered line has actually turned up.

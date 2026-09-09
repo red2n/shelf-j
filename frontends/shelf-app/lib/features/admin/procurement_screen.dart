@@ -594,6 +594,9 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
     // itself on a CANCELLED or already-RECEIVED order, which could only ever end in a 400.
     final isReceivable = status == 'SUBMITTED' || status == 'PARTIALLY_RECEIVED';
     final isPartial = status == 'PARTIALLY_RECEIVED';
+    // Above the raiser's own spend authority: nobody entitled to commit this much has agreed yet,
+    // and until they do the supplier has not been sent anything.
+    final isPendingApproval = status == 'PENDING_APPROVAL';
     final progressAsync = isDraft
         ? const AsyncValue<List<PurchaseOrderLineProgress>>.data([])
         : ref.watch(purchaseOrderProgressProvider(poId));
@@ -708,7 +711,24 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
             icon: const Icon(Icons.send_outlined, size: 18),
             label: const Text('Submit'),
           )
-        else ...[
+        else if (isPendingApproval) ...[
+          // Rejecting needs no spend authority — refusing to commit money is not a commitment —
+          // so it is offered to anyone who can see the order. The server still decides whether
+          // this caller may approve, and says so if not.
+          TextButton.icon(
+            onPressed: () => showDialog(
+              context: context,
+              builder: (_) => _RejectPoDialog(poId: poId),
+            ),
+            icon: const Icon(Icons.block_outlined, size: 18),
+            label: const Text('Reject'),
+          ),
+          FilledButton.icon(
+            onPressed: _submitting ? null : () => _approvePo(context, ref),
+            icon: const Icon(Icons.check_circle_outline, size: 18),
+            label: const Text('Approve'),
+          ),
+        ] else ...[
           // Abandoning the balance is a deliberate act with a reason, so it sits beside the
           // receive action rather than hiding in a menu — but only while there is a balance.
           if (isPartial)
@@ -744,15 +764,21 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
     if (_submitting) return;
     setState(() => _submitting = true);
     try {
-      await ref
+      final resp = await ref
           .read(apiClientProvider)
           .dio
           .post('/${ApiConstants.purchase}/purchase-orders/$poId/submit');
       ref.invalidate(purchaseOrdersProvider);
       if (!context.mounted) return;
       Navigator.pop(context);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Purchase order submitted.')));
+      // The server decides which of the two happened, so the message reads the status back rather
+      // than assuming. Telling a buyer their order went to the supplier when it is actually
+      // waiting for a manager is the one thing this screen must not do.
+      final held = (resp.data['data'] as Map?)?['status'] == 'PENDING_APPROVAL';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(held
+              ? 'Above your spend authority — sent for approval.'
+              : 'Purchase order submitted.')));
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
@@ -761,6 +787,126 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
         backgroundColor: Theme.of(context).colorScheme.error,
       ));
     }
+  }
+
+  Future<void> _approvePo(BuildContext context, WidgetRef ref) async {
+    if (_submitting) return;
+    setState(() => _submitting = true);
+    try {
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post('/${ApiConstants.purchase}/purchase-orders/$poId/approve');
+      ref.invalidate(purchaseOrdersProvider);
+      if (!context.mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Approved — the order is with the supplier.')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      // The server's own message names both figures and the currency, which is the only useful
+      // thing to show someone whose authority fell short — so it is surfaced rather than replaced.
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(friendlyError(e, fallback: 'Could not approve this order.')),
+        backgroundColor: Theme.of(context).colorScheme.error,
+      ));
+    }
+  }
+}
+
+/// Rejects a purchase order that is waiting for someone's spend authority.
+///
+/// The reason is required by the server and required here, for the same purpose: a rejection sends
+/// the order back to DRAFT for the buyer to correct, and "no" with no explanation leaves them with
+/// work to do and no idea what to change.
+class _RejectPoDialog extends ConsumerStatefulWidget {
+  final String poId;
+  const _RejectPoDialog({required this.poId});
+
+  @override
+  ConsumerState<_RejectPoDialog> createState() => _RejectPoDialogState();
+}
+
+class _RejectPoDialogState extends ConsumerState<_RejectPoDialog> {
+  final _reasonCtrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final reason = _reasonCtrl.text.trim();
+    if (reason.isEmpty) {
+      setState(() => _error = 'Say why, so the buyer knows what to change.');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.purchase}/purchase-orders/${widget.poId}/reject',
+        data: {'reason': reason},
+      );
+      if (!mounted) return;
+      ref.invalidate(purchaseOrdersProvider);
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Rejected — the order is back with the buyer.')));
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = friendlyError(e, fallback: 'Could not reject this order.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Reject purchase order'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+                'The order goes back to DRAFT so it can be corrected and resubmitted. The '
+                'rejection stays in its approval history either way.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _reasonCtrl,
+              autofocus: true,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                hintText: 'e.g. get a second quote first',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _loading ? null : () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: _loading ? null : _submit, child: const Text('Reject')),
+      ],
+    );
   }
 }
 
@@ -1200,6 +1346,9 @@ class _PoStatusBadge extends StatelessWidget {
         bg = context.status.info;
         fg = context.status.onInfo;
         break;
+      case 'PENDING_APPROVAL':
+        // Amber for the same reason PARTIALLY_RECEIVED is: this is a state somebody has to act on,
+        // not one to observe. A grey badge would read as "in progress" when it means "stopped".
       case 'PARTIALLY_RECEIVED':
         // Amber rather than the generic default: something is still owed, and that is a state a
         // buyer is meant to act on rather than merely observe.
