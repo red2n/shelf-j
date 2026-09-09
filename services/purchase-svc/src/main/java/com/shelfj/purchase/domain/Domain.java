@@ -168,6 +168,57 @@ public final class Domain {
       BigDecimal qtyReceived,
       Instant createdAt) {}
 
+  // ── Supplier invoice (three-way match) ────────────────────────────────────────
+
+  /** Every line agreed with the order and the receipt, inside tolerance. */
+  public static final String INVOICE_MATCHED = "MATCHED";
+
+  /** At least one line did not. Captured anyway — flagging never blocks. */
+  public static final String INVOICE_FLAGGED = "FLAGGED";
+
+  /**
+   * A supplier's invoice against a purchase order.
+   *
+   * @param invoiceNumber the supplier's own reference as printed on the document; unique per
+   *     supplier case-insensitively, because the commonest way to pay twice is for two people to
+   *     type the same paper reference on the same morning
+   * @param status {@link #INVOICE_MATCHED} or {@link #INVOICE_FLAGGED}
+   */
+  public record SupplierInvoice(
+      UUID id,
+      UUID tenantId,
+      UUID poId,
+      UUID supplierId,
+      String invoiceNumber,
+      LocalDate invoiceDate,
+      String currency,
+      BigDecimal netAmount,
+      BigDecimal vatAmount,
+      BigDecimal grossAmount,
+      String status,
+      Instant matchedAt,
+      UUID createdBy,
+      Instant createdAt) {}
+
+  /**
+   * One line of a supplier invoice, carrying the match outcome it was captured with.
+   *
+   * @param variances comma-separated variance codes, empty when the line agreed. Stored rather than
+   *     recomputed on read: the purchase order can be amended afterwards, and an invoice that
+   *     silently re-matched against the amended order would erase the disagreement it was flagged
+   *     for
+   */
+  public record SupplierInvoiceLine(
+      UUID id,
+      UUID tenantId,
+      UUID invoiceId,
+      UUID variantId,
+      BigDecimal qtyInvoiced,
+      BigDecimal unitPrice,
+      String vatCode,
+      String variances,
+      Instant createdAt) {}
+
   // ── Intercompany Invoice (Gap #20) ────────────────────────────────────────────
   public static final String INV_AR = "AR";
   public static final String INV_AP = "AP";

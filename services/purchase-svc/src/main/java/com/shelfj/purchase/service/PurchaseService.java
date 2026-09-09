@@ -13,9 +13,11 @@ import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import com.shelfj.purchase.domain.Domain.Supplier;
 import com.shelfj.purchase.domain.Money;
 import com.shelfj.purchase.domain.SpendAuthority;
+import com.shelfj.purchase.domain.ThreeWayMatch;
 import com.shelfj.purchase.domain.Totals;
 import com.shelfj.purchase.dto.Dtos.AddPurchaseOrderLineRequest;
 import com.shelfj.purchase.dto.Dtos.CancelPurchaseOrderRequest;
+import com.shelfj.purchase.dto.Dtos.CaptureSupplierInvoiceRequest;
 import com.shelfj.purchase.dto.Dtos.CreateGoodsReceiptRequest;
 import com.shelfj.purchase.dto.Dtos.CreatePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreateSupplierRequest;
@@ -497,6 +499,129 @@ public class PurchaseService {
               + po.status()
               + ". Nothing delivered? Cancel it. Everything delivered? It is already RECEIVED.");
     return getPurchaseOrder(ctx, poId);
+  }
+
+  // ── Supplier invoices (three-way match) ───────────────────────────────────────
+
+  /**
+   * Records a supplier's invoice against a purchase order and matches it three ways.
+   *
+   * <p>The invoice is stored whether or not it matches. Flagging never blocks capture: an invoice
+   * that arrived is a fact, and refusing to record one that disagrees with the order destroys the
+   * evidence of the disagreement — which is exactly what somebody needs in order to argue with the
+   * supplier.
+   *
+   * <p>The one thing that <em>is</em> refused is a currency the order was not placed in. That is
+   * not a variance to flag; it is a different document, and matching a JPY invoice against a GBP
+   * order would compare two numbers that share nothing but a decimal point (SJ-D24, SJ-D25).
+   *
+   * @throws ApiException 404 if the order does not exist for this tenant; 400 {@code
+   *     PURCHASE_CURRENCY_MISMATCH} for the wrong currency; 409 {@code PURCHASE_INVOICE_DUPLICATE}
+   *     if this supplier's invoice number was already captured
+   */
+  public Domain.SupplierInvoice captureSupplierInvoice(
+      TenantContext ctx, CaptureSupplierInvoiceRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    PurchaseOrder po = getPurchaseOrder(ctx, req.poId());
+
+    if (req.lines() == null || req.lines().isEmpty())
+      throw ApiException.badRequest(
+          "PURCHASE_INVOICE_NO_LINES", "an invoice with no lines has nothing to match");
+
+    String currency = po.currency();
+    if (req.currency() != null) {
+      String asked = Money.requireIso4217(req.currency());
+      if (!asked.equals(currency))
+        throw ApiException.badRequest(
+            "PURCHASE_CURRENCY_MISMATCH",
+            "invoice currency " + asked + " does not match the order's " + currency);
+    }
+
+    // Matched against the order and every receipt AND every earlier invoice on it — see
+    // findMatchPositions for why the invoiced leg has to be cumulative.
+    List<ThreeWayMatch.MatchLine> matched =
+        ThreeWayMatch.match(
+            req.lines().stream()
+                .map(l -> new ThreeWayMatch.InvoicedLine(l.variantId(), l.qty(), l.unitPrice()))
+                .toList(),
+            repo.findMatchPositions(tenantId, req.poId()),
+            config.matchTolerance());
+
+    BigDecimal net = BigDecimal.ZERO;
+    for (var l : req.lines()) {
+      net = net.add(Money.round(l.qty().multiply(l.unitPrice()), currency));
+    }
+    net = Money.round(net, currency);
+    BigDecimal vat =
+        Money.round(req.vatAmount() == null ? BigDecimal.ZERO : req.vatAmount(), currency);
+
+    boolean allMatched = matched.stream().allMatch(ThreeWayMatch.MatchLine::matched);
+    UUID invoiceId = UUID.randomUUID();
+    Domain.SupplierInvoice invoice =
+        new Domain.SupplierInvoice(
+            invoiceId,
+            tenantId,
+            po.id(),
+            po.supplierId(),
+            req.invoiceNumber().trim(),
+            Parsing.date(req.invoiceDate(), "invoiceDate"),
+            currency,
+            net,
+            vat,
+            net.add(vat),
+            allMatched ? Domain.INVOICE_MATCHED : Domain.INVOICE_FLAGGED,
+            Instant.now(),
+            ctx.userId(),
+            Instant.now());
+
+    List<Domain.SupplierInvoiceLine> lines = new ArrayList<>(req.lines().size());
+    for (int i = 0; i < req.lines().size(); i++) {
+      var in = req.lines().get(i);
+      lines.add(
+          new Domain.SupplierInvoiceLine(
+              UUID.randomUUID(),
+              tenantId,
+              invoiceId,
+              in.variantId(),
+              in.qty(),
+              in.unitPrice(),
+              in.vatCode() != null ? in.vatCode().toUpperCase(java.util.Locale.ROOT) : "T1",
+              String.join(",", matched.get(i).variances()),
+              Instant.now()));
+    }
+    return repo.captureSupplierInvoice(invoice, lines);
+  }
+
+  public List<Domain.SupplierInvoice> listSupplierInvoices(
+      TenantContext ctx, UUID poId, int limit) {
+    return repo.findSupplierInvoices(ctx.requireTenantId(), poId, limit);
+  }
+
+  public Domain.SupplierInvoice getSupplierInvoice(TenantContext ctx, UUID id) {
+    return repo.findSupplierInvoice(ctx.requireTenantId(), id)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "PURCHASE_INVOICE_NOT_FOUND", "Supplier invoice not found: " + id));
+  }
+
+  /**
+   * The invoice's lines with all three documents' figures beside them.
+   *
+   * <p>The variances come from the stored line rather than being recomputed, because they are the
+   * figures the decision was made against: the purchase order can be amended after an invoice is
+   * flagged, and re-matching on read would silently erase the disagreement it was flagged for. The
+   * ordered and received columns beside them are read live, so the screen can show both what was
+   * true then and what is true now.
+   */
+  public List<Domain.SupplierInvoiceLine> supplierInvoiceLines(TenantContext ctx, UUID invoiceId) {
+    getSupplierInvoice(ctx, invoiceId);
+    return repo.findSupplierInvoiceLines(ctx.requireTenantId(), invoiceId);
+  }
+
+  public List<ThreeWayMatch.OrderPosition> matchPositions(TenantContext ctx, UUID poId) {
+    getPurchaseOrder(ctx, poId);
+    return repo.findMatchPositions(ctx.requireTenantId(), poId);
   }
 
   // ── Goods Receipts ────────────────────────────────────────────────────────────

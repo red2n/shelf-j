@@ -275,6 +275,79 @@ public final class Dtos {
       @Schema(description = "Why the caller holds no authority here; null when they do.")
           String reason) {}
 
+  // ── Supplier invoice / three-way match ────────────────────────────────────────
+
+  @Schema(
+      name = "CaptureSupplierInvoiceRequest",
+      description =
+          "Record a supplier's invoice against a purchase order and match it. The invoice is stored"
+              + " whether or not it matches: an invoice that arrived is a fact, and refusing to"
+              + " record one that disagrees with the order destroys the evidence of the"
+              + " disagreement.")
+  public record CaptureSupplierInvoiceRequest(
+      @NotNull UUID poId,
+      @Schema(description = "The supplier's own reference as printed on the document.") @NotBlank
+          String invoiceNumber,
+      @Schema(description = "Invoice date, as yyyy-MM-dd (e.g. 2026-01-31).") @NotBlank
+          String invoiceDate,
+      @Schema(
+              description =
+                  "ISO 4217 code. Optional — taken from the purchase order when omitted. Supplying"
+                      + " one that differs is rejected: an invoice in a currency the order was not"
+                      + " placed in is not a variance to flag, it is a different document.")
+          String currency,
+      @Schema(description = "VAT charged on the invoice. Defaults to zero.") BigDecimal vatAmount,
+      @NotNull List<CaptureSupplierInvoiceLine> lines) {}
+
+  @Schema(name = "CaptureSupplierInvoiceLine")
+  public record CaptureSupplierInvoiceLine(
+      @NotNull UUID variantId,
+      @Schema(description = "Quantity billed on this line.") @NotNull BigDecimal qty,
+      @Schema(description = "Price per unit charged. May carry more precision than the currency.")
+          @NotNull
+          BigDecimal unitPrice,
+      String vatCode) {}
+
+  @Schema(name = "SupplierInvoiceResponse")
+  public record SupplierInvoiceResponse(
+      UUID id,
+      UUID poId,
+      UUID supplierId,
+      String invoiceNumber,
+      LocalDate invoiceDate,
+      String currency,
+      BigDecimal netAmount,
+      BigDecimal vatAmount,
+      BigDecimal grossAmount,
+      @Schema(
+              description =
+                  "MATCHED when every line agreed with the order and the receipt inside tolerance;"
+                      + " FLAGGED when at least one did not. Flagging never blocks capture.")
+          String status,
+      UUID createdBy,
+      Instant createdAt,
+      List<SupplierInvoiceMatchLineResponse> lines) {}
+
+  @Schema(
+      name = "SupplierInvoiceMatchLineResponse",
+      description = "One line, with all three documents' figures side by side.")
+  public record SupplierInvoiceMatchLineResponse(
+      UUID variantId,
+      @Schema(description = "What the purchase order asked for.") BigDecimal qtyOrdered,
+      @Schema(description = "What has arrived across every receipt on that order.")
+          BigDecimal qtyReceived,
+      @Schema(description = "What earlier invoices on this order already billed for this variant.")
+          BigDecimal qtyInvoicedBefore,
+      @Schema(description = "What this invoice bills.") BigDecimal qtyInvoiced,
+      @Schema(description = "The price the order agreed; null when the variant was never ordered.")
+          BigDecimal orderedUnitPrice,
+      BigDecimal invoicedUnitPrice,
+      @Schema(
+              description =
+                  "Every disagreement found, empty when the line agreed. INVOICED_ABOVE_RECEIVED,"
+                      + " NOT_RECEIVED, NOT_ON_ORDER, PRICE_ABOVE_ORDER, PRICE_BELOW_ORDER.")
+          List<String> variances) {}
+
   @Schema(name = "IntercompanyInvoicePairResponse")
   public record IntercompanyInvoicePairResponse(
       IntercompanyInvoiceResponse arInvoice, IntercompanyInvoiceResponse apInvoice) {}

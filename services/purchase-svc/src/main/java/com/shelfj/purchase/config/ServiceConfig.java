@@ -1,6 +1,7 @@
 package com.shelfj.purchase.config;
 
 import com.shelfj.purchase.domain.Money;
+import com.shelfj.purchase.domain.ThreeWayMatch;
 import com.shelfj.service.BaseServiceConfig;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -158,6 +159,31 @@ public class ServiceConfig extends BaseServiceConfig {
     parsed.forEach(
         (currency, byRole) -> immutable.put(currency, Collections.unmodifiableMap(byRole)));
     approvalLimits = Collections.unmodifiableMap(immutable);
+  }
+
+  /**
+   * Accepted per-unit price difference on a three-way match, as a percentage of the ordered price.
+   *
+   * <p>Zero by default, which surfaces any difference at all. Safe as a default precisely because
+   * flagging does not block: a buyer sees everything until someone decides what the business
+   * actually tolerates, rather than variance being quietly accepted by a number nobody chose.
+   * Setting a band is a procurement policy — the same line partial receipt drew about over-receipt.
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.purchase.match.tolerance.price-percent", defaultValue = "0")
+  BigDecimal matchPricePercent;
+
+  /** Accepted quantity difference, as a percentage of what was received. Zero by default. */
+  @Inject
+  @ConfigProperty(name = "shelfj.purchase.match.tolerance.qty-percent", defaultValue = "0")
+  BigDecimal matchQtyPercent;
+
+  /**
+   * @return the configured match tolerance
+   * @throws IllegalStateException at first use if either percentage is negative
+   */
+  public ThreeWayMatch.Tolerance matchTolerance() {
+    return new ThreeWayMatch.Tolerance(matchPricePercent, matchQtyPercent);
   }
 
   @Override

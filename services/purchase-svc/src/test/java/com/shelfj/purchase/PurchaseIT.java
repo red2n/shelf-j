@@ -61,6 +61,7 @@ class PurchaseIT {
       st.execute(
           "TRUNCATE TABLE purchase.nominal_ledger_entries, purchase.intercompany_invoices,"
               + " purchase.goods_receipt_lines, purchase.goods_receipts,"
+              + " purchase.supplier_invoice_lines, purchase.supplier_invoices,"
               + " purchase.purchase_order_lines, purchase.purchase_orders,"
               + " purchase.suppliers, purchase.outbox CASCADE");
     }
@@ -890,6 +891,191 @@ class PurchaseIT {
     assertThat(
         get("/purchase-orders/" + poId, T).readEntity(String.class),
         containsString("\"totalNet\":12.50"));
+  }
+
+  // ── three-way match: ordered vs received vs invoiced ─────────────────────────
+
+  /**
+   * The whole control, end to end: order 100, receive 60, invoice 60 at the agreed price.
+   *
+   * <p>Quantity is matched against what was RECEIVED. Matching against what was ORDERED would flag
+   * this — and a part-delivered order billed for the part is the commonest legitimate case there
+   * is.
+   */
+  @Test
+  void anInvoiceForWhatActuallyArrivedMatchesCleanly() {
+    String po = receivedOrder("Match Clean Ltd", "100", "60", "2.50");
+
+    Response r = post("/supplier-invoices", invoice(po, "INV-CLEAN-1", "60", "2.50"), T);
+    assertThat(r.getStatus(), is(201));
+    String body = r.readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"MATCHED\""));
+    assertThat(body, containsString("\"qtyOrdered\":100"));
+    assertThat(body, containsString("\"qtyReceived\":60"));
+    assertThat(body, containsString("\"variances\":[]"));
+  }
+
+  /** Billed for the whole order when only part of it turned up. */
+  @Test
+  void anInvoiceForMoreThanArrivedIsFlagged() {
+    String po = receivedOrder("Over Invoice Ltd", "100", "60", "2.50");
+
+    Response r = post("/supplier-invoices", invoice(po, "INV-OVER-1", "100", "2.50"), T);
+    assertThat(r.getStatus(), is(201));
+    String body = r.readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"FLAGGED\""));
+    assertThat(body, containsString("INVOICED_ABOVE_RECEIVED"));
+    // Captured anyway: flagging never blocks, because the invoice arriving is a fact and the
+    // disagreement is the thing somebody needs in order to argue with the supplier.
+    assertThat(
+        get("/supplier-invoices?poId=" + po, T).readEntity(String.class),
+        containsString("INV-OVER-1"));
+  }
+
+  /** Charged more per unit than the order agreed. */
+  @Test
+  void aPriceAboveTheOrderIsFlagged() {
+    String po = receivedOrder("Price Creep Ltd", "100", "60", "2.50");
+
+    String body =
+        post("/supplier-invoices", invoice(po, "INV-PRICE-1", "60", "2.75"), T)
+            .readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"FLAGGED\""));
+    assertThat(body, containsString("PRICE_ABOVE_ORDER"));
+    assertThat(body, containsString("\"orderedUnitPrice\":2.50"));
+    assertThat(body, containsString("\"invoicedUnitPrice\":2.75"));
+  }
+
+  /**
+   * A supplier who delivers and bills in two parts must not be flagged on the second.
+   *
+   * <p>The invoiced leg is cumulative across every invoice on the order — the same shape partial
+   * receipt established for the received leg, and for the same reason.
+   */
+  @Test
+  void invoicingInTwoPartsIsNotOverInvoicing() {
+    String po = receivedOrder("Two Invoices Ltd", "100", "60", "2.50");
+
+    assertThat(
+        post("/supplier-invoices", invoice(po, "INV-SPLIT-1", "40", "2.50"), T)
+            .readEntity(String.class),
+        containsString("\"status\":\"MATCHED\""));
+    assertThat(
+        post("/supplier-invoices", invoice(po, "INV-SPLIT-2", "20", "2.50"), T)
+            .readEntity(String.class),
+        containsString("\"status\":\"MATCHED\""));
+    // 40 + 20 = 60, all of what arrived. One more is not.
+    assertThat(
+        post("/supplier-invoices", invoice(po, "INV-SPLIT-3", "20", "2.50"), T)
+            .readEntity(String.class),
+        containsString("INVOICED_ABOVE_RECEIVED"));
+  }
+
+  /** The duplicate-payment guard: two people typing the same paper reference. */
+  @Test
+  void theSameInvoiceNumberCannotBeCapturedTwice() {
+    String po = receivedOrder("Duplicate Ltd", "100", "60", "2.50");
+
+    assertThat(
+        post("/supplier-invoices", invoice(po, "INV-DUP-1", "60", "2.50"), T).getStatus(), is(201));
+    Response again = post("/supplier-invoices", invoice(po, "inv-dup-1", "60", "2.50"), T);
+    assertThat(again.getStatus(), is(409));
+    // Case-insensitively, because the reference is printed on paper and typed by a human.
+    assertThat(again.readEntity(String.class), containsString("PURCHASE_INVOICE_DUPLICATE"));
+  }
+
+  /**
+   * An invoice in a currency the order was not placed in is a different document, not a variance.
+   */
+  @Test
+  void anInvoiceCannotBeInAnotherCurrency() {
+    String po = receivedOrder("Currency Ltd", "10", "10", "2.50");
+
+    Response r =
+        post(
+            "/supplier-invoices",
+            "{\"poId\":\""
+                + po
+                + "\",\"invoiceNumber\":\"INV-CUR-1\",\"invoiceDate\":\"2026-02-01\","
+                + "\"currency\":\"JPY\",\"lines\":[{\"variantId\":\""
+                + VARIANT
+                + "\",\"qty\":10,\"unitPrice\":2.50}]}",
+            T);
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("PURCHASE_CURRENCY_MISMATCH"));
+  }
+
+  /** Japan: a whole-yen invoice matches a whole-yen order with no invented precision. */
+  @Test
+  void aYenInvoiceMatchesInWholeYen() {
+    String supId = supplier("Tokyo Invoice KK", "JPY");
+    String po = poFor(supId);
+    addLine(po, "3", "1234");
+    post("/purchase-orders/" + po + "/submit", "{}", T);
+    post(
+        "/goods-receipts",
+        "{\"poId\":\""
+            + po
+            + "\",\"storeId\":\""
+            + STORE_A
+            + "\",\"lines\":[{\"variantId\":\""
+            + VARIANT
+            + "\",\"qtyReceived\":3}]}",
+        T);
+
+    String body =
+        post("/supplier-invoices", invoice(po, "INV-JPY-1", "3", "1234"), T)
+            .readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"MATCHED\""));
+    assertThat(body, containsString("\"currency\":\"JPY\""));
+    assertThat(body, containsString("\"netAmount\":3702"));
+    assertThat(body, not(containsString("3702.00")));
+  }
+
+  /** Tenant isolation: an invoice on another tenant's order is not found, not forbidden. */
+  @Test
+  void anInvoiceCannotBeCapturedAgainstAnotherTenantsOrder() {
+    String po = receivedOrder("Isolation Ltd", "10", "10", "2.50");
+    Response r = post("/supplier-invoices", invoice(po, "INV-ISO-1", "10", "2.50"), T2);
+    assertThat(r.getStatus(), is(404));
+  }
+
+  /** An order, submitted, and part-received — the two legs an invoice is matched against. */
+  private String receivedOrder(String supplierName, String ordered, String received, String price) {
+    String supId = supplier(supplierName, "GBP");
+    String po = poFor(supId);
+    addLine(po, ordered, price);
+    assertThat(post("/purchase-orders/" + po + "/submit", "{}", T).getStatus(), is(200));
+    assertThat(
+        post(
+                "/goods-receipts",
+                "{\"poId\":\""
+                    + po
+                    + "\",\"storeId\":\""
+                    + STORE_A
+                    + "\",\"lines\":[{\"variantId\":\""
+                    + VARIANT
+                    + "\",\"qtyReceived\":"
+                    + received
+                    + "}]}",
+                T)
+            .getStatus(),
+        is(201));
+    return po;
+  }
+
+  private String invoice(String poId, String number, String qty, String unitPrice) {
+    return "{\"poId\":\""
+        + poId
+        + "\",\"invoiceNumber\":\""
+        + number
+        + "\",\"invoiceDate\":\"2026-02-01\",\"lines\":[{\"variantId\":\""
+        + VARIANT
+        + "\",\"qty\":"
+        + qty
+        + ",\"unitPrice\":"
+        + unitPrice
+        + "}]}";
   }
 
   private String supplier(String name, String currency) {

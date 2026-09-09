@@ -17,7 +17,7 @@ class ProcurementScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Builder(
         // A Builder gives this subtree a context below DefaultTabController,
         // so DefaultTabController.of(context) below can find it.
@@ -37,6 +37,7 @@ class ProcurementScreen extends ConsumerWidget {
                   tabAlignment: TabAlignment.start,
                   tabs: [
                     Tab(text: 'Purchase Orders'),
+                    Tab(text: 'Invoices'),
                     Tab(text: 'Suppliers'),
                   ],
                 ),
@@ -44,6 +45,7 @@ class ProcurementScreen extends ConsumerWidget {
                   child: TabBarView(
                     children: [
                       _PurchaseOrdersTab(),
+                      _SupplierInvoicesTab(),
                       _SuppliersTab(),
                     ],
                   ),
@@ -55,7 +57,7 @@ class ProcurementScreen extends ConsumerWidget {
             // per tab.
             floatingActionButton: ListenableBuilder(
               listenable: tabController,
-              builder: (context, _) => tabController.index == 1
+              builder: (context, _) => tabController.index == 2
                   ? FloatingActionButton.extended(
                       onPressed: () => showDialog(
                         context: context,
@@ -142,6 +144,235 @@ class _SuppliersTab extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── Supplier invoices: the three-way match ───────────────────────────────────
+
+/// Ordered against received against invoiced, per line.
+///
+/// A status badge alone answers the wrong question. A buyer told an invoice is
+/// FLAGGED still has to know *which* line disagreed and by how much before they
+/// can ring the supplier — so the three figures sit side by side, and the
+/// flagged ones lead.
+class _SupplierInvoicesTab extends ConsumerWidget {
+  const _SupplierInvoicesTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(supplierInvoicesProvider);
+    final cs = Theme.of(context).colorScheme;
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading invoices…'),
+      error: (e, _) => ErrorView(
+        message: friendlyError(e, fallback: 'Could not load supplier invoices.'),
+        onRetry: () => ref.invalidate(supplierInvoicesProvider),
+      ),
+      data: (invoices) {
+        if (invoices.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.receipt_long_outlined, size: 64, color: cs.outlineVariant),
+                const SizedBox(height: 12),
+                const Text('No supplier invoices yet'),
+                const SizedBox(height: 4),
+                Text('Capture one from a purchase order to match it',
+                    style: TextStyle(color: cs.outline, fontSize: 12)),
+              ],
+            ),
+          );
+        }
+        // Flagged first: the whole point of the control is the exceptions, and a
+        // list ordered by date buries them behind the ones nobody needs to read.
+        final sorted = [...invoices]..sort((a, b) {
+            if (a.flagged == b.flagged) return 0;
+            return a.flagged ? -1 : 1;
+          });
+        return ListView.separated(
+          padding: const EdgeInsets.all(16),
+          itemCount: sorted.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 8),
+          itemBuilder: (_, i) => _InvoiceCard(sorted[i]),
+        );
+      },
+    );
+  }
+}
+
+class _InvoiceCard extends StatelessWidget {
+  final SupplierInvoice invoice;
+  const _InvoiceCard(this.invoice);
+
+  @override
+  Widget build(BuildContext context) {
+    final flagged = invoice.flagged;
+    return Card(
+      child: ExpansionTile(
+        // Flagged invoices open by default. A variance the buyer has to click to
+        // discover is a variance that waits until the payment run.
+        initiallyExpanded: flagged,
+        leading: Icon(
+          flagged ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+          color: flagged ? context.status.warning : context.status.success,
+        ),
+        title: Row(
+          children: [
+            Text(invoice.invoiceNumber,
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(width: 8),
+            _InvoiceStatusBadge(invoice.status),
+          ],
+        ),
+        subtitle: Text([
+          AppFormat.money(invoice.grossAmount, currencyCode: invoice.currency),
+          if (invoice.invoiceDate != null) invoice.invoiceDate!,
+          'PO ${_short(invoice.poId, 8)}',
+        ].join(' · ')),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _MatchHeaderRow(),
+                const Divider(height: 12),
+                for (final l in invoice.lines) _MatchRow(l, invoice.currency),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MatchHeaderRow extends StatelessWidget {
+  const _MatchHeaderRow();
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(fontSize: 11, fontWeight: FontWeight.w600);
+    return const Row(
+      children: [
+        Expanded(flex: 3, child: Text('Variant', style: style)),
+        Expanded(child: Text('Ordered', style: style, textAlign: TextAlign.right)),
+        Expanded(child: Text('Received', style: style, textAlign: TextAlign.right)),
+        Expanded(child: Text('Invoiced', style: style, textAlign: TextAlign.right)),
+        Expanded(flex: 2, child: Text('Price', style: style, textAlign: TextAlign.right)),
+      ],
+    );
+  }
+}
+
+class _MatchRow extends StatelessWidget {
+  final InvoiceMatchLine line;
+  final String currency;
+  const _MatchRow(this.line, this.currency);
+
+  @override
+  Widget build(BuildContext context) {
+    final bad = !line.matched;
+    final warn = context.status.warning;
+    final num = TextStyle(
+        fontSize: 12,
+        fontFamily: 'monospace',
+        color: bad ? warn : null,
+        fontWeight: bad ? FontWeight.bold : null);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                  flex: 3,
+                  child: Text(_short(line.variantId, 14),
+                      style: const TextStyle(fontSize: 12, fontFamily: 'monospace'))),
+              Expanded(
+                  child: Text(_trim(line.qtyOrdered),
+                      style: num, textAlign: TextAlign.right)),
+              Expanded(
+                  child: Text(_trim(line.qtyReceived),
+                      style: num, textAlign: TextAlign.right)),
+              Expanded(
+                  child: Text(_trim(line.qtyInvoiced),
+                      style: num, textAlign: TextAlign.right)),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  // Both prices when they differ, so the buyer can see the gap
+                  // rather than being told there is one.
+                  line.orderedUnitPrice != null &&
+                          line.orderedUnitPrice != line.invoicedUnitPrice
+                      ? '${_trim(line.orderedUnitPrice!)} → ${_trim(line.invoicedUnitPrice)}'
+                      : _trim(line.invoicedUnitPrice),
+                  style: num,
+                  textAlign: TextAlign.right,
+                ),
+              ),
+            ],
+          ),
+          if (bad)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [for (final v in line.variances) _VarianceChip(v)],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A variance in words. The codes are precise and unreadable; a buyer chasing a
+/// supplier needs the sentence, not the constant.
+class _VarianceChip extends StatelessWidget {
+  final String code;
+  const _VarianceChip(this.code);
+
+  static const _labels = {
+    'INVOICED_ABOVE_RECEIVED': 'Billed for more than arrived',
+    'NOT_RECEIVED': 'Nothing received yet',
+    'NOT_ON_ORDER': 'Not on the purchase order',
+    'PRICE_ABOVE_ORDER': 'Charged above the agreed price',
+    'PRICE_BELOW_ORDER': 'Charged below the agreed price',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final warn = context.status.warning;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+          color: warn.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(10)),
+      child: Text(_labels[code] ?? code,
+          style: TextStyle(fontSize: 11, color: warn, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+class _InvoiceStatusBadge extends StatelessWidget {
+  final String status;
+  const _InvoiceStatusBadge(this.status);
+
+  @override
+  Widget build(BuildContext context) {
+    final flagged = status == 'FLAGGED';
+    final fg = flagged ? context.status.warning : context.status.success;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+          color: fg.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(12)),
+      child: Text(status,
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
     );
   }
 }

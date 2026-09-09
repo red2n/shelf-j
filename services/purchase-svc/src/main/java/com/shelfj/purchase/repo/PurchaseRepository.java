@@ -9,6 +9,7 @@ import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLineProgress;
 import com.shelfj.purchase.domain.Domain.Supplier;
+import com.shelfj.purchase.domain.ThreeWayMatch;
 import com.shelfj.purchase.domain.Totals;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
@@ -695,6 +696,201 @@ public class PurchaseRepository extends BaseOutboxRepository {
           }
         },
         "close purchase order short");
+  }
+
+  /**
+   * Captures a supplier invoice and its already-matched lines in one transaction.
+   *
+   * <p>The match is computed by the caller from {@link #findMatchPositions} and passed in, because
+   * the arithmetic belongs in {@link com.shelfj.purchase.domain.ThreeWayMatch} where it can be a
+   * unit test. What must be atomic is the invoice, its lines, and the outcome each line was
+   * captured with — a line whose stored variance does not match the invoice it sits on is worse
+   * than no variance at all.
+   *
+   * @param invoice the invoice header, status already decided
+   * @param lines its lines, each carrying its own variance string
+   * @return the invoice as stored
+   * @throws ApiException 409 if this supplier's invoice number has already been captured
+   */
+  public Domain.SupplierInvoice captureSupplierInvoice(
+      Domain.SupplierInvoice invoice, List<Domain.SupplierInvoiceLine> lines) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO supplier_invoices"
+                      + " (id,tenant_id,po_id,supplier_id,invoice_number,invoice_date,currency,"
+                      + "  net_amount,vat_amount,gross_amount,status,created_by)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, invoice.id());
+            ps.setObject(2, invoice.tenantId());
+            ps.setObject(3, invoice.poId());
+            ps.setObject(4, invoice.supplierId());
+            ps.setString(5, invoice.invoiceNumber());
+            ps.setObject(6, invoice.invoiceDate());
+            ps.setString(7, invoice.currency());
+            ps.setBigDecimal(8, invoice.netAmount());
+            ps.setBigDecimal(9, invoice.vatAmount());
+            ps.setBigDecimal(10, invoice.grossAmount());
+            ps.setString(11, invoice.status());
+            ps.setObject(12, invoice.createdBy());
+            ps.executeUpdate();
+          } catch (SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+              throw new ApiException(
+                  409,
+                  "PURCHASE_INVOICE_DUPLICATE",
+                  "invoice "
+                      + invoice.invoiceNumber()
+                      + " has already been captured for this supplier",
+                  List.of(),
+                  sqle);
+            throw sqle;
+          }
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO supplier_invoice_lines"
+                      + " (id,tenant_id,invoice_id,variant_id,qty_invoiced,unit_price,vat_code,"
+                      + "  variances)"
+                      + " VALUES (?,?,?,?,?,?,?,?)")) {
+            for (Domain.SupplierInvoiceLine l : lines) {
+              ps.setObject(1, l.id());
+              ps.setObject(2, l.tenantId());
+              ps.setObject(3, l.invoiceId());
+              ps.setObject(4, l.variantId());
+              ps.setBigDecimal(5, l.qtyInvoiced());
+              ps.setBigDecimal(6, l.unitPrice());
+              ps.setString(7, l.vatCode());
+              ps.setString(8, l.variances());
+              ps.addBatch();
+            }
+            ps.executeBatch();
+          }
+          return invoice;
+        },
+        "capture supplier invoice");
+  }
+
+  /**
+   * What the order and its receipts say about each variant, plus what earlier invoices already
+   * billed — the two documents a new invoice is matched against.
+   *
+   * <p>Invoiced quantity is summed across every earlier invoice on the order, not just the last
+   * one. A supplier delivering in two lorries invoices twice, and matching each against the whole
+   * order in isolation would flag the second as over-invoiced every time — the mistake the
+   * goods-receipt path made before partial receipt fixed it.
+   *
+   * @param tenantId the owning tenant — first condition of every query (golden rule #3)
+   * @param poId the order being invoiced against
+   * @return one position per ordered variant
+   */
+  public List<ThreeWayMatch.OrderPosition> findMatchPositions(UUID tenantId, UUID poId) {
+    return query(
+        "SELECT l.variant_id,"
+            + "       SUM(l.qty)::numeric(14,3)                       AS qty_ordered,"
+            + "       MAX(l.unit_price)                               AS ordered_unit_price,"
+            + "       COALESCE((SELECT SUM(grl.qty_received) FROM goods_receipt_lines grl"
+            + "                   JOIN goods_receipts gr ON gr.id = grl.gr_id"
+            + "                  WHERE gr.tenant_id = l.tenant_id AND gr.po_id = ?"
+            + "                    AND grl.variant_id = l.variant_id), 0)::numeric(14,3)"
+            + "                                                       AS qty_received,"
+            + "       COALESCE((SELECT SUM(sil.qty_invoiced) FROM supplier_invoice_lines sil"
+            + "                   JOIN supplier_invoices si ON si.id = sil.invoice_id"
+            + "                  WHERE si.tenant_id = l.tenant_id AND si.po_id = ?"
+            + "                    AND sil.variant_id = l.variant_id), 0)::numeric(14,3)"
+            + "                                                       AS qty_invoiced"
+            + "  FROM purchase_order_lines l"
+            + " WHERE l.tenant_id = ? AND l.po_id = ?"
+            + " GROUP BY l.variant_id, l.tenant_id",
+        ps -> {
+          ps.setObject(1, poId);
+          ps.setObject(2, poId);
+          ps.setObject(3, tenantId);
+          ps.setObject(4, poId);
+        },
+        rs ->
+            new ThreeWayMatch.OrderPosition(
+                rs.getObject("variant_id", UUID.class),
+                rs.getBigDecimal("qty_ordered"),
+                rs.getBigDecimal("qty_received"),
+                rs.getBigDecimal("qty_invoiced"),
+                rs.getBigDecimal("ordered_unit_price")),
+        "read three-way match positions");
+  }
+
+  public List<Domain.SupplierInvoice> findSupplierInvoices(UUID tenantId, UUID poId, int limit) {
+    String sql =
+        "SELECT id,tenant_id,po_id,supplier_id,invoice_number,invoice_date,currency,"
+            + "net_amount,vat_amount,gross_amount,status,matched_at,created_by,created_at"
+            + " FROM supplier_invoices WHERE tenant_id=?"
+            + (poId != null ? " AND po_id=?" : "")
+            + " ORDER BY created_at DESC LIMIT ?";
+    return query(
+        sql,
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (poId != null) ps.setObject(i++, poId);
+          ps.setInt(i, limit);
+        },
+        this::mapSupplierInvoice,
+        "find supplier invoices");
+  }
+
+  public Optional<Domain.SupplierInvoice> findSupplierInvoice(UUID tenantId, UUID id) {
+    var rows =
+        query(
+            "SELECT id,tenant_id,po_id,supplier_id,invoice_number,invoice_date,currency,"
+                + "net_amount,vat_amount,gross_amount,status,matched_at,created_by,created_at"
+                + " FROM supplier_invoices WHERE tenant_id=? AND id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            this::mapSupplierInvoice,
+            "find supplier invoice");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  public List<Domain.SupplierInvoiceLine> findSupplierInvoiceLines(UUID tenantId, UUID invoiceId) {
+    return query(
+        "SELECT id,tenant_id,invoice_id,variant_id,qty_invoiced,unit_price,vat_code,variances,"
+            + "created_at"
+            + " FROM supplier_invoice_lines WHERE tenant_id=? AND invoice_id=? ORDER BY created_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, invoiceId);
+        },
+        rs ->
+            new Domain.SupplierInvoiceLine(
+                rs.getObject("id", UUID.class),
+                rs.getObject("tenant_id", UUID.class),
+                rs.getObject("invoice_id", UUID.class),
+                rs.getObject("variant_id", UUID.class),
+                rs.getBigDecimal("qty_invoiced"),
+                rs.getBigDecimal("unit_price"),
+                rs.getString("vat_code"),
+                rs.getString("variances"),
+                rs.getObject("created_at", OffsetDateTime.class).toInstant()),
+        "find supplier invoice lines");
+  }
+
+  private Domain.SupplierInvoice mapSupplierInvoice(ResultSet rs) throws SQLException {
+    return new Domain.SupplierInvoice(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("po_id", UUID.class),
+        rs.getObject("supplier_id", UUID.class),
+        rs.getString("invoice_number"),
+        rs.getObject("invoice_date", LocalDate.class),
+        rs.getString("currency"),
+        rs.getBigDecimal("net_amount"),
+        rs.getBigDecimal("vat_amount"),
+        rs.getBigDecimal("gross_amount"),
+        rs.getString("status"),
+        rs.getObject("matched_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("created_by", UUID.class),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
   private GoodsReceipt findGoodsReceiptByKeyTx(

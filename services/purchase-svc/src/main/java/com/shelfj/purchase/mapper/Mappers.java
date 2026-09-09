@@ -62,6 +62,61 @@ public final class Mappers {
         po.approvedAt());
   }
 
+  /**
+   * @param lines the invoice's stored lines
+   * @param positions what the order and receipts say now, keyed by variant, so the screen can show
+   *     the three documents side by side
+   */
+  public static Dtos.SupplierInvoiceResponse toDto(
+      Domain.SupplierInvoice inv,
+      java.util.List<Domain.SupplierInvoiceLine> lines,
+      java.util.List<com.shelfj.purchase.domain.ThreeWayMatch.OrderPosition> positions) {
+    var byVariant =
+        positions.stream()
+            .collect(
+                java.util.stream.Collectors.toMap(
+                    com.shelfj.purchase.domain.ThreeWayMatch.OrderPosition::variantId,
+                    p -> p,
+                    (a, b) -> a));
+    var rows =
+        lines.stream()
+            .map(
+                l -> {
+                  var p = byVariant.get(l.variantId());
+                  return new Dtos.SupplierInvoiceMatchLineResponse(
+                      l.variantId(),
+                      p == null ? java.math.BigDecimal.ZERO : p.qtyOrdered(),
+                      p == null ? java.math.BigDecimal.ZERO : p.qtyReceived(),
+                      // What OTHER invoices billed: the stored total includes this one.
+                      p == null
+                          ? java.math.BigDecimal.ZERO
+                          : p.qtyAlreadyInvoiced()
+                              .subtract(l.qtyInvoiced())
+                              .max(java.math.BigDecimal.ZERO),
+                      l.qtyInvoiced(),
+                      p == null ? null : p.orderedUnitPrice(),
+                      l.unitPrice(),
+                      l.variances() == null || l.variances().isBlank()
+                          ? java.util.List.of()
+                          : java.util.List.of(l.variances().split(",")));
+                })
+            .toList();
+    return new Dtos.SupplierInvoiceResponse(
+        inv.id(),
+        inv.poId(),
+        inv.supplierId(),
+        inv.invoiceNumber(),
+        inv.invoiceDate(),
+        inv.currency(),
+        inv.netAmount(),
+        inv.vatAmount(),
+        inv.grossAmount(),
+        inv.status(),
+        inv.createdBy(),
+        inv.createdAt(),
+        rows);
+  }
+
   public static Dtos.PurchaseOrderApprovalResponse toDto(Domain.PurchaseOrderApproval a) {
     return new Dtos.PurchaseOrderApprovalResponse(
         a.id(),
