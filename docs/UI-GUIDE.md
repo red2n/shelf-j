@@ -146,7 +146,7 @@ Left-hand navigation: **Dashboard · Catalog · Inventory · Stores · Orders ·
 | Tab | What the user does |
 |---|---|
 | **Price Lists** | Create a list scoped to a channel (All / Online / POS); open a list to add per-variant items (price + minimum quantity). |
-| **Promotions** | Create a promotion: name, type (% or flat off), value, channel scope, optional minimum order amount, start date and optional end date. Applies to all products by default. |
+| **Promotions** | Create a promotion across all six types the engine understands: % or amount off each item, % or amount off the basket, spend-and-save, and buy-X-get-Y. Plus a coupon code (blank means it applies on its own), a priority (lower runs first — which of two overlapping offers wins is now a decision rather than an accident), total and per-customer usage caps, and a "cannot be combined" switch that suppresses every promotion after it. The BOGO fields appear only for a BOGO, and the value field disappears there, because a BOGO is described by its three quantities and a number in a value box would mean nothing. The list shows each promotion's own summary — "Buy 2, get 1 free", "£5 off over £100" — with its code, and flags an exclusive one inline because it changes what every other promotion does. Applies to all products by default. |
 | **VAT Rates** | Create/edit tax rates: code, name, percentage, and an "Exempt" flag. |
 
 ### 4.7 Reports

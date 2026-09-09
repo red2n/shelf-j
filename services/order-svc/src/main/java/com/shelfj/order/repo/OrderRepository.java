@@ -47,6 +47,19 @@ public class OrderRepository extends BaseOutboxRepository {
    */
   public Order createOrder(
       Order order, List<OrderItem> items, OutboxRow event, OrderDiscount discount) {
+    return createOrder(order, items, event, discount, List.of());
+  }
+
+  /**
+   * @param appliedPromotions what the promotion engine took off, written in the same transaction as
+   *     the order so a receipt can never print a discount the order does not carry
+   */
+  public Order createOrder(
+      Order order,
+      List<OrderItem> items,
+      OutboxRow event,
+      OrderDiscount discount,
+      List<com.shelfj.order.client.PricingClient.AppliedPromotion> appliedPromotions) {
     return inTx(
         c -> {
           try (PreparedStatement ps =
@@ -56,8 +69,8 @@ public class OrderRepository extends BaseOutboxRepository {
                       + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
                       + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
                       + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone,"
-                      + "  payment_method)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  payment_method,promotion_discount)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, order.id());
             ps.setObject(2, order.tenantId());
             ps.setObject(3, order.storeId());
@@ -82,6 +95,11 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setString(22, order.deliveryRecipientPhone());
             ps.setString(23, order.contactPhone());
             ps.setString(24, order.paymentMethod());
+            ps.setBigDecimal(
+                25,
+                order.promotionDiscount() == null
+                    ? java.math.BigDecimal.ZERO
+                    : order.promotionDiscount());
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -97,6 +115,7 @@ public class OrderRepository extends BaseOutboxRepository {
           appendStatusHistory(
               c, order.tenantId(), order.id(), null, order.status(), "created", null);
           if (discount != null) insertOrderDiscount(c, discount);
+          insertOrderPromotionsTx(c, order.tenantId(), order.id(), appliedPromotions);
           insertOutbox(c, event);
           return order;
         },
@@ -130,7 +149,7 @@ public class OrderRepository extends BaseOutboxRepository {
   public Optional<Order> findOrderByIdempotencyKey(UUID tenantId, String idempotencyKey) {
     return query(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
-                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
@@ -159,7 +178,7 @@ public class OrderRepository extends BaseOutboxRepository {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
-                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
@@ -198,7 +217,7 @@ public class OrderRepository extends BaseOutboxRepository {
     var list =
         query(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
-                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
@@ -921,7 +940,7 @@ public class OrderRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
-                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
@@ -1082,7 +1101,58 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getString("delivery_recipient_name"),
         rs.getString("delivery_recipient_phone"),
         rs.getString("contact_phone"),
-        rs.getString("payment_method"));
+        rs.getString("payment_method"),
+        rs.getBigDecimal("promotion_discount"));
+  }
+
+  /**
+   * Records which promotions applied to an order and for how much.
+   *
+   * <p>Append-only, and written in the same transaction as the order it belongs to, so a receipt
+   * can never print a discount the order does not carry.
+   */
+  void insertOrderPromotionsTx(
+      java.sql.Connection c,
+      UUID tenantId,
+      UUID orderId,
+      List<com.shelfj.order.client.PricingClient.AppliedPromotion> applied)
+      throws SQLException {
+    if (applied.isEmpty()) return;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO order_promotions"
+                + " (tenant_id, order_id, promotion_id, promotion_name, variant_id, amount)"
+                + " VALUES (?,?,?,?,?,?)")) {
+      for (var a : applied) {
+        ps.setObject(1, tenantId);
+        ps.setObject(2, orderId);
+        ps.setObject(3, a.promotionId());
+        ps.setString(4, a.name());
+        ps.setObject(5, a.variantId());
+        ps.setBigDecimal(6, a.amount());
+        ps.addBatch();
+      }
+      ps.executeBatch();
+    }
+  }
+
+  /** What the promotion engine took off one order, for a receipt or a refund decision. */
+  public List<com.shelfj.order.client.PricingClient.AppliedPromotion> findOrderPromotions(
+      UUID tenantId, UUID orderId) {
+    return query(
+        "SELECT promotion_id, promotion_name, variant_id, amount FROM order_promotions"
+            + " WHERE tenant_id = ? AND order_id = ? ORDER BY created_at, promotion_name",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, orderId);
+        },
+        rs ->
+            new com.shelfj.order.client.PricingClient.AppliedPromotion(
+                rs.getObject("promotion_id", UUID.class),
+                rs.getString("promotion_name"),
+                rs.getObject("variant_id", UUID.class),
+                rs.getBigDecimal("amount")),
+        "find order promotions");
   }
 
   private OrderItem mapOrderItem(ResultSet rs) throws SQLException {

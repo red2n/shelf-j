@@ -253,6 +253,7 @@ public class OrderService {
     // unitPrice is ignored. When off (local dev / unseeded rigs), the client price is trusted.
     // One batched call resolves every line instead of one cross-service HTTP call per line.
     List<com.shelfj.order.client.PricingClient.ResolvedLine> resolvedLines = null;
+    com.shelfj.order.client.PricingClient.QuotedBasket quoted = null;
     if (enforcePricing) {
       var lineRequests =
           new ArrayList<com.shelfj.order.client.PricingClient.LineRequest>(variantIds.size());
@@ -261,7 +262,13 @@ public class OrderService {
             new com.shelfj.order.client.PricingClient.LineRequest(
                 variantIds.get(i), req.items().get(i).qty()));
       }
-      resolvedLines = pricing.resolveLines(tenantId, lineRequests, storeId, req.channel());
+      // The whole basket in one call, so the promotion engine can see rules that need the order
+      // total — a spend threshold, a basket percentage, a buy-one-get-one. resolveLines priced
+      // each line independently and gave those nothing to be about.
+      quoted =
+          pricing.quoteBasket(
+              tenantId, lineRequests, storeId, req.channel(), customerId, req.couponCodes());
+      resolvedLines = quoted.lines();
     }
 
     for (int i = 0; i < req.items().size(); i++) {
@@ -335,7 +342,16 @@ public class OrderService {
 
     OrderDiscount discountAudit =
         disc.signum() == 0 ? null : authorizeDiscount(ctx, orderId, storeId, subtotal, disc, req);
-    BigDecimal total = subtotal.add(tax).subtract(disc);
+
+    // The promotion engine's whole-basket reduction. Line-level promotions are already inside the
+    // resolved unit prices and therefore inside subtotal; this is the part that belongs to no
+    // line. It is deliberately NOT added to disc: that column is the staff discount, and the role
+    // ceiling authorizeDiscount enforces must not be spent by an automatic offer.
+    BigDecimal promoDiscount =
+        quoted == null
+            ? BigDecimal.ZERO
+            : quoted.basketDiscount().min(subtotal.subtract(disc).max(BigDecimal.ZERO));
+    BigDecimal total = subtotal.add(tax).subtract(disc).subtract(promoDiscount);
 
     boolean taxExempt = req.taxExempt() != null && req.taxExempt();
     Order order =
@@ -365,14 +381,26 @@ public class OrderService {
             delivery ? req.deliveryRecipientName() : null,
             delivery ? req.deliveryRecipientPhone() : null,
             req.contactPhone(),
-            paymentMethod);
+            paymentMethod,
+            promoDiscount);
 
     try {
-      return repo.createOrder(
-          order,
-          items,
-          Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId),
-          discountAudit);
+      Order placed =
+          repo.createOrder(
+              order,
+              items,
+              Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId),
+              discountAudit,
+              quoted == null ? List.of() : quoted.applied());
+      // Spending the coupon is deliberately the last thing, and deliberately outside the order's
+      // transaction. A basket is quoted on every change and must not burn a redemption by being
+      // looked at; only a placed order spends one. If this call fails the order still stands — a
+      // customer who has paid must not lose their order because a usage counter could not be
+      // written — and the redemption is idempotent on the order, so a retry costs nothing.
+      if (quoted != null && !quoted.applied().isEmpty()) {
+        pricing.recordRedemptionsQuietly(tenantId, orderId, customerId, quoted.applied(), currency);
+      }
+      return placed;
     } catch (ApiException e) {
       // Idempotent replay: a retried checkout with the same key gets the original order back
       // instead of an error (golden rule #11). The stock holds are NOT released here — the

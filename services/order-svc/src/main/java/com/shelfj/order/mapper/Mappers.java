@@ -61,6 +61,7 @@ public final class Mappers {
         o.subtotal(),
         o.taxAmount(),
         o.discountAmount(),
+        o.promotionDiscount() == null ? java.math.BigDecimal.ZERO : o.promotionDiscount(),
         o.total(),
         o.currency(),
         o.notes(),

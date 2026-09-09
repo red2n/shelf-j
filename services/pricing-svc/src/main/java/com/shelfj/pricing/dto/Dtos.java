@@ -351,6 +351,27 @@ public final class Dtos {
                       + " typed a code is owed an answer.")
           Map<String, String> rejectedCoupons) {}
 
+  @Schema(
+      name = "RecordRedemptionsRequest",
+      description =
+          "Tells pricing-svc an order used these promotions, so their usage caps are spent."
+              + " Idempotent on the order.")
+  public record RecordRedemptionsRequest(
+      @Schema(description = "UUID of the order the promotions were used on.") @NotBlank
+          String orderId,
+      @Schema(description = "UUID of the customer, for per-customer caps. Null for a guest.")
+          String customerId,
+      @Schema(description = "ISO 4217 currency the amounts are in.") String currency,
+      @NotEmpty List<AppliedPromotionResponse> appliedPromotions) {}
+
+  @Schema(name = "RecordRedemptionsResponse")
+  public record RecordRedemptionsResponse(
+      @Schema(
+              description =
+                  "How many redemptions this call actually recorded. Zero means every one had"
+                      + " already been recorded — a replay, not a failure.")
+          int recorded) {}
+
   @Schema(name = "PromotionItemResponse")
   public record PromotionItemResponse(
       UUID id, UUID tenantId, UUID promotionId, String scopeType, UUID scopeId, String createdAt) {}

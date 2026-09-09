@@ -371,13 +371,22 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `POST /price-lists/{id}/items/batch` — set many variants' prices in one call (partial-failure tolerant).
 - `GET /price-lists/{id}/items` — list a price list's items.
 - `POST /admin/price-overrides`, `GET /admin/price-overrides` — log/list staff-approved ad-hoc POS price overrides (an append-only audit trail, not a mutable price).
-- `POST /prices/resolve` — compute the effective price + VAT breakdown for a variant/channel/quantity.
-- `POST /prices/resolve-batch` — resolve prices for every line of an order in a single call.
+- `POST /prices/resolve` — compute the effective price + VAT breakdown for one variant/channel/quantity. Applies **line-level** promotions only: basket rules are excluded deliberately, because this answers "what does this item cost" for a product page and quoting a spend-threshold price against one item advertises a total the shopper will not be charged.
+- `POST /prices/resolve-batch` — resolve prices for several lines in one call. Each line is still priced **independently**, so no basket rule can apply; use `/prices/quote` at checkout.
+- `POST /prices/quote` — **price a whole basket.** Resolves every line, then runs the promotion engine over the basket as a unit, returning per-line net prices, the whole-basket discount, every promotion that applied, and the VAT computed after discounts (the basket discount is apportioned across lines by value first, so it is not VAT-free money). Takes `couponCodes`; any that do not apply come back in `rejectedCoupons` with a reason — `NO_SUCH_COUPON`, `NOT_APPLICABLE`, `COUPON_EXHAUSTED` or `COUPON_LIMIT_REACHED` — rather than being silently ignored. **Quoting never spends a coupon**: a basket is quoted on every change a shopper makes, so redemption is a separate call.
+- `POST /prices/redemptions` — record that an order used these promotions, spending their usage caps. Idempotent on `(tenant, promotion, order)`, so a retried checkout or a replayed offline sale cannot burn a second use; `recorded: 0` is a successful replay, not a failure.
 
 ### Promotions (`/promotions`)
-- `POST /promotions` — create a time-bounded promotion (percent or flat discount, scoped to all products, a variant, or a category).
+- `POST /promotions` — create a time-bounded promotion. Six types: `PERCENT` and `FLAT` (per line), `BASKET_PERCENT` and `BASKET_FLAT` (whole basket), `SPEND_THRESHOLD` (a flat amount once the basket clears `minOrderAmount`), and `BOGO` (`buyQty` / `getQty` / `getDiscountPct`, where 100 = free). Also takes `priority` (ascending, lower runs first), `exclusive` (stops every promotion after it), `couponCode` (unique per tenant, matched case-insensitively), and the `maxRedemptions` / `maxPerCustomer` caps.
 - `GET /promotions` — list active promotions (also powers the public storefront offers banner).
-- `POST /promotions/{id}/items` — add a targeted item to a promotion.
+- `POST /promotions/{id}/items` — scope a promotion to `ALL` or to a `VARIANT`. **`CATEGORY` is refused** with `PRICING_CATEGORY_SCOPE_UNSUPPORTED`: pricing-svc has no variant→category mapping because product-svc publishes no catalogue event, and such a promotion was previously accepted, stored, and silently never applied.
+
+**Business rules**
+- **Ordering is explicit.** Line-level promotions run first in `priority` order against each line's original price, then basket-level ones against the subtotal that remains. Two line-level percentages therefore compound on the original price — two 10% offers take 20%, not 19%.
+- Nothing can drive a line or a basket below zero, and the clamp is **per line**, so an oversized flat discount on a cheap item cannot eat into another line's value.
+- A `BOGO` counts across every line it is scoped to, not within one line — three different shirts on a buy-2-get-1 is the common case a per-line implementation gets wrong — and discounts the **cheapest** qualifying units.
+- `minOrderAmount` is tested against the basket **after** line-level discounts. A basket that only clears £100 before a half-price offer has not spent £100.
+- Four defects were fixed in this rebuild, all of which failed silently: `minOrderAmount` was never read, `CATEGORY` scope never matched, `store_id` was never filtered (so a store promotion ran everywhere), and the winner was chosen by `ORDER BY value DESC`, which compared a percentage against a sum of money.
 
 ### VAT & Tax Compliance
 - `POST /customer-vat-status`, `GET /customer-vat-status/{customerId}` — upsert/look up a B2B customer's VAT registration & reverse-charge status.

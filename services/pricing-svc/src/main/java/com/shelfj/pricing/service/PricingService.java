@@ -491,8 +491,6 @@ public class PricingService {
     BigDecimal totalDiscount = outcome.totalDiscount();
     BigDecimal total = subtotal.subtract(totalDiscount).add(vatTotal);
 
-    Map<UUID, Promotion> byId =
-        candidates.stream().collect(java.util.stream.Collectors.toMap(Promotion::id, x -> x));
     List<AppliedPromotionResponse> appliedResponses = new java.util.ArrayList<>();
     for (var d :
         java.util.stream.Stream.concat(

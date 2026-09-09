@@ -37,7 +37,14 @@ public final class Domain {
       String deliveryRecipientName,
       String deliveryRecipientPhone,
       String contactPhone,
-      String paymentMethod) {
+      String paymentMethod,
+      /**
+       * What the promotion engine took off this order, kept apart from {@code discountAmount}. That
+       * one is the staff discount — a named person, a required reason, a role ceiling and an audit
+       * row (SJ-D6). This one is automatic and answers to a rule. Summing them would put
+       * promotional money inside the role-ceiling check.
+       */
+      BigDecimal promotionDiscount) {
     public static final String CHANNEL_ONLINE = "ONLINE";
     public static final String CHANNEL_POS = "POS";
     public static final String FULFILMENT_PICKUP = "PICKUP";

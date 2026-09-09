@@ -1,6 +1,8 @@
 package com.shelfj.pricing.api;
 
 import com.shelfj.pricing.dto.Dtos.QuoteBasketRequest;
+import com.shelfj.pricing.dto.Dtos.RecordRedemptionsRequest;
+import com.shelfj.pricing.dto.Dtos.RecordRedemptionsResponse;
 import com.shelfj.pricing.dto.Dtos.ResolvePriceBatchRequest;
 import com.shelfj.pricing.dto.Dtos.ResolvePriceBatchResponse;
 import com.shelfj.pricing.dto.Dtos.ResolvePriceRequest;
@@ -86,6 +88,33 @@ public class PriceResolveResource {
     Validations.validate(req);
     return Response.ok(
             ApiResponse.ok(svc.quoteBasket(req, ctx), ApiResponse.Meta.of(ctx.requestId())))
+        .build();
+  }
+
+  @Operation(
+      summary = "Record that an order used these promotions",
+      description =
+          "Spends the usage caps on the promotions an order actually applied. Separate from"
+              + " quoting on purpose: a basket is quoted on every change a shopper makes, and a"
+              + " coupon must not be spent by being looked at — only a placed order spends one."
+              + " Idempotent on (tenant, promotion, order), so a retried checkout or a replayed"
+              + " offline sale cannot burn a second use. recorded=0 means every redemption was"
+              + " already on file, which is a successful replay rather than a failure.")
+  @APIResponse(responseCode = "200", description = "How many redemptions were newly recorded")
+  @POST
+  @Path("/redemptions")
+  public Response recordRedemptions(RecordRedemptionsRequest req) {
+    Validations.validate(req);
+    int recorded =
+        svc.recordRedemptions(
+            ctx,
+            com.shelfj.web.Parsing.uuid(req.orderId(), "orderId"),
+            com.shelfj.web.Parsing.optionalUuid(req.customerId(), "customerId"),
+            req.appliedPromotions(),
+            req.currency() == null ? "GBP" : req.currency());
+    return Response.ok(
+            ApiResponse.ok(
+                new RecordRedemptionsResponse(recorded), ApiResponse.Meta.of(ctx.requestId())))
         .build();
   }
 }

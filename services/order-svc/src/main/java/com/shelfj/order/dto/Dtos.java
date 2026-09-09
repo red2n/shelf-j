@@ -58,6 +58,11 @@ public final class Dtos {
                   "ISO 4217 currency code. Defaults to the tenant's own currency; a value that contradicts it is rejected with ORDER_CURRENCY_MISMATCH.")
           String currency,
       String notes,
+      @Schema(
+              description =
+                  "Coupon codes the customer presented, matched case-insensitively. Codes that do"
+                      + " not apply are reported by pricing-svc and do not fail the order.")
+          List<String> couponCodes,
       @Schema(description = "Legacy fallback for the Idempotency-Key header.")
           String idempotencyKey,
       Boolean taxExempt,
@@ -96,7 +101,18 @@ public final class Dtos {
       @Schema(description = "PENDING, CONFIRMED, FULFILLED, CANCELLED, or VOIDED.") String status,
       BigDecimal subtotal,
       BigDecimal taxAmount,
-      BigDecimal discountAmount,
+      @Schema(
+              description =
+                  "The staff discount: a deliberate act by a named person, with a reason and a"
+                      + " role ceiling. Automatic promotional money is promotionDiscount, kept"
+                      + " apart so an offer cannot spend a cashier's authority.")
+          BigDecimal discountAmount,
+      @Schema(
+              description =
+                  "What the promotion engine took off the basket as a whole. Line-level"
+                      + " promotions are already inside the line prices and therefore inside"
+                      + " subtotal.")
+          BigDecimal promotionDiscount,
       BigDecimal total,
       String currency,
       String notes,
