@@ -258,13 +258,18 @@ public class PaymentIntentService {
           400, "PAYMENT_WEBHOOK_INVALID", "webhook signature did not verify", List.of(), e);
     }
 
-    if (!repo.markWebhookSeenIfNew(provider.name(), event.providerEventId(), event.type())) {
+    // Seen before? Skip. This is an optimisation, not the correctness mechanism — see the note on
+    // recording it below.
+    if (repo.hasSeenWebhook(provider.name(), event.providerEventId())) {
       return; // Already applied. Redelivery is normal, not an error.
     }
 
     PaymentIntent intent =
         repo.findByProviderRefAcrossTenants(provider.name(), event.providerRef());
     if (intent == null || intent.isTerminal()) {
+      // Nothing to apply, but still record it: an event about an intent this service does not know
+      // about, or one already finished, would otherwise be reprocessed on every redelivery forever.
+      repo.markWebhookSeenIfNew(provider.name(), event.providerEventId(), event.type());
       return;
     }
 
@@ -289,10 +294,27 @@ public class PaymentIntentService {
               event.failureCode(),
               event.failureMessage());
       default -> {
-        // A status this service does not model. The dedupe row is already written, so the provider
-        // will not redeliver; nothing to apply.
+        // A status this service does not model. Nothing to apply, but it is still recorded below so
+        // the provider stops redelivering it.
       }
     }
+
+    // Recorded LAST, and that ordering is the whole point.
+    //
+    // It used to be written first, in its own transaction, before the effect was applied. A failure
+    // in writeCapture then left the dedupe row committed and the capture never made: the provider's
+    // redelivery — the one mechanism designed to recover exactly this — was swallowed as
+    // "already applied", and the money was captured at Stripe and recorded nowhere. Silently, and
+    // permanently.
+    //
+    // Recording it afterwards is safe because every branch above is idempotent, which golden rule
+    // #7
+    // requires of consumers anyway: captureGuarded locks the intent and returns the existing tender
+    // rather than writing a second, markTerminal is guarded on its source state, and markAuthorized
+    // is an assignment. So the failure mode this ordering creates — a crash between the effect and
+    // this line, or two concurrent deliveries both passing the check above — is a replay that
+    // reaches the same state. The failure mode the old ordering created was lost money.
+    repo.markWebhookSeenIfNew(provider.name(), event.providerEventId(), event.type());
   }
 
   /**
