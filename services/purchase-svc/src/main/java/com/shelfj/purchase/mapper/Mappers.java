@@ -1,5 +1,6 @@
 package com.shelfj.purchase.mapper;
 
+import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.GoodsReceipt;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
 import com.shelfj.purchase.domain.Domain.IntercompanyInvoice;
@@ -11,6 +12,7 @@ import com.shelfj.purchase.dto.Dtos.GoodsReceiptLineResponse;
 import com.shelfj.purchase.dto.Dtos.GoodsReceiptResponse;
 import com.shelfj.purchase.dto.Dtos.IntercompanyInvoiceResponse;
 import com.shelfj.purchase.dto.Dtos.NominalLedgerEntryResponse;
+import com.shelfj.purchase.dto.Dtos.PurchaseOrderLineProgressResponse;
 import com.shelfj.purchase.dto.Dtos.PurchaseOrderLineResponse;
 import com.shelfj.purchase.dto.Dtos.PurchaseOrderResponse;
 import com.shelfj.purchase.dto.Dtos.SupplierResponse;
@@ -50,7 +52,9 @@ public final class Mappers {
         po.createdAt(),
         po.updatedAt(),
         po.cancelledAt(),
-        po.cancelledReason());
+        po.cancelledReason(),
+        po.closedAt(),
+        po.closedReason());
   }
 
   public static PurchaseOrderLineResponse toDto(PurchaseOrderLine line) {
@@ -110,5 +114,10 @@ public final class Mappers {
         e.description(),
         e.sourceRef(),
         e.createdAt());
+  }
+
+  public static PurchaseOrderLineProgressResponse toDto(Domain.PurchaseOrderLineProgress p) {
+    return new PurchaseOrderLineProgressResponse(
+        p.variantId(), p.qtyOrdered(), p.qtyReceived(), p.qtyOutstanding());
   }
 }

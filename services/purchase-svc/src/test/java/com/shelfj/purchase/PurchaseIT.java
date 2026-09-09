@@ -3,6 +3,7 @@ package com.shelfj.purchase;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -189,6 +190,185 @@ class PurchaseIT {
     Response poGet = get("/purchase-orders/" + poId, T);
     assertThat(poGet.getStatus(), is(200));
     assertThat(poGet.readEntity(String.class), containsString("RECEIVED"));
+  }
+
+  // ── Partial receipt (horizon 2 item 5) ───────────────────────────────────────
+
+  /** A submitted PO with one line for {@code qty}, ready to receive against. */
+  private String submittedPo(String supplierName, int qty) {
+    Response sup =
+        post("/suppliers", "{\"name\":\"" + supplierName + "\",\"currency\":\"GBP\"}", T);
+    assertThat(sup.getStatus(), is(201));
+    String supId = extractId(sup.readEntity(String.class));
+    Response po =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\","
+                + "\"currency\":\"GBP\"}",
+            T);
+    assertThat(po.getStatus(), is(201));
+    String poId = extractId(po.readEntity(String.class));
+    assertThat(
+        post(
+                "/purchase-orders/" + poId + "/lines",
+                "{\"variantId\":\""
+                    + VARIANT
+                    + "\",\"qty\":"
+                    + qty
+                    + ",\"unitPrice\":10.00,\"vatCode\":\"T1\"}",
+                T)
+            .getStatus(),
+        is(201));
+    assertThat(post("/purchase-orders/" + poId + "/submit", "{}", T).getStatus(), is(200));
+    return poId;
+  }
+
+  private Response receive(String poId, String qty) {
+    return post(
+        "/goods-receipts",
+        "{\"poId\":\""
+            + poId
+            + "\",\"storeId\":\""
+            + STORE_A
+            + "\","
+            + "\"lines\":[{\"variantId\":\""
+            + VARIANT
+            + "\",\"qtyReceived\":"
+            + qty
+            + "}]}",
+        T);
+  }
+
+  private String status(String poId) {
+    return get("/purchase-orders/" + poId, T).readEntity(String.class);
+  }
+
+  /**
+   * The defect, and the half of it that was worse. A receipt used to set the order RECEIVED with no
+   * reference to quantity — so 6 of 10 closed it, and the second delivery of the remaining 4 was
+   * then refused because the order was no longer SUBMITTED. A split delivery stranded its own
+   * balance with no purchase order left to receive it against.
+   */
+  @Test
+  void aSplitDeliveryIsReceivedInPartsAndClosesOnlyWhenComplete() {
+    String poId = submittedPo("Split Delivery Ltd", 10);
+
+    assertThat(receive(poId, "6").getStatus(), is(201));
+    assertThat(status(poId), containsString("PARTIALLY_RECEIVED"));
+
+    // The balance. This is the call that used to fail.
+    assertThat(receive(poId, "4").getStatus(), is(201));
+    String body = status(poId);
+    assertThat(body, containsString("\"status\":\"RECEIVED\""));
+    assertThat(body, not(containsString("PARTIALLY_RECEIVED")));
+  }
+
+  /** The status alone does not say what is missing; the progress view does. */
+  @Test
+  void progressReportsWhatIsStillOutstanding() {
+    String poId = submittedPo("Progress Ltd", 10);
+    assertThat(receive(poId, "6").getStatus(), is(201));
+
+    String body = get("/purchase-orders/" + poId + "/progress", T).readEntity(String.class);
+    assertThat(body, containsString("\"qtyOrdered\":10.000"));
+    assertThat(body, containsString("\"qtyReceived\":6.000"));
+    assertThat(body, containsString("\"qtyOutstanding\":4.000"));
+  }
+
+  /**
+   * Accepting more than was ordered would book stock nobody asked for against an order that cannot
+   * account for it, and a mistyped 60 for 6 would do it silently.
+   */
+  @Test
+  void overReceiptIsRefused() {
+    String poId = submittedPo("Over Delivery Ltd", 10);
+    Response r = receive(poId, "11");
+    assertThat(r.getStatus(), is(422));
+    assertThat(r.readEntity(String.class), containsString("PURCHASE_OVER_RECEIPT"));
+    // And it is refused as a whole: the order is untouched, not left half-updated.
+    assertThat(status(poId), containsString("SUBMITTED"));
+  }
+
+  /** Over-receipt across two deliveries is the same fault, and the second one is where it shows. */
+  @Test
+  void overReceiptIsRefusedCumulativelyNotOnlyPerDelivery() {
+    String poId = submittedPo("Cumulative Ltd", 10);
+    assertThat(receive(poId, "6").getStatus(), is(201));
+    Response second = receive(poId, "6"); // 12 against an order of 10
+    assertThat(second.getStatus(), is(422));
+    assertThat(second.readEntity(String.class), containsString("PURCHASE_OVER_RECEIPT"));
+    // The first delivery still stands.
+    assertThat(status(poId), containsString("PARTIALLY_RECEIVED"));
+  }
+
+  /**
+   * Without a short close, a partially received order the supplier never completes sits in
+   * PARTIALLY_RECEIVED for good — the same dead end SJ-D3 fixed for DRAFT and SUBMITTED.
+   */
+  @Test
+  void aPartiallyReceivedOrderCanBeShortClosed() {
+    String poId = submittedPo("Short Close Ltd", 10);
+    assertThat(receive(poId, "6").getStatus(), is(201));
+
+    Response closed =
+        post("/purchase-orders/" + poId + "/close", "{\"reason\":\"supplier discontinued\"}", T);
+    assertThat(closed.getStatus(), is(200));
+    String body = closed.readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"CLOSED\""));
+    assertThat(body, containsString("supplier discontinued"));
+
+    // A closed order is no longer receivable — the balance was abandoned deliberately.
+    assertThat(receive(poId, "4").getStatus(), is(400));
+  }
+
+  /** CLOSED is for a partly delivered order. The other two states have their own answers. */
+  @Test
+  void onlyAPartiallyReceivedOrderCanBeShortClosed() {
+    String submitted = submittedPo("Nothing Yet Ltd", 10);
+    Response r = post("/purchase-orders/" + submitted + "/close", "{\"reason\":\"n/a\"}", T);
+    assertThat(r.getStatus(), is(409));
+    assertThat(r.readEntity(String.class), containsString("PURCHASE_PO_NOT_CLOSEABLE"));
+
+    String full = submittedPo("All Arrived Ltd", 10);
+    assertThat(receive(full, "10").getStatus(), is(201));
+    assertThat(
+        post("/purchase-orders/" + full + "/close", "{\"reason\":\"n/a\"}", T).getStatus(),
+        is(409));
+  }
+
+  /** A replayed receipt must not count its quantity twice — the SJ-D15 question, asked here. */
+  @Test
+  void aReplayedReceiptDoesNotCountTwice() {
+    String poId = submittedPo("Replay Ltd", 10);
+    String key = "grn-replay-" + java.util.UUID.randomUUID();
+    for (int i = 0; i < 3; i++) {
+      Response r =
+          target
+              .path("/goods-receipts")
+              .request()
+              .header("X-Tenant-Id", T)
+              .header("X-Roles", "OWNER")
+              .header("Idempotency-Key", key)
+              .post(
+                  Entity.entity(
+                      "{\"poId\":\""
+                          + poId
+                          + "\",\"storeId\":\""
+                          + STORE_A
+                          + "\","
+                          + "\"lines\":[{\"variantId\":\""
+                          + VARIANT
+                          + "\",\"qtyReceived\":6}]}",
+                      MediaType.APPLICATION_JSON));
+      assertThat(r.getStatus(), is(201));
+    }
+    String body = get("/purchase-orders/" + poId + "/progress", T).readEntity(String.class);
+    assertThat(body, containsString("\"qtyReceived\":6.000"));
+    assertThat(body, containsString("\"qtyOutstanding\":4.000"));
   }
 
   // ── Gap #20 Test 3: Intercompany invoicing + FRS 102 nominal ledger ───────────

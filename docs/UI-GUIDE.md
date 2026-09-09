@@ -138,7 +138,7 @@ Left-hand navigation: **Dashboard · Catalog · Inventory · Stores · Orders ·
 
 | Tab | What the user does |
 |---|---|
-| **Purchase Orders** | List with status. **Create PO**: supplier, currency, expected delivery date. **PO detail**: add lines (variant, quantity, cost, tax rate) with a running gross total; **Submit**; then **Receive goods** — confirm actual received quantities per line once the delivery arrives (updating stock immediately). |
+| **Purchase Orders** | List with status. **Create PO**: supplier, currency, expected delivery date. **PO detail**: add lines (variant, quantity, cost, tax rate) with a running gross total; **Submit**; then **Receive goods** — confirm actual received quantities per line once the delivery arrives (updating stock immediately). **Split deliveries are shown line by line**: each line carries what is still outstanding, in amber, so a buyer chasing a supplier can see *what* is missing rather than only that something is — which is all a `PARTIALLY_RECEIVED` badge says. The receive button reads "Receive balance" once part has arrived, and appears only while the order is actually receivable; it used to offer itself on cancelled and already-received orders, where it could only ever produce an error. **Close short** abandons an undelivered balance with a required reason, for the order a supplier is never going to complete. |
 | **Suppliers** | List of suppliers. **Add supplier**: name, country, currency, "VAT registered" checkbox. |
 
 ### 4.6 Pricing (3 tabs)

@@ -97,6 +97,45 @@ public class PurchaseOrderResource {
   }
 
   @Operation(
+      summary = "What is still outstanding on a purchase order",
+      description =
+          "Ordered against received, line by line, with the balance still due. This is what a"
+              + " PARTIALLY_RECEIVED status does not tell you: a buyer chasing a supplier needs to"
+              + " know *what* is missing. Receipts are matched to order lines by variant rather"
+              + " than by line id, because a delivery note names products, not order rows.")
+  @APIResponse(responseCode = "200", description = "One row per ordered variant")
+  @APIResponse(responseCode = "404", description = "Purchase order not found")
+  @GET
+  @Path("/{id}/progress")
+  public Response progress(@PathParam("id") UUID id) {
+    return Response.ok(
+            ApiResponse.ok(
+                svc.purchaseOrderProgress(ctx, id).stream().map(Mappers::toDto).toList()))
+        .build();
+  }
+
+  @Operation(
+      summary = "Short-close a partially received purchase order",
+      description =
+          "Marks a partly delivered order CLOSED: the balance is never arriving and we have stopped"
+              + " waiting. Requires a reason. Only a PARTIALLY_RECEIVED order can be short-closed —"
+              + " one with nothing delivered is a cancellation, and one fully delivered is already"
+              + " RECEIVED. CLOSED is deliberately not RECEIVED, because 'we got it all' and 'we"
+              + " gave up on the rest' are different facts and a supplier scorecard that cannot"
+              + " tell them apart is worthless.")
+  @APIResponse(responseCode = "200", description = "Purchase order short-closed")
+  @APIResponse(responseCode = "400", description = "Reason missing or blank")
+  @APIResponse(responseCode = "404", description = "Purchase order not found")
+  @APIResponse(responseCode = "409", description = "Order is not PARTIALLY_RECEIVED")
+  @POST
+  @Path("/{id}/close")
+  public Response close(@PathParam("id") UUID id, CancelPurchaseOrderRequest req) {
+    Validations.validate(req);
+    return Response.ok(ApiResponse.ok(Mappers.toDto(svc.closePurchaseOrderShort(ctx, id, req))))
+        .build();
+  }
+
+  @Operation(
       summary = "Add a line to a purchase order",
       description = "Lines can only be added while the purchase order is DRAFT.")
   @APIResponse(responseCode = "201", description = "Line added")

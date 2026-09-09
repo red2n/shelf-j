@@ -43,7 +43,20 @@ public final class Domain {
   // ── Purchase Order ────────────────────────────────────────────────────────────
   public static final String PO_DRAFT = "DRAFT";
   public static final String PO_SUBMITTED = "SUBMITTED";
+
+  /** Some of the order has arrived and more is still expected. Receivable, like SUBMITTED. */
+  public static final String PO_PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED";
+
   public static final String PO_RECEIVED = "RECEIVED";
+
+  /**
+   * Short-closed: part arrived, the rest never will. Distinct from {@link #PO_RECEIVED} because "we
+   * got it all" and "we gave up on the rest" are different facts, and a supplier scorecard that
+   * cannot tell them apart is worthless. Distinct from {@link #PO_CANCELLED} because stock is
+   * booked against this order — SJ-D3's reason for refusing to cancel a received one.
+   */
+  public static final String PO_CLOSED = "CLOSED";
+
   public static final String PO_CANCELLED = "CANCELLED";
 
   public record PurchaseOrder(
@@ -60,7 +73,25 @@ public final class Domain {
       Instant createdAt,
       Instant updatedAt,
       Instant cancelledAt,
-      String cancelledReason) {}
+      String cancelledReason,
+      Instant closedAt,
+      String closedReason) {}
+
+  /**
+   * How much of one ordered line has actually turned up.
+   *
+   * <p>Receipts are matched to order lines by variant rather than by line id: {@code
+   * goods_receipt_lines} has never carried a {@code po_line_id}, and a delivery note names products
+   * rather than order rows. Two lines on one order for the same variant therefore aggregate here,
+   * which is also the answer a warehouse gives when counting what arrived.
+   *
+   * @param variantId the product
+   * @param qtyOrdered what the purchase order asked for
+   * @param qtyReceived what has arrived across every receipt against this order
+   * @param qtyOutstanding ordered minus received, floored at zero
+   */
+  public record PurchaseOrderLineProgress(
+      UUID variantId, BigDecimal qtyOrdered, BigDecimal qtyReceived, BigDecimal qtyOutstanding) {}
 
   public record PurchaseOrderLine(
       UUID id,

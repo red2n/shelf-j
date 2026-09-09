@@ -80,7 +80,12 @@ public final class Dtos {
       UUID tenantId,
       UUID supplierId,
       UUID storeId,
-      @Schema(description = "DRAFT, SUBMITTED, RECEIVED or CANCELLED.") String status,
+      @Schema(
+              description =
+                  "DRAFT, SUBMITTED, PARTIALLY_RECEIVED (some arrived, more expected), RECEIVED"
+                      + " (all arrived), CLOSED (short-closed — the balance is not coming) or"
+                      + " CANCELLED (nothing was ever received).")
+          String status,
       String currency,
       BigDecimal totalNet,
       BigDecimal totalVat,
@@ -91,7 +96,26 @@ public final class Dtos {
       @Schema(description = "When the order was cancelled; null unless status is CANCELLED.")
           Instant cancelledAt,
       @Schema(description = "Why the order was cancelled; null unless status is CANCELLED.")
-          String cancelledReason) {}
+          String cancelledReason,
+      @Schema(description = "When the order was short-closed; null unless status is CLOSED.")
+          Instant closedAt,
+      @Schema(description = "Why the balance was abandoned; null unless status is CLOSED.")
+          String closedReason) {}
+
+  @Schema(
+      name = "PurchaseOrderLineProgressResponse",
+      description = "How much of one ordered line has actually turned up.")
+  public record PurchaseOrderLineProgressResponse(
+      UUID variantId,
+      @Schema(description = "What the purchase order asked for.") BigDecimal qtyOrdered,
+      @Schema(
+              description =
+                  "What has arrived across every receipt against this order. Receipts are matched"
+                      + " to order lines by variant, not by line id — a delivery note names"
+                      + " products, not order rows.")
+          BigDecimal qtyReceived,
+      @Schema(description = "Ordered minus received, floored at zero.")
+          BigDecimal qtyOutstanding) {}
 
   @Schema(name = "PurchaseOrderLineResponse")
   public record PurchaseOrderLineResponse(

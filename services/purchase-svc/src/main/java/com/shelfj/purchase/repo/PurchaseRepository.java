@@ -1,16 +1,19 @@
 package com.shelfj.purchase.repo;
 
+import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.GoodsReceipt;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
 import com.shelfj.purchase.domain.Domain.IntercompanyInvoice;
 import com.shelfj.purchase.domain.Domain.NominalLedgerEntry;
 import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
+import com.shelfj.purchase.domain.Domain.PurchaseOrderLineProgress;
 import com.shelfj.purchase.domain.Domain.Supplier;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -133,7 +136,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
   public List<PurchaseOrder> findPurchaseOrders(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
-            + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,cancelled_reason"
+            + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
+            + "cancelled_reason,closed_at,closed_reason"
             + " FROM purchase_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
@@ -147,7 +151,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
     var rows =
         query(
             "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
-                + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,cancelled_reason"
+                + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
+                + "cancelled_reason,closed_at,closed_reason"
                 + " FROM purchase_orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -222,7 +227,11 @@ public class PurchaseRepository extends BaseOutboxRepository {
         rs.getObject("cancelled_at", OffsetDateTime.class) == null
             ? null
             : rs.getObject("cancelled_at", OffsetDateTime.class).toInstant(),
-        rs.getString("cancelled_reason"));
+        rs.getString("cancelled_reason"),
+        rs.getObject("closed_at", OffsetDateTime.class) == null
+            ? null
+            : rs.getObject("closed_at", OffsetDateTime.class).toInstant(),
+        rs.getString("closed_reason"));
   }
 
   // ── PO Lines ──────────────────────────────────────────────────────────────────
@@ -269,10 +278,24 @@ public class PurchaseRepository extends BaseOutboxRepository {
   // ── Goods Receipts ────────────────────────────────────────────────────────────
 
   /**
-   * Record a goods receipt and atomically transition the PO SUBMITTED -&gt; RECEIVED. If the same
-   * Idempotency-Key was already stored for this tenant, the original receipt is returned unchanged
-   * (replay). If the PO is no longer SUBMITTED (e.g. a concurrent/duplicate receive already ran),
-   * the whole transaction is rolled back instead of double-counting received stock.
+   * Record a goods receipt and move the purchase order to whichever state the quantities imply.
+   *
+   * <p><b>The quantities are now read.</b> This used to end {@code SET status='RECEIVED' WHERE
+   * status='SUBMITTED'} with no reference to what had actually turned up, so a delivery of 6
+   * against an order of 10 closed the order — and the second delivery of the remaining 4 was then
+   * refused, because the order was no longer SUBMITTED. A split delivery stranded its own balance.
+   *
+   * <p>The comparison happens inside this transaction, against a {@code FOR UPDATE} lock on the
+   * order, so two lorries arriving at once cannot both read "4 outstanding" and both book it.
+   *
+   * <p><b>Over-receipt is refused rather than absorbed.</b> Accepting more than was ordered would
+   * book stock nobody asked for against a purchase order that cannot account for it, and a mistyped
+   * 60 for 6 would do it silently. Whether a tolerance band should be allowed is a procurement
+   * policy question — a real one, with a real answer per tenant — and inventing one here would be
+   * guessing.
+   *
+   * <p>If the same Idempotency-Key was already stored for this tenant, the original receipt is
+   * returned unchanged (replay), before any quantity is counted.
    */
   public GoodsReceipt createGoodsReceipt(
       GoodsReceipt gr, List<GoodsReceiptLine> lines, OutboxRow event) {
@@ -309,25 +332,150 @@ public class PurchaseRepository extends BaseOutboxRepository {
               ps.executeUpdate();
             }
           }
-          // Update PO status to RECEIVED — only if it's still SUBMITTED, so a duplicate/concurrent
-          // receive for the same PO is rejected atomically instead of double-counting stock.
-          int rows;
-          try (var ps =
-              c.prepareStatement(
-                  "UPDATE purchase_orders SET status='RECEIVED', updated_at=now()"
-                      + " WHERE tenant_id=? AND id=? AND status='SUBMITTED'")) {
-            ps.setObject(1, gr.tenantId());
-            ps.setObject(2, gr.poId());
-            rows = ps.executeUpdate();
+          // Lock the order first: the status decision below reads every receipt against it, and
+          // two deliveries arriving together must not both see the same outstanding quantity.
+          String status = lockPurchaseOrderStatusTx(c, gr.tenantId(), gr.poId());
+          if (status == null) {
+            throw ApiException.notFound("PURCHASE_PO_NOT_FOUND", "No such purchase order");
           }
-          if (rows == 0) {
+          if (!Domain.PO_SUBMITTED.equals(status) && !Domain.PO_PARTIALLY_RECEIVED.equals(status)) {
             throw ApiException.conflict(
-                "PURCHASE_PO_NOT_SUBMITTED", "Only SUBMITTED orders can be received");
+                "PURCHASE_PO_NOT_RECEIVABLE",
+                "a purchase order can only be received while SUBMITTED or PARTIALLY_RECEIVED —"
+                    + " this one is "
+                    + status);
           }
+
+          // Ordered against received, this receipt included. Both sides are already in the
+          // schema; nothing read them until now.
+          List<PurchaseOrderLineProgress> progress = lineProgressTx(c, gr.tenantId(), gr.poId());
+          if (progress.isEmpty()) {
+            throw ApiException.unprocessable(
+                "PURCHASE_PO_HAS_NO_LINES",
+                "a purchase order with no lines has nothing to receive against");
+          }
+          for (PurchaseOrderLineProgress p : progress) {
+            if (p.qtyReceived().compareTo(p.qtyOrdered()) > 0) {
+              throw ApiException.unprocessable(
+                  "PURCHASE_OVER_RECEIPT",
+                  "variant "
+                      + p.variantId()
+                      + ": received "
+                      + p.qtyReceived()
+                      + " against an order of "
+                      + p.qtyOrdered()
+                      + " — amend the purchase order if the extra was genuinely ordered");
+            }
+          }
+          boolean complete = progress.stream().allMatch(p -> p.qtyOutstanding().signum() == 0);
+          setPurchaseOrderStatusTx(
+              c,
+              gr.tenantId(),
+              gr.poId(),
+              complete ? Domain.PO_RECEIVED : Domain.PO_PARTIALLY_RECEIVED);
+
           insertOutbox(c, event);
           return gr;
         },
         "create goods receipt");
+  }
+
+  /** {@code SELECT ... FOR UPDATE}, so the outstanding-quantity read below is serialised. */
+  private static String lockPurchaseOrderStatusTx(java.sql.Connection c, UUID tenantId, UUID poId)
+      throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "SELECT status FROM purchase_orders WHERE tenant_id=? AND id=? FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, poId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? rs.getString("status") : null;
+      }
+    }
+  }
+
+  private static void setPurchaseOrderStatusTx(
+      java.sql.Connection c, UUID tenantId, UUID poId, String status) throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "UPDATE purchase_orders SET status=?, updated_at=now() WHERE tenant_id=? AND id=?")) {
+      ps.setString(1, status);
+      ps.setObject(2, tenantId);
+      ps.setObject(3, poId);
+      ps.executeUpdate();
+    }
+  }
+
+  /**
+   * Ordered against received per variant, for one purchase order.
+   *
+   * <p>A LEFT JOIN from the order's own lines, so a variant ordered but never delivered still
+   * appears with its full quantity outstanding — an INNER JOIN would have made "nothing arrived"
+   * indistinguishable from "nothing was ordered", and the whole point of this query is to notice
+   * what is missing.
+   */
+  private static List<PurchaseOrderLineProgress> lineProgressTx(
+      java.sql.Connection c, UUID tenantId, UUID poId) throws SQLException {
+    List<PurchaseOrderLineProgress> out = new java.util.ArrayList<>();
+    try (var ps =
+        c.prepareStatement(
+            "SELECT l.variant_id,"
+                + "       SUM(l.qty)::numeric(14,3) AS qty_ordered,"
+                + "       COALESCE((SELECT SUM(grl.qty_received) FROM goods_receipt_lines grl"
+                + "                   JOIN goods_receipts gr ON gr.id = grl.gr_id"
+                + "                  WHERE gr.tenant_id = l.tenant_id AND gr.po_id = ?"
+                + "                    AND grl.variant_id = l.variant_id), 0)::numeric(14,3)"
+                + "         AS qty_received"
+                + "  FROM purchase_order_lines l"
+                + " WHERE l.tenant_id = ? AND l.po_id = ?"
+                + " GROUP BY l.tenant_id, l.variant_id")) {
+      ps.setObject(1, poId);
+      ps.setObject(2, tenantId);
+      ps.setObject(3, poId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          BigDecimal ordered = rs.getBigDecimal("qty_ordered");
+          BigDecimal received = rs.getBigDecimal("qty_received");
+          out.add(
+              new PurchaseOrderLineProgress(
+                  rs.getObject("variant_id", UUID.class),
+                  ordered,
+                  received,
+                  ordered.subtract(received).max(BigDecimal.ZERO)));
+        }
+      }
+    }
+    return out;
+  }
+
+  /** The same progress view, for a caller asking what is still outstanding on an order. */
+  public List<PurchaseOrderLineProgress> findLineProgress(UUID tenantId, UUID poId) {
+    return inTx(c -> lineProgressTx(c, tenantId, poId), "read purchase order progress");
+  }
+
+  /**
+   * Short-closes a partially received order: the balance is never coming and we have stopped
+   * waiting.
+   *
+   * <p>Only from PARTIALLY_RECEIVED. A SUBMITTED order with nothing delivered is a cancellation
+   * (SJ-D3), and a RECEIVED one has nothing outstanding to close. Guarded in the {@code WHERE} so a
+   * close racing a final delivery cannot both win — whichever commits second finds no row.
+   */
+  public boolean closePurchaseOrderShort(UUID tenantId, UUID poId, String reason) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE purchase_orders SET status='CLOSED', closed_at=now(),"
+                      + " closed_reason=?, updated_at=now()"
+                      + " WHERE tenant_id=? AND id=? AND status='PARTIALLY_RECEIVED'")) {
+            ps.setString(1, reason);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, poId);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "close purchase order short");
   }
 
   private GoodsReceipt findGoodsReceiptByKeyTx(

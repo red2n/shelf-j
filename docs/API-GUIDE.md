@@ -476,7 +476,10 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `GET /purchase-orders`, `GET /purchase-orders/{id}` — list/get purchase orders.
 - `POST /purchase-orders/{id}/submit` — submit a draft PO.
 - `POST /purchase-orders/{id}/lines`, `GET /purchase-orders/{id}/lines` — add/list PO line items.
-- `POST /goods-receipts` — record goods received against a purchase order.
+- `POST /purchase-orders/{id}/cancel` — cancel a DRAFT or SUBMITTED order with a required reason. A RECEIVED one is refused: stock is booked against it (SJ-D3).
+- `GET /purchase-orders/{id}/progress` — **ordered against received, line by line, with the balance still due.** This is what a `PARTIALLY_RECEIVED` status does not tell you: a buyer chasing a supplier needs to know *what* is missing. Receipts are matched to order lines by variant rather than by line id, because a delivery note names products, not order rows.
+- `POST /purchase-orders/{id}/close` — short-close a `PARTIALLY_RECEIVED` order with a required reason: the balance is never arriving and we have stopped waiting. Refused on any other status — nothing delivered is a cancellation, everything delivered is already RECEIVED.
+- `POST /goods-receipts` — record goods received against a purchase order. Accepts partial deliveries.
 - `GET /goods-receipts?poId=` — list goods receipts for a PO.
 
 ### Intercompany & Ledger
@@ -487,7 +490,10 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 
 **Business rules**
 - Purchase orders run create (draft) → add lines → submit before goods can be received against them.
-- Goods receipt posting accepts an `Idempotency-Key`.
+- **The status vocabulary is `DRAFT → SUBMITTED → PARTIALLY_RECEIVED → RECEIVED`**, with `CLOSED` (short-closed, balance abandoned) and `CANCELLED` (nothing ever received) as the two terminal exits. `CLOSED` is deliberately not `RECEIVED`: "we got it all" and "we gave up on the rest" are different facts, and a supplier scorecard that cannot tell them apart is worthless.
+- **A partial delivery no longer closes the order.** A receipt is compared against what was ordered — under a `FOR UPDATE` lock on the order, so two deliveries arriving at once cannot both book the same balance — and the order lands in `PARTIALLY_RECEIVED` or `RECEIVED` accordingly. Previously the status was set to `RECEIVED` with no reference to quantity, so 6 of 10 closed the order *and the second delivery of the remaining 4 was then refused*, stranding the balance with no PO to receive it against.
+- **Over-receipt is refused** (`422 PURCHASE_OVER_RECEIPT`), cumulatively across deliveries rather than per delivery. Accepting more than was ordered would book stock nobody asked for against an order that cannot account for it, and a mistyped 60 for 6 would do it silently. Whether a tolerance band should be allowed is a per-tenant procurement policy, not something to invent.
+- Goods receipt posting accepts an `Idempotency-Key`; a replayed receipt does not count its quantity twice.
 - The nominal ledger is read-only — a FRS 102/UK GAAP-style journal view, not an editable resource.
 
 **Events**

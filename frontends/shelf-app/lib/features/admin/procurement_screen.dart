@@ -586,7 +586,16 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
       data: (pos) => pos.where((p) => p.id == poId).firstOrNull,
       orElse: () => null,
     );
-    final isDraft = (po?.status.toUpperCase() ?? 'DRAFT') == 'DRAFT';
+    final status = po?.status.toUpperCase() ?? 'DRAFT';
+    final isDraft = status == 'DRAFT';
+    // Receivable is now two states, not "anything that isn't a draft". The button used to offer
+    // itself on a CANCELLED or already-RECEIVED order, which could only ever end in a 400.
+    final isReceivable = status == 'SUBMITTED' || status == 'PARTIALLY_RECEIVED';
+    final isPartial = status == 'PARTIALLY_RECEIVED';
+    final progressAsync = isDraft
+        ? const AsyncValue<List<PurchaseOrderLineProgress>>.data([])
+        : ref.watch(purchaseOrderProgressProvider(poId));
+    final progress = progressAsync.asData?.value ?? const [];
 
     return AlertDialog(
       title: Row(
@@ -624,20 +633,35 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                     shrinkWrap: true,
                     children: [
                       for (final l in lines)
-                        ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(_short(l.variantId, 14),
-                              style: const TextStyle(
-                                  fontFamily: 'monospace', fontSize: 12)),
-                          subtitle: Text(
-                              '${l.qty.toStringAsFixed(0)} × ${l.unitPrice.toStringAsFixed(2)}'
-                              '${l.vatCode != null ? ' · ${l.vatCode}' : ''}'),
-                          trailing: Text(
-                              (l.qty * l.unitPrice).toStringAsFixed(2),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                        ),
+                        Builder(builder: (context) {
+                          final p = progress
+                              .where((x) => x.variantId == l.variantId)
+                              .firstOrNull;
+                          final owed = p?.qtyOutstanding ?? 0;
+                          return ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(_short(l.variantId, 14),
+                                style: const TextStyle(
+                                    fontFamily: 'monospace', fontSize: 12)),
+                            subtitle: Text([
+                              '${l.qty.toStringAsFixed(0)} × ${l.unitPrice.toStringAsFixed(2)}',
+                              if (l.vatCode != null) l.vatCode!,
+                              // What is still owed, which the status alone cannot say.
+                              if (p != null && owed > 0)
+                                '${owed.toStringAsFixed(0)} outstanding',
+                              if (p != null && owed == 0 && !isDraft) 'complete',
+                            ].join(' · '),
+                                style: TextStyle(
+                                    color: owed > 0
+                                        ? context.status.warning
+                                        : null)),
+                            trailing: Text(
+                                (l.qty * l.unitPrice).toStringAsFixed(2),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                          );
+                        }),
                     ],
                   ),
                 ),
@@ -676,21 +700,34 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
             icon: const Icon(Icons.send_outlined, size: 18),
             label: const Text('Submit'),
           )
-        else
-          FilledButton.icon(
-            onPressed: po == null
-                ? null
-                : () {
-                    Navigator.pop(context);
-                    showDialog(
-                      context: context,
-                      builder: (_) =>
-                          _ReceiveGoodsDialog(poId: poId, storeId: po.storeId),
-                    );
-                  },
-            icon: const Icon(Icons.inventory_outlined, size: 18),
-            label: const Text('Receive goods'),
-          ),
+        else ...[
+          // Abandoning the balance is a deliberate act with a reason, so it sits beside the
+          // receive action rather than hiding in a menu — but only while there is a balance.
+          if (isPartial)
+            TextButton.icon(
+              onPressed: () => showDialog(
+                context: context,
+                builder: (_) => _CloseShortDialog(poId: poId),
+              ),
+              icon: const Icon(Icons.do_not_disturb_on_outlined, size: 18),
+              label: const Text('Close short'),
+            ),
+          if (isReceivable)
+            FilledButton.icon(
+              onPressed: po == null
+                  ? null
+                  : () {
+                      Navigator.pop(context);
+                      showDialog(
+                        context: context,
+                        builder: (_) =>
+                            _ReceiveGoodsDialog(poId: poId, storeId: po.storeId),
+                      );
+                    },
+              icon: const Icon(Icons.inventory_outlined, size: 18),
+              label: Text(isPartial ? 'Receive balance' : 'Receive goods'),
+            ),
+        ],
       ],
     );
   }
@@ -716,6 +753,100 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
         backgroundColor: Theme.of(context).colorScheme.error,
       ));
     }
+  }
+}
+
+/// Abandons the undelivered balance of a partly received purchase order.
+///
+/// A reason is required for the same purpose it is on a cancellation: without
+/// one, a short-closed order is indistinguishable next quarter from one the
+/// supplier fulfilled, and the supplier is the party that has to answer for it.
+class _CloseShortDialog extends ConsumerStatefulWidget {
+  final String poId;
+  const _CloseShortDialog({required this.poId});
+
+  @override
+  ConsumerState<_CloseShortDialog> createState() => _CloseShortDialogState();
+}
+
+class _CloseShortDialogState extends ConsumerState<_CloseShortDialog> {
+  final _reasonCtrl = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_reasonCtrl.text.trim().isEmpty) {
+      setState(() => _error = 'Say why the balance is being abandoned.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+            '/${ApiConstants.purchase}/purchase-orders/${widget.poId}/close',
+            data: {'reason': _reasonCtrl.text.trim()},
+          );
+      ref.invalidate(purchaseOrdersProvider);
+      ref.invalidate(purchaseOrderProgressProvider(widget.poId));
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = friendlyError(e, fallback: 'Could not close the order.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Close short'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(_error!, style: TextStyle(color: cs.error)),
+              ),
+            Text(
+              'The undelivered balance will be written off and the order marked '
+              'CLOSED. What has already arrived stays received — this is not a '
+              'cancellation.',
+              style: TextStyle(color: cs.outline, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _reasonCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Reason *'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: _saving ? null : _submit,
+            child: Text(_saving ? 'Closing…' : 'Close short')),
+      ],
+    );
   }
 }
 
@@ -1060,6 +1191,12 @@ class _PoStatusBadge extends StatelessWidget {
       case 'SUBMITTED':
         bg = context.status.info;
         fg = context.status.onInfo;
+        break;
+      case 'PARTIALLY_RECEIVED':
+        // Amber rather than the generic default: something is still owed, and that is a state a
+        // buyer is meant to act on rather than merely observe.
+        bg = context.status.warning.withValues(alpha: 0.18);
+        fg = context.status.warning;
         break;
       case 'RECEIVED':
       case 'CLOSED':

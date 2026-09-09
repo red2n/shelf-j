@@ -86,6 +86,8 @@ public class PurchaseService {
             Instant.now(),
             Instant.now(),
             null,
+            null,
+            null,
             null);
     return repo.createPurchaseOrder(
         po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
@@ -175,14 +177,61 @@ public class PurchaseService {
     return getPurchaseOrder(ctx, poId);
   }
 
+  /**
+   * What is still outstanding on a purchase order, line by line.
+   *
+   * <p>The reason partial receipt needs a screen and not only a status: a buyer chasing a supplier
+   * has to know <em>what</em> is missing, and "PARTIALLY_RECEIVED" does not say.
+   */
+  public List<Domain.PurchaseOrderLineProgress> purchaseOrderProgress(
+      TenantContext ctx, UUID poId) {
+    getPurchaseOrder(ctx, poId); // 404s for another tenant's order before reading any quantity
+    return repo.findLineProgress(ctx.requireTenantId(), poId);
+  }
+
+  /**
+   * Short-closes a partially received order: the balance is never arriving and we have stopped
+   * waiting for it.
+   *
+   * <p>Without this a partially received order that the supplier never completes sits in
+   * PARTIALLY_RECEIVED forever — the same "stuck for good" shape SJ-D3 fixed for DRAFT and
+   * SUBMITTED, which is why building partial receipt without building this would have traded one
+   * dead end for another.
+   *
+   * <p>CLOSED rather than RECEIVED because "we got it all" and "we gave up on the rest" are
+   * different facts, and a supplier scorecard that cannot tell them apart is worthless. CLOSED
+   * rather than CANCELLED because stock is booked against this order — SJ-D3's own reason for
+   * refusing to cancel a received one.
+   */
+  public PurchaseOrder closePurchaseOrderShort(
+      TenantContext ctx, UUID poId, CancelPurchaseOrderRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    PurchaseOrder po = getPurchaseOrder(ctx, poId);
+    boolean closed = repo.closePurchaseOrderShort(tenantId, poId, req.reason().trim());
+    if (!closed)
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_CLOSEABLE",
+          "only a PARTIALLY_RECEIVED order can be short-closed — this one is "
+              + po.status()
+              + ". Nothing delivered? Cancel it. Everything delivered? It is already RECEIVED.");
+    return getPurchaseOrder(ctx, poId);
+  }
+
   // ── Goods Receipts ────────────────────────────────────────────────────────────
 
   public GoodsReceipt receiveGoods(
       CreateGoodsReceiptRequest req, TenantContext ctx, String idempotencyKey) {
     PurchaseOrder po = getPurchaseOrder(ctx, req.poId());
-    if (!Domain.PO_SUBMITTED.equals(po.status()))
+    // A partially received order is still receivable — that is the whole point of the state. The
+    // authoritative check is inside the repository transaction, under a row lock; this one exists
+    // to fail a hopeless request early with a clearer message than a rolled-back transaction.
+    if (!Domain.PO_SUBMITTED.equals(po.status())
+        && !Domain.PO_PARTIALLY_RECEIVED.equals(po.status()))
       throw ApiException.badRequest(
-          "PURCHASE_PO_NOT_SUBMITTED", "Only SUBMITTED orders can be received");
+          "PURCHASE_PO_NOT_RECEIVABLE",
+          "a purchase order can only be received while SUBMITTED or PARTIALLY_RECEIVED — this one"
+              + " is "
+              + po.status());
     if (req.lines() == null || req.lines().isEmpty())
       throw ApiException.badRequest("PURCHASE_GRN_EMPTY", "GRN must have at least one line");
 
