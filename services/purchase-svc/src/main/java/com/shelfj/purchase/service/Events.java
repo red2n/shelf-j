@@ -35,6 +35,24 @@ final class Events {
         "{\"poId\":\"" + poId + "\",\"reason\":\"" + EventPayload.esc(reason) + "\"}");
   }
 
+  /**
+   * The stock movements inventory-svc writes from this event are labelled {@code ref_type='GRN'},
+   * so {@code refId} has to be the goods receipt (SJ-D21). It carried the <em>purchase order</em>
+   * id instead.
+   *
+   * <p>That was survivable while a purchase order could only ever have one receipt — the two ids
+   * were in one-to-one correspondence, so citing the order still identified the delivery. Partial
+   * receipt ends that: a purchase order now has many receipts, and every movement from every
+   * delivery cited the same id under a label claiming to name a specific one. A goods-in
+   * discrepancy could not be traced from the stock movement back to the delivery note, which is the
+   * entire purpose of that reference.
+   *
+   * <p>The order is still one hop away — {@code goods_receipts.po_id} — and is carried here as
+   * {@code poId} for consumers that want it without another lookup. <b>Movements written before
+   * this fix still hold the purchase order id</b>; they cannot be corrected from here without
+   * reaching into another service's schema (golden rule #1), and there was exactly one receipt per
+   * order back then, so nothing was lost that a join cannot recover.
+   */
   static OutboxRow goodsReceived(
       UUID tenantId, UUID grId, UUID storeId, UUID poId, List<GoodsReceiptLine> lines) {
     StringBuilder sb = new StringBuilder();
@@ -45,6 +63,8 @@ final class Events {
         .append("\",\"storeId\":\"")
         .append(storeId)
         .append("\",\"refId\":\"")
+        .append(grId)
+        .append("\",\"poId\":\"")
         .append(poId)
         .append("\",\"lines\":[");
     for (int i = 0; i < lines.size(); i++) {
