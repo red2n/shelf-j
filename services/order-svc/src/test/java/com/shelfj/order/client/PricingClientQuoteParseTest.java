@@ -1,0 +1,138 @@
+package com.shelfj.order.client;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import java.io.StringReader;
+import java.math.BigDecimal;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Parsing tests for {@code /prices/quote}.
+ *
+ * <p>These exist because SJ-D14 established that the only two places in this codebase which parsed
+ * a cross-service DTO inline — behind service discovery, a circuit breaker and a web client — were
+ * the only two that were wrong, and stayed wrong for months. Extracting the parse is what makes it
+ * assertable at all.
+ *
+ * <p><b>SJ-D20 is the case they were written for</b>, and it was found by placing one real order
+ * rather than by reading any of this: the quote's shape and checkout's assumptions disagreed in two
+ * places at once, and the resulting order carried £144 of VAT on an £80 basket with the coupon
+ * charged twice.
+ */
+class PricingClientQuoteParseTest {
+
+  private static JsonObject json(String s) {
+    try (var r = Json.createReader(new StringReader(s))) {
+      return r.readObject();
+    }
+  }
+
+  /**
+   * The first half of SJ-D20. {@code netTotal} already has this line's share of the basket-level
+   * discount subtracted; the caller subtracts the basket discount separately. Reading netTotal here
+   * therefore took it off twice — visible as a subtotal of 72.00 on ten items priced at 8.00.
+   */
+  @Test
+  void unitPriceExcludesTheBasketDiscountBecauseTheCallerSubtractsItSeparately() {
+    var q =
+        PricingClient.parseQuote(
+            json(
+                """
+                {"lines":[{"variantId":"11111111-1111-1111-1111-111111111111","qty":10,
+                           "unitPrice":8.00,"lineTotal":80.00,"discount":0,
+                           "netTotal":72.00,"vatAmount":14.40,"vatCode":"T1"}],
+                 "subtotal":80.00,"totalDiscount":8.00,"basketDiscount":8.00,
+                 "vatAmount":14.40,"total":86.40,"currency":"GBP",
+                 "appliedPromotions":[],"rejectedCoupons":{}}
+                """));
+
+    // 8.00, not 7.20 — the basket discount is reported once, in basketDiscount.
+    assertEquals(0, q.lines().get(0).unitPrice().compareTo(new BigDecimal("8.00")));
+    assertEquals(0, q.basketDiscount().compareTo(new BigDecimal("8.00")));
+  }
+
+  /** A line-level promotion, by contrast, does belong in the unit price. */
+  @Test
+  void unitPriceDoesIncludeALineLevelDiscount() {
+    var q =
+        PricingClient.parseQuote(
+            json(
+                """
+                {"lines":[{"variantId":"11111111-1111-1111-1111-111111111111","qty":10,
+                           "unitPrice":8.00,"lineTotal":80.00,"discount":8.00,
+                           "netTotal":72.00,"vatAmount":14.40,"vatCode":"T1"}],
+                 "subtotal":80.00,"totalDiscount":8.00,"basketDiscount":0,
+                 "vatAmount":14.40,"total":86.40,"currency":"GBP",
+                 "appliedPromotions":[],"rejectedCoupons":{}}
+                """));
+    assertEquals(0, q.lines().get(0).unitPrice().compareTo(new BigDecimal("7.20")));
+  }
+
+  /**
+   * The second half of SJ-D20. A quote returns the whole line's VAT; the per-unit form belongs to
+   * {@code /prices/resolve-batch}. Checkout multiplied by the quantity again, so an £80 basket came
+   * back carrying £144.
+   */
+  @Test
+  void vatIsForTheWholeLineNotPerUnit() {
+    var q =
+        PricingClient.parseQuote(
+            json(
+                """
+                {"lines":[{"variantId":"11111111-1111-1111-1111-111111111111","qty":10,
+                           "unitPrice":8.00,"lineTotal":80.00,"discount":0,
+                           "netTotal":80.00,"vatAmount":16.00,"vatCode":"T1"}],
+                 "subtotal":80.00,"totalDiscount":0,"basketDiscount":0,
+                 "vatAmount":16.00,"total":96.00,"currency":"GBP",
+                 "appliedPromotions":[],"rejectedCoupons":{}}
+                """));
+    // 16.00 for ten items, i.e. the line — not 16.00 per unit waiting to be multiplied to 160.
+    assertEquals(0, q.lines().get(0).lineVat().compareTo(new BigDecimal("16.00")));
+  }
+
+  @Test
+  void appliedPromotionsCarryTheirLineOrNullForAWholeBasketOne() {
+    var q =
+        PricingClient.parseQuote(
+            json(
+                """
+                {"lines":[],"subtotal":0,"totalDiscount":13.00,"basketDiscount":5.00,
+                 "vatAmount":0,"total":0,"currency":"GBP",
+                 "appliedPromotions":[
+                   {"promotionId":"22222222-2222-2222-2222-222222222222","name":"Shirts 10%",
+                    "variantId":"11111111-1111-1111-1111-111111111111","amount":8.00},
+                   {"promotionId":"33333333-3333-3333-3333-333333333333","name":"£5 off",
+                    "amount":5.00}],
+                 "rejectedCoupons":{"NOPE":"NO_SUCH_COUPON"}}
+                """));
+
+    assertEquals(2, q.applied().size());
+    assertEquals("Shirts 10%", q.applied().get(0).name());
+    // JSON-B omits a null field entirely rather than serialising it as null, and isNull throws on
+    // an absent key. That is SJ-D14 exactly, and it 503'd every guest checkout for months.
+    assertNull(q.applied().get(1).variantId());
+    assertEquals("NO_SUCH_COUPON", q.rejectedCoupons().get("NOPE"));
+  }
+
+  /** An absent optional block must not throw — the SJ-D14 shape once more. */
+  @Test
+  void aQuoteWithNoPromotionsAtAllParses() {
+    var q =
+        PricingClient.parseQuote(
+            json(
+                """
+                {"lines":[{"variantId":"11111111-1111-1111-1111-111111111111","qty":1,
+                           "unitPrice":5.00,"lineTotal":5.00,"discount":0,
+                           "netTotal":5.00,"vatAmount":1.00,"vatCode":"T1"}],
+                 "subtotal":5.00,"totalDiscount":0,"basketDiscount":0,
+                 "vatAmount":1.00,"total":6.00,"currency":"GBP"}
+                """));
+    assertTrue(q.applied().isEmpty());
+    assertTrue(q.rejectedCoupons().isEmpty());
+    assertEquals(0, q.basketDiscount().compareTo(BigDecimal.ZERO));
+  }
+}

@@ -252,7 +252,7 @@ public class OrderService {
     // Gap #63: when enforcement is on, the price comes from pricing-svc — the client-supplied
     // unitPrice is ignored. When off (local dev / unseeded rigs), the client price is trusted.
     // One batched call resolves every line instead of one cross-service HTTP call per line.
-    List<com.shelfj.order.client.PricingClient.ResolvedLine> resolvedLines = null;
+    List<com.shelfj.order.client.PricingClient.QuotedLine> resolvedLines = null;
     com.shelfj.order.client.PricingClient.QuotedBasket quoted = null;
     if (enforcePricing) {
       var lineRequests =
@@ -278,7 +278,10 @@ public class OrderService {
       if (enforcePricing) {
         var resolved = resolvedLines.get(i);
         unitPrice = resolved.unitPrice();
-        serverTax = serverTax.add(resolved.vatAmount().multiply(ir.qty()));
+        // A quote returns the whole line's VAT, already multiplied out. The per-unit form this
+        // used to multiply belongs to /prices/resolve-batch; multiplying a line total by the
+        // quantity again put £144 of VAT on an £80 basket (SJ-D20).
+        serverTax = serverTax.add(resolved.lineVat());
       } else {
         if (ir.unitPrice() == null)
           throw ApiException.badRequest(

@@ -162,8 +162,24 @@ public class PricingClient {
    * @param applied every promotion that took money off, for the receipt and the redemption ledger
    * @param rejectedCoupons codes the customer presented that did not apply, and why
    */
+  /**
+   * One line of a quoted basket.
+   *
+   * <p>Deliberately <em>not</em> a {@link ResolvedLine}. That record's {@code vatAmount} is per
+   * unit, because {@code /prices/resolve-batch} prices a single unit and the caller multiplies out;
+   * a quote prices the whole line and returns the line's VAT. Reusing the record made the two
+   * meanings indistinguishable at the call site, and checkout multiplied a line total by the
+   * quantity a second time — £144 of VAT on an £80 basket (SJ-D20).
+   *
+   * @param unitPrice net of <em>line-level</em> promotions only, per unit. The basket-level
+   *     discount is excluded on purpose: it is returned separately and subtracted once by the
+   *     caller, and folding it in here charged it twice.
+   * @param lineVat VAT for the whole line, already multiplied out
+   */
+  public record QuotedLine(BigDecimal unitPrice, BigDecimal lineVat) {}
+
   public record QuotedBasket(
-      List<ResolvedLine> lines,
+      List<QuotedLine> lines,
       BigDecimal basketDiscount,
       List<AppliedPromotion> applied,
       java.util.Map<String, String> rejectedCoupons) {
@@ -261,15 +277,20 @@ public class PricingClient {
    */
   static QuotedBasket parseQuote(JsonObject data) {
     JsonArray lineArray = data.getJsonArray("lines");
-    List<ResolvedLine> lines = new ArrayList<>(lineArray.size());
+    List<QuotedLine> lines = new ArrayList<>(lineArray.size());
     for (var l : lineArray) {
       JsonObject o = l.asJsonObject();
       BigDecimal qty = num(o, "qty", BigDecimal.ONE);
-      BigDecimal net = num(o, "netTotal", BigDecimal.ZERO);
-      // The engine reports money per line; the order stores a unit price, so divide back out.
+      // lineTotal minus the LINE-level discount, not netTotal: netTotal already has this line's
+      // share of the basket-level discount taken off it, and the caller subtracts that separately.
+      // Reading netTotal here charged the customer the basket discount twice (SJ-D20).
+      BigDecimal afterLineDiscount =
+          num(o, "lineTotal", BigDecimal.ZERO).subtract(num(o, "discount", BigDecimal.ZERO));
       BigDecimal unit =
-          qty.signum() == 0 ? BigDecimal.ZERO : net.divide(qty, 2, java.math.RoundingMode.HALF_UP);
-      lines.add(new ResolvedLine(unit, num(o, "vatAmount", BigDecimal.ZERO)));
+          qty.signum() == 0
+              ? BigDecimal.ZERO
+              : afterLineDiscount.divide(qty, 2, java.math.RoundingMode.HALF_UP);
+      lines.add(new QuotedLine(unit, num(o, "vatAmount", BigDecimal.ZERO)));
     }
 
     List<AppliedPromotion> applied = new ArrayList<>();

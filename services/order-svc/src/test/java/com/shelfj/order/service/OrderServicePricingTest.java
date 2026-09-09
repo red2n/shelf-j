@@ -69,7 +69,7 @@ class OrderServicePricingTest {
    * basket rather than each line, because a spend threshold or a buy-one-get-one has nothing to be
    * about until the order total exists.
    */
-  private static PricingClient.QuotedBasket quoted(PricingClient.ResolvedLine... lines) {
+  private static PricingClient.QuotedBasket quoted(PricingClient.QuotedLine... lines) {
     return new PricingClient.QuotedBasket(
         List.of(lines), BigDecimal.ZERO, List.of(), java.util.Map.of());
   }
@@ -109,8 +109,7 @@ class OrderServicePricingTest {
   void enforcementOnUsesServerPriceAndIgnoresClientPrice() {
     when(config.pricingEnforce()).thenReturn(true);
     when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
-        .thenReturn(
-            quoted(new PricingClient.ResolvedLine(new BigDecimal("7.77"), BigDecimal.ZERO)));
+        .thenReturn(quoted(new PricingClient.QuotedLine(new BigDecimal("7.77"), BigDecimal.ZERO)));
     when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
@@ -224,8 +223,7 @@ class OrderServicePricingTest {
     when(ctx.roles()).thenReturn(Set.of("MANAGER"));
     when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
         .thenReturn(
-            quoted(
-                new PricingClient.ResolvedLine(new BigDecimal("10.00"), new BigDecimal("2.00"))));
+            quoted(new PricingClient.QuotedLine(new BigDecimal("10.00"), new BigDecimal("2.00"))));
     when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
@@ -248,8 +246,7 @@ class OrderServicePricingTest {
     when(config.discountCeilings()).thenReturn(Map.of("CASHIER", new BigDecimal("10")));
     when(ctx.roles()).thenReturn(Set.of("CASHIER"));
     when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
-        .thenReturn(
-            quoted(new PricingClient.ResolvedLine(new BigDecimal("10.00"), BigDecimal.ZERO)));
+        .thenReturn(quoted(new PricingClient.QuotedLine(new BigDecimal("10.00"), BigDecimal.ZERO)));
 
     // 2.00 off 10.00 is 20%, over the cashier's 10% ceiling.
     ApiException e =
@@ -272,8 +269,7 @@ class OrderServicePricingTest {
         .thenReturn(Map.of("CASHIER", new BigDecimal("10"), "MANAGER", new BigDecimal("50")));
     when(ctx.roles()).thenReturn(Set.of("CASHIER", "MANAGER"));
     when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
-        .thenReturn(
-            quoted(new PricingClient.ResolvedLine(new BigDecimal("10.00"), BigDecimal.ZERO)));
+        .thenReturn(quoted(new PricingClient.QuotedLine(new BigDecimal("10.00"), BigDecimal.ZERO)));
     when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
@@ -296,8 +292,7 @@ class OrderServicePricingTest {
     when(config.discountCeilings()).thenReturn(Map.of("MANAGER", new BigDecimal("50")));
     when(ctx.roles()).thenReturn(Set.of("MANAGER"));
     when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
-        .thenReturn(
-            quoted(new PricingClient.ResolvedLine(new BigDecimal("10.00"), BigDecimal.ZERO)));
+        .thenReturn(quoted(new PricingClient.QuotedLine(new BigDecimal("10.00"), BigDecimal.ZERO)));
 
     ApiException e =
         assertThrows(
