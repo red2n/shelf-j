@@ -143,6 +143,8 @@ OfflineSale _sale({
 }
 
 void main() {
+  _lossTests();
+
   test('an enqueued sale is on disk before the cashier is told it is saved',
       () async {
     final h = _harness();
@@ -359,5 +361,49 @@ void main() {
     expect(h.container.read(offlineQueueProvider), isEmpty);
     expect(storage.data[StorageKeys.posOfflineSales], 'not json',
         reason: 'unreadable sales are money — kept on disk for recovery');
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Losing a queued sale is the worst thing this class can do: the customer has
+// paid, the till said "saved", and the server never hears about it. These pin
+// the two ways it used to happen, both found in the branch review.
+// ---------------------------------------------------------------------------
+
+void _lossTests() {
+  test('a corrupt queue is moved aside, not overwritten by the next sale',
+      () async {
+    final storage = _MemStorage();
+    // Whatever this is, it is not a queue this build can parse — but the sales
+    // inside it are money.
+    storage.data[StorageKeys.posOfflineSales] = '{not json at all';
+
+    final h = _harness(reuseStorage: storage);
+    await h.container.read(offlineQueueProvider.notifier).enqueue(_sale());
+
+    // The unreadable payload survives somewhere a developer can reach it.
+    expect(storage.data[StorageKeys.posOfflineSalesCorrupt], '{not json at all');
+    // …and the till still works: the new sale is durable.
+    expect(storage.data[StorageKeys.posOfflineSales], contains('pos-1700000123456'));
+  });
+
+  test('a sale taken before restore finishes does not replace what is on disk',
+      () async {
+    final storage = _MemStorage();
+    storage.data[StorageKeys.posOfflineSales] =
+        jsonEncode([_sale(id: 'pos-already-queued').toJson()]);
+
+    final h = _harness(reuseStorage: storage);
+    // Deliberately NOT awaiting restore first — this is the startup window. The
+    // notifier's constructor kicks restore off; enqueue used to race it and
+    // write a one-entry list over the restored queue.
+    await h.container
+        .read(offlineQueueProvider.notifier)
+        .enqueue(_sale(id: 'pos-taken-at-startup'));
+
+    final onDisk = jsonDecode(storage.data[StorageKeys.posOfflineSales]!) as List;
+    final ids = onDisk.map((e) => (e as Map)['id']).toList();
+    expect(ids, containsAll(['pos-already-queued', 'pos-taken-at-startup']));
+    expect(h.container.read(offlineQueueProvider).length, 2);
   });
 }

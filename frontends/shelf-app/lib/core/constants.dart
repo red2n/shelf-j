@@ -54,6 +54,14 @@ class StorageKeys {
   /// Device-local and never cleared on sign-out: this is money the server has not
   /// been told about yet, and it must outlive the cashier's shift.
   static const String posOfflineSales = 'pos_offline_sales';
+
+  /// Where an unreadable offline queue is set aside so it is not overwritten.
+  ///
+  /// [posOfflineSales] is rewritten in full on the next sale, so "left on disk
+  /// for a developer to recover" was only true until the cashier rang up one
+  /// more item. The unparseable payload is moved here first, and this key is
+  /// never written by the normal path.
+  static const String posOfflineSalesCorrupt = 'pos_offline_sales_corrupt';
 }
 
 /// Backend role codes (iam-svc seed). Do not invent client-only roles.

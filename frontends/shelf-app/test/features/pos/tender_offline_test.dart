@@ -140,6 +140,34 @@ ProviderContainer _container(WidgetTester tester) =>
     ProviderScope.containerOf(tester.element(find.byType(TenderScreen).first));
 
 void main() {
+  testWidgets('a discount larger than the basket is clamped before it is sent',
+      (tester) async {
+    // The till used to clamp in two places that disagreed: the amount due was
+    // capped at the subtotal, but the figure actually sent was not. A cashier who
+    // keyed £99 off a £12 basket saw nothing left to pay, tendered it to zero, and
+    // the server then refused the whole sale with
+    // ORDER_DISCOUNT_EXCEEDS_SUBTOTAL — after the money was in the drawer.
+    //
+    // Harmless before SJ-D6, because the server discarded client discounts
+    // entirely. Honouring them is what made the till's own figure matter.
+    await _pumpTender(tester);
+    final container = _container(tester);
+    container.read(posDiscountProvider.notifier).state = 99.0;
+    container.read(posDiscountReasonProvider.notifier).state = 'Manager override';
+    await tester.pumpAndSettle();
+
+    // Nothing left to tender — which is exactly the trap: the till considers the
+    // sale fully paid, so the cashier can complete it, and the server then
+    // refuses the discount the till never clamped.
+    await tester.tap(find.widgetWithText(FilledButton, 'Complete Sale'));
+    await tester.pumpAndSettle();
+
+    // 2 × £6.00 = £12.00, so that is the most that can come off it.
+    final queued = container.read(offlineQueueProvider).single;
+    expect(queued.orderRequest['discountAmount'], 12.0);
+    expect(queued.total, 0.0);
+  });
+
   testWidgets('an unreachable server completes the sale offline and queues it',
       (tester) async {
     await _pumpTender(tester);

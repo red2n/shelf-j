@@ -56,10 +56,18 @@ class OfflineQueueNotifier extends StateNotifier<List<OfflineSale>> {
       : _storage = storage,
         _autoSync = autoSync,
         super(const []) {
-    restore().then((_) {
+    _ready = restore().then((_) {
       if (state.isNotEmpty) _scheduleNext();
     });
   }
+
+  /// Completes when the on-disk queue has been read.
+  ///
+  /// Every mutating operation waits for it. Without that, a sale taken in the
+  /// startup window wrote an in-memory state that did not yet include the
+  /// restored sales — and `_persist` writes the whole list, so the sales already
+  /// on disk were replaced by the one just taken.
+  late final Future<void> _ready;
 
   @override
   void dispose() {
@@ -70,16 +78,29 @@ class OfflineQueueNotifier extends StateNotifier<List<OfflineSale>> {
   // ── persistence ───────────────────────────────────────────────────────────
 
   Future<void> restore() async {
+    String? raw;
     try {
-      final raw = await _storage.read(key: StorageKeys.posOfflineSales);
+      raw = await _storage.read(key: StorageKeys.posOfflineSales);
       if (raw == null || raw.isEmpty) return;
       state = (jsonDecode(raw) as List)
           .map((e) => OfflineSale.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList();
     } catch (_) {
-      // A corrupt queue must not brick the till. It is left on disk rather than
-      // cleared: the sales in it are money, and a developer can still recover the
-      // raw JSON. The till starts with an empty in-memory queue.
+      // A corrupt queue must not brick the till, and the sales in it are money,
+      // so the raw payload is kept for recovery. It has to be MOVED to do that:
+      // _persist rewrites the live key in full, so leaving it in place — which is
+      // what this used to do — meant the next sale silently overwrote it. The
+      // promise held only until the cashier rang up one more item.
+      //
+      // Best effort: if setting it aside fails there is nothing further to try,
+      // and the till must still open.
+      try {
+        if (raw != null && raw.isNotEmpty) {
+          await _storage.write(key: StorageKeys.posOfflineSalesCorrupt, value: raw);
+        }
+      } catch (_) {
+        // Nothing left to do about it.
+      }
     }
   }
 
@@ -95,6 +116,7 @@ class OfflineQueueNotifier extends StateNotifier<List<OfflineSale>> {
   /// Take a sale the server could not be told about. Persisted before returning,
   /// so the cashier is only told "saved" once it is genuinely on disk.
   Future<void> enqueue(OfflineSale sale) async {
+    await _ready;
     state = [...state, sale];
     await _persist();
     _scheduleNext(immediate: true);
@@ -103,6 +125,7 @@ class OfflineQueueNotifier extends StateNotifier<List<OfflineSale>> {
   /// Put a parked (failed) sale back in line — after the cause has been dealt
   /// with, e.g. a store that was closed has been reopened.
   Future<void> retry(String id) async {
+    await _ready;
     state = [
       for (final s in state)
         if (s.id == id)
@@ -118,6 +141,7 @@ class OfflineQueueNotifier extends StateNotifier<List<OfflineSale>> {
   /// about this money — so the UI confirms first and only offers it for a sale
   /// the server has permanently rejected.
   Future<void> discard(String id) async {
+    await _ready;
     state = [
       for (final s in state)
         if (s.id != id) s,
@@ -129,6 +153,7 @@ class OfflineQueueNotifier extends StateNotifier<List<OfflineSale>> {
 
   /// Replay everything waiting, oldest first. Safe to call at any time.
   Future<void> sync() async {
+    await _ready;
     if (_syncing || state.isEmpty) return;
     _syncing = true;
     try {

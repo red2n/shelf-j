@@ -30,11 +30,21 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
   final List<PosTender> _tenders = [];
   bool _processing = false;
 
-  double get _due {
+  /// The discount actually applied to this sale, clamped to the subtotal.
+  ///
+  /// One accessor because there used to be two clamps that disagreed: [_due]
+  /// clamped to the subtotal, while `_complete` clamped only at zero and sent the
+  /// raw figure. A discount larger than the basket therefore showed a due of
+  /// nothing, let the cashier tender it to zero, and was then refused by the
+  /// server with `ORDER_DISCOUNT_EXCEEDS_SUBTOTAL` — a sale the till had already
+  /// treated as finished. Harmless before SJ-D6, because the server discarded the
+  /// discount entirely; that fix is what made the till's figure matter.
+  double get _discount {
     final subtotal = ref.read(posCartProvider.notifier).total;
-    final discount = ref.read(posDiscountProvider).clamp(0, subtotal).toDouble();
-    return subtotal - discount;
+    return ref.read(posDiscountProvider).clamp(0, subtotal).toDouble();
   }
+
+  double get _due => ref.read(posCartProvider.notifier).total - _discount;
 
   double get _paid => _tenders.fold(0.0, (s, t) => s + t.amount);
   double get _remaining => (_due - _paid).clamp(0.0, double.infinity);
@@ -109,7 +119,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     final storeId = ref.read(posStoreProvider);
     final customer = ref.read(posCustomerProvider);
     final walkInPhone = ref.read(posWalkInPhoneProvider);
-    final discount = ref.read(posDiscountProvider).clamp(0, double.infinity).toDouble();
+    final discount = _discount;
     if (cart.isEmpty) return;
     if (storeId == null) {
       _snack('Select a store before tendering.', error: true);
