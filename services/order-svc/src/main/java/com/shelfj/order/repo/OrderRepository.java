@@ -1622,7 +1622,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " FROM order_discounts WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (from != null) sql.append(" AND created_at >= ?");
-    if (to != null) sql.append(" AND created_at <= ?");
+    if (to != null) sql.append(" AND created_at < ?");
     sql.append(" GROUP BY ").append(key);
     return query(
         sql.toString(),
@@ -1639,7 +1639,7 @@ public class OrderRepository extends BaseOutboxRepository {
         new StringBuilder("SELECT " + key + ", COUNT(*) FROM pos_void_log WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (from != null) sql.append(" AND voided_at >= ?");
-    if (to != null) sql.append(" AND voided_at <= ?");
+    if (to != null) sql.append(" AND voided_at < ?");
     sql.append(" GROUP BY ").append(key);
     return query(
         sql.toString(),
@@ -1656,7 +1656,7 @@ public class OrderRepository extends BaseOutboxRepository {
         new StringBuilder("SELECT " + key + ", COUNT(*) FROM pos_no_sale_log WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (from != null) sql.append(" AND logged_at >= ?");
-    if (to != null) sql.append(" AND logged_at <= ?");
+    if (to != null) sql.append(" AND logged_at < ?");
     sql.append(" GROUP BY ").append(key);
     return query(
         sql.toString(),
@@ -1677,7 +1677,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " FROM pos_log_entries WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (from != null) sql.append(" AND transaction_ts >= ?");
-    if (to != null) sql.append(" AND transaction_ts <= ?");
+    if (to != null) sql.append(" AND transaction_ts < ?");
     sql.append(" GROUP BY ").append(key);
     return query(
         sql.toString(),

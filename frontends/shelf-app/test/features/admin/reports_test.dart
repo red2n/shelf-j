@@ -73,7 +73,7 @@ void main() {
 
       final call = h.adapter.callTo('/reports/shrinkage');
       expect(call.query['from'], '2026-08-01T00:00:00Z');
-      expect(call.query['to'], '2026-08-31T23:59:59Z');
+      expect(call.query['to'], '2026-09-01T00:00:00Z');
     });
 
     test('tax summary does the same', () async {
@@ -84,16 +84,29 @@ void main() {
 
       final call = h.adapter.callTo('/tax-summary');
       expect(call.query['from'], '2026-08-01T00:00:00Z');
-      expect(call.query['to'], '2026-08-31T23:59:59Z');
+      expect(call.query['to'], '2026-09-01T00:00:00Z');
     });
 
-    test('`to` covers the whole final day, not midnight at its start', () async {
-      // At T00:00:00Z a report run "to today" would exclude everything that
-      // happened today — the most recent day, silently missing.
+    test('`to` covers the whole final day, as a half-open bound', () async {
+      // Two ways to get this wrong, and this asserts we are between them.
+      //
+      // T00:00:00Z of the SAME day would exclude everything that happened on the
+      // last day of the range — the most recent day, silently missing.
+      //
+      // T23:59:59Z of the same day, which this used to send, is a whole second
+      // short: every report compares with `<`, so anything logged in that last
+      // second was dropped. It also disagreed with the exception report, which
+      // compared inclusively, so one screen could show a numerator and a
+      // denominator measured over different windows.
+      //
+      // The start of the NEXT day makes the window truly half-open: nothing lost,
+      // nothing counted twice.
       final h = _harness();
       await h.container.read(shrinkageReportProvider.future);
       expect(h.adapter.callTo('/reports/shrinkage').query['to'],
-          endsWith('T23:59:59Z'));
+          endsWith('T00:00:00Z'));
+      expect(h.adapter.callTo('/reports/shrinkage').query['to'],
+          startsWith('2026-09-01'));
     });
 
     test('an empty range sends no date params rather than a malformed one',
@@ -236,7 +249,7 @@ void main() {
 
       final call = h.adapter.callTo('/reports/exceptions');
       expect(call.query['from'], '2026-08-01T00:00:00Z');
-      expect(call.query['to'], '2026-08-31T23:59:59Z');
+      expect(call.query['to'], '2026-09-01T00:00:00Z');
       expect(call.query['groupBy'], 'ACTOR');
     });
   });
@@ -444,7 +457,7 @@ void main() {
 
       final call = h.adapter.callTo('/reports/stock-turn');
       expect(call.query['from'], '2026-08-01T00:00:00Z');
-      expect(call.query['to'], '2026-08-31T23:59:59Z');
+      expect(call.query['to'], '2026-09-01T00:00:00Z');
       expect(call.query['groupBy'], 'STORE');
     });
 
@@ -489,7 +502,7 @@ void main() {
 
       final call = h.adapter.callTo('/tender-mix');
       expect(call.query['from'], '2026-08-01T00:00:00Z');
-      expect(call.query['to'], '2026-08-31T23:59:59Z');
+      expect(call.query['to'], '2026-09-01T00:00:00Z');
     });
   });
 }

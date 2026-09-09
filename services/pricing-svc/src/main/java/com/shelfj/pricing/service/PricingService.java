@@ -359,6 +359,47 @@ public class PricingService {
   // ── Basket quoting ────────────────────────────────────────────────────────
 
   /**
+   * One basket line's share of the discount the engine computed for its variant.
+   *
+   * <p>Split by line value, with the variant's last line taking the remainder, so the shares sum to
+   * exactly the engine's figure. A variant appearing on a single line — the ordinary case — takes
+   * the whole thing and this behaves exactly as it did before.
+   *
+   * @param variantId the line's variant
+   * @param index this line's position in the basket
+   * @param lineTotal this line's value before any discount
+   * @param perVariantDiscount the engine's total discount per variant
+   * @param variantLineValue total value of all lines carrying each variant
+   * @param lastLineOfVariant index of the final line carrying each variant
+   * @param taken running total already apportioned per variant; updated here
+   * @return this line's share
+   */
+  private static BigDecimal shareOfVariantDiscount(
+      UUID variantId,
+      int index,
+      BigDecimal lineTotal,
+      Map<UUID, BigDecimal> perVariantDiscount,
+      Map<UUID, BigDecimal> variantLineValue,
+      Map<UUID, Integer> lastLineOfVariant,
+      Map<UUID, BigDecimal> taken) {
+    BigDecimal variantDiscount = perVariantDiscount.getOrDefault(variantId, BigDecimal.ZERO);
+    if (variantDiscount.signum() == 0) {
+      return BigDecimal.ZERO;
+    }
+    BigDecimal variantValue = variantLineValue.getOrDefault(variantId, BigDecimal.ZERO);
+    boolean last = Integer.valueOf(index).equals(lastLineOfVariant.get(variantId));
+    if (last || variantValue.signum() == 0) {
+      // The remainder, so rounding never loses or invents a penny. A zero-value variant cannot be
+      // split by value at all, so its whole discount lands on the last line.
+      return variantDiscount.subtract(taken.getOrDefault(variantId, BigDecimal.ZERO));
+    }
+    BigDecimal share =
+        variantDiscount.multiply(lineTotal).divide(variantValue, 2, RoundingMode.HALF_UP);
+    taken.merge(variantId, share, BigDecimal::add);
+    return share;
+  }
+
+  /**
    * Prices a whole basket, promotions and VAT included.
    *
    * <p>This is the method the old engine could not have had. {@code resolvePrices} was {@code
@@ -428,9 +469,32 @@ public class PricingService {
     var outcome = engine.apply(basket, candidates, scopes, req.couponCodes(), exhausted);
 
     // 3. Fold the line discounts back onto their lines.
+    //
+    // Both BasketLine and LineDiscount are keyed by variantId, so the engine cannot tell two basket
+    // lines of the same variant apart and returns one combined figure for them. Applying that
+    // figure to each line — which is what getOrDefault(variantId) does — charged the discount once
+    // per line: the response's own lines then contradicted its subtotal and totalDiscount, and
+    // order-svc, which derives the stored unit price from lineTotal minus discount, undercharged.
+    //
+    // The variant's discount is therefore split across its lines by value, with the last line of
+    // that variant taking the rounding remainder — the same apportionment this method already uses
+    // for the basket discount below, and for the same reason: the parts must sum to exactly the
+    // whole rather than a penny either side.
     Map<UUID, BigDecimal> perLineDiscount = new java.util.LinkedHashMap<>();
     for (var d : outcome.lineDiscounts())
       perLineDiscount.merge(d.variantId(), d.amount(), BigDecimal::add);
+
+    Map<UUID, BigDecimal> variantLineValue = new java.util.LinkedHashMap<>();
+    Map<UUID, Integer> lastLineOfVariant = new java.util.LinkedHashMap<>();
+    for (int i = 0; i < basket.size(); i++) {
+      BasketLine b = basket.get(i);
+      variantLineValue.merge(
+          b.variantId(),
+          b.unitPrice().multiply(b.qty()).setScale(2, RoundingMode.HALF_UP),
+          BigDecimal::add);
+      lastLineOfVariant.put(b.variantId(), i);
+    }
+    Map<UUID, BigDecimal> variantDiscountTaken = new java.util.LinkedHashMap<>();
 
     BigDecimal subtotal =
         basket.stream()
@@ -453,7 +517,15 @@ public class PricingService {
       BasketLine b = basket.get(i);
       BigDecimal lineTotal = b.unitPrice().multiply(b.qty()).setScale(2, RoundingMode.HALF_UP);
       BigDecimal lineDisc =
-          perLineDiscount.getOrDefault(b.variantId(), BigDecimal.ZERO).min(lineTotal);
+          shareOfVariantDiscount(
+                  b.variantId(),
+                  i,
+                  lineTotal,
+                  perLineDiscount,
+                  variantLineValue,
+                  lastLineOfVariant,
+                  variantDiscountTaken)
+              .min(lineTotal);
       BigDecimal net = lineTotal.subtract(lineDisc);
 
       // The basket discount is shared by value. The last line takes the rounding remainder, so

@@ -275,6 +275,7 @@ public class OrderService {
       var ir = req.items().get(i);
       UUID variantId = variantIds.get(i);
       BigDecimal unitPrice;
+      BigDecimal quotedLineNet = null;
       if (enforcePricing) {
         var resolved = resolvedLines.get(i);
         unitPrice = resolved.unitPrice();
@@ -282,13 +283,18 @@ public class OrderService {
         // used to multiply belongs to /prices/resolve-batch; multiplying a line total by the
         // quantity again put £144 of VAT on an £80 basket (SJ-D20).
         serverTax = serverTax.add(resolved.lineVat());
+        // And the line's value comes from the quote too, rather than from unitPrice × qty. The
+        // unit price is a rounded division of that same figure, so multiplying it back does not
+        // reproduce it: three units of a £100 line quote at 33.33 each and rebuild as 99.99. Taking
+        // the quoted figure keeps the order's subtotal equal to the quote the customer was shown.
+        quotedLineNet = resolved.lineNet();
       } else {
         if (ir.unitPrice() == null)
           throw ApiException.badRequest(
               "ORDER_PRICE_REQUIRED", "unitPrice is required for variant " + ir.variantId());
         unitPrice = ir.unitPrice();
       }
-      BigDecimal line = unitPrice.multiply(ir.qty());
+      BigDecimal line = quotedLineNet != null ? quotedLineNet : unitPrice.multiply(ir.qty());
       subtotal = subtotal.add(line);
       items.add(
           new OrderItem(

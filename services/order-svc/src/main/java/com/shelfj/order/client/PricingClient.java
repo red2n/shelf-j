@@ -176,7 +176,19 @@ public class PricingClient {
    *     caller, and folding it in here charged it twice.
    * @param lineVat VAT for the whole line, already multiplied out
    */
-  public record QuotedLine(BigDecimal unitPrice, BigDecimal lineVat) {}
+  /**
+   * One line as pricing-svc quoted it.
+   *
+   * @param unitPrice the line's value after line-level promotions, divided by the quantity and
+   *     rounded — stored on the order for display and refunds
+   * @param lineNet the line's value after line-level promotions, as pricing-svc computed it.
+   *     Carried rather than re-derived, because {@code unitPrice × qty} does not reproduce it:
+   *     three units of a £100 line give a unit price of 33.33 and multiply back to 99.99. The
+   *     order's subtotal must agree with the quote it was built from, so this is the figure that
+   *     counts
+   * @param lineVat VAT for the whole line, already multiplied out (SJ-D20)
+   */
+  public record QuotedLine(BigDecimal unitPrice, BigDecimal lineNet, BigDecimal lineVat) {}
 
   public record QuotedBasket(
       List<QuotedLine> lines,
@@ -290,7 +302,7 @@ public class PricingClient {
           qty.signum() == 0
               ? BigDecimal.ZERO
               : afterLineDiscount.divide(qty, 2, java.math.RoundingMode.HALF_UP);
-      lines.add(new QuotedLine(unit, num(o, "vatAmount", BigDecimal.ZERO)));
+      lines.add(new QuotedLine(unit, afterLineDiscount, num(o, "vatAmount", BigDecimal.ZERO)));
     }
 
     List<AppliedPromotion> applied = new ArrayList<>();

@@ -1218,11 +1218,25 @@ final deliveryAreasProvider =
 String? _dayStartInstant(String? day) =>
     (day == null || day.isEmpty) ? null : '${day}T00:00:00Z';
 
-/// …and `to` to the instant that *closes* its day. Sending `T00:00:00Z` would
-/// make "to today" exclude everything that happened today, which reads as a
-/// report that silently loses the most recent day.
-String? _dayEndInstant(String? day) =>
-    (day == null || day.isEmpty) ? null : '${day}T23:59:59Z';
+/// …and `to` to the instant that *opens the next* day, because every report
+/// compares it with `<` rather than `<=`.
+///
+/// It used to send `T23:59:59Z`, which is a whole second short of closing the
+/// day: against an exclusive bound that silently dropped anything logged in the
+/// last second, and it disagreed with the one report that compared inclusively,
+/// so a single screen could show a numerator and a denominator measured over
+/// different windows. Sending the start of the next day makes the window a true
+/// half-open interval — no lost second, no double-counted boundary — and the
+/// exception report's four aggregates were changed to `<` to match everything
+/// else rather than the other way round.
+///
+/// Sending `T00:00:00Z` of the *same* day would be the original bug in reverse:
+/// "to today" would exclude everything that happened today.
+String? _dayEndInstant(String? day) {
+  if (day == null || day.isEmpty) return null;
+  final next = DateTime.parse('${day}T00:00:00Z').add(const Duration(days: 1));
+  return next.toIso8601String().replaceFirst('.000Z', 'Z');
+}
 
 /// One line of the shrinkage report. [groupKey] is a reason code, an actor id or
 /// a store id depending on the grouping; `UNSPECIFIED` means an adjustment made

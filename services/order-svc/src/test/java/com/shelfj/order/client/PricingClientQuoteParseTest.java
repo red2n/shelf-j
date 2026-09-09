@@ -1,5 +1,7 @@
 package com.shelfj.order.client;
 
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.comparesEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -8,6 +10,7 @@ import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import java.io.StringReader;
 import java.math.BigDecimal;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -134,5 +137,41 @@ class PricingClientQuoteParseTest {
     assertTrue(q.applied().isEmpty());
     assertTrue(q.rejectedCoupons().isEmpty());
     assertEquals(0, q.basketDiscount().compareTo(BigDecimal.ZERO));
+  }
+
+  @Test
+  @DisplayName("A line's value is carried, not rebuilt from a rounded unit price")
+  void lineNetSurvivesAQuantityThatDoesNotDivideEvenly() {
+    // Three units of a £100 line. The unit price can only be 33.33, which multiplies back to
+    // 99.99 — so an order built by multiplying would be a penny short of the quote it came from,
+    // on every such line, and worse with fractional quantities.
+    var basket =
+        PricingClient.parseQuote(
+            json(
+                "{\"lines\":[{\"qty\":3,\"lineTotal\":100.00,\"discount\":0,"
+                    + "\"vatAmount\":20.00}]}"));
+
+    var line = basket.lines().get(0);
+    assertThat(line.unitPrice(), comparesEqualTo(new BigDecimal("33.33")));
+    assertThat(
+        line.unitPrice().multiply(new BigDecimal("3")), comparesEqualTo(new BigDecimal("99.99")));
+    // The figure that actually goes on the order.
+    assertThat(line.lineNet(), comparesEqualTo(new BigDecimal("100.00")));
+  }
+
+  @Test
+  @DisplayName("lineNet is net of the LINE discount only — the basket discount is subtracted once")
+  void lineNetExcludesOnlyTheLineDiscount() {
+    var basket =
+        PricingClient.parseQuote(
+            json(
+                "{\"lines\":[{\"qty\":2,\"lineTotal\":50.00,\"discount\":10.00,"
+                    + "\"netTotal\":35.00,\"vatAmount\":8.00}],"
+                    + "\"basketDiscount\":5.00}"));
+
+    // netTotal (35.00) already has the basket discount in it; reading that here charged it twice
+    // (SJ-D20). lineNet must be lineTotal − discount = 40.00.
+    assertThat(basket.lines().get(0).lineNet(), comparesEqualTo(new BigDecimal("40.00")));
+    assertThat(basket.basketDiscount(), comparesEqualTo(new BigDecimal("5.00")));
   }
 }

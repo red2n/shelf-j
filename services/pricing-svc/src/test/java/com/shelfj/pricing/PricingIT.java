@@ -1,6 +1,7 @@
 package com.shelfj.pricing;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.comparesEqualTo;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 
@@ -553,6 +554,57 @@ class PricingIT {
     // 120 − 5 = 115, VAT 23.00, total 138.00.
     assertThat(over, containsString("\"vatAmount\":23.00"));
     assertThat(over, containsString("\"total\":138.00"));
+  }
+
+  /**
+   * Two basket lines of the same variant must not each be charged the whole discount.
+   *
+   * <p>Both {@code BasketLine} and {@code LineDiscount} are keyed by variantId, so the engine
+   * returns one combined figure for a variant however many lines carry it. Folding that figure back
+   * with {@code getOrDefault(variantId)} applied it once per line: the response's own lines then
+   * contradicted its {@code subtotal} and {@code totalDiscount}, and order-svc — which derives the
+   * stored unit price from {@code lineTotal} minus the discount — undercharged by the difference.
+   */
+  @Test
+  void aVariantOnTwoBasketLinesSplitsItsDiscountRatherThanDoublingIt() {
+    seedPricedVariant(V, "50.00");
+    createPromotion(
+        "{\"name\":\"10% off everything\",\"type\":\"PERCENT\",\"value\":10,"
+            + "\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+
+    // The same variant twice: 2 × 50 and 1 × 50. Subtotal 150, so 10% is 15.00 in total.
+    String body =
+        quote(
+            "{\"lines\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":2},{\"variantId\":\""
+                + V
+                + "\",\"qty\":1}]}");
+
+    assertThat(body, containsString("\"subtotal\":150.00"));
+    assertThat(body, containsString("\"totalDiscount\":15.00"));
+
+    // The lines must add up to the totals above. Before the fix each line carried the full 15.00 —
+    // 30.00 across the basket against a stated totalDiscount of 15.00.
+    assertThat(sumOf(body, "\"discount\":"), comparesEqualTo(new java.math.BigDecimal("15.00")));
+    assertThat(sumOf(body, "\"netTotal\":"), comparesEqualTo(new java.math.BigDecimal("135.00")));
+  }
+
+  /** Sums every occurrence of a numeric JSON field in the body. */
+  private static java.math.BigDecimal sumOf(String json, String field) {
+    java.math.BigDecimal total = java.math.BigDecimal.ZERO;
+    for (int i = json.indexOf(field); i >= 0; i = json.indexOf(field, i + 1)) {
+      int start = i + field.length();
+      int end = start;
+      while (end < json.length()
+          && (Character.isDigit(json.charAt(end))
+              || json.charAt(end) == '.'
+              || json.charAt(end) == '-')) {
+        end++;
+      }
+      if (end > start) total = total.add(new java.math.BigDecimal(json.substring(start, end)));
+    }
+    return total;
   }
 
   /** A coupon does nothing until it is presented, and is matched case-insensitively. */
