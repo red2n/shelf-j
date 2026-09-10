@@ -41,6 +41,14 @@ final posStoreProvider = StateProvider<String?>((ref) => null);
 
 /// Holds the in-progress POS sale (client-side until tendered).
 class PosCartNotifier extends StateNotifier<List<PosLine>> {
+  /// The highest minimum age a cashier has already confirmed for this sale.
+  ///
+  /// One check covers the sale: a customer shown to be 18 is not asked again
+  /// for the next bottle, but is asked again for an item with a higher age.
+  /// Not state — nothing is drawn from it — and cleared with the cart, because
+  /// the next sale is the next customer.
+  int ageVerifiedUpTo = 0;
+
   PosCartNotifier() : super(const []);
 
   void addOrIncrement(PosLine line) {
@@ -66,10 +74,19 @@ class PosCartNotifier extends StateNotifier<List<PosLine>> {
     ];
   }
 
-  void clear() => state = const [];
+  void clear() {
+    ageVerifiedUpTo = 0;
+    state = const [];
+  }
 
   /// Replace the cart contents (used when resuming a parked sale).
-  void loadLines(List<PosLine> lines) => state = lines;
+  ///
+  /// A resumed sale is checked again: whoever resumes it may not be serving the
+  /// customer who parked it.
+  void loadLines(List<PosLine> lines) {
+    ageVerifiedUpTo = 0;
+    state = lines;
+  }
 
   double get total => state.fold(0.0, (s, l) => s + l.lineTotal);
 }

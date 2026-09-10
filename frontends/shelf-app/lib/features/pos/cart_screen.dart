@@ -9,6 +9,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
+import 'pos_age_check.dart';
 import 'pos_providers.dart';
 import 'pos_session_providers.dart';
 
@@ -38,10 +39,9 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     final code = raw.trim();
     if (code.isEmpty || _scanning) return;
     setState(() => _scanning = true);
+    PosLine? line;
     try {
-      final line = await scanBarcode(ref, code);
-      ref.read(posCartProvider.notifier).addOrIncrement(line);
-      _barcodeCtrl.clear();
+      line = await scanBarcode(ref, code);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -52,9 +52,20 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
         );
       }
     } finally {
+      // Off before the age check, not after it: the check can stop for the
+      // cashier, and a spinner behind that question says the till is still busy
+      // when it is the cashier it is waiting for.
       if (mounted) setState(() => _scanning = false);
-      _barcodeFocus.requestFocus();
     }
+    if (line != null) {
+      // An age-restricted item does not reach the sale until the cashier has
+      // checked, and does not reach it at all if the till can't find out.
+      if (await _passesAgeCheck(line)) {
+        ref.read(posCartProvider.notifier).addOrIncrement(line);
+      }
+      _barcodeCtrl.clear();
+    }
+    _barcodeFocus.requestFocus();
   }
 
   String _friendly(Object e) {
@@ -75,13 +86,51 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     }
   }
 
-  void _addOffer(PosOffer offer) {
-    ref.read(posCartProvider.notifier).addOrIncrement(offer.toLine());
+  Future<void> _addOffer(PosOffer offer) async {
+    final line = offer.toLine();
+    // Picking from the catalog is the other way into the sale, so it gets the
+    // same check — otherwise browsing would be the way round it.
+    if (!await _passesAgeCheck(line)) return;
+    if (!mounted) return;
+    ref.read(posCartProvider.notifier).addOrIncrement(line);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content: Text('Added ${offer.name}'),
           duration: const Duration(milliseconds: 600)),
     );
+  }
+
+  /// The age check, asked before an item reaches the sale.
+  ///
+  /// Blocked outright when the till cannot find out — see [AgeCheckBlocked].
+  /// Asked once per sale per age: confirming 18 covers the next bottle but not
+  /// an item with a higher minimum.
+  Future<bool> _passesAgeCheck(PosLine line) async {
+    final country = await resolveSaleCountry(ref);
+    final result = await checkAgeRestriction(
+        ref.read(apiClientProvider).dio, line.variantId, country);
+    if (result is AgeCheckNotRestricted) return true;
+    if (!mounted) return false;
+    if (result is AgeCheckBlocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return false;
+    }
+    final check = result as AgeCheckRestricted;
+    final cart = ref.read(posCartProvider.notifier);
+    if (cart.ageVerifiedUpTo >= check.minimumAge) return true;
+    final confirmed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => AgeVerificationDialog(itemName: line.name, check: check),
+        ) ??
+        false;
+    if (confirmed) cart.ageVerifiedUpTo = check.minimumAge;
+    return confirmed;
   }
 
   /// Narrow-screen catalog: open the same catalog pane as a full-height sheet.
