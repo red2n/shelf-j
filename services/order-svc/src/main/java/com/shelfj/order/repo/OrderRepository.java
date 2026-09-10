@@ -293,9 +293,17 @@ public class OrderRepository extends BaseOutboxRepository {
    * the same {@code paymentId} (golden rule #7) is a no-op via the unique key on {@code
    * order_payment_events}.
    */
-  public void applyPaymentCaptured(
-      UUID tenantId, UUID orderId, UUID paymentId, BigDecimal amount, OutboxRow confirmEvent) {
-    inTx(
+  public boolean applyPaymentCaptured(
+      UUID tenantId,
+      UUID orderId,
+      UUID paymentId,
+      BigDecimal amount,
+      OutboxRow confirmEvent,
+      OutboxRow fulfilEvent) {
+    // Returns true only when THIS capture completed the sale, so the caller numbers the receipt
+    // exactly once. A redelivery, a partial tender and an order already past PENDING all return
+    // false.
+    return inTx(
         c -> {
           try (PreparedStatement ps =
               c.prepareStatement(
@@ -308,7 +316,7 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.executeUpdate();
           } catch (SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState())) {
-              return null; // already applied — event redelivery, no-op
+              return false; // already applied — event redelivery, no-op
             }
             throw sqle;
           }
@@ -325,36 +333,107 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setObject(2, tenantId);
             ps.setObject(3, orderId);
             try (ResultSet rs = ps.executeQuery()) {
-              if (!rs.next()) return null; // order not found
+              if (!rs.next()) return false; // order not found
               newPaid = rs.getBigDecimal("paid_amount");
               total = rs.getBigDecimal("total");
               status = rs.getString("status");
             }
           }
 
-          if (Order.STATUS_PENDING.equals(status) && newPaid.compareTo(total) >= 0) {
-            try (PreparedStatement ps =
-                c.prepareStatement(
-                    "UPDATE orders SET status='CONFIRMED', updated_at=now()"
-                        + " WHERE tenant_id=? AND id=? AND status='PENDING'")) {
-              ps.setObject(1, tenantId);
-              ps.setObject(2, orderId);
-              if (ps.executeUpdate() > 0) {
-                appendStatusHistory(
-                    c,
-                    tenantId,
-                    orderId,
-                    Order.STATUS_PENDING,
-                    Order.STATUS_CONFIRMED,
-                    "payment captured",
-                    null);
-                insertOutbox(c, confirmEvent);
-              }
+          if (!Order.STATUS_PENDING.equals(status) || newPaid.compareTo(total) < 0) {
+            return false;
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET status='CONFIRMED', updated_at=now()"
+                      + " WHERE tenant_id=? AND id=? AND status='PENDING'")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            if (ps.executeUpdate() == 0) {
+              return false;
             }
           }
-          return null;
+          appendStatusHistory(
+              c,
+              tenantId,
+              orderId,
+              Order.STATUS_PENDING,
+              Order.STATUS_CONFIRMED,
+              "payment captured",
+              null);
+          insertOutbox(c, confirmEvent);
+
+          // SJ-D40. A till sale is handed over at the counter the moment it is paid for, so the
+          // capture that completes it also fulfils it — here, in the same transaction, so "paid for
+          // and never deducted from stock" is not a state a crash between two calls can leave.
+          if (fulfilEvent != null) {
+            fulfilConfirmedInTx(c, tenantId, orderId, "sold at the till", null, fulfilEvent);
+          }
+          return true;
         },
         "apply payment captured");
+  }
+
+  /**
+   * Confirms a till sale and hands it over in one transaction — the manual-confirm counterpart of
+   * {@link #applyPaymentCaptured}, for a sale a manager confirms by hand.
+   */
+  public Order confirmAndFulfil(
+      UUID tenantId, UUID orderId, UUID changedBy, OutboxRow confirmEvent, OutboxRow fulfilEvent) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET status='CONFIRMED', updated_at=now()"
+                      + " WHERE tenant_id=? AND id=? AND status='PENDING'")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            if (ps.executeUpdate() == 0) {
+              throw ApiException.notFound(
+                  "ORDER_NOT_FOUND_OR_WRONG_STATUS", "order not found or not in status PENDING");
+            }
+          }
+          appendStatusHistory(
+              c,
+              tenantId,
+              orderId,
+              Order.STATUS_PENDING,
+              Order.STATUS_CONFIRMED,
+              "confirmed",
+              changedBy);
+          insertOutbox(c, confirmEvent);
+          fulfilConfirmedInTx(c, tenantId, orderId, "sold at the till", changedBy, fulfilEvent);
+          return findOrderInTx(c, tenantId, orderId);
+        },
+        "confirm and fulfil till sale " + orderId);
+  }
+
+  /**
+   * CONFIRMED to FULFILLED, its history row and its OrderFulfilled event, on the caller's
+   * connection. A no-op when the order is not CONFIRMED, so it cannot fulfil — and deduct stock for
+   * — the same sale twice.
+   */
+  private void fulfilConfirmedInTx(
+      java.sql.Connection c,
+      UUID tenantId,
+      UUID orderId,
+      String reason,
+      UUID changedBy,
+      OutboxRow event)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE orders SET status='FULFILLED', updated_at=now()"
+                + " WHERE tenant_id=? AND id=? AND status='CONFIRMED'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      if (ps.executeUpdate() == 0) {
+        return;
+      }
+    }
+    appendStatusHistory(
+        c, tenantId, orderId, Order.STATUS_CONFIRMED, Order.STATUS_FULFILLED, reason, changedBy);
+    insertOutbox(c, event);
   }
 
   /**
@@ -522,22 +601,44 @@ public class OrderRepository extends BaseOutboxRepository {
   // ── Post-void ─────────────────────────────────────────────────────────────
 
   public PosVoidLog voidOrder(
-      UUID tenantId, UUID orderId, UUID storeId, String reason, UUID voidedBy, OutboxRow event) {
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      String reason,
+      UUID voidedBy,
+      java.util.function.Function<List<com.shelfj.order.domain.Domain.RestockLine>, OutboxRow>
+          eventFor) {
     return inTx(
         c -> {
-          int rows;
+          // Lock first, so what is restocked is decided against the order being voided rather than
+          // a copy read before a concurrent fulfil or return changed it.
+          String priorStatus;
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "UPDATE orders SET status=?, updated_at=now()"
-                      + " WHERE tenant_id=? AND id=? AND status NOT IN ('VOIDED','CANCELLED')")) {
+                  "SELECT status FROM orders WHERE tenant_id=? AND id=? FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              priorStatus = rs.next() ? rs.getString(1) : null;
+            }
+          }
+          if (priorStatus == null
+              || Order.STATUS_VOIDED.equals(priorStatus)
+              || Order.STATUS_CANCELLED.equals(priorStatus)) {
+            throw ApiException.conflict(
+                "ORDER_CANNOT_VOID", "order not found or already voided/cancelled");
+          }
+
+          var restock = restockOnVoidInTx(c, tenantId, orderId);
+
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET status=?, updated_at=now() WHERE tenant_id=? AND id=?")) {
             ps.setString(1, Order.STATUS_VOIDED);
             ps.setObject(2, tenantId);
             ps.setObject(3, orderId);
-            rows = ps.executeUpdate();
+            ps.executeUpdate();
           }
-          if (rows == 0)
-            throw ApiException.conflict(
-                "ORDER_CANNOT_VOID", "order not found or already voided/cancelled");
           PosVoidLog vl;
           try (PreparedStatement ps =
               c.prepareStatement(
@@ -553,11 +654,71 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.executeUpdate();
             vl = new PosVoidLog(vid, tenantId, orderId, storeId, reason, voidedBy, Instant.now());
           }
-          appendStatusHistory(c, tenantId, orderId, null, Order.STATUS_VOIDED, reason, voidedBy);
-          insertOutbox(c, event);
+          // With the prior status in hand the history row says what was voided; it used to record
+          // null here.
+          appendStatusHistory(
+              c, tenantId, orderId, priorStatus, Order.STATUS_VOIDED, reason, voidedBy);
+          insertOutbox(c, eventFor.apply(restock));
           return vl;
         },
         "void order");
+  }
+
+  /**
+   * What a void must put back: nothing unless the sale was handed over, and then each line net of
+   * anything already returned (SJ-D40).
+   *
+   * <p>"Handed over" is read from the append-only status history rather than the current status: a
+   * sold order moves on to PARTIALLY_REFUNDED or REFUNDED, and its current status alone forgets it
+   * was ever fulfilled. Every return is netted whatever its status, because createReturn emits
+   * OrderReturned — and so restocks — the moment a return is created.
+   */
+  private List<com.shelfj.order.domain.Domain.RestockLine> restockOnVoidInTx(
+      Connection c, UUID tenantId, UUID orderId) throws SQLException {
+    boolean handedOver;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT EXISTS (SELECT 1 FROM order_status_history"
+                + " WHERE tenant_id=? AND order_id=? AND to_status='FULFILLED')")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      try (ResultSet rs = ps.executeQuery()) {
+        rs.next();
+        handedOver = rs.getBoolean(1);
+      }
+    }
+    if (!handedOver) {
+      return List.of();
+    }
+    var lines = new java.util.ArrayList<com.shelfj.order.domain.Domain.RestockLine>();
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "WITH sold AS ("
+                + "  SELECT variant_id, SUM(qty) AS qty FROM order_items"
+                + "   WHERE tenant_id=? AND order_id=? GROUP BY variant_id"
+                + "), returned AS ("
+                + "  SELECT ri.variant_id, SUM(ri.qty) AS qty"
+                + "    FROM return_items ri"
+                + "    JOIN returns r ON r.id = ri.return_id AND r.tenant_id = ri.tenant_id"
+                + "   WHERE r.tenant_id=? AND r.order_id=? GROUP BY ri.variant_id"
+                + ")"
+                + " SELECT s.variant_id, s.qty - COALESCE(rt.qty, 0) AS net"
+                + "   FROM sold s LEFT JOIN returned rt ON rt.variant_id = s.variant_id"
+                + "  WHERE s.qty - COALESCE(rt.qty, 0) > 0"
+                + "  ORDER BY s.variant_id")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.setObject(3, tenantId);
+      ps.setObject(4, orderId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          lines.add(
+              new com.shelfj.order.domain.Domain.RestockLine(
+                  rs.getObject(1, UUID.class), rs.getBigDecimal(2)));
+        }
+      }
+    }
+    return lines;
   }
 
   // ── Layaway ───────────────────────────────────────────────────────────────

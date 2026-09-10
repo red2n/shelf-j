@@ -91,6 +91,9 @@ public final class Domain {
     public static final String STATUS_REFUNDED = "REFUNDED";
   }
 
+  /** A quantity of one variant to put back into stock — the lines a voided sale restocks. */
+  public record RestockLine(UUID variantId, BigDecimal qty) {}
+
   public record OrderItem(
       UUID id,
       UUID tenantId,

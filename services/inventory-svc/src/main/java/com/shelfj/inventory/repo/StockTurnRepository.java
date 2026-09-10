@@ -82,8 +82,16 @@ public class StockTurnRepository extends BaseJdbcRepository {
             + "           AS qty_open,"
             + "         GREATEST(COALESCE(SUM(m.qty) FILTER (WHERE m.created_at < ?), 0), 0)"
             + "           AS qty_close,"
+            // A voided till sale is excluded, not netted (SJ-D40). Its stock comes back as a
+            // RECEIVE with reference type VOID into a new return batch, and this sum is taken per
+            // batch, so the receipt and the sale it cancels never meet in the same group.
             + "         COALESCE(SUM(-m.qty) FILTER ("
-            + "           WHERE m.type = 'SALE' AND m.created_at >= ? AND m.created_at < ?), 0)"
+            + "           WHERE m.type = 'SALE'"
+            + "             AND NOT EXISTS (SELECT 1 FROM stock_movements v"
+            + "                              WHERE v.tenant_id = m.tenant_id AND v.type = 'RECEIVE'"
+            + "                                AND v.ref_type = 'VOID' AND v.ref_id = m.ref_id"
+            + "                                AND v.variant_id = m.variant_id)"
+            + "             AND m.created_at >= ? AND m.created_at < ?), 0)"
             + "           AS sold_qty"
             + "    FROM stock_movements m"
             + "   WHERE m.tenant_id = ? AND m.batch_id IS NOT NULL"
@@ -211,6 +219,10 @@ public class StockTurnRepository extends BaseJdbcRepository {
             + "  SELECT m.store_id, m.variant_id, MAX(m.created_at) AS sold_at"
             + "    FROM stock_movements m"
             + "   WHERE m.tenant_id = ? AND m.type = 'SALE'"
+            // A voided sale did not happen, so it must not reset how long an item has sat unsold.
+            + "     AND NOT EXISTS (SELECT 1 FROM stock_movements v"
+            + "                      WHERE v.tenant_id = m.tenant_id AND v.type = 'RECEIVE' AND v.ref_type = 'VOID'"
+            + "                        AND v.ref_id = m.ref_id AND v.variant_id = m.variant_id)"
             + (storeId != null ? "     AND m.store_id = ?" : "")
             + "   GROUP BY m.store_id, m.variant_id"
             + "), aged AS ("

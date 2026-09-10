@@ -127,10 +127,12 @@ class OrderIT {
     assertThat(body1, containsString("PENDING"));
     String orderId = extractId(body1);
 
-    // confirm
+    // confirm — this is a POS in-store sale, so confirming it also hands it over (SJ-D40). This
+    // assertion said CONFIRMED, the state every till sale used to be left in: paid for and never
+    // deducted from stock.
     Response r2 = post("/orders/" + orderId + "/confirm", "{}", T);
     assertThat(r2.getStatus(), is(200));
-    assertThat(r2.readEntity(String.class), containsString("CONFIRMED"));
+    assertThat(r2.readEntity(String.class), containsString("FULFILLED"));
 
     // return one unit
     Response r3 =
@@ -201,8 +203,14 @@ class OrderIT {
 
     // A: placed, left PENDING (client never paid).
     String aId = extractId(post("/orders", orderJson, T, "it-sweep-a").readEntity(String.class));
-    // B: placed then confirmed.
-    String bId = extractId(post("/orders", orderJson, T, "it-sweep-b").readEntity(String.class));
+    // B: an online click-and-collect order, placed then confirmed — paid for and waiting to be
+    // collected. It used to be a POS in-store order, but a confirmed till sale is now handed over
+    // at once (SJ-D40), and this test exists to prove the sweeper spares a CONFIRMED order.
+    String collectJson =
+        orderJson.replace(
+            "\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\"",
+            "\"channel\":\"ONLINE\",\"fulfilmentType\":\"PICKUP\"");
+    String bId = extractId(post("/orders", collectJson, T, "it-sweep-b").readEntity(String.class));
     assertThat(post("/orders/" + bId + "/confirm", "{}", T).getStatus(), is(200));
 
     // TTL of 0h → every still-PENDING order is expired. B is CONFIRMED so the status guard skips
@@ -245,12 +253,15 @@ class OrderIT {
         tenantId, orderId, UUID.randomUUID(), new BigDecimal("4.00"));
     Response afterFirst = get("/orders/" + orderId, T);
     assertThat(afterFirst.readEntity(String.class), containsString("PENDING"));
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(0L));
 
-    // Second tender (card, $6) — the two together cover the total: now CONFIRMED.
+    // Second tender (card, $6) — the two together cover the total, and this is a till sale, so it
+    // is handed over: FULFILLED, not CONFIRMED. This assertion used to say CONFIRMED, which is the
+    // state SJ-D40 left every till sale in — paid for, and never deducted from stock.
     orderService.handlePaymentCaptured(
         tenantId, orderId, UUID.randomUUID(), new BigDecimal("6.00"));
-    Response afterSecond = get("/orders/" + orderId, T);
-    assertThat(afterSecond.readEntity(String.class), containsString("CONFIRMED"));
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
   }
 
   /**
@@ -286,6 +297,194 @@ class OrderIT {
 
     Response after = get("/orders/" + orderId, T);
     assertThat(after.readEntity(String.class), containsString("PENDING"));
+  }
+
+  // ── SJ-D40: a till sale is handed over the moment it is paid for ──────────
+
+  private static long outboxCount(UUID orderId, String eventType) {
+    try (var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT count(*) FROM \"order\".outbox WHERE aggregate_id = ? AND event_type = ?")) {
+      ps.setObject(1, orderId);
+      ps.setString(2, eventType);
+      try (var rs = ps.executeQuery()) {
+        rs.next();
+        return rs.getLong(1);
+      }
+    } catch (java.sql.SQLException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private static String outboxPayload(UUID orderId, String eventType) {
+    try (var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT payload FROM \"order\".outbox WHERE aggregate_id = ? AND event_type = ?"
+                    + " LIMIT 1")) {
+      ps.setObject(1, orderId);
+      ps.setString(2, eventType);
+      try (var rs = ps.executeQuery()) {
+        return rs.next() ? rs.getString(1) : null;
+      }
+    } catch (java.sql.SQLException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  /** Places a two-unit order at $10.00 each ($20.00 total) and returns its id. */
+  private UUID placeAt(String channel, String fulfilment) {
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\""
+                + channel
+                + "\",\"fulfilmentType\":\""
+                + fulfilment
+                + "\",\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":2,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
+            T,
+            "it-till-" + UUID.randomUUID());
+    String body = placed.readEntity(String.class);
+    assertThat(body, placed.getStatus(), is(201));
+    return UUID.fromString(extractId(body));
+  }
+
+  private String statusOf(UUID orderId) {
+    String body = get("/orders/" + orderId, T).readEntity(String.class);
+    var m = java.util.regex.Pattern.compile("\"status\":\"([A-Z_]+)\"").matcher(body);
+    return m.find() ? m.group(1) : body;
+  }
+
+  /**
+   * The defect. Proved on the running stack before the fix: a till sale paid in full sat at
+   * CONFIRMED with no SALE movement, and the only SALE movements in the system belonged to one
+   * order a manager had fulfilled by hand.
+   */
+  @Test
+  void aTillSaleIsHandedOverTheMomentItIsPaidFor() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    // The event inventory-svc deducts stock on. Before this fix a till sale never produced one.
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
+    String payload = outboxPayload(orderId, "OrderFulfilled");
+    assertThat(payload, containsString(V));
+    assertThat(payload, containsString("\"qty\":2"));
+  }
+
+  @Test
+  void aRedeliveredCaptureDoesNotSellTheStockTwice() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    UUID paymentId = UUID.randomUUID();
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, paymentId, new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, paymentId, new BigDecimal("20.00"));
+
+    // Two OrderFulfilled events would deduct the stock twice — inventory-svc dedupes per event,
+    // and each OrderFulfilled carries a fresh event id, so this has to be stopped here.
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
+    assertThat(statusOf(orderId), is("FULFILLED"));
+  }
+
+  @Test
+  void aTillSaleQueuedOfflineAsPickupIsStillHandedOver() {
+    // The till sent PICKUP for every tendered sale until this fix, including the ones sitting in
+    // offline queues on devices now, which replay with the request they were queued with.
+    UUID orderId = placeAt("POS", "PICKUP");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
+  }
+
+  @Test
+  void anOnlineCollectOrderIsConfirmedButNotHandedOver() {
+    // The other direction of the same rule: an online click-and-collect order is paid for now and
+    // collected later. Fulfilling it at payment would deduct stock that is still on the shelf.
+    UUID orderId = placeAt("ONLINE", "PICKUP");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+
+    assertThat(statusOf(orderId), is("CONFIRMED"));
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(0L));
+  }
+
+  @Test
+  void confirmingATillSaleByHandAlsoHandsItOver() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    assertThat(post("/orders/" + orderId + "/confirm", "{}", T).getStatus(), is(200));
+
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
+  }
+
+  // ── ...and a voided till sale puts that stock back ────────────────────────
+
+  @Test
+  void voidingATillSaleThatWasHandedOverPutsItsStockBack() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+    assertThat(
+        post("/orders/" + orderId + "/void", "{\"reason\":\"wrong item scanned\"}", T).getStatus(),
+        is(200));
+
+    // Before SJ-D40 a till sale never deducted stock, so a void had nothing to put back and
+    // OrderVoided carried no lines. Now it deducts at payment, and a void that did not restock
+    // would lose the stock permanently.
+    String payload = outboxPayload(orderId, "OrderVoided");
+    assertThat(payload, containsString(V));
+    assertThat(payload, containsString("\"qty\":2"));
+    assertThat(payload, containsString("\"storeId\":\"" + S + "\""));
+    assertThat(payload, containsString("\"eventId\":\""));
+  }
+
+  @Test
+  void voidingASaleWithAReturnAgainstItPutsBackOnlyWhatIsLeft() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+    Response ret =
+        post(
+            "/orders/" + orderId + "/returns",
+            "{\"reason\":\"one was bruised\",\"refundMethod\":\"ORIGINAL\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1}]}",
+            T);
+    assertThat(ret.getStatus(), is(201));
+    assertThat(
+        post("/orders/" + orderId + "/void", "{\"reason\":\"rang the rest up wrong\"}", T)
+            .getStatus(),
+        is(200));
+
+    // Two were sold and one came back through the return, which restocked it the moment the
+    // return was created. Restocking both on the void would count that one twice.
+    String payload = outboxPayload(orderId, "OrderVoided");
+    assertThat(payload, containsString(V));
+    assertThat(payload, containsString("\"qty\":1"));
+    assertThat(payload, not(containsString("\"qty\":2")));
+  }
+
+  @Test
+  void voidingASaleBeforeItIsPaidForPutsNothingBack() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    assertThat(
+        post("/orders/" + orderId + "/void", "{\"reason\":\"customer walked away\"}", T)
+            .getStatus(),
+        is(200));
+
+    // Nothing was handed over, so nothing was deducted — restocking here would invent stock.
+    assertThat(outboxPayload(orderId, "OrderVoided"), containsString("\"items\":[]"));
   }
 
   @Test

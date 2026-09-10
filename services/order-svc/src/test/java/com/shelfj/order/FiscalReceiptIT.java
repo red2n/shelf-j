@@ -12,6 +12,7 @@ import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.math.BigDecimal;
 import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.List;
@@ -55,6 +56,7 @@ class FiscalReceiptIT {
   private static final String V = "dddddddd-3333-3333-3333-dddddddddddd";
 
   @Inject WebTarget target;
+  @Inject com.shelfj.order.service.OrderService orderService;
 
   @AfterAll
   static void stop() {
@@ -236,6 +238,25 @@ class FiscalReceiptIT {
     assertThat(body, containsString("\"voidedAt\""));
     assertThat(body, containsString("wrong item scanned"));
     assertThat(audit(store), containsString("\"intact\":true"));
+  }
+
+  @Test
+  @DisplayName("A till sale is numbered when the payment that completes it lands")
+  void aTillSaleIsNumberedWhenPaymentCompletesIt() {
+    // The first version of this sequence hooked only confirmOrder, which the till never calls:
+    // till sales are confirmed by payment capture. So it numbered the sales a manager confirmed by
+    // hand and almost none of the ones rung up at a till — the ones fiscal law is written about.
+    String store = UUID.randomUUID().toString();
+    String orderId = placeOnly(store);
+    UUID tenant = UUID.fromString(T);
+    UUID order = UUID.fromString(orderId);
+
+    // A split tender: nothing is numbered until the sale is complete.
+    orderService.handlePaymentCaptured(tenant, order, UUID.randomUUID(), new BigDecimal("2.00"));
+    assertThat(get("/admin/orders/" + orderId + "/fiscal-receipt", T).getStatus(), is(404));
+
+    orderService.handlePaymentCaptured(tenant, order, UUID.randomUUID(), new BigDecimal("3.00"));
+    assertThat(numberOf(orderId), is(1L));
   }
 
   // ── the audit ──────────────────────────────────────────────────────────────

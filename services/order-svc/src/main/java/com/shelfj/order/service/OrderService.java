@@ -533,35 +533,61 @@ public class OrderService {
     return repo.findOrderHistory(tenantId, orderId);
   }
 
+  /**
+   * A till sale: rung up on the POS channel and handed over at the counter.
+   *
+   * <p>SJ-D40. inventory-svc deducts stock only on OrderFulfilled, and nothing ever fulfilled a
+   * till sale: the till places the order, payment capture confirms it, and there it stopped. Stock
+   * moved only if a manager later opened each sale and clicked "Mark fulfilled".
+   *
+   * <p>PICKUP counts as well as INSTORE because the till sent PICKUP for every tendered sale until
+   * this fix, and sales already sitting in offline queues on devices will replay with it. Nothing
+   * on the POS channel means "collect later" — special orders and layaways have their own resources
+   * for that. DELIVERY is excluded: a till can take payment for goods that go out on a van, and
+   * those are handed over when they arrive.
+   */
+  static boolean isTillSale(String channel, String fulfilmentType) {
+    return Order.CHANNEL_POS.equals(channel)
+        && (Order.FULFILMENT_INSTORE.equals(fulfilmentType)
+            || Order.FULFILMENT_PICKUP.equals(fulfilmentType));
+  }
+
   public Order confirmOrder(UUID tenantId, UUID orderId, UUID userId) {
     // Load the order so OrderConfirmed can carry the buyer + settled amount (loyalty accrual).
     Order order = getOrder(tenantId, orderId);
-    Order confirmed =
-        repo.transitionOrderStatus(
+    var confirmEvent =
+        Events.orderConfirmed(
             tenantId,
             orderId,
-            Order.STATUS_PENDING,
-            Order.STATUS_CONFIRMED,
-            "confirmed",
-            userId,
-            Events.orderConfirmed(
+            order.storeId(),
+            order.channel(),
+            order.customerId(),
+            order.total(),
+            order.currency());
+    Order confirmed =
+        isTillSale(order.channel(), order.fulfilmentType())
+            ? repo.confirmAndFulfil(
                 tenantId,
                 orderId,
-                order.storeId(),
-                order.channel(),
-                order.customerId(),
-                order.total(),
-                order.currency()));
+                userId,
+                confirmEvent,
+                Events.orderFulfilled(
+                    tenantId, orderId, order.storeId(), repo.findOrderItems(tenantId, orderId)))
+            : repo.transitionOrderStatus(
+                tenantId,
+                orderId,
+                Order.STATUS_PENDING,
+                Order.STATUS_CONFIRMED,
+                "confirmed",
+                userId,
+                confirmEvent);
 
-    // The number is taken here, not when someone asks for a document. A sequence that only
-    // numbers the sales somebody remembered to print is not a sequence, and a receipt issued at
-    // order creation would burn a number on every basket that is abandoned before payment —
-    // which is where the gaps come from.
-    //
-    // Deliberately after the transition rather than inside it: a fiscal number is worth having,
-    // and it is not worth failing a paid-for sale to get. If this throws, the sale stands and
-    // POST /admin/orders/{id}/fiscal-receipt issues it — the numbering is still gapless, because
-    // the counter only moves when a receipt row is actually written.
+    // The number is taken when a sale completes, not when someone asks for a document — a
+    // sequence that only numbers the sales somebody remembered to print is not a sequence. It is
+    // outside the status transaction on purpose: a fiscal number is worth having and not worth
+    // failing a paid-for sale to get, and the sequence stays gapless either way because the
+    // counter only moves when a receipt row is written. POST /admin/orders/{id}/fiscal-receipt
+    // issues it later if this fails.
     issueReceiptQuietly(confirmed, userId);
     return confirmed;
   }
@@ -796,7 +822,7 @@ public class OrderService {
             order.storeId(),
             req.reason(),
             ctx.userId(),
-            Events.orderVoided(tenantId, orderId));
+            restock -> Events.orderVoided(tenantId, orderId, order.storeId(), restock));
 
     // The receipt keeps its number and gains a reason. Removing it would close the hole in the
     // sequence, and closing the hole is the whole trick: ring the sale, take the cash, void the
@@ -1001,19 +1027,37 @@ public class OrderService {
           orderId);
       return;
     }
-    repo.applyPaymentCaptured(
-        tenantId,
-        orderId,
-        paymentId,
-        amount,
-        Events.orderConfirmed(
+    // A till sale is handed over the moment it is paid for, so the capture that completes it also
+    // fulfils it, in the same transaction (SJ-D40). The event is built for every tender but only
+    // written by the one that completes the sale; a partial tender or a redelivery writes nothing.
+    var fulfilEvent =
+        isTillSale(order.channel(), order.fulfilmentType())
+            ? Events.orderFulfilled(
+                tenantId, orderId, order.storeId(), repo.findOrderItems(tenantId, orderId))
+            : null;
+    boolean completed =
+        repo.applyPaymentCaptured(
             tenantId,
             orderId,
-            order.storeId(),
-            order.channel(),
-            order.customerId(),
-            order.total(),
-            order.currency()));
+            paymentId,
+            amount,
+            Events.orderConfirmed(
+                tenantId,
+                orderId,
+                order.storeId(),
+                order.channel(),
+                order.customerId(),
+                order.total(),
+                order.currency()),
+            fulfilEvent);
+
+    // Till sales are confirmed here, not in confirmOrder, so this is where most receipts are
+    // numbered. The first version of the sequence hooked only confirmOrder — which the till never
+    // calls — and so numbered the sales a manager confirmed by hand and almost none of the ones
+    // rung up at a till, which are the ones fiscal law is written about.
+    if (completed) {
+      repo.findOrder(tenantId, orderId).ifPresent(o -> issueReceiptQuietly(o, null));
+    }
   }
 
   public void handlePaymentFailed(java.util.UUID tenantId, java.util.UUID orderId) {

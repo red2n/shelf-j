@@ -168,6 +168,21 @@ void main() {
     expect(queued.total, 0.0);
   });
 
+  testWidgets('a tendered sale is recorded as handed over, not collect-later',
+      (tester) async {
+    // The till sent PICKUP — "collect later" everywhere else in the platform —
+    // for every tendered sale, and nothing ever fulfilled one, so stock was
+    // never deducted for a sale rung up at a till (SJ-D40). The server now
+    // hands a paid till sale over either way, but the request should say what
+    // happened: the goods left with the customer.
+    await _pumpTender(tester);
+    await _tenderAndComplete(tester);
+
+    final queued = _container(tester).read(offlineQueueProvider).single;
+    expect(queued.orderRequest['channel'], 'POS');
+    expect(queued.orderRequest['fulfilmentType'], 'INSTORE');
+  });
+
   testWidgets('an unreachable server completes the sale offline and queues it',
       (tester) async {
     await _pumpTender(tester);

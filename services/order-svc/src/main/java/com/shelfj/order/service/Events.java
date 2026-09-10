@@ -165,15 +165,36 @@ final class Events {
         "OrderReturned", "shelfj.order.order-returned", tenantId, orderId, sb.toString());
   }
 
-  static OutboxRow orderVoided(UUID tenantId, UUID orderId) {
+  static OutboxRow orderVoided(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      List<com.shelfj.order.domain.Domain.RestockLine> restock) {
+    // SJ-D40 made a paid till sale deduct stock, so voiding one must put the stock back. items is
+    // what to put back: each line net of anything already returned, or empty when the sale was
+    // never handed over and nothing was deducted. eventId and storeId are what inventory-svc's
+    // OrderEventHandler needs to restock and dedupe per line, exactly as for OrderReturned.
+    StringBuilder sb = new StringBuilder();
+    sb.append("{\"eventId\":\"")
+        .append(UUID.randomUUID())
+        .append("\",\"eventType\":\"OrderVoided\",\"tenantId\":\"")
+        .append(tenantId)
+        .append("\",\"orderId\":\"")
+        .append(orderId)
+        .append("\",\"storeId\":\"")
+        .append(storeId)
+        .append("\",\"items\":[");
+    for (int i = 0; i < restock.size(); i++) {
+      if (i > 0) sb.append(',');
+      sb.append("{\"variantId\":\"")
+          .append(restock.get(i).variantId())
+          .append("\",\"qty\":")
+          .append(restock.get(i).qty().toPlainString())
+          .append('}');
+    }
+    sb.append("]}");
     return new OutboxRow(
-        "OrderVoided",
-        "shelfj.order.order-voided",
-        tenantId,
-        orderId,
-        String.format(
-            "{\"eventType\":\"OrderVoided\",\"tenantId\":\"%s\",\"orderId\":\"%s\"}",
-            tenantId, orderId));
+        "OrderVoided", "shelfj.order.order-voided", tenantId, orderId, sb.toString());
   }
 
   static OutboxRow layawayCreated(UUID tenantId, UUID layawayId) {

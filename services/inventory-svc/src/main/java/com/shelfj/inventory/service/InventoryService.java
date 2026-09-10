@@ -229,6 +229,30 @@ public class InventoryService {
   }
 
   /**
+   * Puts back the stock a voided till sale took, deduped on {@code dedupeId} (SJ-D40).
+   *
+   * <p>Recorded as a RECEIVE movement with reference type {@code VOID}: distinguishable from a
+   * customer return ({@code RETURN}), which is a different loss-prevention signal, while every
+   * report that sums receipts keeps working unchanged.
+   *
+   * <p>Received rather than reversed: the void and the fulfil arrive on different topics and may be
+   * processed in either order. A receipt and a deduction net to the same stock whichever lands
+   * first; reversing SALE movements that have not arrived yet would reverse nothing.
+   */
+  public boolean receiveVoidFromOrderOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId) {
+    Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
+    return repo.receiveOnce(
+        dedupeId, consumerName, batch, "VOID", orderId, stockReceivedEvent(batch));
+  }
+
+  /**
    * {@link #receive} deduped on {@code dedupeId} — used by the GoodsReceived consumer per GRN line.
    */
   public boolean receiveOnce(

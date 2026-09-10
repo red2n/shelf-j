@@ -504,6 +504,7 @@ public final class Domain {
     public static final String ADJUST = "ADJUST";
     public static final String TRANSFER = "TRANSFER";
     public static final String RETURN = "RETURN";
+
     public static final String RESERVE = "RESERVE";
     public static final String RELEASE = "RELEASE";
   }

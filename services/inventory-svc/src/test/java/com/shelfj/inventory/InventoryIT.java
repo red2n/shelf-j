@@ -55,6 +55,7 @@ class InventoryIT {
   private static final String VP3 = "a0000003-0000-0000-0000-000000000000";
 
   @Inject WebTarget target;
+  @Inject com.shelfj.inventory.service.InventoryService inventoryService;
 
   @AfterAll
   static void stopDb() {
@@ -1495,6 +1496,54 @@ class InventoryIT {
 
     // Another tenant's stock never appears in this one's turns.
     assertThat(stockTurn(OTHER, "VARIANT", null), not(containsString(v)));
+  }
+
+  // ── SJ-D40: a voided till sale is not a sale ─────────────────────────────────
+
+  /**
+   * What inventory-svc does on OrderFulfilled and then OrderVoided for one till sale, driven
+   * through the real service. A unit test with a fake service passed while the reports keyed on a
+   * movement type the void never writes; only the real write path shows what lands in
+   * stock_movements.
+   */
+  private void sellByOrderThenVoid(String tenant, String variantId, String qty) {
+    UUID order = UUID.randomUUID();
+    UUID t = UUID.fromString(tenant);
+    UUID s = UUID.fromString(S);
+    UUID v = UUID.fromString(variantId);
+    var q = new java.math.BigDecimal(qty);
+    inventoryService.deductSaleFromOrderOnce(UUID.randomUUID(), "it", t, s, v, q, order);
+    inventoryService.receiveVoidFromOrderOnce(UUID.randomUUID(), "it", t, s, v, q, order);
+  }
+
+  @Test
+  void stockTurnDoesNotCountAVoidedSale() {
+    String v = "d4000010-0000-0000-0000-000000000000";
+    String tenant = "f3000010-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, v, "10", "2.00");
+    sellByOrderThenVoid(tenant, v, "4");
+
+    String body = stockTurn(tenant, "VARIANT", null);
+    // Netting by sign cannot work here: the void's receipt goes into a new return batch and this
+    // report sums per batch, so the sale would keep its 8.00 of cost in one group and the receipt
+    // would show as a negative sale in another. A voided sale has to be excluded outright.
+    assertThat(numericFieldNear(body, v, "cogs"), is("0.00"));
+    assertThat(numericFieldNear(body, v, "uncostedSaleQty"), is("0.000"));
+  }
+
+  @Test
+  void deadStockDoesNotTreatAVoidedSaleAsTheLastSale() {
+    String v = "d5000010-0000-0000-0000-000000000000";
+    String tenant = "f4000010-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, v, "10", "1.00");
+    sellByOrderThenVoid(tenant, v, "3");
+
+    String byVariant = deadStock(tenant, "VARIANT", null);
+    // A voided sale did not happen. Counting it would make stock that has never sold look as
+    // though it moved today, and hide it from the report whose job is to find it.
+    assertThat(numericFieldNear(byVariant, v, "neverSold"), is("true"));
   }
 
   // ── Dead stock ───────────────────────────────────────────────────────────────

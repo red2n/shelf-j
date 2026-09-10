@@ -152,7 +152,12 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       orderRequest: {
         'storeId': storeId,
         'channel': 'POS',
-        'fulfilmentType': 'PICKUP',
+        // INSTORE: the goods leave with the customer now. This said PICKUP,
+        // which means "collect later" everywhere else in the platform. The
+        // server treats a paid POS sale as handed over either way (SJ-D40),
+        // because sales already queued offline replay with PICKUP — but the
+        // label on new sales should say what actually happened.
+        'fulfilmentType': 'INSTORE',
         'currency': currency,
         if (discount > 0) 'discountAmount': discount,
         if (discount > 0)
