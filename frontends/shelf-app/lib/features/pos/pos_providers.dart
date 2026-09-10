@@ -10,9 +10,19 @@ class PosLine {
   final String variantId;
   final String sku;
   final String name;
-  final int qty;
+
+  /// Units, for an item sold by the each. The reading — kilograms, litres,
+  /// metres — for one sold by weight, volume or length. It was a whole number,
+  /// which meant the till could not sell a single loose item by weight.
+  final double qty;
   final double unitPrice;
   final String currency;
+
+  /// EACH, WEIGHT, VOLUME or LENGTH.
+  final String soldBy;
+
+  /// The unit a measured quantity is in, lower case (kg, l, m). Null for EACH.
+  final String? unit;
 
   const PosLine({
     required this.variantId,
@@ -21,17 +31,32 @@ class PosLine {
     required this.qty,
     required this.unitPrice,
     required this.currency,
+    this.soldBy = 'EACH',
+    this.unit,
   });
+
+  bool get measured => soldBy != 'EACH';
+
+  /// A measured line is one item however much of it there is: 0.375 kg of
+  /// cheese is one thing in the basket, not a third of one.
+  int get itemCount => measured ? 1 : qty.round();
+
+  /// How the quantity reads on the till and on the receipt.
+  String get qtyLabel => measured
+      ? '${qty.toStringAsFixed(3)} ${unit ?? ''}'.trim()
+      : (qty == qty.roundToDouble() ? qty.toInt().toString() : qty.toString());
 
   double get lineTotal => qty * unitPrice;
 
-  PosLine copyWith({int? qty}) => PosLine(
+  PosLine copyWith({double? qty, String? soldBy, String? unit}) => PosLine(
         variantId: variantId,
         sku: sku,
         name: name,
         qty: qty ?? this.qty,
         unitPrice: unitPrice,
         currency: currency,
+        soldBy: soldBy ?? this.soldBy,
+        unit: unit ?? this.unit,
       );
 }
 
@@ -63,7 +88,7 @@ class PosCartNotifier extends StateNotifier<List<PosLine>> {
     }
   }
 
-  void setQty(String variantId, int qty) {
+  void setQty(String variantId, double qty) {
     if (qty <= 0) {
       state = state.where((l) => l.variantId != variantId).toList();
       return;
@@ -408,7 +433,8 @@ class ParkedSale {
             variantId: vid,
             sku: vid.length > 8 ? vid.substring(0, 8) : vid,
             name: 'Parked item',
-            qty: (m['qty'] as num?)?.toInt() ?? 1,
+            // Decimal, not truncated: a parked 0.375 kg came back as nothing.
+            qty: (m['qty'] as num?)?.toDouble() ?? 1,
             unitPrice: (m['unitPrice'] as num?)?.toDouble() ?? 0,
             currency: '',
           );

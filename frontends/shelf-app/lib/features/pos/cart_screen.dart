@@ -11,6 +11,7 @@ import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
 import 'pos_age_check.dart';
 import 'pos_providers.dart';
+import 'pos_weighed_item.dart';
 import 'pos_session_providers.dart';
 
 /// The register screen. On a wide terminal it's a two-pane supermarket till —
@@ -58,10 +59,11 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       if (mounted) setState(() => _scanning = false);
     }
     if (line != null) {
-      // An age-restricted item does not reach the sale until the cashier has
-      // checked, and does not reach it at all if the till can't find out.
-      if (await _passesAgeCheck(line)) {
-        ref.read(posCartProvider.notifier).addOrIncrement(line);
+      // Checked before it reaches the sale: the age check, and for an item sold
+      // by weight, the reading from the scale.
+      final ready = await _prepareForSale(line);
+      if (ready != null) {
+        ref.read(posCartProvider.notifier).addOrIncrement(ready);
       }
       _barcodeCtrl.clear();
     }
@@ -87,17 +89,46 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
   }
 
   Future<void> _addOffer(PosOffer offer) async {
-    final line = offer.toLine();
     // Picking from the catalog is the other way into the sale, so it gets the
-    // same check — otherwise browsing would be the way round it.
-    if (!await _passesAgeCheck(line)) return;
-    if (!mounted) return;
+    // same checks — otherwise browsing would be the way round them.
+    final line = await _prepareForSale(offer.toLine());
+    if (line == null || !mounted) return;
     ref.read(posCartProvider.notifier).addOrIncrement(line);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content: Text('Added ${offer.name}'),
           duration: const Duration(milliseconds: 600)),
     );
+  }
+
+  /// Everything a line must pass before it reaches the sale. Null keeps it out.
+  Future<PosLine?> _prepareForSale(PosLine line) async {
+    if (!await _passesAgeCheck(line)) return null;
+    final saleUnit = await fetchSaleUnit(ref.read(apiClientProvider).dio, line.variantId);
+    if (!mounted) return null;
+    if (saleUnit is SoldEach) return line;
+    if (saleUnit is SaleUnitUnknown) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(saleUnit.message),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return null;
+    }
+    final measure = saleUnit as SoldByMeasure;
+    final qty = await showDialog<double>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => MeasuredQuantityDialog(
+        itemName: line.name,
+        unit: measure,
+        unitPrice: line.unitPrice,
+        currency: line.currency,
+      ),
+    );
+    if (qty == null) return null;
+    return line.copyWith(qty: qty, soldBy: measure.soldBy, unit: measure.unit);
   }
 
   /// The age check, asked before an item reaches the sale.
@@ -407,6 +438,27 @@ class _SaleLine extends ConsumerWidget {
   final PosLine line;
   const _SaleLine({required this.line});
 
+  /// A measured line changes by reading the scale again, never by one.
+  Future<void> _remeasure(BuildContext context, WidgetRef ref, PosLine line) async {
+    final qty = await showDialog<double>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => MeasuredQuantityDialog(
+        itemName: line.name,
+        unit: SoldByMeasure(
+          soldBy: line.soldBy,
+          unit: line.unit ?? defaultUnitFor(line.soldBy),
+          catchWeight: false,
+        ),
+        unitPrice: line.unitPrice,
+        currency: line.currency,
+        initial: line.qty,
+        confirmLabel: 'Update',
+      ),
+    );
+    if (qty != null) ref.read(posCartProvider.notifier).setQty(line.variantId, qty);
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(posCartProvider.notifier);
@@ -431,20 +483,28 @@ class _SaleLine extends ConsumerWidget {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.remove_circle_outline),
-              tooltip: 'Decrease quantity',
-              onPressed: () => notifier.setQty(line.variantId, line.qty - 1),
-            ),
-            Text('${line.qty}',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.add_circle_outline),
-              tooltip: 'Increase quantity',
-              onPressed: () => notifier.setQty(line.variantId, line.qty + 1),
-            ),
+            if (line.measured)
+              TextButton(
+                onPressed: () => _remeasure(context, ref, line),
+                child: Text(line.qtyLabel,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+              )
+            else ...[
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.remove_circle_outline),
+                tooltip: 'Decrease quantity',
+                onPressed: () => notifier.setQty(line.variantId, line.qty - 1),
+              ),
+              Text(line.qtyLabel,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.add_circle_outline),
+                tooltip: 'Increase quantity',
+                onPressed: () => notifier.setQty(line.variantId, line.qty + 1),
+              ),
+            ],
             if (showPrices)
               SizedBox(
                 width: 72,
@@ -958,7 +1018,7 @@ class _TotalsBar extends ConsumerWidget {
     final discount = ref.watch(posDiscountProvider).clamp(0, subtotal).toDouble();
     final net = subtotal - discount;
     final tt = Theme.of(context).textTheme;
-    final qty = items.fold<int>(0, (s, l) => s + l.qty);
+    final qty = items.fold<int>(0, (s, l) => s + l.itemCount);
 
     final clearButton = Expanded(
       child: OutlinedButton(

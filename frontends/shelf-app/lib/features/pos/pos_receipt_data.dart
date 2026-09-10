@@ -82,7 +82,11 @@ class PosReceiptData {
     final itemRows = StringBuffer();
     for (final l in items) {
       final lineTotal = _fmt(l.lineTotal);
-      final qtyPrice = '${l.qty} × ${_fmt(l.unitPrice)}';
+      // A measured line prints its reading and the price per unit:
+      // "0.375 kg × GBP 12.00/kg" is what a weights inspector reads.
+      final qtyPrice = l.measured
+          ? '${l.qtyLabel} × ${_fmt(l.unitPrice)}/${l.unit ?? ''}'
+          : '${l.qtyLabel} × ${_fmt(l.unitPrice)}';
       itemRows.write('''
         <tr>
           <td class="item-name">${_esc(l.name)}</td>

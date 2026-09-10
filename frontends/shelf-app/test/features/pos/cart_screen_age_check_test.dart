@@ -50,6 +50,10 @@ class _Till implements HttpClientAdapter {
       body = '{"data":{"variantId":"v-$code","sku":"$code","productName":"Item $code"}}';
     } else if (o.path.contains('/prices/resolve')) {
       body = '{"data":{"unitPrice":8.0,"currency":"GBP"}}';
+    } else if (o.path.endsWith('/compliance')) {
+      // Every item here is sold by the each; the till now asks how an item is
+      // sold, and refuses to guess when the answer is unreadable.
+      body = '{"data":{"soldBy":"EACH","catchWeight":false}}';
     } else if (o.path.endsWith('/age-check')) {
       final variant = o.path.split('/')[o.path.split('/').length - 2];
       final answer = ageCheck[variant] ?? (200, '{"data":{"restricted":false}}');

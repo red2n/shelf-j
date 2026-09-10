@@ -149,7 +149,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       storeId: storeId,
       currency: currency,
       total: _due,
-      itemCount: cart.fold<int>(0, (s, l) => s + l.qty),
+      itemCount: cart.fold<int>(0, (s, l) => s + l.itemCount),
       orderRequest: {
         'storeId': storeId,
         'channel': 'POS',
@@ -521,7 +521,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
   // ── Catalog mode: order-only checkout (no prices, no payment) ──────────────
 
   Widget _orderOnlyView(List<PosLine> cart) {
-    final qty = cart.fold<int>(0, (s, l) => s + l.qty);
+    final qty = cart.fold<int>(0, (s, l) => s + l.itemCount);
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -543,7 +543,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
                   leading: const Icon(Icons.inventory_2_outlined),
                   title: Text(l.name),
                   subtitle: Text(l.sku),
-                  trailing: Text('× ${l.qty}',
+                  trailing: Text('× ${l.qtyLabel}',
                       style: const TextStyle(fontWeight: FontWeight.bold)),
                 );
               },
@@ -605,7 +605,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       storeId: storeId,
       currency: currency,
       total: 0,
-      itemCount: cart.fold<int>(0, (s, l) => s + l.qty),
+      itemCount: cart.fold<int>(0, (s, l) => s + l.itemCount),
       tenders: const [],
       orderRequest: {
         'storeId': storeId,
