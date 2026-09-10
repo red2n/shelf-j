@@ -287,6 +287,75 @@ class FoodSafetyIT {
         not(containsString(v)));
   }
 
+  // ── SJ-D42: marking an item as food is what makes its allergens owed ─────
+
+  @Test
+  @DisplayName("Marking an item as food puts it on the allergen-gaps list until it is declared")
+  void markingFoodOpensAGap() {
+    String v = variant(T, "Flapjack", "FLAP-1");
+    String gaps = "/admin/products/allergen-gaps";
+    assertThat(getAdmin(gaps, T).readEntity(String.class), not(containsString(v)));
+
+    assertThat(
+        put("/admin/products/variants/" + v + "/compliance", "{\"food\":true}", T).getStatus(),
+        is(200));
+    assertThat(
+        get("/catalog/variants/" + v + "/allergens", T).readEntity(String.class),
+        containsString("\"status\":\"UNDECLARED\""));
+    // Before the flag existed nothing ever wrote UNDECLARED, so this list could not contain
+    // anything.
+    assertThat(getAdmin(gaps, T).readEntity(String.class), containsString(v));
+
+    put(
+        "/admin/products/variants/" + v + "/allergens",
+        "{\"allergens\":[{\"code\":\"CEREALS_GLUTEN\",\"presence\":\"CONTAINS\"}]}",
+        T);
+    assertThat(getAdmin(gaps, T).readEntity(String.class), not(containsString(v)));
+  }
+
+  @Test
+  @DisplayName(
+      "Marking a declared item as food again does not turn its declaration into an unknown")
+  void remarkingFoodKeepsTheDeclaration() {
+    String v = variant(T, "Oatcakes", "OAT-1");
+    put("/admin/products/variants/" + v + "/allergens", "{\"allergens\":[]}", T);
+    put("/admin/products/variants/" + v + "/compliance", "{\"food\":true}", T);
+
+    assertThat(
+        get("/catalog/variants/" + v + "/allergens", T).readEntity(String.class),
+        containsString("\"status\":\"DECLARED\""));
+  }
+
+  @Test
+  @DisplayName("Marking an item as not food removes its allergen statement")
+  void notFoodClearsTheDeclaration() {
+    String v = variant(T, "Bin bags", "BIN-1");
+    // Declared by mistake on something nobody eats.
+    put(
+        "/admin/products/variants/" + v + "/allergens",
+        "{\"allergens\":[{\"code\":\"MILK\",\"presence\":\"CONTAINS\"}]}",
+        T);
+    assertThat(
+        put("/admin/products/variants/" + v + "/compliance", "{\"food\":false}", T).getStatus(),
+        is(200));
+
+    String body = get("/catalog/variants/" + v + "/allergens", T).readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"NOT_APPLICABLE\""));
+    assertThat(body, not(containsString("MILK")));
+  }
+
+  @Test
+  @DisplayName("Updating other fields without the flag leaves the allergen status alone")
+  void omittingTheFlagLeavesStatus() {
+    String v = variant(T, "Shortbread", "SHORT-1");
+    put("/admin/products/variants/" + v + "/compliance", "{\"food\":true}", T);
+    put("/admin/products/variants/" + v + "/compliance", "{\"countryOfOrigin\":\"GB\"}", T);
+
+    assertThat(
+        get("/catalog/variants/" + v + "/allergens", T).readEntity(String.class),
+        containsString("\"status\":\"UNDECLARED\""));
+  }
+
   // ── age restriction, across the five markets ───────────────────────────────
 
   @Test

@@ -582,6 +582,17 @@ public class ProductService {
     if (!complianceRepo.updateCompliance(tenantId, updated)) {
       throw ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found");
     }
+
+    // Whether an item is food decides whether its allergens are owed at all. Until this flag
+    // existed
+    // nothing ever set UNDECLARED — the column defaults to NOT_APPLICABLE, whatever V17's comment
+    // says — so the allergen-gaps list an inspector asks for could never contain a row (SJ-D42).
+    if (Boolean.TRUE.equals(req.food())) {
+      complianceRepo.markFoodUndeclared(tenantId, variantId);
+    } else if (Boolean.FALSE.equals(req.food())) {
+      complianceRepo.replaceDeclaration(
+          tenantId, variantId, List.of(), Domain.VariantCompliance.NOT_APPLICABLE);
+    }
     return complianceRepo.findCompliance(tenantId, variantId);
   }
 

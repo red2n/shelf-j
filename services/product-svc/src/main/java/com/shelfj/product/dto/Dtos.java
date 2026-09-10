@@ -125,7 +125,13 @@ public final class Dtos {
       @Schema(
               description =
                   "True when each item has its own weight — a joint of meat, a whole fish.")
-          Boolean catchWeight) {}
+          Boolean catchWeight,
+      @Schema(
+              description =
+                  "Whether this is a food product. true moves an item from NOT_APPLICABLE to"
+                      + " UNDECLARED, so it is listed on allergen-gaps until declared; false makes it"
+                      + " NOT_APPLICABLE and removes any declaration. Omit to leave it as it is.")
+          Boolean food) {}
 
   @Schema(name = "VariantComplianceResponse")
   public record VariantComplianceResponse(

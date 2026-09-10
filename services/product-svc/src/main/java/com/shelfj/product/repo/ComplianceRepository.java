@@ -137,6 +137,23 @@ public class ComplianceRepository extends BaseJdbcRepository {
         "undeclared variants");
   }
 
+  /**
+   * Marks a variant as food whose allergens nobody has declared yet.
+   *
+   * <p>Only moves NOT_APPLICABLE. An item already DECLARED keeps its declaration: marking it as
+   * food again must never turn a statement someone made back into an unknown.
+   */
+  public void markFoodUndeclared(UUID tenantId, UUID variantId) {
+    exec(
+        "UPDATE product_variants SET allergen_status = 'UNDECLARED', updated_at = now()"
+            + " WHERE tenant_id = ? AND id = ? AND allergen_status = 'NOT_APPLICABLE'",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, variantId);
+        },
+        "mark food undeclared");
+  }
+
   // ── the variant's own compliance fields ─────────────────────────────────────
 
   public VariantCompliance findCompliance(UUID tenantId, UUID variantId) {
