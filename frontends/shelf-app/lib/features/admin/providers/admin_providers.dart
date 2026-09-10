@@ -807,7 +807,9 @@ final defaultPriceListProvider = FutureProvider.autoDispose<String>((ref) async 
   // None yet — create the tenant's default price list.
   final tenant = await ref.watch(tenantInfoProvider.future);
   final created = await dio.post(
-    '/${ApiConstants.pricing}/price-lists',
+    // Under /admin/ since SJ-D37: on the open path any staff role could set
+    // what customers are charged.
+    '/${ApiConstants.pricing}/admin/price-lists',
     data: {
       'name': 'Default',
       'channel': 'ALL',

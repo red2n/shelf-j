@@ -1,5 +1,6 @@
 package com.shelfj.pricing.service;
 
+import com.shelfj.pricing.domain.Domain;
 import com.shelfj.pricing.domain.Domain.BasketLine;
 import com.shelfj.pricing.domain.Domain.CustomerVatStatus;
 import com.shelfj.pricing.domain.Domain.PriceList;
@@ -29,6 +30,7 @@ import com.shelfj.pricing.dto.Dtos.QuoteBasketResponse;
 import com.shelfj.pricing.dto.Dtos.QuoteLineResponse;
 import com.shelfj.pricing.dto.Dtos.RecordTaxTransactionRequest;
 import com.shelfj.pricing.dto.Dtos.ResolvePriceRequest;
+import com.shelfj.pricing.dto.Dtos.SetActiveRequest;
 import com.shelfj.pricing.dto.Dtos.UpsertCustomerVatStatusRequest;
 import com.shelfj.pricing.dto.Dtos.UpsertPriceListItemRequest;
 import com.shelfj.pricing.dto.Dtos.UpsertProductVatCategoryRequest;
@@ -717,6 +719,64 @@ public class PricingService {
       throw ApiException.badRequest(
           "PRICING_INVALID_PERCENT",
           "a percentage promotion cannot exceed 100 — got " + req.value());
+  }
+
+  /**
+   * Stops a promotion or a price list, or starts it again (SJ-D33).
+   *
+   * <p><code>active</code> has existed on both tables since V1 and the engine has always filtered
+   * on it. Nothing ever wrote it, so a promotion created with no end date ran forever and could
+   * only be stopped by reaching into the database. A discount nobody can switch off is the most
+   * expensive version of the "declared column with no writer" shape this branch keeps finding.
+   *
+   * <p>A reason is required in both directions, not just for stopping. Turning a promotion back on
+   * is the change more likely to be questioned later, and a trail that records why something was
+   * stopped but not why it was restarted answers the easier half of the question.
+   *
+   * <p>Already-in-that-state is a 409 rather than a silent success: two people stopping the same
+   * runaway promotion should not both be told they did it, and the trail must not gain a row for a
+   * switch that did not move.
+   *
+   * @throws ApiException 400 if no reason is given; 404 if there is no such subject for this
+   *     tenant; 409 {@code PRICING_ALREADY_IN_STATE} if it is already on or off as requested
+   */
+  public Domain.StatusChange setActive(
+      TenantContext ctx, String subjectType, UUID id, boolean active, SetActiveRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    String table = Domain.StatusChange.PROMOTION.equals(subjectType) ? "promotions" : "price_lists";
+    String reason = req == null || req.reason() == null ? null : req.reason().trim();
+    if (reason == null || reason.isEmpty())
+      throw ApiException.badRequest(
+          "PRICING_REASON_REQUIRED",
+          "say why — a promotion that stopped with no recorded reason is a discount that vanished"
+              + " from the shop floor with nobody accountable");
+
+    Boolean current = repo.findActive(table, tenantId, id);
+    if (current == null)
+      throw ApiException.notFound(
+          "PRICING_SUBJECT_NOT_FOUND",
+          subjectType.toLowerCase(java.util.Locale.ROOT) + " not found: " + id);
+
+    Domain.StatusChange change =
+        new Domain.StatusChange(
+            UUID.randomUUID(),
+            tenantId,
+            subjectType,
+            id,
+            active,
+            reason,
+            ctx.userId(),
+            Instant.now());
+    if (!repo.setActive(table, change))
+      throw ApiException.conflict(
+          "PRICING_ALREADY_IN_STATE",
+          "already " + (active ? "active" : "inactive") + " — nothing to change");
+    return change;
+  }
+
+  /** The on/off history for one promotion or price list. */
+  public List<Domain.StatusChange> statusChanges(TenantContext ctx, String subjectType, UUID id) {
+    return repo.findStatusChanges(subjectType, ctx.requireTenantId(), id);
   }
 
   public List<Promotion> listActivePromotions(TenantContext ctx) {

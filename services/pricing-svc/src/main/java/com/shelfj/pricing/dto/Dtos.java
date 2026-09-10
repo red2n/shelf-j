@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -30,6 +31,28 @@ public final class Dtos {
       @Schema(description = "ISO-8601 instant this rate takes effect, e.g. 2026-01-01T00:00:00Z.")
           @NotBlank
           String effectiveFrom) {}
+
+  @Schema(
+      name = "SetActiveRequest",
+      description = "Stop or restart a promotion or price list. The reason is required either way.")
+  public record SetActiveRequest(
+      @Schema(
+              description =
+                  "Why. Required in both directions — restarting a promotion is the change more"
+                      + " likely to be questioned later, and a trail that records only why things"
+                      + " were stopped answers the easier half of the question.")
+          @NotBlank
+          String reason) {}
+
+  @Schema(name = "StatusChangeResponse", description = "One entry in the on/off history.")
+  public record StatusChangeResponse(
+      UUID id,
+      String subjectType,
+      UUID subjectId,
+      @Schema(description = "The state it was changed TO.") boolean active,
+      String reason,
+      UUID changedBy,
+      Instant changedAt) {}
 
   @Schema(name = "VatRateResponse")
   public record VatRateResponse(

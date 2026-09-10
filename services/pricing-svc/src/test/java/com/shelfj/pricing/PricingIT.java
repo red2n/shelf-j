@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.comparesEqualTo;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -57,18 +58,22 @@ class PricingIT {
       st.execute(
           "TRUNCATE TABLE pricing.promotion_redemptions, pricing.promotion_items,"
               + " pricing.promotions,"
-              + " pricing.tax_transactions, pricing.price_list_items, pricing.price_lists,"
+              + " pricing.promotion_status_changes, pricing.tax_transactions, pricing.price_list_items, pricing.price_lists,"
               + " pricing.product_vat_categories, pricing.customer_vat_status,"
               + " pricing.vat_rates, pricing.outbox CASCADE");
     }
   }
 
   private Response post(String path, String json, String tenant) {
+    return postAs(path, json, tenant, "OWNER");
+  }
+
+  private Response postAs(String path, String json, String tenant, String roles) {
     return target
         .path(path)
         .request()
         .header("X-Tenant-Id", tenant)
-        .header("X-Roles", "OWNER")
+        .header("X-Roles", roles)
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
@@ -194,7 +199,7 @@ class PricingIT {
     // Create price list in GBP
     Response plR =
         post(
-            "/price-lists",
+            "/admin/price-lists",
             "{\"name\":\"Standard GBP\",\"channel\":\"ALL\","
                 + "\"currency\":\"GBP\","
                 + "\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
@@ -206,7 +211,7 @@ class PricingIT {
     // Add price: £10.00 for variant
     Response piR =
         post(
-            "/price-lists/" + plId + "/items",
+            "/admin/price-lists/" + plId + "/items",
             "{\"variantId\":\"" + V + "\",\"price\":10.00,\"minQty\":1}",
             T);
     assertThat(piR.getStatus(), is(200));
@@ -458,21 +463,21 @@ class PricingIT {
     post("/product-vat-categories", "{\"variantId\":\"" + V + "\",\"vatCode\":\"T1\"}", T);
     Response plR =
         post(
-            "/price-lists",
+            "/admin/price-lists",
             "{\"name\":\"Promo Test\",\"channel\":\"ALL\","
                 + "\"currency\":\"GBP\","
                 + "\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
             T);
     String plId = extractId(plR.readEntity(String.class));
     post(
-        "/price-lists/" + plId + "/items",
+        "/admin/price-lists/" + plId + "/items",
         "{\"variantId\":\"" + V + "\",\"price\":100.00,\"minQty\":1}",
         T);
 
     // Create 10% off promotion
     Response promoR =
         post(
-            "/promotions",
+            "/admin/promotions",
             "{\"name\":\"Summer Sale\",\"type\":\"PERCENT\",\"value\":10,"
                 + "\"channel\":\"ALL\","
                 + "\"startsAt\":\"2020-01-01T00:00:00Z\"}",
@@ -481,7 +486,7 @@ class PricingIT {
     String promoId = extractId(promoR.readEntity(String.class));
 
     // Scope promotion to ALL
-    Response piR = post("/promotions/" + promoId + "/items", "{\"scopeType\":\"ALL\"}", T);
+    Response piR = post("/admin/promotions/" + promoId + "/items", "{\"scopeType\":\"ALL\"}", T);
     assertThat(piR.getStatus(), is(201));
 
     // Resolve — expect 10% off: £90 net + 20% VAT = £18 VAT = £108 gross
@@ -505,23 +510,24 @@ class PricingIT {
     post("/product-vat-categories", "{\"variantId\":\"" + variantId + "\",\"vatCode\":\"T1\"}", T);
     Response plR =
         post(
-            "/price-lists",
+            "/admin/price-lists",
             "{\"name\":\"Basket Test\",\"channel\":\"ALL\",\"currency\":\"GBP\","
                 + "\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
             T);
     String plId = extractId(plR.readEntity(String.class));
     post(
-        "/price-lists/" + plId + "/items",
+        "/admin/price-lists/" + plId + "/items",
         "{\"variantId\":\"" + variantId + "\",\"price\":" + price + ",\"minQty\":1}",
         T);
   }
 
   private String createPromotion(String json) {
-    Response r = post("/promotions", json, T);
+    Response r = post("/admin/promotions", json, T);
     assertThat(r.getStatus() + " " + json, r.getStatus(), is(201));
     String id = extractId(r.readEntity(String.class));
     assertThat(
-        post("/promotions/" + id + "/items", "{\"scopeType\":\"ALL\"}", T).getStatus(), is(201));
+        post("/admin/promotions/" + id + "/items", "{\"scopeType\":\"ALL\"}", T).getStatus(),
+        is(201));
     return id;
   }
 
@@ -607,6 +613,331 @@ class PricingIT {
     return total;
   }
 
+  // ── SJ-D33 / SJ-D36: a promotion that can be stopped, by someone entitled to ──
+
+  /**
+   * The defect, and the fix. Before this, <code>promotions.active</code> had no writer of any kind:
+   * a promotion created without an end date ran forever and could only be stopped by reaching into
+   * the database.
+   */
+  @Test
+  void aRunningPromotionCanBeStoppedAndStartedAgain() {
+    seedPricedVariant(V, "100.00");
+    String id =
+        createPromotion(
+            "{\"name\":\"Runaway\",\"type\":\"BASKET_PERCENT\",\"value\":50,"
+                + "\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+
+    // It is running: half off a £100 basket.
+    assertThat(
+        quote("{\"lines\":[{\"variantId\":\"" + V + "\",\"qty\":1}]}"),
+        containsString("\"totalDiscount\":50.00"));
+
+    Response stop =
+        post(
+            "/admin/promotions/" + id + "/deactivate",
+            "{\"reason\":\"priced wrong — 50% was meant to be 5%\"}",
+            T);
+    assertThat(stop.getStatus(), is(200));
+
+    // And now it is not. This assertion is the whole defect.
+    assertThat(
+        quote("{\"lines\":[{\"variantId\":\"" + V + "\",\"qty\":1}]}"),
+        containsString("\"totalDiscount\":0"));
+
+    assertThat(
+        post(
+                "/admin/promotions/" + id + "/activate",
+                "{\"reason\":\"repriced and re-approved\"}",
+                T)
+            .getStatus(),
+        is(200));
+    assertThat(
+        quote("{\"lines\":[{\"variantId\":\"" + V + "\",\"qty\":1}]}"),
+        containsString("\"totalDiscount\":50.00"));
+  }
+
+  /** Both directions need a reason, and the trail keeps every switch. */
+  @Test
+  void everySwitchIsRecordedWithAReason() {
+    String id =
+        createPromotion(
+            "{\"name\":\"Audited\",\"type\":\"BASKET_FLAT\",\"value\":5,"
+                + "\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+
+    // A switch with no stated reason is a discount that vanished with nobody accountable.
+    assertThat(post("/admin/promotions/" + id + "/deactivate", "{}", T).getStatus(), is(400));
+
+    post("/admin/promotions/" + id + "/deactivate", "{\"reason\":\"stopped\"}", T);
+    post("/admin/promotions/" + id + "/activate", "{\"reason\":\"restarted\"}", T);
+
+    String hist =
+        getAs("/admin/promotions/" + id + "/status-history", T, "OWNER").readEntity(String.class);
+    assertThat(hist, containsString("stopped"));
+    assertThat(hist, containsString("restarted"));
+    // Append-only: restarting does not erase the record of it having been stopped.
+    assertThat(hist, containsString("\"active\":false"));
+    assertThat(hist, containsString("\"active\":true"));
+  }
+
+  /** Stopping something already stopped is a conflict, not a silent success. */
+  @Test
+  void switchingToTheStateItIsAlreadyInIsRefused() {
+    String id =
+        createPromotion(
+            "{\"name\":\"Idempotent?\",\"type\":\"BASKET_FLAT\",\"value\":1,"
+                + "\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+    assertThat(
+        post("/admin/promotions/" + id + "/deactivate", "{\"reason\":\"a\"}", T).getStatus(),
+        is(200));
+    Response again = post("/admin/promotions/" + id + "/deactivate", "{\"reason\":\"b\"}", T);
+    assertThat(again.getStatus(), is(409));
+    // Two people stopping the same runaway promotion must not both be told they did it, and the
+    // trail must not gain a row for a switch that never moved.
+    assertThat(again.readEntity(String.class), containsString("PRICING_ALREADY_IN_STATE"));
+  }
+
+  /** SJ-D36: creating a promotion is money leaving the business, and was open to any staff role. */
+  @Test
+  void aCashierCannotCreateOrStopAPromotion() {
+    assertThat(
+        postAs(
+                "/admin/promotions",
+                "{\"name\":\"100% off\",\"type\":\"BASKET_PERCENT\",\"value\":100,"
+                    + "\"startsAt\":\"2020-01-01T00:00:00Z\"}",
+                T,
+                "CASHIER")
+            .getStatus(),
+        is(403));
+
+    String id =
+        createPromotion(
+            "{\"name\":\"Manager's\",\"type\":\"BASKET_FLAT\",\"value\":2,"
+                + "\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+    assertThat(
+        postAs("/admin/promotions/" + id + "/deactivate", "{\"reason\":\"x\"}", T, "CASHIER")
+            .getStatus(),
+        is(403));
+
+    // The storefront read stays open — a shopper must still be able to see the offers.
+    assertThat(getAs("/promotions", T, "CUSTOMER").getStatus(), is(200));
+  }
+
+  // ── SJ-D37 / SJ-D38: the same two defects, on the thing that IS the price ──
+
+  /**
+   * A price list nobody could switch off.
+   *
+   * <p>SJ-D33 and SJ-D36 were reported against promotions. Price lists carried both defects in
+   * identical form and neither was reported: {@code price_lists.active} has been {@code NOT NULL
+   * DEFAULT TRUE} since V1 and the resolve query filters on it, so it decides what customers are
+   * charged — and nothing in the product ever wrote it. A promotion discounts a price; a price list
+   * <em>is</em> the price, so this is the more expensive of the two.
+   */
+  @Test
+  void aLivePriceListCanBeStoppedAndTheResolvedPriceChanges() {
+    post(
+        "/vat-rates",
+        "{\"code\":\"T1\",\"name\":\"Standard Rate\",\"rate\":0.20,"
+            + "\"exempt\":false,\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+        T);
+    post("/product-vat-categories", "{\"variantId\":\"" + V + "\",\"vatCode\":\"T1\"}", T);
+    String plId = createPriceList(T, "Mispriced", "GBP");
+    post(
+        "/admin/price-lists/" + plId + "/items",
+        "{\"variantId\":\"" + V + "\",\"price\":1.00,\"minQty\":1}",
+        T);
+
+    // A £100 item listed at £1. Until this fix, that stood until someone edited the database.
+    Response live = post("/prices/resolve", "{\"variantId\":\"" + V + "\",\"channel\":\"ALL\"}", T);
+    assertThat(live.getStatus(), is(200));
+    assertThat(live.readEntity(String.class), containsString("1.00"));
+
+    assertThat(
+        post(
+                "/admin/price-lists/" + plId + "/deactivate",
+                "{\"reason\":\"decimal slipped — £1.00 should have been £100.00\"}",
+                T)
+            .getStatus(),
+        is(200));
+
+    // Now nothing prices it, which is the correct answer: refusing to sell beats selling at a
+    // price nobody agreed. This assertion is the whole defect.
+    Response stopped =
+        post("/prices/resolve", "{\"variantId\":\"" + V + "\",\"channel\":\"ALL\"}", T);
+    assertThat(stopped.getStatus(), is(404));
+    assertThat(stopped.readEntity(String.class), containsString("PRICING_PRICE_NOT_FOUND"));
+
+    assertThat(
+        post("/admin/price-lists/" + plId + "/activate", "{\"reason\":\"corrected\"}", T)
+            .getStatus(),
+        is(200));
+    assertThat(
+        post("/prices/resolve", "{\"variantId\":\"" + V + "\",\"channel\":\"ALL\"}", T).getStatus(),
+        is(200));
+  }
+
+  /**
+   * Five markets, five currencies, five tenants — the switch is scoped to one of them.
+   *
+   * <p>Stopping the Japanese price list must not touch the British one, and a whole-yen price must
+   * survive the round trip without gaining decimals it does not have. JPY has no minor unit (ISO
+   * 4217 exponent 0), the other four have two, so this also proves the switch does not care about
+   * scale.
+   */
+  @Test
+  void stoppingOneMarketsPricesLeavesTheOthersSelling() {
+    record Market(String tenant, String currency, String price) {}
+    var markets =
+        java.util.List.of(
+            new Market("11111111-1111-1111-1111-111111111111", "USD", "9.99"),
+            new Market("22222222-2222-2222-2222-222222222222", "GBP", "8.50"),
+            new Market("33333333-3333-3333-3333-333333333333", "CNY", "69.00"),
+            new Market("44444444-4444-4444-4444-444444444444", "JPY", "1234"),
+            new Market("55555555-5555-5555-5555-555555555555", "INR", "849.00"));
+
+    var lists = new java.util.LinkedHashMap<String, String>();
+    for (Market m : markets) {
+      post(
+          "/vat-rates",
+          "{\"code\":\"T1\",\"name\":\"Standard\",\"rate\":0.20,"
+              + "\"exempt\":false,\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+          m.tenant());
+      post(
+          "/product-vat-categories",
+          "{\"variantId\":\"" + V + "\",\"vatCode\":\"T1\"}",
+          m.tenant());
+      String id = createPriceList(m.tenant(), m.currency() + " list", m.currency());
+      post(
+          "/admin/price-lists/" + id + "/items",
+          "{\"variantId\":\"" + V + "\",\"price\":" + m.price() + ",\"minQty\":1}",
+          m.tenant());
+      lists.put(m.tenant(), id);
+    }
+
+    String jp = "44444444-4444-4444-4444-444444444444";
+    // Whole yen, and no invented sub-unit on the way out.
+    String yen =
+        post("/prices/resolve", "{\"variantId\":\"" + V + "\",\"channel\":\"ALL\"}", jp)
+            .readEntity(String.class);
+    assertThat(yen, containsString("1234"));
+    assertThat(yen, containsString("JPY"));
+
+    assertThat(
+        post(
+                "/admin/price-lists/" + lists.get(jp) + "/deactivate",
+                "{\"reason\":\"supplier withdrew the Japanese line\"}",
+                jp)
+            .getStatus(),
+        is(200));
+
+    assertThat(
+        post("/prices/resolve", "{\"variantId\":\"" + V + "\",\"channel\":\"ALL\"}", jp)
+            .getStatus(),
+        is(404));
+
+    // Every other market is still selling, at its own currency and its own scale.
+    for (Market m : markets) {
+      if (m.tenant().equals(jp)) {
+        continue;
+      }
+      Response r =
+          post("/prices/resolve", "{\"variantId\":\"" + V + "\",\"channel\":\"ALL\"}", m.tenant());
+      assertThat(m.currency() + " should still price", r.getStatus(), is(200));
+      String body = r.readEntity(String.class);
+      assertThat(body, containsString(m.currency()));
+      assertThat(body, containsString(m.price()));
+    }
+
+    // And one tenant cannot reach into another's switch, even knowing the id.
+    assertThat(
+        post(
+                "/admin/price-lists/" + lists.get(jp) + "/activate",
+                "{\"reason\":\"not mine to restart\"}",
+                "22222222-2222-2222-2222-222222222222")
+            .getStatus(),
+        is(404));
+  }
+
+  /** SJ-D37: proved against the running stack — a CASHIER token created a price list, 201. */
+  @Test
+  void aCashierCannotSetPricesOrStopAPriceList() {
+    assertThat(
+        postAs(
+                "/admin/price-lists",
+                "{\"name\":\"Cashier's own prices\",\"channel\":\"ALL\","
+                    + "\"currency\":\"GBP\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+                T,
+                "CASHIER")
+            .getStatus(),
+        is(403));
+
+    String plId = createPriceList(T, "Managed", "GBP");
+    assertThat(
+        postAs(
+                "/admin/price-lists/" + plId + "/items",
+                "{\"variantId\":\"" + V + "\",\"price\":0.01,\"minQty\":1}",
+                T,
+                "CASHIER")
+            .getStatus(),
+        is(403));
+    assertThat(
+        postAs(
+                "/admin/price-lists/" + plId + "/items/batch",
+                "{\"items\":[{\"variantId\":\"" + V + "\",\"price\":0.01,\"minQty\":1}]}",
+                T,
+                "CASHIER")
+            .getStatus(),
+        is(403));
+    assertThat(
+        postAs("/admin/price-lists/" + plId + "/deactivate", "{\"reason\":\"x\"}", T, "CASHIER")
+            .getStatus(),
+        is(403));
+
+    // The till still has to be able to read prices, or it cannot sell anything.
+    assertThat(getAs("/price-lists", T, "CASHIER").getStatus(), is(200));
+    assertThat(getAs("/price-lists/" + plId + "/items", T, "CASHIER").getStatus(), is(200));
+  }
+
+  /** One trail serves both subjects, and must not blur them. */
+  @Test
+  void aPriceListsHistoryDoesNotShowThePromotionsSwitches() {
+    String promoId =
+        createPromotion(
+            "{\"name\":\"Unrelated\",\"type\":\"BASKET_FLAT\",\"value\":1,"
+                + "\"startsAt\":\"2020-01-01T00:00:00Z\"}");
+    post("/admin/promotions/" + promoId + "/deactivate", "{\"reason\":\"promotion reason\"}", T);
+
+    String plId = createPriceList(T, "Separate", "GBP");
+    post("/admin/price-lists/" + plId + "/deactivate", "{\"reason\":\"price list reason\"}", T);
+
+    String plHist =
+        getAs("/admin/price-lists/" + plId + "/status-history", T, "OWNER")
+            .readEntity(String.class);
+    assertThat(plHist, containsString("price list reason"));
+    assertThat(plHist, not(containsString("promotion reason")));
+
+    String promoHist =
+        getAs("/admin/promotions/" + promoId + "/status-history", T, "OWNER")
+            .readEntity(String.class);
+    assertThat(promoHist, containsString("promotion reason"));
+    assertThat(promoHist, not(containsString("price list reason")));
+  }
+
+  private String createPriceList(String tenant, String name, String currency) {
+    Response r =
+        post(
+            "/admin/price-lists",
+            "{\"name\":\""
+                + name
+                + "\",\"channel\":\"ALL\",\"currency\":\""
+                + currency
+                + "\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            tenant);
+    assertThat(r.getStatus(), is(201));
+    return extractId(r.readEntity(String.class));
+  }
+
   /** A coupon does nothing until it is presented, and is matched case-insensitively. */
   @Test
   void aCouponAppliesOnlyWhenPresented() {
@@ -650,7 +981,7 @@ class PricingIT {
             + "\"couponCode\":\"DUPE\",\"startsAt\":\"2020-01-01T00:00:00Z\"}");
     Response second =
         post(
-            "/promotions",
+            "/admin/promotions",
             "{\"name\":\"Second\",\"type\":\"BASKET_FLAT\",\"value\":9,"
                 + "\"couponCode\":\"dupe\",\"startsAt\":\"2020-01-01T00:00:00Z\"}",
             T);
@@ -665,7 +996,7 @@ class PricingIT {
   void anIncompleteBogoIsRefused() {
     Response r =
         post(
-            "/promotions",
+            "/admin/promotions",
             "{\"name\":\"Half a BOGO\",\"type\":\"BOGO\",\"value\":1,"
                 + "\"buyQty\":2,\"startsAt\":\"2020-01-01T00:00:00Z\"}",
             T);
@@ -678,7 +1009,7 @@ class PricingIT {
   void aThresholdPromotionWithoutAThresholdIsRefused() {
     Response r =
         post(
-            "/promotions",
+            "/admin/promotions",
             "{\"name\":\"No threshold\",\"type\":\"SPEND_THRESHOLD\",\"value\":5,"
                 + "\"startsAt\":\"2020-01-01T00:00:00Z\"}",
             T);
@@ -699,7 +1030,7 @@ class PricingIT {
                 + "\"startsAt\":\"2020-01-01T00:00:00Z\"}");
     Response r =
         post(
-            "/promotions/" + id + "/items",
+            "/admin/promotions/" + id + "/items",
             "{\"scopeType\":\"CATEGORY\",\"scopeId\":\"" + S + "\"}",
             T);
     assertThat(r.getStatus(), is(400));
@@ -737,7 +1068,7 @@ class PricingIT {
     for (int i = 1; i <= 5; i++) {
       Response r =
           post(
-              "/price-lists",
+              "/admin/price-lists",
               "{\"name\":\"List "
                   + i
                   + "\",\"channel\":\"ALL\",\"currency\":\"GBP\","
@@ -771,7 +1102,7 @@ class PricingIT {
   void batchUpsertItemsRejectsAnInvalidItemButStillUpsertsTheRest() {
     Response plR =
         post(
-            "/price-lists",
+            "/admin/price-lists",
             "{\"name\":\"Batch Test\",\"channel\":\"ALL\","
                 + "\"currency\":\"GBP\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
             T);
@@ -793,7 +1124,7 @@ class PricingIT {
             + badVariant
             + "\",\"price\":-5.00,\"minQty\":1}"
             + "]}";
-    Response r = post("/price-lists/" + plId + "/items/batch", body, T);
+    Response r = post("/admin/price-lists/" + plId + "/items/batch", body, T);
     assertThat(r.getStatus(), is(200));
     String result = r.readEntity(String.class);
     assertThat(result, containsString("\"upserted\":1"));

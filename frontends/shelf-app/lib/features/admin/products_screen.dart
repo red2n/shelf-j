@@ -1176,7 +1176,7 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                         final listId =
                             await ref.read(defaultPriceListProvider.future);
                         await ref.read(apiClientProvider).dio.post(
-                          '/${ApiConstants.pricing}/price-lists/$listId/items',
+                          '/${ApiConstants.pricing}/admin/price-lists/$listId/items',
                           data: {
                             'variantId': v.id,
                             'price': price,

@@ -1,5 +1,6 @@
 package com.shelfj.pricing.repo;
 
+import com.shelfj.pricing.domain.Domain;
 import com.shelfj.pricing.domain.Domain.CustomerVatStatus;
 import com.shelfj.pricing.domain.Domain.PriceList;
 import com.shelfj.pricing.domain.Domain.PriceListItem;
@@ -454,6 +455,101 @@ public class PricingRepository extends BaseOutboxRepository {
           return p;
         },
         "create promotion");
+  }
+
+  /**
+   * Switches a promotion or a price list on or off, and records who did it and why, atomically
+   * (SJ-D33).
+   *
+   * <p>The two halves must not be separable. A promotion that stops running with no record of who
+   * stopped it is a discount that vanished from the shop floor with nobody accountable, and a trail
+   * row written for a switch that did not throw is worse than no trail at all.
+   *
+   * <p>The guard sits in the {@code WHERE} clause rather than in a preceding read, on the same
+   * reasoning as every other state transition in this codebase: two people stopping the same
+   * promotion at once must not both write a trail row claiming they were the one who did it.
+   *
+   * @param table the physical table — {@code promotions} or {@code price_lists}, chosen by the
+   *     caller from a closed set, never from user input
+   * @param change the append-only trail row, carrying the state being moved TO
+   * @return {@code true} if this call changed the state; {@code false} if it was already there
+   */
+  public boolean setActive(String table, Domain.StatusChange change) {
+    if (!"promotions".equals(table) && !"price_lists".equals(table)) {
+      throw new IllegalArgumentException("not a switchable table: " + table);
+    }
+    return inTx(
+        c -> {
+          int rows;
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE " + table + " SET active=? WHERE tenant_id=? AND id=? AND active<>?")) {
+            ps.setBoolean(1, change.active());
+            ps.setObject(2, change.tenantId());
+            ps.setObject(3, change.subjectId());
+            ps.setBoolean(4, change.active());
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) return false;
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO promotion_status_changes"
+                      + " (id,tenant_id,subject_type,subject_id,active,reason,changed_by)"
+                      + " VALUES (?,?,?,?,?,?,?)")) {
+            ps.setObject(1, change.id());
+            ps.setObject(2, change.tenantId());
+            ps.setString(3, change.subjectType());
+            ps.setObject(4, change.subjectId());
+            ps.setBoolean(5, change.active());
+            ps.setString(6, change.reason());
+            ps.setObject(7, change.changedBy());
+            ps.executeUpdate();
+          }
+          return true;
+        },
+        "set active");
+  }
+
+  /** Whether a promotion or price list exists for this tenant, and whether it is currently live. */
+  public Boolean findActive(String table, UUID tenantId, UUID id) {
+    if (!"promotions".equals(table) && !"price_lists".equals(table)) {
+      throw new IllegalArgumentException("not a switchable table: " + table);
+    }
+    var rows =
+        query(
+            "SELECT active FROM " + table + " WHERE tenant_id=? AND id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            rs -> rs.getBoolean("active"),
+            "read active");
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  /** The on/off history for one promotion or price list, newest first. Append-only. */
+  public List<Domain.StatusChange> findStatusChanges(String subjectType, UUID tenantId, UUID id) {
+    return query(
+        "SELECT id,tenant_id,subject_type,subject_id,active,reason,changed_by,changed_at"
+            + " FROM promotion_status_changes"
+            + " WHERE tenant_id=? AND subject_type=? AND subject_id=?"
+            + " ORDER BY changed_at DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setString(2, subjectType);
+          ps.setObject(3, id);
+        },
+        rs ->
+            new Domain.StatusChange(
+                rs.getObject("id", UUID.class),
+                rs.getObject("tenant_id", UUID.class),
+                rs.getString("subject_type"),
+                rs.getObject("subject_id", UUID.class),
+                rs.getBoolean("active"),
+                rs.getString("reason"),
+                rs.getObject("changed_by", UUID.class),
+                rs.getObject("changed_at", java.time.OffsetDateTime.class).toInstant()),
+        "find status changes");
   }
 
   /**

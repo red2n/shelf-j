@@ -1,5 +1,6 @@
 package com.shelfj.pricing.mapper;
 
+import com.shelfj.pricing.domain.Domain;
 import com.shelfj.pricing.domain.Domain.CustomerVatStatus;
 import com.shelfj.pricing.domain.Domain.PriceList;
 import com.shelfj.pricing.domain.Domain.PriceListItem;
@@ -13,6 +14,7 @@ import com.shelfj.pricing.domain.Domain.TaxSummaryRow;
 import com.shelfj.pricing.domain.Domain.TaxTransaction;
 import com.shelfj.pricing.domain.Domain.VatRate;
 import com.shelfj.pricing.domain.Domain.VatReturn;
+import com.shelfj.pricing.dto.Dtos;
 import com.shelfj.pricing.dto.Dtos.CustomerVatStatusResponse;
 import com.shelfj.pricing.dto.Dtos.PriceListItemResponse;
 import com.shelfj.pricing.dto.Dtos.PriceListResponse;
@@ -206,5 +208,16 @@ public final class Mappers {
   public static TaxSummaryRowResponse toDto(TaxSummaryRow r) {
     return new TaxSummaryRowResponse(
         r.groupKey(), r.exempt(), r.netAmount(), r.vatAmount(), r.grossAmount(), r.transactions());
+  }
+
+  public static Dtos.StatusChangeResponse toDto(Domain.StatusChange c) {
+    return new Dtos.StatusChangeResponse(
+        c.id(),
+        c.subjectType(),
+        c.subjectId(),
+        c.active(),
+        c.reason(),
+        c.changedBy(),
+        c.changedAt());
   }
 }

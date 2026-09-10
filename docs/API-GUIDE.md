@@ -365,21 +365,31 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 
 ## pricing-svc
 
-### Pricing (`/price-lists`, `/admin/price-overrides`, `/prices`)
-- `POST /price-lists`, `GET /price-lists`, `GET /price-lists/{id}` — create/list/get price lists.
-- `POST /price-lists/{id}/items` — set a single variant's price on a list.
-- `POST /price-lists/{id}/items/batch` — set many variants' prices in one call (partial-failure tolerant).
-- `GET /price-lists/{id}/items` — list a price list's items.
+### Pricing (`/price-lists`, `/admin/price-lists`, `/admin/price-overrides`, `/prices`)
+
+**Writes are management-only, reads are not.** Setting a price used to sit on `/price-lists`, outside `/admin/`, where `AdminAuthorizationFilter`'s mutation tier asks only for *some* staff role — so a CASHIER could create a price list and set what customers are charged (proved against the running stack: 201). The writes moved under `/admin/`; the reads stayed, because the POS and storefront need them and neither runs as management.
+
+- `POST /admin/price-lists` — create a price list. `effectiveFrom` is an **ISO-8601 instant** (`2026-01-01T00:00:00Z`); the column is `TIMESTAMPTZ` and a bare date is refused with `INVALID_DATE`.
+- `POST /admin/price-lists/{id}/items` — set a single variant's price on a list.
+- `POST /admin/price-lists/{id}/items/batch` — set many variants' prices in one call (partial-failure tolerant).
+- `POST /admin/price-lists/{id}/deactivate` · `POST /admin/price-lists/{id}/activate` — switch a price list off or on, `{"reason": "..."}` **required in both directions**. `409 PRICING_ALREADY_IN_STATE` if it is already in that state, so two people stopping the same list are not both told they did it. The resolve query filters on `active`, so a stopped list stops setting prices from the next request; orders already placed keep what they were charged. Before this, `price_lists.active` had no writer of any kind and a wrong price could only be corrected by editing the database.
+- `GET /admin/price-lists/{id}/status-history` — append-only on/off trail, newest first: who switched it, when, and why.
+- `GET /price-lists`, `GET /price-lists/{id}`, `GET /price-lists/{id}/items` — reads, open to any staff role.
 - `POST /admin/price-overrides`, `GET /admin/price-overrides` — log/list staff-approved ad-hoc POS price overrides (an append-only audit trail, not a mutable price).
 - `POST /prices/resolve` — compute the effective price + VAT breakdown for one variant/channel/quantity. Applies **line-level** promotions only: basket rules are excluded deliberately, because this answers "what does this item cost" for a product page and quoting a spend-threshold price against one item advertises a total the shopper will not be charged.
 - `POST /prices/resolve-batch` — resolve prices for several lines in one call. Each line is still priced **independently**, so no basket rule can apply; use `/prices/quote` at checkout.
 - `POST /prices/quote` — **price a whole basket.** Resolves every line, then runs the promotion engine over the basket as a unit, returning per-line net prices, the whole-basket discount, every promotion that applied, and the VAT computed after discounts (the basket discount is apportioned across lines by value first, so it is not VAT-free money). Takes `couponCodes`; any that do not apply come back in `rejectedCoupons` with a reason — `NO_SUCH_COUPON`, `NOT_APPLICABLE`, `COUPON_EXHAUSTED` or `COUPON_LIMIT_REACHED` — rather than being silently ignored. **Quoting never spends a coupon**: a basket is quoted on every change a shopper makes, so redemption is a separate call.
 - `POST /prices/redemptions` — record that an order used these promotions, spending their usage caps. Idempotent on `(tenant, promotion, order)`, so a retried checkout or a replayed offline sale cannot burn a second use; `recorded: 0` is a successful replay, not a failure.
 
-### Promotions (`/promotions`)
-- `POST /promotions` — create a time-bounded promotion. Six types: `PERCENT` and `FLAT` (per line), `BASKET_PERCENT` and `BASKET_FLAT` (whole basket), `SPEND_THRESHOLD` (a flat amount once the basket clears `minOrderAmount`), and `BOGO` (`buyQty` / `getQty` / `getDiscountPct`, where 100 = free). Also takes `priority` (ascending, lower runs first), `exclusive` (stops every promotion after it), `couponCode` (unique per tenant, matched case-insensitively), and the `maxRedemptions` / `maxPerCustomer` caps.
+### Promotions (`/promotions`, `/admin/promotions`)
+
+Same split, and for the same reason: creating a promotion is money leaving the business, and a CASHIER could do it. Writes are under `/admin/`; the storefront read is not.
+
+- `POST /admin/promotions` — create a time-bounded promotion. Six types: `PERCENT` and `FLAT` (per line), `BASKET_PERCENT` and `BASKET_FLAT` (whole basket), `SPEND_THRESHOLD` (a flat amount once the basket clears `minOrderAmount`), and `BOGO` (`buyQty` / `getQty` / `getDiscountPct`, where 100 = free). Also takes `priority` (ascending, lower runs first), `exclusive` (stops every promotion after it), `couponCode` (unique per tenant, matched case-insensitively), and the `maxRedemptions` / `maxPerCustomer` caps.
 - `GET /promotions` — list active promotions (also powers the public storefront offers banner).
-- `POST /promotions/{id}/items` — scope a promotion to `ALL` or to a `VARIANT`. **`CATEGORY` is refused** with `PRICING_CATEGORY_SCOPE_UNSUPPORTED`: pricing-svc has no variant→category mapping because product-svc publishes no catalogue event, and such a promotion was previously accepted, stored, and silently never applied.
+- `POST /admin/promotions/{id}/items` — scope a promotion to `ALL` or to a `VARIANT`. **`CATEGORY` is refused** with `PRICING_CATEGORY_SCOPE_UNSUPPORTED`: pricing-svc has no variant→category mapping because product-svc publishes no catalogue event, and such a promotion was previously accepted, stored, and silently never applied.
+- `POST /admin/promotions/{id}/deactivate` · `POST /admin/promotions/{id}/activate` — stop a running promotion or start a stopped one, `{"reason": "..."}` **required in both directions**; `409 PRICING_ALREADY_IN_STATE` if it is already in that state. Before this there was no route, no service method and no SQL statement anywhere that wrote `promotions.active` — `endsAt` is nullable, so a promotion created without one ran forever and could only be stopped by editing the database.
+- `GET /admin/promotions/{id}/status-history` — append-only on/off trail, newest first. A table rather than a pair of columns on the row, because a promotion can be switched repeatedly and a record keeping only the last change cannot answer "who turned this back on?".
 
 **Business rules**
 - **Ordering is explicit.** Line-level promotions run first in `priority` order against each line's original price, then basket-level ones against the subtotal that remains. Two line-level percentages therefore compound on the original price — two 10% offers take 20%, not 19%.
@@ -393,7 +403,7 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `POST /product-vat-categories`, `GET /product-vat-categories/{variantId}` — upsert/look up a variant's HMRC VAT tax code.
 - `POST /vat-rates`, `GET /vat-rates`, `GET /vat-rates/{code}`, `PUT /vat-rates/{code}` — create/list/get/update UK VAT rates (T1/T5/T0/etc.).
 - `POST /tax-transactions`, `GET /tax-transactions?orderId=` — record/list a POSLog-style tax transaction journal entry per order.
-- `GET /vat-return?from=&to=` — compute an HMRC Making Tax Digital VAT return (boxes 1–9) for a date range.
+- `GET /vat-return?from=&to=` — the boxes of an HMRC Making Tax Digital VAT return for a date range. Management-only (`PLATFORM_ADMIN`/`OWNER`/`MANAGER`), enforced in the resource rather than by path. **Partial (SJ-D39):** boxes 1 (output VAT), 3, 5 and 6 (net sales) come from `tax_transactions`; boxes 2, 4, 7, 8 and 9 return a hardcoded `0`. Box 4 is input VAT reclaimed on purchases — purchase-svc captures it on supplier invoices and nothing carries it across, so box 5 (net VAT to pay) is overstated by exactly the VAT the business is entitled to reclaim. Not fit to file from until box 4 is real.
 
 **Business rules**
 - `POST /prices/resolve(-batch)` is deliberately open with no staff-role requirement — it's a service-to-service call order-svc makes without identity headers during checkout pricing.

@@ -142,13 +142,14 @@ Left-hand navigation: **Dashboard · Catalog · Inventory · Stores · Orders ·
 | **Invoices** | **The three-way match.** One row per invoice line showing *ordered / received / invoiced* side by side, with both unit prices when they differ (`2.50 → 2.75`). Variances are shown as sentences a buyer can act on — "Billed for more than arrived", "Charged above the agreed price" — rather than the API's constants. **Flagged invoices sort first and open expanded**: the exceptions are the entire point of the control, and a list in date order buries them behind the invoices nobody needs to read. A variance the buyer has to click to discover is one that waits until the payment run. |
 | **Suppliers** | List of suppliers. **Add supplier**: name, country, currency, "VAT registered" checkbox. |
 
-### 4.6 Pricing (3 tabs)
+### 4.6 Pricing (4 tabs)
 
 | Tab | What the user does |
 |---|---|
-| **Price Lists** | Create a list scoped to a channel (All / Online / POS); open a list to add per-variant items (price + minimum quantity). |
-| **Promotions** | Create a promotion across all six types the engine understands: % or amount off each item, % or amount off the basket, spend-and-save, and buy-X-get-Y. Plus a coupon code (blank means it applies on its own), a priority (lower runs first — which of two overlapping offers wins is now a decision rather than an accident), total and per-customer usage caps, and a "cannot be combined" switch that suppresses every promotion after it. The BOGO fields appear only for a BOGO, and the value field disappears there, because a BOGO is described by its three quantities and a number in a value box would mean nothing. The list shows each promotion's own summary — "Buy 2, get 1 free", "£5 off over £100" — with its code, and flags an exclusive one inline because it changes what every other promotion does. Applies to all products by default. |
+| **Price Lists** | Create a list scoped to a channel (All / Online / POS); open a list to add per-variant items (price + minimum quantity). Each row carries a **Stop / Start** control: a price list decides what customers are charged, and until this existed a decimal in the wrong place could only be corrected by editing the database. Stopping asks for a reason — recorded against the user's name — and warns what it costs: if nothing else prices those items they cannot be sold until it is started again, which is the safe answer to a price nobody agreed. Orders already placed keep what they were charged. |
+| **Promotions** | Create a promotion across all six types the engine understands: % or amount off each item, % or amount off the basket, spend-and-save, and buy-X-get-Y. Plus a coupon code (blank means it applies on its own), a priority (lower runs first — which of two overlapping offers wins is now a decision rather than an accident), total and per-customer usage caps, and a "cannot be combined" switch that suppresses every promotion after it. The BOGO fields appear only for a BOGO, and the value field disappears there, because a BOGO is described by its three quantities and a number in a value box would mean nothing. The list shows each promotion's own summary — "Buy 2, get 1 free", "£5 off over £100" — with its code, and flags an exclusive one inline because it changes what every other promotion does. Applies to all products by default. Each row carries a **Stop / Start** control, for the same reason: `endsAt` is optional, so a promotion created without one runs forever, and the badge saying "Active" used to offer no way to change that. A reason is required in both directions — a trail that records only why things were stopped answers the easier half of "who turned this back on?". |
 | **VAT Rates** | Create/edit tax rates: code, name, percentage, and an "Exempt" flag. |
+| **VAT Return** | The nine boxes of a UK VAT return for a chosen period, with quick ranges for this quarter and the last 90 days. **Only boxes 1, 3, 5 and 6 are computed** — from the tax transactions recorded at sale, not re-derived from orders, so an amended order cannot silently change a figure already filed. **Boxes 2, 4, 7, 8 and 9 are hardcoded zero** (SJ-D39). Box 4 is input VAT reclaimed on purchases: the figures exist, but in purchase-svc's supplier invoices, and nothing carries them across. A business filing this as-is pays its output VAT in full and reclaims none of it. The screen must say so on its face before this is fit to file from. |
 
 ### 4.7 Reports
 
@@ -306,7 +307,7 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 | `/admin/stores` | Stores + Zones |
 | `/admin/orders` | Orders (all channels) + Return/Refund + Collect Payment |
 | `/admin/procurement` | Procurement (Purchase Orders / Suppliers tabs) |
-| `/admin/pricing` | Pricing (Price Lists / Promotions / VAT Rates tabs) |
+| `/admin/pricing` | Pricing (Price Lists / Promotions / VAT Rates / VAT Return tabs) |
 | `/admin/reports` | Reports (On-Hand / Sales / Sales by Day / Supply-Demand / Movements / Low Stock / Valuation / Shrinkage / Staff Exceptions / Tax Summary / Sales by Hour / Sales by Staff / Tender Mix / Stock Turn / Dead Stock) |
 | `/admin/customers` | Customers + loyalty/credit + addresses |
 | `/admin/sales` | Sales tools (Gift Cards / Layaways / Special Orders tabs) |

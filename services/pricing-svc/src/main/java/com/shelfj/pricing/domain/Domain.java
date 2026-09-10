@@ -188,6 +188,21 @@ public final class Domain {
   }
 
   /** Scopes a promotion to a specific variant, category, or ALL products. */
+  /** What a promotion or price list was switched to, by whom and why. Append-only (SJ-D33). */
+  public record StatusChange(
+      UUID id,
+      UUID tenantId,
+      String subjectType,
+      UUID subjectId,
+      boolean active,
+      String reason,
+      UUID changedBy,
+      Instant changedAt) {
+
+    public static final String PROMOTION = "PROMOTION";
+    public static final String PRICE_LIST = "PRICE_LIST";
+  }
+
   public record PromotionItem(
       UUID id, UUID tenantId, UUID promotionId, String scopeType, UUID scopeId, Instant createdAt) {
 

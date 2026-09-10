@@ -112,7 +112,42 @@ class _PriceListsTab extends ConsumerWidget {
                         if (l.currency != null) l.currency,
                         if (l.effectiveFrom != null) 'from ${l.effectiveFrom}',
                       ].whereType<String>().join(' · ')),
-                      trailing: _activeBadge(context, l.active),
+                      // Same defect as promotions, on the thing that IS the
+                      // price: the resolve engine filters on active and nothing
+                      // could write it (SJ-D38).
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _activeBadge(context, l.active),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            tooltip:
+                                l.active ? 'Stop this price list' : 'Start it again',
+                            icon: Icon(
+                                l.active
+                                    ? Icons.pause_circle_outline
+                                    : Icons.play_circle_outline,
+                                size: 22),
+                            onPressed: () => showDialog(
+                              context: context,
+                              builder: (_) => _SwitchDialog(
+                                collection: 'price-lists',
+                                subjectId: l.id,
+                                name: l.name,
+                                activate: !l.active,
+                                onSwitched: () => ref.invalidate(priceListsProvider),
+                                effect: l.active
+                                    ? 'Its prices stop being offered immediately. If nothing '
+                                        'else prices these items, they cannot be sold until you '
+                                        'start it again — which is the safe answer to a price '
+                                        'nobody agreed. Orders already placed keep what they '
+                                        'were charged.'
+                                    : 'Its prices are offered again from the next basket.',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -157,12 +192,17 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
     });
     try {
       await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.pricing}/price-lists',
+        '/${ApiConstants.pricing}/admin/price-lists',
         data: {
           'name': _nameCtrl.text.trim(),
           'channel': _channel,
           'currency': _currency,
-          'effectiveFrom': _from.toIso8601String().split('T').first,
+          // A bare '2026-01-01' is rejected with INVALID_DATE — the column is
+          // TIMESTAMPTZ. Sent as a UTC instant, which is also what golden rule
+          // 14 asks for: convert at the UI edge, store UTC.
+          'effectiveFrom': DateTime.utc(_from.year, _from.month, _from.day)
+              .toIso8601String()
+              .replaceFirst(RegExp(r'\.\d+Z$'), 'Z'),
         },
       );
       if (!mounted) return;
@@ -334,7 +374,7 @@ class _PriceListItemDialogState extends ConsumerState<_PriceListItemDialog> {
     });
     try {
       await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.pricing}/price-lists/${widget.priceListId}/items',
+        '/${ApiConstants.pricing}/admin/price-lists/${widget.priceListId}/items',
         data: {'variantId': _variantId, 'price': price, 'minQty': minQty},
       );
       if (!mounted) return;
@@ -474,7 +514,40 @@ class _PromotionsTab extends ConsumerWidget {
                         if (p.priority != 100) 'priority ${p.priority}',
                         if (p.maxRedemptions != null) 'max ${p.maxRedemptions}',
                       ].whereType<String>().join(' · ')),
-                      trailing: _activeBadge(context, p.active),
+                      // The badge said whether it was running and offered no
+                      // way to change that — because until SJ-D33 there was no
+                      // endpoint behind it. A promotion nobody can switch off
+                      // is the one that matters most to be able to switch off.
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _activeBadge(context, p.active),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            tooltip: p.active ? 'Stop this promotion' : 'Start it again',
+                            icon: Icon(
+                                p.active
+                                    ? Icons.pause_circle_outline
+                                    : Icons.play_circle_outline,
+                                size: 22),
+                            onPressed: () => showDialog(
+                              context: context,
+                              builder: (_) => _SwitchDialog(
+                                collection: 'promotions',
+                                subjectId: p.id,
+                                name: p.name,
+                                activate: !p.active,
+                                onSwitched: () => ref.invalidate(promotionsProvider),
+                                effect: p.active
+                                    ? 'It stops applying to baskets immediately. Orders already '
+                                        'placed are unaffected — the discount they received is '
+                                        'recorded on the order.'
+                                    : 'It will start applying to baskets immediately.',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -482,6 +555,129 @@ class _PromotionsTab extends ConsumerWidget {
             },
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// Stops a running promotion or price list, or starts a stopped one again.
+///
+/// One dialog for both because they are the same defect and the same fix: each
+/// had an `active` column the resolve engine reads and nothing in the product
+/// could write (SJ-D33, SJ-D38). A price list is the harsher of the two — a
+/// promotion discounts a price, a price list *is* the price.
+///
+/// A reason is required in both directions, matching the server. Restarting is
+/// the change more likely to be questioned later, and a trail recording only why
+/// things were stopped answers the easier half of the question.
+class _SwitchDialog extends ConsumerStatefulWidget {
+  /// Admin collection this subject lives under — `promotions` or `price-lists`.
+  final String collection;
+  final String subjectId;
+  final String name;
+  final bool activate;
+
+  /// What stopping it does, in the words of someone who has to decide.
+  final String effect;
+
+  /// Called after a successful switch, to redraw the list behind the dialog.
+  final VoidCallback onSwitched;
+
+  const _SwitchDialog({
+    required this.collection,
+    required this.subjectId,
+    required this.name,
+    required this.activate,
+    required this.effect,
+    required this.onSwitched,
+  });
+
+  @override
+  ConsumerState<_SwitchDialog> createState() => _SwitchDialogState();
+}
+
+class _SwitchDialogState extends ConsumerState<_SwitchDialog> {
+  final _reason = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final reason = _reason.text.trim();
+    if (reason.isEmpty) {
+      setState(() => _error = 'Say why — this is recorded against your name.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final action = widget.activate ? 'activate' : 'deactivate';
+      await ref.read(apiClientProvider).dio.post(
+            '/${ApiConstants.pricing}/admin/${widget.collection}/${widget.subjectId}/$action',
+            data: {'reason': reason},
+          );
+      if (!mounted) return;
+      widget.onSwitched();
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(widget.activate
+              ? 'Started — it is live again now.'
+              : 'Stopped, with immediate effect.')));
+    } catch (e) {
+      setState(() {
+        _busy = false;
+        _error = friendlyError(e,
+            fallback: 'Could not change this.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(
+          '${widget.activate ? 'Start' : 'Stop'} ${widget.collection == 'promotions' ? 'promotion' : 'price list'}'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(widget.effect),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _reason,
+              autofocus: true,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                hintText: 'e.g. priced wrong — 50% was meant to be 5%',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _busy ? null : () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: _busy ? null : _submit,
+            child: Text(widget.activate ? 'Start' : 'Stop')),
       ],
     );
   }
@@ -566,7 +762,7 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
     final dio = ref.read(apiClientProvider).dio;
     try {
       final resp = await dio.post(
-        '/${ApiConstants.pricing}/promotions',
+        '/${ApiConstants.pricing}/admin/promotions',
         data: {
           'name': _nameCtrl.text.trim(),
           'type': _type,
@@ -595,7 +791,7 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
       final promoId = promo['id'] as String?;
       if (promoId != null) {
         await dio.post(
-          '/${ApiConstants.pricing}/promotions/$promoId/items',
+          '/${ApiConstants.pricing}/admin/promotions/$promoId/items',
           data: {'scopeType': 'ALL'},
         );
       }
