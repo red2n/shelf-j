@@ -330,6 +330,21 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 
 ---
 
+### Fiscal receipts (`/admin/fiscal-receipts`)
+
+A **gapless legal receipt sequence** — required by fiscal law in Italy, Germany (KassenSichV), Portugal, Poland, Brazil and India, and required to be demonstrable to an inspector. Distinct from `/admin/orders/{id}/receipts`, which logs how many times a document was printed or emailed; this is the document itself.
+
+- `POST /admin/orders/{orderId}/fiscal-receipt?series=` — issue the numbered receipt. **Normally unnecessary**: the number is taken automatically when the sale is confirmed. This is the recovery path for a sale that completed while issuance was failing, and it is idempotent — a second call returns the number already issued, because a reprint is not a sale and two numbers for one sale is how a day's takings get counted twice. Refused for a `PENDING` or `CANCELLED` order (`ORDER_NOT_SELLABLE`): numbering a basket that is never paid for is where gaps come from.
+- `GET /admin/orders/{orderId}/fiscal-receipt` — the number, when it was issued, and whether the sale was later voided.
+- `GET /admin/fiscal-receipts?storeId=&series=&period=` — the register, by number. `series` defaults to `MAIN`, `period` to the current fiscal year.
+- `GET /admin/fiscal-receipts/audit?storeId=&series=&period=` — **the inspector's question, answered by the database rather than by assertion.** Returns the first and last numbers, how many were issued, how many the span implies, and every gap with its range. `intact: true` with an empty `gaps` array is the proof. Contiguous holes come back as one gap with a range, because "2 to 3" is what gets explained, not two separate findings.
+
+**Why not a Postgres `SEQUENCE`.** Sequences deliberately do not roll back: two transactions take 41 and 42, the first aborts, and 41 is gone forever. That is right for a surrogate key and wrong for a legal document, where the missing number is exactly what an inspector asks about. The counter is a row updated with `UPDATE … RETURNING` inside the sale's own transaction, so a rollback puts the number back and concurrent tills serialise on the row lock. That trade — concurrency for gaplessness — is the one every fiscal system makes, and a test drives eight tills at once to prove it holds.
+
+**A voided sale keeps its number**, marked void with a reason. Deleting or renumbering it would close the hole, and closing the hole is the trick the numbering exists to expose: ring the sale, take the cash, void the receipt, and a till that balances hides a theft.
+
+Numbering restarts per `period` (fiscal year) and runs per `(store, series)`, so a jurisdiction that numbers per till — Italy does — uses one series per device.
+
 ## payment-svc
 
 ### Payments & Refunds (`/payments`)

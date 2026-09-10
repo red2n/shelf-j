@@ -1,5 +1,6 @@
 package com.shelfj.order.service;
 
+import com.shelfj.order.domain.Domain;
 import com.shelfj.order.domain.Domain.ExceptionGrouping;
 import com.shelfj.order.domain.Domain.ExceptionRow;
 import com.shelfj.order.domain.Domain.GiftCard;
@@ -59,6 +60,7 @@ public class OrderService {
   private static final System.Logger LOG = System.getLogger(OrderService.class.getName());
 
   @Inject OrderRepository repo;
+  @Inject com.shelfj.order.repo.FiscalReceiptRepository receiptRepo;
   @Inject com.shelfj.order.repo.SalesAnalyticsRepository salesAnalyticsRepo;
   @Inject TenantStatusRepository tenantStatusRepo;
   @Inject StoreStatusRepository storeStatusRepo;
@@ -534,21 +536,139 @@ public class OrderService {
   public Order confirmOrder(UUID tenantId, UUID orderId, UUID userId) {
     // Load the order so OrderConfirmed can carry the buyer + settled amount (loyalty accrual).
     Order order = getOrder(tenantId, orderId);
-    return repo.transitionOrderStatus(
-        tenantId,
-        orderId,
-        Order.STATUS_PENDING,
-        Order.STATUS_CONFIRMED,
-        "confirmed",
-        userId,
-        Events.orderConfirmed(
+    Order confirmed =
+        repo.transitionOrderStatus(
             tenantId,
             orderId,
+            Order.STATUS_PENDING,
+            Order.STATUS_CONFIRMED,
+            "confirmed",
+            userId,
+            Events.orderConfirmed(
+                tenantId,
+                orderId,
+                order.storeId(),
+                order.channel(),
+                order.customerId(),
+                order.total(),
+                order.currency()));
+
+    // The number is taken here, not when someone asks for a document. A sequence that only
+    // numbers the sales somebody remembered to print is not a sequence, and a receipt issued at
+    // order creation would burn a number on every basket that is abandoned before payment —
+    // which is where the gaps come from.
+    //
+    // Deliberately after the transition rather than inside it: a fiscal number is worth having,
+    // and it is not worth failing a paid-for sale to get. If this throws, the sale stands and
+    // POST /admin/orders/{id}/fiscal-receipt issues it — the numbering is still gapless, because
+    // the counter only moves when a receipt row is actually written.
+    issueReceiptQuietly(confirmed, userId);
+    return confirmed;
+  }
+
+  private void issueReceiptQuietly(Order order, UUID userId) {
+    try {
+      issueReceipt(order, Domain.FiscalReceipt.DEFAULT_SERIES, userId);
+    } catch (RuntimeException e) {
+      LOG.log(
+          System.Logger.Level.ERROR,
+          () ->
+              "Order "
+                  + order.id()
+                  + " was confirmed but no fiscal receipt could be issued; issue it with POST"
+                  + " /admin/orders/{id}/fiscal-receipt",
+          e);
+    }
+  }
+
+  /**
+   * Issues (or returns) the numbered receipt for a sale.
+   *
+   * <p>Only a sale that has actually happened gets a number. A PENDING order has not been paid for
+   * and may never be — numbering it would put a hole in the sequence the moment the basket is
+   * abandoned, which is the exact thing the sequence must not have.
+   */
+  public Domain.FiscalReceipt issueReceipt(Order order, String seriesCode, UUID userId) {
+    if (Order.STATUS_PENDING.equals(order.status())
+        || Order.STATUS_CANCELLED.equals(order.status())) {
+      throw ApiException.badRequest(
+          "ORDER_NOT_SELLABLE",
+          "A receipt is only issued for a completed sale; this order is " + order.status());
+    }
+    String series =
+        seriesCode == null || seriesCode.isBlank()
+            ? Domain.FiscalReceipt.DEFAULT_SERIES
+            : seriesCode.trim().toUpperCase(java.util.Locale.ROOT);
+    // Fiscal year, which most jurisdictions restart numbering on. UTC because that is what the
+    // rest of the platform stores; a tenant whose fiscal year is not the calendar year needs a
+    // period they choose, and that is a configuration change rather than a schema one.
+    String period = String.valueOf(order.createdAt().atZone(java.time.ZoneOffset.UTC).getYear());
+    return receiptRepo.issue(
+        new Domain.FiscalReceipt(
+            UUID.randomUUID(),
+            order.tenantId(),
             order.storeId(),
-            order.channel(),
-            order.customerId(),
+            series,
+            period,
+            0L,
+            null,
+            order.id(),
+            null,
+            userId,
+            order.currency(),
             order.total(),
-            order.currency()));
+            order.taxAmount(),
+            null,
+            null),
+        null);
+  }
+
+  public Domain.FiscalReceipt issueReceipt(
+      UUID tenantId, UUID orderId, String seriesCode, UUID userId) {
+    return issueReceipt(getOrder(tenantId, orderId), seriesCode, userId);
+  }
+
+  public Domain.FiscalReceipt receiptOf(UUID tenantId, UUID orderId) {
+    return receiptRepo
+        .findByOrder(tenantId, orderId)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "ORDER_RECEIPT_NOT_ISSUED", "No fiscal receipt has been issued for this sale"));
+  }
+
+  public List<Domain.FiscalReceipt> receiptSeries(
+      UUID tenantId, UUID storeId, String series, String period, int limit) {
+    return receiptRepo.listSeries(
+        tenantId, storeId, seriesOrDefault(series), period, Math.min(Math.max(limit, 1), 500));
+  }
+
+  /** The gap audit: bounds, count, and every hole. An empty gap list is the proof. */
+  public java.util.Map<String, Object> receiptAudit(
+      UUID tenantId, UUID storeId, String series, String period) {
+    String s = seriesOrDefault(series);
+    long[] bounds = receiptRepo.seriesBounds(tenantId, storeId, s, period);
+    var gaps = receiptRepo.findGaps(tenantId, storeId, s, period);
+    var out = new java.util.LinkedHashMap<String, Object>();
+    out.put("storeId", storeId.toString());
+    out.put("seriesCode", s);
+    out.put("period", period);
+    out.put("firstNumber", bounds[0]);
+    out.put("lastNumber", bounds[1]);
+    out.put("issued", bounds[2]);
+    // Expected is the span, so a series with 400 receipts numbered 1..500 reads as 100 missing
+    // without anyone having to subtract.
+    out.put("expected", bounds[1] == 0 ? 0 : bounds[1] - bounds[0] + 1);
+    out.put("intact", gaps.isEmpty());
+    out.put(
+        "gaps", gaps.stream().map(g -> java.util.Map.of("from", g.from(), "to", g.to())).toList());
+    return out;
+  }
+
+  private static String seriesOrDefault(String series) {
+    return series == null || series.isBlank()
+        ? Domain.FiscalReceipt.DEFAULT_SERIES
+        : series.trim().toUpperCase(java.util.Locale.ROOT);
   }
 
   public Order cancelOrder(UUID tenantId, UUID orderId, String reason, UUID userId) {
@@ -669,13 +789,20 @@ public class OrderService {
     ctx.requireStoreAccess(order.storeId());
     if (!Order.CHANNEL_POS.equals(order.channel()))
       throw ApiException.conflict("ORDER_VOID_ONLY_POS", "void is only allowed on POS orders");
-    return repo.voidOrder(
-        tenantId,
-        orderId,
-        order.storeId(),
-        req.reason(),
-        ctx.userId(),
-        Events.orderVoided(tenantId, orderId));
+    PosVoidLog log =
+        repo.voidOrder(
+            tenantId,
+            orderId,
+            order.storeId(),
+            req.reason(),
+            ctx.userId(),
+            Events.orderVoided(tenantId, orderId));
+
+    // The receipt keeps its number and gains a reason. Removing it would close the hole in the
+    // sequence, and closing the hole is the whole trick: ring the sale, take the cash, void the
+    // receipt, and a till that balances hides a theft. Here the document stays, numbered.
+    receiptRepo.markVoided(tenantId, orderId, req.reason());
+    return log;
   }
 
   // ── Layaway ───────────────────────────────────────────────────────────────

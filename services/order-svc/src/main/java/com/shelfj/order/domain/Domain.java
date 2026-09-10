@@ -11,6 +11,37 @@ public final class Domain {
 
   // ── Core order ────────────────────────────────────────────────────────────
 
+  /**
+   * A numbered legal receipt.
+   *
+   * <p>Distinct from {@code order_receipts}, which logs how many times a document was printed or
+   * emailed. This is the document — one per sale, numbered consecutively, never renumbered and
+   * never deleted. A voided sale keeps its number, because suppressing it is the fraud the
+   * numbering exists to expose.
+   */
+  public record FiscalReceipt(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      String seriesCode,
+      String period,
+      long number,
+      String fullNumber,
+      UUID orderId,
+      Instant issuedAt,
+      UUID issuedBy,
+      String currency,
+      BigDecimal grossTotal,
+      BigDecimal taxTotal,
+      Instant voidedAt,
+      String voidReason) {
+    /** The series a store uses when the jurisdiction does not require one per till. */
+    public static final String DEFAULT_SERIES = "MAIN";
+  }
+
+  /** A hole in a receipt series, inclusive at both ends. */
+  public record SequenceGap(long from, long to) {}
+
   public record Order(
       UUID id,
       UUID tenantId,
