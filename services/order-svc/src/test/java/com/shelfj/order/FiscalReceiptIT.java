@@ -259,6 +259,30 @@ class FiscalReceiptIT {
     assertThat(numberOf(orderId), is(1L));
   }
 
+  private Response getAs(String path, String tenant, String roles) {
+    return target.path(path).request().header("X-Tenant-Id", tenant).header("X-Roles", roles).get();
+  }
+
+  @Test
+  @DisplayName("The till can read the number it has to print; a stranger cannot")
+  void theTillCanReadItsReceiptNumber() {
+    String store = UUID.randomUUID().toString();
+    String orderId = placeOnly(store);
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), UUID.fromString(orderId), UUID.randomUUID(), new BigDecimal("5.00"));
+
+    Response asCashier = getAs("/orders/" + orderId + "/fiscal-receipt", T, "CASHIER");
+    assertThat(asCashier.getStatus(), is(200));
+    assertThat(asCashier.readEntity(String.class), containsString("\"number\":1"));
+
+    // The admin route is management-only, which is why the till could never print this before.
+    assertThat(
+        getAs("/admin/orders/" + orderId + "/fiscal-receipt", T, "CASHIER").getStatus(), is(403));
+
+    // A customer who did not buy it gets the same 404 as an order that does not exist.
+    assertThat(getAs("/orders/" + orderId + "/fiscal-receipt", T, "CUSTOMER").getStatus(), is(404));
+  }
+
   // ── the audit ──────────────────────────────────────────────────────────────
 
   @Test

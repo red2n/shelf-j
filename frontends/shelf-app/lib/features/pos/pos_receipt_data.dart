@@ -23,6 +23,14 @@ class PosReceiptData {
   final double change;
   final String? customerName;
 
+  /// The legal receipt number, e.g. `2026-000042`. Null until order-svc has
+  /// issued it — and always null for a sale held offline.
+  final String? fiscalNumber;
+
+  /// Printed where the number would be when there is none, so a receipt never
+  /// passes an order id off as a receipt number.
+  final String? fiscalNumberNote;
+
   const PosReceiptData({
     required this.orderId,
     required this.storeName,
@@ -37,7 +45,27 @@ class PosReceiptData {
     required this.tenders,
     required this.change,
     this.customerName,
+    this.fiscalNumber,
+    this.fiscalNumberNote,
   });
+
+  /// The same receipt, now carrying the number that was not issued in time.
+  PosReceiptData withFiscalNumber(String number) => PosReceiptData(
+        orderId: orderId,
+        storeName: storeName,
+        storeAddress: storeAddress,
+        dateTime: dateTime,
+        cashierEmail: cashierEmail,
+        items: items,
+        subtotal: subtotal,
+        discount: discount,
+        total: total,
+        currency: currency,
+        tenders: tenders,
+        change: change,
+        customerName: customerName,
+        fiscalNumber: number,
+      );
 
   String get shortId =>
       orderId.length >= 8 ? orderId.substring(0, 8).toUpperCase() : orderId.toUpperCase();
@@ -90,11 +118,20 @@ class PosReceiptData {
     final addressLine =
         storeAddress != null && storeAddress!.isNotEmpty ? '<div>${_esc(storeAddress!)}</div>' : '';
 
+    // The receipt number is the legal one or nothing. This row used to read
+    // "Receipt #" over the first eight characters of the order's UUID, which is
+    // an order reference wearing a receipt number's label.
+    final numberRows = fiscalNumber != null
+        ? '<div class="info-row receipt-no"><span>Receipt no.:</span><span>${_esc(fiscalNumber!)}</span></div>\n'
+            '  <div class="info-row"><span>Order ref:</span><span>$shortId</span></div>'
+        : '<div class="info-row"><span>Order ref:</span><span>$shortId</span></div>'
+            '${fiscalNumberNote != null ? '\n  <div class="info-row">${_esc(fiscalNumberNote!)}</div>' : ''}';
+
     return '''<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Receipt #$shortId</title>
+  <title>${fiscalNumber != null ? 'Receipt ${_esc(fiscalNumber!)}' : 'Order $shortId'}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -140,7 +177,7 @@ class PosReceiptData {
   <hr class="divider-solid">
 
   <div class="info-row"><span>Date:</span><span>${_fmtDate()}</span></div>
-  <div class="info-row receipt-no"><span>Receipt #:</span><span>$shortId</span></div>
+  $numberRows
   ${cashierEmail != null ? '<div class="info-row"><span>Cashier:</span><span>${_esc(cashierEmail!)}</span></div>' : ''}
   $customerRow
 

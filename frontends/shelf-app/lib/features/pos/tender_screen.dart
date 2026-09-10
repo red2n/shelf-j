@@ -12,6 +12,7 @@ import '../../core/offline/offline_sale.dart';
 import '../../core/theme.dart';
 import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
+import 'pos_fiscal_receipt.dart';
 import 'pos_providers.dart';
 import 'pos_receipt.dart';
 import 'pos_session_providers.dart';
@@ -239,9 +240,18 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       // A completed sale is the strongest activity signal — keep the session alive.
       ref.read(posSessionProvider.notifier).touch();
 
+      // The legal receipt number is issued when the payment reaches order-svc,
+      // a few seconds after the last tender. Wait a bounded time for it rather
+      // than print a receipt without one.
+      final fiscalNumber = await awaitFiscalNumber(dio, orderId);
+
       // Capture everything needed for the receipt before clearing state.
       final receiptData = _buildReceiptData(
         orderId: orderId,
+        fiscalNumber: fiscalNumber,
+        fiscalNumberNote: fiscalNumber == null
+            ? 'Receipt number not issued yet. Reprint once it is.'
+            : null,
         cartSnapshot: [...cart],
         tenderSnapshot: [..._tenders],
         discount: discount,
@@ -296,6 +306,8 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     // tendered, which is what the customer's paper receipt has to show.
     final receiptData = _buildReceiptData(
       orderId: sale.reference,
+      fiscalNumberNote:
+          'Held offline. The receipt number is issued when this sale reaches the server.',
       cartSnapshot: cartSnapshot,
       tenderSnapshot: [..._tenders],
       discount: discount,
@@ -384,6 +396,8 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     required double total,
     required String currency,
     String? customerName,
+    String? fiscalNumber,
+    String? fiscalNumberNote,
   }) {
     final subtotal = cartSnapshot.fold<double>(0, (s, l) => s + l.lineTotal);
     final storeId = ref.read(posStoreProvider);
@@ -412,6 +426,8 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       tenders: tenderSnapshot,
       change: tenderSnapshot.fold<double>(0, (s, t) => s + t.change),
       customerName: customerName,
+      fiscalNumber: fiscalNumber,
+      fiscalNumberNote: fiscalNumberNote,
     );
   }
 
@@ -448,7 +464,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Order #${orderId.length >= 8 ? orderId.substring(0, 8).toUpperCase() : orderId}'),
+            Text(receiptData.fiscalNumber != null ? 'Receipt no. ${receiptData.fiscalNumber}' : 'Order #${orderId.length >= 8 ? orderId.substring(0, 8).toUpperCase() : orderId}'),
             if (change > 0) ...[
               const SizedBox(height: 8),
               Text('Change due: $currency ${change.toStringAsFixed(2)}',
@@ -463,8 +479,17 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
               alignment: WrapAlignment.center,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () {
-                    openReceiptPrint(receiptData);
+                  onPressed: () async {
+                    // A number that was not issued in time for the first print
+                    // is usually there by now.
+                    var data = receiptData;
+                    if (data.fiscalNumber == null) {
+                      final n = await awaitFiscalNumber(
+                          ref.read(apiClientProvider).dio, orderId,
+                          attempts: 1);
+                      if (n != null) data = data.withFiscalNumber(n);
+                    }
+                    openReceiptPrint(data);
                     _recordReceipt(orderId, 'PRINT', null);
                   },
                   icon: const Icon(Icons.print_outlined, size: 18),

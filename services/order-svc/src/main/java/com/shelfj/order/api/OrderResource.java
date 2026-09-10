@@ -233,6 +233,24 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(hist.stream().map(Mappers::toDto).toList())).build();
   }
 
+  @Operation(
+      summary = "The receipt number issued for a sale",
+      description =
+          "Authorized like the order it belongs to: any staff member, or the customer who placed"
+              + " it. The till reads this to print the legal receipt number. The number is issued"
+              + " when the payment that completes the sale reaches order-svc, so for a few seconds"
+              + " after a sale this answers 404 ORDER_RECEIPT_NOT_ISSUED and the till waits.")
+  @APIResponse(responseCode = "200", description = "The receipt")
+  @APIResponse(
+      responseCode = "404",
+      description = "No such order for this caller, or no receipt issued for it yet")
+  @GET
+  @Path("/{id}/fiscal-receipt")
+  public Response fiscalReceipt(@PathParam("id") String id) {
+    return Response.ok(ApiResponse.ok(svc.receiptOf(ctx.tenantId(), Parsing.uuid(id, "id"), ctx)))
+        .build();
+  }
+
   // ── Post-void (Gap #14) ───────────────────────────────────────────────────
 
   @Operation(

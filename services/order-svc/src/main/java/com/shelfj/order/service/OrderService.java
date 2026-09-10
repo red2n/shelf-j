@@ -663,6 +663,15 @@ public class OrderService {
                     "ORDER_RECEIPT_NOT_ISSUED", "No fiscal receipt has been issued for this sale"));
   }
 
+  /**
+   * The receipt for a sale, to whoever may read the sale: any staff member, or the customer who
+   * placed it. The till prints the number from here — the admin route is management-only.
+   */
+  public Domain.FiscalReceipt receiptOf(UUID tenantId, UUID orderId, TenantContext ctx) {
+    requireReadAccess(getOrder(tenantId, orderId), ctx);
+    return receiptOf(tenantId, orderId);
+  }
+
   public List<Domain.FiscalReceipt> receiptSeries(
       UUID tenantId, UUID storeId, String series, String period, int limit) {
     return receiptRepo.listSeries(

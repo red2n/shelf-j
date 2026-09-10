@@ -136,14 +136,15 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
 
   /**
    * The order reads that carry their own object-level authorization: {@code /orders/mine} and the
-   * id-addressed {@code /orders/{id}}, {@code /orders/{id}/history}, {@code /orders/{id}/returns}.
+   * id-addressed {@code /orders/{id}}, {@code /orders/{id}/history}, {@code /orders/{id}/returns}
+   * and {@code /orders/{id}/fiscal-receipt}.
    *
    * <p>Matched by shape rather than by prefix, so anything else added under {@code /orders/} later
    * is denied until someone decides what it should be — the point of this whole change is that
    * forgetting fails closed.
    *
    * @param path the service-local request path
-   * @return {@code true} for exactly those four shapes
+   * @return {@code true} for exactly those five shapes
    */
   private static boolean isOrderSelfRead(String path) {
     if (!path.startsWith("/orders/")) return false;
@@ -152,7 +153,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     int slash = rest.indexOf('/');
     if (slash < 0) return true;
     String tail = rest.substring(slash + 1);
-    return "history".equals(tail) || "returns".equals(tail);
+    // fiscal-receipt: the till prints the legal receipt number from here, and a customer may read
+    // the number on their own order. Same object-level check as the order read it sits under.
+    return "history".equals(tail) || "returns".equals(tail) || "fiscal-receipt".equals(tail);
   }
 
   /**

@@ -133,6 +133,7 @@ class AdminAuthorizationFilterTest {
           "/orders/abc",
           "/orders/abc/history",
           "/orders/abc/returns",
+          "/orders/abc/fiscal-receipt",
           "/promotions",
           "/auth/me",
           "/cart",
@@ -152,7 +153,7 @@ class AdminAuthorizationFilterTest {
   void lookalikePublicPathsDoNotInheritTheExemption() throws Exception {
     assertAborted(invoke("GET", "/catalog-exports"), 403);
     assertAborted(invoke("GET", "/storefront-admin"), 403);
-    // Anything new under /orders/ that is not one of the four object-level-authorized shapes
+    // Anything new under /orders/ that is not one of the five object-level-authorized shapes
     // stays denied, so a future sub-resource cannot inherit the exemption by accident.
     assertAborted(invoke("GET", "/orders/abc/audit-trail"), 403);
     assertAborted(invoke("GET", "/orders/abc/history/all"), 403);
