@@ -1,5 +1,6 @@
 package com.shelfj.product.mapper;
 
+import com.shelfj.product.domain.Domain;
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.CatalogGroup;
 import com.shelfj.product.domain.Domain.CatalogGroupElement;
@@ -23,6 +24,9 @@ import com.shelfj.product.domain.Domain.VariantAttributeGroupValues;
 import com.shelfj.product.domain.Domain.VariantCatalogAssignment;
 import com.shelfj.product.domain.Domain.VariantCategorySetAssignment;
 import com.shelfj.product.domain.Domain.VariantContainerLink;
+import com.shelfj.product.dto.Dtos.AgeRestrictionRuleResponse;
+import com.shelfj.product.dto.Dtos.AllergenEntry;
+import com.shelfj.product.dto.Dtos.AllergenResponse;
 import com.shelfj.product.dto.Dtos.BrandResponse;
 import com.shelfj.product.dto.Dtos.CatalogAssignmentResponse;
 import com.shelfj.product.dto.Dtos.CatalogGroupElementResponse;
@@ -44,6 +48,7 @@ import com.shelfj.product.dto.Dtos.UomDefinitionResponse;
 import com.shelfj.product.dto.Dtos.UomItemConversionResponse;
 import com.shelfj.product.dto.Dtos.VariantAttributeGroupValuesResponse;
 import com.shelfj.product.dto.Dtos.VariantCategorySetAssignmentResponse;
+import com.shelfj.product.dto.Dtos.VariantComplianceResponse;
 import com.shelfj.product.dto.Dtos.VariantContainerLinkResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
 import com.shelfj.product.dto.Dtos.VariantScanResponse;
@@ -96,6 +101,34 @@ public final class Mappers {
         v.status(),
         ts(v.createdAt()),
         ts(v.updatedAt()));
+  }
+
+  public static AllergenResponse toAllergen(Domain.Allergen a) {
+    return new AllergenResponse(a.code(), a.name(), a.detail(), a.regulation());
+  }
+
+  public static AllergenEntry toAllergenEntry(Domain.VariantAllergen a) {
+    return new AllergenEntry(a.allergenCode(), a.presence());
+  }
+
+  public static VariantComplianceResponse toCompliance(Domain.VariantCompliance c) {
+    return new VariantComplianceResponse(
+        c.variantId().toString(),
+        c.countryOfOrigin(),
+        c.originDetail(),
+        c.restrictionCategory(),
+        c.allergenStatus(),
+        c.ingredients(),
+        c.soldBy(),
+        c.netContent(),
+        c.netContentUom(),
+        c.tareWeight(),
+        c.catchWeight());
+  }
+
+  public static AgeRestrictionRuleResponse toAgeRule(Domain.AgeRestrictionRule r) {
+    return new AgeRestrictionRuleResponse(
+        r.country(), r.category(), r.minimumAge(), r.note(), r.tenantId() != null);
   }
 
   public static VariantScanResponse toVariantScan(Variant v, Product p) {

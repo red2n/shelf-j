@@ -1,6 +1,8 @@
 package com.shelfj.product.api;
 
 import com.shelfj.product.dto.Dtos.AddCategorySetMemberRequest;
+import com.shelfj.product.dto.Dtos.AgeRestrictionRuleResponse;
+import com.shelfj.product.dto.Dtos.AllergenDeclarationRequest;
 import com.shelfj.product.dto.Dtos.AssignCatalogGroupRequest;
 import com.shelfj.product.dto.Dtos.AssignVariantCategorySetRequest;
 import com.shelfj.product.dto.Dtos.BrandResponse;
@@ -34,6 +36,7 @@ import com.shelfj.product.dto.Dtos.ItemTemplateApplicationResponse;
 import com.shelfj.product.dto.Dtos.ItemTemplateResponse;
 import com.shelfj.product.dto.Dtos.ProductResponse;
 import com.shelfj.product.dto.Dtos.ProductStoresRequest;
+import com.shelfj.product.dto.Dtos.SetAgeRestrictionRuleRequest;
 import com.shelfj.product.dto.Dtos.UomClassResponse;
 import com.shelfj.product.dto.Dtos.UomDefinitionResponse;
 import com.shelfj.product.dto.Dtos.UomItemConversionRequest;
@@ -48,6 +51,8 @@ import com.shelfj.product.dto.Dtos.UpdateVariantRequest;
 import com.shelfj.product.dto.Dtos.UpsertVariantAttributeGroupRequest;
 import com.shelfj.product.dto.Dtos.VariantAttributeGroupValuesResponse;
 import com.shelfj.product.dto.Dtos.VariantCategorySetAssignmentResponse;
+import com.shelfj.product.dto.Dtos.VariantComplianceRequest;
+import com.shelfj.product.dto.Dtos.VariantComplianceResponse;
 import com.shelfj.product.dto.Dtos.VariantContainerLinkResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
 import com.shelfj.product.dto.Dtos.VariantScanResponse;
@@ -1269,5 +1274,122 @@ public class AdminResource {
 
   private static UUID parseOptional(String s, String field) {
     return s == null || s.isBlank() ? null : com.shelfj.web.Parsing.uuid(s, field);
+  }
+
+  // ── Food safety, origin, age restriction and selling by weight ─────────────
+  //
+  // Writes only. The reads live on /catalog because a shopper is entitled to the allergen
+  // declaration and a till needs the age check, and neither runs as management.
+
+  @Operation(
+      summary = "Declare a variant's allergens",
+      description =
+          "Replaces the whole declaration. Sending an empty list is how a product is declared free"
+              + " from all fourteen — a positive statement, not an omission — and it moves the"
+              + " variant from UNDECLARED to DECLARED either way.\n\n"
+              + "The distinction the status column exists for: an empty list on an UNDECLARED"
+              + " variant means nobody has checked, and must never be shown to a customer as"
+              + " 'free from'.")
+  @APIResponse(responseCode = "200", description = "Declared")
+  @APIResponse(
+      responseCode = "400",
+      description = "Not one of the fourteen, presence not CONTAINS/MAY_CONTAIN, or declared twice")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Food safety")
+  @PUT
+  @Path("/products/variants/{variantId}/allergens")
+  public ApiResponse<VariantComplianceResponse> declareAllergens(
+      @PathParam("variantId") UUID variantId, AllergenDeclarationRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(
+        Mappers.toCompliance(
+            service.declareAllergens(ctx.requireTenantId(), variantId, req, ctx.userId())));
+  }
+
+  @Operation(
+      summary = "Set origin, age restriction and how the item is sold",
+      description =
+          "Country of origin (ISO 3166-1 alpha-2), the age-restriction category if any,"
+              + " ingredients, and the weighed-item fields: soldBy, net content and its unit, tare"
+              + " weight, and catchWeight for items whose price is not knowable until they are on"
+              + " the scale.")
+  @APIResponse(responseCode = "200", description = "Updated")
+  @APIResponse(
+      responseCode = "400",
+      description = "Bad country code, unknown UOM, negative tare, or sold by weight with no unit")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Food safety")
+  @PUT
+  @Path("/products/variants/{variantId}/compliance")
+  public ApiResponse<VariantComplianceResponse> setCompliance(
+      @PathParam("variantId") UUID variantId, VariantComplianceRequest req) {
+    return ApiResponse.ok(
+        Mappers.toCompliance(service.updateCompliance(ctx.requireTenantId(), variantId, req)));
+  }
+
+  @Operation(
+      summary = "Products whose allergens have never been declared",
+      description =
+          "The list a food business is asked for when it is inspected, and the list that says"
+              + " which shelves cannot lawfully be filled yet. Oldest first, because the ones that"
+              + " have been sitting undeclared longest are the ones most likely to be on sale.")
+  @APIResponse(responseCode = "200", description = "Variant ids, oldest first")
+  @Tag(name = "Food safety")
+  @GET
+  @Path("/products/allergen-gaps")
+  public ApiResponse<List<String>> allergenGaps(@QueryParam("limit") Integer limit) {
+    return ApiResponse.ok(
+        service.undeclaredVariants(ctx.requireTenantId(), limit == null ? 100 : limit).stream()
+            .map(UUID::toString)
+            .toList());
+  }
+
+  @Operation(
+      summary = "Every product carrying one allergen",
+      description =
+          "The query a recall runs. Optionally filtered to ?presence=CONTAINS or MAY_CONTAIN; both"
+              + " are returned by default, because a withdrawal usually has to cover both.")
+  @APIResponse(responseCode = "200", description = "Variant ids")
+  @Tag(name = "Food safety")
+  @GET
+  @Path("/products/by-allergen/{code}")
+  public ApiResponse<List<String>> byAllergen(
+      @PathParam("code") String code, @QueryParam("presence") String presence) {
+    return ApiResponse.ok(
+        service.variantsWithAllergen(ctx.requireTenantId(), code, presence).stream()
+            .map(UUID::toString)
+            .toList());
+  }
+
+  @Operation(
+      summary = "Age rules in force in a country",
+      description =
+          "The statutory defaults, with this tenant's overrides shadowing them. tenantOverride"
+              + " says which is which.")
+  @APIResponse(responseCode = "200", description = "Rules by category")
+  @Tag(name = "Age restriction")
+  @GET
+  @Path("/age-restriction-rules")
+  public ApiResponse<List<AgeRestrictionRuleResponse>> ageRules(
+      @QueryParam("country") String country) {
+    return ApiResponse.ok(
+        service.ageRules(ctx.requireTenantId(), country).stream().map(Mappers::toAgeRule).toList());
+  }
+
+  @Operation(
+      summary = "Set this tenant's own age rule",
+      description =
+          "May be stricter than the statute and never laxer — a chain adopting Challenge-25 is"
+              + " making a policy decision, a chain setting alcohol to 16 in the UK is committing"
+              + " an offence, and a system that lets them configure it has helped.")
+  @APIResponse(responseCode = "200", description = "Rule set")
+  @APIResponse(responseCode = "400", description = "Below the statutory minimum for that country")
+  @Tag(name = "Age restriction")
+  @PUT
+  @Path("/age-restriction-rules")
+  public ApiResponse<AgeRestrictionRuleResponse> setAgeRule(SetAgeRestrictionRuleRequest req) {
+    Validations.validate(req);
+    return ApiResponse.ok(
+        Mappers.toAgeRule(service.setAgeRule(ctx.requireTenantId(), req, ctx.userId())));
   }
 }

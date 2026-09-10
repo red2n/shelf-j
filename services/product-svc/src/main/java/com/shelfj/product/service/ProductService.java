@@ -1,5 +1,8 @@
 package com.shelfj.product.service;
 
+import static java.util.stream.Collectors.toSet;
+
+import com.shelfj.product.domain.Domain;
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.CatalogGroup;
 import com.shelfj.product.domain.Domain.CatalogGroupElement;
@@ -24,6 +27,7 @@ import com.shelfj.product.domain.Domain.VariantCatalogAssignment;
 import com.shelfj.product.domain.Domain.VariantCategorySetAssignment;
 import com.shelfj.product.domain.Domain.VariantContainerLink;
 import com.shelfj.product.dto.Dtos.AddCategorySetMemberRequest;
+import com.shelfj.product.dto.Dtos.AllergenDeclarationRequest;
 import com.shelfj.product.dto.Dtos.AssignCatalogGroupRequest;
 import com.shelfj.product.dto.Dtos.AssignVariantCategorySetRequest;
 import com.shelfj.product.dto.Dtos.BulkImportError;
@@ -39,16 +43,19 @@ import com.shelfj.product.dto.Dtos.CreateItemCrossReferenceRequest;
 import com.shelfj.product.dto.Dtos.CreateItemRelationshipRequest;
 import com.shelfj.product.dto.Dtos.CreateProductRequest;
 import com.shelfj.product.dto.Dtos.CreateVariantRequest;
+import com.shelfj.product.dto.Dtos.SetAgeRestrictionRuleRequest;
 import com.shelfj.product.dto.Dtos.UpdateBrandRequest;
 import com.shelfj.product.dto.Dtos.UpdateCatalogAssignmentRequest;
 import com.shelfj.product.dto.Dtos.UpdateCategoryRequest;
 import com.shelfj.product.dto.Dtos.UpdateCategorySetRequest;
 import com.shelfj.product.dto.Dtos.UpdateProductRequest;
 import com.shelfj.product.dto.Dtos.UpdateVariantRequest;
+import com.shelfj.product.dto.Dtos.VariantComplianceRequest;
 import com.shelfj.product.repo.BrandRepository;
 import com.shelfj.product.repo.CatalogGroupRepository;
 import com.shelfj.product.repo.CategoryRepository;
 import com.shelfj.product.repo.CategorySetRepository;
+import com.shelfj.product.repo.ComplianceRepository;
 import com.shelfj.product.repo.ContainerTypeRepository;
 import com.shelfj.product.repo.ItemAttributeGroupRepository;
 import com.shelfj.product.repo.ItemCrossReferenceRepository;
@@ -83,6 +90,7 @@ public class ProductService {
   @Inject ContainerTypeRepository containerTypeRepo;
   @Inject ItemAttributeGroupRepository itemAttributeGroupRepo;
   @Inject CategorySetRepository categorySetRepo;
+  @Inject ComplianceRepository complianceRepo;
   @Inject com.shelfj.product.client.InventoryClient inventoryClient;
   @Inject com.shelfj.product.client.PricingClient pricingClient;
 
@@ -439,6 +447,227 @@ public class ProductService {
     getVariant(tenantId, variantId);
     String type = partyType != null ? partyType.toUpperCase(java.util.Locale.ROOT) : null;
     return crossReferenceRepo.listCrossReferences(tenantId, variantId, type);
+  }
+
+  // ──────────────────────────────────────── food safety, origin, age, weight
+
+  private static final java.util.Set<String> SOLD_BY =
+      java.util.Set.of("EACH", "WEIGHT", "VOLUME", "LENGTH");
+
+  public List<Domain.Allergen> listAllergens() {
+    return complianceRepo.listAllergens();
+  }
+
+  /**
+   * Records a variant's complete allergen declaration.
+   *
+   * <p>An empty list is accepted and is meaningful: it is how "we have checked, and it contains
+   * none of the fourteen" is said. That is why the status is set to DECLARED either way — the
+   * difference between a declared-free product and one nobody has looked at is the entire point of
+   * the status column, and it is not derivable from the row count.
+   */
+  public Domain.VariantCompliance declareAllergens(
+      UUID tenantId, UUID variantId, AllergenDeclarationRequest req, UUID actor) {
+    getVariant(tenantId, variantId);
+    var valid = complianceRepo.listAllergens().stream().map(Domain.Allergen::code).collect(toSet());
+    var rows = new java.util.ArrayList<Domain.VariantAllergen>();
+    var seen = new java.util.HashSet<String>();
+    for (var e : req.allergens()) {
+      String code = e.code().trim().toUpperCase(java.util.Locale.ROOT);
+      if (!valid.contains(code)) {
+        throw ApiException.badRequest(
+            "PRODUCT_UNKNOWN_ALLERGEN", "Not one of the fourteen regulated allergens: " + e.code());
+      }
+      String presence = e.presence().trim().toUpperCase(java.util.Locale.ROOT);
+      if (!Domain.VariantAllergen.CONTAINS.equals(presence)
+          && !Domain.VariantAllergen.MAY_CONTAIN.equals(presence)) {
+        throw ApiException.badRequest(
+            "PRODUCT_INVALID_PRESENCE", "presence must be CONTAINS or MAY_CONTAIN");
+      }
+      // Two rows for one allergen would make the declaration ambiguous, and the stricter of the
+      // two is the one that matters, so it is refused rather than silently resolved.
+      if (!seen.add(code)) {
+        throw ApiException.badRequest(
+            "PRODUCT_DUPLICATE_ALLERGEN", "Declared twice with different presence: " + code);
+      }
+      rows.add(new Domain.VariantAllergen(tenantId, variantId, code, presence, actor, null));
+    }
+    complianceRepo.replaceDeclaration(tenantId, variantId, rows, Domain.VariantCompliance.DECLARED);
+    return complianceRepo.findCompliance(tenantId, variantId);
+  }
+
+  public List<Domain.VariantAllergen> allergensOf(UUID tenantId, UUID variantId) {
+    getVariant(tenantId, variantId);
+    return complianceRepo.listVariantAllergens(tenantId, variantId);
+  }
+
+  public List<UUID> variantsWithAllergen(UUID tenantId, String code, String presence) {
+    return complianceRepo.variantsWithAllergen(
+        tenantId,
+        code.trim().toUpperCase(java.util.Locale.ROOT),
+        presence == null ? null : presence.trim().toUpperCase(java.util.Locale.ROOT));
+  }
+
+  public List<UUID> undeclaredVariants(UUID tenantId, int limit) {
+    return complianceRepo.undeclaredVariants(tenantId, Math.min(Math.max(limit, 1), 500));
+  }
+
+  public Domain.VariantCompliance complianceOf(UUID tenantId, UUID variantId) {
+    getVariant(tenantId, variantId);
+    var c = complianceRepo.findCompliance(tenantId, variantId);
+    if (c == null) {
+      throw ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found");
+    }
+    return c;
+  }
+
+  public Domain.VariantCompliance updateCompliance(
+      UUID tenantId, UUID variantId, VariantComplianceRequest req) {
+    getVariant(tenantId, variantId);
+
+    String origin = null;
+    if (req.countryOfOrigin() != null && !req.countryOfOrigin().isBlank()) {
+      origin = req.countryOfOrigin().trim().toUpperCase(java.util.Locale.ROOT);
+      if (!origin.matches("[A-Z]{2}")) {
+        throw ApiException.badRequest(
+            "PRODUCT_INVALID_COUNTRY", "countryOfOrigin must be an ISO 3166-1 alpha-2 code");
+      }
+    }
+
+    String soldBy =
+        req.soldBy() == null || req.soldBy().isBlank()
+            ? Domain.VariantCompliance.EACH
+            : req.soldBy().trim().toUpperCase(java.util.Locale.ROOT);
+    if (!SOLD_BY.contains(soldBy)) {
+      throw ApiException.badRequest(
+          "PRODUCT_INVALID_SOLD_BY", "soldBy must be EACH, WEIGHT, VOLUME or LENGTH");
+    }
+
+    boolean catchWeight = Boolean.TRUE.equals(req.catchWeight());
+    String uom =
+        req.netContentUom() == null
+            ? null
+            : req.netContentUom().trim().toUpperCase(java.util.Locale.ROOT);
+
+    // Sold by weight with no unit named cannot be priced on a shelf edge, and the unit price is
+    // what the Price Marking Order requires be displayed. Caught here rather than by the CHECK
+    // constraint so the caller is told which field is wrong.
+    if (!Domain.VariantCompliance.EACH.equals(soldBy) && uom == null && !catchWeight) {
+      throw ApiException.badRequest(
+          "PRODUCT_NET_CONTENT_REQUIRED",
+          "An item not sold by the each needs netContentUom, or catchWeight when every item"
+              + " differs");
+    }
+    if (uom != null && !uomRepo.definitionExists(uom)) {
+      throw ApiException.badRequest("PRODUCT_UNKNOWN_UOM", "Unknown unit of measure: " + uom);
+    }
+    if (req.tareWeight() != null && req.tareWeight().signum() < 0) {
+      throw ApiException.badRequest("PRODUCT_INVALID_TARE", "tareWeight cannot be negative");
+    }
+
+    var current = complianceRepo.findCompliance(tenantId, variantId);
+    var updated =
+        new Domain.VariantCompliance(
+            variantId,
+            origin,
+            trimToNull(req.originDetail()),
+            trimUpperToNull(req.restrictionCategory()),
+            current == null ? Domain.VariantCompliance.NOT_APPLICABLE : current.allergenStatus(),
+            trimToNull(req.ingredients()),
+            soldBy,
+            req.netContent(),
+            uom,
+            req.tareWeight(),
+            catchWeight);
+    if (!complianceRepo.updateCompliance(tenantId, updated)) {
+      throw ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found");
+    }
+    return complianceRepo.findCompliance(tenantId, variantId);
+  }
+
+  /**
+   * What the till must ask before selling this item in this country.
+   *
+   * <p>Takes the country rather than the store id on purpose: this is asked for every restricted
+   * line scanned, and resolving a store to its country through tenant-svc would put a second
+   * network hop in front of a queue. The caller already knows which store it is.
+   */
+  public Domain.AgeRestrictionRule ageCheck(UUID tenantId, UUID variantId, String country) {
+    var c = complianceOf(tenantId, variantId);
+    if (c.restrictionCategory() == null) {
+      return null;
+    }
+    String cc = requireCountry(country);
+    Integer age = complianceRepo.minimumAge(tenantId, cc, c.restrictionCategory());
+    if (age == null) {
+      // The item is restricted somewhere but this country has no rule for it. Refusing to answer
+      // is safer than answering "no restriction" — a missing rule is a gap in configuration, not
+      // a licence to sell.
+      throw ApiException.badRequest(
+          "PRODUCT_NO_AGE_RULE",
+          "No age rule for " + c.restrictionCategory() + " in " + cc + "; set one before selling");
+    }
+    boolean override =
+        complianceRepo.rulesFor(tenantId, cc).stream()
+            .anyMatch(r -> r.category().equals(c.restrictionCategory()) && r.tenantId() != null);
+    return new Domain.AgeRestrictionRule(
+        override ? tenantId : null, cc, c.restrictionCategory(), age, null);
+  }
+
+  public List<Domain.AgeRestrictionRule> ageRules(UUID tenantId, String country) {
+    return complianceRepo.rulesFor(tenantId, requireCountry(country));
+  }
+
+  /**
+   * Sets a tenant's own age rule.
+   *
+   * <p>It may be stricter than the statute and never laxer. A chain choosing Challenge-25 is making
+   * a policy decision; a chain setting alcohol to 16 in the UK is committing an offence, and a
+   * system that lets them configure it has helped.
+   */
+  public Domain.AgeRestrictionRule setAgeRule(
+      UUID tenantId, SetAgeRestrictionRuleRequest req, UUID actor) {
+    String cc = requireCountry(req.country());
+    String category = req.category().trim().toUpperCase(java.util.Locale.ROOT);
+    int age = req.minimumAge();
+    if (age < 0 || age > 120) {
+      throw ApiException.badRequest("PRODUCT_INVALID_AGE", "minimumAge must be between 0 and 120");
+    }
+    Integer statutory = complianceRepo.minimumAge(null, cc, category);
+    if (statutory != null && age < statutory) {
+      throw ApiException.badRequest(
+          "PRODUCT_AGE_BELOW_STATUTORY",
+          "The statutory minimum for "
+              + category
+              + " in "
+              + cc
+              + " is "
+              + statutory
+              + "; a tenant rule may be stricter, never laxer");
+    }
+    var rule = new Domain.AgeRestrictionRule(tenantId, cc, category, age, trimToNull(req.reason()));
+    complianceRepo.upsertTenantRule(rule, actor);
+    return rule;
+  }
+
+  private static String requireCountry(String country) {
+    if (country == null || country.isBlank()) {
+      throw ApiException.badRequest("PRODUCT_COUNTRY_REQUIRED", "country is required");
+    }
+    String cc = country.trim().toUpperCase(java.util.Locale.ROOT);
+    if (!cc.matches("[A-Z]{2}")) {
+      throw ApiException.badRequest(
+          "PRODUCT_INVALID_COUNTRY", "country must be an ISO 3166-1 alpha-2 code");
+    }
+    return cc;
+  }
+
+  private static String trimToNull(String v) {
+    return v == null || v.isBlank() ? null : v.trim();
+  }
+
+  private static String trimUpperToNull(String v) {
+    return v == null || v.isBlank() ? null : v.trim().toUpperCase(java.util.Locale.ROOT);
   }
 
   public void deleteCrossReference(UUID tenantId, UUID id) {

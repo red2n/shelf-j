@@ -78,6 +78,60 @@ public final class Domain {
 
   // ── Gap #33: Supplier / Customer Cross-References ────────────────────────
 
+  /**
+   * One of the fourteen allergens Regulation (EU) 1169/2011 Annex II names. Reference data: the
+   * list is set by regulation, so it is seeded and read, never written by a tenant.
+   */
+  public record Allergen(String code, String name, String detail, String regulation) {}
+
+  /**
+   * A declaration that one variant contains, or may contain, one allergen.
+   *
+   * <p>{@link #MAY_CONTAIN} is a cross-contamination warning and is legally a different statement
+   * from {@link #CONTAINS}. Collapsing them into a boolean either invents a declaration nobody made
+   * or discards one they did.
+   */
+  public record VariantAllergen(
+      UUID tenantId,
+      UUID variantId,
+      String allergenCode,
+      String presence,
+      UUID declaredBy,
+      Instant declaredAt) {
+    public static final String CONTAINS = "CONTAINS";
+    public static final String MAY_CONTAIN = "MAY_CONTAIN";
+  }
+
+  /**
+   * The minimum age for one restricted category in one country.
+   *
+   * <p>{@code tenantId} is null for the statutory default and set for a tenant's own override — a
+   * business may sell above the legal minimum, and some jurisdictions set the age below national
+   * level (India varies by state).
+   */
+  public record AgeRestrictionRule(
+      UUID tenantId, String country, String category, int minimumAge, String note) {}
+
+  /** How a variant is sold, and the declarations attached to it. */
+  public record VariantCompliance(
+      UUID variantId,
+      String countryOfOrigin,
+      String originDetail,
+      String restrictionCategory,
+      String allergenStatus,
+      String ingredients,
+      String soldBy,
+      java.math.BigDecimal netContent,
+      String netContentUom,
+      java.math.BigDecimal tareWeight,
+      boolean catchWeight) {
+    public static final String UNDECLARED = "UNDECLARED";
+    public static final String DECLARED = "DECLARED";
+    public static final String NOT_APPLICABLE = "NOT_APPLICABLE";
+    public static final String EACH = "EACH";
+    public static final String WEIGHT = "WEIGHT";
+  }
+
   public record ItemCrossReference(
       UUID id,
       UUID tenantId,

@@ -478,6 +478,24 @@ Same split, and for the same reason: creating a promotion is money leaving the b
 
 ---
 
+### Food safety, origin and age-restricted sales
+
+Four capabilities that are law rather than product strategy. The reads sit on `/catalog` deliberately — a shopper is entitled to allergen information before buying, and a till needs the age check — while every write is management-only under `/admin/`.
+
+- `GET /catalog/allergens` — the fourteen allergens Regulation (EU) 1169/2011 Annex II names. Reference data, seeded, read-only: a tenant that could edit the list could quietly delete one.
+- `PUT /admin/products/variants/{variantId}/allergens` — declare a variant's allergens. **Replaces** the whole declaration, so a mistake can be corrected; merging would make "we were wrong, it has no celery" unsayable. Each entry is `CONTAINS` or `MAY_CONTAIN`, and the distinction is legal rather than cosmetic — `MAY_CONTAIN` is a cross-contamination warning. Declaring the same allergen twice is refused (`PRODUCT_DUPLICATE_ALLERGEN`) rather than silently resolved to the stricter one.
+- `GET /catalog/variants/{variantId}/allergens` — the declaration, open to shoppers. **Read the `status`, not the list length.** `UNDECLARED` with an empty list means nobody has checked; `DECLARED` with an empty list means the product has been checked and contains none of the fourteen. Sending an empty list to the PUT is how the second is said — a positive statement, not an omission. Treating the first as the second is how an allergic customer is told a product is safe when nobody knows.
+- `GET /admin/products/by-allergen/{code}?presence=` — every product carrying one allergen; the query a recall runs. Both presences by default, because a withdrawal usually has to cover the may-contains too.
+- `GET /admin/products/allergen-gaps` — food products nobody has declared yet, oldest first. The list an inspector asks for.
+- `PUT /admin/products/variants/{variantId}/compliance` — country of origin (ISO 3166-1 alpha-2, mandatory for unprocessed meat, fish, fruit, veg, honey, olive oil and wine under EU 1169/2011 art.26), ingredients, the age-restriction category, and the weighed-item fields: `soldBy` (EACH/WEIGHT/VOLUME/LENGTH), `netContent` + `netContentUom` for the unit price a shelf edge must display (Price Marking Order 2004), `tareWeight` a scale deducts, and `catchWeight` for items whose price is not knowable until they are weighed. An item not sold by the each with no unit named is refused — a shelf edge could not price it.
+- `GET /catalog/variants/{variantId}/compliance` — the same, for a shelf edge and a scale.
+- `GET /catalog/variants/{variantId}/age-check?country=GB` — what the till must ask before taking payment. **Read `restricted`, never the absence of `minimumAge`**: a null field is omitted from the JSON entirely, so a client inferring "no age given, therefore sell it" cannot tell an unrestricted item from a field that went missing. `restricted` is always present.
+- `GET /admin/age-restriction-rules?country=` · `PUT /admin/age-restriction-rules` — the statutory defaults with this tenant's overrides shadowing them. A tenant rule may be **stricter than the statute and never laxer** (`PRODUCT_AGE_BELOW_STATUTORY`): a chain adopting Challenge-25 is making a policy decision, a chain setting alcohol to 16 in the UK is committing an offence, and a system that lets them configure it has helped.
+
+**Why the age is not on the product.** The same bottle of wine is 18 in the UK, 18 in China, 20 in Japan and 21 in the US. The variant carries the *category* (`ALCOHOL`, `TOBACCO`, `KNIVES`, `SOLVENTS`, `FIREWORKS`, `LOTTERY`, `VIDEO_18`, `NICOTINE_VAPE`, `CORROSIVES`, `PETROL`) and the age is resolved per country at the till. India's drinking age varies by state, so the seeded default is the conservative 21 and a tenant trading where it differs overrides it. The endpoint takes the country rather than a store id on purpose: this is asked for every restricted line scanned, and a second network hop belongs nowhere near a queue.
+
+A restricted item in a country with **no** rule for it returns `400 PRODUCT_NO_AGE_RULE` rather than "no restriction" — a missing rule is a gap in configuration, not a licence to sell.
+
 ## purchase-svc
 
 ### Suppliers & Purchase Orders
