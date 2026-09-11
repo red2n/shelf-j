@@ -909,7 +909,10 @@ services:
       shelfj.gateway.rate-limit.requests-per-minute: "30000"
       shelfj.jwt.secret: ${SHELFJ_JWT_SECRET:?SHELFJ_JWT_SECRET must be set (>= 32 chars) - see .env.example}
       otel.exporter.otlp.endpoint: http://otel-collector:4317
-      shelfj.gateway.cors.allowed-origins: "*"
+      # Browser origins that may call the API. The web UI (8088) and `flutter run` (40015) on this
+      # machine by default; add http://<LAN-IP>:8088 for phone/tablet testing. Never "*": any
+      # site a signed-in user visits could then read the API through their browser.
+      shelfj.gateway.cors.allowed-origins: ${GATEWAY_CORS_ALLOWED_ORIGINS:-http://localhost:8088,http://127.0.0.1:8088,http://localhost:40015,http://127.0.0.1:40015}
       # Bulk admin operations (e.g. CSV catalog import) process thousands of rows
       # synchronously upstream; the 10s code default is tuned for normal request/response
       # calls and times out well before a large import finishes server-side.

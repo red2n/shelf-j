@@ -34,7 +34,7 @@ spec:
           env:
             - { name: JAVA_TOOL_OPTIONS, value: "-Xms128m -Xmx512m -XX:+UseG1GC" }
             # Production values (docker-compose.prod.yml overlay) — NOT the dev/k6 defaults
-            # from the base docker-compose.yml (30000 req/min, cors "*").
+            # from the base docker-compose.yml (30000 req/min, localhost-only CORS origins).
             - { name: SHELFJ_GATEWAY_RATE_LIMIT_REQUESTS_PER_MINUTE, value: "100" }
             - { name: SHELFJ_GATEWAY_CORS_ALLOWED_ORIGINS, value: "https://app.storeql.com" }
             - { name: SHELFJ_GATEWAY_UPSTREAM_READ_TIMEOUT_SECONDS, value: "120" }
