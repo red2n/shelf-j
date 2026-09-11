@@ -95,8 +95,12 @@ public class RecallRepository extends BaseOutboxRepository {
             insertHeader(c, header);
           } catch (SQLException e) {
             if (UNIQUE_VIOLATION.equals(e.getSQLState())) {
-              throw ApiException.conflict(
-                  "RECALL_REFERENCE_TAKEN", "A recall with this reference already exists");
+              throw new ApiException(
+                  409,
+                  "RECALL_REFERENCE_TAKEN",
+                  "A recall with this reference already exists",
+                  List.of(),
+                  e);
             }
             throw e;
           }
