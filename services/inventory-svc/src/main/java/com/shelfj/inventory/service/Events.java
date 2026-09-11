@@ -1,6 +1,8 @@
 package com.shelfj.inventory.service;
 
 import com.shelfj.events.EventPayload;
+import com.shelfj.inventory.domain.FoodSafety.CheckRecord;
+import com.shelfj.inventory.domain.FoodSafety.OverduePoint;
 import java.math.BigDecimal;
 import java.util.UUID;
 
@@ -230,6 +232,49 @@ public final class Events {
         + "\",\"qty\":"
         + qty.toPlainString()
         + "}";
+  }
+
+  /** A failed food-safety check, carrying what the store alert needs to say without a lookup. */
+  static String foodSafetyCheckFailed(CheckRecord record, String pointName, String checkTypeCode) {
+    return EventPayload.base("FoodSafetyCheckFailed", record.tenantId(), record.id())
+        + ",\"storeId\":\""
+        + record.storeId()
+        + "\",\"pointId\":\""
+        + record.pointId()
+        + "\",\"pointName\":\""
+        + EventPayload.esc(pointName)
+        + "\",\"checkTypeCode\":\""
+        + checkTypeCode
+        + "\",\"kind\":\""
+        + record.kind().name()
+        + "\",\"value\":"
+        + jsonNumber(record.value())
+        + ",\"unit\":"
+        + (record.unit() == null ? "null" : "\"" + record.unit() + "\"")
+        + ",\"minValue\":"
+        + jsonNumber(record.limits().min())
+        + ",\"maxValue\":"
+        + jsonNumber(record.limits().max())
+        + "}";
+  }
+
+  static String foodSafetyCheckOverdue(OverduePoint point) {
+    return EventPayload.base("FoodSafetyCheckOverdue", point.tenantId(), point.pointId())
+        + ",\"storeId\":\""
+        + point.storeId()
+        + "\",\"pointId\":\""
+        + point.pointId()
+        + "\",\"pointName\":\""
+        + EventPayload.esc(point.pointName())
+        + "\",\"checkTypeCode\":\""
+        + point.checkTypeCode()
+        + "\",\"dueSince\":\""
+        + point.dueSince()
+        + "\"}";
+  }
+
+  private static String jsonNumber(BigDecimal value) {
+    return value == null ? "null" : value.toPlainString();
   }
 
   private static String storeVariant(UUID storeId, UUID variantId) {

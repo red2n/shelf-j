@@ -137,6 +137,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/food-safety',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.FoodSafetyScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/stores',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
@@ -282,7 +289,9 @@ final routerProvider = Provider<GoRouter>((ref) {
 
 /// Paths a storekeeper-only user may open inside the admin shell.
 bool _storekeeperAdminAllowed(String loc) {
-  return loc.startsWith('/admin/inventory') || loc.startsWith('/admin/stores');
+  return loc.startsWith('/admin/inventory') ||
+      loc.startsWith('/admin/food-safety') ||
+      loc.startsWith('/admin/stores');
 }
 
 class _AuthListenable extends ChangeNotifier {

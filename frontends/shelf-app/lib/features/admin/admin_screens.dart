@@ -6,6 +6,7 @@ library;
 export 'dashboard_screen.dart';
 export 'catalog_screen.dart';
 export 'inventory_screen.dart';
+export 'food_safety_screen.dart';
 export 'stores_screen.dart';
 export 'orders_screen.dart';
 export 'procurement_screen.dart';

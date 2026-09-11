@@ -118,6 +118,19 @@ Left-hand navigation: **Dashboard · Catalog · Inventory · Stores · Orders ·
 | **Thresholds** | List reorder levels per store/variant; create or edit threshold (+ optional max qty). |
 | **Receive Stock** *(top-level action)* | Pick a store (and zone within it), then either scan a barcode with the camera or enter a variant manually; enter quantity, optional batch number, cost price, and expiry date. |
 
+### 4.2a Food safety (2 tabs for a storekeeper, 4 for a manager)
+
+Temperature monitoring and HACCP checks for one store at a time (a store picker appears when there is more than one; a store-bound member of staff sees only their own stores). Visible to storekeepers as well as managers — taking a chiller reading is shop-floor work.
+
+| Tab | What the user does |
+|---|---|
+| **Today** | Every monitoring point at the store, overdue first, then due, then done, with counts of overdue, due-soon and open failures. Each row shows the check, its limit, how often it is due, the last reading and any failures still without a corrective action. **Record** opens the check dialog: a reading in °C with a live "within / outside the limit" preview (the saved result is always the server's), or Passed/Failed for a checklist, plus notes. A failing check is saved as a failure at once and the dialog then asks **what was done** and what happened to the food; "Record later" leaves the failure open and visible, it does not skip it. A retried Save after a network error reuses the same Idempotency-Key, so a reading is recorded once. |
+| **Diary** | Today / 7 days / 28 days, an "Open failures only" filter, and **Export CSV** (UTC timestamps, reading, limits, result, corrective-action count, notes). An open failure has a **Record action** button. |
+| **Setup** *(manager)* | Add a check (name, check type, stricter limits, how often), **Edit**, and **Switch off / on** with a required reason. The dialog states the type's limit — "Legal limit ≤ 8.00 °C" for a statutory one — and a laxer limit is refused with the server's message. |
+| **Reviews** *(manager)* | **Sign off the last 28 days** with notes; each review lists the checks, failures and failures still open at the moment it was signed. |
+
+Alerts: a failed check and a missed check both reach the store's devices through notification-svc, once per event.
+
 ### 4.3 Stores
 
 - A list of stores/warehouses: name, code, city/country, "Prices shown" vs. **Catalog mode** badge, active/inactive toggle.
@@ -307,6 +320,7 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 | `/admin/dashboard` | Dashboard |
 | `/admin/catalog` | Catalog (Products / Categories / Import tabs) |
 | `/admin/inventory` | Inventory (Levels / Batches tabs) + Receive Stock |
+| `/admin/food-safety` | Food safety: Today / Diary, plus Setup / Reviews for managers |
 | `/admin/stores` | Stores + Zones |
 | `/admin/orders` | Orders (all channels) + Return/Refund + Collect Payment |
 | `/admin/procurement` | Procurement (Purchase Orders / Suppliers tabs) |

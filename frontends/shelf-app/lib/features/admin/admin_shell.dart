@@ -51,6 +51,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Food safety',
+      icon: Icons.health_and_safety_outlined,
+      selectedIcon: Icons.health_and_safety,
+    ),
+    route: '/admin/food-safety',
+    storekeeperVisible: true,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Stores',
       icon: Icons.store_outlined,
       selectedIcon: Icons.store,
