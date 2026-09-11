@@ -42,6 +42,18 @@ public class RefreshTokenRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /** Owner of a token that {@link #consume} would still accept, without consuming it. */
+  public Optional<UUID> ownerOfActive(String tokenHash) {
+    return query(
+            "SELECT user_id FROM refresh_tokens"
+                + " WHERE token_hash = ? AND revoked = false AND expires_at > now()",
+            ps -> ps.setString(1, tokenHash),
+            rs -> rs.getObject("user_id", UUID.class),
+            "find active token owner")
+        .stream()
+        .findFirst();
+  }
+
   /**
    * Owner of an already-revoked (but known) token. A client presenting a revoked token is the
    * classic stolen-token signal — the caller revokes the whole session family in response.

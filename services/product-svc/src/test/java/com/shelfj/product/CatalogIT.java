@@ -142,6 +142,36 @@ class CatalogIT {
     assertThat(get("/catalog/products", TENANT_A), not(containsString("Rice 5kg")));
   }
 
+  /**
+   * The update used to run its UPDATE and then re-read the row. Against a delisted variant the
+   * UPDATE matched nothing, and the re-read still answered 200 with the old values, as if the edit
+   * had been saved.
+   */
+  @Test
+  void aVariantEditIsSavedOrRefusedNeverSilentlyDropped() {
+    String productId =
+        field(
+            post("/admin/products", "{\"name\":\"Kettle\"}", TENANT_A).readEntity(String.class),
+            "id");
+    String variantId =
+        field(
+            post("/admin/products/" + productId + "/variants", "{\"sku\":\"KETTLE-1\"}", TENANT_A)
+                .readEntity(String.class),
+            "id");
+    String path = "/admin/products/" + productId + "/variants/" + variantId;
+
+    Response edited = put(path, "{\"sku\":\"KETTLE-1\",\"manufacturerPn\":\"MFR-A\"}", TENANT_A);
+    assertThat(edited.getStatus(), is(200));
+    assertThat(edited.readEntity(String.class), containsString("\"manufacturerPn\":\"MFR-A\""));
+
+    target.path(path).request().header("X-Tenant-Id", TENANT_A).header("X-Roles", "OWNER").delete();
+    Response afterDelist =
+        put(path, "{\"sku\":\"KETTLE-1\",\"manufacturerPn\":\"MFR-B\"}", TENANT_A);
+    assertThat(afterDelist.getStatus(), is(409));
+    assertThat(afterDelist.readEntity(String.class), containsString("VARIANT_NOT_ACTIVE"));
+    assertThat(getAdmin(path, TENANT_A), containsString("\"manufacturerPn\":\"MFR-A\""));
+  }
+
   @Test
   void resolveVariantsReturnsNameAndSkuAndIsolatesTenants() {
     Response p = post("/admin/products", "{\"name\":\"Resolve Me\"}", TENANT_A);

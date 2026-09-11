@@ -207,8 +207,20 @@ public class TenantService {
             tenantId,
             zoneId,
             Events.zoneCreated(tenantId, storeId, zoneId, "DEFAULT", Zone.TYPE_DEFAULT));
+    // cart-svc, order-svc and iam-svc gate on a local store_status projection that lets through a
+    // store it has no row for (the caller's own write can race this event). Announcing the status
+    // at creation gives every projection a row naming the owner, so another tenant cannot trade
+    // against this store's id while its status has never changed.
+    var statusEvent =
+        new OutboxRow(
+            "StoreStatusChanged",
+            "shelfj.tenant.store-status-changed",
+            tenantId,
+            storeId,
+            Events.storeStatusChanged(tenantId, storeId, store.status()));
 
-    return repo.createStoreWithDefaultZone(store, defaultZone, storeEvent, zoneEvent);
+    return repo.createStoreWithDefaultZone(
+        store, defaultZone, List.of(storeEvent, zoneEvent, statusEvent));
   }
 
   /** Add a zone to a store. Publishes ZoneCreated. */

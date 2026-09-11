@@ -208,6 +208,10 @@ public class AuthService {
   /** Rotate a refresh token → new access + new refresh token; old one is revoked. */
   public TokenResponse refresh(String refreshToken) {
     String hash = Tokens.hash(refreshToken);
+    // Refuse a suspended tenant's staff before the token is spent. Spending it would leave them a
+    // dead token whose every retry reads as theft below, revoking all their sessions and auditing
+    // a reuse that never happened, when all that should happen is a refusal until reactivation.
+    refreshTokens.ownerOfActive(hash).flatMap(users::findById).ifPresent(this::requireTenantActive);
     // Atomic consume: validate + revoke in one statement, so a token can be rotated exactly once
     // even under concurrent requests.
     UUID userId =
@@ -237,13 +241,21 @@ public class AuthService {
             .findById(userId)
             .orElseThrow(
                 () -> ApiException.unauthorized("INVALID_REFRESH", "User no longer exists"));
-    // Block token refresh for a suspended tenant too — otherwise a staff member with a live refresh
-    // token could keep minting access tokens after their business was deactivated.
+    // Again after the consume: the tenant may have been suspended since the check above.
+    requireTenantActive(user);
+    return issueTokens(user);
+  }
+
+  /**
+   * Block token refresh for a suspended tenant — otherwise a staff member with a live refresh token
+   * could keep minting access tokens after their business was deactivated. Customers carry no
+   * tenant and are unaffected.
+   */
+  private void requireTenantActive(User user) {
     if (user.tenantId() != null && !tenantStatus.isActive(user.tenantId())) {
       throw ApiException.forbidden(
           "TENANT_INACTIVE", "This business account is suspended. Contact support.");
     }
-    return issueTokens(user);
   }
 
   /**

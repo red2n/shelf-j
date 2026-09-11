@@ -122,7 +122,7 @@ Customer master data for the storefront and POS.
 - `POST /bootstrap/admin` — one-time creation of the first `PLATFORM_ADMIN` for a fresh deployment (refuses once one already exists; not JWT-gated by necessity).
 
 ### Identity (`/auth/me`)
-- `GET /auth/me` — resolve the caller's own identity, roles, and profile from their bearer token.
+- `GET /auth/me` — the caller's own identity, roles and profile, as verified by the gateway (the gateway forwards the token's identity, never the token).
 
 ### POS Sessions (`/auth/pos/sessions`)
 - `POST /auth/pos/sessions` — start a cashier POS session.
@@ -339,7 +339,7 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `POST /orders/{id}/fulfil` — mark an order fulfilled (stock deducted, ready for handover/pickup/delivery). For online and delivery orders; a till sale never needs it, because it is fulfilled when it is paid for.
 - `GET /orders/{id}/history` — order status history/audit trail.
 - `POST /orders/{id}/void` — void a completed POS sale (post-fulfilment correction, distinct from cancel). **Puts the stock back**: `OrderVoided` carries `eventId`, `storeId` and the lines to restock — each line net of anything already returned, and empty when the sale was never handed over, so nothing that was not deducted is restocked. Decided under a row lock on the order, and "handed over" is read from the append-only status history rather than the current status, which a refund would have moved on.
-- `POST /orders/{id}/returns` / `GET /orders/{id}/returns` — create/list returns against an order (full or partial).
+- `POST /orders/{id}/returns` / `GET /orders/{id}/returns` — create/list returns against an order (full or partial). Only goods that were handed over come back: the order must be `FULFILLED` or `PARTIALLY_REFUNDED`, otherwise `409 ORDER_CANNOT_RETURN` (cancel a `PENDING`/`CONFIRMED` order instead); returning more than was bought is `409 RETURN_QTY_EXCEEDS_PURCHASED`.
 
 ### POS Operations
 - `POST /pos/parked-sales`, `GET /pos/parked-sales`, `GET /pos/parked-sales/{id}`, `DELETE /pos/parked-sales/{id}` — park (suspend), list, get, or cancel an in-progress POS sale so a cashier can serve another customer and resume later.
@@ -457,7 +457,7 @@ Same split, and for the same reason: creating a promotion is money leaving the b
 ### VAT & Tax Compliance
 - `POST /customer-vat-status`, `GET /customer-vat-status/{customerId}` — upsert/look up a B2B customer's VAT registration & reverse-charge status.
 - `POST /product-vat-categories`, `GET /product-vat-categories/{variantId}` — upsert/look up a variant's HMRC VAT tax code.
-- `POST /vat-rates`, `GET /vat-rates`, `GET /vat-rates/{code}`, `PUT /vat-rates/{code}` — create/list/get/update UK VAT rates (T1/T5/T0/etc.).
+- `POST /vat-rates`, `GET /vat-rates`, `GET /vat-rates/{code}`, `PUT /vat-rates/{code}` — create/list/get/update UK VAT rates (T1/T5/T0/etc.). The code is at most 8 characters and the rate a fraction from 0 to 1; outside those, `400 VALIDATION_FAILED`.
 - `POST /tax-transactions`, `GET /tax-transactions?orderId=` — record/list a POSLog-style tax transaction journal entry per order.
 - `GET /vat-return?from=&to=` — the boxes of an HMRC Making Tax Digital VAT return for a date range. Management-only (`PLATFORM_ADMIN`/`OWNER`/`MANAGER`), enforced in the resource rather than by path. **Partial (SJ-D39):** boxes 1 (output VAT), 3, 5 and 6 (net sales) come from `tax_transactions`; boxes 2, 4, 7, 8 and 9 return a hardcoded `0`. Box 4 is input VAT reclaimed on purchases — purchase-svc captures it on supplier invoices and nothing carries it across, so box 5 (net VAT to pay) is overstated by exactly the VAT the business is entitled to reclaim. Not fit to file from until box 4 is real.
 
@@ -487,7 +487,7 @@ Same split, and for the same reason: creating a promotion is money leaving the b
 - `POST/GET/GET/PUT/DELETE /admin/brands(/{id})` — brand CRUD (delete = deactivate).
 - `POST/GET/GET/PUT/DELETE /admin/categories(/{id})` — category CRUD (delete = deactivate).
 - `POST/GET/GET/PUT/DELETE /admin/products(/{id})` — product CRUD (delete = delist); admin list supports status/category filters.
-- `POST/GET /admin/products/{id}/variants`, `GET/PUT/DELETE /admin/products/{id}/variants/{variantId}` — variant CRUD (delete = delist).
+- `POST/GET /admin/products/{id}/variants`, `GET/PUT/DELETE /admin/products/{id}/variants/{variantId}` — variant CRUD (delete = delist; editing a delisted variant is `409 VARIANT_NOT_ACTIVE`).
 - `GET /admin/products/variants/resolve?ids=` — batch-resolve up to 200 variant ids to name/SKU/product context.
 
 **Images & Store Assortment**

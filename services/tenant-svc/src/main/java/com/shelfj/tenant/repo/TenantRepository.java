@@ -46,14 +46,15 @@ public class TenantRepository extends BaseOutboxRepository {
   }
 
   public StoreWithZone createStoreWithDefaultZone(
-      Store store, Zone defaultZone, OutboxRow storeEvent, OutboxRow zoneEvent) {
+      Store store, Zone defaultZone, List<OutboxRow> events) {
     return inTx(
         c -> {
           assertTenantActive(c, store.tenantId());
           insertStore(c, store);
           insertZone(c, defaultZone);
-          insertOutbox(c, storeEvent);
-          insertOutbox(c, zoneEvent);
+          for (OutboxRow event : events) {
+            insertOutbox(c, event);
+          }
           return new StoreWithZone(store, defaultZone);
         },
         "create store");

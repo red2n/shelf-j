@@ -184,6 +184,28 @@ class PricingIT {
     assertThat(rDup.getStatus(), is(409));
   }
 
+  /** Past the column's size or the rate CHECK the insert failed in Postgres: 500, not 400. */
+  @Test
+  void vatRateOutsideTheTablesLimitsIsRejectedUpFront() {
+    Response longCode =
+        post(
+            "/vat-rates",
+            "{\"code\":\"STANDARD9\",\"name\":\"Standard\",\"rate\":0.20,"
+                + "\"exempt\":false,\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            T);
+    assertThat(longCode.getStatus(), is(400));
+    assertThat(longCode.readEntity(String.class), containsString("VALIDATION_FAILED"));
+
+    Response percentNotFraction =
+        post(
+            "/vat-rates",
+            "{\"code\":\"T20\",\"name\":\"Twenty\",\"rate\":20,"
+                + "\"exempt\":false,\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            T);
+    assertThat(percentNotFraction.getStatus(), is(400));
+    assertThat(percentNotFraction.readEntity(String.class), containsString("VALIDATION_FAILED"));
+  }
+
   @Test
   void priceListAndResolution() {
     // Seed VAT rates

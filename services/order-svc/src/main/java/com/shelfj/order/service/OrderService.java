@@ -740,9 +740,14 @@ public class OrderService {
             .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
     ctx.requireStoreAccess(order.storeId());
 
-    if (Order.STATUS_CANCELLED.equals(order.status()) || Order.STATUS_VOIDED.equals(order.status()))
+    // Goods can only come back once they were handed over. An order still PENDING or CONFIRMED
+    // never left the store — cancel it instead; returning it recorded a refund for goods, and
+    // often money, that were never exchanged. A fully REFUNDED order has nothing left to refund.
+    if (!Order.STATUS_FULFILLED.equals(order.status())
+        && !Order.STATUS_PARTIALLY_REFUNDED.equals(order.status()))
       throw ApiException.conflict(
-          "ORDER_CANNOT_RETURN", "cannot return a voided or cancelled order");
+          "ORDER_CANNOT_RETURN",
+          "only a fulfilled order can be returned; this one is " + order.status());
 
     List<OrderItem> orderItems = repo.findOrderItems(tenantId, orderId);
     UUID returnId = Ids.newId();

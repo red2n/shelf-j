@@ -447,6 +447,35 @@ class OrderIT {
     assertThat(payload, containsString("\"eventId\":\""));
   }
 
+  /**
+   * A return used to be refused only for cancelled and voided orders, so an order nobody had paid
+   * for or collected could be "returned" and a refund recorded against it.
+   */
+  @Test
+  void onlyGoodsThatWereHandedOverCanBeReturned() {
+    String oneBack =
+        "{\"reason\":\"changed mind\",\"items\":[{\"variantId\":\"" + V + "\",\"qty\":1}]}";
+
+    UUID unpaid = placeAt("POS", "INSTORE");
+    Response pending = post("/orders/" + unpaid + "/returns", oneBack, T);
+    assertThat(pending.getStatus(), is(409));
+    assertThat(pending.readEntity(String.class), containsString("ORDER_CANNOT_RETURN"));
+
+    // Paid online but not yet collected: CONFIRMED, still on the shelf.
+    UUID awaitingPickup = placeAt("ONLINE", "PICKUP");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), awaitingPickup, Ids.newId(), new BigDecimal("20.00"));
+    assertThat(statusOf(awaitingPickup), is("CONFIRMED"));
+    assertThat(post("/orders/" + awaitingPickup + "/returns", oneBack, T).getStatus(), is(409));
+    assertThat(outboxCount(awaitingPickup, "OrderReturned"), is(0L));
+
+    // Handed over at the till the moment it was paid for: now it can come back.
+    UUID sold = placeAt("POS", "INSTORE");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), sold, Ids.newId(), new BigDecimal("20.00"));
+    assertThat(post("/orders/" + sold + "/returns", oneBack, T).getStatus(), is(201));
+  }
+
   @Test
   void voidingASaleWithAReturnAgainstItPutsBackOnlyWhatIsLeft() {
     UUID orderId = placeAt("POS", "INSTORE");
@@ -718,6 +747,9 @@ class OrderIT {
             "it-return-qty");
     assertThat(r1.getStatus(), is(201));
     String orderId = extractId(r1.readEntity(String.class));
+    // Paid for at the till, which hands it over: only then can anything come back.
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), UUID.fromString(orderId), Ids.newId(), new BigDecimal("20.00"));
 
     // returning 3 when only 2 were purchased must be rejected outright
     Response tooMany =
