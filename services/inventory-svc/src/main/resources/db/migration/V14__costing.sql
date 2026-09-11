@@ -1,5 +1,5 @@
 CREATE TABLE costing_methods (
-    id             UUID           NOT NULL DEFAULT gen_random_uuid(),
+    id             UUID           NOT NULL,
     tenant_id      UUID           NOT NULL,
     store_id       UUID           NOT NULL,
     variant_id     UUID           NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE costing_methods (
 CREATE INDEX idx_costing_tenant ON costing_methods (tenant_id, store_id);
 
 CREATE TABLE accounting_periods (
-    id          UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id          UUID        NOT NULL,
     tenant_id   UUID        NOT NULL,
     store_id    UUID        NOT NULL,
     period_name TEXT        NOT NULL,

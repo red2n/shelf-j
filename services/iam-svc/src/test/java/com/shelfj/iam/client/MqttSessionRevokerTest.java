@@ -2,8 +2,8 @@ package com.shelfj.iam.client;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
+import com.shelfj.ids.Ids;
 import java.util.Optional;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -22,6 +22,6 @@ class MqttSessionRevokerTest {
 
     // init() (which builds the WebClient) is deliberately never called — revoke() must return
     // before touching it, since apiKey/apiSecret are unset.
-    assertDoesNotThrow(() -> revoker.revoke(UUID.randomUUID(), UUID.randomUUID()));
+    assertDoesNotThrow(() -> revoker.revoke(Ids.newId(), Ids.newId()));
   }
 }

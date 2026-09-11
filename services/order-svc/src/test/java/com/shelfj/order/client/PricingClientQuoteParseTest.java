@@ -45,7 +45,7 @@ class PricingClientQuoteParseTest {
         PricingClient.parseQuote(
             json(
                 """
-                {"lines":[{"variantId":"11111111-1111-1111-1111-111111111111","qty":10,
+                {"lines":[{"variantId":"01a090ae-611e-700b-bde4-50df0324c37c","qty":10,
                            "unitPrice":8.00,"lineTotal":80.00,"discount":0,
                            "netTotal":72.00,"vatAmount":14.40,"vatCode":"T1"}],
                  "subtotal":80.00,"totalDiscount":8.00,"basketDiscount":8.00,
@@ -65,7 +65,7 @@ class PricingClientQuoteParseTest {
         PricingClient.parseQuote(
             json(
                 """
-                {"lines":[{"variantId":"11111111-1111-1111-1111-111111111111","qty":10,
+                {"lines":[{"variantId":"01a090ae-611e-700b-bde4-50df0324c37c","qty":10,
                            "unitPrice":8.00,"lineTotal":80.00,"discount":8.00,
                            "netTotal":72.00,"vatAmount":14.40,"vatCode":"T1"}],
                  "subtotal":80.00,"totalDiscount":8.00,"basketDiscount":0,
@@ -86,7 +86,7 @@ class PricingClientQuoteParseTest {
         PricingClient.parseQuote(
             json(
                 """
-                {"lines":[{"variantId":"11111111-1111-1111-1111-111111111111","qty":10,
+                {"lines":[{"variantId":"01a090ae-611e-700b-bde4-50df0324c37c","qty":10,
                            "unitPrice":8.00,"lineTotal":80.00,"discount":0,
                            "netTotal":80.00,"vatAmount":16.00,"vatCode":"T1"}],
                  "subtotal":80.00,"totalDiscount":0,"basketDiscount":0,
@@ -106,9 +106,9 @@ class PricingClientQuoteParseTest {
                 {"lines":[],"subtotal":0,"totalDiscount":13.00,"basketDiscount":5.00,
                  "vatAmount":0,"total":0,"currency":"GBP",
                  "appliedPromotions":[
-                   {"promotionId":"22222222-2222-2222-2222-222222222222","name":"Shirts 10%",
-                    "variantId":"11111111-1111-1111-1111-111111111111","amount":8.00},
-                   {"promotionId":"33333333-3333-3333-3333-333333333333","name":"£5 off",
+                   {"promotionId":"01a090ae-611e-700f-b645-a14095230b77","name":"Shirts 10%",
+                    "variantId":"01a090ae-611e-700b-bde4-50df0324c37c","amount":8.00},
+                   {"promotionId":"01a090ae-611e-7011-ae7d-1bd68c966ff6","name":"£5 off",
                     "amount":5.00}],
                  "rejectedCoupons":{"NOPE":"NO_SUCH_COUPON"}}
                 """));
@@ -128,7 +128,7 @@ class PricingClientQuoteParseTest {
         PricingClient.parseQuote(
             json(
                 """
-                {"lines":[{"variantId":"11111111-1111-1111-1111-111111111111","qty":1,
+                {"lines":[{"variantId":"01a090ae-611e-700b-bde4-50df0324c37c","qty":1,
                            "unitPrice":5.00,"lineTotal":5.00,"discount":0,
                            "netTotal":5.00,"vatAmount":1.00,"vatCode":"T1"}],
                  "subtotal":5.00,"totalDiscount":0,"basketDiscount":0,

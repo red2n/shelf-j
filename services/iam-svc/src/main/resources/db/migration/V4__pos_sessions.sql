@@ -1,7 +1,7 @@
 -- Gap #45: POS session idle timeout — track cashier sessions; sweep idle ones and revoke tokens.
 
 CREATE TABLE pos_sessions (
-    id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                   UUID        PRIMARY KEY,
     tenant_id            UUID        NOT NULL,
     user_id              UUID        NOT NULL,
     store_id             UUID        NOT NULL,

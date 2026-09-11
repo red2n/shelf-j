@@ -2,7 +2,7 @@
 -- grade, and costing behaviour across the org.
 
 CREATE TABLE tenant_inventory_config (
-    id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                      UUID        PRIMARY KEY,
     tenant_id               UUID        NOT NULL UNIQUE,
     lot_control_enabled     BOOLEAN     NOT NULL DEFAULT true,
     serial_control_enabled  BOOLEAN     NOT NULL DEFAULT false,

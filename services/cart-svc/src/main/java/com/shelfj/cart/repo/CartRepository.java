@@ -2,6 +2,7 @@ package com.shelfj.cart.repo;
 
 import com.shelfj.cart.domain.Domain.Cart;
 import com.shelfj.cart.domain.Domain.CartItem;
+import com.shelfj.ids.Ids;
 import com.shelfj.service.BaseJdbcRepository;
 import com.shelfj.service.RedisCache;
 import com.shelfj.web.ApiException;
@@ -405,15 +406,16 @@ public class CartRepository extends BaseJdbcRepository {
                 try (var ins =
                     c.prepareStatement(
                         "INSERT INTO cart_items (id, cart_id, tenant_id, variant_id, qty,"
-                            + " unit_price, added_at) VALUES (gen_random_uuid(),?,?,?,?,?,now())"
+                            + " unit_price, added_at) VALUES (?,?,?,?,?,?,now())"
                             + " ON CONFLICT (cart_id, variant_id) DO UPDATE SET"
                             + "   qty = cart_items.qty + EXCLUDED.qty,"
                             + "   unit_price = COALESCE(EXCLUDED.unit_price, cart_items.unit_price)")) {
-                  ins.setObject(1, targetCartId);
-                  ins.setObject(2, tenantId);
-                  ins.setObject(3, rs.getObject("variant_id", UUID.class));
-                  ins.setBigDecimal(4, rs.getBigDecimal("qty"));
-                  ins.setBigDecimal(5, rs.getBigDecimal("unit_price"));
+                  ins.setObject(1, Ids.newId());
+                  ins.setObject(2, targetCartId);
+                  ins.setObject(3, tenantId);
+                  ins.setObject(4, rs.getObject("variant_id", UUID.class));
+                  ins.setBigDecimal(5, rs.getBigDecimal("qty"));
+                  ins.setBigDecimal(6, rs.getBigDecimal("unit_price"));
                   ins.executeUpdate();
                 }
               }

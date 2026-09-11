@@ -219,7 +219,7 @@ class JwtAuthFilterTest {
             .JWT
             .create()
             .withIssuer("shelfj")
-            .withSubject("11111111-1111-1111-1111-111111111111")
+            .withSubject("01a090ae-611e-700b-bde4-50df0324c37c")
             .withClaim("type", "CUSTOMER")
             .withArrayClaim("roles", new String[] {"CUSTOMER"})
             .sign(
@@ -235,7 +235,7 @@ class JwtAuthFilterTest {
     verify(requestContext, never()).abortWith(any());
     org.junit.jupiter.api.Assertions.assertEquals("tenant-abc", headers.getFirst("X-Tenant-Id"));
     org.junit.jupiter.api.Assertions.assertEquals(
-        "11111111-1111-1111-1111-111111111111", headers.getFirst("X-User-Id"));
+        "01a090ae-611e-700b-bde4-50df0324c37c", headers.getFirst("X-User-Id"));
   }
 
   @Test
@@ -249,7 +249,7 @@ class JwtAuthFilterTest {
             .JWT
             .create()
             .withIssuer("shelfj")
-            .withSubject("11111111-1111-1111-1111-111111111111")
+            .withSubject("01a090ae-611e-700b-bde4-50df0324c37c")
             .withArrayClaim("roles", new String[] {"CUSTOMER"})
             .sign(
                 com.auth0.jwt.algorithms.Algorithm.HMAC256(
@@ -287,7 +287,7 @@ class JwtAuthFilterTest {
             .JWT
             .create()
             .withIssuer("shelfj")
-            .withSubject("11111111-1111-1111-1111-111111111111")
+            .withSubject("01a090ae-611e-700b-bde4-50df0324c37c")
             .withClaim("type", "CUSTOMER")
             .withArrayClaim("roles", new String[] {"CUSTOMER"})
             .sign(
@@ -318,7 +318,7 @@ class JwtAuthFilterTest {
             .JWT
             .create()
             .withIssuer("shelfj")
-            .withSubject("22222222-2222-2222-2222-222222222222")
+            .withSubject("01a090ae-611e-700f-b645-a14095230b77")
             .withClaim("type", "STAFF")
             .withClaim("tenant", "tenant-xyz")
             .withArrayClaim("roles", new String[] {"OWNER"})

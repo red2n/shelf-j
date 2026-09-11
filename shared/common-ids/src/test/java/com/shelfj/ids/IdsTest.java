@@ -23,13 +23,7 @@ class IdsTest {
   @Test
   void leadingZerosInTheTailAreKept() {
     assertEquals("0000abcd", Ids.shortRef(UUID.fromString("01a0905d-7082-7518-8000-00000000abcd")));
-    assertEquals("00000000", Ids.shortRef(new UUID(0, 0)));
-  }
-
-  /** Rows stored before the switch keep v4 ids; their handles must come out the same way. */
-  @Test
-  void legacyV4IdsGetTheirTailToo() {
-    assertEquals("b2c3d479", Ids.shortRef(UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d479")));
+    assertEquals("00000000", Ids.shortRef(UUID.fromString("01a0905d-7082-7518-8000-000000000000")));
   }
 
   /**
@@ -67,6 +61,74 @@ class IdsTest {
   void aNullIdIsRejected() {
     NullPointerException e = assertThrows(NullPointerException.class, () -> Ids.shortRef(null));
     assertEquals("id", e.getMessage());
+  }
+
+  // ── derived ids ─────────────────────────────────────────────────────────────
+
+  private static final UUID EVENT = UUID.fromString("01a0905d-7082-7518-9ec6-aee90d72a43e");
+
+  /**
+   * Pinned, not just self-consistent: consumers dedupe on these, so if the algorithm changed, an
+   * event redelivered across the deploy would be processed a second time.
+   */
+  @Test
+  void aDerivedIdIsPinnedForAGivenSourceAndName() {
+    assertEquals(
+        UUID.fromString("01a0905d-7082-77a2-ac9d-f2f6c3f921b9"),
+        Ids.derived(EVENT, "inventory-order-events:0"));
+  }
+
+  @Test
+  void theSameSourceAndNameAlwaysGiveTheSameId() {
+    assertEquals(Ids.derived(EVENT, "line:3"), Ids.derived(EVENT, "line:3"));
+  }
+
+  @Test
+  void aDerivedIdIsVersion7WithTheSourcesTimestamp() {
+    UUID derived = Ids.derived(EVENT, "line:0");
+
+    assertEquals(7, derived.version());
+    assertEquals(2, derived.variant());
+    assertEquals(EVENT.getMostSignificantBits() >>> 16, derived.getMostSignificantBits() >>> 16);
+  }
+
+  /** The worst case for a per-line key: one huge event. Every line must get its own id. */
+  @Test
+  void everyLineOfOneEventGetsItsOwnId() {
+    Set<UUID> ids = new HashSet<>();
+    for (int line = 0; line < 10_000; line++) {
+      ids.add(Ids.derived(EVENT, "inventory-order-events:" + line));
+    }
+
+    assertEquals(10_000, ids.size());
+  }
+
+  @Test
+  void differentSourcesOrNamesGiveDifferentIds() {
+    UUID other = UUID.fromString("01a0905d-7082-7518-9ec6-aee90d72a43f");
+
+    assertNotEquals(Ids.derived(EVENT, "line:0"), Ids.derived(other, "line:0"));
+    assertNotEquals(Ids.derived(EVENT, "line:0"), Ids.derived(EVENT, "line:1"));
+    assertNotEquals(Ids.derived(EVENT, "a:bc"), Ids.derived(EVENT, "ab:c"));
+  }
+
+  /**
+   * Negative input on purpose: Shelf-J stores only v7, but an event from outside can carry any id.
+   * One with no timestamp in it still yields a stable key that is itself v7.
+   */
+  @Test
+  void aSourceThatIsNotV7StillGivesAStableV7Key() {
+    UUID notV7 = UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d479");
+    UUID derived = Ids.derived(notV7, "line:0");
+
+    assertEquals(UUID.fromString("00000000-0000-7c5d-ac9e-f81d51614b48"), derived);
+    assertEquals(7, derived.version());
+  }
+
+  @Test
+  void derivingNeedsBothASourceAndAName() {
+    assertThrows(NullPointerException.class, () -> Ids.derived(null, "line:0"));
+    assertThrows(NullPointerException.class, () -> Ids.derived(EVENT, null));
   }
 
   /** A handle for people, not a key: different ids can share one, so nothing may look up by it. */

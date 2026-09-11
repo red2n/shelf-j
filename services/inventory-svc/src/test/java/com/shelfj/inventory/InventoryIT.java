@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -39,20 +40,20 @@ class InventoryIT {
     System.setProperty("shelfj.kafka.enabled", "false");
   }
 
-  private static final String T = "11111111-1111-1111-1111-111111111111";
-  private static final String OTHER = "99999999-9999-9999-9999-999999999999";
-  private static final String S = "22222222-2222-2222-2222-222222222222";
-  private static final String V = "33333333-3333-3333-3333-333333333333";
+  private static final String T = "01a090ae-611e-700b-bde4-50df0324c37c";
+  private static final String OTHER = "01a090ae-611e-701d-9d60-a9d7516ed03b";
+  private static final String S = "01a090ae-611e-700f-b645-a14095230b77";
+  private static final String V = "01a090ae-611e-7011-ae7d-1bd68c966ff6";
 
   /** Dedicated variant for the FIFO test so tier-1 stock doesn't pollute its level assertions. */
-  private static final String V_FIFO = "44444444-4444-4444-4444-444444444444";
+  private static final String V_FIFO = "01a090ae-611e-7014-8cd5-baf0862fa319";
 
   /** Dedicated store + variants (id-ordered) for the levels pagination / summary test. */
-  private static final String S_PAGE = "55555555-5555-5555-5555-555555555555";
+  private static final String S_PAGE = "01a090ae-611e-7019-ba7e-5901486ca70a";
 
-  private static final String VP1 = "a0000001-0000-0000-0000-000000000000";
-  private static final String VP2 = "a0000002-0000-0000-0000-000000000000";
-  private static final String VP3 = "a0000003-0000-0000-0000-000000000000";
+  private static final String VP1 = "01a090ae-611e-701f-9044-30556c2f6f4e";
+  private static final String VP2 = "01a090ae-611e-7020-8485-80b3d7bb3c80";
+  private static final String VP3 = "01a090ae-611e-7021-84be-14854f0a8dfe";
 
   @Inject WebTarget target;
   @Inject com.shelfj.inventory.service.InventoryService inventoryService;
@@ -322,7 +323,7 @@ class InventoryIT {
     Response r =
         post(
             "/admin/inventory/lots/split",
-            "{\"sourceBatchId\":\"00000000-0000-0000-0000-000000000099\",\"qty\":1}",
+            "{\"sourceBatchId\":\"01a090ae-611e-7007-b85c-1fbac22cb87b\",\"qty\":1}",
             T);
     assertThat(r.getStatus(), is(404));
   }
@@ -568,7 +569,7 @@ class InventoryIT {
   void ropOrderModifiers_unknownPlan_returns404() {
     Response r =
         target
-            .path("/admin/inventory/rop-plans/00000000-0000-0000-0000-000000000099/order-modifiers")
+            .path("/admin/inventory/rop-plans/01a090ae-611e-7007-b85c-1fbac22cb87b/order-modifiers")
             .request()
             .header("X-Tenant-Id", T)
             .header("X-Roles", "OWNER")
@@ -641,7 +642,7 @@ class InventoryIT {
     // Golden rule #8: stock_movements is append-only. Purge must relocate rows to
     // stock_movements_archive, never destroy them. Seed a pre-dated row directly
     // (no API backdates created_at), then verify it survives in the archive table.
-    UUID movementId = UUID.randomUUID();
+    UUID movementId = Ids.newId();
     OffsetDateTime oldDate = OffsetDateTime.parse("2019-01-01T00:00:00Z");
     try (var c = PG.dataSource().getConnection();
         var ps =
@@ -721,8 +722,8 @@ class InventoryIT {
 
   @Test
   void receiveWithSameIdempotencyKeyIsNotDoubleCounted() {
-    String variant = UUID.randomUUID().toString();
-    String key = UUID.randomUUID().toString();
+    String variant = Ids.newId().toString();
+    String key = Ids.newId().toString();
     String body =
         "{\"storeId\":\""
             + S
@@ -755,8 +756,8 @@ class InventoryIT {
 
   @Test
   void reserveWithSameIdempotencyKeyIsNotDoubleHeld() {
-    String variant = UUID.randomUUID().toString();
-    String key = UUID.randomUUID().toString();
+    String variant = Ids.newId().toString();
+    String key = Ids.newId().toString();
     String receiveBody =
         "{\"storeId\":\""
             + S
@@ -783,8 +784,8 @@ class InventoryIT {
 
   @Test
   void adjustWithSameIdempotencyKeyIsNotDoubleApplied() {
-    String variant = UUID.randomUUID().toString();
-    String key = UUID.randomUUID().toString();
+    String variant = Ids.newId().toString();
+    String key = Ids.newId().toString();
     String receiveBody =
         "{\"storeId\":\""
             + S
@@ -860,8 +861,8 @@ class InventoryIT {
   /** A manual adjustment records the acting user and the reason code on the movement row. */
   @Test
   void manualAdjustmentRecordsActorAndReasonCode() {
-    String variant = "b0000001-0000-0000-0000-000000000000";
-    String actor = "c0000001-0000-0000-0000-000000000000";
+    String variant = "01a090ae-611e-702f-81ae-ad56c2b4e6d4";
+    String actor = "01a090ae-611e-7038-a477-3cf7ad54f5d6";
 
     // Stock in, then written off as theft by a named user.
     assertThat(
@@ -893,8 +894,8 @@ class InventoryIT {
    */
   @Test
   void systemCausedMovementsCarryNoActor() {
-    String variant = "b0000002-0000-0000-0000-000000000000";
-    String actor = "c0000002-0000-0000-0000-000000000000";
+    String variant = "01a090ae-611e-7030-aa2a-8c96cf019044";
+    String actor = "01a090ae-611e-7039-b9af-f03ae3b76991";
     assertThat(
         postAs("/admin/inventory/receive", receiveJson(variant, "7"), T, actor).getStatus(),
         is(201));
@@ -926,9 +927,9 @@ class InventoryIT {
    */
   @Test
   void lowStockIncludesItemsThatHaveRunOutEntirely() {
-    String stocked = "d2000001-0000-0000-0000-000000000000";
-    String soldOut = "d2000002-0000-0000-0000-000000000000";
-    String tenant = "f2000001-0000-0000-0000-000000000000";
+    String stocked = "01a090ae-611e-7047-b89c-88468add6606";
+    String soldOut = "01a090ae-611e-7048-84e3-5ae846fd8f84";
+    String tenant = "01a090ae-611e-7064-9447-1afc2c3b7774";
 
     setThreshold(tenant, stocked, "10");
     setThreshold(tenant, soldOut, "10");
@@ -949,8 +950,8 @@ class InventoryIT {
   /** Stock at or above its level is not low, and reserved stock does not count as available. */
   @Test
   void lowStockExcludesHealthyItemsAndDiscountsHeldReservations() {
-    String healthy = "d2000003-0000-0000-0000-000000000000";
-    String tenant = "f2000002-0000-0000-0000-000000000000";
+    String healthy = "01a090ae-611e-7049-9380-d10f40149ad1";
+    String tenant = "01a090ae-611e-7065-8b98-32e8ccecd52e";
 
     setThreshold(tenant, healthy, "10");
     assertThat(
@@ -976,8 +977,8 @@ class InventoryIT {
    */
   @Test
   void lowStockTakesTheHighestConfiguredSignalAndNamesIt() {
-    String v = "d2000004-0000-0000-0000-000000000000";
-    String tenant = "f2000003-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-704a-8c8c-01642201efb5";
+    String tenant = "01a090ae-611e-7066-af8e-8ded2d05535c";
 
     setThreshold(tenant, v, "10");
     // safety_stock_qty is only ever written by the compute job, which needs 30 days of demand
@@ -986,11 +987,13 @@ class InventoryIT {
     try (var c = PG.dataSource().getConnection();
         var ps =
             c.prepareStatement(
-                "INSERT INTO inventory.safety_stock_params (tenant_id, store_id, variant_id,"
-                    + " method, safety_stock_qty, computed_at) VALUES (?,?,?,'USER_DEFINED',25,now())")) {
-      ps.setObject(1, UUID.fromString(tenant));
-      ps.setObject(2, UUID.fromString(S));
-      ps.setObject(3, UUID.fromString(v));
+                "INSERT INTO inventory.safety_stock_params (id, tenant_id, store_id, variant_id,"
+                    + " method, safety_stock_qty, computed_at)"
+                    + " VALUES (?,?,?,?,'USER_DEFINED',25,now())")) {
+      ps.setObject(1, Ids.newId());
+      ps.setObject(2, UUID.fromString(tenant));
+      ps.setObject(3, UUID.fromString(S));
+      ps.setObject(4, UUID.fromString(v));
       ps.executeUpdate();
     } catch (java.sql.SQLException e) {
       throw new AssertionError("could not seed safety stock", e);
@@ -1008,9 +1011,9 @@ class InventoryIT {
   /** An item with no configured level anywhere is not low, however little of it there is. */
   @Test
   void lowStockIgnoresItemsWithNoConfiguredLevelAndIsTenantScoped() {
-    String unmanaged = "d2000005-0000-0000-0000-000000000000";
-    String managed = "d2000006-0000-0000-0000-000000000000";
-    String tenant = "f2000004-0000-0000-0000-000000000000";
+    String unmanaged = "01a090ae-611e-704b-b623-667cf931d0f4";
+    String managed = "01a090ae-611e-704c-93c3-4f3fa41b98a8";
+    String tenant = "01a090ae-611e-7067-b259-fcbfdf9689fb";
 
     assertThat(
         post("/admin/inventory/receive", receiveJson(unmanaged, "1"), tenant).getStatus(), is(201));
@@ -1052,9 +1055,9 @@ class InventoryIT {
   /** FIFO values each batch at its own cost; the store rollup is the sum of its variants. */
   @Test
   void valuationCostsEachBatchAtItsOwnPriceUnderFifo() {
-    String v1 = "d1000001-0000-0000-0000-000000000000";
-    String v2 = "d1000002-0000-0000-0000-000000000000";
-    String tenant = "f1000001-0000-0000-0000-000000000000";
+    String v1 = "01a090ae-611e-7042-b5d8-966b034ca0a8";
+    String v2 = "01a090ae-611e-7043-b41b-15029ea1bc19";
+    String tenant = "01a090ae-611e-7060-bdbf-27e1145c8a70";
 
     // Two batches of v1 bought at different prices — FIFO must value each at its own, not at an
     // average: 10 × 2.00 + 5 × 3.00 = 35.00.
@@ -1083,8 +1086,8 @@ class InventoryIT {
    */
   @Test
   void stockWithNoCostIsReportedAsUnvaluedNotValuedAtZero() {
-    String v = "d1000003-0000-0000-0000-000000000000";
-    String tenant = "f1000002-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-7044-876b-416df27442bb";
+    String tenant = "01a090ae-611e-7061-862d-3f4576aca46d";
 
     receiveCosted(tenant, v, "10", "4.00"); // 40.00, valued
     // Same variant, no cost supplied — 6 units that cannot be costed.
@@ -1100,8 +1103,8 @@ class InventoryIT {
   /** An AVERAGE row values the whole holding at the configured standard cost. */
   @Test
   void averageCostingValuesTheWholeHoldingAtTheConfiguredCost() {
-    String v = "d1000004-0000-0000-0000-000000000000";
-    String tenant = "f1000003-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-7045-9e55-e2f1f905060e";
+    String tenant = "01a090ae-611e-7062-9304-9dcfba8f11af";
 
     receiveCosted(tenant, v, "10", "2.00");
     receiveCosted(tenant, v, "10", "8.00"); // FIFO would say 100.00
@@ -1132,8 +1135,8 @@ class InventoryIT {
   /** Tenant scoping, and a bad grouping is a 400 rather than a silently different report. */
   @Test
   void valuationIsTenantScopedAndValidatesItsInputs() {
-    String v = "d1000005-0000-0000-0000-000000000000";
-    String tenant = "f1000004-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-7046-8d67-1fecec1bc1bf";
+    String tenant = "01a090ae-611e-7063-b003-d1fad399e4cb";
     receiveCosted(tenant, v, "3", "5.00");
 
     assertThat(valuation(tenant, "VARIANT", null), containsString(v));
@@ -1182,11 +1185,11 @@ class InventoryIT {
    */
   @Test
   void shrinkageReportGroupsWriteOffsByReasonActorAndStore() {
-    String v1 = "d0000001-0000-0000-0000-000000000000";
-    String v2 = "d0000002-0000-0000-0000-000000000000";
-    String alice = "e0000001-0000-0000-0000-000000000000";
-    String bob = "e0000002-0000-0000-0000-000000000000";
-    String tenant = "f0000001-0000-0000-0000-000000000000";
+    String v1 = "01a090ae-611e-703d-b04b-1f8ae88c0f60";
+    String v2 = "01a090ae-611e-703e-8503-f1320f6ae86c";
+    String alice = "01a090ae-611e-7057-94a6-3d076e7cb45e";
+    String bob = "01a090ae-611e-7058-85bf-88ab81890f4f";
+    String tenant = "01a090ae-611e-705d-9baf-57c42ffc2fb6";
 
     assertThat(
         postAs("/admin/inventory/receive", receiveJson(v1, "100"), tenant, alice).getStatus(),
@@ -1228,10 +1231,10 @@ class InventoryIT {
   /** Drill-down answers "what did this person actually write off?". */
   @Test
   void shrinkageDrillsDownToVariantsForOneActor() {
-    String v1 = "d0000003-0000-0000-0000-000000000000";
-    String v2 = "d0000004-0000-0000-0000-000000000000";
-    String carol = "e0000003-0000-0000-0000-000000000000";
-    String tenant = "f0000002-0000-0000-0000-000000000000";
+    String v1 = "01a090ae-611e-703f-bbf0-259f9ebf19ef";
+    String v2 = "01a090ae-611e-7040-b89f-292726780a3f";
+    String carol = "01a090ae-611e-7059-9671-db63e8725245";
+    String tenant = "01a090ae-611e-705e-9448-d8d984956c9f";
 
     assertThat(
         postAs("/admin/inventory/receive", receiveJson(v1, "50"), tenant, carol).getStatus(),
@@ -1261,9 +1264,9 @@ class InventoryIT {
    */
   @Test
   void shrinkageIsTenantScopedAndValidatesItsInputs() {
-    String v = "d0000005-0000-0000-0000-000000000000";
-    String dave = "e0000004-0000-0000-0000-000000000000";
-    String tenant = "f0000003-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-7041-8ffc-2de67716e1ea";
+    String dave = "01a090ae-611e-705a-80a8-62cf06d4f55f";
+    String tenant = "01a090ae-611e-705f-98e4-e88c73e95223";
     assertThat(
         postAs("/admin/inventory/receive", receiveJson(v, "40"), tenant, dave).getStatus(),
         is(201));
@@ -1385,8 +1388,8 @@ class InventoryIT {
    */
   @Test
   void stockTurnCostsSalesAtTheBatchesFifoActuallyDrewDown() {
-    String v = "d4000001-0000-0000-0000-000000000000";
-    String tenant = "f3000001-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-704d-bb45-bfd8df4039a7";
+    String tenant = "01a090ae-611e-7068-a227-6af9ac576fee";
 
     receiveCosted(tenant, v, "10", "2.00"); // 20.00
     receiveCosted(tenant, v, "10", "5.00"); // 50.00
@@ -1416,8 +1419,8 @@ class InventoryIT {
    */
   @Test
   void stockTurnDeclaresSalesItCannotCostRatherThanCostingThemAtZero() {
-    String v = "d4000002-0000-0000-0000-000000000000";
-    String tenant = "f3000002-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-704e-8496-3244583788b7";
+    String tenant = "01a090ae-611e-7069-99e7-75fe68768684";
 
     receiveCosted(tenant, v, "10", "3.00");
     // Second receipt with no costPrice at all.
@@ -1438,8 +1441,8 @@ class InventoryIT {
    */
   @Test
   void stockTurnIsBoundedByItsWindowAndValidatesIt() {
-    String v = "d4000003-0000-0000-0000-000000000000";
-    String tenant = "f3000003-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-704f-a30e-7b1d5d8a67a7";
+    String tenant = "01a090ae-611e-706a-9c72-8281fbf89ec0";
 
     receiveCosted(tenant, v, "10", "4.00");
     sell(tenant, v, 6);
@@ -1507,19 +1510,19 @@ class InventoryIT {
    * stock_movements.
    */
   private void sellByOrderThenVoid(String tenant, String variantId, String qty) {
-    UUID order = UUID.randomUUID();
+    UUID order = Ids.newId();
     UUID t = UUID.fromString(tenant);
     UUID s = UUID.fromString(S);
     UUID v = UUID.fromString(variantId);
     var q = new java.math.BigDecimal(qty);
-    inventoryService.deductSaleFromOrderOnce(UUID.randomUUID(), "it", t, s, v, q, order);
-    inventoryService.receiveVoidFromOrderOnce(UUID.randomUUID(), "it", t, s, v, q, order);
+    inventoryService.deductSaleFromOrderOnce(Ids.newId(), "it", t, s, v, q, order);
+    inventoryService.receiveVoidFromOrderOnce(Ids.newId(), "it", t, s, v, q, order);
   }
 
   @Test
   void stockTurnDoesNotCountAVoidedSale() {
-    String v = "d4000010-0000-0000-0000-000000000000";
-    String tenant = "f3000010-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-7050-9ee6-9048d44dc0c1";
+    String tenant = "01a090ae-611e-706b-87c6-ddc1c5bf86a6";
 
     receiveCosted(tenant, v, "10", "2.00");
     sellByOrderThenVoid(tenant, v, "4");
@@ -1534,8 +1537,8 @@ class InventoryIT {
 
   @Test
   void deadStockDoesNotTreatAVoidedSaleAsTheLastSale() {
-    String v = "d5000010-0000-0000-0000-000000000000";
-    String tenant = "f4000010-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-7054-9161-1d5069fb5a2c";
+    String tenant = "01a090ae-611e-706e-af2f-75352a2c0594";
 
     receiveCosted(tenant, v, "10", "1.00");
     sellByOrderThenVoid(tenant, v, "3");
@@ -1554,9 +1557,9 @@ class InventoryIT {
    */
   @Test
   void deadStockAgesFromTheLastSaleNotFromReceipt() {
-    String moving = "d5000001-0000-0000-0000-000000000000";
-    String idle = "d5000002-0000-0000-0000-000000000000";
-    String tenant = "f4000001-0000-0000-0000-000000000000";
+    String moving = "01a090ae-611e-7051-882f-8d6123511877";
+    String idle = "01a090ae-611e-7052-a27b-e65d45fee74f";
+    String tenant = "01a090ae-611e-706c-8f84-715053a03395";
 
     receiveCosted(tenant, moving, "10", "1.00");
     receiveCosted(tenant, idle, "10", "9.00");
@@ -1587,8 +1590,8 @@ class InventoryIT {
    */
   @Test
   void deadStockLaddersAgainstTheSuppliedAsOfInstant() {
-    String v = "d5000003-0000-0000-0000-000000000000";
-    String tenant = "f4000002-0000-0000-0000-000000000000";
+    String v = "01a090ae-611e-7053-8723-d0f48f967cec";
+    String tenant = "01a090ae-611e-706d-a888-e253c80fa001";
 
     receiveCosted(tenant, v, "4", "2.50"); // never sold, received today
 
@@ -1626,7 +1629,7 @@ class InventoryIT {
                 + "\",\"qty\":"
                 + qty
                 + ",\"orderId\":\""
-                + UUID.randomUUID()
+                + Ids.newId()
                 + "\"}",
             tenant);
     assertThat(reserved.getStatus(), is(201));

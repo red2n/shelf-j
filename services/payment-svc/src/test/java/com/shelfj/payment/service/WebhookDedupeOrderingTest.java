@@ -10,13 +10,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.domain.Domain.PaymentIntent;
 import com.shelfj.payment.provider.PaymentProvider;
 import com.shelfj.payment.provider.PaymentProviders;
 import com.shelfj.payment.repo.PaymentIntentRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.UUID;
 import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -70,10 +70,10 @@ class WebhookDedupeOrderingTest {
 
   private PaymentIntent authorizedIntent() {
     return new PaymentIntent(
-        UUID.randomUUID(), // id
-        UUID.randomUUID(), // tenantId
-        UUID.randomUUID(), // orderId
-        UUID.randomUUID(), // storeId
+        Ids.newId(), // id
+        Ids.newId(), // tenantId
+        Ids.newId(), // orderId
+        Ids.newId(), // storeId
         PROVIDER,
         PROVIDER_REF,
         new BigDecimal("10.00"), // amount

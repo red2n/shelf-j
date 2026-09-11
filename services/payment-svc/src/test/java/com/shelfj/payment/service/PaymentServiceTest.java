@@ -3,6 +3,7 @@ package com.shelfj.payment.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.client.OrderClient;
 import com.shelfj.payment.domain.Domain.PaymentTender;
 import com.shelfj.payment.domain.Domain.RefundTender;
@@ -58,7 +59,7 @@ class PaymentServiceTest {
 
       @Override
       public UUID userId() {
-        return UUID.randomUUID();
+        return Ids.newId();
       }
 
       @Override
@@ -133,26 +134,26 @@ class PaymentServiceTest {
   @Test
   void onlinePayment_rejectsAPosOrder() {
     PaymentService svc = new PaymentService();
-    UUID orderId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null, "POS", new BigDecimal("10.00"), "PENDING", UUID.randomUUID().toString(), "GBP"));
+            null, "POS", new BigDecimal("10.00"), "PENDING", Ids.newId().toString(), "GBP"));
 
     var ex =
         assertThrows(
             ApiException.class,
             () ->
                 svc.recordOnlinePayment(
-                    req(orderId, new BigDecimal("10.00")), ctx(UUID.randomUUID(), null), null));
+                    req(orderId, new BigDecimal("10.00")), ctx(Ids.newId(), null), null));
     assertEquals("PAYMENT_ORDER_NOT_FOUND", ex.code());
   }
 
   @Test
   void onlinePayment_rejectsWhenCallerDoesNotOwnTheOrder() {
     PaymentService svc = new PaymentService();
-    UUID orderId = UUID.randomUUID();
-    UUID ownerId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
+    UUID ownerId = Ids.newId();
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
@@ -160,7 +161,7 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "PENDING",
-            UUID.randomUUID().toString(),
+            Ids.newId().toString(),
             "GBP"));
 
     var ex =
@@ -168,77 +169,60 @@ class PaymentServiceTest {
             ApiException.class,
             () ->
                 svc.recordOnlinePayment(
-                    req(orderId, new BigDecimal("10.00")),
-                    ctx(UUID.randomUUID(), UUID.randomUUID()),
-                    null));
+                    req(orderId, new BigDecimal("10.00")), ctx(Ids.newId(), Ids.newId()), null));
     assertEquals("PAYMENT_ORDER_NOT_FOUND", ex.code());
   }
 
   @Test
   void onlinePayment_rejectsAnAlreadyConfirmedOrder() {
     PaymentService svc = new PaymentService();
-    UUID orderId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null,
-            "ONLINE",
-            new BigDecimal("10.00"),
-            "CONFIRMED",
-            UUID.randomUUID().toString(),
-            "GBP"));
+            null, "ONLINE", new BigDecimal("10.00"), "CONFIRMED", Ids.newId().toString(), "GBP"));
 
     var ex =
         assertThrows(
             ApiException.class,
             () ->
                 svc.recordOnlinePayment(
-                    req(orderId, new BigDecimal("10.00")), ctx(UUID.randomUUID(), null), null));
+                    req(orderId, new BigDecimal("10.00")), ctx(Ids.newId(), null), null));
     assertEquals("PAYMENT_ORDER_NOT_PAYABLE", ex.code());
   }
 
   @Test
   void onlinePayment_rejectsAmountMismatch() {
     PaymentService svc = new PaymentService();
-    UUID orderId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null,
-            "ONLINE",
-            new BigDecimal("10.00"),
-            "PENDING",
-            UUID.randomUUID().toString(),
-            "GBP"));
+            null, "ONLINE", new BigDecimal("10.00"), "PENDING", Ids.newId().toString(), "GBP"));
 
     var ex =
         assertThrows(
             ApiException.class,
             () ->
                 svc.recordOnlinePayment(
-                    req(orderId, new BigDecimal("1.00")), ctx(UUID.randomUUID(), null), null));
+                    req(orderId, new BigDecimal("1.00")), ctx(Ids.newId(), null), null));
     assertEquals("PAYMENT_AMOUNT_MISMATCH", ex.code());
   }
 
   @Test
   void onlinePayment_capturesAGuestOrderWhenChannelAndAmountMatch() {
     PaymentService svc = new PaymentService();
-    UUID orderId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null,
-            "ONLINE",
-            new BigDecimal("10.00"),
-            "PENDING",
-            UUID.randomUUID().toString(),
-            "GBP"));
+            null, "ONLINE", new BigDecimal("10.00"), "PENDING", Ids.newId().toString(), "GBP"));
     svc.repo = capturingRepo();
     svc.storeClient = permissiveStoreClient();
 
     var tender =
         svc.recordOnlinePayment(
-            req(orderId, new BigDecimal("10.00")), ctx(UUID.randomUUID(), null), "idem-1");
+            req(orderId, new BigDecimal("10.00")), ctx(Ids.newId(), null), "idem-1");
     assertEquals(orderId, tender.orderId());
     assertEquals(new BigDecimal("10.00"), tender.amount());
   }
@@ -246,8 +230,8 @@ class PaymentServiceTest {
   @Test
   void onlinePayment_capturesWhenCallerOwnsTheOrder() {
     PaymentService svc = new PaymentService();
-    UUID orderId = UUID.randomUUID();
-    UUID customerId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
+    UUID customerId = Ids.newId();
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
@@ -255,26 +239,26 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("25.50"),
             "PENDING",
-            UUID.randomUUID().toString(),
+            Ids.newId().toString(),
             "GBP"));
     svc.repo = capturingRepo();
     svc.storeClient = permissiveStoreClient();
 
     var tender =
         svc.recordOnlinePayment(
-            req(orderId, new BigDecimal("25.50")), ctx(UUID.randomUUID(), customerId), null);
+            req(orderId, new BigDecimal("25.50")), ctx(Ids.newId(), customerId), null);
     assertEquals(new BigDecimal("25.50"), tender.amount());
   }
 
   @Test
   void staffTender_skipsOrderVerification() {
     PaymentService svc = new PaymentService();
-    UUID orderId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
     svc.repo = capturingRepo();
     // orderClient deliberately left null — recordTender (the staff/POS path) must never touch it.
 
     var tender =
-        svc.recordTender(req(orderId, new BigDecimal("99.99")), ctx(UUID.randomUUID(), null), null);
+        svc.recordTender(req(orderId, new BigDecimal("99.99")), ctx(Ids.newId(), null), null);
     assertEquals(orderId, tender.orderId());
   }
 
@@ -333,12 +317,12 @@ class PaymentServiceTest {
     svc.repo = storeCreditRepo();
     var cust = new RecordingCustomerClient();
     svc.customerClient = cust;
-    UUID orderId = UUID.randomUUID();
-    UUID customerId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
+    UUID customerId = Ids.newId();
 
     var tender =
         svc.recordTender(
-            storeCreditReq(orderId, customerId, "15.00"), ctx(UUID.randomUUID(), null), "k1");
+            storeCreditReq(orderId, customerId, "15.00"), ctx(Ids.newId(), null), "k1");
 
     assertEquals("STORE_CREDIT", tender.method());
     assertEquals(new BigDecimal("15.00"), tender.amount());
@@ -360,21 +344,19 @@ class PaymentServiceTest {
             ApiException.class,
             () ->
                 svc.recordTender(
-                    storeCreditReq(UUID.randomUUID(), null, "15.00"),
-                    ctx(UUID.randomUUID(), null),
-                    null));
+                    storeCreditReq(Ids.newId(), null, "15.00"), ctx(Ids.newId(), null), null));
     assertEquals("PAYMENT_CUSTOMER_REQUIRED", ex.code());
   }
 
   @Test
   void storeCreditTender_isIdempotentWhenTenderAlreadyExists() {
     PaymentService svc = new PaymentService();
-    UUID orderId = UUID.randomUUID();
-    UUID customerId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
+    UUID customerId = Ids.newId();
     var existing =
         new PaymentTender(
-            UUID.randomUUID(),
-            UUID.randomUUID(),
+            Ids.newId(),
+            Ids.newId(),
             orderId,
             new BigDecimal("15.00"),
             "STORE_CREDIT",
@@ -396,7 +378,7 @@ class PaymentServiceTest {
 
     var tender =
         svc.recordTender(
-            storeCreditReq(orderId, customerId, "15.00"), ctx(UUID.randomUUID(), null), null);
+            storeCreditReq(orderId, customerId, "15.00"), ctx(Ids.newId(), null), null);
 
     assertEquals(existing.id(), tender.id());
     assertEquals(0, cust.redeems, "a replayed store-credit tender must not redeem again");
@@ -407,10 +389,10 @@ class PaymentServiceTest {
   @Test
   void getTender_ownerCanReadAPaymentOnTheirOwnOrder() {
     PaymentService svc = new PaymentService();
-    UUID tenantId = UUID.randomUUID();
-    UUID orderId = UUID.randomUUID();
-    UUID customerId = UUID.randomUUID();
-    UUID tenderId = UUID.randomUUID();
+    UUID tenantId = Ids.newId();
+    UUID orderId = Ids.newId();
+    UUID customerId = Ids.newId();
+    UUID tenderId = Ids.newId();
     svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
     wireOrder(
         svc,
@@ -419,7 +401,7 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
-            UUID.randomUUID().toString(),
+            Ids.newId().toString(),
             "GBP"));
 
     var result = svc.getTender(tenantId, tenderId, ctx(tenantId, customerId));
@@ -429,10 +411,10 @@ class PaymentServiceTest {
   @Test
   void getTender_nonOwningCustomerGets404NotTheirOrder() {
     PaymentService svc = new PaymentService();
-    UUID tenantId = UUID.randomUUID();
-    UUID orderId = UUID.randomUUID();
-    UUID ownerId = UUID.randomUUID();
-    UUID tenderId = UUID.randomUUID();
+    UUID tenantId = Ids.newId();
+    UUID orderId = Ids.newId();
+    UUID ownerId = Ids.newId();
+    UUID tenderId = Ids.newId();
     svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
     wireOrder(
         svc,
@@ -441,22 +423,22 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
-            UUID.randomUUID().toString(),
+            Ids.newId().toString(),
             "GBP"));
 
     var ex =
         assertThrows(
             ApiException.class,
-            () -> svc.getTender(tenantId, tenderId, ctx(tenantId, UUID.randomUUID())));
+            () -> svc.getTender(tenantId, tenderId, ctx(tenantId, Ids.newId())));
     assertEquals("PAYMENT_NOT_FOUND", ex.code());
   }
 
   @Test
   void getTender_staffReadsAnyPaymentWithoutOrderVerification() {
     PaymentService svc = new PaymentService();
-    UUID tenantId = UUID.randomUUID();
-    UUID orderId = UUID.randomUUID();
-    UUID tenderId = UUID.randomUUID();
+    UUID tenantId = Ids.newId();
+    UUID orderId = Ids.newId();
+    UUID tenderId = Ids.newId();
     svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
     // The guard is wired with a client that fails on contact, so this still proves what it always
     // did: a staff read short-circuits before the order lookup and must never reach order-svc.
@@ -483,18 +465,18 @@ class PaymentServiceTest {
   @Test
   void getTender_aCallerWithNoPrincipalIsNotWavedThrough() {
     PaymentService svc = new PaymentService();
-    UUID tenantId = UUID.randomUUID();
-    UUID orderId = UUID.randomUUID();
-    UUID tenderId = UUID.randomUUID();
+    UUID tenantId = Ids.newId();
+    UUID orderId = Ids.newId();
+    UUID tenderId = Ids.newId();
     svc.repo = findableRepo(tender(tenderId, tenantId, orderId));
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            UUID.randomUUID().toString(),
+            Ids.newId().toString(),
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
-            UUID.randomUUID().toString(),
+            Ids.newId().toString(),
             "GBP"));
 
     ApiException e =
@@ -506,10 +488,10 @@ class PaymentServiceTest {
   @Test
   void listTendersByOrder_enforcesTheSameOwnershipCheck() {
     PaymentService svc = new PaymentService();
-    UUID tenantId = UUID.randomUUID();
-    UUID orderId = UUID.randomUUID();
-    UUID ownerId = UUID.randomUUID();
-    svc.repo = findableRepo(tender(UUID.randomUUID(), tenantId, orderId));
+    UUID tenantId = Ids.newId();
+    UUID orderId = Ids.newId();
+    UUID ownerId = Ids.newId();
+    svc.repo = findableRepo(tender(Ids.newId(), tenantId, orderId));
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
@@ -517,29 +499,29 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
-            UUID.randomUUID().toString(),
+            Ids.newId().toString(),
             "GBP"));
 
     assertEquals(1, svc.listTendersByOrder(tenantId, orderId, ctx(tenantId, ownerId)).size());
     var ex =
         assertThrows(
             ApiException.class,
-            () -> svc.listTendersByOrder(tenantId, orderId, ctx(tenantId, UUID.randomUUID())));
+            () -> svc.listTendersByOrder(tenantId, orderId, ctx(tenantId, Ids.newId())));
     assertEquals("PAYMENT_NOT_FOUND", ex.code());
   }
 
   @Test
   void listRefundsByOrder_enforcesTheSameOwnershipCheck() {
     PaymentService svc = new PaymentService();
-    UUID tenantId = UUID.randomUUID();
-    UUID orderId = UUID.randomUUID();
-    UUID ownerId = UUID.randomUUID();
+    UUID tenantId = Ids.newId();
+    UUID orderId = Ids.newId();
+    UUID ownerId = Ids.newId();
     var refund =
         new RefundTender(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             orderId,
-            UUID.randomUUID(),
+            Ids.newId(),
             new BigDecimal("5.00"),
             "CARD",
             null,
@@ -554,14 +536,14 @@ class PaymentServiceTest {
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
-            UUID.randomUUID().toString(),
+            Ids.newId().toString(),
             "GBP"));
 
     assertEquals(1, svc.listRefundsByOrder(tenantId, orderId, ctx(tenantId, ownerId)).size());
     var ex =
         assertThrows(
             ApiException.class,
-            () -> svc.listRefundsByOrder(tenantId, orderId, ctx(tenantId, UUID.randomUUID())));
+            () -> svc.listRefundsByOrder(tenantId, orderId, ctx(tenantId, Ids.newId())));
     assertEquals("PAYMENT_NOT_FOUND", ex.code());
   }
 

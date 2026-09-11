@@ -76,7 +76,7 @@ Override _failingDio() => storefrontDioProvider.overrideWith((ref) {
 // ── Factories ─────────────────────────────────────────────────────────────────
 
 ServerOrderSummary _serverOrder({
-  String id = 'aaaabbbb-cccc-dddd-eeee-ffffffffffff',
+  String id = '01a090ae-611e-702d-bfe9-b7296be05944',
   String status = 'PENDING',
   Duration ago = const Duration(minutes: 30),
 }) =>

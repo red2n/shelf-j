@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.domain.Domain.ReturnItem;
 import jakarta.json.Json;
@@ -21,17 +22,17 @@ import org.junit.jupiter.api.Test;
  */
 class EventsTest {
 
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID ORDER = UUID.randomUUID();
-  private static final UUID STORE = UUID.randomUUID();
-  private static final UUID RETURN = UUID.randomUUID();
-  private static final UUID VARIANT = UUID.randomUUID();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID ORDER = Ids.newId();
+  private static final UUID STORE = Ids.newId();
+  private static final UUID RETURN = Ids.newId();
+  private static final UUID VARIANT = Ids.newId();
 
   @Test
   void orderFulfilledPayloadCarriesAParseableEventId() {
     var item =
         new OrderItem(
-            UUID.randomUUID(),
+            Ids.newId(),
             TENANT,
             ORDER,
             VARIANT,
@@ -49,7 +50,7 @@ class EventsTest {
   void orderFulfilledGeneratesADistinctEventIdPerCall() {
     var item =
         new OrderItem(
-            UUID.randomUUID(),
+            Ids.newId(),
             TENANT,
             ORDER,
             VARIANT,
@@ -70,8 +71,7 @@ class EventsTest {
   @Test
   void orderReturnedPayloadCarriesAParseableEventId() {
     var item =
-        new ReturnItem(
-            UUID.randomUUID(), TENANT, RETURN, VARIANT, BigDecimal.ONE, BigDecimal.TEN, null);
+        new ReturnItem(Ids.newId(), TENANT, RETURN, VARIANT, BigDecimal.ONE, BigDecimal.TEN, null);
     var row =
         Events.orderReturned(
             TENANT, ORDER, RETURN, STORE, List.of(item), BigDecimal.TEN, "ORIGINAL", "GBP");

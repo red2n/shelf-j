@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.purchase.domain.ThreeWayMatch.InvoicedLine;
 import com.shelfj.purchase.domain.ThreeWayMatch.MatchLine;
 import com.shelfj.purchase.domain.ThreeWayMatch.OrderPosition;
@@ -25,8 +26,8 @@ import org.junit.jupiter.api.Test;
  */
 class ThreeWayMatchTest {
 
-  private static final UUID A = UUID.randomUUID();
-  private static final UUID B = UUID.randomUUID();
+  private static final UUID A = Ids.newId();
+  private static final UUID B = Ids.newId();
 
   private static BigDecimal d(String v) {
     return new BigDecimal(v);

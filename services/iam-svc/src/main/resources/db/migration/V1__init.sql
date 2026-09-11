@@ -15,8 +15,8 @@ CREATE TABLE users (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- A given email/phone is unique within a tenant scope (NULL tenant = the global/customer scope).
-CREATE UNIQUE INDEX uq_users_tenant_email ON users (COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'), lower(email)) WHERE email IS NOT NULL;
-CREATE UNIQUE INDEX uq_users_tenant_phone ON users (COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'), phone) WHERE phone IS NOT NULL;
+CREATE UNIQUE INDEX uq_users_tenant_email ON users (tenant_id, lower(email)) NULLS NOT DISTINCT WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX uq_users_tenant_phone ON users (tenant_id, phone) NULLS NOT DISTINCT WHERE phone IS NOT NULL;
 CREATE INDEX idx_users_tenant ON users (tenant_id, status);
 
 CREATE TABLE roles (
@@ -80,9 +80,9 @@ CREATE INDEX idx_outbox_unpublished ON outbox (created_at) WHERE published_at IS
 
 -- Seed the standard roles.
 INSERT INTO roles (id, name) VALUES
-    (gen_random_uuid(), 'PLATFORM_ADMIN'),
-    (gen_random_uuid(), 'OWNER'),
-    (gen_random_uuid(), 'MANAGER'),
-    (gen_random_uuid(), 'STOREKEEPER'),
-    (gen_random_uuid(), 'CASHIER'),
-    (gen_random_uuid(), 'CUSTOMER');
+    ('01a090a0-1bc3-7000-851b-81f26d60cbb7', 'PLATFORM_ADMIN'),
+    ('01a090a0-1bc3-7001-958b-727cae4292fa', 'OWNER'),
+    ('01a090a0-1bc3-7002-9476-b590fcfcb183', 'MANAGER'),
+    ('01a090a0-1bc3-7003-8305-a8158d7ec60c', 'STOREKEEPER'),
+    ('01a090a0-1bc3-7004-ad00-f94781b687f8', 'CASHIER'),
+    ('01a090a0-1bc3-7005-a214-7a6740565dbb', 'CUSTOMER');

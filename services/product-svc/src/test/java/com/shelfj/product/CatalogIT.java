@@ -47,8 +47,8 @@ class CatalogIT {
     System.setProperty("shelfj.redis.password", "");
   }
 
-  private static final String TENANT_A = "11111111-1111-1111-1111-111111111111";
-  private static final String TENANT_B = "22222222-2222-2222-2222-222222222222";
+  private static final String TENANT_A = "01a090ae-611e-700b-bde4-50df0324c37c";
+  private static final String TENANT_B = "01a090ae-611e-700f-b645-a14095230b77";
 
   @Inject WebTarget target;
 
@@ -363,7 +363,7 @@ class CatalogIT {
     Response badParent =
         post(
             "/admin/categories",
-            "{\"name\":\"Orphan\",\"parentId\":\"99999999-9999-9999-9999-999999999999\"}",
+            "{\"name\":\"Orphan\",\"parentId\":\"01a090ae-611e-701d-9d60-a9d7516ed03b\"}",
             TENANT_A);
     assertThat(badParent.getStatus(), is(400));
 
@@ -392,7 +392,7 @@ class CatalogIT {
   @Test
   void listProductsAdminPaginatesWithCursor() {
     // Dedicated tenant so products created by other tests never leak into these pages.
-    String tenant = "33333333-3333-3333-3333-333333333333";
+    String tenant = "01a090ae-611e-7011-ae7d-1bd68c966ff6";
     var allIds = new java.util.HashSet<String>();
     for (int i = 0; i < 3; i++) {
       Response r = post("/admin/products", "{\"name\":\"Paginate " + i + "\"}", tenant);
@@ -436,7 +436,7 @@ class CatalogIT {
     assertThat(memberR.getStatus(), is(400));
 
     // AssignVariantCategorySetRequest.setId/categoryId are @NotBlank.
-    String variantId = "99999999-8888-7777-6666-555555555555";
+    String variantId = "01a090ae-611e-701c-979a-c9c9a3b8be89";
     Response assignR =
         post(
             "/admin/products/variants/" + variantId + "/category-set-assignments",

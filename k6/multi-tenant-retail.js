@@ -2653,7 +2653,7 @@ export function negativeTests(d) {
   if (!store || !tenant.variantIds.length) return;
   const tag    = isIN(d) ? 'IN' : 'UK';
   const vid    = tenant.variantIds[0];
-  const fakeId = '00000000-0000-0000-0000-000000000099';
+  const fakeId = '01a090ae-611e-7007-b85c-1fbac22cb87b';
 
   // Assert 4xx; record any unexpected 2xx as a metric failure. A 5xx is an infra blip, not the
   // validation/auth bypass this metric is tracking, so it must not be counted here either.
@@ -3322,7 +3322,7 @@ export function pricingVat(d) {
 
   // ── Negative: resolve price for unknown variant → 404 ────────────────────
   res = http.post(`${BASE}/api/pricing-svc/prices/resolve`,
-    JSON.stringify({ variantId: '99999999-9999-9999-9999-999999999999', channel: 'ALL', qty: 1 }),
+    JSON.stringify({ variantId: '01a090ae-611e-701d-9d60-a9d7516ed03b', channel: 'ALL', qty: 1 }),
     { headers: storefrontHdrs(tenant.tenantId) });
   check(res, { [`${tag} resolve unknown variant 404`]: r => r.status === 404 });
   if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
@@ -3522,7 +3522,7 @@ export function intercompanyFlow(d) {
   check(icBadSameStore, { 'same-store IC 400': res => res.status === 400 });
 
   // ── Negative: unknown invoice ID → 404 ────────────────────────────────────
-  r = get('/api/purchase-svc/intercompany-invoices/00000000-0000-0000-0000-000000000000', ownerToken);
+  r = get('/api/purchase-svc/intercompany-invoices/01a090ae-611e-7000-9e1a-0f8a9e565153', ownerToken);
   check(r, { 'unknown IC invoice 404': res => res.status === 404 });
 
   // ── Negative: tenant isolation — other tenant cannot see invoices ──────────
@@ -3540,7 +3540,7 @@ export function intercompanyFlow(d) {
 
   // ── Negative: create PO with unknown supplier → 404 ──────────────────────
   const badPoRes = post('/api/purchase-svc/purchase-orders', {
-    supplierId: '00000000-0000-0000-0000-000000000000',
+    supplierId: '01a090ae-611e-7000-9e1a-0f8a9e565153',
     storeId:    store1,
     currency,
   }, ownerToken);

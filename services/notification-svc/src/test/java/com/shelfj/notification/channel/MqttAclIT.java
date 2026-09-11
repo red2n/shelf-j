@@ -14,6 +14,7 @@ import com.hivemq.client.mqtt.mqtt5.Mqtt5Client;
 import com.hivemq.client.mqtt.mqtt5.exceptions.Mqtt5SubAckException;
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
 import com.hivemq.client.mqtt.mqtt5.message.subscribe.suback.Mqtt5SubAck;
+import com.shelfj.ids.Ids;
 import com.shelfj.test.EmqxSupport;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -82,7 +83,7 @@ class MqttAclIT {
 
   @Test
   void publishedAlertReachesItsOwnTenantsSubscriber() throws InterruptedException {
-    UUID tenantA = UUID.randomUUID();
+    UUID tenantA = Ids.newId();
     MqttChannel publisher =
         new MqttChannel(
             broker.host(),
@@ -121,8 +122,8 @@ class MqttAclIT {
 
   @Test
   void anotherTenantCannotSubscribeToATenantItDoesNotOwn() {
-    UUID tenantA = UUID.randomUUID();
-    UUID tenantB = UUID.randomUUID();
+    UUID tenantA = Ids.newId();
+    UUID tenantB = Ids.newId();
 
     Mqtt5BlockingClient intruder = newClient();
     connect(intruder, tenantB.toString(), signToken(tenantB.toString()));
@@ -147,8 +148,8 @@ class MqttAclIT {
 
   @Test
   void aClientCannotConnectWithAUsernameThatDoesNotMatchItsOwnJwtTenantClaim() {
-    UUID tenantA = UUID.randomUUID();
-    UUID tenantB = UUID.randomUUID();
+    UUID tenantA = Ids.newId();
+    UUID tenantB = Ids.newId();
     Mqtt5BlockingClient spoofer = newClient();
 
     // Valid JWT for tenant A, but CONNECT claims to be tenant B — infra/emqx.conf's

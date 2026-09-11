@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Domain.AccountingPeriod;
 import com.shelfj.inventory.domain.Domain.CostingMethod;
 import com.shelfj.service.BaseOutboxRepository;
@@ -51,19 +52,20 @@ public class CostingRepository extends BaseOutboxRepository {
           String sql =
               "INSERT INTO costing_methods"
                   + " (id, tenant_id, store_id, variant_id, method, average_cost)"
-                  + " VALUES (gen_random_uuid(),?,?,?,?,COALESCE(?::numeric,0))"
+                  + " VALUES (?,?,?,?,?,COALESCE(?::numeric,0))"
                   + " ON CONFLICT (tenant_id, store_id, variant_id)"
                   + " DO UPDATE SET method=EXCLUDED.method,"
                   + "   average_cost=COALESCE(?::numeric, costing_methods.average_cost),"
                   + "   updated_at=now()"
                   + " RETURNING id, tenant_id, store_id, variant_id, method, average_cost, updated_at";
           try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, storeId);
-            ps.setObject(3, variantId);
-            ps.setString(4, method);
-            ps.setBigDecimal(5, averageCost);
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, storeId);
+            ps.setObject(4, variantId);
+            ps.setString(5, method);
             ps.setBigDecimal(6, averageCost);
+            ps.setBigDecimal(7, averageCost);
             ResultSet rs = ps.executeQuery();
             if (!rs.next())
               throw ApiException.unprocessable(
@@ -109,14 +111,15 @@ public class CostingRepository extends BaseOutboxRepository {
         c -> {
           String sql =
               "INSERT INTO accounting_periods (id, tenant_id, store_id, period_name, period_date)"
-                  + " VALUES (gen_random_uuid(),?,?,?,?)"
+                  + " VALUES (?,?,?,?,?)"
                   + " RETURNING id, tenant_id, store_id, period_name, period_date,"
                   + "   status, opened_at, closed_at";
           try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, storeId);
-            ps.setString(3, periodName);
-            ps.setObject(4, Date.valueOf(periodDate));
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, storeId);
+            ps.setString(4, periodName);
+            ps.setObject(5, Date.valueOf(periodDate));
             try {
               ResultSet rs = ps.executeQuery();
               if (!rs.next())

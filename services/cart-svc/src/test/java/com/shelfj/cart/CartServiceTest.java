@@ -10,6 +10,7 @@ import com.shelfj.cart.dto.Dtos.AddItemRequest;
 import com.shelfj.cart.dto.Dtos.CreateCartRequest;
 import com.shelfj.cart.repo.CartRepository;
 import com.shelfj.cart.service.CartService;
+import com.shelfj.ids.Ids;
 import com.shelfj.service.StoreStatusRepository;
 import com.shelfj.service.TenantStatusRepository;
 import com.shelfj.web.ApiException;
@@ -29,9 +30,9 @@ import org.junit.jupiter.api.Test;
  */
 class CartServiceTest {
 
-  private final UUID TENANT = UUID.randomUUID();
-  private final UUID STORE = UUID.randomUUID();
-  private final UUID CUSTOMER = UUID.randomUUID();
+  private final UUID TENANT = Ids.newId();
+  private final UUID STORE = Ids.newId();
+  private final UUID CUSTOMER = Ids.newId();
 
   private CartService service;
 
@@ -139,7 +140,7 @@ class CartServiceTest {
     // Pre-create cart in active state.
     insertedCart =
         new Cart(
-            UUID.randomUUID(),
+            Ids.newId(),
             TENANT,
             CUSTOMER,
             null,
@@ -151,7 +152,7 @@ class CartServiceTest {
     var ctx = ctx(TENANT, CUSTOMER);
     var req =
         new AddItemRequest(
-            insertedCart.id().toString(), UUID.randomUUID().toString(), BigDecimal.ONE, null, null);
+            insertedCart.id().toString(), Ids.newId().toString(), BigDecimal.ONE, null, null);
 
     ApiException ex = assertThrows(ApiException.class, () -> service.addItem(ctx, req));
     assertThat(ex.code(), is("TENANT_NOT_OPERATIONAL"));
@@ -176,7 +177,7 @@ class CartServiceTest {
   void addItem_blockedForCustomerWhoDoesNotOwnTheCart() {
     insertedCart =
         new Cart(
-            UUID.randomUUID(),
+            Ids.newId(),
             TENANT,
             CUSTOMER,
             null,
@@ -184,11 +185,11 @@ class CartServiceTest {
             Cart.STATUS_ACTIVE,
             Instant.now(),
             Instant.now());
-    UUID otherCustomer = UUID.randomUUID();
+    UUID otherCustomer = Ids.newId();
     var ctx = ctx(TENANT, otherCustomer);
     var req =
         new AddItemRequest(
-            insertedCart.id().toString(), UUID.randomUUID().toString(), BigDecimal.ONE, null, null);
+            insertedCart.id().toString(), Ids.newId().toString(), BigDecimal.ONE, null, null);
 
     ApiException ex = assertThrows(ApiException.class, () -> service.addItem(ctx, req));
     assertThat(ex.code(), is("CART_NOT_FOUND"));
@@ -198,7 +199,7 @@ class CartServiceTest {
   void addItem_allowedForStaffOnAnyCustomersCart() {
     insertedCart =
         new Cart(
-            UUID.randomUUID(),
+            Ids.newId(),
             TENANT,
             CUSTOMER,
             null,
@@ -206,10 +207,10 @@ class CartServiceTest {
             Cart.STATUS_ACTIVE,
             Instant.now(),
             Instant.now());
-    var ctx = ctx(TENANT, UUID.randomUUID(), Set.of("CASHIER"));
+    var ctx = ctx(TENANT, Ids.newId(), Set.of("CASHIER"));
     var req =
         new AddItemRequest(
-            insertedCart.id().toString(), UUID.randomUUID().toString(), BigDecimal.ONE, null, null);
+            insertedCart.id().toString(), Ids.newId().toString(), BigDecimal.ONE, null, null);
 
     // must not throw — staff may operate on any cart in the tenant
     service.addItem(ctx, req);
@@ -219,7 +220,7 @@ class CartServiceTest {
   void addItem_guestCartRequiresMatchingSessionId() {
     insertedCart =
         new Cart(
-            UUID.randomUUID(),
+            Ids.newId(),
             TENANT,
             null,
             "guest-session-abc",
@@ -231,7 +232,7 @@ class CartServiceTest {
     var wrongSession =
         new AddItemRequest(
             insertedCart.id().toString(),
-            UUID.randomUUID().toString(),
+            Ids.newId().toString(),
             BigDecimal.ONE,
             null,
             "not-the-right-session");
@@ -242,7 +243,7 @@ class CartServiceTest {
     var rightSession =
         new AddItemRequest(
             insertedCart.id().toString(),
-            UUID.randomUUID().toString(),
+            Ids.newId().toString(),
             BigDecimal.ONE,
             null,
             "guest-session-abc");

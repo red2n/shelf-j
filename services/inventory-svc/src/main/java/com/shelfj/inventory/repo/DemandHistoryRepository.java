@@ -41,7 +41,7 @@ public class DemandHistoryRepository extends BaseJdbcRepository {
             "INSERT INTO demand_history"
                 + " (id, tenant_id, store_id, variant_id, bucket_date, bucket_type,"
                 + "  demand_qty, movement_count, computed_at)"
-                + " SELECT gen_random_uuid(), sm.tenant_id, sm.store_id, sm.variant_id,"
+                + " SELECT uuid_v7(), sm.tenant_id, sm.store_id, sm.variant_id,"
                 + "        date_trunc('"
                 + trunc
                 + "', sm.created_at)::DATE,"

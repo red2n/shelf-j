@@ -463,7 +463,7 @@ public final class Mappers {
   public static ReasonCodeResponse toReasonCode(ReasonCode r) {
     return new ReasonCodeResponse(
         r.id().toString(),
-        r.tenantId().toString(),
+        r.tenantId() == null ? null : r.tenantId().toString(),
         r.code(),
         r.description(),
         r.active(),
@@ -473,7 +473,7 @@ public final class Mappers {
   public static SourceTypeResponse toSourceType(TransactionSourceType t) {
     return new SourceTypeResponse(
         t.id().toString(),
-        t.tenantId().toString(),
+        t.tenantId() == null ? null : t.tenantId().toString(),
         t.code(),
         t.description(),
         t.active(),

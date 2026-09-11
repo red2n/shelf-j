@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -20,7 +21,6 @@ import java.math.BigDecimal;
 import java.sql.DriverManager;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -48,10 +48,10 @@ class RecallIT {
     System.setProperty("shelfj.inventory.food-safety.overdue-sweeper.enabled", "false");
   }
 
-  private static final String T = "22222222-2222-2222-2222-222222222222";
-  private static final String OTHER = "99999999-9999-9999-9999-999999999999";
-  private static final String MANAGER = "b1000000-0000-0000-0000-000000000001";
-  private static final String STAFF = "b1000000-0000-0000-0000-000000000002";
+  private static final String T = "01a090ae-611e-700f-b645-a14095230b77";
+  private static final String OTHER = "01a090ae-611e-701d-9d60-a9d7516ed03b";
+  private static final String MANAGER = "01a090ae-611e-7031-ace6-811d51dcecba";
+  private static final String STAFF = "01a090ae-611e-7032-8c9c-1dc9a2769104";
 
   @Inject WebTarget target;
 
@@ -518,7 +518,7 @@ class RecallIT {
   }
 
   private static String uuid() {
-    return UUID.randomUUID().toString();
+    return Ids.newId().toString();
   }
 
   private static String materialStatus(String batchId) {

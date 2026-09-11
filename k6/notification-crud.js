@@ -18,7 +18,7 @@ function setupTenant() {
   const tenantRes = http.post(
     `${baseUrl}/api/tenant-svc/onboarding/tenants`,
     JSON.stringify({ businessName: `k6-notif-co-${Date.now()}`, legalName: 'k6 Ltd', country: 'US', currency: 'USD' }),
-    { headers: { ...JSON_CT, 'X-User-Id': '00000000-0000-0000-0000-000000000001' } }
+    { headers: { ...JSON_CT, 'X-User-Id': '01a090ae-611e-7001-a690-2682e4afcb55' } }
   );
   const tenantId = tenantRes.status < 300 ? tenantRes.json('data.id') : null;
   return tenantId;
@@ -26,7 +26,7 @@ function setupTenant() {
 
 export default function () {
   const tenantId = setupTenant();
-  const hdrs = (extra = {}) => ({ ...JSON_CT, 'X-Tenant-Id': tenantId || 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'X-Roles': 'OWNER', ...extra });
+  const hdrs = (extra = {}) => ({ ...JSON_CT, 'X-Tenant-Id': tenantId || '01a090ae-611e-702c-a97b-d1b8025478e1', 'X-Roles': 'OWNER', ...extra });
 
   // ── Positive: list shortage alerts (empty initially) ─────────────────────
   const list1 = http.get(`${baseUrl}/api/notification-svc/admin/notifications/shortage-alerts`, { headers: hdrs() });
@@ -37,7 +37,7 @@ export default function () {
   });
 
   // ── Positive: filter by storeId ────────────────────────────────────────────
-  const storeId = '22222222-2222-2222-2222-222222222222';
+  const storeId = '01a090ae-611e-700f-b645-a14095230b77';
   const listByStore = http.get(
     `${baseUrl}/api/notification-svc/admin/notifications/shortage-alerts?storeId=${storeId}`,
     { headers: hdrs() }
@@ -47,7 +47,7 @@ export default function () {
   });
 
   // ── Positive: filter by variantId ─────────────────────────────────────────
-  const variantId = '33333333-3333-3333-3333-333333333333';
+  const variantId = '01a090ae-611e-7011-ae7d-1bd68c966ff6';
   const listByVariant = http.get(
     `${baseUrl}/api/notification-svc/admin/notifications/shortage-alerts?variantId=${variantId}`,
     { headers: hdrs() }
@@ -77,7 +77,7 @@ export default function () {
   // ── Negative: wrong role → 403 ────────────────────────────────────────────
   const wrongRole = http.get(
     `${baseUrl}/api/notification-svc/admin/notifications/shortage-alerts`,
-    { headers: { ...JSON_CT, 'X-Tenant-Id': tenantId || 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'X-Roles': 'CUSTOMER' } }
+    { headers: { ...JSON_CT, 'X-Tenant-Id': tenantId || '01a090ae-611e-702c-a97b-d1b8025478e1', 'X-Roles': 'CUSTOMER' } }
   );
   check(wrongRole, {
     'wrong role 403': r => r.status === 403,

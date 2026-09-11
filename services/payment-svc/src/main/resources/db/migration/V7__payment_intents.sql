@@ -12,7 +12,7 @@
 -- On capture an intent writes exactly one tender and points at it via payment_id.
 
 CREATE TABLE IF NOT EXISTS payment_intents (
-    id               UUID          NOT NULL DEFAULT gen_random_uuid(),
+    id               UUID          NOT NULL,
     tenant_id        UUID          NOT NULL,
     order_id         UUID          NOT NULL,
     -- Denormalised from the order, exactly as payment_tenders.store_id is (V4): this endpoint has

@@ -20,7 +20,7 @@ CREATE INDEX idx_inv_proj_tenant ON inventory_projection (tenant_id);
 
 -- Append-only movement log for stats / demand history aggregation (Gap #49).
 CREATE TABLE movement_events (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id          UUID PRIMARY KEY,
     tenant_id   UUID NOT NULL,
     store_id    UUID NOT NULL,
     variant_id  UUID NOT NULL,

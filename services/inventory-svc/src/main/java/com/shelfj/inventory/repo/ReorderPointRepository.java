@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Domain.ReorderPointPlan;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
@@ -28,7 +29,7 @@ public class ReorderPointRepository extends BaseOutboxRepository {
               "INSERT INTO reorder_point_plans"
                   + " (id, tenant_id, store_id, variant_id, lead_time_days, ordering_cost,"
                   + "  holding_cost_pct, unit_cost)"
-                  + " VALUES (gen_random_uuid(),?,?,?,?,?,?,?)"
+                  + " VALUES (?,?,?,?,?,?,?,?)"
                   + " ON CONFLICT (tenant_id, store_id, variant_id) DO UPDATE SET"
                   + "  lead_time_days=EXCLUDED.lead_time_days,"
                   + "  ordering_cost=EXCLUDED.ordering_cost,"
@@ -39,13 +40,14 @@ public class ReorderPointRepository extends BaseOutboxRepository {
                   + "  avg_daily_demand, rop, eoq, min_order_qty, max_order_qty,"
                   + "  lot_multiplier, computed_at, created_at";
           try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setObject(1, plan.tenantId());
-            ps.setObject(2, plan.storeId());
-            ps.setObject(3, plan.variantId());
-            ps.setInt(4, plan.leadTimeDays());
-            ps.setBigDecimal(5, plan.orderingCost());
-            ps.setBigDecimal(6, plan.holdingCostPct());
-            ps.setBigDecimal(7, plan.unitCost());
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, plan.tenantId());
+            ps.setObject(3, plan.storeId());
+            ps.setObject(4, plan.variantId());
+            ps.setInt(5, plan.leadTimeDays());
+            ps.setBigDecimal(6, plan.orderingCost());
+            ps.setBigDecimal(7, plan.holdingCostPct());
+            ps.setBigDecimal(8, plan.unitCost());
             try (ResultSet rs = ps.executeQuery()) {
               if (!rs.next())
                 throw ApiException.unprocessable("ROP_UPSERT_ERROR", "upsert ROP plan failed");

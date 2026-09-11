@@ -54,11 +54,11 @@ class PurchaseApprovalIT {
             + "INR:MANAGER:500000,INR:OWNER:UNLIMITED");
   }
 
-  private static final String T = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-  private static final String STORE_A = "cccccccc-cccc-cccc-cccc-cccccccccccc";
-  private static final String VARIANT = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
-  private static final String BUYER = "11111111-1111-1111-1111-111111111111";
-  private static final String BOSS = "22222222-2222-2222-2222-222222222222";
+  private static final String T = "01a090ae-611e-702c-a97b-d1b8025478e1";
+  private static final String STORE_A = "01a090ae-611e-703c-a378-a4972ea461c8";
+  private static final String VARIANT = "01a090ae-611e-705c-994c-5daee3fbd033";
+  private static final String BUYER = "01a090ae-611e-700b-bde4-50df0324c37c";
+  private static final String BOSS = "01a090ae-611e-700f-b645-a14095230b77";
 
   @Inject WebTarget target;
 

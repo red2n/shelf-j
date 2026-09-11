@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.service.FoodSafetyService;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -20,7 +21,6 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.io.StringReader;
 import java.sql.DriverManager;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -48,13 +48,13 @@ class FoodSafetyIT {
     System.setProperty("shelfj.inventory.food-safety.overdue-sweeper.enabled", "false");
   }
 
-  private static final String T = "11111111-1111-1111-1111-111111111111";
-  private static final String OTHER = "99999999-9999-9999-9999-999999999999";
-  private static final String MANAGER = "a1000000-0000-0000-0000-000000000001";
-  private static final String STAFF = "a1000000-0000-0000-0000-000000000002";
+  private static final String T = "01a090ae-611e-700b-bde4-50df0324c37c";
+  private static final String OTHER = "01a090ae-611e-701d-9d60-a9d7516ed03b";
+  private static final String MANAGER = "01a090ae-611e-7022-a4af-ac524c304167";
+  private static final String STAFF = "01a090ae-611e-7023-be8d-9115b3480de8";
 
-  private static final String CHILLED = "f5000000-0000-0000-0000-000000000001";
-  private static final String OPENING = "f5000000-0000-0000-0000-000000000007";
+  private static final String CHILLED = "01a090a0-1bc3-70b9-a4f2-357a63f90f41";
+  private static final String OPENING = "01a090a0-1bc3-70bf-ab53-eb45b1289166";
 
   @Inject WebTarget target;
   @Inject FoodSafetyService foodSafety;
@@ -68,7 +68,7 @@ class FoodSafetyIT {
 
   @Test
   void aWarmChillerFailsAlertsTheStoreAndStaysOpenUntilSomethingIsDone() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     JsonObject point = created(createPoint(store, "Dairy chiller 1", CHILLED, "", 4));
     String pointId = point.getString("id");
     assertThat(point.getJsonNumber("maxValue").bigDecimalValue().toPlainString(), is("8.00"));
@@ -126,7 +126,7 @@ class FoodSafetyIT {
 
   @Test
   void aPointCannotBeLaxerThanTheLawAndAPlatformTypeCannotBeEdited() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     Response laxer = createPoint(store, "Warm chiller", CHILLED, ",\"maxValue\":10", 4);
     assertThat(laxer.getStatus(), is(422));
     assertThat(laxer.readEntity(String.class), containsString("FOOD_SAFETY_LIMIT_LAXER_THAN_TYPE"));
@@ -177,9 +177,9 @@ class FoodSafetyIT {
 
   @Test
   void aRetriedCheckIsRecordedOnce() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String pointId = created(createPoint(store, "Freezer", CHILLED, "", 4)).getString("id");
-    String key = UUID.randomUUID().toString();
+    String key = Ids.newId().toString();
     Response first = record(pointId, "\"value\":3", key, "STOREKEEPER", null);
     assertThat(first.getStatus(), is(201));
     String firstId = data(first).getString("id");
@@ -203,7 +203,7 @@ class FoodSafetyIT {
 
   @Test
   void aPassFailCheckTakesAVerdictNotAReading() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String pointId = created(createPoint(store, "Opening checks", OPENING, "", 24)).getString("id");
     Response withValue = record(pointId, "\"value\":1", null, "CASHIER", null);
     assertThat(withValue.getStatus(), is(400));
@@ -219,7 +219,7 @@ class FoodSafetyIT {
 
   @Test
   void onlyManagementSetsUpAndAnyStaffRecords() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String pointId = created(createPoint(store, "Hot cabinet", CHILLED, "", 4)).getString("id");
     String point =
         "{\"storeId\":\""
@@ -282,10 +282,10 @@ class FoodSafetyIT {
 
   @Test
   void aStoreRestrictedMemberOfStaffCannotRecordAtAnotherStore() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String pointId = created(createPoint(store, "Deli chiller", CHILLED, "", 4)).getString("id");
     Response elsewhere =
-        record(pointId, "\"value\":4", null, "STOREKEEPER", UUID.randomUUID().toString());
+        record(pointId, "\"value\":4", null, "STOREKEEPER", Ids.newId().toString());
     assertThat(elsewhere.getStatus(), is(403));
     assertThat(elsewhere.readEntity(String.class), containsString("STORE_ACCESS_DENIED"));
     assertThat(record(pointId, "\"value\":4", null, "STOREKEEPER", store).getStatus(), is(201));
@@ -293,7 +293,7 @@ class FoodSafetyIT {
 
   @Test
   void anotherTenantCannotSeeOrUseTheRecords() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String pointId = created(createPoint(store, "Bakery chiller", CHILLED, "", 4)).getString("id");
     String recordId =
         created(record(pointId, "\"value\":4", null, "STOREKEEPER", null)).getString("id");
@@ -339,7 +339,7 @@ class FoodSafetyIT {
 
   @Test
   void aSwitchedOffPointTakesNoChecksAndSwitchingItTwiceIsRefused() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String pointId = created(createPoint(store, "Old freezer", CHILLED, "", 4)).getString("id");
     String reason = "{\"reason\":\"decommissioned\"}";
     JsonObject off =
@@ -388,7 +388,7 @@ class FoodSafetyIT {
 
   @Test
   void theDiaryPagesNewestFirstOverAHalfOpenWindow() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String pointId = created(createPoint(store, "Salad bar", CHILLED, "", 4)).getString("id");
     for (String v : new String[] {"1", "2", "3"}) {
       created(record(pointId, "\"value\":" + v, null, "STOREKEEPER", null));
@@ -416,7 +416,7 @@ class FoodSafetyIT {
 
   @Test
   void aReviewKeepsTheCountsItSignedOff() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String pointId = created(createPoint(store, "Fish counter", CHILLED, "", 4)).getString("id");
     created(record(pointId, "\"value\":4", null, "STOREKEEPER", null));
     String failId =
@@ -456,7 +456,7 @@ class FoodSafetyIT {
 
   @Test
   void aMissedCheckIsAlertedOnce() throws Exception {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String pointId =
         created(createPoint(store, "Butchery chiller", CHILLED, "", 1)).getString("id");
     exec(

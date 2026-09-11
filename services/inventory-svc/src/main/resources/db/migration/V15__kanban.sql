@@ -2,7 +2,7 @@
 -- Each kanban card represents one replenishment signal for a (store, variant) pair.
 
 CREATE TABLE kanban_cards (
-    id              UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID        NOT NULL,
     tenant_id       UUID        NOT NULL,
     store_id        UUID        NOT NULL,
     variant_id      UUID        NOT NULL,

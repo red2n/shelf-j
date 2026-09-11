@@ -7,7 +7,7 @@ ALTER TABLE orders
 
 -- ── Gap #42: Special orders — customer order at store for future delivery ────
 CREATE TABLE special_orders (
-    id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                     UUID        PRIMARY KEY,
     tenant_id              UUID        NOT NULL,
     store_id               UUID        NOT NULL,
     customer_id            UUID,
@@ -31,7 +31,7 @@ CREATE INDEX idx_special_orders_tenant_cust  ON special_orders (tenant_id, custo
     WHERE customer_id IS NOT NULL;
 
 CREATE TABLE special_order_items (
-    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id           UUID        PRIMARY KEY,
     tenant_id    UUID        NOT NULL,
     so_id        UUID        NOT NULL REFERENCES special_orders(id),
     variant_id   UUID        NOT NULL,
@@ -44,7 +44,7 @@ CREATE INDEX idx_soi_tenant_so ON special_order_items (tenant_id, so_id);
 
 -- Append-only status audit for special orders.
 CREATE TABLE special_order_status_history (
-    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id          UUID        PRIMARY KEY,
     tenant_id   UUID        NOT NULL,
     so_id       UUID        NOT NULL,
     from_status TEXT,
@@ -57,7 +57,7 @@ CREATE INDEX idx_sosh_tenant_so ON special_order_status_history (tenant_id, so_i
 
 -- ── Gap #43: POSLog — append-only transaction journal per fulfilled POS order ─
 CREATE TABLE pos_log_entries (
-    id             UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    id             UUID          PRIMARY KEY,
     tenant_id      UUID          NOT NULL,
     order_id       UUID          NOT NULL,
     store_id       UUID          NOT NULL,
@@ -78,7 +78,7 @@ CREATE UNIQUE INDEX idx_pos_log_order_uniq ON pos_log_entries (tenant_id, order_
 
 -- ── Gap #44: Receipts — append-only log of receipt generation events ─────────
 CREATE TABLE order_receipts (
-    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id           UUID        PRIMARY KEY,
     tenant_id    UUID        NOT NULL,
     order_id     UUID        NOT NULL,
     receipt_type TEXT        NOT NULL DEFAULT 'PRINT',  -- PRINT | EMAIL

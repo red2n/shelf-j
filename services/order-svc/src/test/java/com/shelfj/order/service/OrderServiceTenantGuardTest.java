@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.dto.Dtos.CreateLayawayRequest;
 import com.shelfj.order.dto.Dtos.IssueGiftCardRequest;
 import com.shelfj.order.dto.Dtos.LayawayItemRequest;
@@ -33,8 +34,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTenantGuardTest {
 
-  private static final UUID STORE = UUID.randomUUID();
-  private static final UUID VARIANT = UUID.randomUUID();
+  private static final UUID STORE = Ids.newId();
+  private static final UUID VARIANT = Ids.newId();
 
   @Mock OrderRepository repo;
   @Mock TenantContext ctx;

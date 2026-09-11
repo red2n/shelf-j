@@ -42,9 +42,7 @@ public class Passwords {
   }
 
   /** Hash of a random throwaway password, used only to equalize timing (see {@link #burn}). */
-  @SuppressWarnings("PMD.UseTimeOrderedIds") // a throwaway secret, not an id: keep it fully random
-  private final String dummyHash =
-      hash(java.util.UUID.randomUUID().toString() + java.util.UUID.randomUUID());
+  private final String dummyHash = hash(Tokens.newOpaqueToken());
 
   /**
    * Burn one verification's worth of CPU/memory against a dummy hash. Called when login finds no

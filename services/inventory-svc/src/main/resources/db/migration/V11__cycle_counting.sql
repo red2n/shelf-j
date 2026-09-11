@@ -6,7 +6,7 @@
 -- Approved lines are converted to ADJUST stock movements.
 
 CREATE TABLE cycle_count_headers (
-    id              UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID        NOT NULL,
     tenant_id       UUID        NOT NULL,
     store_id        UUID        NOT NULL,
     name            TEXT        NOT NULL,
@@ -21,7 +21,7 @@ CREATE TABLE cycle_count_headers (
 CREATE INDEX idx_cch_tenant ON cycle_count_headers (tenant_id, store_id, status, created_at DESC);
 
 CREATE TABLE cycle_count_lines (
-    id              UUID           NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID           NOT NULL,
     tenant_id       UUID           NOT NULL,
     header_id       UUID           NOT NULL,
     store_id        UUID           NOT NULL,

@@ -2,7 +2,7 @@
 -- Golden rule #8: payments and refunds are append-only.
 
 CREATE TABLE IF NOT EXISTS payment_tenders (
-    id              UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID        NOT NULL,
     tenant_id       UUID        NOT NULL,
     order_id        UUID        NOT NULL,
     amount          NUMERIC(14,4) NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS payment_tenders (
 );
 
 CREATE TABLE IF NOT EXISTS refund_tenders (
-    id              UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID        NOT NULL,
     tenant_id       UUID        NOT NULL,
     order_id        UUID        NOT NULL,
     payment_id      UUID        NOT NULL,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS refund_tenders (
 );
 
 CREATE TABLE IF NOT EXISTS outbox (
-    id              UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    id              UUID        NOT NULL PRIMARY KEY,
     event_type      VARCHAR(100) NOT NULL,
     topic           VARCHAR(200) NOT NULL,
     tenant_id       UUID,

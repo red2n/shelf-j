@@ -4,7 +4,7 @@
 
 -- Named catalog groups (e.g. "Electronics Spec", "Apparel Spec")
 CREATE TABLE catalog_groups (
-    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id          UUID        PRIMARY KEY,
     tenant_id   UUID        NOT NULL,
     name        TEXT        NOT NULL,
     description TEXT,
@@ -17,7 +17,7 @@ CREATE INDEX idx_catalog_groups_tenant ON catalog_groups (tenant_id);
 
 -- Typed descriptive elements within a catalog group
 CREATE TABLE catalog_group_elements (
-    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id           UUID        PRIMARY KEY,
     tenant_id    UUID        NOT NULL,
     group_id     UUID        NOT NULL REFERENCES catalog_groups(id) ON DELETE CASCADE,
     element_name TEXT        NOT NULL,
@@ -32,7 +32,7 @@ CREATE INDEX idx_catalog_elements_group ON catalog_group_elements (tenant_id, gr
 
 -- Variant-to-catalog-group assignment with typed element values (JSONB key→value map)
 CREATE TABLE variant_catalog_assignments (
-    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id           UUID        PRIMARY KEY,
     tenant_id    UUID        NOT NULL,
     variant_id   UUID        NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
     group_id     UUID        NOT NULL REFERENCES catalog_groups(id),

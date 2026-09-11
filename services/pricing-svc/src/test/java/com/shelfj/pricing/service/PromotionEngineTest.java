@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.pricing.domain.Domain.BasketLine;
 import com.shelfj.pricing.domain.Domain.Promotion;
 import com.shelfj.pricing.domain.Domain.PromotionOutcome;
@@ -32,8 +33,8 @@ class PromotionEngineTest {
 
   private final PromotionEngine engine = new PromotionEngine();
 
-  private static final UUID SHIRT = UUID.fromString("11111111-1111-1111-1111-111111111111");
-  private static final UUID MUG = UUID.fromString("22222222-2222-2222-2222-222222222222");
+  private static final UUID SHIRT = UUID.fromString("01a090ae-611e-700b-bde4-50df0324c37c");
+  private static final UUID MUG = UUID.fromString("01a090ae-611e-700f-b645-a14095230b77");
 
   // ── line-level ─────────────────────────────────────────────────────────────
 
@@ -347,8 +348,8 @@ class PromotionEngineTest {
 
   private static Promotion base(String name, String type, BigDecimal value) {
     return new Promotion(
-        UUID.randomUUID(),
-        UUID.randomUUID(),
+        Ids.newId(),
+        Ids.newId(),
         null,
         name,
         type,

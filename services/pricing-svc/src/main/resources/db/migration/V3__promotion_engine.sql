@@ -85,7 +85,7 @@ CREATE INDEX idx_promotions_tenant
 -- and impossible to audit: "this coupon is exhausted" is a claim a tenant will dispute, and the
 -- answer has to be a list of orders rather than a number.
 CREATE TABLE promotion_redemptions (
-    id            UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    id            UUID          PRIMARY KEY,
     tenant_id     UUID          NOT NULL,
     promotion_id  UUID          NOT NULL REFERENCES promotions (id),
     order_id      UUID          NOT NULL,

@@ -3,7 +3,7 @@
 -- Status lifecycle: DRAFT → OPEN → COMPLETED | CANCELLED
 
 CREATE TABLE move_orders (
-    id            UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id            UUID        NOT NULL,
     tenant_id     UUID        NOT NULL,
     from_store_id UUID        NOT NULL,
     to_store_id   UUID        NOT NULL,
@@ -19,7 +19,7 @@ CREATE TABLE move_orders (
 CREATE INDEX idx_move_orders_tenant ON move_orders (tenant_id, from_store_id, status, created_at DESC);
 
 CREATE TABLE move_order_lines (
-    id            UUID           NOT NULL DEFAULT gen_random_uuid(),
+    id            UUID           NOT NULL,
     tenant_id     UUID           NOT NULL,
     move_order_id UUID           NOT NULL,
     variant_id    UUID           NOT NULL,

@@ -26,16 +26,16 @@ export default function () {
   const tenantRes = http.post(
     `${baseUrl}/api/tenant-svc/onboarding/tenants`,
     JSON.stringify({ businessName: `k6-iam-co-${Date.now()}`, legalName: 'k6 Ltd', country: 'GB', currency: 'GBP' }),
-    { headers: { 'Content-Type': 'application/json', 'X-User-Id': '00000000-0000-0000-0000-000000000001' } }
+    { headers: { 'Content-Type': 'application/json', 'X-User-Id': '01a090ae-611e-7001-a690-2682e4afcb55' } }
   );
   const tenantId = tenantRes.status < 300 ? tenantRes.json('data.id') : null;
   const posHdrs = tenantId
-    ? { 'Content-Type': 'application/json', 'X-Tenant-Id': tenantId, 'X-User-Id': '00000000-0000-0000-0000-000000000001' }
+    ? { 'Content-Type': 'application/json', 'X-Tenant-Id': tenantId, 'X-User-Id': '01a090ae-611e-7001-a690-2682e4afcb55' }
     : { 'Content-Type': 'application/json' };
 
   const sessionRes = http.post(
     `${baseUrl}/api/iam-svc/auth/pos/sessions`,
-    JSON.stringify({ storeId: '00000000-0000-0000-0000-000000000001', idleTimeoutSeconds: 300 }),
+    JSON.stringify({ storeId: '01a090ae-611e-7001-a690-2682e4afcb55', idleTimeoutSeconds: 300 }),
     { headers: posHdrs }
   );
   check(sessionRes, { '[+] start pos session 201': (r) => r.status === 201 });
@@ -77,7 +77,7 @@ export default function () {
   check(
     http.post(
       `${baseUrl}/api/iam-svc/auth/pos/sessions`,
-      JSON.stringify({ storeId: '00000000-0000-0000-0000-000000000001', idleTimeoutSeconds: 10 }),
+      JSON.stringify({ storeId: '01a090ae-611e-7001-a690-2682e4afcb55', idleTimeoutSeconds: 10 }),
       { headers: posHdrs }
     ),
     { '[-] start session invalid timeout 400': (r) => r.status === 400 }
@@ -86,7 +86,7 @@ export default function () {
   // [-] Touch unknown session → 404
   check(
     http.put(
-      `${baseUrl}/api/iam-svc/auth/pos/sessions/00000000-0000-0000-0000-000000000000/activity`,
+      `${baseUrl}/api/iam-svc/auth/pos/sessions/01a090ae-611e-7000-9e1a-0f8a9e565153/activity`,
       null,
       { headers: posHdrs }
     ),

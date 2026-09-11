@@ -65,7 +65,7 @@ If any are unknown, stop and check docs/API-GUIDE.md / docs/ARCHITECTURE.md — 
    - `X-Request-Id` propagation + tracing.
    - Cursor pagination helper.
 
-4. **Database**: create `src/main/resources/db/migration/V1__init.sql` defining the owned tables. Every tenant-owned table: `id UUID PK` (minted in Java with `Ids.newId()`, UUIDv7), `tenant_id UUID NOT NULL`, composite index starting `tenant_id`, `timestamptz` UTC times, `NUMERIC` for money/qty, append-only tables have no UPDATE/DELETE paths. Follow the tenant-filter rules in [docs/coding-standards.md](../../../docs/coding-standards.md).
+4. **Database**: create `src/main/resources/db/migration/V1__init.sql` defining the owned tables. Every tenant-owned table: `id UUID PK` with **no `DEFAULT`** — the service binds `Ids.newId()` (UUIDv7) in every `INSERT`, and seed rows carry literal v7 ids (Flyway's `afterMigrate` check fails a column that generates its own uuid), `tenant_id UUID NOT NULL`, composite index starting `tenant_id`, `timestamptz` UTC times, `NUMERIC` for money/qty, append-only tables have no UPDATE/DELETE paths. Follow the tenant-filter rules in [docs/coding-standards.md](../../../docs/coding-standards.md).
 
 5. **Config**: `src/main/resources/META-INF/microprofile-config.properties` with non-secret defaults (port, app name = service name). DB URL, Kafka brokers, secrets come from **config service / env** — never hardcoded. Register the service name with **Consul** on startup; deregister on shutdown.
 

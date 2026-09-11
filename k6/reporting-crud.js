@@ -18,13 +18,13 @@ function setupTenant() {
   const tenantRes = http.post(
     `${baseUrl}/api/tenant-svc/onboarding/tenants`,
     JSON.stringify({ businessName: `k6-report-co-${Date.now()}`, legalName: 'k6 Ltd', country: 'US', currency: 'USD' }),
-    { headers: { ...JSON_CT, 'X-User-Id': '00000000-0000-0000-0000-000000000001' } }
+    { headers: { ...JSON_CT, 'X-User-Id': '01a090ae-611e-7001-a690-2682e4afcb55' } }
   );
   return tenantRes.status < 300 ? tenantRes.json('data.id') : null;
 }
 
 export default function () {
-  const tenantId = setupTenant() || 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  const tenantId = setupTenant() || '01a090ae-611e-7037-a4b7-c854f0266ace';
   const hdrs = (extra = {}) => ({ ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-Roles': 'OWNER', ...extra });
   const base = `${baseUrl}/api/reporting-svc/admin/reports/inventory`;
 
@@ -38,7 +38,7 @@ export default function () {
   });
 
   // ── Gap #47: on-hand filtered by storeId ─────────────────────────────────
-  const storeId = '11111111-1111-1111-1111-111111111111';
+  const storeId = '01a090ae-611e-700b-bde4-50df0324c37c';
   const onHandByStore = http.get(`${base}/on-hand?storeId=${storeId}`, { headers: hdrs() });
   check(onHandByStore, { 'on-hand by store 200': r => r.status === 200 });
 
@@ -50,7 +50,7 @@ export default function () {
   });
 
   // ── Gap #48: netting filtered by variantId ────────────────────────────────
-  const variantId = '22222222-2222-2222-2222-222222222222';
+  const variantId = '01a090ae-611e-700f-b645-a14095230b77';
   const nettingByVariant = http.get(`${base}/supply-demand?variantId=${variantId}`, { headers: hdrs() });
   check(nettingByVariant, { 'supply-demand by variant 200': r => r.status === 200 });
 

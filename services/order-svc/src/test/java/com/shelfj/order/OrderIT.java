@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -42,9 +43,9 @@ class OrderIT {
     System.setProperty("shelfj.order.inventory.reserve-enforce", "false");
   }
 
-  private static final String T = "11111111-1111-1111-1111-111111111111";
-  private static final String S = "22222222-2222-2222-2222-222222222222";
-  private static final String V = "33333333-3333-3333-3333-333333333333";
+  private static final String T = "01a090ae-611e-700b-bde4-50df0324c37c";
+  private static final String S = "01a090ae-611e-700f-b645-a14095230b77";
+  private static final String V = "01a090ae-611e-7011-ae7d-1bd68c966ff6";
 
   @Inject WebTarget target;
   @Inject OrderService orderService;
@@ -170,7 +171,7 @@ class OrderIT {
     UUID order = UUID.fromString(orderId);
 
     // A 12.00 refund on a 20.00 order → PARTIALLY_REFUNDED (as PaymentEventHandler would call it).
-    UUID e1 = UUID.randomUUID();
+    UUID e1 = Ids.newId();
     orderService.applyRefund(e1, tenant, order, new java.math.BigDecimal("12.00"));
     assertThat(
         get("/orders/" + orderId, T).readEntity(String.class),
@@ -184,7 +185,7 @@ class OrderIT {
         containsString("PARTIALLY_REFUNDED"));
 
     // The remaining 8.00 (distinct event) → cumulative 20.00 = total → REFUNDED.
-    orderService.applyRefund(UUID.randomUUID(), tenant, order, new java.math.BigDecimal("8.00"));
+    orderService.applyRefund(Ids.newId(), tenant, order, new java.math.BigDecimal("8.00"));
     String finalBody = get("/orders/" + orderId, T).readEntity(String.class);
     // REFUNDED present and PARTIALLY_REFUNDED absent together prove the status is exactly REFUNDED.
     assertThat(finalBody, containsString("REFUNDED"));
@@ -249,8 +250,7 @@ class OrderIT {
     UUID tenantId = UUID.fromString(T);
 
     // First tender (cash, $4) — covers less than the $10 total: still PENDING.
-    orderService.handlePaymentCaptured(
-        tenantId, orderId, UUID.randomUUID(), new BigDecimal("4.00"));
+    orderService.handlePaymentCaptured(tenantId, orderId, Ids.newId(), new BigDecimal("4.00"));
     Response afterFirst = get("/orders/" + orderId, T);
     assertThat(afterFirst.readEntity(String.class), containsString("PENDING"));
     assertThat(outboxCount(orderId, "OrderFulfilled"), is(0L));
@@ -258,8 +258,7 @@ class OrderIT {
     // Second tender (card, $6) — the two together cover the total, and this is a till sale, so it
     // is handed over: FULFILLED, not CONFIRMED. This assertion used to say CONFIRMED, which is the
     // state SJ-D40 left every till sale in — paid for, and never deducted from stock.
-    orderService.handlePaymentCaptured(
-        tenantId, orderId, UUID.randomUUID(), new BigDecimal("6.00"));
+    orderService.handlePaymentCaptured(tenantId, orderId, Ids.newId(), new BigDecimal("6.00"));
     assertThat(statusOf(orderId), is("FULFILLED"));
     assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
   }
@@ -289,7 +288,7 @@ class OrderIT {
     UUID orderId = UUID.fromString(extractId(placed.readEntity(String.class)));
     UUID tenantId = UUID.fromString(T);
 
-    UUID paymentId = UUID.randomUUID();
+    UUID paymentId = Ids.newId();
     orderService.handlePaymentCaptured(tenantId, orderId, paymentId, new BigDecimal("6.00"));
     // Same paymentId redelivered: if paid_amount were double-counted (6+6=12 >= 10) the order
     // would wrongly confirm. The unique key on order_payment_events must make this a no-op.
@@ -348,7 +347,7 @@ class OrderIT {
                 + V
                 + "\",\"qty\":2,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
             T,
-            "it-till-" + UUID.randomUUID());
+            "it-till-" + Ids.newId());
     String body = placed.readEntity(String.class);
     assertThat(body, placed.getStatus(), is(201));
     return UUID.fromString(extractId(body));
@@ -369,7 +368,7 @@ class OrderIT {
   void aTillSaleIsHandedOverTheMomentItIsPaidFor() {
     UUID orderId = placeAt("POS", "INSTORE");
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
 
     assertThat(statusOf(orderId), is("FULFILLED"));
     // The event inventory-svc deducts stock on. Before this fix a till sale never produced one.
@@ -382,7 +381,7 @@ class OrderIT {
   @Test
   void aRedeliveredCaptureDoesNotSellTheStockTwice() {
     UUID orderId = placeAt("POS", "INSTORE");
-    UUID paymentId = UUID.randomUUID();
+    UUID paymentId = Ids.newId();
     orderService.handlePaymentCaptured(
         UUID.fromString(T), orderId, paymentId, new BigDecimal("20.00"));
     orderService.handlePaymentCaptured(
@@ -400,7 +399,7 @@ class OrderIT {
     // offline queues on devices now, which replay with the request they were queued with.
     UUID orderId = placeAt("POS", "PICKUP");
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
 
     assertThat(statusOf(orderId), is("FULFILLED"));
     assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
@@ -412,7 +411,7 @@ class OrderIT {
     // collected later. Fulfilling it at payment would deduct stock that is still on the shelf.
     UUID orderId = placeAt("ONLINE", "PICKUP");
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
 
     assertThat(statusOf(orderId), is("CONFIRMED"));
     assertThat(outboxCount(orderId, "OrderFulfilled"), is(0L));
@@ -433,7 +432,7 @@ class OrderIT {
   void voidingATillSaleThatWasHandedOverPutsItsStockBack() {
     UUID orderId = placeAt("POS", "INSTORE");
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
     assertThat(
         post("/orders/" + orderId + "/void", "{\"reason\":\"wrong item scanned\"}", T).getStatus(),
         is(200));
@@ -452,7 +451,7 @@ class OrderIT {
   void voidingASaleWithAReturnAgainstItPutsBackOnlyWhatIsLeft() {
     UUID orderId = placeAt("POS", "INSTORE");
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
     Response ret =
         post(
             "/orders/" + orderId + "/returns",
@@ -548,7 +547,7 @@ class OrderIT {
   @Test
   void listOrdersPaginatesWithCursor() {
     // Dedicated tenant so orders created by other tests never leak into these pages.
-    String tenant = "44444444-4444-4444-4444-444444444444";
+    String tenant = "01a090ae-611e-7014-8cd5-baf0862fa319";
     var allIds = new java.util.HashSet<String>();
     for (int i = 0; i < 3; i++) {
       Response r =
@@ -601,7 +600,7 @@ class OrderIT {
   @Test
   void listSpecialOrdersPaginatesWithCursor() {
     // Dedicated tenant so special orders created by other tests never leak into these pages.
-    String tenant = "55555555-5555-5555-5555-555555555555";
+    String tenant = "01a090ae-611e-7019-ba7e-5901486ca70a";
     var allNames = new java.util.HashSet<String>();
     for (int i = 0; i < 3; i++) {
       String name = "Cust" + i;
@@ -660,7 +659,7 @@ class OrderIT {
   @Test
   void listPosLogPaginatesWithCursor() {
     // Dedicated tenant so POSLog entries created by other tests never leak into these pages.
-    String tenant = "66666666-6666-6666-6666-666666666666";
+    String tenant = "01a090ae-611e-701b-8b9c-fe24949dad64";
     var allIds = new java.util.HashSet<String>();
     for (int i = 0; i < 3; i++) {
       Response placed =
@@ -865,7 +864,7 @@ class OrderIT {
     assertThat(r3.getStatus(), is(200));
 
     // tenant isolation — other tenant cannot see this card
-    Response rIso = get("/gift-cards/" + code, "99999999-9999-9999-9999-999999999999");
+    Response rIso = get("/gift-cards/" + code, "01a090ae-611e-701d-9d60-a9d7516ed03b");
     assertThat(rIso.getStatus(), is(404));
   }
 
@@ -955,7 +954,7 @@ class OrderIT {
 
   @Test
   void orderByIdReadsAreObjectLevelAuthorized() {
-    String owningCustomer = UUID.randomUUID().toString();
+    String owningCustomer = Ids.newId().toString();
     Response placed =
         post(
             "/orders",
@@ -983,7 +982,7 @@ class OrderIT {
         is(200));
 
     // Another authenticated customer in the same tenant gets 404 (not 403 — no existence oracle).
-    String otherCustomer = UUID.randomUUID().toString();
+    String otherCustomer = Ids.newId().toString();
     assertThat(getAs("/orders/" + orderId, T, otherCustomer, "CUSTOMER").getStatus(), is(404));
     assertThat(
         getAs("/orders/" + orderId + "/history", T, otherCustomer, "CUSTOMER").getStatus(),
@@ -1058,7 +1057,7 @@ class OrderIT {
    */
   @Test
   void salesByHourBucketsOnTheRequestedTimezoneNotUtc() {
-    String tenant = "51000000-0000-0000-0000-000000000001";
+    String tenant = "01a090ae-611e-7015-8c11-fd62230bf57a";
     Response placed =
         post(
             "/orders",
@@ -1109,7 +1108,7 @@ class OrderIT {
    */
   @Test
   void salesByHourCountsOnlyRevenueOrders() {
-    String tenant = "51000000-0000-0000-0000-000000000002";
+    String tenant = "01a090ae-611e-7016-a809-076a3374b722";
     // Placed and left PENDING: no money has changed hands.
     Response pending =
         post(
@@ -1137,8 +1136,8 @@ class OrderIT {
    */
   @Test
   void salesByStaffAttributesTakingsToTheCashierWhoJournalledThem() {
-    String tenant = "51000000-0000-0000-0000-000000000003";
-    String cashier = "aaaaaaaa-0000-0000-0000-0000000000b1";
+    String tenant = "01a090ae-611e-7017-bdd9-d7612c647032";
+    String cashier = "01a090ae-611e-7028-aeff-c236d3874dec";
 
     // 20.00 ticket with 5.00 off: 15.00 taken, 25% of the ticket given away.
     String orderId =
@@ -1172,7 +1171,7 @@ class OrderIT {
 
     // Another tenant's takings are never in this one's report.
     assertThat(
-        get("/admin/reports/sales-by-staff", "51000000-0000-0000-0000-000000000004")
+        get("/admin/reports/sales-by-staff", "01a090ae-611e-7018-b51a-6051d93278c1")
             .readEntity(String.class),
         not(containsString(cashier)));
   }
@@ -1225,8 +1224,8 @@ class OrderIT {
    */
   @Test
   void exceptionReportMergesTheThreeLogsPerActor() {
-    String cashier = "aaaaaaaa-0000-0000-0000-000000000001";
-    String other = "aaaaaaaa-0000-0000-0000-000000000002";
+    String cashier = "01a090ae-611e-7024-812b-f6199d71d0ca";
+    String other = "01a090ae-611e-7025-802e-c47f396e20e3";
 
     // One discounted POS sale by `cashier`.
     String orderId =
@@ -1291,14 +1290,14 @@ class OrderIT {
         postAs(
             "/pos/no-sale",
             "{\"storeId\":\"" + S + "\",\"reason\":\"no journal here\"}",
-            "44444444-4444-4444-4444-444444444444",
-            "aaaaaaaa-0000-0000-0000-000000000009",
+            "01a090ae-611e-7014-8cd5-baf0862fa319",
+            "01a090ae-611e-7026-b9ca-bb6f7d2eb775",
             "CASHIER",
             null);
     assertThat(ns.getStatus(), is(201));
 
     String body =
-        get("/admin/reports/exceptions", "44444444-4444-4444-4444-444444444444")
+        get("/admin/reports/exceptions", "01a090ae-611e-7014-8cd5-baf0862fa319")
             .readEntity(String.class);
     assertThat(body, containsString("\"noSales\":1"));
     assertThat(body, containsString("\"sales\":0"));
@@ -1318,7 +1317,7 @@ class OrderIT {
    */
   @Test
   void aCashierCanJournalTheirOwnSaleAndReplayIsANoOp() {
-    String cashier = "aaaaaaaa-0000-0000-0000-00000000000a";
+    String cashier = "01a090ae-611e-7027-bae4-be01a178d6ef";
     String orderId =
         extractId(
             postAs(
@@ -1448,10 +1447,10 @@ class OrderIT {
   @Test
   void currencyResolvesFromTheTenantNotAHardcodedLiteral() {
     // A tenant whose TenantCreated has been projected — the normal case in a running system.
-    String tenant = UUID.randomUUID().toString();
+    String tenant = Ids.newId().toString();
     boolean projected =
         tenantStatus.projectTenantCurrencyOnce(
-            UUID.randomUUID(), "order-svc/tenant-created", UUID.fromString(tenant), "gbp");
+            Ids.newId(), "order-svc/tenant-created", UUID.fromString(tenant), "gbp");
     assertThat(projected, is(true));
 
     // Omitting currency stamps the tenant's own, not "USD".
@@ -1505,7 +1504,7 @@ class OrderIT {
 
     // A tenant with no projection yet (onboarded before this existed, or event lag) falls back to
     // the one configured default rather than to three different literals.
-    String unprojected = UUID.randomUUID().toString();
+    String unprojected = Ids.newId().toString();
     Response fallback =
         post(
             "/orders",
@@ -1524,8 +1523,8 @@ class OrderIT {
   /** A redelivered TenantCreated must not re-apply the projection (golden rule #7). */
   @Test
   void tenantCurrencyProjectionIsIdempotent() {
-    UUID tenant = UUID.randomUUID();
-    UUID eventId = UUID.randomUUID();
+    UUID tenant = Ids.newId();
+    UUID eventId = Ids.newId();
     assertThat(
         tenantStatus.projectTenantCurrencyOnce(eventId, "order-svc/tenant-created", tenant, "EUR"),
         is(true));

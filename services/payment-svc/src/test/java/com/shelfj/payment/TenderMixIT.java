@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.domain.Domain.PaymentTender;
 import com.shelfj.payment.domain.Domain.RefundTender;
 import com.shelfj.payment.domain.Domain.TenderMixRow;
@@ -61,13 +62,13 @@ class TenderMixIT {
    */
   @Test
   void splitsTheTakeByMethodAndSubtractsRefundsWithinTheirOwnMethod() {
-    UUID tenant = UUID.randomUUID();
-    UUID order = UUID.randomUUID();
+    UUID tenant = Ids.newId();
+    UUID order = Ids.newId();
 
     UUID card = capture(tenant, order, "100.00", PaymentTender.METHOD_CARD, "CAPTURED");
     capture(tenant, order, "60.00", PaymentTender.METHOD_CASH, "CAPTURED");
     // A declined card attempt: it happened, but no money moved.
-    capture(tenant, UUID.randomUUID(), "45.00", PaymentTender.METHOD_CARD, "FAILED");
+    capture(tenant, Ids.newId(), "45.00", PaymentTender.METHOD_CARD, "FAILED");
     refund(tenant, order, card, "40.00", PaymentTender.METHOD_CARD);
 
     List<TenderMixRow> rows = service.tenderMix(tenant, null, null);
@@ -101,8 +102,8 @@ class TenderMixIT {
    */
   @Test
   void aMethodWithRefundsButNoCapturesStillAppears() {
-    UUID tenant = UUID.randomUUID();
-    UUID order = UUID.randomUUID();
+    UUID tenant = Ids.newId();
+    UUID order = Ids.newId();
 
     UUID card = capture(tenant, order, "80.00", PaymentTender.METHOD_CARD, "CAPTURED");
     // Refunded onto a voucher rather than back to the card.
@@ -124,8 +125,8 @@ class TenderMixIT {
    */
   @Test
   void shareIsNullWhenThereIsNoPositiveTotalToShare() {
-    UUID tenant = UUID.randomUUID();
-    UUID order = UUID.randomUUID();
+    UUID tenant = Ids.newId();
+    UUID order = Ids.newId();
 
     UUID card = capture(tenant, order, "30.00", PaymentTender.METHOD_CARD, "CAPTURED");
     refund(tenant, order, card, "30.00", PaymentTender.METHOD_CARD);
@@ -137,10 +138,10 @@ class TenderMixIT {
   /** The window bounds both sides of the UNION, and is validated before either is read. */
   @Test
   void isBoundedByItsWindowAndTenantScoped() {
-    UUID tenant = UUID.randomUUID();
-    UUID other = UUID.randomUUID();
-    capture(tenant, UUID.randomUUID(), "10.00", PaymentTender.METHOD_CASH, "CAPTURED");
-    capture(other, UUID.randomUUID(), "999.00", PaymentTender.METHOD_CASH, "CAPTURED");
+    UUID tenant = Ids.newId();
+    UUID other = Ids.newId();
+    capture(tenant, Ids.newId(), "10.00", PaymentTender.METHOD_CASH, "CAPTURED");
+    capture(other, Ids.newId(), "999.00", PaymentTender.METHOD_CASH, "CAPTURED");
 
     Instant now = Instant.now();
     // A window that closed before any of this happened sees none of it.
@@ -170,7 +171,7 @@ class TenderMixIT {
   }
 
   private UUID capture(UUID tenantId, UUID orderId, String amount, String method, String status) {
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     repo.createTender(
         new PaymentTender(
             id,
@@ -189,7 +190,7 @@ class TenderMixIT {
   }
 
   private void refund(UUID tenantId, UUID orderId, UUID paymentId, String amount, String method) {
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     repo.createRefundGuarded(
         new RefundTender(
             id,

@@ -1,5 +1,5 @@
 CREATE TABLE physical_inventories (
-    id           UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id           UUID        NOT NULL,
     tenant_id    UUID        NOT NULL,
     store_id     UUID        NOT NULL,
     status       TEXT        NOT NULL DEFAULT 'OPEN',
@@ -12,7 +12,7 @@ CREATE TABLE physical_inventories (
 CREATE INDEX idx_pi_tenant_store ON physical_inventories (tenant_id, store_id, started_at DESC);
 
 CREATE TABLE physical_inventory_tags (
-    id                    UUID           NOT NULL DEFAULT gen_random_uuid(),
+    id                    UUID           NOT NULL,
     tenant_id             UUID           NOT NULL,
     physical_inventory_id UUID           NOT NULL REFERENCES physical_inventories(id),
     variant_id            UUID           NOT NULL,

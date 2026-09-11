@@ -38,11 +38,11 @@ class PricingIT {
     System.setProperty("shelfj.kafka.enabled", "false");
   }
 
-  private static final String T = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-  private static final String V = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
-  private static final String S = "cccccccc-cccc-cccc-cccc-cccccccccccc";
-  private static final String ORDER_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
-  private static final String LINE_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+  private static final String T = "01a090ae-611e-702c-a97b-d1b8025478e1";
+  private static final String V = "01a090ae-611e-7037-a4b7-c854f0266ace";
+  private static final String S = "01a090ae-611e-703c-a378-a4972ea461c8";
+  private static final String ORDER_ID = "01a090ae-611e-7056-8f30-ecdbb48160eb";
+  private static final String LINE_ID = "01a090ae-611e-705c-994c-5daee3fbd033";
 
   @Inject WebTarget target;
 
@@ -171,7 +171,7 @@ class PricingIT {
     assertThat(r3.readEntity(String.class), containsString("Standard Rate"));
 
     // Tenant isolation — other tenant cannot see T1
-    Response rIso = getAs("/vat-rates/T1", "99999999-9999-9999-9999-999999999999", "OWNER");
+    Response rIso = getAs("/vat-rates/T1", "01a090ae-611e-701d-9d60-a9d7516ed03b", "OWNER");
     assertThat(rIso.getStatus(), is(404));
 
     // Duplicate code is 409
@@ -230,7 +230,7 @@ class PricingIT {
         post(
             "/prices/resolve",
             "{\"variantId\":\"" + V + "\",\"channel\":\"ALL\",\"qty\":1}",
-            "99999999-9999-9999-9999-999999999999");
+            "01a090ae-611e-701d-9d60-a9d7516ed03b");
     assertThat(rIso.getStatus(), is(404));
 
     // Batch form: order-svc's checkout resolves every line in one call instead of one per line.
@@ -301,7 +301,7 @@ class PricingIT {
     Response vrIso =
         getAs(
             "/vat-return?from=2024-04-01T00:00:00Z&to=2024-07-01T00:00:00Z",
-            "99999999-9999-9999-9999-999999999999",
+            "01a090ae-611e-701d-9d60-a9d7516ed03b",
             "OWNER");
     assertThat(vrIso.getStatus(), is(200));
     assertThat(vrIso.readEntity(String.class), containsString("0.00"));
@@ -324,7 +324,7 @@ class PricingIT {
         "{\"orderId\":\""
             + order
             + "\",\"orderLineId\":\""
-            + java.util.UUID.randomUUID()
+            + com.shelfj.ids.Ids.newId()
             + "\",\"variantId\":\""
             + V
             + "\",\"storeId\":\""
@@ -386,7 +386,7 @@ class PricingIT {
   /** MONTH grouping is what shows a rate change, or a supply landing in the wrong VAT quarter. */
   @Test
   void taxSummaryCanGroupByMonthAndByStore() {
-    String otherStore = "11111111-2222-3333-4444-555555555555";
+    String otherStore = "01a090ae-611e-700c-a049-f00caee8e6c5";
     recordTax(
         ORDER_ID, S, "T1", "0.20", "100.00", "20.00", "120.00", false, "2024-04-01T10:00:00Z");
     recordTax(
@@ -790,11 +790,11 @@ class PricingIT {
     record Market(String tenant, String currency, String price) {}
     var markets =
         java.util.List.of(
-            new Market("11111111-1111-1111-1111-111111111111", "USD", "9.99"),
-            new Market("22222222-2222-2222-2222-222222222222", "GBP", "8.50"),
-            new Market("33333333-3333-3333-3333-333333333333", "CNY", "69.00"),
-            new Market("44444444-4444-4444-4444-444444444444", "JPY", "1234"),
-            new Market("55555555-5555-5555-5555-555555555555", "INR", "849.00"));
+            new Market("01a090ae-611e-700b-bde4-50df0324c37c", "USD", "9.99"),
+            new Market("01a090ae-611e-700f-b645-a14095230b77", "GBP", "8.50"),
+            new Market("01a090ae-611e-7011-ae7d-1bd68c966ff6", "CNY", "69.00"),
+            new Market("01a090ae-611e-7014-8cd5-baf0862fa319", "JPY", "1234"),
+            new Market("01a090ae-611e-7019-ba7e-5901486ca70a", "INR", "849.00"));
 
     var lists = new java.util.LinkedHashMap<String, String>();
     for (Market m : markets) {
@@ -815,7 +815,7 @@ class PricingIT {
       lists.put(m.tenant(), id);
     }
 
-    String jp = "44444444-4444-4444-4444-444444444444";
+    String jp = "01a090ae-611e-7014-8cd5-baf0862fa319";
     // Whole yen, and no invented sub-unit on the way out.
     String yen =
         post("/prices/resolve", "{\"variantId\":\"" + V + "\",\"channel\":\"ALL\"}", jp)
@@ -854,7 +854,7 @@ class PricingIT {
         post(
                 "/admin/price-lists/" + lists.get(jp) + "/activate",
                 "{\"reason\":\"not mine to restart\"}",
-                "22222222-2222-2222-2222-222222222222")
+                "01a090ae-611e-700f-b645-a14095230b77")
             .getStatus(),
         is(404));
   }
@@ -1059,7 +1059,7 @@ class PricingIT {
             "{\"lines\":[{\"variantId\":\""
                 + V
                 + "\",\"qty\":1}],"
-                + "\"storeId\":\"11111111-2222-3333-4444-555555555555\"}");
+                + "\"storeId\":\"01a090ae-611e-700c-a049-f00caee8e6c5\"}");
     assertThat(otherStore, containsString("\"totalDiscount\":0"));
   }
 
@@ -1109,8 +1109,8 @@ class PricingIT {
     assertThat(plR.getStatus(), is(201));
     String plId = extractId(plR.readEntity(String.class));
 
-    String goodVariant = java.util.UUID.randomUUID().toString();
-    String badVariant = java.util.UUID.randomUUID().toString();
+    String goodVariant = com.shelfj.ids.Ids.newId().toString();
+    String badVariant = com.shelfj.ids.Ids.newId().toString();
     // One valid item (price 10.00) and one violating @Positive price (-5.00) — the endpoint's
     // contract is "never 4xx on partial failure", so this must stay 200 with the bad item
     // reported in errors and NOT counted as upserted (previously it silently succeeded since
@@ -1133,7 +1133,7 @@ class PricingIT {
 
   @Test
   void customerVatStatusReadRequiresAStaffRole() {
-    String customerId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+    String customerId = "01a090ae-611e-7070-9b99-4c0448c39abf";
     Response created =
         post(
             "/customer-vat-status",

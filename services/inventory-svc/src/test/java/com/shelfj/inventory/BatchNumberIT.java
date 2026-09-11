@@ -52,8 +52,8 @@ class BatchNumberIT {
     System.setProperty("shelfj.inventory.food-safety.overdue-sweeper.enabled", "false");
   }
 
-  private static final String T = "33333333-3333-3333-3333-333333333333";
-  private static final String USER = "b2000000-0000-0000-0000-000000000001";
+  private static final String T = "01a090ae-611e-7011-ae7d-1bd68c966ff6";
+  private static final String USER = "01a090ae-611e-7033-93f1-01903ac69340";
 
   @Inject WebTarget target;
   @Inject InventoryService inventory;

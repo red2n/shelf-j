@@ -102,7 +102,7 @@ Per-service internal shape (copy for each): `api/ dto/ service/ domain/ repo/ me
 - **Errors:** correct HTTP codes; stable machine `code` (e.g. `INVENTORY_INSUFFICIENT_STOCK`); never leak stack/SQL.
 - **Pagination:** cursor only (`?after=&limit=`), default 20 / max 100. No page numbers.
 - **Naming:** REST paths = plural kebab nouns (`/purchase-orders`); JSON = `camelCase`; DB columns = `snake_case`; events = `PascalCase` past tense (`OrderPlaced`); Kafka topics = `shelfj.<domain>.<event>`.
-- **IDs:** UUIDv7 primary keys, minted in the service with `Ids.newId()` (`shared/common-ids`) — never `UUID.randomUUID()` (PMD `UseTimeOrderedIds` fails the build).
+- **IDs:** UUIDv7 only. Mint in the service with `Ids.newId()` (`shared/common-ids`); deterministic keys with `Ids.derived(eventId, name)`. Never `UUID.randomUUID()`/`nameUUIDFromBytes()`, never `gen_random_uuid()` in SQL, never a column `DEFAULT` that fills in a uuid — every `INSERT` binds its `id`. PMD rules and the integration-test audit (`PostgresSupport.stop()`: column defaults + stored ids) fail the build on violations; a Flyway `afterMigrate` check backs them up ([ARCHITECTURE §14](docs/ARCHITECTURE.md#14-cross-cutting-conventions)).
 - **Migrations:** Flyway only (`V<n>__desc.sql`); never manual DDL in prod.
 - **Tests:** unit for `service/` logic + Testcontainers integration for the core flow (Postgres + Kafka). Not done without it.
 

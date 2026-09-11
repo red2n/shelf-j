@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.client.OrderClient;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
@@ -34,8 +35,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class OrderPaymentGuardReadAccessTest {
 
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID ORDER = UUID.randomUUID();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID ORDER = Ids.newId();
 
   @Mock OrderClient orderClient;
   @InjectMocks OrderPaymentGuard guard;
@@ -76,24 +77,24 @@ class OrderPaymentGuardReadAccessTest {
   @Test
   @DisplayName("Not SJ-D13: an anonymous caller still cannot read an order that HAS an owner")
   void anonymousCannotReadAnOwnedOrder() {
-    orderOwnedBy(UUID.randomUUID().toString());
+    orderOwnedBy(Ids.newId().toString());
     assertThrows(ApiException.class, () -> check(ctx(null)));
   }
 
   @Test
   @DisplayName("A signed-in customer reads their own order and not somebody else's")
   void customerReadsOnlyTheirOwn() {
-    UUID me = UUID.randomUUID();
+    UUID me = Ids.newId();
     orderOwnedBy(me.toString());
     assertDoesNotThrow(() -> check(ctx(me, "CUSTOMER")));
 
-    orderOwnedBy(UUID.randomUUID().toString());
+    orderOwnedBy(Ids.newId().toString());
     assertThrows(ApiException.class, () -> check(ctx(me, "CUSTOMER")));
   }
 
   @Test
   @DisplayName("Staff read anything in their own tenant, without an order lookup at all")
   void staffReadAnything() {
-    assertDoesNotThrow(() -> check(ctx(UUID.randomUUID(), "CASHIER")));
+    assertDoesNotThrow(() -> check(ctx(Ids.newId(), "CASHIER")));
   }
 }

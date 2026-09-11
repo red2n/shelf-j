@@ -23,13 +23,13 @@ function setupTenant() {
   const tenantRes = http.post(
     `${baseUrl}/api/tenant-svc/onboarding/tenants`,
     JSON.stringify({ businessName: `k6-pricing-co-${Date.now()}`, legalName: 'k6 Ltd', country: 'GB', currency: 'GBP' }),
-    { headers: { ...JSON_CT, 'X-User-Id': uid || '00000000-0000-0000-0000-000000000001' } }
+    { headers: { ...JSON_CT, 'X-User-Id': uid || '01a090ae-611e-7001-a690-2682e4afcb55' } }
   );
   const tenantId = tenantRes.status < 300 ? tenantRes.json('data.id') : null;
   return { uid, tenantId };
 }
 
-const FAKE_UUID = '00000000-0000-0000-0000-000000000001';
+const FAKE_UUID = '01a090ae-611e-7001-a690-2682e4afcb55';
 
 export default function () {
   const ctx = setupTenant();

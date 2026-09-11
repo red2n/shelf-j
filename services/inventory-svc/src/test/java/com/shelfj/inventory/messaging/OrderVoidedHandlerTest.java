@@ -21,12 +21,12 @@ import org.junit.jupiter.api.Test;
  */
 class OrderVoidedHandlerTest {
 
-  private static final UUID EVENT = UUID.fromString("eeeeeeee-0000-0000-0000-000000000001");
-  private static final UUID TENANT = UUID.fromString("11111111-0000-0000-0000-000000000001");
-  private static final UUID ORDER = UUID.fromString("22222222-0000-0000-0000-000000000001");
-  private static final UUID STORE = UUID.fromString("33333333-0000-0000-0000-000000000001");
-  private static final UUID APPLES = UUID.fromString("44444444-0000-0000-0000-000000000001");
-  private static final UUID CHEESE = UUID.fromString("44444444-0000-0000-0000-000000000002");
+  private static final UUID EVENT = UUID.fromString("01a090ae-611e-705b-8bb0-8fccd45e4201");
+  private static final UUID TENANT = UUID.fromString("01a090ae-611e-700a-9f77-b94950c4c25a");
+  private static final UUID ORDER = UUID.fromString("01a090ae-611e-700e-89dd-b0cb0b3011a9");
+  private static final UUID STORE = UUID.fromString("01a090ae-611e-7010-be82-c788cf35ea1c");
+  private static final UUID APPLES = UUID.fromString("01a090ae-611e-7012-a14d-4f924d594f00");
+  private static final UUID CHEESE = UUID.fromString("01a090ae-611e-7013-9a2a-bd6e8545fd8a");
 
   /**
    * Records the two receive paths. Every other service method is left un-overridden, so if the

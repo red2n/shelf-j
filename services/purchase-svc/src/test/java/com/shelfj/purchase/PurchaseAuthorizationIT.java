@@ -3,6 +3,7 @@ package com.shelfj.purchase;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -10,7 +11,6 @@ import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -53,9 +53,9 @@ class PurchaseAuthorizationIT {
     System.setProperty("shelfj.purchase.approval.limits", "");
   }
 
-  private static final String T = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-  private static final String STORE_A = "cccccccc-cccc-cccc-cccc-cccccccccccc";
-  private static final String USER = "11111111-1111-1111-1111-111111111111";
+  private static final String T = "01a090ae-611e-702c-a97b-d1b8025478e1";
+  private static final String STORE_A = "01a090ae-611e-703c-a378-a4972ea461c8";
+  private static final String USER = "01a090ae-611e-700b-bde4-50df0324c37c";
 
   @Inject WebTarget target;
 
@@ -129,7 +129,7 @@ class PurchaseAuthorizationIT {
   // ── helpers ─────────────────────────────────────────────────────────────────
 
   private String draftOrder(String role) {
-    Response sup = post("/suppliers", "{\"name\":\"auth-" + UUID.randomUUID() + "\"}", role);
+    Response sup = post("/suppliers", "{\"name\":\"auth-" + Ids.newId() + "\"}", role);
     assertThat(sup.getStatus(), is(201));
     String supId = id(sup.readEntity(String.class));
     Response po =

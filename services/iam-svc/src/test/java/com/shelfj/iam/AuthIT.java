@@ -200,7 +200,7 @@ class AuthIT {
     assertThat(reg.getStatus(), is(201));
     String refresh = extract(reg.readEntity(String.class), "refreshToken");
 
-    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    java.util.UUID tenantId = com.shelfj.ids.Ids.newId();
     try (var c = iamConnection()) {
       try (var ps =
           c.prepareStatement(
@@ -244,7 +244,7 @@ class AuthIT {
 
   @Test
   void provisionStaffRejectsBlankAndShortPassword() {
-    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    java.util.UUID tenantId = com.shelfj.ids.Ids.newId();
     Response blank =
         target
             .path("/auth/admin/staff-users")
@@ -274,7 +274,7 @@ class AuthIT {
 
   @Test
   void provisionStaffRequiresManagementRole() {
-    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    java.util.UUID tenantId = com.shelfj.ids.Ids.newId();
     // Asserted directly in AuthResource.provisionStaff as a backstop independent of the shared
     // filter's "/admin/" path-prefix rule — see its javadoc.
     Response asCashier =
@@ -296,7 +296,7 @@ class AuthIT {
     // roleIdByName("STAFF") — but "STAFF" is a user *type*, not a roles-table row, so every call
     // threw "role not found: STAFF" and returned 500. Now roleName is null → role assignment is
     // skipped, and the real store-scoped role arrives later via StaffAssigned event.
-    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    java.util.UUID tenantId = com.shelfj.ids.Ids.newId();
     Response resp =
         target
             .path("/auth/admin/staff-users")
@@ -324,7 +324,7 @@ class AuthIT {
 
   @Test
   void provisionStaffIsIdempotentForSameEmail() {
-    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    java.util.UUID tenantId = com.shelfj.ids.Ids.newId();
     String body1 =
         target
             .path("/auth/admin/staff-users")

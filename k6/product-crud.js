@@ -23,7 +23,7 @@ function setupTenant() {
   const tenantRes = http.post(
     `${baseUrl}/api/tenant-svc/onboarding/tenants`,
     JSON.stringify({ businessName: `k6-prod-co-${Date.now()}`, legalName: 'k6 Ltd', country: 'US', currency: 'USD' }),
-    { headers: { ...JSON_CT, 'X-User-Id': uid || '00000000-0000-0000-0000-000000000001' } }
+    { headers: { ...JSON_CT, 'X-User-Id': uid || '01a090ae-611e-7001-a690-2682e4afcb55' } }
   );
   const tenantId = tenantRes.status < 300 ? tenantRes.json('data.id') : null;
   return { uid, tenantId };
@@ -128,7 +128,7 @@ export default function () {
 
   check(
     http.get(
-      `${baseUrl}/api/product-svc/catalog/products/00000000-0000-0000-0000-000000000000`,
+      `${baseUrl}/api/product-svc/catalog/products/01a090ae-611e-7000-9e1a-0f8a9e565153`,
       { headers: hdrs }
     ),
     { '[-] get product unknown 404': (r) => r.status === 404 }
@@ -198,7 +198,7 @@ export default function () {
   check(
     http.post(
       `${baseUrl}/api/product-svc/admin/uom/item-conversions`,
-      JSON.stringify({ variantId: '00000000-0000-0000-0000-000000000000', toUom: 'EA', factor: 12 }),
+      JSON.stringify({ variantId: '01a090ae-611e-7000-9e1a-0f8a9e565153', toUom: 'EA', factor: 12 }),
       { headers: hdrs }
     ),
     { '[-] item conversion missing fromUom 400': (r) => r.status === 400 }
@@ -274,7 +274,7 @@ export default function () {
   // [-] Get unknown template → 404
   check(
     http.get(
-      `${baseUrl}/api/product-svc/admin/item-templates/00000000-0000-0000-0000-000000000000`,
+      `${baseUrl}/api/product-svc/admin/item-templates/01a090ae-611e-7000-9e1a-0f8a9e565153`,
       { headers: hdrs }
     ),
     { '[-] get unknown template 404': (r) => r.status === 404 }
@@ -284,7 +284,7 @@ export default function () {
   if (variantId) {
     check(
       http.post(
-        `${baseUrl}/api/product-svc/admin/item-templates/00000000-0000-0000-0000-000000000000/apply/${variantId}`,
+        `${baseUrl}/api/product-svc/admin/item-templates/01a090ae-611e-7000-9e1a-0f8a9e565153/apply/${variantId}`,
         null,
         { headers: hdrs }
       ),
@@ -395,7 +395,7 @@ export default function () {
   // [-] Revisions for unknown variant → empty list (200) or 404
   check(
     http.get(
-      `${baseUrl}/api/product-svc/admin/products/variants/00000000-0000-0000-0000-000000000000/revisions`,
+      `${baseUrl}/api/product-svc/admin/products/variants/01a090ae-611e-7000-9e1a-0f8a9e565153/revisions`,
       { headers: hdrs }
     ),
     { '[-] list revisions unknown variant 200 or 404': (r) => r.status === 200 || r.status === 404 }
@@ -404,7 +404,7 @@ export default function () {
   // [-] Current revision for unknown variant → 404
   check(
     http.get(
-      `${baseUrl}/api/product-svc/admin/products/variants/00000000-0000-0000-0000-000000000000/revisions/current`,
+      `${baseUrl}/api/product-svc/admin/products/variants/01a090ae-611e-7000-9e1a-0f8a9e565153/revisions/current`,
       { headers: hdrs }
     ),
     { '[-] current revision unknown variant 404': (r) => r.status === 404 }
@@ -515,7 +515,7 @@ export default function () {
   // [-] Get unknown container type → 404
   check(
     http.get(
-      `${baseUrl}/api/product-svc/admin/container-types/00000000-0000-0000-0000-000000000000`,
+      `${baseUrl}/api/product-svc/admin/container-types/01a090ae-611e-7000-9e1a-0f8a9e565153`,
       { headers: hdrs }
     ),
     { '[-] get unknown container type 404': (r) => r.status === 404 }
@@ -650,7 +650,7 @@ export default function () {
   // [-] Get attribute group values for unknown variant → 404
   check(
     http.get(
-      `${baseUrl}/api/product-svc/admin/products/variants/00000000-0000-0000-0000-000000000000/attribute-groups`,
+      `${baseUrl}/api/product-svc/admin/products/variants/01a090ae-611e-7000-9e1a-0f8a9e565153/attribute-groups`,
       { headers: hdrs }
     ),
     { '[-] list attribute group values unknown variant 404': (r) => r.status === 404 }
@@ -751,7 +751,7 @@ export default function () {
     // [-] Get unknown set → 404
     check(
       http.get(
-        `${baseUrl}/api/product-svc/admin/category-sets/00000000-0000-0000-0000-000000000000`,
+        `${baseUrl}/api/product-svc/admin/category-sets/01a090ae-611e-7000-9e1a-0f8a9e565153`,
         { headers: hdrs }
       ),
       { '[-] get unknown category set 404': (r) => r.status === 404 }

@@ -6,6 +6,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.shelfj.customer.service.CustomerService;
+import com.shelfj.ids.Ids;
 import java.math.BigDecimal;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,10 +24,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class OrderConfirmedHandlerTest {
 
-  private static final UUID EVENT = UUID.randomUUID();
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID ORDER = UUID.randomUUID();
-  private static final UUID CUSTOMER = UUID.randomUUID();
+  private static final UUID EVENT = Ids.newId();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID ORDER = Ids.newId();
+  private static final UUID CUSTOMER = Ids.newId();
 
   @Mock CustomerService service;
 

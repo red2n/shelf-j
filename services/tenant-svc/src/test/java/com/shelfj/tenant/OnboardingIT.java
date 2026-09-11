@@ -39,8 +39,8 @@ class OnboardingIT {
     System.setProperty("shelfj.kafka.enabled", "false");
   }
 
-  private static final String OWNER = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-  private static final String TENANT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+  private static final String OWNER = "01a090ae-611e-702c-a97b-d1b8025478e1";
+  private static final String TENANT_B = "01a090ae-611e-7037-a4b7-c854f0266ace";
 
   @Inject WebTarget target;
 
@@ -138,7 +138,7 @@ class OnboardingIT {
             OWNER);
     String tenantId = field(t.readEntity(String.class), "id");
 
-    String attacker = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    String attacker = "01a090ae-611e-7056-8f30-ecdbb48160eb";
     Response attackerStore =
         post(
             "/onboarding/stores",
@@ -262,7 +262,7 @@ class OnboardingIT {
     String storeId = field(sr.readEntity(String.class), "id");
 
     // assign a staff user
-    String staffUserId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    String staffUserId = "01a090ae-611e-703c-a378-a4972ea461c8";
     Response assign =
         post(
             "/admin/staff",

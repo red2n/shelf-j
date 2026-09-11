@@ -1,5 +1,6 @@
 package com.shelfj.pricing.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.pricing.domain.Domain;
 import com.shelfj.pricing.domain.Domain.CustomerVatStatus;
 import com.shelfj.pricing.domain.Domain.PriceList;
@@ -706,16 +707,17 @@ public class PricingRepository extends BaseOutboxRepository {
     try {
       exec(
           "INSERT INTO promotion_redemptions"
-              + " (tenant_id, promotion_id, order_id, customer_id, amount, currency)"
-              + " VALUES (?,?,?,?,?,?)"
+              + " (id, tenant_id, promotion_id, order_id, customer_id, amount, currency)"
+              + " VALUES (?,?,?,?,?,?,?)"
               + " ON CONFLICT (tenant_id, promotion_id, order_id) DO NOTHING",
           ps -> {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, promotionId);
-            ps.setObject(3, orderId);
-            ps.setObject(4, customerId);
-            ps.setBigDecimal(5, amount);
-            ps.setString(6, currency);
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, promotionId);
+            ps.setObject(4, orderId);
+            ps.setObject(5, customerId);
+            ps.setBigDecimal(6, amount);
+            ps.setString(7, currency);
           },
           "record promotion redemption");
       return true;

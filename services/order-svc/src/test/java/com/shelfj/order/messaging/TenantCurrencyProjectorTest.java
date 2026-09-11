@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.service.TenantStatusRepository;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,7 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class TenantCurrencyProjectorTest {
 
-  private static final UUID TENANT = UUID.randomUUID();
+  private static final UUID TENANT = Ids.newId();
 
   @Mock TenantStatusRepository tenantStatus;
 
@@ -53,7 +54,7 @@ class TenantCurrencyProjectorTest {
 
   @Test
   void aDeclaredCurrencyIsProjected() {
-    UUID event = UUID.randomUUID();
+    UUID event = Ids.newId();
     declared.handle(payload("TenantCurrencyDeclared", event, "GBP"));
     verify(tenantStatus)
         .projectTenantCurrencyOnce(
@@ -68,7 +69,7 @@ class TenantCurrencyProjectorTest {
    */
   @Test
   void theTwoEventsDedupeUnderDifferentConsumerIdentities() {
-    UUID event = UUID.randomUUID();
+    UUID event = Ids.newId();
     created.handle(payload("TenantCreated", event, "GBP"));
     verify(tenantStatus)
         .projectTenantCurrencyOnce(
@@ -81,7 +82,7 @@ class TenantCurrencyProjectorTest {
   /** Leading/trailing space in the payload must not reach the column. */
   @Test
   void theCurrencyIsTrimmedBeforeItIsStored() {
-    UUID event = UUID.randomUUID();
+    UUID event = Ids.newId();
     declared.handle(payload("TenantCurrencyDeclared", event, " EUR "));
     verify(tenantStatus).projectTenantCurrencyOnce(eq(event), any(), eq(TENANT), eq("EUR"));
   }
@@ -101,9 +102,9 @@ class TenantCurrencyProjectorTest {
   /** Anything that is not a 3-letter code means a producer contract change, not a currency. */
   @Test
   void aCurrencyThatIsNotAnIso4217CodeProjectsNothing() {
-    declared.handle(payload("TenantCurrencyDeclared", UUID.randomUUID(), null));
-    declared.handle(payload("TenantCurrencyDeclared", UUID.randomUUID(), "POUNDS"));
-    declared.handle(payload("TenantCurrencyDeclared", UUID.randomUUID(), "GB"));
+    declared.handle(payload("TenantCurrencyDeclared", Ids.newId(), null));
+    declared.handle(payload("TenantCurrencyDeclared", Ids.newId(), "POUNDS"));
+    declared.handle(payload("TenantCurrencyDeclared", Ids.newId(), "GB"));
     verify(tenantStatus, never()).projectTenantCurrencyOnce(any(), any(), any(), any());
   }
 }

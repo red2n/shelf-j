@@ -28,7 +28,7 @@ function setup() {
   const tenantRes = http.post(
     `${baseUrl}/api/tenant-svc/onboarding/tenants`,
     JSON.stringify({ businessName: `k6-co-${Date.now()}`, legalName: 'k6 Ltd', country: 'US', currency: 'USD' }),
-    { headers: { ...JSON_CT, 'X-User-Id': uid || '00000000-0000-0000-0000-000000000001' } }
+    { headers: { ...JSON_CT, 'X-User-Id': uid || '01a090ae-611e-7001-a690-2682e4afcb55' } }
   );
   if (tenantRes.status < 200 || tenantRes.status >= 300) return { uid };
   const tenantId = tenantRes.json('data.id');

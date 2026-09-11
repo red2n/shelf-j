@@ -23,7 +23,7 @@ class OrderClientParseTest {
     return "{\"data\":{"
         + customerIdField
         + "\"channel\":\"ONLINE\",\"total\":5.40,\"status\":\"PENDING\","
-        + "\"storeId\":\"1defa10f-22ee-46bf-9ba3-24b3d11586a8\"}}";
+        + "\"storeId\":\"01a090ae-611e-700d-b30c-06bbb83aac12\"}}";
   }
 
   @Test
@@ -43,7 +43,7 @@ class OrderClientParseTest {
   @Test
   void aCustomerOrderCarriesTheId() {
     var info =
-        OrderClient.parseOrder(body("\"customerId\":\"5d4acdfc-7913-4253-a432-ee5b0ab2a9c2\","));
-    assertEquals("5d4acdfc-7913-4253-a432-ee5b0ab2a9c2", info.customerId());
+        OrderClient.parseOrder(body("\"customerId\":\"01a090ae-611e-701a-acda-6dfc4bcb2f17\","));
+    assertEquals("01a090ae-611e-701a-acda-6dfc4bcb2f17", info.customerId());
   }
 }

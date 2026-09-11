@@ -2,7 +2,7 @@
 -- Tracks parent/child relationships between stock batches (SPLIT, MERGE, TRANSFORM).
 
 CREATE TABLE lot_genealogy (
-    id              UUID         NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID         NOT NULL,
     tenant_id       UUID         NOT NULL,
     parent_batch_id UUID         NOT NULL,
     child_batch_id  UUID         NOT NULL,

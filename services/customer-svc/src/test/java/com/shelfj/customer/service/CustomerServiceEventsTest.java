@@ -14,6 +14,7 @@ import com.shelfj.customer.dto.Dtos.AdjustPointsRequest;
 import com.shelfj.customer.dto.Dtos.IssueStoreCreditRequest;
 import com.shelfj.customer.dto.Dtos.RedeemStoreCreditRequest;
 import com.shelfj.customer.repo.CustomerRepository;
+import com.shelfj.ids.Ids;
 import com.shelfj.service.OutboxRow;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -34,8 +35,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class CustomerServiceEventsTest {
 
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID CUSTOMER = UUID.randomUUID();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID CUSTOMER = Ids.newId();
 
   @Mock CustomerRepository repo;
   private CustomerService service;
@@ -69,7 +70,7 @@ class CustomerServiceEventsTest {
     when(repo.adjustPoints(eq(TENANT), eq(CUSTOMER), any(), anyString(), captor.capture()))
         .thenReturn(
             new LoyaltyAccount(
-                UUID.randomUUID(),
+                Ids.newId(),
                 TENANT,
                 CUSTOMER,
                 BigDecimal.TEN,
@@ -94,7 +95,7 @@ class CustomerServiceEventsTest {
             eq(TENANT), eq(CUSTOMER), any(), anyString(), any(), any(), captor.capture()))
         .thenReturn(
             new StoreCreditAccount(
-                UUID.randomUUID(),
+                Ids.newId(),
                 TENANT,
                 CUSTOMER,
                 BigDecimal.TEN,
@@ -118,7 +119,7 @@ class CustomerServiceEventsTest {
             eq(TENANT), eq(CUSTOMER), any(), anyString(), any(), any(), captor.capture()))
         .thenReturn(
             new StoreCreditAccount(
-                UUID.randomUUID(),
+                Ids.newId(),
                 TENANT,
                 CUSTOMER,
                 BigDecimal.ZERO,

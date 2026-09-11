@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Domain.LotAction;
 import com.shelfj.service.BaseJdbcRepository;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -31,16 +32,17 @@ public class LotActionRepository extends BaseJdbcRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO lot_actions"
-                      + " (tenant_id,action_type,source_batch_id,result_batch_id,qty,notes)"
-                      + " VALUES (?,?,?,?,?,?)"
+                      + " (id,tenant_id,action_type,source_batch_id,result_batch_id,qty,notes)"
+                      + " VALUES (?,?,?,?,?,?,?)"
                       + " RETURNING id,tenant_id,action_type,source_batch_id,"
                       + "result_batch_id,qty,notes,created_at")) {
-            ps.setObject(1, tenantId);
-            ps.setString(2, actionType);
-            ps.setObject(3, sourceBatchId);
-            ps.setObject(4, resultBatchId);
-            ps.setBigDecimal(5, qty);
-            ps.setString(6, notes);
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setString(3, actionType);
+            ps.setObject(4, sourceBatchId);
+            ps.setObject(5, resultBatchId);
+            ps.setBigDecimal(6, qty);
+            ps.setString(7, notes);
             try (ResultSet rs = ps.executeQuery()) {
               rs.next();
               return mapLotAction(rs);

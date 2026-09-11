@@ -3,6 +3,7 @@ package com.shelfj.notification.messaging;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.notification.channel.NotificationChannel;
 import com.shelfj.notification.repo.NotificationRepository;
 import com.shelfj.notification.service.NotifierTestSupport;
@@ -18,8 +19,8 @@ import org.junit.jupiter.api.Test;
  */
 class FoodSafetyAlertHandlersTest {
 
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID STORE = UUID.randomUUID();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID STORE = Ids.newId();
 
   private static final class FakeChannel implements NotificationChannel {
     int sends;
@@ -43,7 +44,7 @@ class FoodSafetyAlertHandlersTest {
 
   private static final class FakeRepo extends NotificationRepository {
     boolean notified;
-    UUID subjectId = UUID.randomUUID();
+    UUID subjectId = Ids.newId();
 
     @Override
     public boolean alreadyNotified(UUID eventId, String type) {
@@ -85,7 +86,7 @@ class FoodSafetyAlertHandlersTest {
   void aWarmChillerTellsTheStoreTheReadingAndTheLimitOnce() {
     String payload =
         Json.createObjectBuilder()
-            .add("eventId", UUID.randomUUID().toString())
+            .add("eventId", Ids.newId().toString())
             .add("tenantId", TENANT.toString())
             .add("storeId", STORE.toString())
             .add("pointName", "Dairy chiller 1")
@@ -134,7 +135,7 @@ class FoodSafetyAlertHandlersTest {
   void aMissedCheckSaysWhenItWasDueInUtc() {
     overdue.handle(
         Json.createObjectBuilder()
-            .add("eventId", UUID.randomUUID().toString())
+            .add("eventId", Ids.newId().toString())
             .add("tenantId", TENANT.toString())
             .add("storeId", STORE.toString())
             .add("pointName", "Butchery chiller")

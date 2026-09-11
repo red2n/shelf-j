@@ -20,13 +20,13 @@ import org.junit.jupiter.api.Test;
  */
 class RecallTest {
 
-  private static final UUID VARIANT = UUID.randomUUID();
+  private static final UUID VARIANT = Ids.newId();
   private static final LocalDate OCT_1 = LocalDate.parse("2026-10-01");
   private static final LocalDate OCT_31 = LocalDate.parse("2026-10-31");
 
   @Test
   void aLineNamingNothingCoversEveryPackWhateverItsLotOrDate() {
-    Scope every = new Scope(UUID.randomUUID(), VARIANT, null, null, null);
+    Scope every = new Scope(Ids.newId(), VARIANT, null, null, null);
     assertTrue(every.coversEveryPack());
     assertEquals(Match.IN_SCOPE, every.classify("L1", OCT_1));
     assertEquals(Match.IN_SCOPE, every.classify(null, null));
@@ -34,7 +34,7 @@ class RecallTest {
 
   @Test
   void aLotIsMatchedIgnoringCaseAndSpacesAndAnotherLotIsRuledOut() {
-    Scope lot = new Scope(UUID.randomUUID(), VARIANT, "L-2291", null, null);
+    Scope lot = new Scope(Ids.newId(), VARIANT, "L-2291", null, null);
     assertEquals(Match.IN_SCOPE, lot.classify(" l-2291 ", null));
     assertNull(lot.classify("L-2292", null));
     assertEquals(Match.LOT_UNKNOWN, lot.classify(null, OCT_1));
@@ -43,7 +43,7 @@ class RecallTest {
 
   @Test
   void aBatchNumberTheServiceWroteItselfCannotRuleABatchOut() {
-    Scope lot = new Scope(UUID.randomUUID(), VARIANT, "L-2291", null, null);
+    Scope lot = new Scope(Ids.newId(), VARIANT, "L-2291", null, null);
     for (String system :
         List.of("ADJ", "CC-1a2b3c4d", "MO-1a2b3c4d", "TO-1a2b3c4d", "RET-1a2b3c4d")) {
       assertEquals(Match.LOT_UNKNOWN, lot.classify(system, OCT_1), system);
@@ -82,29 +82,29 @@ class RecallTest {
 
   @Test
   void datesAreInclusiveAndAnUnknownDateIsHeldAsPossiblyAffected() {
-    Scope range = new Scope(UUID.randomUUID(), VARIANT, null, OCT_1, OCT_31);
+    Scope range = new Scope(Ids.newId(), VARIANT, null, OCT_1, OCT_31);
     assertEquals(Match.IN_SCOPE, range.classify("L1", OCT_1));
     assertEquals(Match.IN_SCOPE, range.classify("L1", OCT_31));
     assertNull(range.classify("L1", OCT_31.plusDays(1)));
     assertNull(range.classify("L1", OCT_1.minusDays(1)));
     assertEquals(Match.DATE_UNKNOWN, range.classify("L1", null));
 
-    Scope onOrAfter = new Scope(UUID.randomUUID(), VARIANT, null, OCT_1, null);
+    Scope onOrAfter = new Scope(Ids.newId(), VARIANT, null, OCT_1, null);
     assertEquals(Match.IN_SCOPE, onOrAfter.classify(null, OCT_31.plusYears(1)));
   }
 
   @Test
   void aKnownMismatchOutranksAnUnknownAndTheMostCertainLineWins() {
-    Scope both = new Scope(UUID.randomUUID(), VARIANT, "L1", OCT_1, OCT_31);
+    Scope both = new Scope(Ids.newId(), VARIANT, "L1", OCT_1, OCT_31);
     assertNull(both.classify("L2", null), "a different lot rules it out, date or no date");
     assertNull(both.classify(null, OCT_31.plusDays(1)), "an out-of-range date rules it out");
     assertEquals(Match.LOT_UNKNOWN, both.classify(null, null));
 
     List<Scope> notice =
         List.of(
-            new Scope(UUID.randomUUID(), VARIANT, "L9", null, null),
-            new Scope(UUID.randomUUID(), VARIANT, null, OCT_1, OCT_31),
-            new Scope(UUID.randomUUID(), UUID.randomUUID(), null, null, null));
+            new Scope(Ids.newId(), VARIANT, "L9", null, null),
+            new Scope(Ids.newId(), VARIANT, null, OCT_1, OCT_31),
+            new Scope(Ids.newId(), Ids.newId(), null, null, null));
     assertEquals(Match.IN_SCOPE, Recall.classify(notice, VARIANT, null, OCT_1));
     assertEquals(Match.LOT_UNKNOWN, Recall.classify(notice, VARIANT, "ADJ", OCT_31.plusDays(9)));
     assertNull(Recall.classify(notice, VARIANT, "L1", OCT_31.plusDays(9)));

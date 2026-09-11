@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.comparesEqualTo;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -23,15 +24,15 @@ import org.junit.jupiter.api.Test;
  */
 class TotalsTest {
 
-  private static final UUID T = UUID.randomUUID();
-  private static final UUID PO = UUID.randomUUID();
+  private static final UUID T = Ids.newId();
+  private static final UUID PO = Ids.newId();
 
   private static PurchaseOrderLine line(String qty, String unitPrice, String vatCode) {
     return new PurchaseOrderLine(
-        UUID.randomUUID(),
+        Ids.newId(),
         T,
         PO,
-        UUID.randomUUID(),
+        Ids.newId(),
         new BigDecimal(qty),
         new BigDecimal(unitPrice),
         vatCode,

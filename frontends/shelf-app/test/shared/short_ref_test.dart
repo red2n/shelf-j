@@ -11,10 +11,6 @@ void main() {
       expect(shortRef(_v7), '0d72a43e');
     });
 
-    test('works the same for the older v4 ids already stored', () {
-      expect(shortRef('f47ac10b-58cc-4372-a567-0e02b2c3d479'), 'b2c3d479');
-    });
-
     // The worst case it exists for: a burst of ids from one millisecond, as a
     // busy till or a bulk import makes. They share the first eight characters
     // (the timestamp); their handles must all differ.

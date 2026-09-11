@@ -3,6 +3,7 @@ package com.shelfj.notification.messaging;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.notification.channel.NotificationChannel;
 import com.shelfj.notification.repo.NotificationRepository;
 import com.shelfj.notification.service.NotifierTestSupport;
@@ -21,9 +22,9 @@ import org.junit.jupiter.api.Test;
  */
 class RecallOpenedHandlerTest {
 
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID STORE_A = UUID.randomUUID();
-  private static final UUID STORE_B = UUID.randomUUID();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID STORE_A = Ids.newId();
+  private static final UUID STORE_B = Ids.newId();
 
   private static final class FakeChannel implements NotificationChannel {
     final List<String> recipients = new ArrayList<>();
@@ -114,7 +115,7 @@ class RecallOpenedHandlerTest {
       ids.add(s.toString());
     }
     return Json.createObjectBuilder()
-        .add("eventId", UUID.randomUUID().toString())
+        .add("eventId", Ids.newId().toString())
         .add("tenantId", TENANT.toString())
         .add("reference", "FSA-PRIN-42-2026")
         .add("kind", kind)

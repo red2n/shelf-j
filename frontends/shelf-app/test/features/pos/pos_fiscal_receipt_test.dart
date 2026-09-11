@@ -37,7 +37,7 @@ const _issued = (200, '{"data":{"fullNumber":"2026-000042","number":42}}');
 Dio _dio(_Replies r) => Dio(BaseOptions(baseUrl: 'http://test'))..httpClientAdapter = r;
 
 PosReceiptData _receipt({String? number, String? note}) => PosReceiptData(
-      orderId: '9f3c2a1b-0000-0000-0000-000000000000',
+      orderId: '01a090ae-611e-701e-a773-cff68a489efe',
       storeName: 'High Street',
       dateTime: DateTime(2026, 9, 10, 11, 30),
       items: const [],

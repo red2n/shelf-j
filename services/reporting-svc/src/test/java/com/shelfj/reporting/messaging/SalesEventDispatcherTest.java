@@ -3,6 +3,7 @@ package com.shelfj.reporting.messaging;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.reporting.service.ReportingService;
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -17,11 +18,11 @@ import org.junit.jupiter.api.Test;
  */
 class SalesEventDispatcherTest {
 
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID ORDER = UUID.randomUUID();
-  private static final UUID STORE = UUID.randomUUID();
-  private static final UUID CUSTOMER = UUID.randomUUID();
-  private static final UUID EVENT = UUID.randomUUID();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID ORDER = Ids.newId();
+  private static final UUID STORE = Ids.newId();
+  private static final UUID CUSTOMER = Ids.newId();
+  private static final UUID EVENT = Ids.newId();
 
   private static final class CapturingService extends ReportingService {
     int sales;
@@ -125,7 +126,7 @@ class SalesEventDispatcherTest {
             + "\",\"eventType\":\"PaymentRefunded\",\"tenantId\":\""
             + TENANT
             + "\",\"refundId\":\""
-            + UUID.randomUUID()
+            + Ids.newId()
             + "\",\"orderId\":\""
             + ORDER
             + "\",\"amount\":25.00}";

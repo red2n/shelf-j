@@ -97,21 +97,42 @@
     <!-- ── Shelf-J rules ───────────────────────────────────────────────────── -->
     <rule name="UseTimeOrderedIds"
           language="java"
-          message="Mint ids with com.shelfj.ids.Ids.newId() (UUIDv7), not UUID.randomUUID()"
+          message="Shelf-J ids are UUIDv7: use Ids.newId(), or Ids.derived(source, name) for a deterministic key"
           class="net.sourceforge.pmd.lang.rule.xpath.XPathRule">
         <description>
-            UUID.randomUUID() makes version-4 ids, and each insert of one lands on a random B-tree
-            page: more page splits, half-full indexes and more WAL than time-ordered UUIDv7 ids,
-            which append at the right-hand edge. Use Ids.newId(). Where the value is not an id and
-            has to be random all the way through (a suffix cut from the first characters, which in
-            a v7 id are the clock), keep randomUUID() behind @SuppressWarnings("PMD.UseTimeOrderedIds")
-            with a comment saying why.
+            UUID.randomUUID() makes version-4 ids and UUID.nameUUIDFromBytes() version-3 ones. Shelf-J
+            stores only UUIDv7: new rows append at the right-hand edge of a B-tree instead of landing
+            on a random page. Use Ids.newId(); for a key that must come out the same every time (a
+            dedupe id per event line) use Ids.derived(source, name). A random value that is not an
+            id comes from SecureRandom, not from a UUID.
         </description>
         <priority>3</priority>
         <properties>
             <property name="xpath">
                 <value><![CDATA[
-//MethodCall[pmd-java:matchesSig('java.util.UUID#randomUUID()')]
+//MethodCall[pmd-java:matchesSig('java.util.UUID#randomUUID()')
+           or pmd-java:matchesSig('java.util.UUID#nameUUIDFromBytes(byte[])')]
+                ]]></value>
+            </property>
+        </properties>
+    </rule>
+
+    <rule name="NoDatabaseMintedIds"
+          language="java"
+          message="Bind Ids.newId() instead of letting SQL make a uuid: gen_random_uuid() and uuid_generate_v4() make version-4 ids"
+          class="net.sourceforge.pmd.lang.rule.xpath.XPathRule">
+        <description>
+            SQL that calls gen_random_uuid() or uuid-ossp's uuid_generate_v*() stores ids of another
+            version, and neither Ids.newId() nor UseTimeOrderedIds can see it. Put id in the column
+            list and bind Ids.newId(). The one set-based insert that cannot (demand_history) calls the
+            schema's uuid_v7() function.
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="xpath">
+                <value><![CDATA[
+//StringLiteral[contains(lower-case(@ConstValue), 'gen_random_uuid')
+             or contains(lower-case(@ConstValue), 'uuid_generate_v')]
                 ]]></value>
             </property>
         </properties>

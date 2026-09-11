@@ -5,7 +5,7 @@ import { baseUrl } from './common.js';
 export const options = { vus: 1, iterations: 1 };
 
 const JSON_CT = { 'Content-Type': 'application/json' };
-const FAKE_UUID = '00000000-0000-0000-0000-000000000001';
+const FAKE_UUID = '01a090ae-611e-7001-a690-2682e4afcb55';
 
 function setupTenant() {
   const email = `k6-order-${Date.now()}@example.com`;
@@ -142,7 +142,7 @@ export default function () {
     // [-] Receipt for unknown order → 404
     check(
       http.post(
-        `${baseUrl}/api/order-svc/admin/orders/00000000-0000-0000-0000-000000000000/receipts`,
+        `${baseUrl}/api/order-svc/admin/orders/01a090ae-611e-7000-9e1a-0f8a9e565153/receipts`,
         JSON.stringify({ receiptType: 'PRINT' }),
         { headers: hdrs }
       ),
@@ -219,7 +219,7 @@ export default function () {
   // [-] Unknown special order → 404
   check(
     http.get(
-      `${baseUrl}/api/order-svc/admin/special-orders/00000000-0000-0000-0000-000000000000`,
+      `${baseUrl}/api/order-svc/admin/special-orders/01a090ae-611e-7000-9e1a-0f8a9e565153`,
       { headers: hdrs }
     ),
     { '[-] get unknown special order 404': (r) => r.status === 404 }

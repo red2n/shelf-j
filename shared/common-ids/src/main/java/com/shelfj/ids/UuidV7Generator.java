@@ -56,9 +56,20 @@ final class UuidV7Generator {
       sequence.lastMillis++;
       sequence.counter = (int) (random.getAsLong() & COUNTER_SEED_MASK);
     }
+    return layout(sequence.lastMillis, sequence.counter, random.getAsLong());
+  }
+
+  /**
+   * The version-7 bit layout, shared by generated and derived ids.
+   *
+   * @param millis Unix-epoch milliseconds; the low 48 bits are used
+   * @param twelveBits the counter or other value for the 12 bits after the version; low 12 used
+   * @param sixtyTwoBits the value for the 62 bits after the variant; low 62 used
+   */
+  static UUID layout(long millis, long twelveBits, long sixtyTwoBits) {
     return new UUID(
-        (sequence.lastMillis << 16) | VERSION_7 | sequence.counter,
-        (random.getAsLong() & RANDOM_62_BITS) | VARIANT_RFC);
+        ((millis & 0xFFFF_FFFF_FFFFL) << 16) | VERSION_7 | (twelveBits & COUNTER_MAX),
+        (sixtyTwoBits & RANDOM_62_BITS) | VARIANT_RFC);
   }
 
   /** One thread's place: the millisecond it last used and its counter within it. */

@@ -1,5 +1,6 @@
 package com.shelfj.notification.messaging;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.notification.service.Notifier;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -9,7 +10,6 @@ import jakarta.json.JsonString;
 import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -82,7 +82,7 @@ class RecallOpenedHandler {
   }
 
   static UUID perStore(UUID eventId, UUID storeId) {
-    return UUID.nameUUIDFromBytes((eventId + ":" + storeId).getBytes(StandardCharsets.UTF_8));
+    return Ids.derived(eventId, "store:" + storeId);
   }
 
   private static String hazardText(String hazard) {
