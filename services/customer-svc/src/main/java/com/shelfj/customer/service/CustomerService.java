@@ -155,7 +155,22 @@ public class CustomerService {
   /** GDPR right-to-erasure: anonymizes PII in place; retains the record for audit. */
   public Customer anonymize(UUID tenantId, UUID customerId) {
     get(tenantId, customerId);
-    return repo.anonymize(tenantId, customerId);
+    // Ids only. The event outlives its handling — in the outbox and on the topic — so it must not
+    // carry the email or phone it exists to erase.
+    String payload =
+        Json.createObjectBuilder()
+            .add("eventId", UUID.randomUUID().toString())
+            .add("eventType", "CustomerErased")
+            .add("tenantId", tenantId.toString())
+            .add("customerId", customerId.toString())
+            .add("occurredAt", Instant.now().toString())
+            .build()
+            .toString();
+    return repo.anonymize(
+        tenantId,
+        customerId,
+        new OutboxRow(
+            "CustomerErased", "shelfj.customer.customer-erased", tenantId, customerId, payload));
   }
 
   /** POS barcode / QR code lookup by email or phone. */

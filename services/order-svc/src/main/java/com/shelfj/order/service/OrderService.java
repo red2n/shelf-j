@@ -1069,6 +1069,22 @@ public class OrderService {
     }
   }
 
+  /**
+   * A customer this shop erased (SJ-D43). Settled orders lose what identifies the customer now;
+   * open ones keep their delivery details until they finish, then {@link #sweepErasures} takes
+   * them.
+   *
+   * @return false when the event had already been applied
+   */
+  public boolean handleCustomerErased(UUID tenantId, UUID customerId, UUID eventId) {
+    return repo.applyCustomerErasure(tenantId, customerId, eventId, "order-svc/customer-erased");
+  }
+
+  /** Redacts orders that have finished since their customer was erased. */
+  public int sweepErasures() {
+    return repo.sweepErasures();
+  }
+
   public void handlePaymentFailed(java.util.UUID tenantId, java.util.UUID orderId) {
     repo.findOrder(tenantId, orderId)
         .ifPresent(
@@ -1526,7 +1542,15 @@ public class OrderService {
       java.util.Set<String> roles =
           ctx != null && ctx.roles() != null ? ctx.roles() : java.util.Set.of("CASHIER");
       notifications.send(
-          tenantId, userId, roles, req.emailedTo().trim(), subject, body, "POS_RECEIPT", eventId);
+          tenantId,
+          userId,
+          roles,
+          req.emailedTo().trim(),
+          subject,
+          body,
+          "POS_RECEIPT",
+          eventId,
+          order.customerId());
     }
 
     int printCount = req.printCount() != null ? req.printCount() : 1;

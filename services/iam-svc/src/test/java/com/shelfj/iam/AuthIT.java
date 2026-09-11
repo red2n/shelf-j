@@ -368,4 +368,107 @@ class AuthIT {
     int end = json.indexOf('"', start);
     return json.substring(start, end);
   }
+
+  // ── SJ-D43: the account holder deletes their own login ─────────────────────
+
+  private String registerAndGetUserId(String email) {
+    Response reg =
+        post("/auth/register", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
+    assertThat(reg.getStatus(), is(201));
+    String access = extract(reg.readEntity(String.class), "accessToken");
+    String me =
+        target
+            .path("/auth/me")
+            .request()
+            .header("Authorization", "Bearer " + access)
+            .get(String.class);
+    return extract(me, "userId");
+  }
+
+  private Response deleteAccount(String userId, String password) {
+    return target
+        .path("/auth/delete-account")
+        .request()
+        .header("X-User-Id", userId)
+        .post(Entity.entity("{\"password\":\"" + password + "\"}", MediaType.APPLICATION_JSON));
+  }
+
+  @Test
+  void aCustomerCanDeleteTheirOwnAccount() throws Exception {
+    Response reg =
+        post("/auth/register", "{\"email\":\"leaving@example.com\",\"password\":\"strongpass1\"}");
+    assertThat(reg.getStatus(), is(201));
+    String regBody = reg.readEntity(String.class);
+    String refresh = extract(regBody, "refreshToken");
+    String me =
+        target
+            .path("/auth/me")
+            .request()
+            .header("Authorization", "Bearer " + extract(regBody, "accessToken"))
+            .get(String.class);
+    String userId = extract(me, "userId");
+
+    // A session left open on a shared device is not enough: the password is asked for again.
+    assertThat(deleteAccount(userId, "not-my-password").getStatus(), is(401));
+    assertThat(deleteAccount(userId, "strongpass1").getStatus(), is(200));
+
+    // The login no longer works, and no session survives it.
+    assertThat(
+        post("/auth/login", "{\"email\":\"leaving@example.com\",\"password\":\"strongpass1\"}")
+            .getStatus(),
+        is(401));
+    assertThat(
+        post("/auth/refresh", "{\"refreshToken\":\"" + refresh + "\"}").getStatus(), is(401));
+
+    // What identified the person is gone from the row; the row itself stays.
+    try (var c = iamConnection();
+        var ps =
+            c.prepareStatement(
+                "SELECT email, phone, password_hash, status FROM users WHERE id = ?")) {
+      ps.setObject(1, java.util.UUID.fromString(userId));
+      try (var rs = ps.executeQuery()) {
+        assertThat(rs.next(), is(true));
+        assertThat(rs.getString("email"), org.hamcrest.Matchers.nullValue());
+        assertThat(rs.getString("password_hash"), org.hamcrest.Matchers.nullValue());
+        assertThat(rs.getString("status"), is("DELETED"));
+      }
+      // Other services are told, and the event carries no email.
+      try (var ev =
+          c.prepareStatement(
+              "SELECT payload FROM outbox WHERE event_type = 'AccountDeleted' AND aggregate_id = ?")) {
+        ev.setObject(1, java.util.UUID.fromString(userId));
+        try (var rs = ev.executeQuery()) {
+          assertThat(rs.next(), is(true));
+          assertThat(rs.getString(1).contains("leaving@example.com"), is(false));
+        }
+      }
+    }
+
+    // The same address can open a new account later — a new one, not the old one back.
+    Response again =
+        post("/auth/register", "{\"email\":\"leaving@example.com\",\"password\":\"anotherpass2\"}");
+    assertThat(again.getStatus(), is(201));
+  }
+
+  @Test
+  void deletingTwiceIsRefusedNotRepeated() {
+    String userId = registerAndGetUserId("twice@example.com");
+    assertThat(deleteAccount(userId, "strongpass1").getStatus(), is(200));
+    // The account is no longer active, so the same request cannot be verified a second time.
+    assertThat(deleteAccount(userId, "strongpass1").getStatus(), is(401));
+  }
+
+  @Test
+  void aStaffAccountIsNotDeletedHere() throws Exception {
+    String userId = registerAndGetUserId("employee@example.com");
+    try (var c = iamConnection();
+        var ps = c.prepareStatement("UPDATE users SET type = 'STAFF' WHERE id = ?")) {
+      ps.setObject(1, java.util.UUID.fromString(userId));
+      ps.executeUpdate();
+    }
+    // A staff login belongs to the business that employs its holder, which removes it.
+    Response r = deleteAccount(userId, "strongpass1");
+    assertThat(r.getStatus(), is(403));
+    assertThat(r.readEntity(String.class).contains("ACCOUNT_MANAGED_BY_EMPLOYER"), is(true));
+  }
 }

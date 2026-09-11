@@ -170,18 +170,45 @@ public class CustomerRepository extends BaseOutboxRepository {
         "update customer");
   }
 
-  public Customer anonymize(UUID tenantId, UUID customerId) {
+  /**
+   * Erases a customer's personal data in this service and tells every other service, in one
+   * transaction.
+   *
+   * <p>SJ-D43. This was a single UPDATE on the customers row. It left every saved address in
+   * customer_addresses, published nothing, and nothing anywhere listened — so the names, phones and
+   * addresses on the customer's orders, and every message sent to them, survived an erasure.
+   *
+   * <p>The event is written only by the call that actually erased the customer, so repeating the
+   * request does not ask every other service to do it again.
+   */
+  public Customer anonymize(UUID tenantId, UUID customerId, OutboxRow erasedEvent) {
     Instant now = Instant.now();
-    exec(
-        "UPDATE customers SET email = 'anon-' || id || '@deleted', phone = NULL,"
-            + " first_name = 'Deleted', last_name = 'User', dob = NULL, gender = NULL,"
-            + " gdpr_consent_at = NULL, status = 'ANONYMIZED', anonymized_at = ?,"
-            + " updated_at = ? WHERE tenant_id = ? AND id = ?",
-        ps -> {
-          ps.setObject(1, now.atOffset(ZoneOffset.UTC));
-          ps.setObject(2, now.atOffset(ZoneOffset.UTC));
-          ps.setObject(3, tenantId);
-          ps.setObject(4, customerId);
+    inTx(
+        conn -> {
+          int erased;
+          try (var ps =
+              conn.prepareStatement(
+                  "UPDATE customers SET email = 'anon-' || id || '@deleted', phone = NULL,"
+                      + " first_name = 'Deleted', last_name = 'User', dob = NULL, gender = NULL,"
+                      + " gdpr_consent_at = NULL, status = 'ANONYMIZED', anonymized_at = ?,"
+                      + " updated_at = ? WHERE tenant_id = ? AND id = ? AND status <> 'ANONYMIZED'")) {
+            ps.setObject(1, now.atOffset(ZoneOffset.UTC));
+            ps.setObject(2, now.atOffset(ZoneOffset.UTC));
+            ps.setObject(3, tenantId);
+            ps.setObject(4, customerId);
+            erased = ps.executeUpdate();
+          }
+          if (erased > 0) {
+            try (var ps =
+                conn.prepareStatement(
+                    "DELETE FROM customer_addresses WHERE tenant_id = ? AND customer_id = ?")) {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, customerId);
+              ps.executeUpdate();
+            }
+            insertOutbox(conn, erasedEvent);
+          }
+          return null;
         },
         "anonymize customer");
     return findById(tenantId, customerId)

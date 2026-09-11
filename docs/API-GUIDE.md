@@ -77,7 +77,7 @@ Customer master data for the storefront and POS.
 - `GET /customers/lookup?email=&phone=` — find a customer by email or phone (POS/CRM lookup).
 - `GET /customers/{id}` — get a customer profile.
 - `PUT /customers/{id}` — update a customer profile.
-- `DELETE /customers/{id}` — GDPR erasure/anonymize a customer.
+- `DELETE /customers/{id}` — GDPR erasure/anonymize a customer (SJ-D43: also deletes their saved addresses and publishes `CustomerErased` so order-svc and notification-svc redact what they hold about them).
 - `POST /customers/{id}/addresses` — add a delivery/billing address.
 - `GET /customers/{id}/addresses` — list a customer's addresses.
 - `PUT /customers/{id}/addresses/{addressId}` — update an address.
@@ -102,7 +102,7 @@ Customer master data for the storefront and POS.
 
 **Events**
 - Consumes: `OrderConfirmed` (auto-accrues loyalty points).
-- Publishes: `CustomerRegistered`, `LoyaltyEarned`, `LoyaltyRedeemed`, `LoyaltyAdjusted`, `StoreCreditIssued`, `StoreCreditRedeemed`.
+- Publishes: `CustomerRegistered`, `LoyaltyEarned`, `LoyaltyRedeemed`, `LoyaltyAdjusted`, `StoreCreditIssued`, `StoreCreditRedeemed`, `CustomerErased` (SJ-D43; ids only — no email/phone, since the event outlives the erasure it announces).
 
 ---
 
@@ -116,6 +116,7 @@ Customer master data for the storefront and POS.
 - `POST /auth/refresh` — exchange a refresh token for a new access token.
 - `POST /auth/logout` — revoke a refresh token.
 - `PUT /auth/change-password` — change the caller's own password.
+- `POST /auth/delete-account` — a customer deletes their own login (SJ-D43; requires the password again). Refused (403) for a staff account — that's removed by the business that employs its holder, not self-service.
 
 ### Bootstrap (`/bootstrap`)
 - `POST /bootstrap/admin` — one-time creation of the first `PLATFORM_ADMIN` for a fresh deployment (refuses once one already exists; not JWT-gated by necessity).
@@ -137,7 +138,7 @@ Customer master data for the storefront and POS.
 
 **Events**
 - Consumes: `TenantCreated`, `StaffAssigned` (grants the store role), `StoreStatusChanged`, `TenantStatusChanged`.
-- Publishes: `UserRegistered`.
+- Publishes: `UserRegistered`, `AccountDeleted` (SJ-D43; id only, on self-service account deletion).
 
 ---
 
@@ -281,7 +282,7 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - MQTT auth: every client (including this service's own publisher connection) presents a shelfj platform JWT as the MQTT password; the broker (EMQX) verifies it and ties the connecting username to the JWT's `tenant` claim, then ACL-scopes reads to that tenant's own topic subtree — see `infra/emqx.conf` / `infra/emqx-acl.conf`.
 
 **Events**
-- Consumes: `OrderConfirmed` (order-confirmation notice), `StockBelowThreshold` (shortage alert), `UserRegistered` (welcome/registration notice).
+- Consumes: `OrderConfirmed` (order-confirmation notice), `StockBelowThreshold` (shortage alert), `UserRegistered` (welcome/registration notice), `CustomerErased` (SJ-D43; redacts the recipient/subject/body of that shop's messages to the customer), `AccountDeleted` (SJ-D43; redacts the platform's own messages to the deleted account, e.g. `WELCOME` — a shop's own messages are redacted by its own `CustomerErased` instead).
 - Publishes: none.
 
 ---
@@ -325,8 +326,10 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - **A till sale is handed over the moment it is paid for (SJ-D40).** The capture that completes it moves it `PENDING → CONFIRMED → FULFILLED` in one transaction and writes `OrderFulfilled` alongside `OrderConfirmed`. Before this, inventory-svc deducted stock only on `OrderFulfilled` and nothing ever fulfilled a till sale — the till places the order, payment capture confirmed it, and there it stopped. Stock moved only if a manager later opened each sale and clicked *Mark fulfilled*. `PICKUP` counts as a till sale as well as `INSTORE` because the till sent `PICKUP` for every tendered sale until the fix, and sales already queued offline replay with it. `DELIVERY` is not: goods leaving on a van are handed over when they arrive. A partial tender or a redelivered capture writes nothing, so a sale is fulfilled — and deducted — exactly once.
 - The POS stock-position projection is explicitly documented as eventually consistent and must not be used to make reservation decisions.
 
+- **A customer this shop erased keeps their delivery details only until an open order finishes (SJ-D43).** `CustomerErased` redacts a settled order's contact/delivery fields and any parked-sale/special-order name at once; an order still in flight is left alone until it reaches a settled state (fulfilled, cancelled, voided, refunded) and is caught by an hourly sweep — the address is still needed to deliver it. The sale record itself (amounts, tax, lines) is never touched; only what identifies the customer is.
+
 **Events**
-- Consumes: `StockReceived`, `StockDeducted`, `StockAdjusted` (feeds the POS stock-position projection), `PaymentCaptured`, `PaymentFailed`, `PaymentRefunded` (order confirmation/refund status), `StoreStatusChanged`, `TenantStatusChanged`.
+- Consumes: `StockReceived`, `StockDeducted`, `StockAdjusted` (feeds the POS stock-position projection), `PaymentCaptured`, `PaymentFailed`, `PaymentRefunded` (order confirmation/refund status), `StoreStatusChanged`, `TenantStatusChanged`, `CustomerErased` (SJ-D43).
 - Publishes: `OrderPlaced`, `OrderConfirmed`, `OrderCancelled`, `OrderFulfilled`, `OrderReturned`, `OrderVoided`, `LayawayCreated`, `LayawayCompleted`, `LayawayCancelled`.
 
 ---

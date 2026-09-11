@@ -62,7 +62,15 @@ public final class Dtos {
               description =
                   "Optional idempotency id. When set, re-sends with the same (eventId, type) are"
                       + " no-ops. When omitted a new UUID is minted (always delivers).")
-          String eventId) {}
+          String eventId,
+      @Schema(
+              description =
+                  "The shop's customer this message is about, when there is one. Recorded so that"
+                      + " erasing the customer erases the message too (SJ-D43).")
+          @jakarta.validation.constraints.Pattern(
+              regexp = "^[0-9a-fA-F-]{36}$",
+              message = "customerId must be a UUID")
+          String customerId) {}
 
   @Schema(name = "SendNotificationResponse")
   public record SendNotificationResponse(

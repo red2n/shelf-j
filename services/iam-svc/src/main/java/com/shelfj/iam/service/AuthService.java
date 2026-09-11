@@ -312,6 +312,43 @@ public class AuthService {
     users.audit(user.tenantId(), userId, "PASSWORD_CHANGED", user.email());
   }
 
+  /**
+   * The account holder deletes their own login (SJ-D43).
+   *
+   * <p>The password is asked for again: a session left signed in on a shared device must not be
+   * enough to delete someone's account. A staff account is refused — it belongs to the business
+   * that employs its holder, which removes it.
+   */
+  public void deleteAccount(UUID userId, String password) {
+    User user =
+        users
+            .findById(userId)
+            .orElseThrow(() -> ApiException.unauthorized("USER_NOT_FOUND", "User not found"));
+    if (!User.TYPE_CUSTOMER.equals(user.type())) {
+      throw ApiException.forbidden(
+          "ACCOUNT_MANAGED_BY_EMPLOYER",
+          "A staff account is removed by the business that employs you, not deleted here");
+    }
+    if (!User.STATUS_ACTIVE.equals(user.status())
+        || user.passwordHash() == null
+        || !passwords.verify(user.passwordHash(), password)) {
+      users.audit(null, userId, "ACCOUNT_DELETE_REFUSED", null);
+      throw ApiException.unauthorized("INVALID_CREDENTIALS", "Password is incorrect");
+    }
+    // Ids only: the event outlives its handling, so it must not carry what it erases.
+    String payload =
+        Json.createObjectBuilder()
+            .add("eventId", UUID.randomUUID().toString())
+            .add("eventType", "AccountDeleted")
+            .add("aggregateId", userId.toString())
+            .add("occurredAt", Instant.now().toString())
+            .build()
+            .toString();
+    users.deleteCustomerAccount(
+        user, new OutboxRow("AccountDeleted", "shelfj.iam.account-deleted", null, userId, payload));
+    users.audit(null, userId, "ACCOUNT_DELETED", null);
+  }
+
   // --- helpers ---
 
   private TokenResponse issueTokens(User user) {

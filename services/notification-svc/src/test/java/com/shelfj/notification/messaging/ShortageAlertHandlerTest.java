@@ -69,6 +69,7 @@ class ShortageAlertHandlerTest {
     @Override
     public void recordNotification(
         UUID tenantId,
+        UUID subjectId,
         UUID eventId,
         String type,
         String channel,

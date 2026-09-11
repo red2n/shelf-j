@@ -66,7 +66,8 @@ public class NotificationClient {
       String subject,
       String body,
       String type,
-      UUID eventId) {
+      UUID eventId,
+      UUID customerId) {
     ServiceInstance instance =
         registry
             .resolve(NOTIFICATION_SERVICE)
@@ -75,15 +76,18 @@ public class NotificationClient {
                     unavailable(
                         "notification-svc is not available — receipt was not emailed", null));
 
-    String payload =
+    var json =
         Json.createObjectBuilder()
             .add("recipient", recipient)
             .add("subject", subject)
             .add("body", body)
             .add("type", type == null ? "POS_RECEIPT" : type)
-            .add("eventId", eventId.toString())
-            .build()
-            .toString();
+            .add("eventId", eventId.toString());
+    // SJ-D43: names the customer, so erasing them erases the emailed receipt's log entry too.
+    if (customerId != null) {
+      json.add("customerId", customerId.toString());
+    }
+    String payload = json.build().toString();
 
     String rolesHeader =
         roles == null || roles.isEmpty()

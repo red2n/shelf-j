@@ -69,7 +69,10 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
           "/auth/platform-login",
           "/auth/refresh",
           "/auth/logout",
-          "/auth/change-password");
+          "/auth/change-password",
+          // The account holder deleting their own login — same object-level rule as changing its
+          // password: the user id comes from the verified token, never from the request.
+          "/auth/delete-account");
 
   @Inject TenantContext ctx;
 

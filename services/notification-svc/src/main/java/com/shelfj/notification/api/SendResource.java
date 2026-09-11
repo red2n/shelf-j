@@ -54,7 +54,12 @@ public class SendResource {
             ? UUID.fromString(req.eventId())
             : UUID.randomUUID();
     String type = req.type() == null || req.type().isBlank() ? "MANUAL" : req.type().trim();
-    notifier.notifyOnce(eventId, type, tenantId, req.recipient(), req.subject(), req.body());
+    UUID customerId =
+        req.customerId() != null && !req.customerId().isBlank()
+            ? UUID.fromString(req.customerId())
+            : null;
+    notifier.notifyOnce(
+        eventId, type, tenantId, customerId, req.recipient(), req.subject(), req.body());
     return Response.accepted()
         .entity(ApiResponse.ok(new SendNotificationResponse(eventId.toString(), type, "SENT")))
         .build();

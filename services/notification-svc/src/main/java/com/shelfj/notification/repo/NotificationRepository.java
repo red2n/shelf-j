@@ -96,6 +96,7 @@ public class NotificationRepository extends BaseJdbcRepository {
    */
   public void recordNotification(
       UUID tenantId,
+      UUID subjectId,
       UUID eventId,
       String type,
       String channel,
@@ -105,21 +106,62 @@ public class NotificationRepository extends BaseJdbcRepository {
       String status) {
     exec(
         "INSERT INTO notification_log"
-            + " (id, tenant_id, event_id, type, channel, recipient, subject, body, status)"
-            + " VALUES (?,?,?,?,?,?,?,?,?)"
+            + " (id, tenant_id, subject_id, event_id, type, channel, recipient, subject, body,"
+            + " status)"
+            + " VALUES (?,?,?,?,?,?,?,?,?,?)"
             + " ON CONFLICT (event_id, type) DO NOTHING",
         ps -> {
           ps.setObject(1, UUID.randomUUID());
           ps.setObject(2, tenantId);
-          ps.setObject(3, eventId);
-          ps.setString(4, type);
-          ps.setString(5, channel);
-          ps.setString(6, recipient);
-          ps.setString(7, subject);
-          ps.setString(8, body);
-          ps.setString(9, status);
+          ps.setObject(3, subjectId);
+          ps.setObject(4, eventId);
+          ps.setString(5, type);
+          ps.setString(6, channel);
+          ps.setString(7, recipient);
+          ps.setString(8, subject);
+          ps.setString(9, body);
+          ps.setString(10, status);
         },
         "record notification");
+  }
+
+  /**
+   * Erases the messages one shop sent about one customer (SJ-D43). The row stays, so the send is
+   * still accounted for; who it went to and what it said do not. Idempotent: a redacted row is not
+   * touched again.
+   */
+  public int redactForCustomer(UUID tenantId, UUID customerId) {
+    return redact(
+        "UPDATE notification_log SET recipient = '[erased]', subject = '[erased]', body = '',"
+            + " redacted_at = now()"
+            + " WHERE tenant_id = ? AND subject_id = ? AND redacted_at IS NULL",
+        tenantId,
+        customerId);
+  }
+
+  /**
+   * Erases the platform's own messages about a deleted account — the ones sent with no shop, such
+   * as WELCOME. Messages a shop sent stay with that shop, which erases them itself.
+   */
+  public int redactForAccount(UUID userId) {
+    return redact(
+        "UPDATE notification_log SET recipient = '[erased]', subject = '[erased]', body = '',"
+            + " redacted_at = now()"
+            + " WHERE tenant_id IS NULL AND subject_id = ? AND redacted_at IS NULL",
+        userId);
+  }
+
+  private int redact(String sql, UUID... params) {
+    return inTx(
+        c -> {
+          try (var ps = c.prepareStatement(sql)) {
+            for (int i = 0; i < params.length; i++) {
+              ps.setObject(i + 1, params[i]);
+            }
+            return ps.executeUpdate();
+          }
+        },
+        "redact notifications");
   }
 
   /** Recent in-app notifications for a tenant, newest first, optionally filtered by recipient. */

@@ -25,11 +25,17 @@ class UserRegisteredHandler {
   void handle(String json) {
     UUID eventId;
     UUID tenantId;
+    UUID userId;
     String email;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       eventId = UUID.fromString(obj.getString("eventId"));
       email = obj.getString("email", null);
+      // The account the welcome is about, so deleting the account can erase it.
+      userId =
+          obj.containsKey("aggregateId") && !obj.isNull("aggregateId")
+              ? UUID.fromString(obj.getString("aggregateId"))
+              : null;
       tenantId =
           obj.containsKey("tenantId") && !obj.isNull("tenantId")
               ? UUID.fromString(obj.getString("tenantId"))
@@ -44,6 +50,6 @@ class UserRegisteredHandler {
     }
     String body =
         "Hi,\n\nYour Shelf-J account (" + email + ") is ready. Welcome aboard!\n\n— Shelf-J";
-    notifier.notifyOnce(eventId, "WELCOME", tenantId, email, "Welcome to Shelf-J", body);
+    notifier.notifyOnce(eventId, "WELCOME", tenantId, userId, email, "Welcome to Shelf-J", body);
   }
 }

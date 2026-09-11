@@ -263,6 +263,177 @@ public class OrderRepository extends BaseOutboxRepository {
         "transition order " + orderId);
   }
 
+  // ── SJ-D43: erasing a customer from this shop's orders ─────────────────────
+
+  /**
+   * States in which a sale is over, so nothing still has to reach the customer. An order in any
+   * other state keeps its delivery details until it gets here.
+   */
+  private static final String SETTLED_ORDER =
+      "('FULFILLED','CANCELLED','VOIDED','REFUNDED','PARTIALLY_REFUNDED')";
+
+  private static final String REDACT_ORDER =
+      " SET contact_phone = NULL, delivery_line1 = NULL, delivery_line2 = NULL,"
+          + " delivery_city = NULL, delivery_postal_code = NULL, delivery_recipient_name = NULL,"
+          + " delivery_recipient_phone = NULL, notes = NULL, updated_at = now()";
+
+  private static final String REDACT_SPECIAL_ORDER =
+      "UPDATE special_orders s SET customer_name = NULL, customer_phone = NULL,"
+          + " customer_email = NULL, delivery_address = NULL, notes = NULL, updated_at = now()";
+
+  private static final String SPECIAL_ORDER_SETTLED_AND_IDENTIFIES =
+      " s.status IN ('FULFILLED','CANCELLED')"
+          + " AND (s.customer_name IS NOT NULL OR s.customer_phone IS NOT NULL"
+          + " OR s.customer_email IS NOT NULL OR s.delivery_address IS NOT NULL"
+          + " OR s.notes IS NOT NULL)";
+
+  /** A layaway's free-text notes are the only thing on it that can name the customer. */
+  private static final String LAYAWAY_SETTLED_WITH_NOTES =
+      " l.status IN ('COMPLETED','CANCELLED') AND l.notes IS NOT NULL";
+
+  private static final String ORDER_STILL_IDENTIFIES =
+      " (o.contact_phone IS NOT NULL OR o.delivery_line1 IS NOT NULL"
+          + " OR o.delivery_line2 IS NOT NULL OR o.delivery_city IS NOT NULL"
+          + " OR o.delivery_postal_code IS NOT NULL OR o.delivery_recipient_name IS NOT NULL"
+          + " OR o.delivery_recipient_phone IS NOT NULL OR o.notes IS NOT NULL)";
+
+  /**
+   * Records a customer's erasure and redacts everything that can go now, once per event.
+   *
+   * @return false for a redelivered event, which changes nothing
+   */
+  public boolean applyCustomerErasure(
+      UUID tenantId, UUID customerId, UUID eventId, String consumer) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumer)) {
+            return false;
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO customer_erasures (tenant_id, customer_id, event_id)"
+                      + " VALUES (?,?,?) ON CONFLICT DO NOTHING")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, customerId);
+            ps.setObject(3, eventId);
+            ps.executeUpdate();
+          }
+          redactCustomerInTx(c, tenantId, customerId);
+          return true;
+        },
+        "apply customer erasure");
+  }
+
+  private static void redactCustomerInTx(Connection c, UUID tenantId, UUID customerId)
+      throws SQLException {
+    // Settled orders only: an open delivery still needs its address to arrive.
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE orders o"
+                + REDACT_ORDER
+                + " WHERE o.tenant_id = ? AND o.customer_id = ? AND o.status IN "
+                + SETTLED_ORDER
+                + " AND"
+                + ORDER_STILL_IDENTIFIES)) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.executeUpdate();
+    }
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            REDACT_SPECIAL_ORDER
+                + " WHERE s.tenant_id = ? AND s.customer_id = ? AND"
+                + SPECIAL_ORDER_SETTLED_AND_IDENTIFIES)) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.executeUpdate();
+    }
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE layaways l SET notes = NULL WHERE l.tenant_id = ? AND l.customer_id = ? AND"
+                + LAYAWAY_SETTLED_WITH_NOTES)) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.executeUpdate();
+    }
+    // At once, whatever the order's state: the address a receipt was emailed to and the name on a
+    // held basket are not needed to finish any sale.
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE order_receipts r SET emailed_to = NULL FROM orders o"
+                + " WHERE r.tenant_id = ? AND o.tenant_id = r.tenant_id AND o.id = r.order_id"
+                + " AND o.customer_id = ? AND r.emailed_to IS NOT NULL")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.executeUpdate();
+    }
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE parked_sales p SET customer_name = NULL, notes = NULL"
+                + " WHERE p.tenant_id = ? AND p.customer_id = ?"
+                + " AND (p.customer_name IS NOT NULL OR p.notes IS NOT NULL)")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.executeUpdate();
+    }
+  }
+
+  /**
+   * Redacts every order that has settled since its customer was erased. A cross-tenant sweep for
+   * the background sweeper, like {@link #findExpiredPendingOrders}: the tenant is carried by the
+   * join to customer_erasures on (tenant_id, customer_id), never assumed.
+   *
+   * <p>A sweep rather than a hook on each transition, because there are many ways for an order to
+   * finish — fulfil, cancel, void, refund, the till's capture, the pending sweeper — and a hook
+   * that one of them skipped would keep a forgotten customer's address forever.
+   *
+   * @return how many orders and special orders it redacted
+   */
+  public int sweepErasures() {
+    return inTx(
+        c -> {
+          int redacted = 0;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders o"
+                      + REDACT_ORDER
+                      + " FROM customer_erasures e"
+                      + " WHERE o.tenant_id = e.tenant_id AND o.customer_id = e.customer_id"
+                      + " AND o.status IN "
+                      + SETTLED_ORDER
+                      + " AND"
+                      + ORDER_STILL_IDENTIFIES)) {
+            redacted += ps.executeUpdate();
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  REDACT_SPECIAL_ORDER
+                      + " FROM customer_erasures e"
+                      + " WHERE s.tenant_id = e.tenant_id AND s.customer_id = e.customer_id AND"
+                      + SPECIAL_ORDER_SETTLED_AND_IDENTIFIES)) {
+            redacted += ps.executeUpdate();
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE layaways l SET notes = NULL FROM customer_erasures e"
+                      + " WHERE l.tenant_id = e.tenant_id AND l.customer_id = e.customer_id AND"
+                      + LAYAWAY_SETTLED_WITH_NOTES)) {
+            redacted += ps.executeUpdate();
+          }
+          // A receipt emailed after the erasure, for an order that was still open at the time.
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE order_receipts r SET emailed_to = NULL FROM orders o, customer_erasures e"
+                      + " WHERE o.tenant_id = r.tenant_id AND o.id = r.order_id"
+                      + " AND e.tenant_id = o.tenant_id AND e.customer_id = o.customer_id"
+                      + " AND r.emailed_to IS NOT NULL")) {
+            ps.executeUpdate();
+          }
+          return redacted;
+        },
+        "sweep customer erasures");
+  }
+
   public record PendingOrderRef(UUID tenantId, UUID orderId) {}
 
   /**
