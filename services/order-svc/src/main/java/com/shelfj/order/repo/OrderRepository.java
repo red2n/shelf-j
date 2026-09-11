@@ -675,7 +675,7 @@ public class OrderRepository extends BaseOutboxRepository {
    */
   private List<com.shelfj.order.domain.Domain.RestockLine> restockOnVoidInTx(
       Connection c, UUID tenantId, UUID orderId) throws SQLException {
-    boolean handedOver;
+    boolean handedOver = false;
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT EXISTS (SELECT 1 FROM order_status_history"
@@ -683,8 +683,9 @@ public class OrderRepository extends BaseOutboxRepository {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
       try (ResultSet rs = ps.executeQuery()) {
-        rs.next();
-        handedOver = rs.getBoolean(1);
+        if (rs.next()) {
+          handedOver = rs.getBoolean(1);
+        }
       }
     }
     if (!handedOver) {
