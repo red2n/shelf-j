@@ -60,6 +60,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Recalls',
+      icon: Icons.report_outlined,
+      selectedIcon: Icons.report,
+    ),
+    route: '/admin/recalls',
+    storekeeperVisible: true,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Stores',
       icon: Icons.store_outlined,
       selectedIcon: Icons.store,

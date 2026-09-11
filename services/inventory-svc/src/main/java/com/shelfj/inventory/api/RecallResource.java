@@ -1,0 +1,158 @@
+package com.shelfj.inventory.api;
+
+import com.shelfj.inventory.domain.Recall.Disposition;
+import com.shelfj.inventory.domain.Recall.Status;
+import com.shelfj.inventory.dto.RecallDtos.ActiveRecallItemResponse;
+import com.shelfj.inventory.dto.RecallDtos.ReasonRequest;
+import com.shelfj.inventory.dto.RecallDtos.RecallResponse;
+import com.shelfj.inventory.dto.RecallDtos.RecallSummaryResponse;
+import com.shelfj.inventory.dto.RecallDtos.StoreActionRequest;
+import com.shelfj.inventory.mapper.RecallMappers;
+import com.shelfj.inventory.service.RecallService;
+import com.shelfj.inventory.service.RecallService.RecordStoreAction;
+import com.shelfj.web.ApiException;
+import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Parsing;
+import com.shelfj.web.TenantContext;
+import com.shelfj.web.Validations;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import java.util.List;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+
+/**
+ * Recalls as store staff work them: the list the till checks items against, what each recall holds,
+ * and recording what a store found and did.
+ *
+ * <p>Under {@code /admin/inventory/} so any staff role reaches it by path: a cashier's till reads
+ * the active list, and a storekeeper pulls the stock. Opening, closing and cancelling a recall is
+ * management work in {@link RecallSetupResource}, under a path the filter gates to management.
+ */
+@Path("/admin/inventory/recalls")
+@ApplicationScoped
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+@Tag(name = "Recalls")
+public class RecallResource {
+
+  @Inject RecallService service;
+  @Inject TenantContext ctx;
+
+  @Operation(
+      summary = "List recalls",
+      description = "Newest first, cursor-paginated, optionally by status.")
+  @GET
+  public ApiResponse<List<RecallSummaryResponse>> list(
+      @QueryParam("status") String status,
+      @QueryParam("after") String after,
+      @QueryParam("limit") Integer limit) {
+    var page = service.list(ctx.requireTenantId(), parseStatus(status), after, limit);
+    return ApiResponse.ok(
+        page.items().stream().map(RecallMappers::toSummary).toList(),
+        new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
+  }
+
+  @Operation(
+      summary = "The items under an open recall",
+      description =
+          "Every scope line of every open recall. The till keeps this list and checks each item"
+              + " against it, so a scan never waits on the network.")
+  @GET
+  @Path("/active")
+  public ApiResponse<List<ActiveRecallItemResponse>> active() {
+    var items =
+        service.active(ctx.requireTenantId()).stream().map(RecallMappers::toActiveItem).toList();
+    return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @Operation(
+      summary = "Get a recall",
+      description = "Its scope, every batch it holds, what each store recorded, and progress.")
+  @APIResponse(responseCode = "404", description = "No such recall")
+  @GET
+  @Path("/{id}")
+  public ApiResponse<RecallResponse> get(@PathParam("id") String id) {
+    return ApiResponse.ok(
+        RecallMappers.toRecall(service.get(ctx.requireTenantId(), Parsing.uuid(id, "id"))),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @Operation(
+      summary = "Record what a store found and did",
+      description =
+          "RETURNED_TO_SUPPLIER or DESTROYED takes the store's held stock off the books with a"
+              + " movement attributed to the caller; HELD_FOR_COLLECTION does not. A store may"
+              + " record more than once.")
+  @APIResponse(responseCode = "201", description = "Recorded")
+  @APIResponse(responseCode = "403", description = "Not assigned to that store")
+  @APIResponse(responseCode = "409", description = "The recall is not open")
+  @POST
+  @Path("/{id}/stores/{storeId}/actions")
+  public Response recordStoreAction(
+      @PathParam("id") String id, @PathParam("storeId") String storeId, StoreActionRequest req) {
+    Validations.validate(req);
+    var action =
+        service.recordStoreAction(
+            new RecordStoreAction(
+                ctx.requireTenantId(),
+                ctx.requireUserId(),
+                Parsing.uuid(id, "id"),
+                Parsing.uuid(storeId, "storeId"),
+                req.qtyFound(),
+                Disposition.valueOf(req.disposition()),
+                req.noticeDisplayed(),
+                req.notes()),
+            ctx::requireStoreAccess);
+    return Response.status(Response.Status.CREATED)
+        .entity(
+            ApiResponse.ok(
+                RecallMappers.toStoreAction(action), ApiResponse.Meta.of(ctx.requestId())))
+        .build();
+  }
+
+  @Operation(
+      summary = "Release a batch found not to be affected",
+      description =
+          "Only a batch held because its lot or date was unknown. Its status is restored once no"
+              + " open recall holds it.")
+  @APIResponse(responseCode = "404", description = "The recall does not hold that batch")
+  @APIResponse(responseCode = "409", description = "The batch is certainly in scope, or released")
+  @POST
+  @Path("/{id}/batches/{batchId}/release")
+  public ApiResponse<RecallResponse> release(
+      @PathParam("id") String id, @PathParam("batchId") String batchId, ReasonRequest req) {
+    Validations.validate(req);
+    var detail =
+        service.release(
+            ctx.requireTenantId(),
+            ctx.requireUserId(),
+            Parsing.uuid(id, "id"),
+            Parsing.uuid(batchId, "batchId"),
+            req.reason(),
+            ctx::requireStoreAccess);
+    return ApiResponse.ok(RecallMappers.toRecall(detail), ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  private static Status parseStatus(String value) {
+    if (value == null || value.isBlank()) {
+      return null;
+    }
+    try {
+      return Status.valueOf(value.trim());
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(
+          400, "RECALL_STATUS_INVALID", "status must be OPEN, CLOSED or CANCELLED", List.of(), e);
+    }
+  }
+}

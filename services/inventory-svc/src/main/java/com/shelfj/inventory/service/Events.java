@@ -3,8 +3,11 @@ package com.shelfj.inventory.service;
 import com.shelfj.events.EventPayload;
 import com.shelfj.inventory.domain.FoodSafety.CheckRecord;
 import com.shelfj.inventory.domain.FoodSafety.OverduePoint;
+import com.shelfj.inventory.domain.Recall.Header;
 import java.math.BigDecimal;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /** JSON event payloads for the outbox. Past-tense; topic shelfj.inventory.<event>. */
 public final class Events {
@@ -271,6 +274,24 @@ public final class Events {
         + "\",\"dueSince\":\""
         + point.dueSince()
         + "\"}";
+  }
+
+  /**
+   * A recall opened, naming the stores whose stock it took off sale so each can be told. Carries
+   * the reference and hazard, never the reason or customer notice: those are free text a store
+   * reads on the screen, not in an alert.
+   */
+  static String recallOpened(Header header, Set<UUID> storeIds) {
+    return EventPayload.base("RecallOpened", header.tenantId(), header.id())
+        + ",\"reference\":\""
+        + EventPayload.esc(header.reference())
+        + "\",\"kind\":\""
+        + header.kind().name()
+        + "\",\"hazard\":\""
+        + header.hazard().name()
+        + "\",\"storeIds\":["
+        + storeIds.stream().map(id -> "\"" + id + "\"").collect(Collectors.joining(","))
+        + "]}";
   }
 
   private static String jsonNumber(BigDecimal value) {

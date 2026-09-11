@@ -144,6 +144,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/recalls',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.RecallsScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/stores',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
@@ -291,6 +298,7 @@ final routerProvider = Provider<GoRouter>((ref) {
 bool _storekeeperAdminAllowed(String loc) {
   return loc.startsWith('/admin/inventory') ||
       loc.startsWith('/admin/food-safety') ||
+      loc.startsWith('/admin/recalls') ||
       loc.startsWith('/admin/stores');
 }
 

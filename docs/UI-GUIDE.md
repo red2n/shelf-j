@@ -131,6 +131,17 @@ Temperature monitoring and HACCP checks for one store at a time (a store picker 
 
 Alerts: a failed check and a missed check both reach the store's devices through notification-svc, once per event.
 
+### 4.2b Recalls
+
+Withdrawals and recalls across every store. Visible to storekeepers as well as managers — pulling stock off the shelves is shop-floor work.
+
+| Part | What the user does |
+|---|---|
+| **List** | Open / Closed / Cancelled / All. Each recall shows its reference, a *Recall* or *Withdrawal* badge, the hazard, when it opened, how much is held, and how many stores still have to act. A list that fails to load shows the error, never *No open recalls*. |
+| **Open a recall** *(manager)* | Withdrawal or recall; the notice reference, where it came from and its own reference, the hazard, what's wrong, and — for a recall — the notice for customers, which is required. Affected items are added one at a time: product and variant, optionally a lot, and a date range (YYYY-MM-DD). **Take off sale** holds every pack in scope at every store at once, and opens the recall. |
+| **A recall** | What's wrong and the customer notice; the affected items in the words on the pack (*Lot L1, dated 2026-10-01 or later*); then each store with what was taken off sale and whether it is still to do. Each held batch shows its lot, date and quantity, and whether it is certainly in scope or held because its lot or date isn't recorded — those have **Not affected**, which asks what the pack shows and puts it back on sale. **Record what was found** asks how much was on the shelves, what became of it (*Held for collection*, *Returned to supplier*, *Destroyed*) and, for a recall, whether the notice is displayed at the tills; returned or destroyed stock leaves the books. A storekeeper sees these only for their own stores. |
+| **Close / Cancel** *(manager)* | **Close recall** asks for close-out notes; closing too early names the stores still holding recalled stock. **Cancel recall** asks why it was opened in error and puts its stock back on sale. |
+
 ### 4.3 Stores
 
 - A list of stores/warehouses: name, code, city/country, "Prices shown" vs. **Catalog mode** badge, active/inactive toggle.
@@ -241,6 +252,7 @@ Navigation: **Sale · Tender · Cash · Pending** (a distinct amber accent brand
 - *Start of shift:* Clock in (pick store) → Sale screen unlocked.
 - *Ring up a sale:* scan/search items → attach customer or walk-in phone (required) → Hold or Charge → Tender (splitting across methods as needed) → receipt → New sale.
 - *Age-restricted items:* scanning or picking an item that is age-restricted in the store's country stops before it reaches the sale and asks the cashier to check — the item, its category, the minimum age, and whether that age is the legal minimum or the store's own stricter policy. **Refuse sale** keeps it out; **Checked — 18+** lets it in. The dialog cannot be dismissed by tapping away. One check covers the rest of the sale at that age, and is asked again for an item with a higher age, when the basket is cleared, or when a parked sale is resumed. **If the till can't find out** — the store has no country, the country has no rule for that category, or product-svc can't be reached — the item is refused with the reason, not waved through: a till that treats *couldn't tell* as *not restricted* sells alcohol to a child while every screen says it asked. Refusals are not yet recorded anywhere, so the due-diligence record a retailer needs to show is still missing.
+- *Recalls:* the till keeps the list of open recalls, refreshed every five minutes, and checks every scanned or picked item against it before anything else. **Every pack recalled:** *Do not sell this item*, with the reference, the hazard and the customer notice, and one button — *Remove from sale*; there is no override. **Only some lots or dates recalled:** *Check the pack before selling*, listing exactly what to look for (*lot L-2291, best before 1 Oct 2026 to 31 Oct 2026*); *Affected — remove* is the prominent answer, *Not affected — sell* lets it in. When the list can't be refreshed for half an hour the till keeps selling against the list it has and shows *Recalls haven't refreshed for a while. Check items against the recall notices.* — blocking every sale because inventory-svc is down would close the shop.
 - *Weighed items:* an item sold by weight, volume or length asks for the reading before it reaches the sale — the item, its price per unit, and *Enter the weight the approved scale shows. Do not estimate it.* The line price updates as the reading is typed (to the gram; a decimal comma is accepted). Where the product declares packaging weight the dialog says the scale deducts it, and the till subtracts nothing itself. In the basket a weighed line shows its reading (e.g. *0.375 kg*) and counts as one item; tapping it reads the scale again, and it has no ± buttons. The receipt prints *0.375 kg × GBP 12.00/kg*. If the till can't tell how an item is sold it is kept out, not rung up as a single unit. Until this existed a line's quantity was a whole number and no loose item could be sold by weight at all. A parked weighed line resumes with its weight, though — as for every parked line — without its name or unit. Variable-measure barcodes printed by a labelling scale are not read yet, and there is no scale integration: the reading is keyed from the approved scale.
 - *Interrupted sale:* Hold → serve another customer → Resume (discarding or completing the interrupted cart).
 - *Network drops mid-shift:* the sale completes at the till — the customer pays, the receipt prints with an offline reference — and the writes it owes the server are queued. The till keeps selling; the queue drains by itself when the line comes back. Sales that are still waiting survive a sign-out and an app restart, and clocking out warns how many are outstanding.
@@ -321,6 +333,7 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 | `/admin/catalog` | Catalog (Products / Categories / Import tabs) |
 | `/admin/inventory` | Inventory (Levels / Batches tabs) + Receive Stock |
 | `/admin/food-safety` | Food safety: Today / Diary, plus Setup / Reviews for managers |
+| `/admin/recalls` | Recalls: list, detail with store actions; open / close / cancel for managers |
 | `/admin/stores` | Stores + Zones |
 | `/admin/orders` | Orders (all channels) + Return/Refund + Collect Payment |
 | `/admin/procurement` | Procurement (Purchase Orders / Suppliers tabs) |

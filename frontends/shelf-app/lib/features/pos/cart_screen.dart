@@ -11,6 +11,7 @@ import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
 import 'pos_age_check.dart';
 import 'pos_providers.dart';
+import 'pos_recall_check.dart';
 import 'pos_weighed_item.dart';
 import 'pos_session_providers.dart';
 
@@ -103,6 +104,9 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
 
   /// Everything a line must pass before it reaches the sale. Null keeps it out.
   Future<PosLine?> _prepareForSale(PosLine line) async {
+    // The recall first: there is no point checking the age of a customer for
+    // an item that cannot be sold to anyone.
+    if (!await _passesRecallCheck(line)) return null;
     if (!await _passesAgeCheck(line)) return null;
     final saleUnit = await fetchSaleUnit(ref.read(apiClientProvider).dio, line.variantId);
     if (!mounted) return null;
@@ -129,6 +133,30 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     );
     if (qty == null) return null;
     return line.copyWith(qty: qty, soldBy: measure.soldBy, unit: measure.unit);
+  }
+
+  /// The recall check, against the list the till keeps: blocked outright when
+  /// every pack is recalled, a pack check when only some lots or dates are.
+  Future<bool> _passesRecallCheck(PosLine line) async {
+    final result =
+        checkRecall(line.variantId, ref.read(activeRecallsProvider).items);
+    if (result is RecallClear) return true;
+    if (!mounted) return false;
+    if (result is RecallBlocked) {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => RecallStopSaleDialog(itemName: line.name, item: result.item),
+      );
+      return false;
+    }
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => RecallCheckPackDialog(
+              itemName: line.name, items: (result as RecallCheckPack).items),
+        ) ??
+        false;
   }
 
   /// The age check, asked before an item reaches the sale.
@@ -326,6 +354,7 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     final items = ref.watch(posCartProvider);
     return Column(
       children: [
+        const RecallListBanner(),
         _StoreSelector(),
         const _CustomerBar(),
         Padding(

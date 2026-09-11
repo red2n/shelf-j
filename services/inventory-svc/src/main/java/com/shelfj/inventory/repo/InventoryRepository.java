@@ -50,8 +50,9 @@ public class InventoryRepository extends BaseOutboxRepository {
       Batch batch, String refType, UUID refId, OutboxRow event, String idempotencyKey) {
     return inTx(
         c -> {
+          String recallHold;
           try {
-            insertBatch(c, batch, idempotencyKey);
+            recallHold = insertBatch(c, batch, idempotencyKey);
           } catch (SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
               throw new ApiException(
@@ -70,7 +71,7 @@ public class InventoryRepository extends BaseOutboxRepository {
               refId,
               MovementAttribution.system());
           insertOutbox(c, event);
-          return batch;
+          return recallHold == null ? batch : recalledCopy(batch, recallHold);
         },
         "receive stock");
   }
@@ -1153,7 +1154,14 @@ public class InventoryRepository extends BaseOutboxRepository {
     insertBatch(c, b, null);
   }
 
-  private void insertBatch(Connection c, Batch b, String idempotencyKey) throws SQLException {
+  /**
+   * Inserts a batch and, if an open recall covers it, holds it before the transaction commits.
+   * Every way stock enters a store comes through here — a delivery, a transfer, a return, a count —
+   * so a recalled lot arriving the day after the recall is never on sale for a moment.
+   *
+   * @return why a recall now holds the batch, or null when none does
+   */
+  private String insertBatch(Connection c, Batch b, String idempotencyKey) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO inventory_batches"
@@ -1178,6 +1186,26 @@ public class InventoryRepository extends BaseOutboxRepository {
       ps.setString(15, idempotencyKey);
       ps.executeUpdate();
     }
+    return RecallRepository.holdOnArrival(c, b);
+  }
+
+  private static Batch recalledCopy(Batch b, String reason) {
+    return new Batch(
+        b.id(),
+        b.tenantId(),
+        b.storeId(),
+        b.variantId(),
+        b.batchNo(),
+        b.receivedQty(),
+        b.remainingQty(),
+        b.costPrice(),
+        b.expiryDate(),
+        b.createdAt(),
+        b.status(),
+        Batch.MATERIAL_RECALLED,
+        reason,
+        b.grade(),
+        b.zoneId());
   }
 
   private void insertReservation(Connection c, Reservation r, String idempotencyKey)
@@ -1212,7 +1240,7 @@ public class InventoryRepository extends BaseOutboxRepository {
    * {@code refId = null}, so without these two columns nothing links a stock correction to a person
    * or a reason (SJ-D4).
    */
-  private void insertMovement(
+  static void insertMovement(
       Connection c,
       UUID tenantId,
       UUID storeId,
