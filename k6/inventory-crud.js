@@ -1,50 +1,35 @@
+// Converted to real JWT sign-in: the gateway strips X-Tenant-Id / X-User-Id / X-Roles, so every call
+// carries the owner's bearer token and a call with no token is a 401 at the gateway.
+//
+//   k6/run.sh inventory-crud
 import http from 'k6/http';
-import { check, sleep } from 'k6';
-import { baseUrl } from './common.js';
+import { check as k6check, sleep } from 'k6';
+import { ALL_CHECKS_PASS, BASE as baseUrl, onboardTenant, register, sellableVariant } from './lib/shelfj.js';
 
-export const options = { vus: 1, iterations: 1 };
+export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS, setupTimeout: '3m' };
 
 const JSON_CT = { 'Content-Type': 'application/json' };
 
-function setupTenant() {
-  const email = `k6-inv-${Date.now()}@example.com`;
-  const regRes = http.post(
-    `${baseUrl}/api/iam-svc/auth/register`,
-    JSON.stringify({ email, password: 'TestPass1!' }),
-    { headers: JSON_CT }
-  );
-  if (regRes.status < 200 || regRes.status >= 300) return null;
-  let uid = null;
-  try {
-    const token = regRes.json('data.accessToken');
-    uid = JSON.parse(atob(token.split('.')[1])).sub;
-  } catch (_) {}
-
-  const tenantRes = http.post(
-    `${baseUrl}/api/tenant-svc/onboarding/tenants`,
-    JSON.stringify({ businessName: `k6-inv-co-${Date.now()}`, legalName: 'k6 Ltd', country: 'US', currency: 'USD' }),
-    { headers: { ...JSON_CT, 'X-User-Id': uid || '01a090ae-611e-7001-a690-2682e4afcb55' } }
-  );
-  const tenantId = tenantRes.status < 300 ? tenantRes.json('data.id') : null;
-
-  let storeId = null;
-  if (tenantId) {
-    const storeRes = http.post(
-      `${baseUrl}/api/tenant-svc/admin/stores`,
-      JSON.stringify({ name: 'k6 Warehouse', code: `K6W-${Date.now()}`, line1: '1 Dock Rd', city: 'LA', country: 'US', pincode: '90001', timezone: 'UTC' }),
-      { headers: { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-Roles': 'OWNER' } }
-    );
-    storeId = storeRes.status < 300 ? storeRes.json('data.id') : null;
+/** k6's check, plus the response on failure so a red check says why. */
+function check(res, sets) {
+  const ok = k6check(res, sets);
+  if (!ok) {
+    const failed = Object.entries(sets).filter(([, fn]) => { try { return !fn(res); } catch (_) { return true; } }).map(([name]) => name);
+    console.error(`✗ ${failed.join(' | ')}: got ${res && res.status} ${String(res && res.body).slice(0, 400)}`);
   }
-  return { uid, tenantId, storeId };
+  return ok;
 }
 
-export default function () {
-  const ctx = setupTenant();
-  const tenantId = ctx && ctx.tenantId;
-  const storeId = ctx && ctx.storeId;
-  const variantId = '01a090ae-611e-7007-b85c-1fbac22cb87b';
-  const hdrs = tenantId ? { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-Roles': 'OWNER' } : { ...JSON_CT };
+export function setup() {
+  const tenant = onboardTenant('inventory', { stores: 2 });
+  return { tenant, variantId: sellableVariant(tenant, 'Stocked beans').variantId, shopper: register('inventory-shopper') };
+}
+
+export default function (d) {
+  const tenantId = d.tenant.tenantId;
+  const storeId = d.tenant.stores[0].id;
+  const variantId = d.variantId;
+  const hdrs = { ...JSON_CT, Authorization: `Bearer ${d.tenant.owner.token}` };
 
   // ── Gap #1-#7: core inventory positive checks ─────────────────────────────
 
@@ -212,7 +197,7 @@ export default function () {
     { headers: JSON_CT }
   );
   check(abcNoTenantRes, {
-    '[-] abc compile no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+    '[-] abc compile no token → 401': (r) => r.status === 401,
   });
 
   sleep(0.3);
@@ -383,7 +368,7 @@ export default function () {
     { headers: JSON_CT }
   );
   check(ssNoTenantRes, {
-    '[-] no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+    '[-] no token → 401': (r) => r.status === 401,
   });
 
   // Invalid UUID for storeId
@@ -520,7 +505,7 @@ export default function () {
     { headers: JSON_CT }
   );
   check(ccNoTenantRes, {
-    '[-] cycle count no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+    '[-] cycle count no token → 401': (r) => r.status === 401,
   });
 
   // Enter count on non-existent line → 404
@@ -652,7 +637,7 @@ export default function () {
       { headers: hdrs }
     );
     check(lgDupRes, {
-      '[+] duplicate lot link returns 4xx (idempotent guard)': (r) => r.status >= 400 && r.status < 500,
+      '[-] duplicate lot link refused': (r) => r.status === 409,
     });
   }
 
@@ -721,7 +706,7 @@ export default function () {
     { headers: JSON_CT }
   );
   check(lgNoTenantRes, {
-    '[-] lot genealogy no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+    '[-] lot genealogy no token → 401': (r) => r.status === 401,
   });
 
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
@@ -818,7 +803,7 @@ export default function () {
       JSON.stringify({ storeId: storeId }),
       { headers: JSON_CT }
     ),
-    { '[-] create PI no auth 403': (r) => r.status === 403 }
+    { '[-] create PI no token 401': (r) => r.status === 401 }
   );
 
   // ── Gap #17: Costing Methods ────────────────────────────────────────────────
@@ -1273,6 +1258,6 @@ export default function () {
       JSON.stringify({ name: 'x', strategy: 'FIFO' }),
       { headers: { 'Content-Type': 'application/json' } }
     ),
-    { '[-] create picking rule no auth 403': (r) => r.status === 403 }
+    { '[-] create picking rule no token 401': (r) => r.status === 401 }
   );
 }
