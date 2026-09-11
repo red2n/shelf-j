@@ -6,6 +6,7 @@ import '../../shared/widgets/error_view.dart';
 import 'providers/admin_providers.dart';
 import 'providers/inventory_levels_pagination.dart';
 import 'providers/live_alerts_provider.dart';
+import '../../shared/util/short_ref.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -184,7 +185,7 @@ class DashboardScreen extends ConsumerWidget {
                                     : context.status.onInfo,
                               ),
                             ),
-                            title: Text('#${o.id.length >= 8 ? o.id.substring(0, 8) : o.id}…',
+                            title: Text('#…${shortRef(o.id)}',
                                 style: const TextStyle(fontFamily: 'monospace')),
                             subtitle: Text(
                                 o.createdAt.length >= 10
@@ -481,7 +482,7 @@ class _ShortageAlertsBannerState extends State<_ShortageAlertsBanner> {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Text(
-                  'Variant ${a.variantId.length > 8 ? a.variantId.substring(0, 8) : a.variantId}… · '
+                  'Variant …${shortRef(a.variantId)} · '
                   'available ${a.available.toStringAsFixed(0)} ≤ threshold ${a.threshold.toStringAsFixed(0)}',
                   style: TextStyle(color: cs.onErrorContainer, fontSize: 12),
                 ),

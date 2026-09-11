@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import '../../../core/constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/paged.dart';
+import '../../../shared/util/short_ref.dart';
 
 // ── Models ──────────────────────────────────────────────────────────────────
 
@@ -319,8 +320,7 @@ class VariantLabel {
 String variantDisplayName(String variantId, Map<String, VariantLabel> labels) {
   final l = labels[variantId];
   if (l != null && l.productName.isNotEmpty) return l.productName;
-  final n = variantId.length >= 8 ? variantId.substring(0, 8) : variantId;
-  return '$n…';
+  return '…${shortRef(variantId)}';
 }
 
 /// Resolved SKU for a variant id, or empty string when unknown.

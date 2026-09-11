@@ -264,13 +264,15 @@ void main() {
       });
     }
 
-    testWidgets('dialog displays the first 8 characters of the order ID',
+    // Ids are UUIDv7: the first eight characters are a timestamp, the last eight
+    // are random, so the dialog names the order by the end of its id.
+    testWidgets('dialog names the order by the end of its id, not the start',
         (tester) async {
       _setViewport(tester);
       await tester.pumpWidget(_scope([
         _configOverride(),
         _signedIn(),
-        _serverOrders([_serverOrder(id: 'abcd1234-5678-0000-0000-000000000000')]),
+        _serverOrders([_serverOrder(id: '01a0905d-7082-7518-9ec6-aee90d72a43e')]),
         _failingDio(),
       ]));
       _seedCart(tester, [_line()]);
@@ -278,8 +280,9 @@ void main() {
 
       await _tapCheckout(tester);
 
-      // Short ID shown in body text (e.g. "Order #abcd1234 placed at …")
-      expect(find.textContaining('abcd1234'), findsOneWidget);
+      // e.g. "Order #0d72a43e placed at …"
+      expect(find.textContaining('Order #0d72a43e'), findsOneWidget);
+      expect(find.textContaining('01a0905d'), findsNothing);
     });
 
     testWidgets('most recent pending order is shown when multiple exist',
@@ -291,11 +294,11 @@ void main() {
         _serverOrders([
           // Older pending order
           _serverOrder(
-              id: 'old-order-0000-0000-0000-000000000000',
+              id: '01a08e2b-4c10-7a31-8f02-0000000000aa',
               ago: const Duration(hours: 3)),
           // Newer pending order — this one should appear in the dialog
           _serverOrder(
-              id: 'new-order-1111-1111-1111-111111111111',
+              id: '01a0905d-7082-7518-9ec6-0000000000bb',
               ago: const Duration(minutes: 15)),
         ]),
         _failingDio(),
@@ -305,8 +308,37 @@ void main() {
 
       await _tapCheckout(tester);
 
-      expect(find.textContaining('new-orde'), findsOneWidget);
-      expect(find.textContaining('old-orde'), findsNothing);
+      expect(find.textContaining('000000bb'), findsOneWidget);
+      expect(find.textContaining('000000aa'), findsNothing);
+    });
+
+    // Worst case: two orders placed within the same minute share the first
+    // eight characters of their ids. Cut from the front, both would read
+    // "Order #01a0905d" and the shopper could not tell which one is waiting.
+    testWidgets('two pending orders from the same minute are told apart',
+        (tester) async {
+      _setViewport(tester);
+      await tester.pumpWidget(_scope([
+        _configOverride(),
+        _signedIn(),
+        _serverOrders([
+          _serverOrder(
+              id: '01a0905d-7082-7518-9ec6-00000000a001',
+              ago: const Duration(seconds: 40)),
+          _serverOrder(
+              id: '01a0905d-70a4-7003-9ec6-00000000a002',
+              ago: const Duration(seconds: 5)),
+        ]),
+        _failingDio(),
+      ]));
+      _seedCart(tester, [_line()]);
+      await tester.pumpAndSettle();
+
+      await _tapCheckout(tester);
+
+      expect(find.textContaining('Order #0000a002'), findsOneWidget);
+      expect(find.textContaining('0000a001'), findsNothing);
+      expect(find.textContaining('01a0905d'), findsNothing);
     });
 
     testWidgets('fails open — no dialog when server throws', (tester) async {

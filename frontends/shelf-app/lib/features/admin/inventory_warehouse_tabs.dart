@@ -7,6 +7,7 @@ import '../../core/spacing.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import '../../shared/util/short_ref.dart';
 
 // ── Transfers ────────────────────────────────────────────────────────────────
 
@@ -437,7 +438,7 @@ class _InventoryMovementsTabState extends ConsumerState<InventoryMovementsTab> {
                     dense: true,
                     title: Text('${m.type}  $sign${m.qty}'),
                     subtitle: Text(
-                      '$store · variant ${m.variantId.length > 8 ? m.variantId.substring(0, 8) : m.variantId}…'
+                      '$store · variant …${shortRef(m.variantId)}'
                       '${m.createdAt != null ? ' · ${m.createdAt}' : ''}',
                     ),
                   );

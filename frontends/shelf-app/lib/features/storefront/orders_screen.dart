@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
+import '../../shared/util/short_ref.dart';
 
 class StorefrontOrdersScreen extends ConsumerWidget {
   const StorefrontOrdersScreen({super.key});
@@ -76,7 +77,7 @@ class _ServerOrderTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final shortId = order.id.length >= 8 ? order.id.substring(0, 8) : order.id;
+    final shortId = shortRef(order.id);
     return Card(
       child: ListTile(
         leading: CircleAvatar(
@@ -119,8 +120,7 @@ class _LocalOrderTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final shortId =
-        order.orderId.length >= 8 ? order.orderId.substring(0, 8) : order.orderId;
+    final shortId = shortRef(order.orderId);
     final hasKnownPrice = showPrices && order.currency.isNotEmpty;
     return Card(
       child: ListTile(

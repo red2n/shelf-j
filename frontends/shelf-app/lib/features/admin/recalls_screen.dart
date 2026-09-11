@@ -12,6 +12,7 @@ import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 import 'recall_providers.dart';
 import 'widgets/variant_picker.dart';
+import '../../shared/util/short_ref.dart';
 
 final _day = DateFormat('d MMM yyyy');
 final _isoDate = RegExp(r'^\d{4}-\d{2}-\d{2}$');
@@ -283,7 +284,7 @@ class _RecallDetailDialog extends ConsumerWidget {
             )
             .value ??
         const <String, VariantLabel>{};
-    String storeName(String id) => storeNames[id] ?? '${id.substring(0, 8)}…';
+    String storeName(String id) => storeNames[id] ?? '…${shortRef(id)}';
     bool canActAt(String storeId) =>
         r.isOpen && (allowedStores.isEmpty || allowedStores.contains(storeId));
 

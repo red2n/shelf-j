@@ -296,7 +296,7 @@ public class InventoryService {
         tenantId,
         storeId,
         variantId,
-        "RET-" + orderId.toString().substring(0, 8),
+        "RET-" + Ids.shortRef(orderId),
         qty,
         qty,
         null,
@@ -1885,16 +1885,6 @@ public class InventoryService {
 
   public record LotSplitResult(Batch newBatch, LotAction action) {}
 
-  /**
-   * Suffix for a split batch nobody named. Cut from a random (v4) UUID on purpose: the first eight
-   * characters of a v7 id are the clock, so two splits within about a minute would share a batch
-   * number and blur a recall trace.
-   */
-  @SuppressWarnings("PMD.UseTimeOrderedIds")
-  private static String splitSuffix() {
-    return UUID.randomUUID().toString().substring(0, 8);
-  }
-
   public LotSplitResult splitLot(
       UUID tenantId, UUID sourceBatchId, BigDecimal qty, String batchNo, String notes) {
     Batch source =
@@ -1904,7 +1894,8 @@ public class InventoryService {
       throw ApiException.unprocessable(
           "INSUFFICIENT_QTY", "Split qty exceeds remaining qty on source batch");
     }
-    String newBatchNo = batchNo != null ? batchNo : source.batchNo() + "-SPLIT-" + splitSuffix();
+    String newBatchNo =
+        batchNo != null ? batchNo : source.batchNo() + "-SPLIT-" + Ids.shortRef(Ids.newId());
     UUID newBatchId = Ids.newId();
     Batch splitBatch =
         new Batch(

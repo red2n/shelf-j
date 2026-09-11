@@ -117,4 +117,26 @@
         </properties>
     </rule>
 
+    <rule name="ShortRefFromIdTail"
+          language="java"
+          message="Shorten an id with Ids.shortRef(id), not id.toString().substring(0, n): a v7 id starts with its timestamp"
+          class="net.sourceforge.pmd.lang.rule.xpath.XPathRule">
+        <description>
+            The first characters of a UUIDv7 are its millisecond timestamp, so a handle cut from the
+            front is the same for every id minted in the same minute: every order placed in it would
+            show one order number, every document one batch number. Ids.shortRef(id) takes the random
+            tail instead.
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="xpath">
+                <value><![CDATA[
+//MethodCall[@MethodName = 'substring']
+  [ArgumentList/*[1][self::NumericLiteral and @ValueAsInt = 0]]
+  [*[1][self::MethodCall[@MethodName = 'toString'][*[1][pmd-java:typeIs('java.util.UUID')]]]]
+                ]]></value>
+            </property>
+        </properties>
+    </rule>
+
 </ruleset>

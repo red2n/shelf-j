@@ -5,10 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Recall.Match;
 import com.shelfj.inventory.domain.Recall.Scope;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -47,6 +49,35 @@ class RecallTest {
       assertEquals(Match.LOT_UNKNOWN, lot.classify(system, OCT_1), system);
     }
     assertTrue(Recall.isSupplierLot("TO-SUPPLIER-LOT"));
+  }
+
+  /**
+   * The service's own batch numbers now end in an id's tail ({@link Ids#shortRef}) rather than its
+   * head. If recall stopped recognising them it would treat "MO-…" as a supplier lot and rule stock
+   * out of a recall by a number the service invented.
+   */
+  @Test
+  void batchNumbersBuiltFromAnIdTailAreStillRecognisedAsTheServicesOwn() {
+    for (int i = 0; i < 1_000; i++) {
+      String ref = Ids.shortRef(Ids.newId());
+      for (String kind : List.of("CC", "MO", "TO", "RET")) {
+        assertFalse(Recall.isSupplierLot(kind + "-" + ref), kind + "-" + ref);
+      }
+    }
+  }
+
+  /** Only that exact shape is the service's: anything close to it is still a supplier's lot. */
+  @Test
+  void aNearMissOnTheSystemShapeIsStillASupplierLot() {
+    String ref = Ids.shortRef(UUID.fromString("01a0905d-7082-7518-9ec6-aee90d72a43e"));
+    assertEquals("0d72a43e", ref);
+
+    assertTrue(Recall.isSupplierLot("MO-" + ref.toUpperCase(Locale.ROOT)), "upper case");
+    assertTrue(Recall.isSupplierLot("MO-" + ref.substring(1)), "seven digits");
+    assertTrue(Recall.isSupplierLot("MO-" + ref + "0"), "nine digits");
+    assertTrue(Recall.isSupplierLot("XX-" + ref), "unknown kind");
+    assertFalse(Recall.isSupplierLot(null));
+    assertFalse(Recall.isSupplierLot(" "));
   }
 
   @Test
