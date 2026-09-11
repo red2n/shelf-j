@@ -269,6 +269,50 @@ public class UserRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Deletes a customer's login in one transaction with everything that would let it be used or
+   * found again: its sessions, its one-time codes, and the event that tells other services.
+   *
+   * <p>The row stays, with status DELETED, so the user id other records carry still resolves to
+   * something rather than nothing; what identifies the person does not. Email and phone become NULL
+   * rather than a placeholder, so the same address can register a new account later — the unique
+   * indexes ignore NULLs.
+   */
+  public void deleteCustomerAccount(User user, OutboxRow event) {
+    inTx(
+        c -> {
+          int rows;
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE users SET email = NULL, phone = NULL, password_hash = NULL,"
+                      + " status = 'DELETED', updated_at = now()"
+                      + " WHERE id = ? AND type = 'CUSTOMER' AND status <> 'DELETED'")) {
+            ps.setObject(1, user.id());
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) {
+            return null;
+          }
+          try (var ps =
+              c.prepareStatement("UPDATE refresh_tokens SET revoked = true WHERE user_id = ?")) {
+            ps.setObject(1, user.id());
+            ps.executeUpdate();
+          }
+          for (String target : new String[] {user.email(), user.phone()}) {
+            if (target == null || target.isBlank()) {
+              continue;
+            }
+            try (var ps = c.prepareStatement("DELETE FROM otp_codes WHERE target = ?")) {
+              ps.setString(1, target);
+              ps.executeUpdate();
+            }
+          }
+          insertOutbox(c, event);
+          return null;
+        },
+        "delete customer account");
+  }
+
   // --- mapping / helpers ---
 
   public void updatePassword(UUID userId, String newHash) {

@@ -32,7 +32,7 @@ Widget _scope(List<Override> overrides) => ProviderScope(
       child: const MaterialApp(home: Scaffold(body: PosCartScreen())),
     );
 
-PosLine _line(String variantId, {int qty = 1}) => PosLine(
+PosLine _line(String variantId, {double qty = 1}) => PosLine(
       variantId: variantId,
       sku: 'SKU-$variantId',
       name: 'Product $variantId',

@@ -135,4 +135,32 @@ public final class Domain {
       UUID recordedBy,
       String notes,
       Instant createdAt) {}
+
+  /**
+   * One line of the tender-mix report: how much of the take came in through one payment method.
+   *
+   * <p>Captures and refunds stay on separate columns. A card sale refunded to store credit moves
+   * money between two methods rather than cancelling out, and a report that only showed the net
+   * could not be reconciled against a merchant statement.
+   *
+   * @param method CASH, CARD, GIFT_CARD, VOUCHER — whatever the tenant actually took
+   * @param capturedAmount money taken through this method in the window
+   * @param capturedCount how many tenders that was
+   * @param refundedAmount money given back through this method
+   * @param refundedCount how many refunds that was
+   * @param failedCount tenders recorded against this method that did not capture — a climbing
+   *     figure against healthy volume is a terminal or acquirer problem, not a sales one
+   * @param netAmount captured minus refunded
+   * @param shareOfNet this method's percentage of the window's total net take, to one decimal; null
+   *     when the total is zero or negative, where a share has no meaning
+   */
+  public record TenderMixRow(
+      String method,
+      BigDecimal capturedAmount,
+      long capturedCount,
+      BigDecimal refundedAmount,
+      long refundedCount,
+      long failedCount,
+      BigDecimal netAmount,
+      BigDecimal shareOfNet) {}
 }

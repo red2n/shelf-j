@@ -83,6 +83,12 @@ public final class Dtos {
     }
   }
 
+  /** The account holder confirming, with their password, that the account should be deleted. */
+  @Schema(name = "DeleteAccountRequest")
+  public record DeleteAccountRequest(
+      @Schema(description = "The account's password, re-verified before deletion.") @NotBlank
+          String password) {}
+
   /** Change password (authenticated user only). */
   @Schema(name = "ChangePasswordRequest")
   public record ChangePasswordRequest(

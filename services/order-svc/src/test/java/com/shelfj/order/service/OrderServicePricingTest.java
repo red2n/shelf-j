@@ -64,6 +64,16 @@ class OrderServicePricingTest {
     when(storeStatusRepo.isActive(any(), any())).thenReturn(true);
   }
 
+  /**
+   * A quoted basket with no promotions on it. Checkout now asks pricing-svc to price the whole
+   * basket rather than each line, because a spend threshold or a buy-one-get-one has nothing to be
+   * about until the order total exists.
+   */
+  private static PricingClient.QuotedBasket quoted(PricingClient.QuotedLine... lines) {
+    return new PricingClient.QuotedBasket(
+        List.of(lines), BigDecimal.ZERO, List.of(), java.util.Map.of());
+  }
+
   private static PlaceOrderRequest request(BigDecimal clientUnitPrice, BigDecimal discount) {
     return request(clientUnitPrice, discount, null);
   }
@@ -81,6 +91,7 @@ class OrderServicePricingTest {
         discountReason,
         "USD",
         null,
+        null, // couponCodes
         null,
         null,
         null,
@@ -97,10 +108,13 @@ class OrderServicePricingTest {
   @Test
   void enforcementOnUsesServerPriceAndIgnoresClientPrice() {
     when(config.pricingEnforce()).thenReturn(true);
-    when(pricing.resolveLines(eq(TENANT), anyList(), eq(STORE), eq("POS")))
+    when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
         .thenReturn(
-            List.of(new PricingClient.ResolvedLine(new BigDecimal("7.77"), BigDecimal.ZERO)));
-    when(repo.createOrder(any(), anyList(), any(), any())).thenAnswer(inv -> inv.getArgument(0));
+            quoted(
+                new PricingClient.QuotedLine(
+                    new BigDecimal("7.77"), new BigDecimal("7.77"), BigDecimal.ZERO)));
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+        .thenAnswer(inv -> inv.getArgument(0));
 
     // client claims the item costs 0.01 — the server-resolved 7.77 must win
     Order order = svc.placeOrder(request(new BigDecimal("0.01"), null), ctx, null);
@@ -108,14 +122,14 @@ class OrderServicePricingTest {
     assertEquals(new BigDecimal("7.77"), order.subtotal());
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<OrderItem>> items = ArgumentCaptor.forClass(List.class);
-    org.mockito.Mockito.verify(repo).createOrder(any(), items.capture(), any(), any());
+    org.mockito.Mockito.verify(repo).createOrder(any(), items.capture(), any(), any(), anyList());
     assertEquals(new BigDecimal("7.77"), items.getValue().get(0).unitPrice());
   }
 
   @Test
   void enforcementOnFailsClosedWhenPriceCannotBeResolved() {
     when(config.pricingEnforce()).thenReturn(true);
-    when(pricing.resolveLines(any(), any(), any(), any()))
+    when(pricing.quoteBasket(any(), any(), any(), any(), any(), any()))
         .thenThrow(ApiException.unprocessable("ORDER_PRICE_UNRESOLVED", "no price"));
 
     ApiException e =
@@ -129,7 +143,8 @@ class OrderServicePricingTest {
   @Test
   void enforcementOffTrustsClientPrice() {
     when(config.pricingEnforce()).thenReturn(false);
-    when(repo.createOrder(any(), anyList(), any(), any())).thenAnswer(inv -> inv.getArgument(0));
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+        .thenAnswer(inv -> inv.getArgument(0));
 
     Order order = svc.placeOrder(request(new BigDecimal("5.00"), null), ctx, null);
 
@@ -209,11 +224,13 @@ class OrderServicePricingTest {
     when(config.pricingEnforce()).thenReturn(true);
     when(config.discountCeilings()).thenReturn(Map.of("MANAGER", new BigDecimal("50")));
     when(ctx.roles()).thenReturn(Set.of("MANAGER"));
-    when(pricing.resolveLines(eq(TENANT), anyList(), eq(STORE), eq("POS")))
+    when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
         .thenReturn(
-            List.of(
-                new PricingClient.ResolvedLine(new BigDecimal("10.00"), new BigDecimal("2.00"))));
-    when(repo.createOrder(any(), anyList(), any(), any())).thenAnswer(inv -> inv.getArgument(0));
+            quoted(
+                new PricingClient.QuotedLine(
+                    new BigDecimal("10.00"), new BigDecimal("10.00"), new BigDecimal("2.00"))));
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+        .thenAnswer(inv -> inv.getArgument(0));
 
     Order order =
         svc.placeOrder(
@@ -233,9 +250,11 @@ class OrderServicePricingTest {
     when(config.pricingEnforce()).thenReturn(true);
     when(config.discountCeilings()).thenReturn(Map.of("CASHIER", new BigDecimal("10")));
     when(ctx.roles()).thenReturn(Set.of("CASHIER"));
-    when(pricing.resolveLines(eq(TENANT), anyList(), eq(STORE), eq("POS")))
+    when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
         .thenReturn(
-            List.of(new PricingClient.ResolvedLine(new BigDecimal("10.00"), BigDecimal.ZERO)));
+            quoted(
+                new PricingClient.QuotedLine(
+                    new BigDecimal("10.00"), new BigDecimal("10.00"), BigDecimal.ZERO)));
 
     // 2.00 off 10.00 is 20%, over the cashier's 10% ceiling.
     ApiException e =
@@ -257,17 +276,21 @@ class OrderServicePricingTest {
     when(config.discountCeilings())
         .thenReturn(Map.of("CASHIER", new BigDecimal("10"), "MANAGER", new BigDecimal("50")));
     when(ctx.roles()).thenReturn(Set.of("CASHIER", "MANAGER"));
-    when(pricing.resolveLines(eq(TENANT), anyList(), eq(STORE), eq("POS")))
+    when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
         .thenReturn(
-            List.of(new PricingClient.ResolvedLine(new BigDecimal("10.00"), BigDecimal.ZERO)));
-    when(repo.createOrder(any(), anyList(), any(), any())).thenAnswer(inv -> inv.getArgument(0));
+            quoted(
+                new PricingClient.QuotedLine(
+                    new BigDecimal("10.00"), new BigDecimal("10.00"), BigDecimal.ZERO)));
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+        .thenAnswer(inv -> inv.getArgument(0));
 
     // 3.00 off 10.00 is 30%: over CASHIER's ceiling, within MANAGER's.
     svc.placeOrder(request(new BigDecimal("10.00"), new BigDecimal("3.00"), "damaged"), ctx, null);
 
     ArgumentCaptor<Domain.OrderDiscount> audit =
         ArgumentCaptor.forClass(Domain.OrderDiscount.class);
-    org.mockito.Mockito.verify(repo).createOrder(any(), anyList(), any(), audit.capture());
+    org.mockito.Mockito.verify(repo)
+        .createOrder(any(), anyList(), any(), audit.capture(), anyList());
     assertEquals("MANAGER", audit.getValue().grantedRole());
     assertEquals(new BigDecimal("30.000"), audit.getValue().discountPct());
     assertEquals("damaged", audit.getValue().reason());
@@ -279,9 +302,11 @@ class OrderServicePricingTest {
     when(config.pricingEnforce()).thenReturn(true);
     when(config.discountCeilings()).thenReturn(Map.of("MANAGER", new BigDecimal("50")));
     when(ctx.roles()).thenReturn(Set.of("MANAGER"));
-    when(pricing.resolveLines(eq(TENANT), anyList(), eq(STORE), eq("POS")))
+    when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
         .thenReturn(
-            List.of(new PricingClient.ResolvedLine(new BigDecimal("10.00"), BigDecimal.ZERO)));
+            quoted(
+                new PricingClient.QuotedLine(
+                    new BigDecimal("10.00"), new BigDecimal("10.00"), BigDecimal.ZERO)));
 
     ApiException e =
         assertThrows(

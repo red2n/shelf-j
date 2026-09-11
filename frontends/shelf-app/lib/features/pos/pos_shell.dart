@@ -5,30 +5,39 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_notifier.dart';
 import '../../core/network/api_error.dart';
+import '../../core/offline/offline_queue.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'pos_providers.dart';
 import 'pos_session_providers.dart';
 
-const _destinations = [
-  AdaptiveNavDestination(
-    label: 'Sale',
-    icon: Icons.shopping_cart_outlined,
-    selectedIcon: Icons.shopping_cart,
-  ),
-  AdaptiveNavDestination(
-    label: 'Tender',
-    icon: Icons.payments_outlined,
-    selectedIcon: Icons.payments,
-  ),
-  AdaptiveNavDestination(
-    label: 'Cash',
-    icon: Icons.account_balance_wallet_outlined,
-    selectedIcon: Icons.account_balance_wallet,
-  ),
-];
+/// [pending] badges the Pending destination so unsynced sales are visible from
+/// anywhere in the terminal, not only once the cashier goes looking.
+List<AdaptiveNavDestination> _destinations(int pending) => [
+      const AdaptiveNavDestination(
+        label: 'Sale',
+        icon: Icons.shopping_cart_outlined,
+        selectedIcon: Icons.shopping_cart,
+      ),
+      const AdaptiveNavDestination(
+        label: 'Tender',
+        icon: Icons.payments_outlined,
+        selectedIcon: Icons.payments,
+      ),
+      const AdaptiveNavDestination(
+        label: 'Cash',
+        icon: Icons.account_balance_wallet_outlined,
+        selectedIcon: Icons.account_balance_wallet,
+      ),
+      AdaptiveNavDestination(
+        label: 'Pending',
+        icon: Icons.cloud_off_outlined,
+        selectedIcon: Icons.cloud_off,
+        badgeCount: pending,
+      ),
+    ];
 
-const _routes = ['/pos/cart', '/pos/tender', '/pos/cash'];
+const _routes = ['/pos/cart', '/pos/tender', '/pos/cash', '/pos/pending'];
 
 class PosShell extends ConsumerStatefulWidget {
   final String currentLocation;
@@ -64,15 +73,18 @@ class _PosShellState extends ConsumerState<PosShell> {
     super.dispose();
   }
 
-  int get _selectedIndex => widget.currentLocation.startsWith('/pos/cash')
-      ? 2
-      : widget.currentLocation.startsWith('/pos/tender')
-          ? 1
-          : 0;
+  int get _selectedIndex => widget.currentLocation.startsWith('/pos/pending')
+      ? 3
+      : widget.currentLocation.startsWith('/pos/cash')
+          ? 2
+          : widget.currentLocation.startsWith('/pos/tender')
+              ? 1
+              : 0;
 
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(posSessionProvider);
+    final pending = ref.watch(offlineQueueCountProvider);
 
     // Scope the amber channel accent (app bar, primary actions, nav indicator)
     // to the whole POS subtree via the theme system, rather than threading the
@@ -84,7 +96,7 @@ class _PosShellState extends ConsumerState<PosShell> {
         leadingIcon: Icons.point_of_sale,
         // 3 flat destinations — a bottom bar, per Material's compact-width guidance.
         compactStyle: CompactNavStyle.bottomBar,
-        destinations: _destinations,
+        destinations: _destinations(pending),
         selectedIndex: _selectedIndex,
         onDestinationSelected: (i) => context.go(_routes[i]),
         actions: [
@@ -95,8 +107,12 @@ class _PosShellState extends ConsumerState<PosShell> {
                   context: context,
                   builder: (ctx) => AlertDialog(
                     title: const Text('Clock out?'),
-                    content: const Text(
-                        'This ends your POS session. Any sale in progress is kept.'),
+                    content: Text(pending == 0
+                        ? 'This ends your POS session. Any sale in progress is kept.'
+                        : 'This ends your POS session. $pending sale'
+                            '${pending == 1 ? '' : 's'} still '
+                            "haven't reached the server — they stay on this till "
+                            'and are sent when the network is back.'),
                     actions: [
                       TextButton(
                           onPressed: () => Navigator.pop(ctx, false),

@@ -81,7 +81,14 @@ class ShortageAlertHandler {
             + " (threshold "
             + threshold.toPlainString()
             + ")";
+    // Addressed to a store's devices, not to a person, so there is no subject to erase by.
     notifier.notifyOnce(
-        eventId, NOTIFICATION_TYPE, tenantId, storeId.toString(), "Stock below threshold", body);
+        eventId,
+        NOTIFICATION_TYPE,
+        tenantId,
+        null,
+        storeId.toString(),
+        "Stock below threshold",
+        body);
   }
 }

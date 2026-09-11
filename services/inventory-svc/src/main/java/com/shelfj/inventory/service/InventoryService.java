@@ -8,6 +8,8 @@ import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.CostingMethod;
 import com.shelfj.inventory.domain.Domain.CycleCountHeader;
 import com.shelfj.inventory.domain.Domain.CycleCountLine;
+import com.shelfj.inventory.domain.Domain.DeadStockGrouping;
+import com.shelfj.inventory.domain.Domain.DeadStockRow;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
@@ -34,6 +36,9 @@ import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.ShrinkageGrouping;
 import com.shelfj.inventory.domain.Domain.ShrinkageRow;
+import com.shelfj.inventory.domain.Domain.StockTurnGrouping;
+import com.shelfj.inventory.domain.Domain.StockTurnReport;
+import com.shelfj.inventory.domain.Domain.StockTurnRow;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.domain.Domain.TransactionSourceType;
@@ -66,6 +71,8 @@ import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -84,6 +91,7 @@ public class InventoryService {
   @Inject com.shelfj.inventory.repo.ShrinkageRepository shrinkageRepo;
   @Inject com.shelfj.inventory.repo.ValuationRepository valuationRepo;
   @Inject com.shelfj.inventory.repo.LowStockRepository lowStockRepo;
+  @Inject com.shelfj.inventory.repo.StockTurnRepository stockTurnRepo;
   @Inject LotGenealogyRepository lotGenealogyRepo;
   @Inject ThresholdRepository thresholdRepo;
   @Inject SuggestionRepository suggestionRepo;
@@ -221,6 +229,30 @@ public class InventoryService {
   }
 
   /**
+   * Puts back the stock a voided till sale took, deduped on {@code dedupeId} (SJ-D40).
+   *
+   * <p>Recorded as a RECEIVE movement with reference type {@code VOID}: distinguishable from a
+   * customer return ({@code RETURN}), which is a different loss-prevention signal, while every
+   * report that sums receipts keeps working unchanged.
+   *
+   * <p>Received rather than reversed: the void and the fulfil arrive on different topics and may be
+   * processed in either order. A receipt and a deduction net to the same stock whichever lands
+   * first; reversing SALE movements that have not arrived yet would reverse nothing.
+   */
+  public boolean receiveVoidFromOrderOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId) {
+    Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
+    return repo.receiveOnce(
+        dedupeId, consumerName, batch, "VOID", orderId, stockReceivedEvent(batch));
+  }
+
+  /**
    * {@link #receive} deduped on {@code dedupeId} — used by the GoodsReceived consumer per GRN line.
    */
   public boolean receiveOnce(
@@ -349,6 +381,85 @@ public class InventoryService {
       throw ApiException.badRequest(
           "INVENTORY_INVALID_PERIOD", "from must be before to — got " + from + " and " + to);
     return shrinkageRepo.topVariants(tenantId, storeId, from, to, reasonCode, actorId, limit);
+  }
+
+  // ---- stock turn & dead stock ----
+
+  /**
+   * How many times the holding turned over during a window, and how long the stock on hand would
+   * last at that rate.
+   *
+   * <p>Both bounds are required, unlike the shrinkage report's. Shrinkage over "all time" is a
+   * meaningful total; turns over all time is not — the ratio's denominator is an average holding
+   * over a period, and its {@code daysOnHand} divides by the period's length.
+   *
+   * <p>{@code daysOnHand} is completed here rather than in SQL because it needs the window length,
+   * which is a property of the request rather than of any row.
+   *
+   * @param grouping validated by the resource against {@link StockTurnGrouping}
+   */
+  public StockTurnReport stockTurnReport(
+      UUID tenantId,
+      UUID storeId,
+      Instant from,
+      Instant to,
+      StockTurnGrouping grouping,
+      int limit) {
+    if (!from.isBefore(to))
+      throw ApiException.badRequest(
+          "INVENTORY_INVALID_PERIOD", "from must be before to — got " + from + " and " + to);
+
+    long days = Duration.between(from, to).toDays();
+    // A window shorter than a day still has a length; rounding it to zero would divide by it.
+    int windowDays = (int) Math.max(1, days);
+
+    List<StockTurnRow> rows =
+        stockTurnRepo.stockTurn(tenantId, storeId, from, to, grouping, limit).stream()
+            .map(r -> withDaysOnHand(r, windowDays))
+            .toList();
+
+    // The replay behind these figures can only see movements still in stock_movements, so the
+    // archive is asked whether the purge took any the window needed. Asking the archive rather
+    // than inferring from the oldest retained movement is the difference between "history is
+    // missing" and "there is no history yet", which a young tenant has plenty of.
+    boolean historyComplete = stockTurnRepo.historyComplete(tenantId, storeId, to);
+    return new StockTurnReport(rows, historyComplete, windowDays);
+  }
+
+  /**
+   * Days of cover implied by a turnover ratio. Null propagates: a group with nothing to turn has no
+   * rate of sale, and reporting "0 days on hand" for it would read as an emergency.
+   */
+  private static StockTurnRow withDaysOnHand(StockTurnRow r, int windowDays) {
+    BigDecimal ratio = r.turnoverRatio();
+    BigDecimal daysOnHand =
+        ratio == null || ratio.signum() == 0
+            ? null
+            : BigDecimal.valueOf(windowDays).divide(ratio, 1, RoundingMode.HALF_UP);
+    return new StockTurnRow(
+        r.groupKey(),
+        r.cogs(),
+        r.uncostedSaleQty(),
+        r.openingValue(),
+        r.closingValue(),
+        r.averageValue(),
+        ratio,
+        daysOnHand);
+  }
+
+  /**
+   * Stock on hand aged by time since its last sale, for the dead-stock ladder.
+   *
+   * <p>No date range: dead stock is a question about now, not about a period. The caller may pin
+   * {@code asOf} so a report re-run tomorrow against the same date gives the same answer.
+   *
+   * @param asOf the instant to measure ages back from; defaults to now when null
+   * @param grouping validated by the resource against {@link DeadStockGrouping}
+   */
+  public List<DeadStockRow> deadStockReport(
+      UUID tenantId, UUID storeId, Instant asOf, DeadStockGrouping grouping, int limit) {
+    return stockTurnRepo.deadStock(
+        tenantId, storeId, asOf == null ? Instant.now() : asOf, grouping, limit);
   }
 
   // ---- adjust ----

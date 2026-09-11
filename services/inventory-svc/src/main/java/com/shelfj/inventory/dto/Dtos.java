@@ -175,6 +175,75 @@ public final class Dtos {
       @Schema(description = "Signed net of write-offs and finds.") BigDecimal netQty,
       @Schema(description = "How many adjustment movements this line covers.") long movements) {}
 
+  @Schema(
+      name = "StockTurnRowResponse",
+      description = "One line of the stock-turn report: what sold, against what was held.")
+  public record StockTurnRowResponse(
+      @Schema(description = "The store id or variant id this line covers.") String groupKey,
+      @Schema(
+              description =
+                  "Cost of the stock sold in the window, taken from the cost price of the batches"
+                      + " the sales actually drew down.")
+          BigDecimal cogs,
+      @Schema(
+              description =
+                  "Quantity sold out of batches carrying no cost price, and therefore excluded"
+                      + " from cogs. Reported rather than costed at zero, which would overstate"
+                      + " margin and understate turns.")
+          BigDecimal uncostedSaleQty,
+      @Schema(description = "Value of the holding at the start of the window.")
+          BigDecimal openingValue,
+      @Schema(description = "Value of the holding at the end of the window.")
+          BigDecimal closingValue,
+      @Schema(description = "Mean of opening and closing — the denominator of turnoverRatio.")
+          BigDecimal averageValue,
+      @Schema(
+              description =
+                  "cogs / averageValue. Null when there was no stock to turn, which is not the"
+                      + " same as turning it zero times.")
+          BigDecimal turnoverRatio,
+      @Schema(
+              description =
+                  "How many days the average holding would last at this rate of sale. Null"
+                      + " whenever turnoverRatio is.")
+          BigDecimal daysOnHand) {}
+
+  @Schema(
+      name = "StockTurnReportResponse",
+      description = "The stock-turn report, plus whether its opening figures can be trusted.")
+  public record StockTurnReportResponse(
+      @Schema(description = "One line per store or variant, slowest-turning first.")
+          List<StockTurnRowResponse> rows,
+      @Schema(
+              description =
+                  "False when the movement ledger has been purged past the start of the window, so"
+                      + " opening value is a floor rather than a figure. Rows are still returned.")
+          boolean historyComplete,
+      @Schema(description = "Length of the window in days — the numerator of daysOnHand.")
+          int windowDays) {}
+
+  @Schema(name = "DeadStockRowResponse", description = "One line of the dead-stock ageing report.")
+  public record DeadStockRowResponse(
+      @Schema(
+              description =
+                  "What this line covers: an ageing bucket (0-30, 31-60, 61-90, 91-180, 180+), a"
+                      + " store id, or a variant id, depending on the grouping.")
+          String groupKey,
+      @Schema(description = "Quantity still on hand.") BigDecimal onHandQty,
+      @Schema(description = "Value of that quantity at batch cost.") BigDecimal value,
+      @Schema(description = "How much of onHandQty carries no cost and is excluded from value.")
+          BigDecimal uncostedQty,
+      @Schema(
+              description =
+                  "Days since this item last sold — for a group, the largest such age in it. Where"
+                      + " nothing has ever sold, days since the oldest remaining batch arrived.")
+          Integer daysSinceLastSale,
+      @Schema(
+              description =
+                  "True when nothing in this line has ever sold, so its age is measured from"
+                      + " receipt rather than from a sale.")
+          boolean neverSold) {}
+
   @Schema(name = "MovementResponse", description = "One append-only stock movement ledger entry.")
   public record MovementResponse(
       String id,

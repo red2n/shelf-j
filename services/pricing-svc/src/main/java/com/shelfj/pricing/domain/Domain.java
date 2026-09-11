@@ -3,6 +3,7 @@ package com.shelfj.pricing.domain;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /** Pure domain records — no HTTP, no persistence annotations. */
@@ -101,13 +102,107 @@ public final class Domain {
       boolean active,
       Instant startsAt,
       Instant endsAt,
-      Instant createdAt) {
+      Instant createdAt,
+      int priority,
+      boolean exclusive,
+      String couponCode,
+      Integer maxRedemptions,
+      Integer maxPerCustomer,
+      BigDecimal buyQty,
+      BigDecimal getQty,
+      BigDecimal getDiscountPct) {
 
+    /** Percentage off each matching line. {@code value} is 0-100. */
     public static final String TYPE_PERCENT = "PERCENT";
+
+    /** Fixed amount off each matching unit. */
     public static final String TYPE_FLAT = "FLAT";
+
+    /** Percentage off the whole basket, after line-level promotions have run. */
+    public static final String TYPE_BASKET_PERCENT = "BASKET_PERCENT";
+
+    /** Fixed amount off the whole basket. */
+    public static final String TYPE_BASKET_FLAT = "BASKET_FLAT";
+
+    /** Fixed amount off, but only once the basket clears {@code minOrderAmount}. */
+    public static final String TYPE_SPEND_THRESHOLD = "SPEND_THRESHOLD";
+
+    /** Buy {@code buyQty}, get {@code getQty} at {@code getDiscountPct} off (100 = free). */
+    public static final String TYPE_BOGO = "BOGO";
+
+    /** True when this promotion must be presented rather than applying on its own. */
+    public boolean requiresCoupon() {
+      return couponCode != null && !couponCode.isBlank();
+    }
+
+    /** True for the two types that discount the basket rather than any particular line. */
+    public boolean isBasketLevel() {
+      return TYPE_BASKET_PERCENT.equals(type)
+          || TYPE_BASKET_FLAT.equals(type)
+          || TYPE_SPEND_THRESHOLD.equals(type);
+    }
+  }
+
+  /**
+   * One line of a basket being quoted.
+   *
+   * @param variantId what is being bought
+   * @param qty how many
+   * @param unitPrice the base price before any promotion
+   */
+  public record BasketLine(UUID variantId, BigDecimal qty, BigDecimal unitPrice) {}
+
+  /**
+   * What one promotion took off one line.
+   *
+   * @param variantId the line discounted
+   * @param promotionId which promotion did it
+   * @param promotionName its name, so a receipt can say why the price changed
+   * @param amount the money taken off that line in total, not per unit
+   */
+  public record LineDiscount(
+      UUID variantId, UUID promotionId, String promotionName, BigDecimal amount) {}
+
+  /**
+   * The engine's answer for one basket.
+   *
+   * @param lineDiscounts every line-level reduction, itemised by promotion
+   * @param basketDiscounts every whole-basket reduction, itemised by promotion
+   * @param appliedPromotionIds every promotion that took something off, in the order it ran — the
+   *     list a redemption ledger is written from
+   * @param rejectedCoupons coupon codes the caller presented that did not apply, each with the
+   *     reason. Returned rather than ignored: a customer who typed a code is owed an answer, and
+   *     "nothing happened" is the answer that generates a support call.
+   */
+  public record PromotionOutcome(
+      List<LineDiscount> lineDiscounts,
+      List<LineDiscount> basketDiscounts,
+      List<UUID> appliedPromotionIds,
+      Map<String, String> rejectedCoupons) {
+
+    public BigDecimal totalDiscount() {
+      return java.util.stream.Stream.concat(lineDiscounts.stream(), basketDiscounts.stream())
+          .map(LineDiscount::amount)
+          .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
   }
 
   /** Scopes a promotion to a specific variant, category, or ALL products. */
+  /** What a promotion or price list was switched to, by whom and why. Append-only (SJ-D33). */
+  public record StatusChange(
+      UUID id,
+      UUID tenantId,
+      String subjectType,
+      UUID subjectId,
+      boolean active,
+      String reason,
+      UUID changedBy,
+      Instant changedAt) {
+
+    public static final String PROMOTION = "PROMOTION";
+    public static final String PRICE_LIST = "PRICE_LIST";
+  }
+
   public record PromotionItem(
       UUID id, UUID tenantId, UUID promotionId, String scopeType, UUID scopeId, Instant createdAt) {
 

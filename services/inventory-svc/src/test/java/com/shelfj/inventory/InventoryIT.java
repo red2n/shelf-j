@@ -55,6 +55,7 @@ class InventoryIT {
   private static final String VP3 = "a0000003-0000-0000-0000-000000000000";
 
   @Inject WebTarget target;
+  @Inject com.shelfj.inventory.service.InventoryService inventoryService;
 
   @AfterAll
   static void stopDb() {
@@ -1373,5 +1374,282 @@ class InventoryIT {
     int objEnd = json.indexOf('}', m);
     String obj = json.substring(objStart, objEnd + 1);
     return field(obj, name);
+  }
+
+  // ── Stock turn ───────────────────────────────────────────────────────────────
+
+  /**
+   * The report's central claim: cost of goods sold comes from the batches the sale actually drew
+   * down, not from an average or from today's price. Two batches at different costs, FIFO takes the
+   * cheaper one first, and the COGS figure has to reflect exactly that.
+   */
+  @Test
+  void stockTurnCostsSalesAtTheBatchesFifoActuallyDrewDown() {
+    String v = "d4000001-0000-0000-0000-000000000000";
+    String tenant = "f3000001-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, v, "10", "2.00"); // 20.00
+    receiveCosted(tenant, v, "10", "5.00"); // 50.00
+
+    // Sell 15: FIFO takes all 10 at 2.00 and 5 at 5.00 = 20 + 25 = 45.00, not 15 x 3.50.
+    sell(tenant, v, 15);
+
+    String body = stockTurn(tenant, "VARIANT", null);
+    assertThat(numericFieldNear(body, v, "cogs"), is("45.00"));
+    // The window opens a day before this tenant existed, so it held nothing then. Zero here is
+    // the replay working: a report that read remaining_qty live would have called both ends
+    // 25.00 and reported the holding as though it had always been there.
+    assertThat(numericFieldNear(body, v, "openingValue"), is("0.00"));
+    // Closing is the 5 units FIFO left behind, still at 5.00 each.
+    assertThat(numericFieldNear(body, v, "closingValue"), is("25.00"));
+    assertThat(numericFieldNear(body, v, "averageValue"), is("12.50"));
+    // 45.00 / 12.50 = 3.6 turns in the window.
+    assertThat(numericFieldNear(body, v, "turnoverRatio"), is("3.6000"));
+    // The whole ledger is inside the window, so nothing was purged from under it.
+    assertThat(body, containsString("\"historyComplete\":true"));
+  }
+
+  /**
+   * A sale out of a batch with no cost price contributes nothing to COGS. Costing it at zero would
+   * flatter the margin and understate the turns, so it is declared instead — the same rule the
+   * valuation report applies to stock it cannot value.
+   */
+  @Test
+  void stockTurnDeclaresSalesItCannotCostRatherThanCostingThemAtZero() {
+    String v = "d4000002-0000-0000-0000-000000000000";
+    String tenant = "f3000002-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, v, "10", "3.00");
+    // Second receipt with no costPrice at all.
+    assertThat(post("/admin/inventory/receive", receiveJson(v, "10"), tenant).getStatus(), is(201));
+
+    // Sell 14: 10 costed units at 3.00 = 30.00, plus 4 that cannot be costed.
+    sell(tenant, v, 14);
+
+    String body = stockTurn(tenant, "VARIANT", null);
+    assertThat(numericFieldNear(body, v, "cogs"), is("30.00"));
+    assertThat(numericFieldNear(body, v, "uncostedSaleQty"), is("4.000"));
+  }
+
+  /**
+   * A window that closes before the sales happened must not see them. This is what separates a
+   * replayed report from one that reads {@code remaining_qty} live: the latter would answer a
+   * question about last month with this month's stock level.
+   */
+  @Test
+  void stockTurnIsBoundedByItsWindowAndValidatesIt() {
+    String v = "d4000003-0000-0000-0000-000000000000";
+    String tenant = "f3000003-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, v, "10", "4.00");
+    sell(tenant, v, 6);
+
+    // A window entirely in the past: nothing had been received or sold yet, so the variant is
+    // not a row at all rather than a row of zeroes.
+    String past =
+        target
+            .path("/admin/inventory/reports/stock-turn")
+            .queryParam("groupBy", "VARIANT")
+            .queryParam("from", "2000-01-01T00:00:00Z")
+            .queryParam("to", "2000-02-01T00:00:00Z")
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    assertThat(past, not(containsString(v)));
+
+    // from and to are required, and a bare date is not an instant (SJ-D9).
+    Response missing =
+        target
+            .path("/admin/inventory/reports/stock-turn")
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(missing.getStatus(), is(400));
+    assertThat(missing.readEntity(String.class), containsString("from"));
+
+    Response backwards =
+        target
+            .path("/admin/inventory/reports/stock-turn")
+            .queryParam("from", "2026-02-01T00:00:00Z")
+            .queryParam("to", "2026-01-01T00:00:00Z")
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(backwards.getStatus(), is(400));
+    assertThat(backwards.readEntity(String.class), containsString("INVENTORY_INVALID_PERIOD"));
+
+    Response badGrouping =
+        target
+            .path("/admin/inventory/reports/stock-turn")
+            .queryParam("groupBy", "REASON")
+            .queryParam("from", "2026-01-01T00:00:00Z")
+            .queryParam("to", "2026-02-01T00:00:00Z")
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(badGrouping.getStatus(), is(400));
+    assertThat(badGrouping.readEntity(String.class), containsString("INVENTORY_INVALID_GROUPING"));
+
+    // Another tenant's stock never appears in this one's turns.
+    assertThat(stockTurn(OTHER, "VARIANT", null), not(containsString(v)));
+  }
+
+  // ── SJ-D40: a voided till sale is not a sale ─────────────────────────────────
+
+  /**
+   * What inventory-svc does on OrderFulfilled and then OrderVoided for one till sale, driven
+   * through the real service. A unit test with a fake service passed while the reports keyed on a
+   * movement type the void never writes; only the real write path shows what lands in
+   * stock_movements.
+   */
+  private void sellByOrderThenVoid(String tenant, String variantId, String qty) {
+    UUID order = UUID.randomUUID();
+    UUID t = UUID.fromString(tenant);
+    UUID s = UUID.fromString(S);
+    UUID v = UUID.fromString(variantId);
+    var q = new java.math.BigDecimal(qty);
+    inventoryService.deductSaleFromOrderOnce(UUID.randomUUID(), "it", t, s, v, q, order);
+    inventoryService.receiveVoidFromOrderOnce(UUID.randomUUID(), "it", t, s, v, q, order);
+  }
+
+  @Test
+  void stockTurnDoesNotCountAVoidedSale() {
+    String v = "d4000010-0000-0000-0000-000000000000";
+    String tenant = "f3000010-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, v, "10", "2.00");
+    sellByOrderThenVoid(tenant, v, "4");
+
+    String body = stockTurn(tenant, "VARIANT", null);
+    // Netting by sign cannot work here: the void's receipt goes into a new return batch and this
+    // report sums per batch, so the sale would keep its 8.00 of cost in one group and the receipt
+    // would show as a negative sale in another. A voided sale has to be excluded outright.
+    assertThat(numericFieldNear(body, v, "cogs"), is("0.00"));
+    assertThat(numericFieldNear(body, v, "uncostedSaleQty"), is("0.000"));
+  }
+
+  @Test
+  void deadStockDoesNotTreatAVoidedSaleAsTheLastSale() {
+    String v = "d5000010-0000-0000-0000-000000000000";
+    String tenant = "f4000010-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, v, "10", "1.00");
+    sellByOrderThenVoid(tenant, v, "3");
+
+    String byVariant = deadStock(tenant, "VARIANT", null);
+    // A voided sale did not happen. Counting it would make stock that has never sold look as
+    // though it moved today, and hide it from the report whose job is to find it.
+    assertThat(numericFieldNear(byVariant, v, "neverSold"), is("true"));
+  }
+
+  // ── Dead stock ───────────────────────────────────────────────────────────────
+
+  /**
+   * The distinction the report exists for: stock that sold recently is not dead however long ago it
+   * arrived, and stock that has never sold is aged from its receipt and says so.
+   */
+  @Test
+  void deadStockAgesFromTheLastSaleNotFromReceipt() {
+    String moving = "d5000001-0000-0000-0000-000000000000";
+    String idle = "d5000002-0000-0000-0000-000000000000";
+    String tenant = "f4000001-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, moving, "10", "1.00");
+    receiveCosted(tenant, idle, "10", "9.00");
+    sell(tenant, moving, 2); // sold just now
+
+    String byVariant = deadStock(tenant, "VARIANT", null);
+    // Both are freshly created here, so both sit in the first band -- what differs is why.
+    assertThat(numericFieldNear(byVariant, moving, "daysSinceLastSale"), is("0"));
+    assertThat(numericFieldNear(byVariant, moving, "neverSold"), is("false"));
+    // The idle line has never sold: its age is measured from receipt, and it says so.
+    assertThat(numericFieldNear(byVariant, idle, "neverSold"), is("true"));
+    // 8 units left at 1.00 against 10 at 9.00 -- ordered by value at risk, so idle comes first.
+    assertThat(numericFieldNear(byVariant, idle, "value"), is("90.00"));
+    assertThat(numericFieldNear(byVariant, moving, "value"), is("8.00"));
+    assertThat(byVariant.indexOf(idle) < byVariant.indexOf(moving), is(true));
+
+    // The default grouping is the ageing ladder, and everything here is under 30 days old.
+    String ladder = deadStock(tenant, null, null);
+    assertThat(numericFieldNear(ladder, "0-30", "value"), is("98.00"));
+    assertThat(numericFieldNear(ladder, "0-30", "onHandQty"), is("18.000"));
+    // A mixed bucket is not "never sold" just because one line in it never has.
+    assertThat(numericFieldNear(ladder, "0-30", "neverSold"), is("false"));
+  }
+
+  /**
+   * Ageing is measured from a caller-supplied instant so the report is reproducible, and the ladder
+   * puts stock in the band that instant implies rather than the band today implies.
+   */
+  @Test
+  void deadStockLaddersAgainstTheSuppliedAsOfInstant() {
+    String v = "d5000003-0000-0000-0000-000000000000";
+    String tenant = "f4000002-0000-0000-0000-000000000000";
+
+    receiveCosted(tenant, v, "4", "2.50"); // never sold, received today
+
+    // Asked about a year from now, today's untouched receipt is deep in the last band.
+    String future =
+        deadStock(tenant, null, OffsetDateTime.now().plusDays(200).toInstant().toString());
+    assertThat(future, containsString("\"groupKey\":\"180+\""));
+    assertThat(numericFieldNear(future, "180+", "value"), is("10.00"));
+
+    // Stock that is entirely sold out has nothing at risk and leaves the report.
+    sell(tenant, v, 4);
+    assertThat(deadStock(tenant, "VARIANT", null), not(containsString(v)));
+
+    Response badGrouping =
+        target
+            .path("/admin/inventory/reports/dead-stock")
+            .queryParam("groupBy", "ACTOR")
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(badGrouping.getStatus(), is(400));
+    assertThat(badGrouping.readEntity(String.class), containsString("INVENTORY_INVALID_GROUPING"));
+  }
+
+  /** Reserve then consume — the only path that writes SALE movements against real batches. */
+  private void sell(String tenant, String variantId, int qty) {
+    Response reserved =
+        post(
+            "/inventory/reservations",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + variantId
+                + "\",\"qty\":"
+                + qty
+                + ",\"orderId\":\""
+                + UUID.randomUUID()
+                + "\"}",
+            tenant);
+    assertThat(reserved.getStatus(), is(201));
+    String id = field(reserved.readEntity(String.class), "id");
+    assertThat(post("/inventory/reservations/" + id + "/consume", "", tenant).getStatus(), is(200));
+  }
+
+  /** A window wide enough to contain everything a test just did. */
+  private String stockTurn(String tenant, String groupBy, String storeId) {
+    var t =
+        target
+            .path("/admin/inventory/reports/stock-turn")
+            .queryParam("from", OffsetDateTime.now().minusDays(1).toInstant().toString())
+            .queryParam("to", OffsetDateTime.now().plusDays(1).toInstant().toString());
+    if (groupBy != null) t = t.queryParam("groupBy", groupBy);
+    if (storeId != null) t = t.queryParam("storeId", storeId);
+    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get(String.class);
+  }
+
+  private String deadStock(String tenant, String groupBy, String asOf) {
+    var t = target.path("/admin/inventory/reports/dead-stock");
+    if (groupBy != null) t = t.queryParam("groupBy", groupBy);
+    if (asOf != null) t = t.queryParam("asOf", asOf);
+    return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get(String.class);
   }
 }

@@ -58,6 +58,13 @@
             <artifactId>helidon-webclient</artifactId>
         </dependency>
 
+        <!-- Timeout/retry/circuit-breaker on the sync tenant-svc currency lookup (golden rule:
+             every sync call has a timeout, retry, breaker and fallback). -->
+        <dependency>
+            <groupId>io.helidon.microprofile</groupId>
+            <artifactId>helidon-microprofile-fault-tolerance</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>com.shelfj</groupId>
             <artifactId>common-web</artifactId>

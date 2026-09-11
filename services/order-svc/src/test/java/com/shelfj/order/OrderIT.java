@@ -127,10 +127,12 @@ class OrderIT {
     assertThat(body1, containsString("PENDING"));
     String orderId = extractId(body1);
 
-    // confirm
+    // confirm — this is a POS in-store sale, so confirming it also hands it over (SJ-D40). This
+    // assertion said CONFIRMED, the state every till sale used to be left in: paid for and never
+    // deducted from stock.
     Response r2 = post("/orders/" + orderId + "/confirm", "{}", T);
     assertThat(r2.getStatus(), is(200));
-    assertThat(r2.readEntity(String.class), containsString("CONFIRMED"));
+    assertThat(r2.readEntity(String.class), containsString("FULFILLED"));
 
     // return one unit
     Response r3 =
@@ -201,8 +203,14 @@ class OrderIT {
 
     // A: placed, left PENDING (client never paid).
     String aId = extractId(post("/orders", orderJson, T, "it-sweep-a").readEntity(String.class));
-    // B: placed then confirmed.
-    String bId = extractId(post("/orders", orderJson, T, "it-sweep-b").readEntity(String.class));
+    // B: an online click-and-collect order, placed then confirmed — paid for and waiting to be
+    // collected. It used to be a POS in-store order, but a confirmed till sale is now handed over
+    // at once (SJ-D40), and this test exists to prove the sweeper spares a CONFIRMED order.
+    String collectJson =
+        orderJson.replace(
+            "\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\"",
+            "\"channel\":\"ONLINE\",\"fulfilmentType\":\"PICKUP\"");
+    String bId = extractId(post("/orders", collectJson, T, "it-sweep-b").readEntity(String.class));
     assertThat(post("/orders/" + bId + "/confirm", "{}", T).getStatus(), is(200));
 
     // TTL of 0h → every still-PENDING order is expired. B is CONFIRMED so the status guard skips
@@ -245,12 +253,15 @@ class OrderIT {
         tenantId, orderId, UUID.randomUUID(), new BigDecimal("4.00"));
     Response afterFirst = get("/orders/" + orderId, T);
     assertThat(afterFirst.readEntity(String.class), containsString("PENDING"));
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(0L));
 
-    // Second tender (card, $6) — the two together cover the total: now CONFIRMED.
+    // Second tender (card, $6) — the two together cover the total, and this is a till sale, so it
+    // is handed over: FULFILLED, not CONFIRMED. This assertion used to say CONFIRMED, which is the
+    // state SJ-D40 left every till sale in — paid for, and never deducted from stock.
     orderService.handlePaymentCaptured(
         tenantId, orderId, UUID.randomUUID(), new BigDecimal("6.00"));
-    Response afterSecond = get("/orders/" + orderId, T);
-    assertThat(afterSecond.readEntity(String.class), containsString("CONFIRMED"));
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
   }
 
   /**
@@ -286,6 +297,194 @@ class OrderIT {
 
     Response after = get("/orders/" + orderId, T);
     assertThat(after.readEntity(String.class), containsString("PENDING"));
+  }
+
+  // ── SJ-D40: a till sale is handed over the moment it is paid for ──────────
+
+  private static long outboxCount(UUID orderId, String eventType) {
+    try (var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT count(*) FROM \"order\".outbox WHERE aggregate_id = ? AND event_type = ?")) {
+      ps.setObject(1, orderId);
+      ps.setString(2, eventType);
+      try (var rs = ps.executeQuery()) {
+        rs.next();
+        return rs.getLong(1);
+      }
+    } catch (java.sql.SQLException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private static String outboxPayload(UUID orderId, String eventType) {
+    try (var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT payload FROM \"order\".outbox WHERE aggregate_id = ? AND event_type = ?"
+                    + " LIMIT 1")) {
+      ps.setObject(1, orderId);
+      ps.setString(2, eventType);
+      try (var rs = ps.executeQuery()) {
+        return rs.next() ? rs.getString(1) : null;
+      }
+    } catch (java.sql.SQLException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  /** Places a two-unit order at $10.00 each ($20.00 total) and returns its id. */
+  private UUID placeAt(String channel, String fulfilment) {
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\""
+                + channel
+                + "\",\"fulfilmentType\":\""
+                + fulfilment
+                + "\",\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":2,\"unitPrice\":10.00}],\"currency\":\"USD\"}",
+            T,
+            "it-till-" + UUID.randomUUID());
+    String body = placed.readEntity(String.class);
+    assertThat(body, placed.getStatus(), is(201));
+    return UUID.fromString(extractId(body));
+  }
+
+  private String statusOf(UUID orderId) {
+    String body = get("/orders/" + orderId, T).readEntity(String.class);
+    var m = java.util.regex.Pattern.compile("\"status\":\"([A-Z_]+)\"").matcher(body);
+    return m.find() ? m.group(1) : body;
+  }
+
+  /**
+   * The defect. Proved on the running stack before the fix: a till sale paid in full sat at
+   * CONFIRMED with no SALE movement, and the only SALE movements in the system belonged to one
+   * order a manager had fulfilled by hand.
+   */
+  @Test
+  void aTillSaleIsHandedOverTheMomentItIsPaidFor() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    // The event inventory-svc deducts stock on. Before this fix a till sale never produced one.
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
+    String payload = outboxPayload(orderId, "OrderFulfilled");
+    assertThat(payload, containsString(V));
+    assertThat(payload, containsString("\"qty\":2"));
+  }
+
+  @Test
+  void aRedeliveredCaptureDoesNotSellTheStockTwice() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    UUID paymentId = UUID.randomUUID();
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, paymentId, new BigDecimal("20.00"));
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, paymentId, new BigDecimal("20.00"));
+
+    // Two OrderFulfilled events would deduct the stock twice — inventory-svc dedupes per event,
+    // and each OrderFulfilled carries a fresh event id, so this has to be stopped here.
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
+    assertThat(statusOf(orderId), is("FULFILLED"));
+  }
+
+  @Test
+  void aTillSaleQueuedOfflineAsPickupIsStillHandedOver() {
+    // The till sent PICKUP for every tendered sale until this fix, including the ones sitting in
+    // offline queues on devices now, which replay with the request they were queued with.
+    UUID orderId = placeAt("POS", "PICKUP");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
+  }
+
+  @Test
+  void anOnlineCollectOrderIsConfirmedButNotHandedOver() {
+    // The other direction of the same rule: an online click-and-collect order is paid for now and
+    // collected later. Fulfilling it at payment would deduct stock that is still on the shelf.
+    UUID orderId = placeAt("ONLINE", "PICKUP");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+
+    assertThat(statusOf(orderId), is("CONFIRMED"));
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(0L));
+  }
+
+  @Test
+  void confirmingATillSaleByHandAlsoHandsItOver() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    assertThat(post("/orders/" + orderId + "/confirm", "{}", T).getStatus(), is(200));
+
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    assertThat(outboxCount(orderId, "OrderFulfilled"), is(1L));
+  }
+
+  // ── ...and a voided till sale puts that stock back ────────────────────────
+
+  @Test
+  void voidingATillSaleThatWasHandedOverPutsItsStockBack() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+    assertThat(
+        post("/orders/" + orderId + "/void", "{\"reason\":\"wrong item scanned\"}", T).getStatus(),
+        is(200));
+
+    // Before SJ-D40 a till sale never deducted stock, so a void had nothing to put back and
+    // OrderVoided carried no lines. Now it deducts at payment, and a void that did not restock
+    // would lose the stock permanently.
+    String payload = outboxPayload(orderId, "OrderVoided");
+    assertThat(payload, containsString(V));
+    assertThat(payload, containsString("\"qty\":2"));
+    assertThat(payload, containsString("\"storeId\":\"" + S + "\""));
+    assertThat(payload, containsString("\"eventId\":\""));
+  }
+
+  @Test
+  void voidingASaleWithAReturnAgainstItPutsBackOnlyWhatIsLeft() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, UUID.randomUUID(), new BigDecimal("20.00"));
+    Response ret =
+        post(
+            "/orders/" + orderId + "/returns",
+            "{\"reason\":\"one was bruised\",\"refundMethod\":\"ORIGINAL\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1}]}",
+            T);
+    assertThat(ret.getStatus(), is(201));
+    assertThat(
+        post("/orders/" + orderId + "/void", "{\"reason\":\"rang the rest up wrong\"}", T)
+            .getStatus(),
+        is(200));
+
+    // Two were sold and one came back through the return, which restocked it the moment the
+    // return was created. Restocking both on the void would count that one twice.
+    String payload = outboxPayload(orderId, "OrderVoided");
+    assertThat(payload, containsString(V));
+    assertThat(payload, containsString("\"qty\":1"));
+    assertThat(payload, not(containsString("\"qty\":2")));
+  }
+
+  @Test
+  void voidingASaleBeforeItIsPaidForPutsNothingBack() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    assertThat(
+        post("/orders/" + orderId + "/void", "{\"reason\":\"customer walked away\"}", T)
+            .getStatus(),
+        is(200));
+
+    // Nothing was handed over, so nothing was deducted — restocking here would invent stock.
+    assertThat(outboxPayload(orderId, "OrderVoided"), containsString("\"items\":[]"));
   }
 
   @Test
@@ -477,7 +676,7 @@ class OrderIT {
               "it-poslog-" + i);
       assertThat(placed.getStatus(), is(201));
       String orderId = extractId(placed.readEntity(String.class));
-      Response logged = post("/admin/pos-log/orders/" + orderId, "", tenant);
+      Response logged = post("/pos/log/orders/" + orderId, "", tenant);
       assertThat(logged.getStatus(), is(201));
       allIds.add(extractId(logged.readEntity(String.class)));
     }
@@ -670,6 +869,70 @@ class OrderIT {
     assertThat(rIso.getStatus(), is(404));
   }
 
+  /**
+   * A POS sale captured while the till is offline is replayed later by re-sending every write in
+   * the sale. Order placement and tender capture already replay on their Idempotency-Key; gift-card
+   * redemption had no key at all and simply decremented, so a replay took the money twice. Redeem
+   * is now idempotent per (card, order).
+   */
+  @Test
+  void giftCardRedeemIsIdempotentPerOrder() {
+    String gcBody =
+        post("/gift-cards", "{\"storeId\":\"" + S + "\",\"amount\":50.00}", T)
+            .readEntity(String.class);
+    String code = extractCode(gcBody);
+
+    String orderId =
+        extractId(
+            post(
+                    "/orders",
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"POS\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,\"unitPrice\":5.00}]}",
+                    T,
+                    "it-gc-replay")
+                .readEntity(String.class));
+
+    String redeem = "{\"amount\":30.00,\"orderId\":\"" + orderId + "\"}";
+    Response first = post("/gift-cards/" + code + "/redeem", redeem, T);
+    assertThat(first.getStatus(), is(200));
+    assertThat(first.readEntity(String.class), containsString("\"currentBalance\":20.0"));
+
+    // The replay must be a no-op, not a second deduction.
+    Response replay = post("/gift-cards/" + code + "/redeem", redeem, T);
+    assertThat(replay.getStatus(), is(200));
+    assertThat(replay.readEntity(String.class), containsString("\"currentBalance\":20.0"));
+
+    assertThat(
+        get("/gift-cards/" + code, T).readEntity(String.class),
+        containsString("\"currentBalance\":20.0"));
+
+    // A different order genuinely redeems again — the guard is per order, not per card.
+    String otherOrder =
+        extractId(
+            post(
+                    "/orders",
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"POS\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,\"unitPrice\":5.00}]}",
+                    T,
+                    "it-gc-replay-2")
+                .readEntity(String.class));
+    Response second =
+        post(
+            "/gift-cards/" + code + "/redeem",
+            "{\"amount\":5.00,\"orderId\":\"" + otherOrder + "\"}",
+            T);
+    assertThat(second.getStatus(), is(200));
+    assertThat(second.readEntity(String.class), containsString("\"currentBalance\":15.0"));
+  }
+
   @Test
   void voidOnlineOrderFails() {
     Response r1 =
@@ -786,7 +1049,329 @@ class OrderIT {
         is(200));
   }
 
+  // ── Sales by hour / by staff ───────────────────────────────────────────────
+
+  /**
+   * The timezone is the whole report. The same order, bucketed on two different clocks, has to land
+   * in two different hours — otherwise a shop outside UTC is being told its peak is at the wrong
+   * time of day, which is the one thing the report is for.
+   */
+  @Test
+  void salesByHourBucketsOnTheRequestedTimezoneNotUtc() {
+    String tenant = "51000000-0000-0000-0000-000000000001";
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":2,\"unitPrice\":15.00}]}",
+            tenant,
+            "it-hour-1");
+    assertThat(placed.getStatus(), is(201));
+    confirm(tenant, extractId(placed.readEntity(String.class)));
+
+    int utcHour = hourOf(salesByHour(tenant, "UTC"));
+    // Asia/Dubai is UTC+4 all year and never observes DST, so the shift is exactly four hours
+    // whenever this test happens to run. A half-hour zone like Asia/Kolkata would have been the
+    // more interesting case and a worse assertion: whether its hour lands +5 or +6 depends on
+    // the minute the test started. Modulo 24 because the day can roll over.
+    int dubaiHour = hourOf(salesByHour(tenant, "Asia/Dubai"));
+    assertThat(dubaiHour, is((utcHour + 4) % 24));
+
+    // The admin app cannot read the browser's IANA zone name, so it sends a fixed offset. The
+    // form matters and the trap is silent: Postgres reads "UTC+04:00" under the POSIX
+    // convention, where the sign is INVERTED, while Java's ZoneId.of accepts it meaning the
+    // opposite — so that spelling would validate and then bucket every hour eight hours out.
+    // "+04:00" is an ISO offset to both. This pins that the form the client sends agrees with a
+    // named zone at the same offset.
+    assertThat(hourOf(salesByHour(tenant, "+04:00")), is(dubaiHour));
+
+    // 2 x 15.00 in one order: the basket average is the order value, not the line value.
+    String body = salesByHour(tenant, "UTC");
+    assertThat(body, containsString("\"orders\":1"));
+    assertThat(body, containsString("\"averageBasket\":30.00"));
+
+    // An unparseable zone is the caller's error, not a 500 from Postgres rejecting it.
+    Response bad = getQuery("/admin/reports/sales-by-hour", tenant, "tz", "Europe/Londn");
+    assertThat(bad.getStatus(), is(400));
+    assertThat(bad.readEntity(String.class), containsString("ORDER_INVALID_TIMEZONE"));
+
+    Response badChannel = getQuery("/admin/reports/sales-by-hour", tenant, "channel", "CARRIER");
+    assertThat(badChannel.getStatus(), is(400));
+    assertThat(badChannel.readEntity(String.class), containsString("ORDER_INVALID_CHANNEL"));
+  }
+
+  /**
+   * Only money that was actually taken counts. A PENDING order has not been paid for and a
+   * cancelled one has been unmade — including either would put a trading peak where none happened.
+   */
+  @Test
+  void salesByHourCountsOnlyRevenueOrders() {
+    String tenant = "51000000-0000-0000-0000-000000000002";
+    // Placed and left PENDING: no money has changed hands.
+    Response pending =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":99.00}]}",
+            tenant,
+            "it-hour-2");
+    assertThat(pending.getStatus(), is(201));
+
+    assertThat(salesByHour(tenant, "UTC"), not(containsString("\"orders\"")));
+
+    // Confirming the same order makes it revenue, and now it counts.
+    confirm(tenant, extractId(pending.readEntity(String.class)));
+    assertThat(salesByHour(tenant, "UTC"), containsString("\"grossAmount\":99.00"));
+  }
+
+  /**
+   * Takings per cashier come from the POS journal, which is the only place that knows who served
+   * whom. A cashier who journalled nothing is absent rather than zero, and the discount rate is a
+   * share of the undiscounted ticket, not of what was left after the discount.
+   */
+  @Test
+  void salesByStaffAttributesTakingsToTheCashierWhoJournalledThem() {
+    String tenant = "51000000-0000-0000-0000-000000000003";
+    String cashier = "aaaaaaaa-0000-0000-0000-0000000000b1";
+
+    // 20.00 ticket with 5.00 off: 15.00 taken, 25% of the ticket given away.
+    String orderId =
+        extractId(
+            postAs(
+                    "/orders",
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"POS\","
+                        + "\"discountAmount\":5.00,\"discountReason\":\"damaged box\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,\"unitPrice\":20.00}]}",
+                    tenant,
+                    cashier,
+                    "MANAGER",
+                    "it-staff-1")
+                .readEntity(String.class));
+    assertThat(
+        postAs("/pos/log/orders/" + orderId, "{}", tenant, cashier, "CASHIER", null).getStatus(),
+        is(201));
+
+    String body = get("/admin/reports/sales-by-staff", tenant).readEntity(String.class);
+    assertThat(body, containsString(cashier));
+    assertThat(body, containsString("\"sales\":1"));
+    assertThat(body, containsString("\"grossAmount\":15.00"));
+    assertThat(body, containsString("\"discountAmount\":5.00"));
+    assertThat(body, containsString("\"averageBasket\":15.00"));
+    // 5 of the 20 the ticket would have fetched: 25.0%, not 33.3% of the 15 taken.
+    assertThat(body, containsString("\"discountRate\":25.0"));
+
+    // Another tenant's takings are never in this one's report.
+    assertThat(
+        get("/admin/reports/sales-by-staff", "51000000-0000-0000-0000-000000000004")
+            .readEntity(String.class),
+        not(containsString(cashier)));
+  }
+
+  /** A backwards window is rejected before either query runs, on both endpoints. */
+  @Test
+  void salesReportsRejectABackwardsWindow() {
+    for (String path :
+        new String[] {"/admin/reports/sales-by-hour", "/admin/reports/sales-by-staff"}) {
+      Response r =
+          target
+              .path(path)
+              .queryParam("from", "2026-02-01T00:00:00Z")
+              .queryParam("to", "2026-01-01T00:00:00Z")
+              .request()
+              .header("X-Tenant-Id", T)
+              .header("X-Roles", "OWNER")
+              .get();
+      assertThat(r.getStatus(), is(400));
+      assertThat(r.readEntity(String.class), containsString("ORDER_INVALID_PERIOD"));
+    }
+  }
+
+  /** Move a placed order to CONFIRMED, which is what makes it revenue. */
+  private void confirm(String tenant, String orderId) {
+    assertThat(post("/orders/" + orderId + "/confirm", "{}", tenant).getStatus(), is(200));
+  }
+
+  private String salesByHour(String tenant, String tz) {
+    return getQuery("/admin/reports/sales-by-hour", tenant, "tz", tz).readEntity(String.class);
+  }
+
+  /** The single hourOfDay in a one-row sales-by-hour response. */
+  private static int hourOf(String json) {
+    String key = "\"hourOfDay\":";
+    int i = json.indexOf(key);
+    if (i < 0) throw new AssertionError("no hourOfDay in " + json);
+    int start = i + key.length();
+    int end = start;
+    while (end < json.length() && ",}]".indexOf(json.charAt(end)) < 0) end++;
+    return Integer.parseInt(json.substring(start, end).trim());
+  }
+
+  // ── Staff exception report ─────────────────────────────────────────────────
+
+  /**
+   * The report exists to answer "which cashier is an outlier". These pin the two things that make
+   * it an answer rather than a table: the three logs are merged rather than joined, and a group
+   * that appears in only one of them still gets a row.
+   */
+  @Test
+  void exceptionReportMergesTheThreeLogsPerActor() {
+    String cashier = "aaaaaaaa-0000-0000-0000-000000000001";
+    String other = "aaaaaaaa-0000-0000-0000-000000000002";
+
+    // One discounted POS sale by `cashier`.
+    String orderId =
+        extractId(
+            postAs(
+                    "/orders",
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"POS\","
+                        + "\"discountAmount\":2.00,\"discountReason\":\"damaged box\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,"
+                        + "\"unitPrice\":20.00}]}",
+                    T,
+                    cashier,
+                    "MANAGER",
+                    "it-exc-1")
+                .readEntity(String.class));
+
+    // Two no-sales: one by the same cashier, one by somebody else who sold nothing at all.
+    for (String who : new String[] {cashier, other}) {
+      Response ns =
+          postAs(
+              "/pos/no-sale",
+              "{\"storeId\":\"" + S + "\",\"reason\":\"drawer check\"}",
+              T,
+              who,
+              "CASHIER",
+              null);
+      assertThat(ns.getStatus(), is(201));
+    }
+
+    // Journal the sale, so the report has a denominator for `cashier`.
+    Response journal = postAs("/pos/log/orders/" + orderId, "{}", T, cashier, "CASHIER", null);
+    assertThat(journal.getStatus(), is(201));
+
+    String body =
+        getQuery("/admin/reports/exceptions", T, "groupBy", "ACTOR").readEntity(String.class);
+
+    // The discounting cashier: one discount worth 2.00, one no-sale, one journalled sale.
+    assertThat(body, containsString(cashier));
+    assertThat(body, containsString("\"discounts\":1"));
+    assertThat(body, containsString("\"noSales\":1"));
+    assertThat(body, containsString("\"sales\":1"));
+
+    // The second cashier sold nothing and opened the drawer anyway — the case the report is for.
+    // A join across the three logs would have dropped this row entirely.
+    assertThat(body, containsString(other));
+
+    // A denominator exists, so rates are meaningful.
+    assertThat(body, containsString("\"journalCoverage\":true"));
+  }
+
+  /**
+   * With nothing journalled there is no denominator, and the report has to say so rather than
+   * present zeroes that read as "this cashier made no sales".
+   */
+  @Test
+  void exceptionReportDeclaresWhenItHasNoDenominator() {
+    Response ns =
+        postAs(
+            "/pos/no-sale",
+            "{\"storeId\":\"" + S + "\",\"reason\":\"no journal here\"}",
+            "44444444-4444-4444-4444-444444444444",
+            "aaaaaaaa-0000-0000-0000-000000000009",
+            "CASHIER",
+            null);
+    assertThat(ns.getStatus(), is(201));
+
+    String body =
+        get("/admin/reports/exceptions", "44444444-4444-4444-4444-444444444444")
+            .readEntity(String.class);
+    assertThat(body, containsString("\"noSales\":1"));
+    assertThat(body, containsString("\"sales\":0"));
+    assertThat(body, containsString("\"journalCoverage\":false"));
+  }
+
+  @Test
+  void exceptionReportRejectsAnUnknownGrouping() {
+    Response r = getQuery("/admin/reports/exceptions", T, "groupBy", "WEATHER");
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("ORDER_INVALID_GROUPING"));
+  }
+
+  /**
+   * The journal write used to sit under /admin/, which is management-gated — so the cashier who
+   * took the sale could not journal it and nothing ever did. It is now on the till's own path.
+   */
+  @Test
+  void aCashierCanJournalTheirOwnSaleAndReplayIsANoOp() {
+    String cashier = "aaaaaaaa-0000-0000-0000-00000000000a";
+    String orderId =
+        extractId(
+            postAs(
+                    "/orders",
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"POS\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,"
+                        + "\"unitPrice\":9.00}]}",
+                    T,
+                    cashier,
+                    "CASHIER",
+                    "it-poslog-1")
+                .readEntity(String.class));
+
+    Response first = postAs("/pos/log/orders/" + orderId, "{}", T, cashier, "CASHIER", null);
+    assertThat(first.getStatus(), is(201));
+    String firstId = extractId(first.readEntity(String.class));
+
+    // A retry — or an offline sale replayed later — returns the same entry, not a 409.
+    Response replay = postAs("/pos/log/orders/" + orderId, "{}", T, cashier, "CASHIER", null);
+    assertThat(replay.getStatus(), is(201));
+    assertThat(extractId(replay.readEntity(String.class)), is(firstId));
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────
+
+  /** GET with one query parameter — `get` bakes its argument into the path, which encodes '?'. */
+  private Response getQuery(String path, String tenant, String key, String value) {
+    return target
+        .path(path)
+        .queryParam(key, value)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", "OWNER")
+        .get();
+  }
+
+  /** POST as a specific principal and role, which the OWNER-stamped helpers cannot express. */
+  private Response postAs(
+      String path, String json, String tenant, String userId, String roles, String idempotencyKey) {
+    var req =
+        target
+            .path(path)
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-User-Id", userId)
+            .header("X-Roles", roles);
+    if (idempotencyKey != null) req = req.header("Idempotency-Key", idempotencyKey);
+    return req.post(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
 
   private Response getAs(String path, String tenant, String userId, String roles) {
     return target

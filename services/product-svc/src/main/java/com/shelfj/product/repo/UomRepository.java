@@ -31,6 +31,22 @@ public class UomRepository extends BaseJdbcRepository {
         "list uom classes");
   }
 
+  /**
+   * Whether a unit code exists at all.
+   *
+   * <p>A targeted lookup rather than scanning {@link #listUomDefinitions}: this is called whenever
+   * a variant's net content is set, and reading the whole reference table to answer one membership
+   * question is the kind of thing that is invisible until the catalogue import runs.
+   */
+  public boolean definitionExists(String code) {
+    return !query(
+            "SELECT 1 FROM uom_definitions WHERE code = ?",
+            ps -> ps.setString(1, code),
+            rs -> rs.getInt(1),
+            "uom definition exists")
+        .isEmpty();
+  }
+
   public List<UomDefinition> listUomDefinitions(String classCode) {
     if (classCode != null) {
       return query(

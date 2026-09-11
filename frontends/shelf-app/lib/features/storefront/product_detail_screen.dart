@@ -6,6 +6,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'storefront_providers.dart';
 import 'storefront_widgets.dart';
+import 'allergen_summary.dart';
 
 class ProductDetailScreen extends ConsumerWidget {
   final String productId;
@@ -119,10 +120,19 @@ class _VariantRow extends ConsumerWidget {
       );
     }
 
-    final subtitle = Text([
-      if (variant.unit != null) variant.unit!,
-      if (variant.barcode != null) 'EAN: ${variant.barcode}',
-    ].join('  ·  '));
+    final subtitle = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text([
+          if (variant.unit != null) variant.unit!,
+          if (variant.barcode != null) 'EAN: ${variant.barcode}',
+        ].join('  ·  ')),
+        // A shopper is entitled to this before buying, and it is the one line
+        // on the page where a wrong answer can put someone in hospital.
+        AllergenSummary(variantId: variant.id),
+      ],
+    );
     final title =
         Text(variant.sku, style: const TextStyle(fontFamily: 'monospace'));
 

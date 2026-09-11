@@ -21,14 +21,22 @@ class UserRegisteredHandlerTest {
     int calls;
     UUID eventId;
     String type;
+    UUID subjectId;
     String recipient;
 
     @Override
     public void notifyOnce(
-        UUID eventId, String type, UUID tenantId, String recipient, String subject, String body) {
+        UUID eventId,
+        String type,
+        UUID tenantId,
+        UUID subjectId,
+        String recipient,
+        String subject,
+        String body) {
       this.calls++;
       this.eventId = eventId;
       this.type = type;
+      this.subjectId = subjectId;
       this.recipient = recipient;
     }
   }
@@ -45,13 +53,14 @@ class UserRegisteredHandlerTest {
 
   @Test
   void sendsWelcomeToTheRegisteredEmail() {
+    UUID user = UUID.randomUUID();
     String json =
         "{\"eventId\":\""
             + EVENT
             + "\",\"eventType\":\"UserRegistered\",\"tenantId\":\""
             + TENANT
             + "\",\"aggregateId\":\""
-            + UUID.randomUUID()
+            + user
             + "\",\"email\":\"newuser@example.com\",\"type\":\"CUSTOMER\"}";
 
     handler.handle(json);
@@ -60,6 +69,8 @@ class UserRegisteredHandlerTest {
     assertEquals(EVENT, notifier.eventId);
     assertEquals("WELCOME", notifier.type);
     assertEquals("newuser@example.com", notifier.recipient);
+    // SJ-D43: the welcome records whose account it was, so deleting the account can erase it.
+    assertEquals(user, notifier.subjectId);
   }
 
   @Test

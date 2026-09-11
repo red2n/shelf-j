@@ -3,8 +3,10 @@ package com.shelfj.payment.mapper;
 import com.shelfj.payment.domain.Domain.PaymentIntent;
 import com.shelfj.payment.domain.Domain.PaymentTender;
 import com.shelfj.payment.domain.Domain.RefundTender;
+import com.shelfj.payment.domain.Domain.TenderMixRow;
 import com.shelfj.payment.dto.Dtos.PaymentIntentResponse;
 import com.shelfj.payment.dto.Dtos.RefundResponse;
+import com.shelfj.payment.dto.Dtos.TenderMixRowResponse;
 import com.shelfj.payment.dto.Dtos.TenderResponse;
 
 public final class Mappers {
@@ -53,5 +55,17 @@ public final class Mappers {
         i.failureMessage(),
         i.paymentId() == null ? null : i.paymentId().toString(),
         i.createdAt().toString());
+  }
+
+  public static TenderMixRowResponse toTenderMixRow(TenderMixRow r) {
+    return new TenderMixRowResponse(
+        r.method(),
+        r.capturedAmount(),
+        r.capturedCount(),
+        r.refundedAmount(),
+        r.refundedCount(),
+        r.failedCount(),
+        r.netAmount(),
+        r.shareOfNet());
   }
 }

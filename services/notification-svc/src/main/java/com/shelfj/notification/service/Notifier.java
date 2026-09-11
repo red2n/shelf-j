@@ -21,8 +21,18 @@ public class Notifier {
   @Inject NotificationChannel channel;
   @Inject NotificationRepository repo;
 
+  /**
+   * @param subjectId the customer or account the message is about, so it can be found and erased
+   *     later; null only when there is none
+   */
   public void notifyOnce(
-      UUID eventId, String type, UUID tenantId, String recipient, String subject, String body) {
+      UUID eventId,
+      String type,
+      UUID tenantId,
+      UUID subjectId,
+      String recipient,
+      String subject,
+      String body) {
     if (recipient == null || recipient.isBlank()) {
       LOG.log(Level.DEBUG, "No recipient for {0} {1} — skipped", type, eventId);
       return;
@@ -34,6 +44,6 @@ public class Notifier {
     // retries.
     channel.send(tenantId, recipient, subject, body);
     repo.recordNotification(
-        tenantId, eventId, type, channel.name(), recipient, subject, body, "SENT");
+        tenantId, subjectId, eventId, type, channel.name(), recipient, subject, body, "SENT");
   }
 }

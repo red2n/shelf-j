@@ -35,9 +35,15 @@ class OrderEventConsumer extends BaseKafkaConsumer {
       defaultValue = "shelfj.order.order-cancelled")
   String cancelledTopic;
 
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.kafka.topics.order-voided",
+      defaultValue = "shelfj.order.order-voided")
+  String voidedTopic;
+
   @Override
   protected List<String> topics() {
-    return List.of(fulfilledTopic, returnedTopic, cancelledTopic);
+    return List.of(fulfilledTopic, returnedTopic, cancelledTopic, voidedTopic);
   }
 
   @Override

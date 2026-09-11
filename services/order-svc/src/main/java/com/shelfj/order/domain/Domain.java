@@ -11,6 +11,37 @@ public final class Domain {
 
   // ── Core order ────────────────────────────────────────────────────────────
 
+  /**
+   * A numbered legal receipt.
+   *
+   * <p>Distinct from {@code order_receipts}, which logs how many times a document was printed or
+   * emailed. This is the document — one per sale, numbered consecutively, never renumbered and
+   * never deleted. A voided sale keeps its number, because suppressing it is the fraud the
+   * numbering exists to expose.
+   */
+  public record FiscalReceipt(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      String seriesCode,
+      String period,
+      long number,
+      String fullNumber,
+      UUID orderId,
+      Instant issuedAt,
+      UUID issuedBy,
+      String currency,
+      BigDecimal grossTotal,
+      BigDecimal taxTotal,
+      Instant voidedAt,
+      String voidReason) {
+    /** The series a store uses when the jurisdiction does not require one per till. */
+    public static final String DEFAULT_SERIES = "MAIN";
+  }
+
+  /** A hole in a receipt series, inclusive at both ends. */
+  public record SequenceGap(long from, long to) {}
+
   public record Order(
       UUID id,
       UUID tenantId,
@@ -37,7 +68,14 @@ public final class Domain {
       String deliveryRecipientName,
       String deliveryRecipientPhone,
       String contactPhone,
-      String paymentMethod) {
+      String paymentMethod,
+      /**
+       * What the promotion engine took off this order, kept apart from {@code discountAmount}. That
+       * one is the staff discount — a named person, a required reason, a role ceiling and an audit
+       * row (SJ-D6). This one is automatic and answers to a rule. Summing them would put
+       * promotional money inside the role-ceiling check.
+       */
+      BigDecimal promotionDiscount) {
     public static final String CHANNEL_ONLINE = "ONLINE";
     public static final String CHANNEL_POS = "POS";
     public static final String FULFILMENT_PICKUP = "PICKUP";
@@ -52,6 +90,9 @@ public final class Domain {
     public static final String STATUS_PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED";
     public static final String STATUS_REFUNDED = "REFUNDED";
   }
+
+  /** A quantity of one variant to put back into stock — the lines a voided sale restocks. */
+  public record RestockLine(UUID variantId, BigDecimal qty) {}
 
   public record OrderItem(
       UUID id,
@@ -260,6 +301,74 @@ public final class Domain {
       Instant changedAt) {}
 
   // ── Gap #43: POSLog entry (append-only) ───────────────────────────────────
+
+  /**
+   * One line of the staff exception report: everything one cashier (or one store) did over the
+   * period that loss prevention cares about, with the sales count that makes it a rate rather than
+   * a ranking of who worked hardest.
+   *
+   * <p>{@code sales} and {@code salesValue} come from the POS transaction journal. They are zero
+   * when nothing journalled the sale, which is not the same as "this person made no sales" — the
+   * report says so rather than dividing by it.
+   */
+  public record ExceptionRow(
+      String groupKey,
+      long discounts,
+      java.math.BigDecimal discountAmount,
+      long voids,
+      long noSales,
+      long sales,
+      java.math.BigDecimal salesValue) {}
+
+  /** How the exception report buckets its rows. */
+  public enum ExceptionGrouping {
+    ACTOR,
+    STORE
+  }
+
+  /**
+   * One hour of the trading day.
+   *
+   * <p>Hours with no trade are absent from the report rather than present as zeroes: a row of
+   * zeroes asserts the shop was open and nobody came, which is a different fact from the shop being
+   * shut, and only the caller knows which.
+   *
+   * @param hourOfDay 0-23 on the clock of the timezone the report was asked for, not UTC
+   * @param orders how many revenue orders fell in this hour
+   * @param grossAmount their total, after any discount
+   * @param discountAmount how much was discounted away inside it
+   * @param averageBasket gross divided by orders — null is impossible here, since an hour with no
+   *     orders produces no row at all
+   */
+  public record SalesByHourRow(
+      int hourOfDay,
+      long orders,
+      java.math.BigDecimal grossAmount,
+      java.math.BigDecimal discountAmount,
+      java.math.BigDecimal averageBasket) {}
+
+  /**
+   * One member of staff's takings.
+   *
+   * <p>Sourced from the POS transaction journal, so it covers in-store sales only — an online order
+   * has no cashier. {@code UNATTRIBUTED} buckets journal entries that name nobody rather than
+   * dropping them.
+   *
+   * @param groupKey the cashier's user id, or UNATTRIBUTED
+   * @param sales how many sales they journalled
+   * @param grossAmount what those sales came to
+   * @param discountAmount how much they discounted away
+   * @param averageBasket gross divided by sales
+   * @param discountRate discount as a percentage of gross plus discount — what the sale would have
+   *     been worth undiscounted. Null when there is nothing to take a percentage of.
+   */
+  public record SalesByStaffRow(
+      String groupKey,
+      long sales,
+      java.math.BigDecimal grossAmount,
+      java.math.BigDecimal discountAmount,
+      java.math.BigDecimal averageBasket,
+      java.math.BigDecimal discountRate) {}
 
   public record PosLogEntry(
       UUID id,

@@ -9,7 +9,10 @@ import '../../core/theme.dart';
 import '../../shared/widgets/barcode_scanner_sheet.dart';
 import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
+import 'pos_age_check.dart';
 import 'pos_providers.dart';
+import 'pos_recall_check.dart';
+import 'pos_weighed_item.dart';
 import 'pos_session_providers.dart';
 
 /// The register screen. On a wide terminal it's a two-pane supermarket till —
@@ -38,10 +41,9 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     final code = raw.trim();
     if (code.isEmpty || _scanning) return;
     setState(() => _scanning = true);
+    PosLine? line;
     try {
-      final line = await scanBarcode(ref, code);
-      ref.read(posCartProvider.notifier).addOrIncrement(line);
-      _barcodeCtrl.clear();
+      line = await scanBarcode(ref, code);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -52,9 +54,21 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
         );
       }
     } finally {
+      // Off before the age check, not after it: the check can stop for the
+      // cashier, and a spinner behind that question says the till is still busy
+      // when it is the cashier it is waiting for.
       if (mounted) setState(() => _scanning = false);
-      _barcodeFocus.requestFocus();
     }
+    if (line != null) {
+      // Checked before it reaches the sale: the age check, and for an item sold
+      // by weight, the reading from the scale.
+      final ready = await _prepareForSale(line);
+      if (ready != null) {
+        ref.read(posCartProvider.notifier).addOrIncrement(ready);
+      }
+      _barcodeCtrl.clear();
+    }
+    _barcodeFocus.requestFocus();
   }
 
   String _friendly(Object e) {
@@ -75,13 +89,107 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     }
   }
 
-  void _addOffer(PosOffer offer) {
-    ref.read(posCartProvider.notifier).addOrIncrement(offer.toLine());
+  Future<void> _addOffer(PosOffer offer) async {
+    // Picking from the catalog is the other way into the sale, so it gets the
+    // same checks — otherwise browsing would be the way round them.
+    final line = await _prepareForSale(offer.toLine());
+    if (line == null || !mounted) return;
+    ref.read(posCartProvider.notifier).addOrIncrement(line);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content: Text('Added ${offer.name}'),
           duration: const Duration(milliseconds: 600)),
     );
+  }
+
+  /// Everything a line must pass before it reaches the sale. Null keeps it out.
+  Future<PosLine?> _prepareForSale(PosLine line) async {
+    // The recall first: there is no point checking the age of a customer for
+    // an item that cannot be sold to anyone.
+    if (!await _passesRecallCheck(line)) return null;
+    if (!await _passesAgeCheck(line)) return null;
+    final saleUnit = await fetchSaleUnit(ref.read(apiClientProvider).dio, line.variantId);
+    if (!mounted) return null;
+    if (saleUnit is SoldEach) return line;
+    if (saleUnit is SaleUnitUnknown) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(saleUnit.message),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return null;
+    }
+    final measure = saleUnit as SoldByMeasure;
+    final qty = await showDialog<double>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => MeasuredQuantityDialog(
+        itemName: line.name,
+        unit: measure,
+        unitPrice: line.unitPrice,
+        currency: line.currency,
+      ),
+    );
+    if (qty == null) return null;
+    return line.copyWith(qty: qty, soldBy: measure.soldBy, unit: measure.unit);
+  }
+
+  /// The recall check, against the list the till keeps: blocked outright when
+  /// every pack is recalled, a pack check when only some lots or dates are.
+  Future<bool> _passesRecallCheck(PosLine line) async {
+    final result =
+        checkRecall(line.variantId, ref.read(activeRecallsProvider).items);
+    if (result is RecallClear) return true;
+    if (!mounted) return false;
+    if (result is RecallBlocked) {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => RecallStopSaleDialog(itemName: line.name, item: result.item),
+      );
+      return false;
+    }
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => RecallCheckPackDialog(
+              itemName: line.name, items: (result as RecallCheckPack).items),
+        ) ??
+        false;
+  }
+
+  /// The age check, asked before an item reaches the sale.
+  ///
+  /// Blocked outright when the till cannot find out — see [AgeCheckBlocked].
+  /// Asked once per sale per age: confirming 18 covers the next bottle but not
+  /// an item with a higher minimum.
+  Future<bool> _passesAgeCheck(PosLine line) async {
+    final country = await resolveSaleCountry(ref);
+    final result = await checkAgeRestriction(
+        ref.read(apiClientProvider).dio, line.variantId, country);
+    if (result is AgeCheckNotRestricted) return true;
+    if (!mounted) return false;
+    if (result is AgeCheckBlocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return false;
+    }
+    final check = result as AgeCheckRestricted;
+    final cart = ref.read(posCartProvider.notifier);
+    if (cart.ageVerifiedUpTo >= check.minimumAge) return true;
+    final confirmed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => AgeVerificationDialog(itemName: line.name, check: check),
+        ) ??
+        false;
+    if (confirmed) cart.ageVerifiedUpTo = check.minimumAge;
+    return confirmed;
   }
 
   /// Narrow-screen catalog: open the same catalog pane as a full-height sheet.
@@ -246,6 +354,7 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     final items = ref.watch(posCartProvider);
     return Column(
       children: [
+        const RecallListBanner(),
         _StoreSelector(),
         const _CustomerBar(),
         Padding(
@@ -358,6 +467,27 @@ class _SaleLine extends ConsumerWidget {
   final PosLine line;
   const _SaleLine({required this.line});
 
+  /// A measured line changes by reading the scale again, never by one.
+  Future<void> _remeasure(BuildContext context, WidgetRef ref, PosLine line) async {
+    final qty = await showDialog<double>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => MeasuredQuantityDialog(
+        itemName: line.name,
+        unit: SoldByMeasure(
+          soldBy: line.soldBy,
+          unit: line.unit ?? defaultUnitFor(line.soldBy),
+          catchWeight: false,
+        ),
+        unitPrice: line.unitPrice,
+        currency: line.currency,
+        initial: line.qty,
+        confirmLabel: 'Update',
+      ),
+    );
+    if (qty != null) ref.read(posCartProvider.notifier).setQty(line.variantId, qty);
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(posCartProvider.notifier);
@@ -382,20 +512,28 @@ class _SaleLine extends ConsumerWidget {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.remove_circle_outline),
-              tooltip: 'Decrease quantity',
-              onPressed: () => notifier.setQty(line.variantId, line.qty - 1),
-            ),
-            Text('${line.qty}',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.add_circle_outline),
-              tooltip: 'Increase quantity',
-              onPressed: () => notifier.setQty(line.variantId, line.qty + 1),
-            ),
+            if (line.measured)
+              TextButton(
+                onPressed: () => _remeasure(context, ref, line),
+                child: Text(line.qtyLabel,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+              )
+            else ...[
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.remove_circle_outline),
+                tooltip: 'Decrease quantity',
+                onPressed: () => notifier.setQty(line.variantId, line.qty - 1),
+              ),
+              Text(line.qtyLabel,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.add_circle_outline),
+                tooltip: 'Increase quantity',
+                onPressed: () => notifier.setQty(line.variantId, line.qty + 1),
+              ),
+            ],
             if (showPrices)
               SizedBox(
                 width: 72,
@@ -909,7 +1047,7 @@ class _TotalsBar extends ConsumerWidget {
     final discount = ref.watch(posDiscountProvider).clamp(0, subtotal).toDouble();
     final net = subtotal - discount;
     final tt = Theme.of(context).textTheme;
-    final qty = items.fold<int>(0, (s, l) => s + l.qty);
+    final qty = items.fold<int>(0, (s, l) => s + l.itemCount);
 
     final clearButton = Expanded(
       child: OutlinedButton(

@@ -42,8 +42,30 @@ public final class Domain {
 
   // ── Purchase Order ────────────────────────────────────────────────────────────
   public static final String PO_DRAFT = "DRAFT";
+
+  /**
+   * Raised, but above the raiser's own spend authority — nobody entitled to commit this much has
+   * agreed to it yet. A state rather than a flag on SUBMITTED: "waiting for a decision" and
+   * "decided" are different facts, and a supplier must never be sent an order that is merely
+   * waiting.
+   */
+  public static final String PO_PENDING_APPROVAL = "PENDING_APPROVAL";
+
   public static final String PO_SUBMITTED = "SUBMITTED";
+
+  /** Some of the order has arrived and more is still expected. Receivable, like SUBMITTED. */
+  public static final String PO_PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED";
+
   public static final String PO_RECEIVED = "RECEIVED";
+
+  /**
+   * Short-closed: part arrived, the rest never will. Distinct from {@link #PO_RECEIVED} because "we
+   * got it all" and "we gave up on the rest" are different facts, and a supplier scorecard that
+   * cannot tell them apart is worthless. Distinct from {@link #PO_CANCELLED} because stock is
+   * booked against this order — SJ-D3's reason for refusing to cancel a received one.
+   */
+  public static final String PO_CLOSED = "CLOSED";
+
   public static final String PO_CANCELLED = "CANCELLED";
 
   public record PurchaseOrder(
@@ -60,7 +82,63 @@ public final class Domain {
       Instant createdAt,
       Instant updatedAt,
       Instant cancelledAt,
-      String cancelledReason) {}
+      String cancelledReason,
+      Instant closedAt,
+      String closedReason,
+      UUID createdBy,
+      UUID approvedBy,
+      Instant approvedAt) {}
+
+  // ── Purchase order approval (spend authority) ─────────────────────────────────
+
+  /** A submission that exceeded the raiser's authority and is waiting for someone else's. */
+  public static final String APPROVAL_REQUESTED = "REQUESTED";
+
+  public static final String APPROVAL_APPROVED = "APPROVED";
+  public static final String APPROVAL_REJECTED = "REJECTED";
+
+  /**
+   * One decision in a purchase order's approval history. Append-only (golden rule #8).
+   *
+   * <p>A column pair on the order would have covered a single decision, the way V3 handled
+   * cancellation — but a rejection sends the order back to DRAFT to be corrected and resubmitted,
+   * so one order can cycle through several. A spend-authority trail that keeps only the last
+   * decision is not an audit trail.
+   *
+   * @param totalNet the figure the decision was made against, captured at decision time rather than
+   *     read back later: the order can be edited after a rejection, and an approval that silently
+   *     re-points at a larger total is the whole attack this feature exists to stop
+   * @param authority what the decider was entitled to commit, so the trail can still answer "were
+   *     they allowed to?" after the configuration has changed
+   */
+  public record PurchaseOrderApproval(
+      UUID id,
+      UUID tenantId,
+      UUID poId,
+      String decision,
+      BigDecimal totalNet,
+      String currency,
+      BigDecimal authority,
+      UUID decidedBy,
+      String decidedRole,
+      String reason,
+      Instant decidedAt) {}
+
+  /**
+   * How much of one ordered line has actually turned up.
+   *
+   * <p>Receipts are matched to order lines by variant rather than by line id: {@code
+   * goods_receipt_lines} has never carried a {@code po_line_id}, and a delivery note names products
+   * rather than order rows. Two lines on one order for the same variant therefore aggregate here,
+   * which is also the answer a warehouse gives when counting what arrived.
+   *
+   * @param variantId the product
+   * @param qtyOrdered what the purchase order asked for
+   * @param qtyReceived what has arrived across every receipt against this order
+   * @param qtyOutstanding ordered minus received, floored at zero
+   */
+  public record PurchaseOrderLineProgress(
+      UUID variantId, BigDecimal qtyOrdered, BigDecimal qtyReceived, BigDecimal qtyOutstanding) {}
 
   public record PurchaseOrderLine(
       UUID id,
@@ -88,6 +166,57 @@ public final class Domain {
       UUID grId,
       UUID variantId,
       BigDecimal qtyReceived,
+      Instant createdAt) {}
+
+  // ── Supplier invoice (three-way match) ────────────────────────────────────────
+
+  /** Every line agreed with the order and the receipt, inside tolerance. */
+  public static final String INVOICE_MATCHED = "MATCHED";
+
+  /** At least one line did not. Captured anyway — flagging never blocks. */
+  public static final String INVOICE_FLAGGED = "FLAGGED";
+
+  /**
+   * A supplier's invoice against a purchase order.
+   *
+   * @param invoiceNumber the supplier's own reference as printed on the document; unique per
+   *     supplier case-insensitively, because the commonest way to pay twice is for two people to
+   *     type the same paper reference on the same morning
+   * @param status {@link #INVOICE_MATCHED} or {@link #INVOICE_FLAGGED}
+   */
+  public record SupplierInvoice(
+      UUID id,
+      UUID tenantId,
+      UUID poId,
+      UUID supplierId,
+      String invoiceNumber,
+      LocalDate invoiceDate,
+      String currency,
+      BigDecimal netAmount,
+      BigDecimal vatAmount,
+      BigDecimal grossAmount,
+      String status,
+      Instant matchedAt,
+      UUID createdBy,
+      Instant createdAt) {}
+
+  /**
+   * One line of a supplier invoice, carrying the match outcome it was captured with.
+   *
+   * @param variances comma-separated variance codes, empty when the line agreed. Stored rather than
+   *     recomputed on read: the purchase order can be amended afterwards, and an invoice that
+   *     silently re-matched against the amended order would erase the disagreement it was flagged
+   *     for
+   */
+  public record SupplierInvoiceLine(
+      UUID id,
+      UUID tenantId,
+      UUID invoiceId,
+      UUID variantId,
+      BigDecimal qtyInvoiced,
+      BigDecimal unitPrice,
+      String vatCode,
+      String variances,
       Instant createdAt) {}
 
   // ── Intercompany Invoice (Gap #20) ────────────────────────────────────────────

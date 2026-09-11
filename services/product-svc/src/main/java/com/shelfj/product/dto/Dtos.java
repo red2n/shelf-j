@@ -62,6 +62,130 @@ public final class Dtos {
           Boolean sellableOnline,
       @Schema(description = "Whether POS can sell this product.") @NotNull Boolean sellablePos) {}
 
+  // ── Food safety, origin, age restriction and selling by weight ─────────────
+
+  @Schema(
+      name = "AllergenResponse",
+      description = "One of the fourteen allergens EU 1169/2011 names.")
+  public record AllergenResponse(String code, String name, String detail, String regulation) {}
+
+  @Schema(
+      name = "AllergenDeclarationRequest",
+      description =
+          "A variant's complete allergen declaration. Sending an empty list is how a product is"
+              + " declared free from all fourteen — it is a positive statement, not an omission.")
+  public record AllergenDeclarationRequest(
+      @Schema(
+              description =
+                  "Every allergen present or possibly present. Replaces the current declaration"
+                      + " entirely, so removing an entry is how a mistake is corrected.")
+          @NotNull
+          @Valid
+          List<AllergenEntry> allergens) {}
+
+  @Schema(name = "AllergenEntry")
+  public record AllergenEntry(
+      @Schema(description = "Allergen code from GET /catalog/allergens.") @NotBlank String code,
+      @Schema(
+              description =
+                  "CONTAINS or MAY_CONTAIN. MAY_CONTAIN is a cross-contamination warning.")
+          @NotBlank
+          String presence) {}
+
+  @Schema(name = "AllergenDeclarationResponse")
+  public record AllergenDeclarationResponse(
+      String variantId,
+      @Schema(
+              description =
+                  "UNDECLARED, DECLARED or NOT_APPLICABLE. An empty list with UNDECLARED means"
+                      + " nobody has checked — it does NOT mean free from.")
+          String status,
+      List<AllergenEntry> allergens,
+      String declaredAt) {}
+
+  @Schema(
+      name = "VariantComplianceRequest",
+      description = "Origin, age restriction, and how the item is sold.")
+  public record VariantComplianceRequest(
+      @Schema(description = "ISO 3166-1 alpha-2, e.g. GB. Uppercased on the way in.")
+          String countryOfOrigin,
+      @Schema(
+              description =
+                  "Free text where one code cannot say it: 'Produce of Spain, packed in the UK'.")
+          String originDetail,
+      @Schema(description = "ALCOHOL, TOBACCO, KNIVES … or null when unrestricted.")
+          String restrictionCategory,
+      @Schema(description = "Ingredients as printed on the pack.") String ingredients,
+      @Schema(description = "EACH, WEIGHT, VOLUME or LENGTH. Defaults to EACH.") String soldBy,
+      @Schema(description = "Net quantity in the pack, for the unit price a shelf edge must show.")
+          BigDecimal netContent,
+      @Schema(description = "UOM code for netContent, e.g. KG, L.") String netContentUom,
+      @Schema(description = "Packaging weight a scale deducts before pricing.")
+          BigDecimal tareWeight,
+      @Schema(
+              description =
+                  "True when each item has its own weight — a joint of meat, a whole fish.")
+          Boolean catchWeight,
+      @Schema(
+              description =
+                  "Whether this is a food product. true moves an item from NOT_APPLICABLE to"
+                      + " UNDECLARED, so it is listed on allergen-gaps until declared; false makes it"
+                      + " NOT_APPLICABLE and removes any declaration. Omit to leave it as it is.")
+          Boolean food) {}
+
+  @Schema(name = "VariantComplianceResponse")
+  public record VariantComplianceResponse(
+      String variantId,
+      String countryOfOrigin,
+      String originDetail,
+      String restrictionCategory,
+      String allergenStatus,
+      String ingredients,
+      String soldBy,
+      BigDecimal netContent,
+      String netContentUom,
+      BigDecimal tareWeight,
+      boolean catchWeight) {}
+
+  @Schema(
+      name = "AgeCheckResponse",
+      description = "What the till must ask before selling this item in this country.")
+  public record AgeCheckResponse(
+      String variantId,
+      String country,
+      @Schema(
+              description =
+                  "Whether this item is age-restricted here. Read THIS, not the absence of"
+                      + " minimumAge: a null field is omitted from the JSON entirely, so a client"
+                      + " that infers 'no age given, therefore sell it' cannot tell an"
+                      + " unrestricted item from a field that went missing. This boolean is always"
+                      + " present, and its absence is a parse failure rather than a sale.")
+          boolean restricted,
+      @Schema(description = "Null when the item is not age-restricted.") String category,
+      @Schema(description = "Null when the item is not age-restricted.") Integer minimumAge,
+      @Schema(description = "True when the rule came from the tenant rather than the statute.")
+          boolean tenantOverride) {}
+
+  @Schema(name = "AgeRestrictionRuleResponse")
+  public record AgeRestrictionRuleResponse(
+      String country,
+      String category,
+      int minimumAge,
+      String note,
+      @Schema(description = "True when this tenant set it, false when it is the statutory default.")
+          boolean tenantOverride) {}
+
+  @Schema(name = "SetAgeRestrictionRuleRequest")
+  public record SetAgeRestrictionRuleRequest(
+      @Schema(description = "ISO 3166-1 alpha-2 country the store is in.") @NotBlank String country,
+      @NotBlank String category,
+      @Schema(
+              description =
+                  "Must be at or above the statutory minimum — a business may be stricter, never laxer.")
+          @NotNull
+          Integer minimumAge,
+      @Schema(description = "Why this differs from the statutory default.") String reason) {}
+
   @Schema(name = "CreateVariantRequest")
   public record CreateVariantRequest(
       @Schema(description = "Stock-keeping unit code, unique within the tenant.") @NotBlank

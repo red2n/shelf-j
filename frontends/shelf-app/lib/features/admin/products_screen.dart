@@ -12,6 +12,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 import 'providers/products_pagination.dart';
+import 'variant_compliance_dialog.dart';
 
 class ProductsScreen extends ConsumerStatefulWidget {
   const ProductsScreen({super.key});
@@ -997,6 +998,15 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                                     tooltip: 'Set price',
                                     onPressed: () => _setPrice(v, price),
                                   ),
+                                  IconButton(
+                                    icon: const Icon(Icons.no_food_outlined),
+                                    tooltip: 'Allergens and origin',
+                                    onPressed: () => showDialog<bool>(
+                                      context: context,
+                                      builder: (_) =>
+                                          VariantComplianceDialog(variant: v),
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -1176,7 +1186,7 @@ class _VariantsDialogState extends ConsumerState<_VariantsDialog> {
                         final listId =
                             await ref.read(defaultPriceListProvider.future);
                         await ref.read(apiClientProvider).dio.post(
-                          '/${ApiConstants.pricing}/price-lists/$listId/items',
+                          '/${ApiConstants.pricing}/admin/price-lists/$listId/items',
                           data: {
                             'variantId': v.id,
                             'price': price,

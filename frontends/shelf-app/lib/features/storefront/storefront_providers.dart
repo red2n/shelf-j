@@ -142,6 +142,25 @@ class StorefrontAuthNotifier extends StateNotifier<StorefrontAuthState> {
     await _storage.delete(key: _kEmail);
     state = const StorefrontAuthState();
   }
+
+  /// SJ-D43: the account holder deletes their own login. The password is asked
+  /// for again server-side (a session left open on this device must not be
+  /// enough on its own), so a wrong password surfaces as the 401 iam-svc
+  /// returns; the caller shows that. On success the login is gone, so this
+  /// behaves like [logout] on top of the server-side deletion.
+  Future<void> deleteAccount(String password) async {
+    final token = state.accessToken;
+    if (token == null || token.isEmpty) {
+      throw Exception('Not signed in.');
+    }
+    final dio = Dio(BaseOptions(
+      baseUrl: ApiConstants.baseUrl,
+      headers: {'Authorization': 'Bearer $token'},
+    ));
+    await dio.post('/${ApiConstants.iam}/auth/delete-account',
+        data: {'password': password});
+    await logout();
+  }
 }
 
 final storefrontAuthProvider =

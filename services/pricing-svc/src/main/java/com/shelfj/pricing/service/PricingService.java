@@ -1,5 +1,7 @@
 package com.shelfj.pricing.service;
 
+import com.shelfj.pricing.domain.Domain;
+import com.shelfj.pricing.domain.Domain.BasketLine;
 import com.shelfj.pricing.domain.Domain.CustomerVatStatus;
 import com.shelfj.pricing.domain.Domain.PriceList;
 import com.shelfj.pricing.domain.Domain.PriceListItem;
@@ -16,14 +18,19 @@ import com.shelfj.pricing.domain.Domain.TaxTransaction;
 import com.shelfj.pricing.domain.Domain.VatRate;
 import com.shelfj.pricing.domain.Domain.VatReturn;
 import com.shelfj.pricing.dto.Dtos.AddPromotionItemRequest;
+import com.shelfj.pricing.dto.Dtos.AppliedPromotionResponse;
 import com.shelfj.pricing.dto.Dtos.BatchUpsertPriceListItemsRequest;
 import com.shelfj.pricing.dto.Dtos.BatchUpsertResult;
 import com.shelfj.pricing.dto.Dtos.CreatePriceListRequest;
 import com.shelfj.pricing.dto.Dtos.CreatePriceOverrideRequest;
 import com.shelfj.pricing.dto.Dtos.CreatePromotionRequest;
 import com.shelfj.pricing.dto.Dtos.CreateVatRateRequest;
+import com.shelfj.pricing.dto.Dtos.QuoteBasketRequest;
+import com.shelfj.pricing.dto.Dtos.QuoteBasketResponse;
+import com.shelfj.pricing.dto.Dtos.QuoteLineResponse;
 import com.shelfj.pricing.dto.Dtos.RecordTaxTransactionRequest;
 import com.shelfj.pricing.dto.Dtos.ResolvePriceRequest;
+import com.shelfj.pricing.dto.Dtos.SetActiveRequest;
 import com.shelfj.pricing.dto.Dtos.UpsertCustomerVatStatusRequest;
 import com.shelfj.pricing.dto.Dtos.UpsertPriceListItemRequest;
 import com.shelfj.pricing.dto.Dtos.UpsertProductVatCategoryRequest;
@@ -39,6 +46,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /** Business logic for pricing-svc. Controllers call this; no HTTP types here. */
@@ -46,6 +54,7 @@ import java.util.UUID;
 public class PricingService {
 
   @Inject PricingRepository repo;
+  @Inject PromotionEngine engine;
   @Inject TaxReportRepository taxReportRepo;
 
   // ── VAT Rates ─────────────────────────────────────────────────────────────
@@ -255,17 +264,45 @@ public class PricingService {
 
     BigDecimal unitPrice = baseItem.price();
     String promoApplied = null;
-    var promos = repo.findActivePromotions(tenantId, variantId, channel, Instant.now());
-    if (!promos.isEmpty()) {
-      Promotion promo = promos.get(0);
-      if (Promotion.TYPE_PERCENT.equals(promo.type())) {
-        BigDecimal pct = promo.value().divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP);
+
+    // A single-variant quote runs the same engine as the basket path, on a basket of one, with
+    // the basket-level promotions filtered out. They are excluded deliberately rather than for
+    // convenience: this endpoint answers "what does this item cost" for a product page, and
+    // showing a spend-threshold price against one item advertises a total the shopper will not be
+    // charged. The checkout path calls quoteBasket, where the threshold can actually be tested.
+    UUID storeId =
+        req.storeId() == null || req.storeId().isBlank()
+            ? null
+            : Parsing.uuid(req.storeId(), "storeId");
+    List<Promotion> candidates =
+        repo.findCandidatePromotions(tenantId, storeId, channel, Instant.now()).stream()
+            .filter(p -> !p.isBasketLevel())
+            // A coupon promotion is not applied to a browsing price: the customer has not
+            // presented it, and this endpoint takes no codes.
+            .filter(p -> !p.requiresCoupon())
+            .toList();
+    if (!candidates.isEmpty()) {
+      var scopes =
+          repo.findPromotionVariantScopes(
+              tenantId, candidates.stream().map(Promotion::id).toList());
+      var outcome =
+          engine.apply(
+              List.of(new BasketLine(variantId, qty, unitPrice)),
+              candidates,
+              scopes,
+              List.of(),
+              Map.of());
+      BigDecimal off = outcome.totalDiscount();
+      if (off.signum() > 0) {
+        BigDecimal lineTotal = unitPrice.multiply(qty);
         unitPrice =
-            unitPrice.multiply(BigDecimal.ONE.subtract(pct)).setScale(2, RoundingMode.HALF_UP);
-      } else {
-        unitPrice = unitPrice.subtract(promo.value()).max(BigDecimal.ZERO);
+            lineTotal.subtract(off).max(BigDecimal.ZERO).divide(qty, 2, RoundingMode.HALF_UP);
+        promoApplied =
+            outcome.lineDiscounts().stream()
+                .map(com.shelfj.pricing.domain.Domain.LineDiscount::promotionName)
+                .distinct()
+                .collect(java.util.stream.Collectors.joining(" + "));
       }
-      promoApplied = promo.name();
     }
 
     String vatCode =
@@ -321,16 +358,301 @@ public class PricingService {
     return reqs.stream().map(r -> resolvePrice(r, ctx)).toList();
   }
 
+  // ── Basket quoting ────────────────────────────────────────────────────────
+
+  /**
+   * One basket line's share of the discount the engine computed for its variant.
+   *
+   * <p>Split by line value, with the variant's last line taking the remainder, so the shares sum to
+   * exactly the engine's figure. A variant appearing on a single line — the ordinary case — takes
+   * the whole thing and this behaves exactly as it did before.
+   *
+   * @param variantId the line's variant
+   * @param index this line's position in the basket
+   * @param lineTotal this line's value before any discount
+   * @param perVariantDiscount the engine's total discount per variant
+   * @param variantLineValue total value of all lines carrying each variant
+   * @param lastLineOfVariant index of the final line carrying each variant
+   * @param taken running total already apportioned per variant; updated here
+   * @return this line's share
+   */
+  private static BigDecimal shareOfVariantDiscount(
+      UUID variantId,
+      int index,
+      BigDecimal lineTotal,
+      Map<UUID, BigDecimal> perVariantDiscount,
+      Map<UUID, BigDecimal> variantLineValue,
+      Map<UUID, Integer> lastLineOfVariant,
+      Map<UUID, BigDecimal> taken) {
+    BigDecimal variantDiscount = perVariantDiscount.getOrDefault(variantId, BigDecimal.ZERO);
+    if (variantDiscount.signum() == 0) {
+      return BigDecimal.ZERO;
+    }
+    BigDecimal variantValue = variantLineValue.getOrDefault(variantId, BigDecimal.ZERO);
+    boolean last = Integer.valueOf(index).equals(lastLineOfVariant.get(variantId));
+    if (last || variantValue.signum() == 0) {
+      // The remainder, so rounding never loses or invents a penny. A zero-value variant cannot be
+      // split by value at all, so its whole discount lands on the last line.
+      return variantDiscount.subtract(taken.getOrDefault(variantId, BigDecimal.ZERO));
+    }
+    BigDecimal share =
+        variantDiscount.multiply(lineTotal).divide(variantValue, 2, RoundingMode.HALF_UP);
+    taken.merge(variantId, share, BigDecimal::add);
+    return share;
+  }
+
+  /**
+   * Prices a whole basket, promotions and VAT included.
+   *
+   * <p>This is the method the old engine could not have had. {@code resolvePrices} was {@code
+   * lines.stream().map(resolvePrice)} — each line priced in isolation — so a rule that needed to
+   * see the order total had nowhere to stand. Spend thresholds, basket percentages and
+   * buy-one-get-one were not merely unimplemented; there was no object for them to be about.
+   *
+   * <p>VAT is computed per line on the discounted amount, and the basket-level discount is
+   * apportioned across the lines by value before that happens — otherwise a £10-off-the-basket
+   * promotion would be VAT-free money, which it is not. Apportionment is by value rather than
+   * evenly because lines can sit at different rates, and the zero-rated line must not absorb a
+   * share of relief that belongs to the standard-rated one.
+   *
+   * @param couponCodes what the customer presented; codes that do not apply come back in {@code
+   *     rejectedCoupons} with a reason rather than being silently dropped
+   */
+  public QuoteBasketResponse quoteBasket(QuoteBasketRequest req, TenantContext ctx) {
+    UUID tenantId = ctx.tenantId();
+    String channel =
+        req.channel() != null
+            ? req.channel().toUpperCase(java.util.Locale.ROOT)
+            : PriceList.CHANNEL_ALL;
+    UUID storeId =
+        req.storeId() == null || req.storeId().isBlank()
+            ? null
+            : Parsing.uuid(req.storeId(), "storeId");
+    UUID customerId =
+        req.customerId() == null || req.customerId().isBlank()
+            ? null
+            : Parsing.uuid(req.customerId(), "customerId");
+
+    // 1. Base prices, one resolution per line.
+    List<BasketLine> basket = new java.util.ArrayList<>();
+    List<String> vatCodes = new java.util.ArrayList<>();
+    String currency = null;
+    for (var l : req.lines()) {
+      UUID variantId = Parsing.uuid(l.variantId(), "variantId");
+      BigDecimal qty = l.qty() != null ? l.qty() : BigDecimal.ONE;
+      if (qty.signum() <= 0)
+        throw ApiException.badRequest(
+            "PRICING_INVALID_QTY", "qty must be greater than zero for variant " + l.variantId());
+      var baseItem =
+          repo.resolveBasePrice(tenantId, variantId, channel, qty)
+              .orElseThrow(
+                  () ->
+                      ApiException.notFound(
+                          "PRICING_PRICE_NOT_FOUND",
+                          "no active price configured for variant " + l.variantId()));
+      basket.add(new BasketLine(variantId, qty, baseItem.price()));
+      vatCodes.add(
+          repo.findProductVatCategory(tenantId, variantId)
+              .map(ProductVatCategory::vatCode)
+              .orElse(VatRate.T1));
+      if (currency == null)
+        currency =
+            repo.findPriceList(tenantId, baseItem.priceListId())
+                .map(PriceList::currency)
+                .orElse(null);
+    }
+
+    // 2. Promotions, over the whole basket.
+    List<Promotion> candidates =
+        repo.findCandidatePromotions(tenantId, storeId, channel, Instant.now());
+    var scopes =
+        repo.findPromotionVariantScopes(tenantId, candidates.stream().map(Promotion::id).toList());
+    var exhausted = repo.findExhaustedPromotions(tenantId, candidates, customerId);
+    var outcome = engine.apply(basket, candidates, scopes, req.couponCodes(), exhausted);
+
+    // 3. Fold the line discounts back onto their lines.
+    //
+    // Both BasketLine and LineDiscount are keyed by variantId, so the engine cannot tell two basket
+    // lines of the same variant apart and returns one combined figure for them. Applying that
+    // figure to each line — which is what getOrDefault(variantId) does — charged the discount once
+    // per line: the response's own lines then contradicted its subtotal and totalDiscount, and
+    // order-svc, which derives the stored unit price from lineTotal minus discount, undercharged.
+    //
+    // The variant's discount is therefore split across its lines by value, with the last line of
+    // that variant taking the rounding remainder — the same apportionment this method already uses
+    // for the basket discount below, and for the same reason: the parts must sum to exactly the
+    // whole rather than a penny either side.
+    Map<UUID, BigDecimal> perLineDiscount = new java.util.LinkedHashMap<>();
+    for (var d : outcome.lineDiscounts())
+      perLineDiscount.merge(d.variantId(), d.amount(), BigDecimal::add);
+
+    Map<UUID, BigDecimal> variantLineValue = new java.util.LinkedHashMap<>();
+    Map<UUID, Integer> lastLineOfVariant = new java.util.LinkedHashMap<>();
+    for (int i = 0; i < basket.size(); i++) {
+      BasketLine b = basket.get(i);
+      variantLineValue.merge(
+          b.variantId(),
+          b.unitPrice().multiply(b.qty()).setScale(2, RoundingMode.HALF_UP),
+          BigDecimal::add);
+      lastLineOfVariant.put(b.variantId(), i);
+    }
+    Map<UUID, BigDecimal> variantDiscountTaken = new java.util.LinkedHashMap<>();
+
+    BigDecimal subtotal =
+        basket.stream()
+            .map(b -> b.unitPrice().multiply(b.qty()))
+            .reduce(BigDecimal.ZERO, BigDecimal::add)
+            .setScale(2, RoundingMode.HALF_UP);
+    BigDecimal basketDiscount =
+        outcome.basketDiscounts().stream()
+            .map(com.shelfj.pricing.domain.Domain.LineDiscount::amount)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    BigDecimal afterLine =
+        subtotal.subtract(
+            perLineDiscount.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add));
+
+    // 4. Per-line VAT, on each line's share of what is left.
+    List<QuoteLineResponse> lineResponses = new java.util.ArrayList<>();
+    BigDecimal vatTotal = BigDecimal.ZERO;
+    BigDecimal apportioned = BigDecimal.ZERO;
+    for (int i = 0; i < basket.size(); i++) {
+      BasketLine b = basket.get(i);
+      BigDecimal lineTotal = b.unitPrice().multiply(b.qty()).setScale(2, RoundingMode.HALF_UP);
+      BigDecimal lineDisc =
+          shareOfVariantDiscount(
+                  b.variantId(),
+                  i,
+                  lineTotal,
+                  perLineDiscount,
+                  variantLineValue,
+                  lastLineOfVariant,
+                  variantDiscountTaken)
+              .min(lineTotal);
+      BigDecimal net = lineTotal.subtract(lineDisc);
+
+      // The basket discount is shared by value. The last line takes the rounding remainder, so
+      // the apportioned parts always sum to exactly the discount rather than a penny either side.
+      BigDecimal share;
+      if (basketDiscount.signum() == 0 || afterLine.signum() <= 0) {
+        share = BigDecimal.ZERO;
+      } else if (i == basket.size() - 1) {
+        share = basketDiscount.subtract(apportioned);
+      } else {
+        share = basketDiscount.multiply(net).divide(afterLine, 2, RoundingMode.HALF_UP);
+        apportioned = apportioned.add(share);
+      }
+      net = net.subtract(share).max(BigDecimal.ZERO);
+
+      VatRate rate = vatRateFor(tenantId, vatCodes.get(i));
+      BigDecimal vat =
+          rate.exempt()
+              ? BigDecimal.ZERO
+              : net.multiply(rate.rate()).setScale(2, RoundingMode.HALF_UP);
+      vatTotal = vatTotal.add(vat);
+
+      lineResponses.add(
+          new QuoteLineResponse(
+              b.variantId(),
+              b.qty(),
+              b.unitPrice(),
+              lineTotal,
+              lineDisc,
+              net,
+              vat,
+              vatCodes.get(i)));
+    }
+
+    BigDecimal totalDiscount = outcome.totalDiscount();
+    BigDecimal total = subtotal.subtract(totalDiscount).add(vatTotal);
+
+    List<AppliedPromotionResponse> appliedResponses = new java.util.ArrayList<>();
+    for (var d :
+        java.util.stream.Stream.concat(
+                outcome.lineDiscounts().stream(), outcome.basketDiscounts().stream())
+            .toList()) {
+      appliedResponses.add(
+          new AppliedPromotionResponse(
+              d.promotionId(), d.promotionName(), d.variantId(), d.amount()));
+    }
+
+    return new QuoteBasketResponse(
+        lineResponses,
+        subtotal,
+        totalDiscount,
+        basketDiscount,
+        vatTotal,
+        total,
+        currency != null ? currency : "GBP",
+        appliedResponses,
+        outcome.rejectedCoupons());
+  }
+
+  /**
+   * The tenant's rate for a VAT code, falling back to the standard rate the same way resolvePrice
+   * does.
+   */
+  private VatRate vatRateFor(UUID tenantId, String vatCode) {
+    return repo.findVatRate(tenantId, vatCode)
+        .orElse(
+            new VatRate(
+                null,
+                tenantId,
+                VatRate.T1,
+                "Standard Rate",
+                new BigDecimal("0.20"),
+                false,
+                null,
+                Instant.now(),
+                null,
+                Instant.now()));
+  }
+
+  /**
+   * Records that the promotions on a quote were used by an order.
+   *
+   * <p>Separate from quoting on purpose: a basket is quoted many times as a shopper adds items, and
+   * a coupon must not be spent by looking at it. Only the checkout calls this, once the order
+   * exists to attribute the redemption to.
+   *
+   * @return how many redemptions this call actually recorded; a replay records none
+   */
+  public int recordRedemptions(
+      TenantContext ctx,
+      UUID orderId,
+      UUID customerId,
+      List<AppliedPromotionResponse> applied,
+      String currency) {
+    Map<UUID, BigDecimal> perPromotion = new java.util.LinkedHashMap<>();
+    for (var a : applied) perPromotion.merge(a.promotionId(), a.amount(), BigDecimal::add);
+    int recorded = 0;
+    for (var e : perPromotion.entrySet()) {
+      if (repo.recordRedemption(
+          ctx.tenantId(), e.getKey(), orderId, customerId, e.getValue(), currency)) recorded++;
+    }
+    return recorded;
+  }
+
   // ── Promotions ────────────────────────────────────────────────────────────
 
+  /**
+   * Creates a promotion, validating the shape its type requires.
+   *
+   * <p>The database enforces the same rules with CHECK constraints, deliberately: a half-configured
+   * BOGO is a promotion that silently discounts nothing, which is the failure mode this whole
+   * rebuild exists to end, and it must not be reachable however the row is written. What this adds
+   * is the message — a constraint violation tells a caller only that something was wrong.
+   */
   public Promotion createPromotion(CreatePromotionRequest req, TenantContext ctx) {
+    String type = req.type().toUpperCase(java.util.Locale.ROOT);
+    validatePromotionShape(type, req);
+
     Promotion p =
         new Promotion(
             UUID.randomUUID(),
             ctx.tenantId(),
             req.storeId() != null ? UUID.fromString(req.storeId()) : null,
             req.name(),
-            req.type().toUpperCase(java.util.Locale.ROOT),
+            type,
             req.value(),
             req.minOrderAmount(),
             req.channel() != null
@@ -339,17 +661,156 @@ public class PricingService {
             true,
             Parsing.instant(req.startsAt(), "startsAt"),
             req.endsAt() != null ? Parsing.instant(req.endsAt(), "endsAt") : null,
-            Instant.now());
+            Instant.now(),
+            req.priority() != null ? req.priority() : 100,
+            Boolean.TRUE.equals(req.exclusive()),
+            req.couponCode() == null || req.couponCode().isBlank() ? null : req.couponCode().trim(),
+            req.maxRedemptions(),
+            req.maxPerCustomer(),
+            req.buyQty(),
+            req.getQty(),
+            req.getDiscountPct());
     return repo.createPromotion(p, Events.promotionActivated(ctx.tenantId(), p.id()));
+  }
+
+  private static final java.util.Set<String> PROMOTION_TYPES =
+      java.util.Set.of(
+          Promotion.TYPE_PERCENT,
+          Promotion.TYPE_FLAT,
+          Promotion.TYPE_BASKET_PERCENT,
+          Promotion.TYPE_BASKET_FLAT,
+          Promotion.TYPE_SPEND_THRESHOLD,
+          Promotion.TYPE_BOGO);
+
+  private static void validatePromotionShape(String type, CreatePromotionRequest req) {
+    if (!PROMOTION_TYPES.contains(type))
+      throw ApiException.badRequest(
+          "PRICING_INVALID_PROMOTION_TYPE",
+          "type must be one of " + PROMOTION_TYPES + " — got: " + type);
+
+    boolean bogo = Promotion.TYPE_BOGO.equals(type);
+    if (bogo) {
+      if (req.buyQty() == null || req.getQty() == null || req.getDiscountPct() == null)
+        throw ApiException.badRequest(
+            "PRICING_INCOMPLETE_BOGO",
+            "BOGO requires buyQty, getQty and getDiscountPct — a partial one would apply to every"
+                + " basket and discount nothing");
+      if (req.buyQty().signum() <= 0 || req.getQty().signum() <= 0)
+        throw ApiException.badRequest(
+            "PRICING_INCOMPLETE_BOGO", "buyQty and getQty must both be greater than zero");
+      if (req.getDiscountPct().signum() <= 0
+          || req.getDiscountPct().compareTo(new BigDecimal("100")) > 0)
+        throw ApiException.badRequest(
+            "PRICING_INCOMPLETE_BOGO", "getDiscountPct must be between 0 and 100 (100 = free)");
+    } else if (req.buyQty() != null || req.getQty() != null || req.getDiscountPct() != null) {
+      throw ApiException.badRequest(
+          "PRICING_INVALID_PROMOTION_SHAPE",
+          "buyQty / getQty / getDiscountPct belong to a BOGO — got type " + type);
+    }
+
+    if (Promotion.TYPE_SPEND_THRESHOLD.equals(type) && req.minOrderAmount() == null)
+      throw ApiException.badRequest(
+          "PRICING_MISSING_THRESHOLD",
+          "SPEND_THRESHOLD requires minOrderAmount — without one it discounts every basket");
+
+    boolean percent =
+        Promotion.TYPE_PERCENT.equals(type) || Promotion.TYPE_BASKET_PERCENT.equals(type);
+    if (percent && req.value().compareTo(new BigDecimal("100")) > 0)
+      throw ApiException.badRequest(
+          "PRICING_INVALID_PERCENT",
+          "a percentage promotion cannot exceed 100 — got " + req.value());
+  }
+
+  /**
+   * Stops a promotion or a price list, or starts it again (SJ-D33).
+   *
+   * <p><code>active</code> has existed on both tables since V1 and the engine has always filtered
+   * on it. Nothing ever wrote it, so a promotion created with no end date ran forever and could
+   * only be stopped by reaching into the database. A discount nobody can switch off is the most
+   * expensive version of the "declared column with no writer" shape this branch keeps finding.
+   *
+   * <p>A reason is required in both directions, not just for stopping. Turning a promotion back on
+   * is the change more likely to be questioned later, and a trail that records why something was
+   * stopped but not why it was restarted answers the easier half of the question.
+   *
+   * <p>Already-in-that-state is a 409 rather than a silent success: two people stopping the same
+   * runaway promotion should not both be told they did it, and the trail must not gain a row for a
+   * switch that did not move.
+   *
+   * @throws ApiException 400 if no reason is given; 404 if there is no such subject for this
+   *     tenant; 409 {@code PRICING_ALREADY_IN_STATE} if it is already on or off as requested
+   */
+  public Domain.StatusChange setActive(
+      TenantContext ctx, String subjectType, UUID id, boolean active, SetActiveRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    String table = Domain.StatusChange.PROMOTION.equals(subjectType) ? "promotions" : "price_lists";
+    String reason = req == null || req.reason() == null ? null : req.reason().trim();
+    if (reason == null || reason.isEmpty())
+      throw ApiException.badRequest(
+          "PRICING_REASON_REQUIRED",
+          "say why — a promotion that stopped with no recorded reason is a discount that vanished"
+              + " from the shop floor with nobody accountable");
+
+    Boolean current = repo.findActive(table, tenantId, id);
+    if (current == null)
+      throw ApiException.notFound(
+          "PRICING_SUBJECT_NOT_FOUND",
+          subjectType.toLowerCase(java.util.Locale.ROOT) + " not found: " + id);
+
+    Domain.StatusChange change =
+        new Domain.StatusChange(
+            UUID.randomUUID(),
+            tenantId,
+            subjectType,
+            id,
+            active,
+            reason,
+            ctx.userId(),
+            Instant.now());
+    if (!repo.setActive(table, change))
+      throw ApiException.conflict(
+          "PRICING_ALREADY_IN_STATE",
+          "already " + (active ? "active" : "inactive") + " — nothing to change");
+    return change;
+  }
+
+  /** The on/off history for one promotion or price list. */
+  public List<Domain.StatusChange> statusChanges(TenantContext ctx, String subjectType, UUID id) {
+    return repo.findStatusChanges(subjectType, ctx.requireTenantId(), id);
   }
 
   public List<Promotion> listActivePromotions(TenantContext ctx) {
     return repo.findAllActivePromotions(ctx.tenantId());
   }
 
+  /**
+   * Scopes a promotion to a variant, or to everything.
+   *
+   * <p><b>CATEGORY is rejected, and that is a change in behaviour rather than a restriction.</b> It
+   * has been accepted since V1 — it is in the CHECK constraint, the domain constants, the request
+   * schema and the API guide — and the matching query never handled it, so a category promotion was
+   * stored and never fired. Rejecting it says so at the point the mistake is made. Honouring it
+   * needs the variant→category mapping, which product-svc owns and publishes on no topic; that
+   * projection is the same one sales-by-category is blocked on, and is written up in
+   * docs/reporting-api-gap-analysis.md.
+   */
   public PromotionItem addPromotionItem(
       TenantContext ctx, UUID promotionId, AddPromotionItemRequest req) {
     String scopeType = req.scopeType().toUpperCase(java.util.Locale.ROOT);
+    if (PromotionItem.SCOPE_CATEGORY.equals(scopeType))
+      throw ApiException.badRequest(
+          "PRICING_CATEGORY_SCOPE_UNSUPPORTED",
+          "category-scoped promotions cannot be honoured yet: pricing-svc has no variant→category"
+              + " mapping, because product-svc publishes no catalogue event. Scope to VARIANT or"
+              + " ALL. Previously such a promotion was accepted and silently never applied.");
+    if (!PromotionItem.SCOPE_VARIANT.equals(scopeType)
+        && !PromotionItem.SCOPE_ALL.equals(scopeType))
+      throw ApiException.badRequest(
+          "PRICING_INVALID_SCOPE", "scopeType must be VARIANT or ALL — got: " + scopeType);
+    if (PromotionItem.SCOPE_VARIANT.equals(scopeType)
+        && (req.scopeId() == null || req.scopeId().isBlank()))
+      throw ApiException.badRequest(
+          "PRICING_INVALID_SCOPE", "a VARIANT scope needs a scopeId naming the variant");
     UUID scopeId = req.scopeId() != null ? UUID.fromString(req.scopeId()) : null;
     PromotionItem pi =
         new PromotionItem(

@@ -7,6 +7,7 @@ import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.CostingMethod;
 import com.shelfj.inventory.domain.Domain.CycleCountHeader;
 import com.shelfj.inventory.domain.Domain.CycleCountLine;
+import com.shelfj.inventory.domain.Domain.DeadStockRow;
 import com.shelfj.inventory.domain.Domain.DemandBucket;
 import com.shelfj.inventory.domain.Domain.KanbanCard;
 import com.shelfj.inventory.domain.Domain.Level;
@@ -31,6 +32,8 @@ import com.shelfj.inventory.domain.Domain.SafetyStockParams;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.inventory.domain.Domain.ShrinkageRow;
+import com.shelfj.inventory.domain.Domain.StockTurnReport;
+import com.shelfj.inventory.domain.Domain.StockTurnRow;
 import com.shelfj.inventory.domain.Domain.Suggestion;
 import com.shelfj.inventory.domain.Domain.Threshold;
 import com.shelfj.inventory.domain.Domain.TransactionSourceType;
@@ -45,6 +48,7 @@ import com.shelfj.inventory.dto.Dtos.BatchResponse;
 import com.shelfj.inventory.dto.Dtos.CostingMethodResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountHeaderResponse;
 import com.shelfj.inventory.dto.Dtos.CycleCountLineResponse;
+import com.shelfj.inventory.dto.Dtos.DeadStockRowResponse;
 import com.shelfj.inventory.dto.Dtos.DemandBucketResponse;
 import com.shelfj.inventory.dto.Dtos.ExpiringBatchResponse;
 import com.shelfj.inventory.dto.Dtos.KanbanCardResponse;
@@ -71,6 +75,8 @@ import com.shelfj.inventory.dto.Dtos.SerialMovementResponse;
 import com.shelfj.inventory.dto.Dtos.SerialNumberResponse;
 import com.shelfj.inventory.dto.Dtos.ShrinkageRowResponse;
 import com.shelfj.inventory.dto.Dtos.SourceTypeResponse;
+import com.shelfj.inventory.dto.Dtos.StockTurnReportResponse;
+import com.shelfj.inventory.dto.Dtos.StockTurnRowResponse;
 import com.shelfj.inventory.dto.Dtos.SuggestionResponse;
 import com.shelfj.inventory.dto.Dtos.ThresholdResponse;
 import com.shelfj.inventory.dto.Dtos.TransferOrderLineResponse;
@@ -138,6 +144,35 @@ public final class Mappers {
   public static ShrinkageRowResponse toShrinkageRow(ShrinkageRow r) {
     return new ShrinkageRowResponse(
         r.groupKey(), r.qtyWrittenOff(), r.qtyFound(), r.netQty(), r.movements());
+  }
+
+  public static StockTurnRowResponse toStockTurnRow(StockTurnRow r) {
+    return new StockTurnRowResponse(
+        r.groupKey(),
+        r.cogs(),
+        r.uncostedSaleQty(),
+        r.openingValue(),
+        r.closingValue(),
+        r.averageValue(),
+        r.turnoverRatio(),
+        r.daysOnHand());
+  }
+
+  public static StockTurnReportResponse toStockTurnReport(StockTurnReport report) {
+    return new StockTurnReportResponse(
+        report.rows().stream().map(Mappers::toStockTurnRow).toList(),
+        report.historyComplete(),
+        report.windowDays());
+  }
+
+  public static DeadStockRowResponse toDeadStockRow(DeadStockRow r) {
+    return new DeadStockRowResponse(
+        r.groupKey(),
+        r.onHandQty(),
+        r.value(),
+        r.uncostedQty(),
+        r.daysSinceLastSale(),
+        r.neverSold());
   }
 
   public static MovementResponse toMovement(Movement m) {

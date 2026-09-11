@@ -1,5 +1,8 @@
 package com.shelfj.pricing.api;
 
+import com.shelfj.pricing.dto.Dtos.QuoteBasketRequest;
+import com.shelfj.pricing.dto.Dtos.RecordRedemptionsRequest;
+import com.shelfj.pricing.dto.Dtos.RecordRedemptionsResponse;
 import com.shelfj.pricing.dto.Dtos.ResolvePriceBatchRequest;
 import com.shelfj.pricing.dto.Dtos.ResolvePriceBatchResponse;
 import com.shelfj.pricing.dto.Dtos.ResolvePriceRequest;
@@ -61,5 +64,57 @@ public class PriceResolveResource {
     Validations.validate(req);
     var results = svc.resolvePrices(req.lines(), ctx).stream().map(Mappers::toDto).toList();
     return Response.ok(ApiResponse.ok(new ResolvePriceBatchResponse(results))).build();
+  }
+
+  @Operation(
+      summary = "Price a whole basket",
+      description =
+          "Resolves every line, then runs the promotion engine over the basket as a unit and"
+              + " returns the itemised result. Use this at checkout in preference to"
+              + " /resolve-batch, which prices each line independently and therefore cannot see a"
+              + " spend threshold, a basket percentage or a buy-one-get-one — those rules need the"
+              + " order total to exist before they mean anything."
+              + " Coupon codes are matched case-insensitively; any that do not apply come back in"
+              + " rejectedCoupons with a reason (NO_SUCH_COUPON, NOT_APPLICABLE, COUPON_EXHAUSTED,"
+              + " COUPON_LIMIT_REACHED) rather than being silently ignored."
+              + " Quoting never spends a coupon — a basket is quoted on every change, and the"
+              + " redemption is recorded by the checkout once an order exists to attribute it to.")
+  @APIResponse(responseCode = "200", description = "The priced basket")
+  @APIResponse(responseCode = "400", description = "Malformed id or a non-positive quantity")
+  @APIResponse(responseCode = "404", description = "No active price configured for a variant")
+  @POST
+  @Path("/quote")
+  public Response quote(QuoteBasketRequest req) {
+    Validations.validate(req);
+    return Response.ok(
+            ApiResponse.ok(svc.quoteBasket(req, ctx), ApiResponse.Meta.of(ctx.requestId())))
+        .build();
+  }
+
+  @Operation(
+      summary = "Record that an order used these promotions",
+      description =
+          "Spends the usage caps on the promotions an order actually applied. Separate from"
+              + " quoting on purpose: a basket is quoted on every change a shopper makes, and a"
+              + " coupon must not be spent by being looked at — only a placed order spends one."
+              + " Idempotent on (tenant, promotion, order), so a retried checkout or a replayed"
+              + " offline sale cannot burn a second use. recorded=0 means every redemption was"
+              + " already on file, which is a successful replay rather than a failure.")
+  @APIResponse(responseCode = "200", description = "How many redemptions were newly recorded")
+  @POST
+  @Path("/redemptions")
+  public Response recordRedemptions(RecordRedemptionsRequest req) {
+    Validations.validate(req);
+    int recorded =
+        svc.recordRedemptions(
+            ctx,
+            com.shelfj.web.Parsing.uuid(req.orderId(), "orderId"),
+            com.shelfj.web.Parsing.optionalUuid(req.customerId(), "customerId"),
+            req.appliedPromotions(),
+            req.currency() == null ? "GBP" : req.currency());
+    return Response.ok(
+            ApiResponse.ok(
+                new RecordRedemptionsResponse(recorded), ApiResponse.Meta.of(ctx.requestId())))
+        .build();
   }
 }

@@ -112,7 +112,42 @@ class _PriceListsTab extends ConsumerWidget {
                         if (l.currency != null) l.currency,
                         if (l.effectiveFrom != null) 'from ${l.effectiveFrom}',
                       ].whereType<String>().join(' · ')),
-                      trailing: _activeBadge(context, l.active),
+                      // Same defect as promotions, on the thing that IS the
+                      // price: the resolve engine filters on active and nothing
+                      // could write it (SJ-D38).
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _activeBadge(context, l.active),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            tooltip:
+                                l.active ? 'Stop this price list' : 'Start it again',
+                            icon: Icon(
+                                l.active
+                                    ? Icons.pause_circle_outline
+                                    : Icons.play_circle_outline,
+                                size: 22),
+                            onPressed: () => showDialog(
+                              context: context,
+                              builder: (_) => _SwitchDialog(
+                                collection: 'price-lists',
+                                subjectId: l.id,
+                                name: l.name,
+                                activate: !l.active,
+                                onSwitched: () => ref.invalidate(priceListsProvider),
+                                effect: l.active
+                                    ? 'Its prices stop being offered immediately. If nothing '
+                                        'else prices these items, they cannot be sold until you '
+                                        'start it again — which is the safe answer to a price '
+                                        'nobody agreed. Orders already placed keep what they '
+                                        'were charged.'
+                                    : 'Its prices are offered again from the next basket.',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -157,12 +192,17 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
     });
     try {
       await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.pricing}/price-lists',
+        '/${ApiConstants.pricing}/admin/price-lists',
         data: {
           'name': _nameCtrl.text.trim(),
           'channel': _channel,
           'currency': _currency,
-          'effectiveFrom': _from.toIso8601String().split('T').first,
+          // A bare '2026-01-01' is rejected with INVALID_DATE — the column is
+          // TIMESTAMPTZ. Sent as a UTC instant, which is also what golden rule
+          // 14 asks for: convert at the UI edge, store UTC.
+          'effectiveFrom': DateTime.utc(_from.year, _from.month, _from.day)
+              .toIso8601String()
+              .replaceFirst(RegExp(r'\.\d+Z$'), 'Z'),
         },
       );
       if (!mounted) return;
@@ -334,7 +374,7 @@ class _PriceListItemDialogState extends ConsumerState<_PriceListItemDialog> {
     });
     try {
       await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.pricing}/price-lists/${widget.priceListId}/items',
+        '/${ApiConstants.pricing}/admin/price-lists/${widget.priceListId}/items',
         data: {'variantId': _variantId, 'price': price, 'minQty': minQty},
       );
       if (!mounted) return;
@@ -399,6 +439,18 @@ class _PriceListItemDialogState extends ConsumerState<_PriceListItemDialog> {
 
 // ── Promotions ───────────────────────────────────────────────────────────────
 
+/// A small inline label, for the one or two promotion properties that change how
+/// every other promotion behaves and are therefore worth seeing in the list.
+Widget _chip(BuildContext context, String text, Color bg, Color fg) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(4)),
+      child: Text(text,
+          style: TextStyle(
+              color: fg, fontSize: 10.5, fontWeight: FontWeight.bold)),
+    );
+
+
 class _PromotionsTab extends ConsumerWidget {
   const _PromotionsTab();
 
@@ -427,25 +479,75 @@ class _PromotionsTab extends ConsumerWidget {
                 separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
                   final p = promos[i];
-                  final label = p.type == 'PERCENT'
-                      ? '${p.value.toStringAsFixed(0)}% off'
-                      : '${p.value.toStringAsFixed(2)} off';
                   return Card(
                     child: ListTile(
                       leading: CircleAvatar(
                         backgroundColor: cs.tertiaryContainer,
-                        child: Icon(Icons.local_offer_outlined,
+                        child: Icon(
+                            p.couponCode != null
+                                ? Icons.confirmation_number_outlined
+                                : Icons.local_offer_outlined,
                             color: cs.onTertiaryContainer),
                       ),
-                      title: Text(p.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      title: Row(children: [
+                        Flexible(
+                          child: Text(p.name,
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                        // An exclusive promotion changes what every other one
+                        // does, so it is the one property worth seeing without
+                        // opening the row.
+                        if (p.exclusive) ...[
+                          const SizedBox(width: 8),
+                          _chip(context, 'Exclusive', cs.errorContainer,
+                              cs.onErrorContainer),
+                        ],
+                      ]),
                       subtitle: Text([
-                        label,
-                        if (p.channel != null) p.channel,
-                        if (p.minOrderAmount != null)
-                          'min ${p.minOrderAmount!.toStringAsFixed(0)}',
+                        p.summary,
+                        if (p.couponCode != null) 'code ${p.couponCode}',
+                        if (p.channel != null && p.channel != 'ALL') p.channel,
+                        // Priority only earns space when it is not the default:
+                        // every promotion showing "priority 100" tells nobody
+                        // anything.
+                        if (p.priority != 100) 'priority ${p.priority}',
+                        if (p.maxRedemptions != null) 'max ${p.maxRedemptions}',
                       ].whereType<String>().join(' · ')),
-                      trailing: _activeBadge(context, p.active),
+                      // The badge said whether it was running and offered no
+                      // way to change that — because until SJ-D33 there was no
+                      // endpoint behind it. A promotion nobody can switch off
+                      // is the one that matters most to be able to switch off.
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _activeBadge(context, p.active),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            tooltip: p.active ? 'Stop this promotion' : 'Start it again',
+                            icon: Icon(
+                                p.active
+                                    ? Icons.pause_circle_outline
+                                    : Icons.play_circle_outline,
+                                size: 22),
+                            onPressed: () => showDialog(
+                              context: context,
+                              builder: (_) => _SwitchDialog(
+                                collection: 'promotions',
+                                subjectId: p.id,
+                                name: p.name,
+                                activate: !p.active,
+                                onSwitched: () => ref.invalidate(promotionsProvider),
+                                effect: p.active
+                                    ? 'It stops applying to baskets immediately. Orders already '
+                                        'placed are unaffected — the discount they received is '
+                                        'recorded on the order.'
+                                    : 'It will start applying to baskets immediately.',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -453,6 +555,129 @@ class _PromotionsTab extends ConsumerWidget {
             },
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// Stops a running promotion or price list, or starts a stopped one again.
+///
+/// One dialog for both because they are the same defect and the same fix: each
+/// had an `active` column the resolve engine reads and nothing in the product
+/// could write (SJ-D33, SJ-D38). A price list is the harsher of the two — a
+/// promotion discounts a price, a price list *is* the price.
+///
+/// A reason is required in both directions, matching the server. Restarting is
+/// the change more likely to be questioned later, and a trail recording only why
+/// things were stopped answers the easier half of the question.
+class _SwitchDialog extends ConsumerStatefulWidget {
+  /// Admin collection this subject lives under — `promotions` or `price-lists`.
+  final String collection;
+  final String subjectId;
+  final String name;
+  final bool activate;
+
+  /// What stopping it does, in the words of someone who has to decide.
+  final String effect;
+
+  /// Called after a successful switch, to redraw the list behind the dialog.
+  final VoidCallback onSwitched;
+
+  const _SwitchDialog({
+    required this.collection,
+    required this.subjectId,
+    required this.name,
+    required this.activate,
+    required this.effect,
+    required this.onSwitched,
+  });
+
+  @override
+  ConsumerState<_SwitchDialog> createState() => _SwitchDialogState();
+}
+
+class _SwitchDialogState extends ConsumerState<_SwitchDialog> {
+  final _reason = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final reason = _reason.text.trim();
+    if (reason.isEmpty) {
+      setState(() => _error = 'Say why — this is recorded against your name.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final action = widget.activate ? 'activate' : 'deactivate';
+      await ref.read(apiClientProvider).dio.post(
+            '/${ApiConstants.pricing}/admin/${widget.collection}/${widget.subjectId}/$action',
+            data: {'reason': reason},
+          );
+      if (!mounted) return;
+      widget.onSwitched();
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(widget.activate
+              ? 'Started — it is live again now.'
+              : 'Stopped, with immediate effect.')));
+    } catch (e) {
+      setState(() {
+        _busy = false;
+        _error = friendlyError(e,
+            fallback: 'Could not change this.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(
+          '${widget.activate ? 'Start' : 'Stop'} ${widget.collection == 'promotions' ? 'promotion' : 'price list'}'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(widget.effect),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _reason,
+              autofocus: true,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                hintText: 'e.g. priced wrong — 50% was meant to be 5%',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _busy ? null : () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: _busy ? null : _submit,
+            child: Text(widget.activate ? 'Start' : 'Stop')),
       ],
     );
   }
@@ -469,25 +694,65 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
   final _nameCtrl = TextEditingController();
   final _valueCtrl = TextEditingController();
   final _minCtrl = TextEditingController();
+  final _couponCtrl = TextEditingController();
+  final _priorityCtrl = TextEditingController(text: '100');
+  final _maxRedemptionsCtrl = TextEditingController();
+  final _maxPerCustomerCtrl = TextEditingController();
+  final _buyQtyCtrl = TextEditingController();
+  final _getQtyCtrl = TextEditingController();
+  final _getPctCtrl = TextEditingController(text: '100');
   String _type = 'PERCENT';
   String _channel = 'ALL';
+  bool _exclusive = false;
   DateTime _starts = DateTime.now();
   DateTime? _ends;
   bool _loading = false;
   String? _error;
+
+  bool get _isBogo => _type == 'BOGO';
+  bool get _isThreshold => _type == 'SPEND_THRESHOLD';
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     _valueCtrl.dispose();
     _minCtrl.dispose();
+    _couponCtrl.dispose();
+    _priorityCtrl.dispose();
+    _maxRedemptionsCtrl.dispose();
+    _maxPerCustomerCtrl.dispose();
+    _buyQtyCtrl.dispose();
+    _getQtyCtrl.dispose();
+    _getPctCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
-    final value = double.tryParse(_valueCtrl.text.trim());
+    // A BOGO is described by its quantities, not by a value, so the server takes
+    // a placeholder 1 there. Validating client-side as well as server-side is
+    // deliberate: a half-configured BOGO would apply to every basket and
+    // discount nothing, which is the exact failure this rebuild removed.
+    final value = _isBogo ? 1.0 : double.tryParse(_valueCtrl.text.trim());
     if (_nameCtrl.text.trim().isEmpty || value == null || value <= 0) {
       setState(() => _error = 'Enter a name and a positive value.');
+      return;
+    }
+    if (_isBogo) {
+      final buy = double.tryParse(_buyQtyCtrl.text.trim());
+      final get = double.tryParse(_getQtyCtrl.text.trim());
+      final pct = double.tryParse(_getPctCtrl.text.trim());
+      if (buy == null || buy <= 0 || get == null || get <= 0 ||
+          pct == null || pct <= 0 || pct > 100) {
+        setState(() => _error =
+            'A buy-one-get-one needs a buy quantity, a get quantity, and a '
+            'discount between 1 and 100 percent.');
+        return;
+      }
+    }
+    if (_isThreshold && double.tryParse(_minCtrl.text.trim()) == null) {
+      setState(() => _error =
+          'A spend threshold needs a minimum order amount — without one it '
+          'would discount every basket.');
       return;
     }
     setState(() {
@@ -497,7 +762,7 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
     final dio = ref.read(apiClientProvider).dio;
     try {
       final resp = await dio.post(
-        '/${ApiConstants.pricing}/promotions',
+        '/${ApiConstants.pricing}/admin/promotions',
         data: {
           'name': _nameCtrl.text.trim(),
           'type': _type,
@@ -507,6 +772,18 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
           'channel': _channel,
           'startsAt': _starts.toIso8601String(),
           if (_ends != null) 'endsAt': _ends!.toIso8601String(),
+          'priority': int.tryParse(_priorityCtrl.text.trim()) ?? 100,
+          'exclusive': _exclusive,
+          if (_couponCtrl.text.trim().isNotEmpty)
+            'couponCode': _couponCtrl.text.trim(),
+          if (_maxRedemptionsCtrl.text.trim().isNotEmpty)
+            'maxRedemptions': int.tryParse(_maxRedemptionsCtrl.text.trim()),
+          if (_maxPerCustomerCtrl.text.trim().isNotEmpty)
+            'maxPerCustomer': int.tryParse(_maxPerCustomerCtrl.text.trim()),
+          if (_isBogo) 'buyQty': double.tryParse(_buyQtyCtrl.text.trim()),
+          if (_isBogo) 'getQty': double.tryParse(_getQtyCtrl.text.trim()),
+          if (_isBogo)
+            'getDiscountPct': double.tryParse(_getPctCtrl.text.trim()),
         },
       );
       // Apply to all products by default so the promo is usable immediately.
@@ -514,7 +791,7 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
       final promoId = promo['id'] as String?;
       if (promoId != null) {
         await dio.post(
-          '/${ApiConstants.pricing}/promotions/$promoId/items',
+          '/${ApiConstants.pricing}/admin/promotions/$promoId/items',
           data: {'scopeType': 'ALL'},
         );
       }
@@ -554,24 +831,86 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                       decoration: const InputDecoration(labelText: 'Type'),
                       items: const [
                         DropdownMenuItem(
-                            value: 'PERCENT', child: Text('% off')),
-                        DropdownMenuItem(value: 'FLAT', child: Text('Flat off')),
+                            value: 'PERCENT', child: Text('% off each item')),
+                        DropdownMenuItem(
+                            value: 'FLAT', child: Text('Amount off each item')),
+                        DropdownMenuItem(
+                            value: 'BASKET_PERCENT',
+                            child: Text('% off the basket')),
+                        DropdownMenuItem(
+                            value: 'BASKET_FLAT',
+                            child: Text('Amount off the basket')),
+                        DropdownMenuItem(
+                            value: 'SPEND_THRESHOLD',
+                            child: Text('Spend and save')),
+                        DropdownMenuItem(
+                            value: 'BOGO', child: Text('Buy X get Y')),
                       ],
                       onChanged: (v) => setState(() => _type = v!),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: TextField(
-                      controller: _valueCtrl,
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(
-                          labelText: _type == 'PERCENT' ? 'Percent' : 'Amount'),
-                    ),
+                    // A BOGO has no single value — its three quantities below
+                    // describe it — so the field goes away rather than sitting
+                    // there inviting a number that means nothing.
+                    child: _isBogo
+                        ? const SizedBox.shrink()
+                        : TextField(
+                            controller: _valueCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            decoration: InputDecoration(
+                                labelText: _type.contains('PERCENT')
+                                    ? 'Percent'
+                                    : 'Amount'),
+                          ),
                   ),
                 ],
               ),
+              if (_isBogo) ...[
+                const SizedBox(height: 12),
+                Row(children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _buyQtyCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      decoration: const InputDecoration(labelText: 'Buy *'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _getQtyCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      decoration: const InputDecoration(labelText: 'Get *'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _getPctCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      decoration:
+                          const InputDecoration(labelText: '% off (100 = free)'),
+                    ),
+                  ),
+                ]),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Counted across every product the promotion covers, not '
+                    'within one line — and the cheapest units are the ones '
+                    'given away.',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.outline),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -593,13 +932,70 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                       controller: _minCtrl,
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
-                      decoration:
-                          const InputDecoration(labelText: 'Min order (opt)'),
+                      decoration: InputDecoration(
+                          labelText: _isThreshold
+                              ? 'Spend at least *'
+                              : 'Min order (opt)'),
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
+              Row(children: [
+                Expanded(
+                  child: TextField(
+                    controller: _couponCtrl,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: const InputDecoration(
+                      labelText: 'Coupon code (opt)',
+                      helperText: 'Blank = applies on its own',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: _priorityCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Priority',
+                      helperText: 'Lower runs first',
+                    ),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(
+                  child: TextField(
+                    controller: _maxRedemptionsCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration:
+                        const InputDecoration(labelText: 'Max uses (opt)'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: _maxPerCustomerCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Max per customer (opt)',
+                      helperText: 'Guests are uncapped',
+                    ),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 4),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _exclusive,
+                onChanged: (v) => setState(() => _exclusive = v),
+                title: const Text('Cannot be combined'),
+                subtitle: const Text(
+                    'Stops every promotion with a higher priority number'),
+              ),
+              const SizedBox(height: 8),
               _datePickerTile(context, 'Starts', _starts,
                   (d) => setState(() => _starts = d)),
               _datePickerTile(context, 'Ends (optional)', _ends,

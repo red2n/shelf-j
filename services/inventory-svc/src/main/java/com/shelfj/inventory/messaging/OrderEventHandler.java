@@ -26,6 +26,8 @@ import java.util.UUID;
  *       placed by order-svc at ONLINE checkout); FIFO-deduct directly for lines without a hold (POS
  *       orders, or online orders whose hold expired). (SALE movement either way.)
  *   <li>OrderReturned → receive stock back for each returned line item (RETURN movement).
+ *   <li>OrderVoided → receive back what a voided till sale took, net of anything already returned
+ *       (RECEIVE movement, reference type VOID). Empty when the sale was never handed over.
  *   <li>OrderCancelled → release every HELD reservation for the order so the stock returns to
  *       availability.
  * </ul>
@@ -36,8 +38,9 @@ import java.util.UUID;
  * failures propagate so the consumer loop redelivers the event. Cancellation release is naturally
  * idempotent (releasing a non-HELD reservation is a no-op).
  *
- * <p>Expected fulfil/return payload shape: {@code {eventId, eventType, tenantId, orderId, storeId,
- * items: [{variantId, qty}]}}. Cancelled payload: {@code {eventType, tenantId, orderId, reason}}.
+ * <p>Expected fulfil/return/void payload shape: {@code {eventId, eventType, tenantId, orderId,
+ * storeId, items: [{variantId, qty}]}}. Cancelled payload: {@code {eventType, tenantId, orderId,
+ * reason}}.
  */
 @ApplicationScoped
 class OrderEventHandler {
@@ -69,7 +72,12 @@ class OrderEventHandler {
 
     boolean fulfil = "OrderFulfilled".equals(eventType);
     boolean returned = "OrderReturned".equals(eventType);
-    if (!fulfil && !returned) {
+    // SJ-D40: a till sale now deducts stock when it is paid for, so voiding one must put it back.
+    // A void that was never handed over carries no lines, and an OrderVoided from before this
+    // change has no eventId or storeId and is skipped below as malformed — correctly, because the
+    // till sales voided then had never deducted anything.
+    boolean voided = "OrderVoided".equals(eventType);
+    if (!fulfil && !returned && !voided) {
       return;
     }
 
@@ -107,6 +115,9 @@ class OrderEventHandler {
             service.deductSaleFromOrderOnce(
                 dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId);
           }
+        } else if (voided) {
+          service.receiveVoidFromOrderOnce(
+              dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId);
         } else {
           service.receiveReturnFromOrderOnce(
               dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId);

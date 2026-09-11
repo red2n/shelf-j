@@ -1,22 +1,29 @@
 package com.shelfj.purchase.repo;
 
+import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.GoodsReceipt;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
 import com.shelfj.purchase.domain.Domain.IntercompanyInvoice;
 import com.shelfj.purchase.domain.Domain.NominalLedgerEntry;
 import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
+import com.shelfj.purchase.domain.Domain.PurchaseOrderLineProgress;
 import com.shelfj.purchase.domain.Domain.Supplier;
+import com.shelfj.purchase.domain.ThreeWayMatch;
+import com.shelfj.purchase.domain.Totals;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.math.BigDecimal;
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -110,8 +117,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO purchase_orders"
                       + " (id,tenant_id,supplier_id,store_id,status,currency,"
-                      + "  total_net,total_vat,total_gross,expected_delivery)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  total_net,total_vat,total_gross,expected_delivery,created_by)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, po.id());
             ps.setObject(2, po.tenantId());
             ps.setObject(3, po.supplierId());
@@ -122,6 +129,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ps.setBigDecimal(8, po.totalVat());
             ps.setBigDecimal(9, po.totalGross());
             ps.setObject(10, po.expectedDelivery());
+            ps.setObject(11, po.createdBy());
             ps.executeUpdate();
           }
           insertOutbox(c, event);
@@ -133,7 +141,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
   public List<PurchaseOrder> findPurchaseOrders(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
-            + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,cancelled_reason"
+            + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
+            + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at"
             + " FROM purchase_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
@@ -147,7 +156,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
     var rows =
         query(
             "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
-                + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,cancelled_reason"
+                + "total_net,total_vat,total_gross,expected_delivery,created_at,updated_at,cancelled_at,"
+                + "cancelled_reason,closed_at,closed_reason,created_by,approved_by,approved_at"
                 + " FROM purchase_orders WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -156,6 +166,135 @@ public class PurchaseRepository extends BaseOutboxRepository {
             this::mapPurchaseOrder,
             "find purchase order");
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /**
+   * Moves a DRAFT order to {@code SUBMITTED} or {@code PENDING_APPROVAL} and records the submission
+   * in the approval trail, atomically.
+   *
+   * <p>The guard is in the {@code WHERE} clause rather than in a preceding read, on the same
+   * reasoning as {@link #cancelPurchaseOrder}: two concurrent submits, or a submit racing a cancel,
+   * must not both win. Whichever commits first moves the row out of DRAFT and the other sees zero
+   * rows.
+   *
+   * @param tenantId the owning tenant
+   * @param id the order to submit
+   * @param status the state this submission lands in
+   * @param trail the {@code REQUESTED} row recording what was submitted and under whose authority
+   * @return {@code true} if this call submitted the order; {@code false} if it was not DRAFT
+   */
+  public boolean submitPurchaseOrder(
+      UUID tenantId, UUID id, String status, Domain.PurchaseOrderApproval trail) {
+    return inTx(
+        c -> {
+          int rows;
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE purchase_orders SET status=?, updated_at=now()"
+                      + " WHERE tenant_id=? AND id=? AND status='DRAFT'")) {
+            ps.setString(1, status);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, id);
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) return false;
+          insertApproval(c, trail);
+          return true;
+        },
+        "submit purchase order");
+  }
+
+  /**
+   * Records an approval decision and moves the order accordingly, atomically.
+   *
+   * <p>An approval takes the order to {@code SUBMITTED}; a rejection returns it to {@code DRAFT} so
+   * it can be corrected and resubmitted, and clears nothing else — the trail keeps the rejection,
+   * which is the point of it being append-only.
+   *
+   * @param tenantId the owning tenant
+   * @param id the order being decided on
+   * @param approve true to approve, false to reject
+   * @param decision the trail row, already carrying the decider, their authority and the figure
+   * @return {@code true} if this call decided the order; {@code false} if it was not awaiting one
+   */
+  public boolean decidePurchaseOrder(
+      UUID tenantId, UUID id, boolean approve, Domain.PurchaseOrderApproval decision) {
+    return inTx(
+        c -> {
+          int rows;
+          String sql =
+              approve
+                  ? "UPDATE purchase_orders SET status='SUBMITTED', approved_by=?, approved_at=now(),"
+                      + " updated_at=now() WHERE tenant_id=? AND id=? AND status='PENDING_APPROVAL'"
+                  : "UPDATE purchase_orders SET status='DRAFT', approved_by=NULL, approved_at=NULL,"
+                      + " updated_at=now() WHERE tenant_id=? AND id=? AND status='PENDING_APPROVAL'";
+          try (var ps = c.prepareStatement(sql)) {
+            int i = 1;
+            if (approve) ps.setObject(i++, decision.decidedBy());
+            ps.setObject(i++, tenantId);
+            ps.setObject(i, id);
+            rows = ps.executeUpdate();
+          }
+          if (rows == 0) return false;
+          insertApproval(c, decision);
+          return true;
+        },
+        approve ? "approve purchase order" : "reject purchase order");
+  }
+
+  private void insertApproval(Connection c, Domain.PurchaseOrderApproval a) throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "INSERT INTO purchase_order_approvals"
+                + " (id,tenant_id,po_id,decision,total_net,currency,authority,decided_by,"
+                + "  decided_role,reason)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, a.id());
+      ps.setObject(2, a.tenantId());
+      ps.setObject(3, a.poId());
+      ps.setString(4, a.decision());
+      ps.setBigDecimal(5, a.totalNet());
+      ps.setString(6, a.currency());
+      ps.setBigDecimal(7, a.authority());
+      ps.setObject(8, a.decidedBy());
+      ps.setString(9, a.decidedRole());
+      ps.setString(10, a.reason());
+      ps.executeUpdate();
+    }
+  }
+
+  /**
+   * The order's approval history, newest first. Append-only, so this is the complete record of
+   * every submission and decision the order has been through.
+   *
+   * @param tenantId the owning tenant — first condition (golden rule #3)
+   * @param poId the order
+   * @return every trail row for that order
+   */
+  public List<Domain.PurchaseOrderApproval> findApprovals(UUID tenantId, UUID poId) {
+    return query(
+        "SELECT id,tenant_id,po_id,decision,total_net,currency,authority,decided_by,decided_role,"
+            + "reason,decided_at"
+            + " FROM purchase_order_approvals WHERE tenant_id=? AND po_id=?"
+            + " ORDER BY decided_at DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, poId);
+        },
+        rs ->
+            new Domain.PurchaseOrderApproval(
+                rs.getObject("id", UUID.class),
+                rs.getObject("tenant_id", UUID.class),
+                rs.getObject("po_id", UUID.class),
+                rs.getString("decision"),
+                rs.getBigDecimal("total_net"),
+                rs.getString("currency"),
+                rs.getBigDecimal("authority"),
+                rs.getObject("decided_by", UUID.class),
+                rs.getString("decided_role"),
+                rs.getString("reason"),
+                rs.getObject("decided_at", OffsetDateTime.class).toInstant()),
+        "find purchase order approvals");
   }
 
   public void updatePurchaseOrderStatus(UUID tenantId, UUID id, String status) {
@@ -222,27 +361,117 @@ public class PurchaseRepository extends BaseOutboxRepository {
         rs.getObject("cancelled_at", OffsetDateTime.class) == null
             ? null
             : rs.getObject("cancelled_at", OffsetDateTime.class).toInstant(),
-        rs.getString("cancelled_reason"));
+        rs.getString("cancelled_reason"),
+        rs.getObject("closed_at", OffsetDateTime.class) == null
+            ? null
+            : rs.getObject("closed_at", OffsetDateTime.class).toInstant(),
+        rs.getString("closed_reason"),
+        rs.getObject("created_by", UUID.class),
+        rs.getObject("approved_by", UUID.class),
+        rs.getObject("approved_at", OffsetDateTime.class) == null
+            ? null
+            : rs.getObject("approved_at", OffsetDateTime.class).toInstant());
   }
 
   // ── PO Lines ──────────────────────────────────────────────────────────────────
 
-  public PurchaseOrderLine addPurchaseOrderLine(PurchaseOrderLine line) {
-    exec(
-        "INSERT INTO purchase_order_lines"
-            + " (id,tenant_id,po_id,variant_id,qty,unit_price,vat_code)"
-            + " VALUES (?,?,?,?,?,?,?)",
-        ps -> {
-          ps.setObject(1, line.id());
-          ps.setObject(2, line.tenantId());
-          ps.setObject(3, line.poId());
-          ps.setObject(4, line.variantId());
-          ps.setBigDecimal(5, line.qty());
-          ps.setBigDecimal(6, line.unitPrice());
-          ps.setString(7, line.vatCode());
+  /**
+   * Appends a line and restates the order's totals from every line it now has, atomically (SJ-D22).
+   *
+   * <p>The two halves must not be separable. A committed line whose order still shows the old total
+   * is a purchase order that understates what it commits — and once spend authority is enforced
+   * against that figure, an order could be approved against a total that its own lines contradict.
+   *
+   * <p>Recomputed from all lines rather than incremented by this one, so the stored figure is a
+   * function of the rows rather than of the sequence of calls that produced them. An increment that
+   * is missed, applied twice or applied against a since-changed rate drifts silently and for good;
+   * a recompute cannot.
+   *
+   * <p>The arithmetic itself is not done here — it is {@link Totals#of}, a pure function this
+   * method calls. Keeping money arithmetic out of the repository is what lets every rounding and
+   * VAT case be a unit test rather than a Testcontainers one.
+   *
+   * @param line the line to append
+   * @param currency the order's currency, which fixes the rounding scale
+   * @param vatRates VAT code to rate, resolved from pricing-svc by the caller
+   * @return the line as stored
+   */
+  public PurchaseOrderLine addPurchaseOrderLine(
+      PurchaseOrderLine line, String currency, java.util.Map<String, BigDecimal> vatRates) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO purchase_order_lines"
+                      + " (id,tenant_id,po_id,variant_id,qty,unit_price,vat_code)"
+                      + " VALUES (?,?,?,?,?,?,?)")) {
+            ps.setObject(1, line.id());
+            ps.setObject(2, line.tenantId());
+            ps.setObject(3, line.poId());
+            ps.setObject(4, line.variantId());
+            ps.setBigDecimal(5, line.qty());
+            ps.setBigDecimal(6, line.unitPrice());
+            ps.setString(7, line.vatCode());
+            ps.executeUpdate();
+          }
+          restateTotals(c, line.tenantId(), line.poId(), currency, vatRates);
+          return line;
         },
         "add po line");
-    return line;
+  }
+
+  /**
+   * Reads every line of the order and writes the three totals back onto it. Runs on the caller's
+   * connection so it joins their transaction.
+   *
+   * @param c the open connection, inside the caller's transaction
+   * @param tenantId the owning tenant — first condition of every query (golden rule #3)
+   * @param poId the order to restate
+   * @param currency the order's currency
+   * @param vatRates VAT code to rate
+   * @throws SQLException if either statement fails, aborting the caller's transaction
+   */
+  private void restateTotals(
+      Connection c,
+      UUID tenantId,
+      UUID poId,
+      String currency,
+      java.util.Map<String, BigDecimal> vatRates)
+      throws SQLException {
+    List<PurchaseOrderLine> lines = new ArrayList<>();
+    try (var ps =
+        c.prepareStatement(
+            "SELECT id,tenant_id,po_id,variant_id,qty,unit_price,vat_code,created_at"
+                + " FROM purchase_order_lines WHERE tenant_id=? AND po_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, poId);
+      try (var rs = ps.executeQuery()) {
+        while (rs.next()) {
+          lines.add(
+              new PurchaseOrderLine(
+                  rs.getObject("id", UUID.class),
+                  rs.getObject("tenant_id", UUID.class),
+                  rs.getObject("po_id", UUID.class),
+                  rs.getObject("variant_id", UUID.class),
+                  rs.getBigDecimal("qty"),
+                  rs.getBigDecimal("unit_price"),
+                  rs.getString("vat_code"),
+                  rs.getObject("created_at", OffsetDateTime.class).toInstant()));
+        }
+      }
+    }
+    Totals totals = Totals.of(lines, currency, vatRates);
+    try (var ps =
+        c.prepareStatement(
+            "UPDATE purchase_orders SET total_net=?, total_vat=?, total_gross=?, updated_at=now()"
+                + " WHERE tenant_id=? AND id=?")) {
+      ps.setBigDecimal(1, totals.net());
+      ps.setBigDecimal(2, totals.vat());
+      ps.setBigDecimal(3, totals.gross());
+      ps.setObject(4, tenantId);
+      ps.setObject(5, poId);
+      ps.executeUpdate();
+    }
   }
 
   public List<PurchaseOrderLine> findPurchaseOrderLines(UUID tenantId, UUID poId) {
@@ -269,10 +498,24 @@ public class PurchaseRepository extends BaseOutboxRepository {
   // ── Goods Receipts ────────────────────────────────────────────────────────────
 
   /**
-   * Record a goods receipt and atomically transition the PO SUBMITTED -&gt; RECEIVED. If the same
-   * Idempotency-Key was already stored for this tenant, the original receipt is returned unchanged
-   * (replay). If the PO is no longer SUBMITTED (e.g. a concurrent/duplicate receive already ran),
-   * the whole transaction is rolled back instead of double-counting received stock.
+   * Record a goods receipt and move the purchase order to whichever state the quantities imply.
+   *
+   * <p><b>The quantities are now read.</b> This used to end {@code SET status='RECEIVED' WHERE
+   * status='SUBMITTED'} with no reference to what had actually turned up, so a delivery of 6
+   * against an order of 10 closed the order — and the second delivery of the remaining 4 was then
+   * refused, because the order was no longer SUBMITTED. A split delivery stranded its own balance.
+   *
+   * <p>The comparison happens inside this transaction, against a {@code FOR UPDATE} lock on the
+   * order, so two lorries arriving at once cannot both read "4 outstanding" and both book it.
+   *
+   * <p><b>Over-receipt is refused rather than absorbed.</b> Accepting more than was ordered would
+   * book stock nobody asked for against a purchase order that cannot account for it, and a mistyped
+   * 60 for 6 would do it silently. Whether a tolerance band should be allowed is a procurement
+   * policy question — a real one, with a real answer per tenant — and inventing one here would be
+   * guessing.
+   *
+   * <p>If the same Idempotency-Key was already stored for this tenant, the original receipt is
+   * returned unchanged (replay), before any quantity is counted.
    */
   public GoodsReceipt createGoodsReceipt(
       GoodsReceipt gr, List<GoodsReceiptLine> lines, OutboxRow event) {
@@ -309,25 +552,345 @@ public class PurchaseRepository extends BaseOutboxRepository {
               ps.executeUpdate();
             }
           }
-          // Update PO status to RECEIVED — only if it's still SUBMITTED, so a duplicate/concurrent
-          // receive for the same PO is rejected atomically instead of double-counting stock.
-          int rows;
-          try (var ps =
-              c.prepareStatement(
-                  "UPDATE purchase_orders SET status='RECEIVED', updated_at=now()"
-                      + " WHERE tenant_id=? AND id=? AND status='SUBMITTED'")) {
-            ps.setObject(1, gr.tenantId());
-            ps.setObject(2, gr.poId());
-            rows = ps.executeUpdate();
+          // Lock the order first: the status decision below reads every receipt against it, and
+          // two deliveries arriving together must not both see the same outstanding quantity.
+          String status = lockPurchaseOrderStatusTx(c, gr.tenantId(), gr.poId());
+          if (status == null) {
+            throw ApiException.notFound("PURCHASE_PO_NOT_FOUND", "No such purchase order");
           }
-          if (rows == 0) {
+          if (!Domain.PO_SUBMITTED.equals(status) && !Domain.PO_PARTIALLY_RECEIVED.equals(status)) {
             throw ApiException.conflict(
-                "PURCHASE_PO_NOT_SUBMITTED", "Only SUBMITTED orders can be received");
+                "PURCHASE_PO_NOT_RECEIVABLE",
+                "a purchase order can only be received while SUBMITTED or PARTIALLY_RECEIVED —"
+                    + " this one is "
+                    + status);
           }
+
+          // Ordered against received, this receipt included. Both sides are already in the
+          // schema; nothing read them until now.
+          List<PurchaseOrderLineProgress> progress = lineProgressTx(c, gr.tenantId(), gr.poId());
+          if (progress.isEmpty()) {
+            throw ApiException.unprocessable(
+                "PURCHASE_PO_HAS_NO_LINES",
+                "a purchase order with no lines has nothing to receive against");
+          }
+          for (PurchaseOrderLineProgress p : progress) {
+            if (p.qtyReceived().compareTo(p.qtyOrdered()) > 0) {
+              throw ApiException.unprocessable(
+                  "PURCHASE_OVER_RECEIPT",
+                  "variant "
+                      + p.variantId()
+                      + ": received "
+                      + p.qtyReceived()
+                      + " against an order of "
+                      + p.qtyOrdered()
+                      + " — amend the purchase order if the extra was genuinely ordered");
+            }
+          }
+          boolean complete = progress.stream().allMatch(p -> p.qtyOutstanding().signum() == 0);
+          setPurchaseOrderStatusTx(
+              c,
+              gr.tenantId(),
+              gr.poId(),
+              complete ? Domain.PO_RECEIVED : Domain.PO_PARTIALLY_RECEIVED);
+
           insertOutbox(c, event);
           return gr;
         },
         "create goods receipt");
+  }
+
+  /** {@code SELECT ... FOR UPDATE}, so the outstanding-quantity read below is serialised. */
+  private static String lockPurchaseOrderStatusTx(java.sql.Connection c, UUID tenantId, UUID poId)
+      throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "SELECT status FROM purchase_orders WHERE tenant_id=? AND id=? FOR UPDATE")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, poId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? rs.getString("status") : null;
+      }
+    }
+  }
+
+  private static void setPurchaseOrderStatusTx(
+      java.sql.Connection c, UUID tenantId, UUID poId, String status) throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "UPDATE purchase_orders SET status=?, updated_at=now() WHERE tenant_id=? AND id=?")) {
+      ps.setString(1, status);
+      ps.setObject(2, tenantId);
+      ps.setObject(3, poId);
+      ps.executeUpdate();
+    }
+  }
+
+  /**
+   * Ordered against received per variant, for one purchase order.
+   *
+   * <p>A LEFT JOIN from the order's own lines, so a variant ordered but never delivered still
+   * appears with its full quantity outstanding — an INNER JOIN would have made "nothing arrived"
+   * indistinguishable from "nothing was ordered", and the whole point of this query is to notice
+   * what is missing.
+   */
+  private static List<PurchaseOrderLineProgress> lineProgressTx(
+      java.sql.Connection c, UUID tenantId, UUID poId) throws SQLException {
+    List<PurchaseOrderLineProgress> out = new java.util.ArrayList<>();
+    try (var ps =
+        c.prepareStatement(
+            "SELECT l.variant_id,"
+                + "       SUM(l.qty)::numeric(14,3) AS qty_ordered,"
+                + "       COALESCE((SELECT SUM(grl.qty_received) FROM goods_receipt_lines grl"
+                + "                   JOIN goods_receipts gr ON gr.id = grl.gr_id"
+                + "                  WHERE gr.tenant_id = l.tenant_id AND gr.po_id = ?"
+                + "                    AND grl.variant_id = l.variant_id), 0)::numeric(14,3)"
+                + "         AS qty_received"
+                + "  FROM purchase_order_lines l"
+                + " WHERE l.tenant_id = ? AND l.po_id = ?"
+                + " GROUP BY l.tenant_id, l.variant_id")) {
+      ps.setObject(1, poId);
+      ps.setObject(2, tenantId);
+      ps.setObject(3, poId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          BigDecimal ordered = rs.getBigDecimal("qty_ordered");
+          BigDecimal received = rs.getBigDecimal("qty_received");
+          out.add(
+              new PurchaseOrderLineProgress(
+                  rs.getObject("variant_id", UUID.class),
+                  ordered,
+                  received,
+                  ordered.subtract(received).max(BigDecimal.ZERO)));
+        }
+      }
+    }
+    return out;
+  }
+
+  /** The same progress view, for a caller asking what is still outstanding on an order. */
+  public List<PurchaseOrderLineProgress> findLineProgress(UUID tenantId, UUID poId) {
+    return inTx(c -> lineProgressTx(c, tenantId, poId), "read purchase order progress");
+  }
+
+  /**
+   * Short-closes a partially received order: the balance is never coming and we have stopped
+   * waiting.
+   *
+   * <p>Only from PARTIALLY_RECEIVED. A SUBMITTED order with nothing delivered is a cancellation
+   * (SJ-D3), and a RECEIVED one has nothing outstanding to close. Guarded in the {@code WHERE} so a
+   * close racing a final delivery cannot both win — whichever commits second finds no row.
+   */
+  public boolean closePurchaseOrderShort(UUID tenantId, UUID poId, String reason) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE purchase_orders SET status='CLOSED', closed_at=now(),"
+                      + " closed_reason=?, updated_at=now()"
+                      + " WHERE tenant_id=? AND id=? AND status='PARTIALLY_RECEIVED'")) {
+            ps.setString(1, reason);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, poId);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "close purchase order short");
+  }
+
+  /**
+   * Captures a supplier invoice and its already-matched lines in one transaction.
+   *
+   * <p>The match is computed by the caller from {@link #findMatchPositions} and passed in, because
+   * the arithmetic belongs in {@link com.shelfj.purchase.domain.ThreeWayMatch} where it can be a
+   * unit test. What must be atomic is the invoice, its lines, and the outcome each line was
+   * captured with — a line whose stored variance does not match the invoice it sits on is worse
+   * than no variance at all.
+   *
+   * @param invoice the invoice header, status already decided
+   * @param lines its lines, each carrying its own variance string
+   * @return the invoice as stored
+   * @throws ApiException 409 if this supplier's invoice number has already been captured
+   */
+  public Domain.SupplierInvoice captureSupplierInvoice(
+      Domain.SupplierInvoice invoice, List<Domain.SupplierInvoiceLine> lines) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO supplier_invoices"
+                      + " (id,tenant_id,po_id,supplier_id,invoice_number,invoice_date,currency,"
+                      + "  net_amount,vat_amount,gross_amount,status,created_by)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, invoice.id());
+            ps.setObject(2, invoice.tenantId());
+            ps.setObject(3, invoice.poId());
+            ps.setObject(4, invoice.supplierId());
+            ps.setString(5, invoice.invoiceNumber());
+            ps.setObject(6, invoice.invoiceDate());
+            ps.setString(7, invoice.currency());
+            ps.setBigDecimal(8, invoice.netAmount());
+            ps.setBigDecimal(9, invoice.vatAmount());
+            ps.setBigDecimal(10, invoice.grossAmount());
+            ps.setString(11, invoice.status());
+            ps.setObject(12, invoice.createdBy());
+            ps.executeUpdate();
+          } catch (SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+              throw new ApiException(
+                  409,
+                  "PURCHASE_INVOICE_DUPLICATE",
+                  "invoice "
+                      + invoice.invoiceNumber()
+                      + " has already been captured for this supplier",
+                  List.of(),
+                  sqle);
+            throw sqle;
+          }
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO supplier_invoice_lines"
+                      + " (id,tenant_id,invoice_id,variant_id,qty_invoiced,unit_price,vat_code,"
+                      + "  variances)"
+                      + " VALUES (?,?,?,?,?,?,?,?)")) {
+            for (Domain.SupplierInvoiceLine l : lines) {
+              ps.setObject(1, l.id());
+              ps.setObject(2, l.tenantId());
+              ps.setObject(3, l.invoiceId());
+              ps.setObject(4, l.variantId());
+              ps.setBigDecimal(5, l.qtyInvoiced());
+              ps.setBigDecimal(6, l.unitPrice());
+              ps.setString(7, l.vatCode());
+              ps.setString(8, l.variances());
+              ps.addBatch();
+            }
+            ps.executeBatch();
+          }
+          return invoice;
+        },
+        "capture supplier invoice");
+  }
+
+  /**
+   * What the order and its receipts say about each variant, plus what earlier invoices already
+   * billed — the two documents a new invoice is matched against.
+   *
+   * <p>Invoiced quantity is summed across every earlier invoice on the order, not just the last
+   * one. A supplier delivering in two lorries invoices twice, and matching each against the whole
+   * order in isolation would flag the second as over-invoiced every time — the mistake the
+   * goods-receipt path made before partial receipt fixed it.
+   *
+   * @param tenantId the owning tenant — first condition of every query (golden rule #3)
+   * @param poId the order being invoiced against
+   * @return one position per ordered variant
+   */
+  public List<ThreeWayMatch.OrderPosition> findMatchPositions(UUID tenantId, UUID poId) {
+    return query(
+        "SELECT l.variant_id,"
+            + "       SUM(l.qty)::numeric(14,3)                       AS qty_ordered,"
+            + "       MAX(l.unit_price)                               AS ordered_unit_price,"
+            + "       COALESCE((SELECT SUM(grl.qty_received) FROM goods_receipt_lines grl"
+            + "                   JOIN goods_receipts gr ON gr.id = grl.gr_id"
+            + "                  WHERE gr.tenant_id = l.tenant_id AND gr.po_id = ?"
+            + "                    AND grl.variant_id = l.variant_id), 0)::numeric(14,3)"
+            + "                                                       AS qty_received,"
+            + "       COALESCE((SELECT SUM(sil.qty_invoiced) FROM supplier_invoice_lines sil"
+            + "                   JOIN supplier_invoices si ON si.id = sil.invoice_id"
+            + "                  WHERE si.tenant_id = l.tenant_id AND si.po_id = ?"
+            + "                    AND sil.variant_id = l.variant_id), 0)::numeric(14,3)"
+            + "                                                       AS qty_invoiced"
+            + "  FROM purchase_order_lines l"
+            + " WHERE l.tenant_id = ? AND l.po_id = ?"
+            + " GROUP BY l.variant_id, l.tenant_id",
+        ps -> {
+          ps.setObject(1, poId);
+          ps.setObject(2, poId);
+          ps.setObject(3, tenantId);
+          ps.setObject(4, poId);
+        },
+        rs ->
+            new ThreeWayMatch.OrderPosition(
+                rs.getObject("variant_id", UUID.class),
+                rs.getBigDecimal("qty_ordered"),
+                rs.getBigDecimal("qty_received"),
+                rs.getBigDecimal("qty_invoiced"),
+                rs.getBigDecimal("ordered_unit_price")),
+        "read three-way match positions");
+  }
+
+  public List<Domain.SupplierInvoice> findSupplierInvoices(UUID tenantId, UUID poId, int limit) {
+    String sql =
+        "SELECT id,tenant_id,po_id,supplier_id,invoice_number,invoice_date,currency,"
+            + "net_amount,vat_amount,gross_amount,status,matched_at,created_by,created_at"
+            + " FROM supplier_invoices WHERE tenant_id=?"
+            + (poId != null ? " AND po_id=?" : "")
+            + " ORDER BY created_at DESC LIMIT ?";
+    return query(
+        sql,
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (poId != null) ps.setObject(i++, poId);
+          ps.setInt(i, limit);
+        },
+        this::mapSupplierInvoice,
+        "find supplier invoices");
+  }
+
+  public Optional<Domain.SupplierInvoice> findSupplierInvoice(UUID tenantId, UUID id) {
+    var rows =
+        query(
+            "SELECT id,tenant_id,po_id,supplier_id,invoice_number,invoice_date,currency,"
+                + "net_amount,vat_amount,gross_amount,status,matched_at,created_by,created_at"
+                + " FROM supplier_invoices WHERE tenant_id=? AND id=?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            this::mapSupplierInvoice,
+            "find supplier invoice");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  public List<Domain.SupplierInvoiceLine> findSupplierInvoiceLines(UUID tenantId, UUID invoiceId) {
+    return query(
+        "SELECT id,tenant_id,invoice_id,variant_id,qty_invoiced,unit_price,vat_code,variances,"
+            + "created_at"
+            + " FROM supplier_invoice_lines WHERE tenant_id=? AND invoice_id=? ORDER BY created_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, invoiceId);
+        },
+        rs ->
+            new Domain.SupplierInvoiceLine(
+                rs.getObject("id", UUID.class),
+                rs.getObject("tenant_id", UUID.class),
+                rs.getObject("invoice_id", UUID.class),
+                rs.getObject("variant_id", UUID.class),
+                rs.getBigDecimal("qty_invoiced"),
+                rs.getBigDecimal("unit_price"),
+                rs.getString("vat_code"),
+                rs.getString("variances"),
+                rs.getObject("created_at", OffsetDateTime.class).toInstant()),
+        "find supplier invoice lines");
+  }
+
+  private Domain.SupplierInvoice mapSupplierInvoice(ResultSet rs) throws SQLException {
+    return new Domain.SupplierInvoice(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("po_id", UUID.class),
+        rs.getObject("supplier_id", UUID.class),
+        rs.getString("invoice_number"),
+        rs.getObject("invoice_date", LocalDate.class),
+        rs.getString("currency"),
+        rs.getBigDecimal("net_amount"),
+        rs.getBigDecimal("vat_amount"),
+        rs.getBigDecimal("gross_amount"),
+        rs.getString("status"),
+        rs.getObject("matched_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("created_by", UUID.class),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 
   private GoodsReceipt findGoodsReceiptByKeyTx(

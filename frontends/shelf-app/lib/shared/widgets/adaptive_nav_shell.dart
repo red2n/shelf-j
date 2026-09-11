@@ -5,11 +5,24 @@ class AdaptiveNavDestination {
   final IconData icon;
   final IconData selectedIcon;
 
+  /// Count shown on the destination's icon; zero or null shows no badge. Used by
+  /// POS to surface sales still waiting to reach the server from wherever the
+  /// cashier happens to be in the terminal.
+  final int? badgeCount;
+
   const AdaptiveNavDestination({
     required this.label,
     required this.icon,
     required this.selectedIcon,
+    this.badgeCount,
   });
+
+  /// The destination's icon, badged when it has a non-zero count.
+  Widget iconWidget({bool selected = false}) {
+    final icon = Icon(selected ? selectedIcon : this.icon);
+    final count = badgeCount ?? 0;
+    return count > 0 ? Badge.count(count: count, child: icon) : icon;
+  }
 }
 
 /// How the shell presents navigation below the [AdaptiveNavShell._railBreakpoint].
@@ -136,8 +149,8 @@ class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
         onDestinationSelected: widget.onDestinationSelected,
         destinations: widget.destinations
             .map((d) => NavigationDestination(
-                  icon: Icon(d.icon),
-                  selectedIcon: Icon(d.selectedIcon),
+                  icon: d.iconWidget(),
+                  selectedIcon: d.iconWidget(selected: true),
                   label: d.label,
                 ))
             .toList(),
@@ -168,8 +181,8 @@ class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
                         : NavigationRailLabelType.all,
                     destinations: widget.destinations
                         .map((d) => NavigationRailDestination(
-                              icon: Icon(d.icon),
-                              selectedIcon: Icon(d.selectedIcon),
+                              icon: d.iconWidget(),
+                              selectedIcon: d.iconWidget(selected: true),
                               label: Text(d.label),
                             ))
                         .toList(),
@@ -210,8 +223,8 @@ class _AdaptiveNavShellState extends State<AdaptiveNavShell> {
           ),
         ),
         ...widget.destinations.map((d) => NavigationDrawerDestination(
-              icon: Icon(d.icon),
-              selectedIcon: Icon(d.selectedIcon),
+              icon: d.iconWidget(),
+              selectedIcon: d.iconWidget(selected: true),
               label: Text(d.label),
             )),
       ],

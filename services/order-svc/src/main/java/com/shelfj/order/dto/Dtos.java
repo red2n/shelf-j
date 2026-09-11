@@ -58,6 +58,11 @@ public final class Dtos {
                   "ISO 4217 currency code. Defaults to the tenant's own currency; a value that contradicts it is rejected with ORDER_CURRENCY_MISMATCH.")
           String currency,
       String notes,
+      @Schema(
+              description =
+                  "Coupon codes the customer presented, matched case-insensitively. Codes that do"
+                      + " not apply are reported by pricing-svc and do not fail the order.")
+          List<String> couponCodes,
       @Schema(description = "Legacy fallback for the Idempotency-Key header.")
           String idempotencyKey,
       Boolean taxExempt,
@@ -96,7 +101,18 @@ public final class Dtos {
       @Schema(description = "PENDING, CONFIRMED, FULFILLED, CANCELLED, or VOIDED.") String status,
       BigDecimal subtotal,
       BigDecimal taxAmount,
-      BigDecimal discountAmount,
+      @Schema(
+              description =
+                  "The staff discount: a deliberate act by a named person, with a reason and a"
+                      + " role ceiling. Automatic promotional money is promotionDiscount, kept"
+                      + " apart so an offer cannot spend a cashier's authority.")
+          BigDecimal discountAmount,
+      @Schema(
+              description =
+                  "What the promotion engine took off the basket as a whole. Line-level"
+                      + " promotions are already inside the line prices and therefore inside"
+                      + " subtotal.")
+          BigDecimal promotionDiscount,
       BigDecimal total,
       String currency,
       String notes,
@@ -438,4 +454,82 @@ public final class Dtos {
 
   @Schema(name = "NoSaleResponse")
   public record NoSaleResponse(String id, String storeId, String reason, String loggedAt) {}
+
+  // ── Staff exception report ────────────────────────────────────────────────
+
+  @Schema(
+      name = "ExceptionRowResponse",
+      description =
+          "One cashier's, or one store's, staff-initiated exceptions over the period, with the"
+              + " journalled sales that make them a rate rather than a ranking of who worked most.")
+  public record ExceptionRowResponse(
+      @Schema(
+              description =
+                  "The actor id or store id this line covers. UNATTRIBUTED covers exceptions"
+                      + " recorded with no actor — bucketed rather than dropped, because an"
+                      + " exception nobody is accountable for is the last one to hide.")
+          String groupKey,
+      @Schema(description = "How many discounts this group granted.") long discounts,
+      @Schema(description = "Total value discounted.") BigDecimal discountAmount,
+      @Schema(description = "How many sales this group voided.") long voids,
+      @Schema(description = "How many times the drawer was opened with no sale.") long noSales,
+      @Schema(
+              description =
+                  "Journalled POS sales for this group. Zero means nothing journalled the sale,"
+                      + " which is NOT the same as no sales having happened — see"
+                      + " ExceptionReportResponse.journalCoverage before reading any rate.")
+          long sales,
+      @Schema(description = "Value of those journalled sales.") BigDecimal salesValue) {}
+
+  @Schema(
+      name = "ExceptionReportResponse",
+      description = "Staff exception report: discounts, voids and no-sales over a period.")
+  public record ExceptionReportResponse(
+      List<ExceptionRowResponse> rows,
+      @Schema(
+              description =
+                  "True when the POS transaction journal has entries for this period. When false"
+                      + " every sales figure above is zero because nothing journalled anything,"
+                      + " and the exception counts must be read as raw counts with no denominator"
+                      + " — a cashier who took a thousand sales and one who took three are not"
+                      + " distinguishable.")
+          boolean journalCoverage) {}
+
+  @Schema(
+      name = "SalesByHourRowResponse",
+      description = "One hour of the trading day, on the clock of the requested timezone.")
+  public record SalesByHourRowResponse(
+      @Schema(
+              description =
+                  "Hour 0-23 in the timezone the report was asked for, not UTC. Hours with no"
+                      + " trade are absent rather than zero: a row of zeroes would assert the shop"
+                      + " was open and empty.")
+          int hourOfDay,
+      @Schema(description = "How many revenue orders fell in this hour.") long orders,
+      @Schema(description = "Their total, after discount.") BigDecimal grossAmount,
+      @Schema(description = "How much was discounted away inside this hour.")
+          BigDecimal discountAmount,
+      @Schema(description = "grossAmount divided by orders.") BigDecimal averageBasket) {}
+
+  @Schema(
+      name = "SalesByStaffRowResponse",
+      description =
+          "One member of staff's takings, from the POS transaction journal. In-store only — an"
+              + " online order has no cashier.")
+  public record SalesByStaffRowResponse(
+      @Schema(
+              description =
+                  "The cashier's user id. UNATTRIBUTED covers journal entries naming nobody —"
+                      + " bucketed rather than dropped, because a sale with no cashier is a gap in"
+                      + " the audit trail.")
+          String groupKey,
+      @Schema(description = "How many sales they journalled.") long sales,
+      @Schema(description = "What those sales came to, after discount.") BigDecimal grossAmount,
+      @Schema(description = "How much they discounted away.") BigDecimal discountAmount,
+      @Schema(description = "grossAmount divided by sales.") BigDecimal averageBasket,
+      @Schema(
+              description =
+                  "Discount as a percentage of what the sales would have fetched undiscounted."
+                      + " Null when there is nothing to take a percentage of.")
+          BigDecimal discountRate) {}
 }

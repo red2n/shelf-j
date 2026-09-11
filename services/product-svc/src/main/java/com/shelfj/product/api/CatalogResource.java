@@ -1,7 +1,11 @@
 package com.shelfj.product.api;
 
+import com.shelfj.product.dto.Dtos.AgeCheckResponse;
+import com.shelfj.product.dto.Dtos.AllergenDeclarationResponse;
+import com.shelfj.product.dto.Dtos.AllergenResponse;
 import com.shelfj.product.dto.Dtos.CategoryResponse;
 import com.shelfj.product.dto.Dtos.ProductResponse;
+import com.shelfj.product.dto.Dtos.VariantComplianceResponse;
 import com.shelfj.product.dto.Dtos.VariantResponse;
 import com.shelfj.product.dto.Dtos.VariantScanResponse;
 import com.shelfj.product.mapper.Mappers;
@@ -188,5 +192,99 @@ public class CatalogResource {
     } catch (IllegalArgumentException e) {
       throw new ApiException(400, code, message, List.of(), e);
     }
+  }
+
+  // ── Food safety and age restriction: reads a shopper and a till both need ──
+
+  @Operation(
+      summary = "The fourteen regulated allergens",
+      description =
+          "Reference data from Regulation (EU) 1169/2011 Annex II. Set by regulation, not by the"
+              + " business, so it is read-only.")
+  @APIResponse(responseCode = "200", description = "The fourteen, by code")
+  @Tag(name = "Food safety")
+  @GET
+  @Path("/allergens")
+  public ApiResponse<List<AllergenResponse>> allergens() {
+    return ApiResponse.ok(service.listAllergens().stream().map(Mappers::toAllergen).toList());
+  }
+
+  @Operation(
+      summary = "A product's allergen declaration",
+      description =
+          "Open to shoppers deliberately: since Natasha's Law a customer is entitled to this"
+              + " information before buying, so putting it behind a login would defeat it.\n\n"
+              + "**Read the status, not the list length.** UNDECLARED with an empty list means"
+              + " nobody has checked yet; DECLARED with an empty list means the product has been"
+              + " checked and contains none of the fourteen. Treating the first as the second is"
+              + " how an allergic customer is told a product is safe when nobody knows.")
+  @APIResponse(responseCode = "200", description = "The declaration and its status")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Food safety")
+  @GET
+  @Path("/variants/{variantId}/allergens")
+  public ApiResponse<AllergenDeclarationResponse> variantAllergens(
+      @PathParam("variantId") UUID variantId) {
+    UUID tenantId = requireTenant();
+    var compliance = service.complianceOf(tenantId, variantId);
+    var rows = service.allergensOf(tenantId, variantId);
+    return ApiResponse.ok(
+        new AllergenDeclarationResponse(
+            variantId.toString(),
+            compliance.allergenStatus(),
+            rows.stream().map(Mappers::toAllergenEntry).toList(),
+            rows.isEmpty() ? null : rows.get(0).declaredAt().toString()));
+  }
+
+  @Operation(
+      summary = "Is this item age-restricted here, and from what age",
+      description =
+          "The question a till asks before it will take payment for a scanned line. Takes the"
+              + " country the store is in, because the same bottle of wine is 18 in the UK, 20 in"
+              + " Japan and 21 in the US — the restriction belongs to the product, the age belongs"
+              + " to the jurisdiction.\n\n"
+              + "A tenant's own rule wins over the statutory default, and may only ever be"
+              + " stricter. `minimumAge` null means the item is not restricted at all.")
+  @APIResponse(responseCode = "200", description = "The check to perform, or no restriction")
+  @APIResponse(
+      responseCode = "400",
+      description = "The item is restricted but this country has no rule for it — set one first")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Age restriction")
+  @GET
+  @Path("/variants/{variantId}/age-check")
+  public ApiResponse<AgeCheckResponse> ageCheck(
+      @PathParam("variantId") UUID variantId, @QueryParam("country") String country) {
+    UUID tenantId = requireTenant();
+    var rule = service.ageCheck(tenantId, variantId, country);
+    return ApiResponse.ok(
+        rule == null
+            ? new AgeCheckResponse(
+                variantId.toString(),
+                country == null ? null : country.toUpperCase(java.util.Locale.ROOT),
+                false,
+                null,
+                null,
+                false)
+            : new AgeCheckResponse(
+                variantId.toString(),
+                rule.country(),
+                true,
+                rule.category(),
+                rule.minimumAge(),
+                rule.tenantId() != null));
+  }
+
+  @Operation(
+      summary = "How an item is sold, and where it is from",
+      description =
+          "Country of origin, ingredients, and whether the item is sold by the each or by weight —"
+              + " what a shelf edge and a scale both need to price it.")
+  @APIResponse(responseCode = "404", description = "Variant not found")
+  @Tag(name = "Food safety")
+  @GET
+  @Path("/variants/{variantId}/compliance")
+  public ApiResponse<VariantComplianceResponse> compliance(@PathParam("variantId") UUID variantId) {
+    return ApiResponse.ok(Mappers.toCompliance(service.complianceOf(requireTenant(), variantId)));
   }
 }

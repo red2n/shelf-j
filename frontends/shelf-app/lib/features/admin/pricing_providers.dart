@@ -67,6 +67,24 @@ class Promotion {
   final String? startsAt;
   final String? endsAt;
 
+  /// Application order, ascending — lower runs first. Which of two overlapping
+  /// offers wins used to be an accident of a SQL sort that compared a
+  /// percentage against a sum of money.
+  final int priority;
+
+  /// True when this promotion stops every promotion after it.
+  final bool exclusive;
+
+  /// Code the customer must present, or null when it applies on its own.
+  final String? couponCode;
+  final int? maxRedemptions;
+  final int? maxPerCustomer;
+
+  /// BOGO only: buy [buyQty], get [getQty] at [getDiscountPct] off.
+  final double? buyQty;
+  final double? getQty;
+  final double? getDiscountPct;
+
   const Promotion({
     required this.id,
     required this.name,
@@ -77,7 +95,39 @@ class Promotion {
     required this.active,
     this.startsAt,
     this.endsAt,
+    this.priority = 100,
+    this.exclusive = false,
+    this.couponCode,
+    this.maxRedemptions,
+    this.maxPerCustomer,
+    this.buyQty,
+    this.getQty,
+    this.getDiscountPct,
   });
+
+  /// How this promotion reads on one line of the list.
+  String get summary {
+    switch (type) {
+      case 'PERCENT':
+        return '${value.toStringAsFixed(0)}% off each item';
+      case 'FLAT':
+        return '${value.toStringAsFixed(2)} off each item';
+      case 'BASKET_PERCENT':
+        return '${value.toStringAsFixed(0)}% off the basket';
+      case 'BASKET_FLAT':
+        return '${value.toStringAsFixed(2)} off the basket';
+      case 'SPEND_THRESHOLD':
+        return '${value.toStringAsFixed(2)} off over '
+            '${(minOrderAmount ?? 0).toStringAsFixed(2)}';
+      case 'BOGO':
+        final free = (getDiscountPct ?? 0) >= 100;
+        return 'Buy ${(buyQty ?? 0).toStringAsFixed(0)}, '
+            'get ${(getQty ?? 0).toStringAsFixed(0)} '
+            '${free ? 'free' : '${(getDiscountPct ?? 0).toStringAsFixed(0)}% off'}';
+      default:
+        return type;
+    }
+  }
 
   factory Promotion.fromJson(Map<String, dynamic> j) => Promotion(
         id: j['id'] as String? ?? '',
@@ -87,6 +137,14 @@ class Promotion {
         minOrderAmount: (j['minOrderAmount'] as num?)?.toDouble(),
         channel: j['channel'] as String?,
         active: j['active'] as bool? ?? false,
+        priority: (j['priority'] as num?)?.toInt() ?? 100,
+        exclusive: j['exclusive'] as bool? ?? false,
+        couponCode: j['couponCode'] as String?,
+        maxRedemptions: (j['maxRedemptions'] as num?)?.toInt(),
+        maxPerCustomer: (j['maxPerCustomer'] as num?)?.toInt(),
+        buyQty: (j['buyQty'] as num?)?.toDouble(),
+        getQty: (j['getQty'] as num?)?.toDouble(),
+        getDiscountPct: (j['getDiscountPct'] as num?)?.toDouble(),
         startsAt: j['startsAt'] as String?,
         endsAt: j['endsAt'] as String?,
       );

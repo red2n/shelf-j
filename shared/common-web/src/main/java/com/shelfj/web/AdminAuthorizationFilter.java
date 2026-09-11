@@ -26,7 +26,9 @@ import java.util.Set;
  *   <li><b>Staff-operable admin surfaces</b> — day-to-day warehouse and till work — only require
  *       any staff role ({@code STOREKEEPER}/{@code CASHIER} included):
  *       <ul>
- *         <li>{@code /admin/inventory/**} (receive, adjust, levels, batches, planning, …)
+ *         <li>{@code /admin/inventory/**} (receive, adjust, levels, batches, planning, …), but
+ *             <b>not</b> {@code /admin/inventory/reports/**}, which is management-only — see {@link
+ *             #requiresStaffAdmin}
  *         <li>{@code /admin/cash/**} (till open/close, drops, pay-in/out — resource layer still
  *             enforces finer rules, e.g. Z-report stays MANAGER+)
  *         <li>Read support for those UIs: {@code GET /admin/tenant}, {@code GET /admin/stores…},
@@ -67,7 +69,10 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
           "/auth/platform-login",
           "/auth/refresh",
           "/auth/logout",
-          "/auth/change-password");
+          "/auth/change-password",
+          // The account holder deleting their own login — same object-level rule as changing its
+          // password: the user id comes from the verified token, never from the request.
+          "/auth/delete-account");
 
   @Inject TenantContext ctx;
 
@@ -134,14 +139,15 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
 
   /**
    * The order reads that carry their own object-level authorization: {@code /orders/mine} and the
-   * id-addressed {@code /orders/{id}}, {@code /orders/{id}/history}, {@code /orders/{id}/returns}.
+   * id-addressed {@code /orders/{id}}, {@code /orders/{id}/history}, {@code /orders/{id}/returns}
+   * and {@code /orders/{id}/fiscal-receipt}.
    *
    * <p>Matched by shape rather than by prefix, so anything else added under {@code /orders/} later
    * is denied until someone decides what it should be — the point of this whole change is that
    * forgetting fails closed.
    *
    * @param path the service-local request path
-   * @return {@code true} for exactly those four shapes
+   * @return {@code true} for exactly those five shapes
    */
   private static boolean isOrderSelfRead(String path) {
     if (!path.startsWith("/orders/")) return false;
@@ -150,7 +156,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     int slash = rest.indexOf('/');
     if (slash < 0) return true;
     String tail = rest.substring(slash + 1);
-    return "history".equals(tail) || "returns".equals(tail);
+    // fiscal-receipt: the till prints the legal receipt number from here, and a customer may read
+    // the number on their own order. Same object-level check as the order read it sits under.
+    return "history".equals(tail) || "returns".equals(tail) || "fiscal-receipt".equals(tail);
   }
 
   /**
@@ -345,6 +353,24 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
    * a stricter role (e.g. till close stays MANAGER+).
    */
   static boolean requiresStaffAdmin(String path, String method) {
+    // Reporting is not warehouse work, and this exclusion has to come first because it carves a
+    // hole out of the far broader rule below it.
+    //
+    // Found by driving the running stack (SJ-D19): every report under /admin/inventory/reports
+    // answered a CASHIER with 200 — stock valuation, cost of goods sold, and a shrinkage report
+    // naming which colleague wrote off what. Each one had inherited the staff tier from the
+    // warehouse subtree it happens to sit in, and each resource's own javadoc claimed the
+    // opposite: "under /admin/ so the filter gates them by path". That sentence was true of the
+    // prefix and false of this one, which is precisely the SJ-D10 shape — an authorisation claim
+    // that reads as correct and is never executed.
+    //
+    // The whole subtree goes to management rather than a per-report list. A storekeeper checking
+    // low stock is a plausible future screen and it does not exist: the only caller of any of
+    // these is the admin reports screen, which already carries reports a cashier gets 403 from.
+    // An allowlist entry for nobody is surface for nobody (SJ-D11's reasoning for /customers/{id},
+    // applied again). Whoever builds that screen adds the carve-out deliberately, here, rather
+    // than discovering the gate never existed.
+    if (pathEqualsOrUnder(path, "/admin/inventory/reports")) return false;
     // Warehouse ops — the storekeeper's primary job.
     if (pathEqualsOrUnder(path, "/admin/inventory")) return true;
     // Till / cash drawer — cashiers open a session; close/drops stay stricter at resource level.

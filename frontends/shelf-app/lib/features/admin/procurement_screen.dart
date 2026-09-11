@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
@@ -16,7 +17,7 @@ class ProcurementScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Builder(
         // A Builder gives this subtree a context below DefaultTabController,
         // so DefaultTabController.of(context) below can find it.
@@ -36,6 +37,7 @@ class ProcurementScreen extends ConsumerWidget {
                   tabAlignment: TabAlignment.start,
                   tabs: [
                     Tab(text: 'Purchase Orders'),
+                    Tab(text: 'Invoices'),
                     Tab(text: 'Suppliers'),
                   ],
                 ),
@@ -43,6 +45,7 @@ class ProcurementScreen extends ConsumerWidget {
                   child: TabBarView(
                     children: [
                       _PurchaseOrdersTab(),
+                      _SupplierInvoicesTab(),
                       _SuppliersTab(),
                     ],
                   ),
@@ -54,7 +57,7 @@ class ProcurementScreen extends ConsumerWidget {
             // per tab.
             floatingActionButton: ListenableBuilder(
               listenable: tabController,
-              builder: (context, _) => tabController.index == 1
+              builder: (context, _) => tabController.index == 2
                   ? FloatingActionButton.extended(
                       onPressed: () => showDialog(
                         context: context,
@@ -141,6 +144,235 @@ class _SuppliersTab extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── Supplier invoices: the three-way match ───────────────────────────────────
+
+/// Ordered against received against invoiced, per line.
+///
+/// A status badge alone answers the wrong question. A buyer told an invoice is
+/// FLAGGED still has to know *which* line disagreed and by how much before they
+/// can ring the supplier — so the three figures sit side by side, and the
+/// flagged ones lead.
+class _SupplierInvoicesTab extends ConsumerWidget {
+  const _SupplierInvoicesTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(supplierInvoicesProvider);
+    final cs = Theme.of(context).colorScheme;
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading invoices…'),
+      error: (e, _) => ErrorView(
+        message: friendlyError(e, fallback: 'Could not load supplier invoices.'),
+        onRetry: () => ref.invalidate(supplierInvoicesProvider),
+      ),
+      data: (invoices) {
+        if (invoices.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.receipt_long_outlined, size: 64, color: cs.outlineVariant),
+                const SizedBox(height: 12),
+                const Text('No supplier invoices yet'),
+                const SizedBox(height: 4),
+                Text('Capture one from a purchase order to match it',
+                    style: TextStyle(color: cs.outline, fontSize: 12)),
+              ],
+            ),
+          );
+        }
+        // Flagged first: the whole point of the control is the exceptions, and a
+        // list ordered by date buries them behind the ones nobody needs to read.
+        final sorted = [...invoices]..sort((a, b) {
+            if (a.flagged == b.flagged) return 0;
+            return a.flagged ? -1 : 1;
+          });
+        return ListView.separated(
+          padding: const EdgeInsets.all(16),
+          itemCount: sorted.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 8),
+          itemBuilder: (_, i) => _InvoiceCard(sorted[i]),
+        );
+      },
+    );
+  }
+}
+
+class _InvoiceCard extends StatelessWidget {
+  final SupplierInvoice invoice;
+  const _InvoiceCard(this.invoice);
+
+  @override
+  Widget build(BuildContext context) {
+    final flagged = invoice.flagged;
+    return Card(
+      child: ExpansionTile(
+        // Flagged invoices open by default. A variance the buyer has to click to
+        // discover is a variance that waits until the payment run.
+        initiallyExpanded: flagged,
+        leading: Icon(
+          flagged ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+          color: flagged ? context.status.warning : context.status.success,
+        ),
+        title: Row(
+          children: [
+            Text(invoice.invoiceNumber,
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(width: 8),
+            _InvoiceStatusBadge(invoice.status),
+          ],
+        ),
+        subtitle: Text([
+          AppFormat.money(invoice.grossAmount, currencyCode: invoice.currency),
+          if (invoice.invoiceDate != null) invoice.invoiceDate!,
+          'PO ${_short(invoice.poId, 8)}',
+        ].join(' · ')),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _MatchHeaderRow(),
+                const Divider(height: 12),
+                for (final l in invoice.lines) _MatchRow(l, invoice.currency),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MatchHeaderRow extends StatelessWidget {
+  const _MatchHeaderRow();
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(fontSize: 11, fontWeight: FontWeight.w600);
+    return const Row(
+      children: [
+        Expanded(flex: 3, child: Text('Variant', style: style)),
+        Expanded(child: Text('Ordered', style: style, textAlign: TextAlign.right)),
+        Expanded(child: Text('Received', style: style, textAlign: TextAlign.right)),
+        Expanded(child: Text('Invoiced', style: style, textAlign: TextAlign.right)),
+        Expanded(flex: 2, child: Text('Price', style: style, textAlign: TextAlign.right)),
+      ],
+    );
+  }
+}
+
+class _MatchRow extends StatelessWidget {
+  final InvoiceMatchLine line;
+  final String currency;
+  const _MatchRow(this.line, this.currency);
+
+  @override
+  Widget build(BuildContext context) {
+    final bad = !line.matched;
+    final warn = context.status.warning;
+    final num = TextStyle(
+        fontSize: 12,
+        fontFamily: 'monospace',
+        color: bad ? warn : null,
+        fontWeight: bad ? FontWeight.bold : null);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                  flex: 3,
+                  child: Text(_short(line.variantId, 14),
+                      style: const TextStyle(fontSize: 12, fontFamily: 'monospace'))),
+              Expanded(
+                  child: Text(_trim(line.qtyOrdered),
+                      style: num, textAlign: TextAlign.right)),
+              Expanded(
+                  child: Text(_trim(line.qtyReceived),
+                      style: num, textAlign: TextAlign.right)),
+              Expanded(
+                  child: Text(_trim(line.qtyInvoiced),
+                      style: num, textAlign: TextAlign.right)),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  // Both prices when they differ, so the buyer can see the gap
+                  // rather than being told there is one.
+                  line.orderedUnitPrice != null &&
+                          line.orderedUnitPrice != line.invoicedUnitPrice
+                      ? '${_trim(line.orderedUnitPrice!)} → ${_trim(line.invoicedUnitPrice)}'
+                      : _trim(line.invoicedUnitPrice),
+                  style: num,
+                  textAlign: TextAlign.right,
+                ),
+              ),
+            ],
+          ),
+          if (bad)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [for (final v in line.variances) _VarianceChip(v)],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A variance in words. The codes are precise and unreadable; a buyer chasing a
+/// supplier needs the sentence, not the constant.
+class _VarianceChip extends StatelessWidget {
+  final String code;
+  const _VarianceChip(this.code);
+
+  static const _labels = {
+    'INVOICED_ABOVE_RECEIVED': 'Billed for more than arrived',
+    'NOT_RECEIVED': 'Nothing received yet',
+    'NOT_ON_ORDER': 'Not on the purchase order',
+    'PRICE_ABOVE_ORDER': 'Charged above the agreed price',
+    'PRICE_BELOW_ORDER': 'Charged below the agreed price',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final warn = context.status.warning;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+          color: warn.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(10)),
+      child: Text(_labels[code] ?? code,
+          style: TextStyle(fontSize: 11, color: warn, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+class _InvoiceStatusBadge extends StatelessWidget {
+  final String status;
+  const _InvoiceStatusBadge(this.status);
+
+  @override
+  Widget build(BuildContext context) {
+    final flagged = status == 'FLAGGED';
+    final fg = flagged ? context.status.warning : context.status.success;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+          color: fg.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(12)),
+      child: Text(status,
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
     );
   }
 }
@@ -377,7 +609,8 @@ class _PurchaseOrdersTab extends ConsumerWidget {
                         ],
                       ),
                       subtitle: Text([
-                        '${po.currency} ${po.totalGross.toStringAsFixed(2)}',
+                        AppFormat.money(po.totalGross,
+                            currencyCode: po.currency),
                         if (po.expectedDelivery != null)
                           'ETA ${po.expectedDelivery}',
                       ].join(' · ')),
@@ -586,7 +819,19 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
       data: (pos) => pos.where((p) => p.id == poId).firstOrNull,
       orElse: () => null,
     );
-    final isDraft = (po?.status.toUpperCase() ?? 'DRAFT') == 'DRAFT';
+    final status = po?.status.toUpperCase() ?? 'DRAFT';
+    final isDraft = status == 'DRAFT';
+    // Receivable is now two states, not "anything that isn't a draft". The button used to offer
+    // itself on a CANCELLED or already-RECEIVED order, which could only ever end in a 400.
+    final isReceivable = status == 'SUBMITTED' || status == 'PARTIALLY_RECEIVED';
+    final isPartial = status == 'PARTIALLY_RECEIVED';
+    // Above the raiser's own spend authority: nobody entitled to commit this much has agreed yet,
+    // and until they do the supplier has not been sent anything.
+    final isPendingApproval = status == 'PENDING_APPROVAL';
+    final progressAsync = isDraft
+        ? const AsyncValue<List<PurchaseOrderLineProgress>>.data([])
+        : ref.watch(purchaseOrderProgressProvider(poId));
+    final progress = progressAsync.asData?.value ?? const [];
 
     return AlertDialog(
       title: Row(
@@ -624,20 +869,39 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                     shrinkWrap: true,
                     children: [
                       for (final l in lines)
-                        ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(_short(l.variantId, 14),
-                              style: const TextStyle(
-                                  fontFamily: 'monospace', fontSize: 12)),
-                          subtitle: Text(
-                              '${l.qty.toStringAsFixed(0)} × ${l.unitPrice.toStringAsFixed(2)}'
-                              '${l.vatCode != null ? ' · ${l.vatCode}' : ''}'),
-                          trailing: Text(
-                              (l.qty * l.unitPrice).toStringAsFixed(2),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                        ),
+                        Builder(builder: (context) {
+                          final p = progress
+                              .where((x) => x.variantId == l.variantId)
+                              .firstOrNull;
+                          final owed = p?.qtyOutstanding ?? 0;
+                          return ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(_short(l.variantId, 14),
+                                style: const TextStyle(
+                                    fontFamily: 'monospace', fontSize: 12)),
+                            subtitle: Text([
+                              // The unit price is shown at its own precision, not the
+                              // currency's: a trade price of 0.0125 per screw is ordinary, and
+                              // rounding it to the penny here would misreport the line by 25%.
+                              '${l.qty.toStringAsFixed(0)} × ${_trim(l.unitPrice)}',
+                              if (l.vatCode != null) l.vatCode!,
+                              // What is still owed, which the status alone cannot say.
+                              if (p != null && owed > 0)
+                                '${owed.toStringAsFixed(0)} outstanding',
+                              if (p != null && owed == 0 && !isDraft) 'complete',
+                            ].join(' · '),
+                                style: TextStyle(
+                                    color: owed > 0
+                                        ? context.status.warning
+                                        : null)),
+                            trailing: Text(
+                                AppFormat.money(l.qty * l.unitPrice,
+                                    currencyCode: po?.currency),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                          );
+                        }),
                     ],
                   ),
                 ),
@@ -647,7 +911,9 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                   children: [
                     const Text('Total (gross)'),
                     const Spacer(),
-                    Text('${po.currency} ${po.totalGross.toStringAsFixed(2)}',
+                    Text(
+                        AppFormat.money(po.totalGross,
+                            currencyCode: po.currency),
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                   ],
                 ),
@@ -676,21 +942,51 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
             icon: const Icon(Icons.send_outlined, size: 18),
             label: const Text('Submit'),
           )
-        else
-          FilledButton.icon(
-            onPressed: po == null
-                ? null
-                : () {
-                    Navigator.pop(context);
-                    showDialog(
-                      context: context,
-                      builder: (_) =>
-                          _ReceiveGoodsDialog(poId: poId, storeId: po.storeId),
-                    );
-                  },
-            icon: const Icon(Icons.inventory_outlined, size: 18),
-            label: const Text('Receive goods'),
+        else if (isPendingApproval) ...[
+          // Rejecting needs no spend authority — refusing to commit money is not a commitment —
+          // so it is offered to anyone who can see the order. The server still decides whether
+          // this caller may approve, and says so if not.
+          TextButton.icon(
+            onPressed: () => showDialog(
+              context: context,
+              builder: (_) => _RejectPoDialog(poId: poId),
+            ),
+            icon: const Icon(Icons.block_outlined, size: 18),
+            label: const Text('Reject'),
           ),
+          FilledButton.icon(
+            onPressed: _submitting ? null : () => _approvePo(context, ref),
+            icon: const Icon(Icons.check_circle_outline, size: 18),
+            label: const Text('Approve'),
+          ),
+        ] else ...[
+          // Abandoning the balance is a deliberate act with a reason, so it sits beside the
+          // receive action rather than hiding in a menu — but only while there is a balance.
+          if (isPartial)
+            TextButton.icon(
+              onPressed: () => showDialog(
+                context: context,
+                builder: (_) => _CloseShortDialog(poId: poId),
+              ),
+              icon: const Icon(Icons.do_not_disturb_on_outlined, size: 18),
+              label: const Text('Close short'),
+            ),
+          if (isReceivable)
+            FilledButton.icon(
+              onPressed: po == null
+                  ? null
+                  : () {
+                      Navigator.pop(context);
+                      showDialog(
+                        context: context,
+                        builder: (_) =>
+                            _ReceiveGoodsDialog(poId: poId, storeId: po.storeId),
+                      );
+                    },
+              icon: const Icon(Icons.inventory_outlined, size: 18),
+              label: Text(isPartial ? 'Receive balance' : 'Receive goods'),
+            ),
+        ],
       ],
     );
   }
@@ -699,15 +995,21 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
     if (_submitting) return;
     setState(() => _submitting = true);
     try {
-      await ref
+      final resp = await ref
           .read(apiClientProvider)
           .dio
           .post('/${ApiConstants.purchase}/purchase-orders/$poId/submit');
       ref.invalidate(purchaseOrdersProvider);
       if (!context.mounted) return;
       Navigator.pop(context);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Purchase order submitted.')));
+      // The server decides which of the two happened, so the message reads the status back rather
+      // than assuming. Telling a buyer their order went to the supplier when it is actually
+      // waiting for a manager is the one thing this screen must not do.
+      final held = (resp.data['data'] as Map?)?['status'] == 'PENDING_APPROVAL';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(held
+              ? 'Above your spend authority — sent for approval.'
+              : 'Purchase order submitted.')));
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
@@ -716,6 +1018,220 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
         backgroundColor: Theme.of(context).colorScheme.error,
       ));
     }
+  }
+
+  Future<void> _approvePo(BuildContext context, WidgetRef ref) async {
+    if (_submitting) return;
+    setState(() => _submitting = true);
+    try {
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post('/${ApiConstants.purchase}/purchase-orders/$poId/approve');
+      ref.invalidate(purchaseOrdersProvider);
+      if (!context.mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Approved — the order is with the supplier.')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      // The server's own message names both figures and the currency, which is the only useful
+      // thing to show someone whose authority fell short — so it is surfaced rather than replaced.
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(friendlyError(e, fallback: 'Could not approve this order.')),
+        backgroundColor: Theme.of(context).colorScheme.error,
+      ));
+    }
+  }
+}
+
+/// Rejects a purchase order that is waiting for someone's spend authority.
+///
+/// The reason is required by the server and required here, for the same purpose: a rejection sends
+/// the order back to DRAFT for the buyer to correct, and "no" with no explanation leaves them with
+/// work to do and no idea what to change.
+class _RejectPoDialog extends ConsumerStatefulWidget {
+  final String poId;
+  const _RejectPoDialog({required this.poId});
+
+  @override
+  ConsumerState<_RejectPoDialog> createState() => _RejectPoDialogState();
+}
+
+class _RejectPoDialogState extends ConsumerState<_RejectPoDialog> {
+  final _reasonCtrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final reason = _reasonCtrl.text.trim();
+    if (reason.isEmpty) {
+      setState(() => _error = 'Say why, so the buyer knows what to change.');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+        '/${ApiConstants.purchase}/purchase-orders/${widget.poId}/reject',
+        data: {'reason': reason},
+      );
+      if (!mounted) return;
+      ref.invalidate(purchaseOrdersProvider);
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Rejected — the order is back with the buyer.')));
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = friendlyError(e, fallback: 'Could not reject this order.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Reject purchase order'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+                'The order goes back to DRAFT so it can be corrected and resubmitted. The '
+                'rejection stays in its approval history either way.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _reasonCtrl,
+              autofocus: true,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                hintText: 'e.g. get a second quote first',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _loading ? null : () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: _loading ? null : _submit, child: const Text('Reject')),
+      ],
+    );
+  }
+}
+
+/// Abandons the undelivered balance of a partly received purchase order.
+///
+/// A reason is required for the same purpose it is on a cancellation: without
+/// one, a short-closed order is indistinguishable next quarter from one the
+/// supplier fulfilled, and the supplier is the party that has to answer for it.
+class _CloseShortDialog extends ConsumerStatefulWidget {
+  final String poId;
+  const _CloseShortDialog({required this.poId});
+
+  @override
+  ConsumerState<_CloseShortDialog> createState() => _CloseShortDialogState();
+}
+
+class _CloseShortDialogState extends ConsumerState<_CloseShortDialog> {
+  final _reasonCtrl = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_reasonCtrl.text.trim().isEmpty) {
+      setState(() => _error = 'Say why the balance is being abandoned.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+            '/${ApiConstants.purchase}/purchase-orders/${widget.poId}/close',
+            data: {'reason': _reasonCtrl.text.trim()},
+          );
+      ref.invalidate(purchaseOrdersProvider);
+      ref.invalidate(purchaseOrderProgressProvider(widget.poId));
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = friendlyError(e, fallback: 'Could not close the order.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Close short'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(_error!, style: TextStyle(color: cs.error)),
+              ),
+            Text(
+              'The undelivered balance will be written off and the order marked '
+              'CLOSED. What has already arrived stays received — this is not a '
+              'cancellation.',
+              style: TextStyle(color: cs.outline, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _reasonCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Reason *'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: _saving ? null : _submit,
+            child: Text(_saving ? 'Closing…' : 'Close short')),
+      ],
+    );
   }
 }
 
@@ -1061,6 +1577,15 @@ class _PoStatusBadge extends StatelessWidget {
         bg = context.status.info;
         fg = context.status.onInfo;
         break;
+      case 'PENDING_APPROVAL':
+        // Amber for the same reason PARTIALLY_RECEIVED is: this is a state somebody has to act on,
+        // not one to observe. A grey badge would read as "in progress" when it means "stopped".
+      case 'PARTIALLY_RECEIVED':
+        // Amber rather than the generic default: something is still owed, and that is a state a
+        // buyer is meant to act on rather than merely observe.
+        bg = context.status.warning.withValues(alpha: 0.18);
+        fg = context.status.warning;
+        break;
       case 'RECEIVED':
       case 'CLOSED':
         bg = cs.secondaryContainer;
@@ -1083,3 +1608,16 @@ class _PoStatusBadge extends StatelessWidget {
 
 String _short(String s, [int n = 8]) =>
     s.length > n ? '${s.substring(0, n)}…' : s;
+
+/// A unit price at its own precision, with trailing zeroes removed.
+///
+/// Deliberately not [AppFormat.money]: that rounds to the currency's minor unit, which is right for
+/// a total and wrong for a unit price. Buying 1,000 screws at 0.0125 each is an ordinary trade
+/// price, and showing it as 0.01 misreports the line by 25% — the same defect SJ-D25 removed from
+/// the column type.
+String _trim(double v) {
+  final s = v.toStringAsFixed(4);
+  return s.contains('.')
+      ? s.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')
+      : s;
+}

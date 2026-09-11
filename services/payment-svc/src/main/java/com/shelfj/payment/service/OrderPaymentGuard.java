@@ -89,10 +89,25 @@ public class OrderPaymentGuard {
    * an authenticated customer may read only what is against their own order. Denials are 404 rather
    * than 403 so ids cannot be probed for existence.
    *
-   * <p>There is deliberately no exemption for a caller with no principal. No other service reads
-   * payments, so that branch had no caller to serve — and a guest storefront request carries a
-   * tenant with no principal, so it was reachable from outside rather than only from the mesh
-   * (SJ-D13).
+   * <p>There is deliberately no exemption for a caller with no principal <em>in general</em>. No
+   * other service reads payments, so that branch had no caller to serve — and a guest storefront
+   * request carries a tenant with no principal, so it was reachable from outside rather than only
+   * from the mesh (SJ-D13).
+   *
+   * <p><b>An order with no customer is the one exception, and it is about the order rather than the
+   * caller.</b> A guest checkout has no identity to bind to: {@code customerId} is null because
+   * nobody was signed in. Requiring a matching principal therefore made the guest SCA flow
+   * impossible — and both the gateway and {@code AdminAuthorizationFilter} open this path
+   * specifically so a guest can poll their intent after returning from the provider, the gateway's
+   * own comment saying so in as many words. Two layers deliberately allowed a request the third
+   * refused, so the flow could never have worked.
+   *
+   * <p>For such an order the intent id is the capability: an unguessable UUID held only by whoever
+   * opened the checkout. That is the same trust model as the provider's own client secret. It is
+   * <em>not</em> the SJ-D13 bypass returning: that branch let an anonymous caller read <b>any</b>
+   * order, customer-owned ones included. This one turns on the order having no owner at all, so an
+   * order that belongs to somebody still requires being that somebody, and the amount of privacy
+   * left to breach on an ownerless order is its own status and amount.
    *
    * @param tenantId owning tenant
    * @param orderId the order the record is against
@@ -109,11 +124,16 @@ public class OrderPaymentGuard {
       return;
     }
     OrderClient.OrderInfo order = orderClient.getOrder(tenantId, orderId);
+    // A guest order has no owner to match against, and the intent id is the capability. See the
+    // class note above for why this is not SJ-D13's bypass: that one keyed on the CALLER having no
+    // principal, which is attacker-controlled; this keys on the ORDER having no customer, which is
+    // a fact about the order and cannot be arranged by the caller.
+    if (order.customerId() == null) {
+      return;
+    }
     // ctx.userId() is null for an unidentified caller. Compare from the order's side so a null
     // principal cannot reach a .toString() — the NPE SJ-D13 uncovered when the exemption went away.
-    if (order.customerId() == null
-        || ctx.userId() == null
-        || !order.customerId().equals(ctx.userId().toString())) {
+    if (ctx.userId() == null || !order.customerId().equals(ctx.userId().toString())) {
       throw notFound.get();
     }
   }

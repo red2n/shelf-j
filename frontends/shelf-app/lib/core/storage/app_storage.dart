@@ -50,12 +50,27 @@ class AppStorage {
     await _secure.delete(key: key);
   }
 
-  Future<void> deleteAll() async {
+  /// Wipe everything this app stored on the device.
+  ///
+  /// [keep] names keys that must survive — sign-out uses it to preserve state
+  /// that does not belong to the session. The POS offline queue is the reason it
+  /// exists: those are sales the customer has already paid for and the server has
+  /// not been told about, so a cashier signing out at the end of a shift must not
+  /// destroy them.
+  Future<void> deleteAll({Set<String> keep = const {}}) async {
+    final preserved = <String, String>{};
+    for (final key in keep) {
+      final value = await read(key: key);
+      if (value != null) preserved[key] = value;
+    }
     if (kIsWeb) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.clear();
-      return;
+    } else {
+      await _secure.deleteAll();
     }
-    await _secure.deleteAll();
+    for (final entry in preserved.entries) {
+      await write(key: entry.key, value: entry.value);
+    }
   }
 }

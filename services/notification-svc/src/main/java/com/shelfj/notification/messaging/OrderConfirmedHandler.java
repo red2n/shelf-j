@@ -63,6 +63,12 @@ class OrderConfirmedHandler {
             + total.toPlainString()
             + "\n\n— Shelf-J";
     notifier.notifyOnce(
-        eventId, "ORDER_CONFIRMATION", tenantId, email, "Your order is confirmed", body);
+        eventId,
+        "ORDER_CONFIRMATION",
+        tenantId,
+        customerId,
+        email,
+        "Your order is confirmed",
+        body);
   }
 }

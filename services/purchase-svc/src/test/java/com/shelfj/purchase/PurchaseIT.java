@@ -3,6 +3,7 @@ package com.shelfj.purchase;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -34,6 +35,10 @@ class PurchaseIT {
     System.setProperty("shelfj.db.schema", "purchase");
     System.setProperty("shelfj.consul.enabled", "false");
     System.setProperty("shelfj.kafka.enabled", "false");
+    // Approval OFF, stated rather than assumed. PurchaseApprovalIT sets this property in its own
+    // static block and both suites share a JVM, so leaving it unset would make this suite's
+    // behaviour depend on which class surefire happened to load first.
+    System.setProperty("shelfj.purchase.approval.limits", "");
   }
 
   private static final String T = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -56,6 +61,7 @@ class PurchaseIT {
       st.execute(
           "TRUNCATE TABLE purchase.nominal_ledger_entries, purchase.intercompany_invoices,"
               + " purchase.goods_receipt_lines, purchase.goods_receipts,"
+              + " purchase.supplier_invoice_lines, purchase.supplier_invoices,"
               + " purchase.purchase_order_lines, purchase.purchase_orders,"
               + " purchase.suppliers, purchase.outbox CASCADE");
     }
@@ -189,6 +195,185 @@ class PurchaseIT {
     Response poGet = get("/purchase-orders/" + poId, T);
     assertThat(poGet.getStatus(), is(200));
     assertThat(poGet.readEntity(String.class), containsString("RECEIVED"));
+  }
+
+  // ── Partial receipt (horizon 2 item 5) ───────────────────────────────────────
+
+  /** A submitted PO with one line for {@code qty}, ready to receive against. */
+  private String submittedPo(String supplierName, int qty) {
+    Response sup =
+        post("/suppliers", "{\"name\":\"" + supplierName + "\",\"currency\":\"GBP\"}", T);
+    assertThat(sup.getStatus(), is(201));
+    String supId = extractId(sup.readEntity(String.class));
+    Response po =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\","
+                + "\"currency\":\"GBP\"}",
+            T);
+    assertThat(po.getStatus(), is(201));
+    String poId = extractId(po.readEntity(String.class));
+    assertThat(
+        post(
+                "/purchase-orders/" + poId + "/lines",
+                "{\"variantId\":\""
+                    + VARIANT
+                    + "\",\"qty\":"
+                    + qty
+                    + ",\"unitPrice\":10.00,\"vatCode\":\"T1\"}",
+                T)
+            .getStatus(),
+        is(201));
+    assertThat(post("/purchase-orders/" + poId + "/submit", "{}", T).getStatus(), is(200));
+    return poId;
+  }
+
+  private Response receive(String poId, String qty) {
+    return post(
+        "/goods-receipts",
+        "{\"poId\":\""
+            + poId
+            + "\",\"storeId\":\""
+            + STORE_A
+            + "\","
+            + "\"lines\":[{\"variantId\":\""
+            + VARIANT
+            + "\",\"qtyReceived\":"
+            + qty
+            + "}]}",
+        T);
+  }
+
+  private String status(String poId) {
+    return get("/purchase-orders/" + poId, T).readEntity(String.class);
+  }
+
+  /**
+   * The defect, and the half of it that was worse. A receipt used to set the order RECEIVED with no
+   * reference to quantity — so 6 of 10 closed it, and the second delivery of the remaining 4 was
+   * then refused because the order was no longer SUBMITTED. A split delivery stranded its own
+   * balance with no purchase order left to receive it against.
+   */
+  @Test
+  void aSplitDeliveryIsReceivedInPartsAndClosesOnlyWhenComplete() {
+    String poId = submittedPo("Split Delivery Ltd", 10);
+
+    assertThat(receive(poId, "6").getStatus(), is(201));
+    assertThat(status(poId), containsString("PARTIALLY_RECEIVED"));
+
+    // The balance. This is the call that used to fail.
+    assertThat(receive(poId, "4").getStatus(), is(201));
+    String body = status(poId);
+    assertThat(body, containsString("\"status\":\"RECEIVED\""));
+    assertThat(body, not(containsString("PARTIALLY_RECEIVED")));
+  }
+
+  /** The status alone does not say what is missing; the progress view does. */
+  @Test
+  void progressReportsWhatIsStillOutstanding() {
+    String poId = submittedPo("Progress Ltd", 10);
+    assertThat(receive(poId, "6").getStatus(), is(201));
+
+    String body = get("/purchase-orders/" + poId + "/progress", T).readEntity(String.class);
+    assertThat(body, containsString("\"qtyOrdered\":10.000"));
+    assertThat(body, containsString("\"qtyReceived\":6.000"));
+    assertThat(body, containsString("\"qtyOutstanding\":4.000"));
+  }
+
+  /**
+   * Accepting more than was ordered would book stock nobody asked for against an order that cannot
+   * account for it, and a mistyped 60 for 6 would do it silently.
+   */
+  @Test
+  void overReceiptIsRefused() {
+    String poId = submittedPo("Over Delivery Ltd", 10);
+    Response r = receive(poId, "11");
+    assertThat(r.getStatus(), is(422));
+    assertThat(r.readEntity(String.class), containsString("PURCHASE_OVER_RECEIPT"));
+    // And it is refused as a whole: the order is untouched, not left half-updated.
+    assertThat(status(poId), containsString("SUBMITTED"));
+  }
+
+  /** Over-receipt across two deliveries is the same fault, and the second one is where it shows. */
+  @Test
+  void overReceiptIsRefusedCumulativelyNotOnlyPerDelivery() {
+    String poId = submittedPo("Cumulative Ltd", 10);
+    assertThat(receive(poId, "6").getStatus(), is(201));
+    Response second = receive(poId, "6"); // 12 against an order of 10
+    assertThat(second.getStatus(), is(422));
+    assertThat(second.readEntity(String.class), containsString("PURCHASE_OVER_RECEIPT"));
+    // The first delivery still stands.
+    assertThat(status(poId), containsString("PARTIALLY_RECEIVED"));
+  }
+
+  /**
+   * Without a short close, a partially received order the supplier never completes sits in
+   * PARTIALLY_RECEIVED for good — the same dead end SJ-D3 fixed for DRAFT and SUBMITTED.
+   */
+  @Test
+  void aPartiallyReceivedOrderCanBeShortClosed() {
+    String poId = submittedPo("Short Close Ltd", 10);
+    assertThat(receive(poId, "6").getStatus(), is(201));
+
+    Response closed =
+        post("/purchase-orders/" + poId + "/close", "{\"reason\":\"supplier discontinued\"}", T);
+    assertThat(closed.getStatus(), is(200));
+    String body = closed.readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"CLOSED\""));
+    assertThat(body, containsString("supplier discontinued"));
+
+    // A closed order is no longer receivable — the balance was abandoned deliberately.
+    assertThat(receive(poId, "4").getStatus(), is(400));
+  }
+
+  /** CLOSED is for a partly delivered order. The other two states have their own answers. */
+  @Test
+  void onlyAPartiallyReceivedOrderCanBeShortClosed() {
+    String submitted = submittedPo("Nothing Yet Ltd", 10);
+    Response r = post("/purchase-orders/" + submitted + "/close", "{\"reason\":\"n/a\"}", T);
+    assertThat(r.getStatus(), is(409));
+    assertThat(r.readEntity(String.class), containsString("PURCHASE_PO_NOT_CLOSEABLE"));
+
+    String full = submittedPo("All Arrived Ltd", 10);
+    assertThat(receive(full, "10").getStatus(), is(201));
+    assertThat(
+        post("/purchase-orders/" + full + "/close", "{\"reason\":\"n/a\"}", T).getStatus(),
+        is(409));
+  }
+
+  /** A replayed receipt must not count its quantity twice — the SJ-D15 question, asked here. */
+  @Test
+  void aReplayedReceiptDoesNotCountTwice() {
+    String poId = submittedPo("Replay Ltd", 10);
+    String key = "grn-replay-" + java.util.UUID.randomUUID();
+    for (int i = 0; i < 3; i++) {
+      Response r =
+          target
+              .path("/goods-receipts")
+              .request()
+              .header("X-Tenant-Id", T)
+              .header("X-Roles", "OWNER")
+              .header("Idempotency-Key", key)
+              .post(
+                  Entity.entity(
+                      "{\"poId\":\""
+                          + poId
+                          + "\",\"storeId\":\""
+                          + STORE_A
+                          + "\","
+                          + "\"lines\":[{\"variantId\":\""
+                          + VARIANT
+                          + "\",\"qtyReceived\":6}]}",
+                      MediaType.APPLICATION_JSON));
+      assertThat(r.getStatus(), is(201));
+    }
+    String body = get("/purchase-orders/" + poId + "/progress", T).readEntity(String.class);
+    assertThat(body, containsString("\"qtyReceived\":6.000"));
+    assertThat(body, containsString("\"qtyOutstanding\":4.000"));
   }
 
   // ── Gap #20 Test 3: Intercompany invoicing + FRS 102 nominal ledger ───────────
@@ -514,6 +699,422 @@ class PurchaseIT {
 
   private static String line() {
     return "{\"variantId\":\"" + VARIANT + "\",\"qty\":10,\"unitPrice\":2.50}";
+  }
+
+  // ── SJ-D22 / SJ-D23 / SJ-D24: totals and currency, across markets ────────────
+
+  /**
+   * The defect itself, through the API. Before this change the assertion below read {@code
+   * "totalGross":0.00} on an order committing £999 — and that is what the procurement screen
+   * rendered, in two places, for every purchase order ever raised.
+   *
+   * <p>No VAT rates are reachable in this harness (Consul is disabled, so the pricing lookup falls
+   * back to an empty table), which makes gross equal net here. That is the correct answer for a
+   * tenant with no VAT configured, and it is the same code path a fresh tenant takes in production.
+   */
+  @Test
+  void purchaseOrderTotalsAreComputedFromItsLines() {
+    String supId = supplier("Totals Test Ltd", "GBP");
+    String poId = poFor(supId);
+
+    // An order with no lines is genuinely zero — and at sterling's own scale.
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class),
+        containsString("\"totalNet\":0.00"));
+
+    addLine(poId, "100", "9.99");
+    String afterOne = get("/purchase-orders/" + poId, T).readEntity(String.class);
+    assertThat(afterOne, containsString("\"totalNet\":999.00"));
+    assertThat(afterOne, containsString("\"totalGross\":999.00"));
+    assertThat(afterOne, not(containsString("\"totalNet\":0.00")));
+
+    // A second line restates the order rather than replacing the figure.
+    addLine(poId, "3", "0.50");
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class),
+        containsString("\"totalNet\":1000.50"));
+  }
+
+  /**
+   * Japan. The yen has no minor unit, so a JPY order must total in whole yen — the one currency of
+   * the five that a hardcoded {@code setScale(2)} would silently get wrong.
+   */
+  @Test
+  void japaneseSupplierOrdersInWholeYen() {
+    String supId = supplier("Tokyo Trading KK", "JPY");
+    String poId = poFor(supId);
+
+    // The order inherits the supplier's currency without being told it (SJ-D24).
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class),
+        containsString("\"currency\":\"JPY\""));
+
+    addLine(poId, "3", "1234");
+    String body = get("/purchase-orders/" + poId, T).readEntity(String.class);
+    assertThat(body, containsString("\"totalNet\":3702"));
+    assertThat(body, not(containsString("3702.00")));
+  }
+
+  /** The four two-minor-unit markets, each an independent tenant's supplier. */
+  @Test
+  void suppliersInEveryMarketKeepTheirOwnCurrency() {
+    for (String[] market :
+        new String[][] {
+          {"US Wholesale Inc", "USD"}, {"Mumbai Supplies Pvt", "INR"},
+          {"Shenzhen Goods Co", "CNY"}, {"Brighton Provisions", "GBP"}
+        }) {
+      String supId = supplier(market[0], market[1]);
+      String poId = poFor(supId);
+      addLine(poId, "2", "10.00");
+
+      String body = get("/purchase-orders/" + poId, T).readEntity(String.class);
+      assertThat(market[1], body, containsString("\"currency\":\"" + market[1] + "\""));
+      assertThat(market[1], body, containsString("\"totalNet\":20.00"));
+    }
+  }
+
+  /**
+   * A purchase order cannot be denominated in a currency its supplier does not invoice in. Refused
+   * rather than silently overridden, on the SJ-D2 precedent.
+   */
+  @Test
+  void anOrderCannotContradictItsSuppliersCurrency() {
+    String supId = supplier("Osaka Parts KK", "JPY");
+
+    Response r =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"currency\":\"GBP\"}",
+            T);
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("PURCHASE_CURRENCY_MISMATCH"));
+
+    // Naming the supplier's own currency is fine — it agrees rather than contradicts.
+    Response ok =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\""
+                + supId
+                + "\",\"storeId\":\""
+                + STORE_A
+                + "\",\"currency\":\"JPY\"}",
+            T);
+    assertThat(ok.getStatus(), is(201));
+  }
+
+  /** Currency is validated at the boundary rather than reaching the database (golden rule #15). */
+  @Test
+  void anInvalidCurrencyCodeIsRejected() {
+    Response r = post("/suppliers", "{\"name\":\"Bad Currency Ltd\",\"currency\":\"POUNDS\"}", T);
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("PURCHASE_INVALID_CURRENCY"));
+  }
+
+  /**
+   * Two tenants trading in different currencies do not contaminate each other, and neither can see
+   * the other's order — the same store id is deliberately used for both, because a shared store id
+   * is exactly the case where a missing tenant filter would show.
+   */
+  @Test
+  void twoTenantsInDifferentCurrenciesStaySeparate() {
+    String jpSupplier = supplier("Kyoto Imports KK", "JPY");
+    String jpPo = poFor(jpSupplier);
+    addLine(jpPo, "5", "500");
+
+    String usSupplier = supplierFor(T2, "Chicago Wholesale Inc", "USD");
+    Response usPoRes =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\"" + usSupplier + "\",\"storeId\":\"" + STORE_A + "\"}",
+            T2);
+    assertThat(usPoRes.getStatus(), is(201));
+    String usPo = extractId(usPoRes.readEntity(String.class));
+    Response usLine =
+        post(
+            "/purchase-orders/" + usPo + "/lines",
+            "{\"variantId\":\"" + VARIANT + "\",\"qty\":5,\"unitPrice\":500}",
+            T2);
+    assertThat(usLine.getStatus(), is(201));
+
+    assertThat(
+        get("/purchase-orders/" + jpPo, T).readEntity(String.class),
+        containsString("\"totalNet\":2500"));
+    assertThat(
+        get("/purchase-orders/" + usPo, T2).readEntity(String.class),
+        containsString("\"totalNet\":2500.00"));
+
+    // Neither tenant can read the other's order at all.
+    assertThat(get("/purchase-orders/" + usPo, T).getStatus(), is(404));
+    assertThat(get("/purchase-orders/" + jpPo, T2).getStatus(), is(404));
+  }
+
+  /**
+   * SJ-D25, and the reason it is a defect rather than a display quirk. The dinar has THREE minor
+   * units, and every money column in this service was NUMERIC(14,2) — so Postgres rounded the third
+   * decimal away on write, without an error, on every line and every total.
+   *
+   * <p>2 × 1.234 KWD is 2.468. Under the old column type it stored as 2.47: money gone, silently,
+   * on a tenant nobody had thought to test.
+   */
+  @Test
+  void aThreeMinorUnitCurrencyKeepsItsThirdDecimal() {
+    String supId = supplier("Kuwait Trading WLL", "KWD");
+    String poId = poFor(supId);
+    addLine(poId, "2", "1.234");
+
+    String body = get("/purchase-orders/" + poId, T).readEntity(String.class);
+    assertThat(body, containsString("\"currency\":\"KWD\""));
+    assertThat(body, containsString("\"totalNet\":2.468"));
+    assertThat(body, not(containsString("2.47")));
+  }
+
+  /**
+   * A unit price may legitimately carry more precision than the currency it is priced in — 1,000
+   * screws at £0.0125 each is an ordinary trade price. NUMERIC(14,2) rounded it to £0.01, a 25%
+   * error on the line before any currency question arises.
+   */
+  @Test
+  void aSubPennyUnitPriceSurvives() {
+    String supId = supplier("Fastener Wholesale Ltd", "GBP");
+    String poId = poFor(supId);
+    addLine(poId, "1000", "0.0125");
+
+    // The line keeps its true price, and the order total is still rounded to the penny it is
+    // actually invoiced in: 1000 × 0.0125 = £12.50 exactly.
+    assertThat(
+        get("/purchase-orders/" + poId + "/lines", T).readEntity(String.class),
+        containsString("0.0125"));
+    assertThat(
+        get("/purchase-orders/" + poId, T).readEntity(String.class),
+        containsString("\"totalNet\":12.50"));
+  }
+
+  // ── three-way match: ordered vs received vs invoiced ─────────────────────────
+
+  /**
+   * The whole control, end to end: order 100, receive 60, invoice 60 at the agreed price.
+   *
+   * <p>Quantity is matched against what was RECEIVED. Matching against what was ORDERED would flag
+   * this — and a part-delivered order billed for the part is the commonest legitimate case there
+   * is.
+   */
+  @Test
+  void anInvoiceForWhatActuallyArrivedMatchesCleanly() {
+    String po = receivedOrder("Match Clean Ltd", "100", "60", "2.50");
+
+    Response r = post("/supplier-invoices", invoice(po, "INV-CLEAN-1", "60", "2.50"), T);
+    assertThat(r.getStatus(), is(201));
+    String body = r.readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"MATCHED\""));
+    assertThat(body, containsString("\"qtyOrdered\":100"));
+    assertThat(body, containsString("\"qtyReceived\":60"));
+    assertThat(body, containsString("\"variances\":[]"));
+  }
+
+  /** Billed for the whole order when only part of it turned up. */
+  @Test
+  void anInvoiceForMoreThanArrivedIsFlagged() {
+    String po = receivedOrder("Over Invoice Ltd", "100", "60", "2.50");
+
+    Response r = post("/supplier-invoices", invoice(po, "INV-OVER-1", "100", "2.50"), T);
+    assertThat(r.getStatus(), is(201));
+    String body = r.readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"FLAGGED\""));
+    assertThat(body, containsString("INVOICED_ABOVE_RECEIVED"));
+    // Captured anyway: flagging never blocks, because the invoice arriving is a fact and the
+    // disagreement is the thing somebody needs in order to argue with the supplier.
+    assertThat(
+        get("/supplier-invoices?poId=" + po, T).readEntity(String.class),
+        containsString("INV-OVER-1"));
+  }
+
+  /** Charged more per unit than the order agreed. */
+  @Test
+  void aPriceAboveTheOrderIsFlagged() {
+    String po = receivedOrder("Price Creep Ltd", "100", "60", "2.50");
+
+    String body =
+        post("/supplier-invoices", invoice(po, "INV-PRICE-1", "60", "2.75"), T)
+            .readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"FLAGGED\""));
+    assertThat(body, containsString("PRICE_ABOVE_ORDER"));
+    assertThat(body, containsString("\"orderedUnitPrice\":2.50"));
+    assertThat(body, containsString("\"invoicedUnitPrice\":2.75"));
+  }
+
+  /**
+   * A supplier who delivers and bills in two parts must not be flagged on the second.
+   *
+   * <p>The invoiced leg is cumulative across every invoice on the order — the same shape partial
+   * receipt established for the received leg, and for the same reason.
+   */
+  @Test
+  void invoicingInTwoPartsIsNotOverInvoicing() {
+    String po = receivedOrder("Two Invoices Ltd", "100", "60", "2.50");
+
+    assertThat(
+        post("/supplier-invoices", invoice(po, "INV-SPLIT-1", "40", "2.50"), T)
+            .readEntity(String.class),
+        containsString("\"status\":\"MATCHED\""));
+    assertThat(
+        post("/supplier-invoices", invoice(po, "INV-SPLIT-2", "20", "2.50"), T)
+            .readEntity(String.class),
+        containsString("\"status\":\"MATCHED\""));
+    // 40 + 20 = 60, all of what arrived. One more is not.
+    assertThat(
+        post("/supplier-invoices", invoice(po, "INV-SPLIT-3", "20", "2.50"), T)
+            .readEntity(String.class),
+        containsString("INVOICED_ABOVE_RECEIVED"));
+  }
+
+  /** The duplicate-payment guard: two people typing the same paper reference. */
+  @Test
+  void theSameInvoiceNumberCannotBeCapturedTwice() {
+    String po = receivedOrder("Duplicate Ltd", "100", "60", "2.50");
+
+    assertThat(
+        post("/supplier-invoices", invoice(po, "INV-DUP-1", "60", "2.50"), T).getStatus(), is(201));
+    Response again = post("/supplier-invoices", invoice(po, "inv-dup-1", "60", "2.50"), T);
+    assertThat(again.getStatus(), is(409));
+    // Case-insensitively, because the reference is printed on paper and typed by a human.
+    assertThat(again.readEntity(String.class), containsString("PURCHASE_INVOICE_DUPLICATE"));
+  }
+
+  /**
+   * An invoice in a currency the order was not placed in is a different document, not a variance.
+   */
+  @Test
+  void anInvoiceCannotBeInAnotherCurrency() {
+    String po = receivedOrder("Currency Ltd", "10", "10", "2.50");
+
+    Response r =
+        post(
+            "/supplier-invoices",
+            "{\"poId\":\""
+                + po
+                + "\",\"invoiceNumber\":\"INV-CUR-1\",\"invoiceDate\":\"2026-02-01\","
+                + "\"currency\":\"JPY\",\"lines\":[{\"variantId\":\""
+                + VARIANT
+                + "\",\"qty\":10,\"unitPrice\":2.50}]}",
+            T);
+    assertThat(r.getStatus(), is(400));
+    assertThat(r.readEntity(String.class), containsString("PURCHASE_CURRENCY_MISMATCH"));
+  }
+
+  /** Japan: a whole-yen invoice matches a whole-yen order with no invented precision. */
+  @Test
+  void aYenInvoiceMatchesInWholeYen() {
+    String supId = supplier("Tokyo Invoice KK", "JPY");
+    String po = poFor(supId);
+    addLine(po, "3", "1234");
+    post("/purchase-orders/" + po + "/submit", "{}", T);
+    post(
+        "/goods-receipts",
+        "{\"poId\":\""
+            + po
+            + "\",\"storeId\":\""
+            + STORE_A
+            + "\",\"lines\":[{\"variantId\":\""
+            + VARIANT
+            + "\",\"qtyReceived\":3}]}",
+        T);
+
+    String body =
+        post("/supplier-invoices", invoice(po, "INV-JPY-1", "3", "1234"), T)
+            .readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"MATCHED\""));
+    assertThat(body, containsString("\"currency\":\"JPY\""));
+    assertThat(body, containsString("\"netAmount\":3702"));
+    assertThat(body, not(containsString("3702.00")));
+  }
+
+  /** Tenant isolation: an invoice on another tenant's order is not found, not forbidden. */
+  @Test
+  void anInvoiceCannotBeCapturedAgainstAnotherTenantsOrder() {
+    String po = receivedOrder("Isolation Ltd", "10", "10", "2.50");
+    Response r = post("/supplier-invoices", invoice(po, "INV-ISO-1", "10", "2.50"), T2);
+    assertThat(r.getStatus(), is(404));
+  }
+
+  /** An order, submitted, and part-received — the two legs an invoice is matched against. */
+  private String receivedOrder(String supplierName, String ordered, String received, String price) {
+    String supId = supplier(supplierName, "GBP");
+    String po = poFor(supId);
+    addLine(po, ordered, price);
+    assertThat(post("/purchase-orders/" + po + "/submit", "{}", T).getStatus(), is(200));
+    assertThat(
+        post(
+                "/goods-receipts",
+                "{\"poId\":\""
+                    + po
+                    + "\",\"storeId\":\""
+                    + STORE_A
+                    + "\",\"lines\":[{\"variantId\":\""
+                    + VARIANT
+                    + "\",\"qtyReceived\":"
+                    + received
+                    + "}]}",
+                T)
+            .getStatus(),
+        is(201));
+    return po;
+  }
+
+  private String invoice(String poId, String number, String qty, String unitPrice) {
+    return "{\"poId\":\""
+        + poId
+        + "\",\"invoiceNumber\":\""
+        + number
+        + "\",\"invoiceDate\":\"2026-02-01\",\"lines\":[{\"variantId\":\""
+        + VARIANT
+        + "\",\"qty\":"
+        + qty
+        + ",\"unitPrice\":"
+        + unitPrice
+        + "}]}";
+  }
+
+  private String supplier(String name, String currency) {
+    return supplierFor(T, name, currency);
+  }
+
+  private String supplierFor(String tenant, String name, String currency) {
+    Response r =
+        post(
+            "/suppliers",
+            "{\"name\":\"" + name + "\",\"vatRegistered\":true,\"currency\":\"" + currency + "\"}",
+            tenant);
+    assertThat(r.getStatus(), is(201));
+    return extractId(r.readEntity(String.class));
+  }
+
+  private String poFor(String supplierId) {
+    Response r =
+        post(
+            "/purchase-orders",
+            "{\"supplierId\":\"" + supplierId + "\",\"storeId\":\"" + STORE_A + "\"}",
+            T);
+    assertThat(r.getStatus(), is(201));
+    return extractId(r.readEntity(String.class));
+  }
+
+  private void addLine(String poId, String qty, String unitPrice) {
+    Response r =
+        post(
+            "/purchase-orders/" + poId + "/lines",
+            "{\"variantId\":\""
+                + VARIANT
+                + "\",\"qty\":"
+                + qty
+                + ",\"unitPrice\":"
+                + unitPrice
+                + ",\"vatCode\":\"T1\"}",
+            T);
+    assertThat(r.getStatus(), is(201));
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────────

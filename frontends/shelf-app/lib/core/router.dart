@@ -137,6 +137,20 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/food-safety',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.FoodSafetyScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/recalls',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.RecallsScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/stores',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
@@ -222,6 +236,13 @@ final routerProvider = Provider<GoRouter>((ref) {
               builder: (_) => pos_lib.CashScreen(),
             ),
           ),
+          GoRoute(
+            path: '/pos/pending',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: pos_lib.loadLibrary,
+              builder: (_) => pos_lib.OfflineQueueScreen(),
+            ),
+          ),
         ],
       ),
 
@@ -275,7 +296,10 @@ final routerProvider = Provider<GoRouter>((ref) {
 
 /// Paths a storekeeper-only user may open inside the admin shell.
 bool _storekeeperAdminAllowed(String loc) {
-  return loc.startsWith('/admin/inventory') || loc.startsWith('/admin/stores');
+  return loc.startsWith('/admin/inventory') ||
+      loc.startsWith('/admin/food-safety') ||
+      loc.startsWith('/admin/recalls') ||
+      loc.startsWith('/admin/stores');
 }
 
 class _AuthListenable extends ChangeNotifier {

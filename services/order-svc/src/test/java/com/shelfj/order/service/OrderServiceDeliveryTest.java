@@ -84,6 +84,7 @@ class OrderServiceDeliveryTest {
         null,
         "USD",
         null,
+        null, // couponCodes
         null,
         null,
         null,
@@ -123,7 +124,8 @@ class OrderServiceDeliveryTest {
 
   @Test
   void deliveryWithFullAddressIsPersisted() {
-    when(repo.createOrder(any(), anyList(), any(), any())).thenAnswer(inv -> inv.getArgument(0));
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+        .thenAnswer(inv -> inv.getArgument(0));
 
     Order order =
         svc.placeOrder(
@@ -140,7 +142,8 @@ class OrderServiceDeliveryTest {
 
   @Test
   void pickupIgnoresAnySuppliedAddressFields() {
-    when(repo.createOrder(any(), anyList(), any(), any())).thenAnswer(inv -> inv.getArgument(0));
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+        .thenAnswer(inv -> inv.getArgument(0));
 
     // A pickup order should never persist delivery details even if the client sends some
     // (e.g. stale client state from switching fulfilment type back and forth in the UI).

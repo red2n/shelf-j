@@ -1,5 +1,8 @@
 package com.shelfj.order.service;
 
+import com.shelfj.order.domain.Domain;
+import com.shelfj.order.domain.Domain.ExceptionGrouping;
+import com.shelfj.order.domain.Domain.ExceptionRow;
 import com.shelfj.order.domain.Domain.GiftCard;
 import com.shelfj.order.domain.Domain.GiftCardTransaction;
 import com.shelfj.order.domain.Domain.Layaway;
@@ -14,6 +17,8 @@ import com.shelfj.order.domain.Domain.PosLogEntry;
 import com.shelfj.order.domain.Domain.PosVoidLog;
 import com.shelfj.order.domain.Domain.Return;
 import com.shelfj.order.domain.Domain.ReturnItem;
+import com.shelfj.order.domain.Domain.SalesByHourRow;
+import com.shelfj.order.domain.Domain.SalesByStaffRow;
 import com.shelfj.order.domain.Domain.SpecialOrder;
 import com.shelfj.order.domain.Domain.SpecialOrderItem;
 import com.shelfj.order.dto.Dtos.AddDepositRequest;
@@ -35,11 +40,17 @@ import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.security.SecureRandom;
+import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 /** Business logic for order-svc. Thin resource → this service → repository. */
@@ -49,6 +60,8 @@ public class OrderService {
   private static final System.Logger LOG = System.getLogger(OrderService.class.getName());
 
   @Inject OrderRepository repo;
+  @Inject com.shelfj.order.repo.FiscalReceiptRepository receiptRepo;
+  @Inject com.shelfj.order.repo.SalesAnalyticsRepository salesAnalyticsRepo;
   @Inject TenantStatusRepository tenantStatusRepo;
   @Inject StoreStatusRepository storeStatusRepo;
   @Inject com.shelfj.order.config.ServiceConfig config;
@@ -241,7 +254,8 @@ public class OrderService {
     // Gap #63: when enforcement is on, the price comes from pricing-svc — the client-supplied
     // unitPrice is ignored. When off (local dev / unseeded rigs), the client price is trusted.
     // One batched call resolves every line instead of one cross-service HTTP call per line.
-    List<com.shelfj.order.client.PricingClient.ResolvedLine> resolvedLines = null;
+    List<com.shelfj.order.client.PricingClient.QuotedLine> resolvedLines = null;
+    com.shelfj.order.client.PricingClient.QuotedBasket quoted = null;
     if (enforcePricing) {
       var lineRequests =
           new ArrayList<com.shelfj.order.client.PricingClient.LineRequest>(variantIds.size());
@@ -250,24 +264,39 @@ public class OrderService {
             new com.shelfj.order.client.PricingClient.LineRequest(
                 variantIds.get(i), req.items().get(i).qty()));
       }
-      resolvedLines = pricing.resolveLines(tenantId, lineRequests, storeId, req.channel());
+      // The whole basket in one call, so the promotion engine can see rules that need the order
+      // total — a spend threshold, a basket percentage, a buy-one-get-one. resolveLines priced
+      // each line independently and gave those nothing to be about.
+      quoted =
+          pricing.quoteBasket(
+              tenantId, lineRequests, storeId, req.channel(), customerId, req.couponCodes());
+      resolvedLines = quoted.lines();
     }
 
     for (int i = 0; i < req.items().size(); i++) {
       var ir = req.items().get(i);
       UUID variantId = variantIds.get(i);
       BigDecimal unitPrice;
+      BigDecimal quotedLineNet = null;
       if (enforcePricing) {
         var resolved = resolvedLines.get(i);
         unitPrice = resolved.unitPrice();
-        serverTax = serverTax.add(resolved.vatAmount().multiply(ir.qty()));
+        // A quote returns the whole line's VAT, already multiplied out. The per-unit form this
+        // used to multiply belongs to /prices/resolve-batch; multiplying a line total by the
+        // quantity again put £144 of VAT on an £80 basket (SJ-D20).
+        serverTax = serverTax.add(resolved.lineVat());
+        // And the line's value comes from the quote too, rather than from unitPrice × qty. The
+        // unit price is a rounded division of that same figure, so multiplying it back does not
+        // reproduce it: three units of a £100 line quote at 33.33 each and rebuild as 99.99. Taking
+        // the quoted figure keeps the order's subtotal equal to the quote the customer was shown.
+        quotedLineNet = resolved.lineNet();
       } else {
         if (ir.unitPrice() == null)
           throw ApiException.badRequest(
               "ORDER_PRICE_REQUIRED", "unitPrice is required for variant " + ir.variantId());
         unitPrice = ir.unitPrice();
       }
-      BigDecimal line = unitPrice.multiply(ir.qty());
+      BigDecimal line = quotedLineNet != null ? quotedLineNet : unitPrice.multiply(ir.qty());
       subtotal = subtotal.add(line);
       items.add(
           new OrderItem(
@@ -324,7 +353,16 @@ public class OrderService {
 
     OrderDiscount discountAudit =
         disc.signum() == 0 ? null : authorizeDiscount(ctx, orderId, storeId, subtotal, disc, req);
-    BigDecimal total = subtotal.add(tax).subtract(disc);
+
+    // The promotion engine's whole-basket reduction. Line-level promotions are already inside the
+    // resolved unit prices and therefore inside subtotal; this is the part that belongs to no
+    // line. It is deliberately NOT added to disc: that column is the staff discount, and the role
+    // ceiling authorizeDiscount enforces must not be spent by an automatic offer.
+    BigDecimal promoDiscount =
+        quoted == null
+            ? BigDecimal.ZERO
+            : quoted.basketDiscount().min(subtotal.subtract(disc).max(BigDecimal.ZERO));
+    BigDecimal total = subtotal.add(tax).subtract(disc).subtract(promoDiscount);
 
     boolean taxExempt = req.taxExempt() != null && req.taxExempt();
     Order order =
@@ -354,14 +392,26 @@ public class OrderService {
             delivery ? req.deliveryRecipientName() : null,
             delivery ? req.deliveryRecipientPhone() : null,
             req.contactPhone(),
-            paymentMethod);
+            paymentMethod,
+            promoDiscount);
 
     try {
-      return repo.createOrder(
-          order,
-          items,
-          Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId),
-          discountAudit);
+      Order placed =
+          repo.createOrder(
+              order,
+              items,
+              Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId),
+              discountAudit,
+              quoted == null ? List.of() : quoted.applied());
+      // Spending the coupon is deliberately the last thing, and deliberately outside the order's
+      // transaction. A basket is quoted on every change and must not burn a redemption by being
+      // looked at; only a placed order spends one. If this call fails the order still stands — a
+      // customer who has paid must not lose their order because a usage counter could not be
+      // written — and the redemption is idempotent on the order, so a retry costs nothing.
+      if (quoted != null && !quoted.applied().isEmpty()) {
+        pricing.recordRedemptionsQuietly(tenantId, orderId, customerId, quoted.applied(), currency);
+      }
+      return placed;
     } catch (ApiException e) {
       // Idempotent replay: a retried checkout with the same key gets the original order back
       // instead of an error (golden rule #11). The stock holds are NOT released here — the
@@ -483,16 +533,29 @@ public class OrderService {
     return repo.findOrderHistory(tenantId, orderId);
   }
 
+  /**
+   * A till sale: rung up on the POS channel and handed over at the counter.
+   *
+   * <p>SJ-D40. inventory-svc deducts stock only on OrderFulfilled, and nothing ever fulfilled a
+   * till sale: the till places the order, payment capture confirms it, and there it stopped. Stock
+   * moved only if a manager later opened each sale and clicked "Mark fulfilled".
+   *
+   * <p>PICKUP counts as well as INSTORE because the till sent PICKUP for every tendered sale until
+   * this fix, and sales already sitting in offline queues on devices will replay with it. Nothing
+   * on the POS channel means "collect later" — special orders and layaways have their own resources
+   * for that. DELIVERY is excluded: a till can take payment for goods that go out on a van, and
+   * those are handed over when they arrive.
+   */
+  static boolean isTillSale(String channel, String fulfilmentType) {
+    return Order.CHANNEL_POS.equals(channel)
+        && (Order.FULFILMENT_INSTORE.equals(fulfilmentType)
+            || Order.FULFILMENT_PICKUP.equals(fulfilmentType));
+  }
+
   public Order confirmOrder(UUID tenantId, UUID orderId, UUID userId) {
     // Load the order so OrderConfirmed can carry the buyer + settled amount (loyalty accrual).
     Order order = getOrder(tenantId, orderId);
-    return repo.transitionOrderStatus(
-        tenantId,
-        orderId,
-        Order.STATUS_PENDING,
-        Order.STATUS_CONFIRMED,
-        "confirmed",
-        userId,
+    var confirmEvent =
         Events.orderConfirmed(
             tenantId,
             orderId,
@@ -500,7 +563,147 @@ public class OrderService {
             order.channel(),
             order.customerId(),
             order.total(),
-            order.currency()));
+            order.currency());
+    Order confirmed =
+        isTillSale(order.channel(), order.fulfilmentType())
+            ? repo.confirmAndFulfil(
+                tenantId,
+                orderId,
+                userId,
+                confirmEvent,
+                Events.orderFulfilled(
+                    tenantId, orderId, order.storeId(), repo.findOrderItems(tenantId, orderId)))
+            : repo.transitionOrderStatus(
+                tenantId,
+                orderId,
+                Order.STATUS_PENDING,
+                Order.STATUS_CONFIRMED,
+                "confirmed",
+                userId,
+                confirmEvent);
+
+    // The number is taken when a sale completes, not when someone asks for a document — a
+    // sequence that only numbers the sales somebody remembered to print is not a sequence. It is
+    // outside the status transaction on purpose: a fiscal number is worth having and not worth
+    // failing a paid-for sale to get, and the sequence stays gapless either way because the
+    // counter only moves when a receipt row is written. POST /admin/orders/{id}/fiscal-receipt
+    // issues it later if this fails.
+    issueReceiptQuietly(confirmed, userId);
+    return confirmed;
+  }
+
+  private void issueReceiptQuietly(Order order, UUID userId) {
+    try {
+      issueReceipt(order, Domain.FiscalReceipt.DEFAULT_SERIES, userId);
+    } catch (RuntimeException e) {
+      LOG.log(
+          System.Logger.Level.ERROR,
+          () ->
+              "Order "
+                  + order.id()
+                  + " was confirmed but no fiscal receipt could be issued; issue it with POST"
+                  + " /admin/orders/{id}/fiscal-receipt",
+          e);
+    }
+  }
+
+  /**
+   * Issues (or returns) the numbered receipt for a sale.
+   *
+   * <p>Only a sale that has actually happened gets a number. A PENDING order has not been paid for
+   * and may never be — numbering it would put a hole in the sequence the moment the basket is
+   * abandoned, which is the exact thing the sequence must not have.
+   */
+  public Domain.FiscalReceipt issueReceipt(Order order, String seriesCode, UUID userId) {
+    if (Order.STATUS_PENDING.equals(order.status())
+        || Order.STATUS_CANCELLED.equals(order.status())) {
+      throw ApiException.badRequest(
+          "ORDER_NOT_SELLABLE",
+          "A receipt is only issued for a completed sale; this order is " + order.status());
+    }
+    String series =
+        seriesCode == null || seriesCode.isBlank()
+            ? Domain.FiscalReceipt.DEFAULT_SERIES
+            : seriesCode.trim().toUpperCase(java.util.Locale.ROOT);
+    // Fiscal year, which most jurisdictions restart numbering on. UTC because that is what the
+    // rest of the platform stores; a tenant whose fiscal year is not the calendar year needs a
+    // period they choose, and that is a configuration change rather than a schema one.
+    String period = String.valueOf(order.createdAt().atZone(java.time.ZoneOffset.UTC).getYear());
+    return receiptRepo.issue(
+        new Domain.FiscalReceipt(
+            UUID.randomUUID(),
+            order.tenantId(),
+            order.storeId(),
+            series,
+            period,
+            0L,
+            null,
+            order.id(),
+            null,
+            userId,
+            order.currency(),
+            order.total(),
+            order.taxAmount(),
+            null,
+            null),
+        null);
+  }
+
+  public Domain.FiscalReceipt issueReceipt(
+      UUID tenantId, UUID orderId, String seriesCode, UUID userId) {
+    return issueReceipt(getOrder(tenantId, orderId), seriesCode, userId);
+  }
+
+  public Domain.FiscalReceipt receiptOf(UUID tenantId, UUID orderId) {
+    return receiptRepo
+        .findByOrder(tenantId, orderId)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "ORDER_RECEIPT_NOT_ISSUED", "No fiscal receipt has been issued for this sale"));
+  }
+
+  /**
+   * The receipt for a sale, to whoever may read the sale: any staff member, or the customer who
+   * placed it. The till prints the number from here — the admin route is management-only.
+   */
+  public Domain.FiscalReceipt receiptOf(UUID tenantId, UUID orderId, TenantContext ctx) {
+    requireReadAccess(getOrder(tenantId, orderId), ctx);
+    return receiptOf(tenantId, orderId);
+  }
+
+  public List<Domain.FiscalReceipt> receiptSeries(
+      UUID tenantId, UUID storeId, String series, String period, int limit) {
+    return receiptRepo.listSeries(
+        tenantId, storeId, seriesOrDefault(series), period, Math.min(Math.max(limit, 1), 500));
+  }
+
+  /** The gap audit: bounds, count, and every hole. An empty gap list is the proof. */
+  public java.util.Map<String, Object> receiptAudit(
+      UUID tenantId, UUID storeId, String series, String period) {
+    String s = seriesOrDefault(series);
+    long[] bounds = receiptRepo.seriesBounds(tenantId, storeId, s, period);
+    var gaps = receiptRepo.findGaps(tenantId, storeId, s, period);
+    var out = new java.util.LinkedHashMap<String, Object>();
+    out.put("storeId", storeId.toString());
+    out.put("seriesCode", s);
+    out.put("period", period);
+    out.put("firstNumber", bounds[0]);
+    out.put("lastNumber", bounds[1]);
+    out.put("issued", bounds[2]);
+    // Expected is the span, so a series with 400 receipts numbered 1..500 reads as 100 missing
+    // without anyone having to subtract.
+    out.put("expected", bounds[1] == 0 ? 0 : bounds[1] - bounds[0] + 1);
+    out.put("intact", gaps.isEmpty());
+    out.put(
+        "gaps", gaps.stream().map(g -> java.util.Map.of("from", g.from(), "to", g.to())).toList());
+    return out;
+  }
+
+  private static String seriesOrDefault(String series) {
+    return series == null || series.isBlank()
+        ? Domain.FiscalReceipt.DEFAULT_SERIES
+        : series.trim().toUpperCase(java.util.Locale.ROOT);
   }
 
   public Order cancelOrder(UUID tenantId, UUID orderId, String reason, UUID userId) {
@@ -621,13 +824,20 @@ public class OrderService {
     ctx.requireStoreAccess(order.storeId());
     if (!Order.CHANNEL_POS.equals(order.channel()))
       throw ApiException.conflict("ORDER_VOID_ONLY_POS", "void is only allowed on POS orders");
-    return repo.voidOrder(
-        tenantId,
-        orderId,
-        order.storeId(),
-        req.reason(),
-        ctx.userId(),
-        Events.orderVoided(tenantId, orderId));
+    PosVoidLog log =
+        repo.voidOrder(
+            tenantId,
+            orderId,
+            order.storeId(),
+            req.reason(),
+            ctx.userId(),
+            restock -> Events.orderVoided(tenantId, orderId, order.storeId(), restock));
+
+    // The receipt keeps its number and gains a reason. Removing it would close the hole in the
+    // sequence, and closing the hole is the whole trick: ring the sale, take the cash, void the
+    // receipt, and a till that balances hides a theft. Here the document stays, numbered.
+    receiptRepo.markVoided(tenantId, orderId, req.reason());
+    return log;
   }
 
   // ── Layaway ───────────────────────────────────────────────────────────────
@@ -826,19 +1036,53 @@ public class OrderService {
           orderId);
       return;
     }
-    repo.applyPaymentCaptured(
-        tenantId,
-        orderId,
-        paymentId,
-        amount,
-        Events.orderConfirmed(
+    // A till sale is handed over the moment it is paid for, so the capture that completes it also
+    // fulfils it, in the same transaction (SJ-D40). The event is built for every tender but only
+    // written by the one that completes the sale; a partial tender or a redelivery writes nothing.
+    var fulfilEvent =
+        isTillSale(order.channel(), order.fulfilmentType())
+            ? Events.orderFulfilled(
+                tenantId, orderId, order.storeId(), repo.findOrderItems(tenantId, orderId))
+            : null;
+    boolean completed =
+        repo.applyPaymentCaptured(
             tenantId,
             orderId,
-            order.storeId(),
-            order.channel(),
-            order.customerId(),
-            order.total(),
-            order.currency()));
+            paymentId,
+            amount,
+            Events.orderConfirmed(
+                tenantId,
+                orderId,
+                order.storeId(),
+                order.channel(),
+                order.customerId(),
+                order.total(),
+                order.currency()),
+            fulfilEvent);
+
+    // Till sales are confirmed here, not in confirmOrder, so this is where most receipts are
+    // numbered. The first version of the sequence hooked only confirmOrder — which the till never
+    // calls — and so numbered the sales a manager confirmed by hand and almost none of the ones
+    // rung up at a till, which are the ones fiscal law is written about.
+    if (completed) {
+      repo.findOrder(tenantId, orderId).ifPresent(o -> issueReceiptQuietly(o, null));
+    }
+  }
+
+  /**
+   * A customer this shop erased (SJ-D43). Settled orders lose what identifies the customer now;
+   * open ones keep their delivery details until they finish, then {@link #sweepErasures} takes
+   * them.
+   *
+   * @return false when the event had already been applied
+   */
+  public boolean handleCustomerErased(UUID tenantId, UUID customerId, UUID eventId) {
+    return repo.applyCustomerErasure(tenantId, customerId, eventId, "order-svc/customer-erased");
+  }
+
+  /** Redacts orders that have finished since their customer was erased. */
+  public int sweepErasures() {
+    return repo.sweepErasures();
   }
 
   public void handlePaymentFailed(java.util.UUID tenantId, java.util.UUID orderId) {
@@ -1061,7 +1305,176 @@ public class OrderService {
             order.exemptReason(),
             Instant.now(),
             Instant.now());
-    return repo.insertPosLogEntry(entry);
+    // Idempotent on the order: the till calls this straight after taking money, so it is on
+    // the retry path — and an offline sale replays it along with everything else.
+    return repo.recordPosLogOnce(entry);
+  }
+
+  // ── Staff exception report ────────────────────────────────────────────────
+
+  /**
+   * What loss prevention actually asks: which cashier is an outlier. Sums the three append-only
+   * logs that record staff-initiated exceptions — discounts granted, sales voided, drawer opened
+   * with no sale — against the transaction journal that says how much each person sold, so a result
+   * can be read as a rate rather than a ranking of who worked the most shifts.
+   *
+   * <p>Rows are merged on the key rather than joined in SQL: these are four independent logs, and a
+   * join would multiply a cashier's 3 discounts by their 2 voids into 6 of each. Merging also means
+   * someone who appears in only one log still gets a row, which is the case that matters — the
+   * cashier with no sales and four no-sales is the whole point of the report.
+   *
+   * <p>A null actor buckets as {@code UNATTRIBUTED} rather than being dropped. An exception nobody
+   * is accountable for is the last thing this report should hide.
+   */
+  public List<ExceptionRow> exceptionReport(
+      UUID tenantId, UUID storeId, Instant from, Instant to, ExceptionGrouping grouping) {
+    boolean byActor = grouping == ExceptionGrouping.ACTOR;
+    Map<String, BigDecimal[]> money = new LinkedHashMap<>();
+    Map<String, long[]> counts = new LinkedHashMap<>();
+
+    for (Object[] r : repo.aggregateDiscounts(tenantId, storeId, from, to, byActor)) {
+      String k = key(r[0]);
+      counts.computeIfAbsent(k, x -> new long[4])[0] = (Long) r[1];
+      money.computeIfAbsent(k, x -> newMoney())[0] = (BigDecimal) r[2];
+    }
+    for (Object[] r : repo.aggregateVoids(tenantId, storeId, from, to, byActor)) {
+      counts.computeIfAbsent(key(r[0]), x -> new long[4])[1] = (Long) r[1];
+    }
+    for (Object[] r : repo.aggregateNoSales(tenantId, storeId, from, to, byActor)) {
+      counts.computeIfAbsent(key(r[0]), x -> new long[4])[2] = (Long) r[1];
+    }
+    for (Object[] r : repo.aggregateJournalledSales(tenantId, storeId, from, to, byActor)) {
+      String k = key(r[0]);
+      counts.computeIfAbsent(k, x -> new long[4])[3] = (Long) r[1];
+      money.computeIfAbsent(k, x -> newMoney())[1] = (BigDecimal) r[2];
+    }
+
+    List<ExceptionRow> rows = new ArrayList<>();
+    for (Map.Entry<String, long[]> e : counts.entrySet()) {
+      long[] c = e.getValue();
+      BigDecimal[] m = money.getOrDefault(e.getKey(), newMoney());
+      rows.add(new ExceptionRow(e.getKey(), c[0], m[0], c[1], c[2], c[3], m[1]));
+    }
+    // Most exceptions first, money breaking the tie: two cashiers with three exceptions each are
+    // not equally interesting if one of them discounted a hundred times more.
+    rows.sort(
+        java.util.Comparator.comparingLong(
+                (ExceptionRow r) -> r.discounts() + r.voids() + r.noSales())
+            .thenComparing(ExceptionRow::discountAmount)
+            .reversed());
+    return rows;
+  }
+
+  private static BigDecimal[] newMoney() {
+    return new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO};
+  }
+
+  /** Null actor or store ids are bucketed, never dropped. */
+  private static String key(Object raw) {
+    return raw == null ? "UNATTRIBUTED" : raw.toString();
+  }
+
+  // ---- sales by hour / by staff ----
+
+  /**
+   * Takings bucketed by hour of the trading day, on the clock of a named timezone.
+   *
+   * <p>The timezone is validated here rather than in the resource because getting it wrong is a
+   * domain error, not a parsing one: {@code Europe/Londn} parses fine as a string and would reach
+   * Postgres, which rejects it with an error that surfaces as a 500. {@link ZoneId#of} knows the
+   * same tz database Postgres does, so validating with it turns that into the 400 it always was.
+   *
+   * @param tz an IANA zone name such as {@code Europe/London}; defaults to UTC when absent
+   */
+  public List<SalesByHourRow> salesByHour(
+      UUID tenantId, UUID storeId, String channel, Instant from, Instant to, String tz) {
+    requireOrderedPeriod(from, to);
+    String normalisedChannel = normaliseChannel(channel);
+    return salesAnalyticsRepo
+        .salesByHour(tenantId, storeId, normalisedChannel, from, to, zone(tz))
+        .stream()
+        .map(
+            r ->
+                new SalesByHourRow(
+                    r.hourOfDay(),
+                    r.orders(),
+                    r.grossAmount(),
+                    r.discountAmount(),
+                    // An hour with no orders produces no row, so the divisor is never zero.
+                    r.grossAmount()
+                        .divide(BigDecimal.valueOf(r.orders()), 2, RoundingMode.HALF_UP)))
+        .toList();
+  }
+
+  /**
+   * Takings by the cashier who rang them up, from the POS transaction journal.
+   *
+   * <p>Online orders have no cashier and are therefore not here at all. That is a property of the
+   * data rather than a filter — the journal only ever covers the till.
+   */
+  public List<SalesByStaffRow> salesByStaff(
+      UUID tenantId, UUID storeId, Instant from, Instant to, int limit) {
+    requireOrderedPeriod(from, to);
+    return salesAnalyticsRepo.salesByStaff(tenantId, storeId, from, to, limit).stream()
+        .map(OrderService::withStaffRatios)
+        .toList();
+  }
+
+  /**
+   * Average basket and discount rate for one cashier.
+   *
+   * <p>The discount rate divides by what the sales would have been worth undiscounted, not by what
+   * they fetched: discounting £50 off £100 is half the ticket given away, and dividing by the £50
+   * that was actually taken would call it 100%.
+   */
+  private static SalesByStaffRow withStaffRatios(SalesByStaffRow r) {
+    BigDecimal basket =
+        r.sales() == 0
+            ? null
+            : r.grossAmount().divide(BigDecimal.valueOf(r.sales()), 2, RoundingMode.HALF_UP);
+    BigDecimal undiscounted = r.grossAmount().add(r.discountAmount());
+    BigDecimal rate =
+        undiscounted.signum() <= 0
+            ? null
+            : r.discountAmount()
+                .multiply(BigDecimal.valueOf(100))
+                .divide(undiscounted, 1, RoundingMode.HALF_UP);
+    return new SalesByStaffRow(
+        r.groupKey(), r.sales(), r.grossAmount(), r.discountAmount(), basket, rate);
+  }
+
+  private static ZoneId zone(String tz) {
+    if (tz == null || tz.isBlank()) return ZoneOffset.UTC;
+    try {
+      return ZoneId.of(tz.trim());
+    } catch (DateTimeException e) {
+      // Cause preserved, as the grouping parsers do: what ZoneId disliked about the string is
+      // the only thing that distinguishes a typo from an offset in a form it will not take.
+      throw new ApiException(
+          400,
+          "ORDER_INVALID_TIMEZONE",
+          "tz must be an IANA zone name such as Europe/London, or an ISO offset such as"
+              + " +05:30 — got: "
+              + tz,
+          List.of(),
+          e);
+    }
+  }
+
+  /** Only the two channels exist; anything else is a caller error, not an empty result. */
+  private static String normaliseChannel(String channel) {
+    if (channel == null || channel.isBlank()) return null;
+    String c = channel.trim().toUpperCase(Locale.ROOT);
+    if (!Order.CHANNEL_ONLINE.equals(c) && !Order.CHANNEL_POS.equals(c))
+      throw ApiException.badRequest(
+          "ORDER_INVALID_CHANNEL", "channel must be ONLINE or POS — got: " + channel);
+    return c;
+  }
+
+  private static void requireOrderedPeriod(Instant from, Instant to) {
+    if (from != null && to != null && !from.isBefore(to))
+      throw ApiException.badRequest(
+          "ORDER_INVALID_PERIOD", "from must be before to — got " + from + " and " + to);
   }
 
   /** One page of POSLog entries plus the opaque cursor for the next page (null when exhausted). */
@@ -1129,7 +1542,15 @@ public class OrderService {
       java.util.Set<String> roles =
           ctx != null && ctx.roles() != null ? ctx.roles() : java.util.Set.of("CASHIER");
       notifications.send(
-          tenantId, userId, roles, req.emailedTo().trim(), subject, body, "POS_RECEIPT", eventId);
+          tenantId,
+          userId,
+          roles,
+          req.emailedTo().trim(),
+          subject,
+          body,
+          "POS_RECEIPT",
+          eventId,
+          order.customerId());
     }
 
     int printCount = req.printCount() != null ? req.printCount() : 1;

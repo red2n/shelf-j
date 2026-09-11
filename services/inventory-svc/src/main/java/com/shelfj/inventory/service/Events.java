@@ -1,8 +1,13 @@
 package com.shelfj.inventory.service;
 
 import com.shelfj.events.EventPayload;
+import com.shelfj.inventory.domain.FoodSafety.CheckRecord;
+import com.shelfj.inventory.domain.FoodSafety.OverduePoint;
+import com.shelfj.inventory.domain.Recall.Header;
 import java.math.BigDecimal;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /** JSON event payloads for the outbox. Past-tense; topic shelfj.inventory.<event>. */
 public final class Events {
@@ -230,6 +235,67 @@ public final class Events {
         + "\",\"qty\":"
         + qty.toPlainString()
         + "}";
+  }
+
+  /** A failed food-safety check, carrying what the store alert needs to say without a lookup. */
+  static String foodSafetyCheckFailed(CheckRecord record, String pointName, String checkTypeCode) {
+    return EventPayload.base("FoodSafetyCheckFailed", record.tenantId(), record.id())
+        + ",\"storeId\":\""
+        + record.storeId()
+        + "\",\"pointId\":\""
+        + record.pointId()
+        + "\",\"pointName\":\""
+        + EventPayload.esc(pointName)
+        + "\",\"checkTypeCode\":\""
+        + checkTypeCode
+        + "\",\"kind\":\""
+        + record.kind().name()
+        + "\",\"value\":"
+        + jsonNumber(record.value())
+        + ",\"unit\":"
+        + (record.unit() == null ? "null" : "\"" + record.unit() + "\"")
+        + ",\"minValue\":"
+        + jsonNumber(record.limits().min())
+        + ",\"maxValue\":"
+        + jsonNumber(record.limits().max())
+        + "}";
+  }
+
+  static String foodSafetyCheckOverdue(OverduePoint point) {
+    return EventPayload.base("FoodSafetyCheckOverdue", point.tenantId(), point.pointId())
+        + ",\"storeId\":\""
+        + point.storeId()
+        + "\",\"pointId\":\""
+        + point.pointId()
+        + "\",\"pointName\":\""
+        + EventPayload.esc(point.pointName())
+        + "\",\"checkTypeCode\":\""
+        + point.checkTypeCode()
+        + "\",\"dueSince\":\""
+        + point.dueSince()
+        + "\"}";
+  }
+
+  /**
+   * A recall opened, naming the stores whose stock it took off sale so each can be told. Carries
+   * the reference and hazard, never the reason or customer notice: those are free text a store
+   * reads on the screen, not in an alert.
+   */
+  static String recallOpened(Header header, Set<UUID> storeIds) {
+    return EventPayload.base("RecallOpened", header.tenantId(), header.id())
+        + ",\"reference\":\""
+        + EventPayload.esc(header.reference())
+        + "\",\"kind\":\""
+        + header.kind().name()
+        + "\",\"hazard\":\""
+        + header.hazard().name()
+        + "\",\"storeIds\":["
+        + storeIds.stream().map(id -> "\"" + id + "\"").collect(Collectors.joining(","))
+        + "]}";
+  }
+
+  private static String jsonNumber(BigDecimal value) {
+    return value == null ? "null" : value.toPlainString();
   }
 
   private static String storeVariant(UUID storeId, UUID variantId) {

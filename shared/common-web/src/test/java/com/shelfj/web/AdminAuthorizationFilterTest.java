@@ -133,6 +133,7 @@ class AdminAuthorizationFilterTest {
           "/orders/abc",
           "/orders/abc/history",
           "/orders/abc/returns",
+          "/orders/abc/fiscal-receipt",
           "/promotions",
           "/auth/me",
           "/cart",
@@ -152,7 +153,7 @@ class AdminAuthorizationFilterTest {
   void lookalikePublicPathsDoNotInheritTheExemption() throws Exception {
     assertAborted(invoke("GET", "/catalog-exports"), 403);
     assertAborted(invoke("GET", "/storefront-admin"), 403);
-    // Anything new under /orders/ that is not one of the four object-level-authorized shapes
+    // Anything new under /orders/ that is not one of the five object-level-authorized shapes
     // stays denied, so a future sub-resource cannot inherit the exemption by accident.
     assertAborted(invoke("GET", "/orders/abc/audit-trail"), 403);
     assertAborted(invoke("GET", "/orders/abc/history/all"), 403);
@@ -241,6 +242,45 @@ class AdminAuthorizationFilterTest {
   @Test
   void unauthenticatedCannotReadAdminInventory() throws Exception {
     assertAborted(invoke("GET", "/admin/inventory/levels"), 403);
+  }
+
+  // ── SJ-D19: the reports subtree is carved out of the staff tier ───────────
+
+  /**
+   * The whole point of the carve-out. Every report under {@code /admin/inventory/reports} answered
+   * a CASHIER with 200 on the running stack, because it sits inside the warehouse subtree that
+   * STOREKEEPER and CASHIER legitimately share. Stock valuation, cost of goods sold and a shrinkage
+   * report naming which colleague wrote off what are not warehouse work.
+   */
+  @Test
+  void staffCannotReadInventoryReports() throws Exception {
+    for (String role : new String[] {"CASHIER", "STOREKEEPER"}) {
+      ctx.set(null, null, Set.of(role), null, null);
+      for (String report :
+          new String[] {"valuation", "shrinkage", "low-stock", "stock-turn", "dead-stock"}) {
+        assertAborted(invoke("GET", "/admin/inventory/reports/" + report), 403);
+      }
+    }
+  }
+
+  @Test
+  void managementCanReadInventoryReports() throws Exception {
+    ctx.set(null, null, Set.of("MANAGER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/inventory/reports/valuation"));
+    ctx.set(null, null, Set.of("OWNER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/inventory/reports/stock-turn"));
+  }
+
+  /**
+   * The lookalike trap, pinned the way SJ-D11 pinned {@code /catalog-exports}: a path that merely
+   * starts with the same characters is a different path, and must keep the staff access the
+   * warehouse subtree grants it.
+   */
+  @Test
+  void aPathMerelyStartingWithReportsKeepsItsStaffAccess() throws Exception {
+    ctx.set(null, null, Set.of("STOREKEEPER"), null, null);
+    assertNotAborted(invoke("GET", "/admin/inventory/reports-config"));
+    assertNotAborted(invoke("POST", "/admin/inventory/reportable-items"));
   }
 
   @Test

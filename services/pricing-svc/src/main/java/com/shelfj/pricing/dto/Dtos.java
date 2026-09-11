@@ -7,7 +7,9 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
@@ -29,6 +31,28 @@ public final class Dtos {
       @Schema(description = "ISO-8601 instant this rate takes effect, e.g. 2026-01-01T00:00:00Z.")
           @NotBlank
           String effectiveFrom) {}
+
+  @Schema(
+      name = "SetActiveRequest",
+      description = "Stop or restart a promotion or price list. The reason is required either way.")
+  public record SetActiveRequest(
+      @Schema(
+              description =
+                  "Why. Required in both directions — restarting a promotion is the change more"
+                      + " likely to be questioned later, and a trail that records only why things"
+                      + " were stopped answers the easier half of the question.")
+          @NotBlank
+          String reason) {}
+
+  @Schema(name = "StatusChangeResponse", description = "One entry in the on/off history.")
+  public record StatusChangeResponse(
+      UUID id,
+      String subjectType,
+      UUID subjectId,
+      @Schema(description = "The state it was changed TO.") boolean active,
+      String reason,
+      UUID changedBy,
+      Instant changedAt) {}
 
   @Schema(name = "VatRateResponse")
   public record VatRateResponse(
@@ -188,19 +212,63 @@ public final class Dtos {
   @Schema(name = "CreatePromotionRequest")
   public record CreatePromotionRequest(
       @NotBlank String name,
-      @Schema(description = "PERCENT or FLAT.") @NotBlank String type,
-      @Schema(description = "Percentage (0-100) for PERCENT, or a flat amount for FLAT.")
+      @Schema(
+              description =
+                  "PERCENT or FLAT (per line), BASKET_PERCENT or BASKET_FLAT (whole basket),"
+                      + " SPEND_THRESHOLD (a flat amount once the basket clears minOrderAmount),"
+                      + " or BOGO (buy X get Y at a discount).")
+          @NotBlank
+          String type,
+      @Schema(
+              description =
+                  "Percentage (0-100) for the PERCENT types, or an amount for the FLAT ones."
+                      + " Ignored for BOGO, which is described by buyQty/getQty/getDiscountPct.")
           @NotNull
           @Positive
           BigDecimal value,
-      BigDecimal minOrderAmount,
+      @Schema(
+              description =
+                  "Basket subtotal this promotion needs before it applies. Required for"
+                      + " SPEND_THRESHOLD, optional on the other basket types. Previously stored"
+                      + " and never read, so a 'spend £100' offer applied to a £3 basket.")
+          BigDecimal minOrderAmount,
       @Schema(description = "ALL, ONLINE, or POS. Defaults to ALL.") String channel,
-      @Schema(description = "UUID of the store this promotion is scoped to, if any.")
+      @Schema(
+              description =
+                  "UUID of the store this promotion is scoped to; omit for every store. Previously"
+                      + " stored and never filtered, so a store promotion ran in every store.")
           String storeId,
       @Schema(description = "ISO-8601 timestamp the promotion becomes active.") @NotBlank
           String startsAt,
       @Schema(description = "ISO-8601 timestamp the promotion ends; open-ended if omitted.")
-          String endsAt) {}
+          String endsAt,
+      @Schema(
+              description =
+                  "Application order, ascending — lower runs first. Defaults to 100. Which of two"
+                      + " overlapping offers wins used to be an accident of a SQL sort that"
+                      + " compared a percentage against a sum of money.")
+          Integer priority,
+      @Schema(
+              description =
+                  "When true, this promotion stops every promotion after it — 'cannot be combined"
+                      + " with any other offer'.")
+          Boolean exclusive,
+      @Schema(
+              description =
+                  "Code the customer must present. Omit for a promotion that applies on its own."
+                      + " Matched case-insensitively and unique per tenant.")
+          String couponCode,
+      @Schema(description = "Total times this promotion may be redeemed. Null = uncapped.")
+          Integer maxRedemptions,
+      @Schema(
+              description =
+                  "Times one customer may redeem it. Null = uncapped. Cannot bind on a guest"
+                      + " checkout, which has no identity to count against.")
+          Integer maxPerCustomer,
+      @Schema(description = "BOGO: how many must be bought.") BigDecimal buyQty,
+      @Schema(description = "BOGO: how many are then discounted.") BigDecimal getQty,
+      @Schema(description = "BOGO: by how much, as a percentage. 100 = free.")
+          BigDecimal getDiscountPct) {}
 
   @Schema(name = "PromotionResponse")
   public record PromotionResponse(
@@ -208,20 +276,124 @@ public final class Dtos {
       UUID tenantId,
       UUID storeId,
       String name,
-      @Schema(description = "PERCENT or FLAT.") String type,
+      @Schema(description = "PERCENT, FLAT, BASKET_PERCENT, BASKET_FLAT, SPEND_THRESHOLD or BOGO.")
+          String type,
       BigDecimal value,
       BigDecimal minOrderAmount,
       String channel,
       boolean active,
       String startsAt,
       String endsAt,
-      String createdAt) {}
+      String createdAt,
+      @Schema(description = "Application order, ascending.") int priority,
+      @Schema(description = "True when this promotion suppresses every promotion after it.")
+          boolean exclusive,
+      @Schema(description = "Code the customer must present, or null when it applies on its own.")
+          String couponCode,
+      Integer maxRedemptions,
+      Integer maxPerCustomer,
+      BigDecimal buyQty,
+      BigDecimal getQty,
+      BigDecimal getDiscountPct) {}
 
   @Schema(name = "AddPromotionItemRequest")
   public record AddPromotionItemRequest(
-      @Schema(description = "ALL, VARIANT, or CATEGORY.") @NotBlank String scopeType,
-      @Schema(description = "UUID of the variant or category; null when scopeType is ALL.")
-          String scopeId) {}
+      @Schema(
+              description =
+                  "ALL or VARIANT. CATEGORY is rejected: pricing-svc has no variant→category"
+                      + " mapping, because product-svc publishes no catalogue event, and a"
+                      + " category promotion was previously accepted and silently never applied.")
+          @NotBlank
+          String scopeType,
+      @Schema(description = "UUID of the variant; null when scopeType is ALL.") String scopeId) {}
+
+  // ── Basket quoting ────────────────────────────────────────────────────────
+
+  @Schema(
+      name = "QuoteBasketRequest",
+      description =
+          "Prices a whole basket at once. Distinct from /prices/resolve-batch, which prices each"
+              + " line independently and therefore cannot see a spend threshold, a basket"
+              + " percentage or a buy-one-get-one.")
+  public record QuoteBasketRequest(
+      @NotEmpty @Valid List<QuoteLineRequest> lines,
+      @Schema(description = "UUID of the store; selects store-scoped prices and promotions.")
+          String storeId,
+      @Schema(description = "ONLINE or POS. Defaults to ALL.") String channel,
+      @Schema(description = "UUID of the customer, for per-customer coupon caps.")
+          String customerId,
+      @Schema(description = "Coupon codes the customer presented. Matched case-insensitively.")
+          List<String> couponCodes) {}
+
+  @Schema(name = "QuoteLineRequest")
+  public record QuoteLineRequest(
+      @Schema(description = "UUID of the product variant.") @NotBlank String variantId,
+      @Schema(description = "Quantity being bought. Defaults to 1.") BigDecimal qty) {}
+
+  @Schema(name = "QuoteLineResponse", description = "One priced basket line.")
+  public record QuoteLineResponse(
+      UUID variantId,
+      BigDecimal qty,
+      @Schema(description = "Base price per unit, before promotions.") BigDecimal unitPrice,
+      @Schema(description = "qty × unitPrice, before promotions.") BigDecimal lineTotal,
+      @Schema(description = "Total taken off this line by line-level promotions.")
+          BigDecimal discount,
+      @Schema(description = "lineTotal minus discount.") BigDecimal netTotal,
+      @Schema(description = "VAT on netTotal, at this variant's rate.") BigDecimal vatAmount,
+      @Schema(description = "The VAT code applied.") String vatCode) {}
+
+  @Schema(name = "AppliedPromotionResponse", description = "One promotion that took money off.")
+  public record AppliedPromotionResponse(
+      UUID promotionId,
+      String name,
+      @Schema(description = "The variant discounted, or null for a whole-basket promotion.")
+          UUID variantId,
+      BigDecimal amount) {}
+
+  @Schema(
+      name = "QuoteBasketResponse",
+      description = "A fully priced basket, with every promotion that applied itemised.")
+  public record QuoteBasketResponse(
+      List<QuoteLineResponse> lines,
+      @Schema(description = "Sum of line totals before any promotion.") BigDecimal subtotal,
+      @Schema(description = "Everything taken off, line-level and basket-level together.")
+          BigDecimal totalDiscount,
+      @Schema(description = "Whole-basket discounts, which belong to no single line.")
+          BigDecimal basketDiscount,
+      @Schema(description = "VAT across every line, computed after discounts.")
+          BigDecimal vatAmount,
+      @Schema(description = "subtotal − totalDiscount + vatAmount.") BigDecimal total,
+      String currency,
+      @Schema(description = "Every promotion that applied, in the order it ran.")
+          List<AppliedPromotionResponse> appliedPromotions,
+      @Schema(
+              description =
+                  "Coupon codes the caller presented that did not apply, and why:"
+                      + " NO_SUCH_COUPON, NOT_APPLICABLE, COUPON_EXHAUSTED or"
+                      + " COUPON_LIMIT_REACHED. Returned rather than ignored — a customer who"
+                      + " typed a code is owed an answer.")
+          Map<String, String> rejectedCoupons) {}
+
+  @Schema(
+      name = "RecordRedemptionsRequest",
+      description =
+          "Tells pricing-svc an order used these promotions, so their usage caps are spent."
+              + " Idempotent on the order.")
+  public record RecordRedemptionsRequest(
+      @Schema(description = "UUID of the order the promotions were used on.") @NotBlank
+          String orderId,
+      @Schema(description = "UUID of the customer, for per-customer caps. Null for a guest.")
+          String customerId,
+      @Schema(description = "ISO 4217 currency the amounts are in.") String currency,
+      @NotEmpty List<AppliedPromotionResponse> appliedPromotions) {}
+
+  @Schema(name = "RecordRedemptionsResponse")
+  public record RecordRedemptionsResponse(
+      @Schema(
+              description =
+                  "How many redemptions this call actually recorded. Zero means every one had"
+                      + " already been recorded — a replay, not a failure.")
+          int recorded) {}
 
   @Schema(name = "PromotionItemResponse")
   public record PromotionItemResponse(

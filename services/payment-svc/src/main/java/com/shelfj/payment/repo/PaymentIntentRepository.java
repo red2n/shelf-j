@@ -238,6 +238,23 @@ public class PaymentIntentRepository extends BaseOutboxRepository {
    * @param eventType provider event type, stored for the audit trail
    * @return {@code true} if this event had not been seen before
    */
+  public boolean hasSeenWebhook(String provider, String providerEventId) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT 1 FROM payment_webhook_events"
+                      + " WHERE provider = ? AND provider_event_id = ?")) {
+            ps.setString(1, provider);
+            ps.setString(2, providerEventId);
+            try (var rs = ps.executeQuery()) {
+              return rs.next();
+            }
+          }
+        },
+        "check webhook event seen");
+  }
+
   public boolean markWebhookSeenIfNew(String provider, String providerEventId, String eventType) {
     return inTx(
         c -> {

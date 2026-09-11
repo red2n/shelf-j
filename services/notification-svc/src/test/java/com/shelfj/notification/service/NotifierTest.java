@@ -49,6 +49,7 @@ class NotifierTest {
     @Override
     public void recordNotification(
         UUID tenantId,
+        UUID subjectId,
         UUID eventId,
         String type,
         String channel,
@@ -75,7 +76,7 @@ class NotifierTest {
 
   @Test
   void sendsAndRecordsOnFirstDelivery() {
-    notifier.notifyOnce(EVENT, "WELCOME", TENANT, "a@b.com", "Hi", "body");
+    notifier.notifyOnce(EVENT, "WELCOME", TENANT, null, "a@b.com", "Hi", "body");
 
     assertEquals(1, channel.sends);
     assertEquals(1, repo.records);
@@ -85,7 +86,7 @@ class NotifierTest {
   @Test
   void skipsWhenAlreadyNotified() {
     repo.notified = true;
-    notifier.notifyOnce(EVENT, "WELCOME", TENANT, "a@b.com", "Hi", "body");
+    notifier.notifyOnce(EVENT, "WELCOME", TENANT, null, "a@b.com", "Hi", "body");
 
     assertEquals(0, channel.sends);
     assertEquals(0, repo.records);
@@ -93,7 +94,7 @@ class NotifierTest {
 
   @Test
   void skipsWhenNoRecipient() {
-    notifier.notifyOnce(EVENT, "WELCOME", TENANT, null, "Hi", "body");
+    notifier.notifyOnce(EVENT, "WELCOME", TENANT, null, null, "Hi", "body");
 
     assertEquals(0, channel.sends);
     assertEquals(0, repo.records);
@@ -105,7 +106,7 @@ class NotifierTest {
 
     assertThrows(
         RuntimeException.class,
-        () -> notifier.notifyOnce(EVENT, "WELCOME", TENANT, "a@b.com", "Hi", "body"));
+        () -> notifier.notifyOnce(EVENT, "WELCOME", TENANT, null, "a@b.com", "Hi", "body"));
     assertEquals(0, repo.records, "a failed send must not be recorded (so the consumer retries)");
   }
 }

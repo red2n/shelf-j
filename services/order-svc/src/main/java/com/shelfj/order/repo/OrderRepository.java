@@ -47,6 +47,19 @@ public class OrderRepository extends BaseOutboxRepository {
    */
   public Order createOrder(
       Order order, List<OrderItem> items, OutboxRow event, OrderDiscount discount) {
+    return createOrder(order, items, event, discount, List.of());
+  }
+
+  /**
+   * @param appliedPromotions what the promotion engine took off, written in the same transaction as
+   *     the order so a receipt can never print a discount the order does not carry
+   */
+  public Order createOrder(
+      Order order,
+      List<OrderItem> items,
+      OutboxRow event,
+      OrderDiscount discount,
+      List<com.shelfj.order.client.PricingClient.AppliedPromotion> appliedPromotions) {
     return inTx(
         c -> {
           try (PreparedStatement ps =
@@ -56,8 +69,8 @@ public class OrderRepository extends BaseOutboxRepository {
                       + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
                       + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
                       + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone,"
-                      + "  payment_method)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  payment_method,promotion_discount)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, order.id());
             ps.setObject(2, order.tenantId());
             ps.setObject(3, order.storeId());
@@ -82,6 +95,11 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setString(22, order.deliveryRecipientPhone());
             ps.setString(23, order.contactPhone());
             ps.setString(24, order.paymentMethod());
+            ps.setBigDecimal(
+                25,
+                order.promotionDiscount() == null
+                    ? java.math.BigDecimal.ZERO
+                    : order.promotionDiscount());
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -97,6 +115,7 @@ public class OrderRepository extends BaseOutboxRepository {
           appendStatusHistory(
               c, order.tenantId(), order.id(), null, order.status(), "created", null);
           if (discount != null) insertOrderDiscount(c, discount);
+          insertOrderPromotionsTx(c, order.tenantId(), order.id(), appliedPromotions);
           insertOutbox(c, event);
           return order;
         },
@@ -130,7 +149,7 @@ public class OrderRepository extends BaseOutboxRepository {
   public Optional<Order> findOrderByIdempotencyKey(UUID tenantId, String idempotencyKey) {
     return query(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
-                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
@@ -159,7 +178,7 @@ public class OrderRepository extends BaseOutboxRepository {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
-                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
@@ -198,7 +217,7 @@ public class OrderRepository extends BaseOutboxRepository {
     var list =
         query(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
-                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
@@ -244,6 +263,177 @@ public class OrderRepository extends BaseOutboxRepository {
         "transition order " + orderId);
   }
 
+  // ── SJ-D43: erasing a customer from this shop's orders ─────────────────────
+
+  /**
+   * States in which a sale is over, so nothing still has to reach the customer. An order in any
+   * other state keeps its delivery details until it gets here.
+   */
+  private static final String SETTLED_ORDER =
+      "('FULFILLED','CANCELLED','VOIDED','REFUNDED','PARTIALLY_REFUNDED')";
+
+  private static final String REDACT_ORDER =
+      " SET contact_phone = NULL, delivery_line1 = NULL, delivery_line2 = NULL,"
+          + " delivery_city = NULL, delivery_postal_code = NULL, delivery_recipient_name = NULL,"
+          + " delivery_recipient_phone = NULL, notes = NULL, updated_at = now()";
+
+  private static final String REDACT_SPECIAL_ORDER =
+      "UPDATE special_orders s SET customer_name = NULL, customer_phone = NULL,"
+          + " customer_email = NULL, delivery_address = NULL, notes = NULL, updated_at = now()";
+
+  private static final String SPECIAL_ORDER_SETTLED_AND_IDENTIFIES =
+      " s.status IN ('FULFILLED','CANCELLED')"
+          + " AND (s.customer_name IS NOT NULL OR s.customer_phone IS NOT NULL"
+          + " OR s.customer_email IS NOT NULL OR s.delivery_address IS NOT NULL"
+          + " OR s.notes IS NOT NULL)";
+
+  /** A layaway's free-text notes are the only thing on it that can name the customer. */
+  private static final String LAYAWAY_SETTLED_WITH_NOTES =
+      " l.status IN ('COMPLETED','CANCELLED') AND l.notes IS NOT NULL";
+
+  private static final String ORDER_STILL_IDENTIFIES =
+      " (o.contact_phone IS NOT NULL OR o.delivery_line1 IS NOT NULL"
+          + " OR o.delivery_line2 IS NOT NULL OR o.delivery_city IS NOT NULL"
+          + " OR o.delivery_postal_code IS NOT NULL OR o.delivery_recipient_name IS NOT NULL"
+          + " OR o.delivery_recipient_phone IS NOT NULL OR o.notes IS NOT NULL)";
+
+  /**
+   * Records a customer's erasure and redacts everything that can go now, once per event.
+   *
+   * @return false for a redelivered event, which changes nothing
+   */
+  public boolean applyCustomerErasure(
+      UUID tenantId, UUID customerId, UUID eventId, String consumer) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumer)) {
+            return false;
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO customer_erasures (tenant_id, customer_id, event_id)"
+                      + " VALUES (?,?,?) ON CONFLICT DO NOTHING")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, customerId);
+            ps.setObject(3, eventId);
+            ps.executeUpdate();
+          }
+          redactCustomerInTx(c, tenantId, customerId);
+          return true;
+        },
+        "apply customer erasure");
+  }
+
+  private static void redactCustomerInTx(Connection c, UUID tenantId, UUID customerId)
+      throws SQLException {
+    // Settled orders only: an open delivery still needs its address to arrive.
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE orders o"
+                + REDACT_ORDER
+                + " WHERE o.tenant_id = ? AND o.customer_id = ? AND o.status IN "
+                + SETTLED_ORDER
+                + " AND"
+                + ORDER_STILL_IDENTIFIES)) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.executeUpdate();
+    }
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            REDACT_SPECIAL_ORDER
+                + " WHERE s.tenant_id = ? AND s.customer_id = ? AND"
+                + SPECIAL_ORDER_SETTLED_AND_IDENTIFIES)) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.executeUpdate();
+    }
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE layaways l SET notes = NULL WHERE l.tenant_id = ? AND l.customer_id = ? AND"
+                + LAYAWAY_SETTLED_WITH_NOTES)) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.executeUpdate();
+    }
+    // At once, whatever the order's state: the address a receipt was emailed to and the name on a
+    // held basket are not needed to finish any sale.
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE order_receipts r SET emailed_to = NULL FROM orders o"
+                + " WHERE r.tenant_id = ? AND o.tenant_id = r.tenant_id AND o.id = r.order_id"
+                + " AND o.customer_id = ? AND r.emailed_to IS NOT NULL")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.executeUpdate();
+    }
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE parked_sales p SET customer_name = NULL, notes = NULL"
+                + " WHERE p.tenant_id = ? AND p.customer_id = ?"
+                + " AND (p.customer_name IS NOT NULL OR p.notes IS NOT NULL)")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, customerId);
+      ps.executeUpdate();
+    }
+  }
+
+  /**
+   * Redacts every order that has settled since its customer was erased. A cross-tenant sweep for
+   * the background sweeper, like {@link #findExpiredPendingOrders}: the tenant is carried by the
+   * join to customer_erasures on (tenant_id, customer_id), never assumed.
+   *
+   * <p>A sweep rather than a hook on each transition, because there are many ways for an order to
+   * finish — fulfil, cancel, void, refund, the till's capture, the pending sweeper — and a hook
+   * that one of them skipped would keep a forgotten customer's address forever.
+   *
+   * @return how many orders and special orders it redacted
+   */
+  public int sweepErasures() {
+    return inTx(
+        c -> {
+          int redacted = 0;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders o"
+                      + REDACT_ORDER
+                      + " FROM customer_erasures e"
+                      + " WHERE o.tenant_id = e.tenant_id AND o.customer_id = e.customer_id"
+                      + " AND o.status IN "
+                      + SETTLED_ORDER
+                      + " AND"
+                      + ORDER_STILL_IDENTIFIES)) {
+            redacted += ps.executeUpdate();
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  REDACT_SPECIAL_ORDER
+                      + " FROM customer_erasures e"
+                      + " WHERE s.tenant_id = e.tenant_id AND s.customer_id = e.customer_id AND"
+                      + SPECIAL_ORDER_SETTLED_AND_IDENTIFIES)) {
+            redacted += ps.executeUpdate();
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE layaways l SET notes = NULL FROM customer_erasures e"
+                      + " WHERE l.tenant_id = e.tenant_id AND l.customer_id = e.customer_id AND"
+                      + LAYAWAY_SETTLED_WITH_NOTES)) {
+            redacted += ps.executeUpdate();
+          }
+          // A receipt emailed after the erasure, for an order that was still open at the time.
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE order_receipts r SET emailed_to = NULL FROM orders o, customer_erasures e"
+                      + " WHERE o.tenant_id = r.tenant_id AND o.id = r.order_id"
+                      + " AND e.tenant_id = o.tenant_id AND e.customer_id = o.customer_id"
+                      + " AND r.emailed_to IS NOT NULL")) {
+            ps.executeUpdate();
+          }
+          return redacted;
+        },
+        "sweep customer erasures");
+  }
+
   public record PendingOrderRef(UUID tenantId, UUID orderId) {}
 
   /**
@@ -274,9 +464,17 @@ public class OrderRepository extends BaseOutboxRepository {
    * the same {@code paymentId} (golden rule #7) is a no-op via the unique key on {@code
    * order_payment_events}.
    */
-  public void applyPaymentCaptured(
-      UUID tenantId, UUID orderId, UUID paymentId, BigDecimal amount, OutboxRow confirmEvent) {
-    inTx(
+  public boolean applyPaymentCaptured(
+      UUID tenantId,
+      UUID orderId,
+      UUID paymentId,
+      BigDecimal amount,
+      OutboxRow confirmEvent,
+      OutboxRow fulfilEvent) {
+    // Returns true only when THIS capture completed the sale, so the caller numbers the receipt
+    // exactly once. A redelivery, a partial tender and an order already past PENDING all return
+    // false.
+    return inTx(
         c -> {
           try (PreparedStatement ps =
               c.prepareStatement(
@@ -289,7 +487,7 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.executeUpdate();
           } catch (SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState())) {
-              return null; // already applied — event redelivery, no-op
+              return false; // already applied — event redelivery, no-op
             }
             throw sqle;
           }
@@ -306,36 +504,107 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setObject(2, tenantId);
             ps.setObject(3, orderId);
             try (ResultSet rs = ps.executeQuery()) {
-              if (!rs.next()) return null; // order not found
+              if (!rs.next()) return false; // order not found
               newPaid = rs.getBigDecimal("paid_amount");
               total = rs.getBigDecimal("total");
               status = rs.getString("status");
             }
           }
 
-          if (Order.STATUS_PENDING.equals(status) && newPaid.compareTo(total) >= 0) {
-            try (PreparedStatement ps =
-                c.prepareStatement(
-                    "UPDATE orders SET status='CONFIRMED', updated_at=now()"
-                        + " WHERE tenant_id=? AND id=? AND status='PENDING'")) {
-              ps.setObject(1, tenantId);
-              ps.setObject(2, orderId);
-              if (ps.executeUpdate() > 0) {
-                appendStatusHistory(
-                    c,
-                    tenantId,
-                    orderId,
-                    Order.STATUS_PENDING,
-                    Order.STATUS_CONFIRMED,
-                    "payment captured",
-                    null);
-                insertOutbox(c, confirmEvent);
-              }
+          if (!Order.STATUS_PENDING.equals(status) || newPaid.compareTo(total) < 0) {
+            return false;
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET status='CONFIRMED', updated_at=now()"
+                      + " WHERE tenant_id=? AND id=? AND status='PENDING'")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            if (ps.executeUpdate() == 0) {
+              return false;
             }
           }
-          return null;
+          appendStatusHistory(
+              c,
+              tenantId,
+              orderId,
+              Order.STATUS_PENDING,
+              Order.STATUS_CONFIRMED,
+              "payment captured",
+              null);
+          insertOutbox(c, confirmEvent);
+
+          // SJ-D40. A till sale is handed over at the counter the moment it is paid for, so the
+          // capture that completes it also fulfils it — here, in the same transaction, so "paid for
+          // and never deducted from stock" is not a state a crash between two calls can leave.
+          if (fulfilEvent != null) {
+            fulfilConfirmedInTx(c, tenantId, orderId, "sold at the till", null, fulfilEvent);
+          }
+          return true;
         },
         "apply payment captured");
+  }
+
+  /**
+   * Confirms a till sale and hands it over in one transaction — the manual-confirm counterpart of
+   * {@link #applyPaymentCaptured}, for a sale a manager confirms by hand.
+   */
+  public Order confirmAndFulfil(
+      UUID tenantId, UUID orderId, UUID changedBy, OutboxRow confirmEvent, OutboxRow fulfilEvent) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET status='CONFIRMED', updated_at=now()"
+                      + " WHERE tenant_id=? AND id=? AND status='PENDING'")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            if (ps.executeUpdate() == 0) {
+              throw ApiException.notFound(
+                  "ORDER_NOT_FOUND_OR_WRONG_STATUS", "order not found or not in status PENDING");
+            }
+          }
+          appendStatusHistory(
+              c,
+              tenantId,
+              orderId,
+              Order.STATUS_PENDING,
+              Order.STATUS_CONFIRMED,
+              "confirmed",
+              changedBy);
+          insertOutbox(c, confirmEvent);
+          fulfilConfirmedInTx(c, tenantId, orderId, "sold at the till", changedBy, fulfilEvent);
+          return findOrderInTx(c, tenantId, orderId);
+        },
+        "confirm and fulfil till sale " + orderId);
+  }
+
+  /**
+   * CONFIRMED to FULFILLED, its history row and its OrderFulfilled event, on the caller's
+   * connection. A no-op when the order is not CONFIRMED, so it cannot fulfil — and deduct stock for
+   * — the same sale twice.
+   */
+  private void fulfilConfirmedInTx(
+      java.sql.Connection c,
+      UUID tenantId,
+      UUID orderId,
+      String reason,
+      UUID changedBy,
+      OutboxRow event)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE orders SET status='FULFILLED', updated_at=now()"
+                + " WHERE tenant_id=? AND id=? AND status='CONFIRMED'")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      if (ps.executeUpdate() == 0) {
+        return;
+      }
+    }
+    appendStatusHistory(
+        c, tenantId, orderId, Order.STATUS_CONFIRMED, Order.STATUS_FULFILLED, reason, changedBy);
+    insertOutbox(c, event);
   }
 
   /**
@@ -503,22 +772,44 @@ public class OrderRepository extends BaseOutboxRepository {
   // ── Post-void ─────────────────────────────────────────────────────────────
 
   public PosVoidLog voidOrder(
-      UUID tenantId, UUID orderId, UUID storeId, String reason, UUID voidedBy, OutboxRow event) {
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      String reason,
+      UUID voidedBy,
+      java.util.function.Function<List<com.shelfj.order.domain.Domain.RestockLine>, OutboxRow>
+          eventFor) {
     return inTx(
         c -> {
-          int rows;
+          // Lock first, so what is restocked is decided against the order being voided rather than
+          // a copy read before a concurrent fulfil or return changed it.
+          String priorStatus;
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "UPDATE orders SET status=?, updated_at=now()"
-                      + " WHERE tenant_id=? AND id=? AND status NOT IN ('VOIDED','CANCELLED')")) {
+                  "SELECT status FROM orders WHERE tenant_id=? AND id=? FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              priorStatus = rs.next() ? rs.getString(1) : null;
+            }
+          }
+          if (priorStatus == null
+              || Order.STATUS_VOIDED.equals(priorStatus)
+              || Order.STATUS_CANCELLED.equals(priorStatus)) {
+            throw ApiException.conflict(
+                "ORDER_CANNOT_VOID", "order not found or already voided/cancelled");
+          }
+
+          var restock = restockOnVoidInTx(c, tenantId, orderId);
+
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET status=?, updated_at=now() WHERE tenant_id=? AND id=?")) {
             ps.setString(1, Order.STATUS_VOIDED);
             ps.setObject(2, tenantId);
             ps.setObject(3, orderId);
-            rows = ps.executeUpdate();
+            ps.executeUpdate();
           }
-          if (rows == 0)
-            throw ApiException.conflict(
-                "ORDER_CANNOT_VOID", "order not found or already voided/cancelled");
           PosVoidLog vl;
           try (PreparedStatement ps =
               c.prepareStatement(
@@ -534,11 +825,72 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.executeUpdate();
             vl = new PosVoidLog(vid, tenantId, orderId, storeId, reason, voidedBy, Instant.now());
           }
-          appendStatusHistory(c, tenantId, orderId, null, Order.STATUS_VOIDED, reason, voidedBy);
-          insertOutbox(c, event);
+          // With the prior status in hand the history row says what was voided; it used to record
+          // null here.
+          appendStatusHistory(
+              c, tenantId, orderId, priorStatus, Order.STATUS_VOIDED, reason, voidedBy);
+          insertOutbox(c, eventFor.apply(restock));
           return vl;
         },
         "void order");
+  }
+
+  /**
+   * What a void must put back: nothing unless the sale was handed over, and then each line net of
+   * anything already returned (SJ-D40).
+   *
+   * <p>"Handed over" is read from the append-only status history rather than the current status: a
+   * sold order moves on to PARTIALLY_REFUNDED or REFUNDED, and its current status alone forgets it
+   * was ever fulfilled. Every return is netted whatever its status, because createReturn emits
+   * OrderReturned — and so restocks — the moment a return is created.
+   */
+  private List<com.shelfj.order.domain.Domain.RestockLine> restockOnVoidInTx(
+      Connection c, UUID tenantId, UUID orderId) throws SQLException {
+    boolean handedOver = false;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT EXISTS (SELECT 1 FROM order_status_history"
+                + " WHERE tenant_id=? AND order_id=? AND to_status='FULFILLED')")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) {
+          handedOver = rs.getBoolean(1);
+        }
+      }
+    }
+    if (!handedOver) {
+      return List.of();
+    }
+    var lines = new java.util.ArrayList<com.shelfj.order.domain.Domain.RestockLine>();
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "WITH sold AS ("
+                + "  SELECT variant_id, SUM(qty) AS qty FROM order_items"
+                + "   WHERE tenant_id=? AND order_id=? GROUP BY variant_id"
+                + "), returned AS ("
+                + "  SELECT ri.variant_id, SUM(ri.qty) AS qty"
+                + "    FROM return_items ri"
+                + "    JOIN returns r ON r.id = ri.return_id AND r.tenant_id = ri.tenant_id"
+                + "   WHERE r.tenant_id=? AND r.order_id=? GROUP BY ri.variant_id"
+                + ")"
+                + " SELECT s.variant_id, s.qty - COALESCE(rt.qty, 0) AS net"
+                + "   FROM sold s LEFT JOIN returned rt ON rt.variant_id = s.variant_id"
+                + "  WHERE s.qty - COALESCE(rt.qty, 0) > 0"
+                + "  ORDER BY s.variant_id")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.setObject(3, tenantId);
+      ps.setObject(4, orderId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          lines.add(
+              new com.shelfj.order.domain.Domain.RestockLine(
+                  rs.getObject(1, UUID.class), rs.getBigDecimal(2)));
+        }
+      }
+    }
+    return lines;
   }
 
   // ── Layaway ───────────────────────────────────────────────────────────────
@@ -787,12 +1139,21 @@ public class OrderRepository extends BaseOutboxRepository {
         "reload gift card");
   }
 
+  /**
+   * Redeem gift-card value toward an order. Idempotent per (card, order): a repeat redemption for
+   * the same order returns the card unchanged rather than deducting again — the balance is money,
+   * and a retried request whose response was lost must not charge the customer twice. This is the
+   * same shape payment-svc uses to make a STORE_CREDIT tender idempotent, and it is what lets a POS
+   * sale captured offline be replayed safely. A redemption with no orderId (a manual back-office
+   * adjustment) has no natural key and is not deduplicated.
+   */
   public GiftCard redeemGiftCard(
       UUID tenantId, String code, BigDecimal amount, UUID orderId, String reference) {
     return inTx(
         c -> {
           GiftCard gc = findGiftCardByCodeInTx(c, tenantId, code);
           if (gc == null) throw ApiException.notFound("GIFT_CARD_NOT_FOUND", "gift card not found");
+          if (orderId != null && hasRedeemedForOrderTx(c, tenantId, gc.id(), orderId)) return gc;
           if (!GiftCard.STATUS_ACTIVE.equals(gc.status()))
             throw ApiException.conflict("GIFT_CARD_NOT_ACTIVE", "gift card is not active");
           if (gc.currentBalance().compareTo(amount) < 0)
@@ -830,6 +1191,23 @@ public class OrderRepository extends BaseOutboxRepository {
           return findGiftCardByCodeInTx(c, tenantId, code);
         },
         "redeem gift card");
+  }
+
+  /** True when this card has already been redeemed against this order (replay guard). */
+  private static boolean hasRedeemedForOrderTx(
+      java.sql.Connection c, UUID tenantId, UUID giftCardId, UUID orderId) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT 1 FROM gift_card_transactions"
+                + " WHERE tenant_id=? AND gift_card_id=? AND order_id=? AND tx_type=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, giftCardId);
+      ps.setObject(3, orderId);
+      ps.setString(4, GiftCardTransaction.TX_REDEEM);
+      try (var rs = ps.executeQuery()) {
+        return rs.next();
+      }
+    }
   }
 
   public List<GiftCardTransaction> findGiftCardTransactions(UUID tenantId, UUID giftCardId) {
@@ -895,7 +1273,7 @@ public class OrderRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
-                + " subtotal, tax_amount, discount_amount, total, currency, notes,"
+                + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
                 + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
@@ -1056,7 +1434,58 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getString("delivery_recipient_name"),
         rs.getString("delivery_recipient_phone"),
         rs.getString("contact_phone"),
-        rs.getString("payment_method"));
+        rs.getString("payment_method"),
+        rs.getBigDecimal("promotion_discount"));
+  }
+
+  /**
+   * Records which promotions applied to an order and for how much.
+   *
+   * <p>Append-only, and written in the same transaction as the order it belongs to, so a receipt
+   * can never print a discount the order does not carry.
+   */
+  void insertOrderPromotionsTx(
+      java.sql.Connection c,
+      UUID tenantId,
+      UUID orderId,
+      List<com.shelfj.order.client.PricingClient.AppliedPromotion> applied)
+      throws SQLException {
+    if (applied.isEmpty()) return;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO order_promotions"
+                + " (tenant_id, order_id, promotion_id, promotion_name, variant_id, amount)"
+                + " VALUES (?,?,?,?,?,?)")) {
+      for (var a : applied) {
+        ps.setObject(1, tenantId);
+        ps.setObject(2, orderId);
+        ps.setObject(3, a.promotionId());
+        ps.setString(4, a.name());
+        ps.setObject(5, a.variantId());
+        ps.setBigDecimal(6, a.amount());
+        ps.addBatch();
+      }
+      ps.executeBatch();
+    }
+  }
+
+  /** What the promotion engine took off one order, for a receipt or a refund decision. */
+  public List<com.shelfj.order.client.PricingClient.AppliedPromotion> findOrderPromotions(
+      UUID tenantId, UUID orderId) {
+    return query(
+        "SELECT promotion_id, promotion_name, variant_id, amount FROM order_promotions"
+            + " WHERE tenant_id = ? AND order_id = ? ORDER BY created_at, promotion_name",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, orderId);
+        },
+        rs ->
+            new com.shelfj.order.client.PricingClient.AppliedPromotion(
+                rs.getObject("promotion_id", UUID.class),
+                rs.getString("promotion_name"),
+                rs.getObject("variant_id", UUID.class),
+                rs.getBigDecimal("amount")),
+        "find order promotions");
   }
 
   private OrderItem mapOrderItem(ResultSet rs) throws SQLException {
@@ -1441,6 +1870,164 @@ public class OrderRepository extends BaseOutboxRepository {
           return e;
         },
         "insert pos log entry");
+  }
+
+  /**
+   * Journal a completed POS sale, returning the existing entry if this order is already journalled
+   * rather than failing.
+   *
+   * <p>The till calls this after taking the money, so it is on the retry path: a lost response, or
+   * a sale captured offline and replayed later, must not turn into an error the cashier has to
+   * interpret. The order id is the natural key and already carries a unique index, so this is the
+   * same shape as the gift-card redeem guard — a replay is a no-op, not a 409.
+   */
+  public PosLogEntry recordPosLogOnce(PosLogEntry e) {
+    return inTx(
+        c -> {
+          PosLogEntry existing = findPosLogByOrderTx(c, e.tenantId(), e.orderId());
+          if (existing != null) return existing;
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO pos_log_entries"
+                      + " (id,tenant_id,order_id,store_id,cashier_id,subtotal,tax_amount,"
+                      + "  discount_amount,total,currency,tax_exempt,exempt_reason,transaction_ts)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, e.id());
+            ps.setObject(2, e.tenantId());
+            ps.setObject(3, e.orderId());
+            ps.setObject(4, e.storeId());
+            ps.setObject(5, e.cashierId());
+            ps.setBigDecimal(6, e.subtotal());
+            ps.setBigDecimal(7, e.taxAmount());
+            ps.setBigDecimal(8, e.discountAmount());
+            ps.setBigDecimal(9, e.total());
+            ps.setString(10, e.currency());
+            ps.setBoolean(11, e.taxExempt());
+            ps.setString(12, e.exemptReason());
+            ps.setObject(13, e.transactionTs().atOffset(java.time.ZoneOffset.UTC));
+            ps.executeUpdate();
+          } catch (java.sql.SQLException sqle) {
+            // Two tills journalling the same order at once: the loser re-reads the winner's row.
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState())) {
+              PosLogEntry raced = findPosLogByOrderTx(c, e.tenantId(), e.orderId());
+              if (raced != null) return raced;
+            }
+            throw sqle;
+          }
+          return e;
+        },
+        "record pos log entry");
+  }
+
+  private PosLogEntry findPosLogByOrderTx(java.sql.Connection c, UUID tenantId, UUID orderId)
+      throws java.sql.SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
+                + " discount_amount, total, currency, tax_exempt, exempt_reason,"
+                + " transaction_ts, created_at"
+                + " FROM pos_log_entries WHERE tenant_id=? AND order_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      try (var rs = ps.executeQuery()) {
+        return rs.next() ? mapPosLogEntry(rs) : null;
+      }
+    }
+  }
+
+  // ── Staff exception report ──────────────────────────────────────────────────
+  //
+  // Four separate aggregates rather than one joined query, because these are four
+  // independent append-only logs with no join key between them beyond the actor or store
+  // they name. Joining them would multiply rows: a cashier with 3 discounts and 2 voids
+  // would report 6 of each. They are summed separately and merged on the key in the
+  // service, which is also what lets a cashier who only appears in one log still get a row.
+
+  /** discounts: count and total value, keyed by actor or store. */
+  public List<Object[]> aggregateDiscounts(
+      UUID tenantId, UUID storeId, Instant from, Instant to, boolean byActor) {
+    String key = byActor ? "granted_by" : "store_id";
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT "
+                + key
+                + ", COUNT(*), COALESCE(SUM(discount_amount),0)"
+                + " FROM order_discounts WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (from != null) sql.append(" AND created_at >= ?");
+    if (to != null) sql.append(" AND created_at < ?");
+    sql.append(" GROUP BY ").append(key);
+    return query(
+        sql.toString(),
+        ps -> bindPeriod(ps, tenantId, storeId, from, to),
+        rs -> new Object[] {rs.getObject(1), rs.getLong(2), rs.getBigDecimal(3)},
+        "aggregate discounts");
+  }
+
+  /** voids: count only — a void has no money on it, only an order it removed. */
+  public List<Object[]> aggregateVoids(
+      UUID tenantId, UUID storeId, Instant from, Instant to, boolean byActor) {
+    String key = byActor ? "voided_by" : "store_id";
+    StringBuilder sql =
+        new StringBuilder("SELECT " + key + ", COUNT(*) FROM pos_void_log WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (from != null) sql.append(" AND voided_at >= ?");
+    if (to != null) sql.append(" AND voided_at < ?");
+    sql.append(" GROUP BY ").append(key);
+    return query(
+        sql.toString(),
+        ps -> bindPeriod(ps, tenantId, storeId, from, to),
+        rs -> new Object[] {rs.getObject(1), rs.getLong(2)},
+        "aggregate voids");
+  }
+
+  /** no-sales: drawer opened with no transaction. */
+  public List<Object[]> aggregateNoSales(
+      UUID tenantId, UUID storeId, Instant from, Instant to, boolean byActor) {
+    String key = byActor ? "cashier_id" : "store_id";
+    StringBuilder sql =
+        new StringBuilder("SELECT " + key + ", COUNT(*) FROM pos_no_sale_log WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (from != null) sql.append(" AND logged_at >= ?");
+    if (to != null) sql.append(" AND logged_at < ?");
+    sql.append(" GROUP BY ").append(key);
+    return query(
+        sql.toString(),
+        ps -> bindPeriod(ps, tenantId, storeId, from, to),
+        rs -> new Object[] {rs.getObject(1), rs.getLong(2)},
+        "aggregate no-sales");
+  }
+
+  /** The denominator: journalled sales, so exceptions can be read as a rate. */
+  public List<Object[]> aggregateJournalledSales(
+      UUID tenantId, UUID storeId, Instant from, Instant to, boolean byActor) {
+    String key = byActor ? "cashier_id" : "store_id";
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT "
+                + key
+                + ", COUNT(*), COALESCE(SUM(total),0)"
+                + " FROM pos_log_entries WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (from != null) sql.append(" AND transaction_ts >= ?");
+    if (to != null) sql.append(" AND transaction_ts < ?");
+    sql.append(" GROUP BY ").append(key);
+    return query(
+        sql.toString(),
+        ps -> bindPeriod(ps, tenantId, storeId, from, to),
+        rs -> new Object[] {rs.getObject(1), rs.getLong(2), rs.getBigDecimal(3)},
+        "aggregate journalled sales");
+  }
+
+  /** tenant_id first (golden rule #3), then the optional store and period, in SQL order. */
+  private static void bindPeriod(
+      PreparedStatement ps, UUID tenantId, UUID storeId, Instant from, Instant to)
+      throws java.sql.SQLException {
+    int i = 1;
+    ps.setObject(i++, tenantId);
+    if (storeId != null) ps.setObject(i++, storeId);
+    if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
+    if (to != null) ps.setObject(i++, to.atOffset(java.time.ZoneOffset.UTC));
   }
 
   public List<PosLogEntry> findPosLogByOrder(UUID tenantId, UUID orderId) {

@@ -1,5 +1,8 @@
 package com.shelfj.purchase.service;
 
+import com.shelfj.purchase.client.PricingClient;
+import com.shelfj.purchase.client.TenantClient;
+import com.shelfj.purchase.config.ServiceConfig;
 import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.GoodsReceipt;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
@@ -8,11 +11,17 @@ import com.shelfj.purchase.domain.Domain.NominalLedgerEntry;
 import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import com.shelfj.purchase.domain.Domain.Supplier;
+import com.shelfj.purchase.domain.Money;
+import com.shelfj.purchase.domain.SpendAuthority;
+import com.shelfj.purchase.domain.ThreeWayMatch;
+import com.shelfj.purchase.domain.Totals;
 import com.shelfj.purchase.dto.Dtos.AddPurchaseOrderLineRequest;
 import com.shelfj.purchase.dto.Dtos.CancelPurchaseOrderRequest;
+import com.shelfj.purchase.dto.Dtos.CaptureSupplierInvoiceRequest;
 import com.shelfj.purchase.dto.Dtos.CreateGoodsReceiptRequest;
 import com.shelfj.purchase.dto.Dtos.CreatePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreateSupplierRequest;
+import com.shelfj.purchase.dto.Dtos.DecidePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.RaiseIntercompanyInvoiceRequest;
 import com.shelfj.purchase.repo.PurchaseRepository;
 import com.shelfj.web.ApiException;
@@ -36,18 +45,60 @@ public class PurchaseService {
 
   @Inject PurchaseRepository repo;
 
+  @Inject TenantClient tenants;
+
+  @Inject PricingClient pricing;
+
+  @Inject ServiceConfig config;
+
+  // ── Currency ──────────────────────────────────────────────────────────────────
+
+  /**
+   * The tenant's own trading currency, for use when the caller names none (SJ-D23).
+   *
+   * <p>This service stamped a hardcoded {@code "GBP"} onto suppliers, purchase orders and
+   * intercompany invoices alike — the SJ-D2 defect, in the one service SJ-D2's sweep never reached.
+   * On a platform whose tenants trade in USD, JPY, INR and CNY, that is not a cosmetic default: it
+   * is one country's currency written onto another country's money, and every downstream figure
+   * built on it inherits the error.
+   *
+   * <p>Falls back to the configured platform default when tenant-svc cannot answer, rather than
+   * refusing the write — see {@link TenantClient} for why that trade is the right way round here.
+   *
+   * @param tenantId the tenant whose currency is wanted
+   * @return an ISO 4217 code, never null
+   */
+  private String resolveTenantCurrency(UUID tenantId) {
+    return tenants
+        .findCurrency(tenantId)
+        .orElseGet(() -> config.defaultCurrency().toUpperCase(java.util.Locale.ROOT));
+  }
+
   // ── Suppliers ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Registers a supplier.
+   *
+   * <p>The supplier's currency is the one they invoice in. It defaults to the tenant's own — most
+   * suppliers are domestic — but is deliberately settable, because the case that matters is the one
+   * that is not: a UK tenant buying from a Japanese supplier is invoiced in JPY, and every purchase
+   * order raised against that supplier is a JPY commitment.
+   */
   public Supplier createSupplier(CreateSupplierRequest req, TenantContext ctx) {
+    UUID tenantId = ctx.requireTenantId();
+    String currency =
+        req.currency() != null
+            ? Money.requireIso4217(req.currency())
+            : resolveTenantCurrency(tenantId);
     Supplier s =
         new Supplier(
             UUID.randomUUID(),
-            ctx.requireTenantId(),
+            tenantId,
             req.name(),
             req.vatNumber(),
             req.vatRegistered(),
             req.countryCode() != null ? req.countryCode().toUpperCase(java.util.Locale.ROOT) : "GB",
-            req.currency() != null ? req.currency().toUpperCase(java.util.Locale.ROOT) : "GBP",
+            currency,
             req.paymentTermsDays() != null ? req.paymentTermsDays() : BACS_TERMS_DAYS,
             Instant.now(),
             Instant.now());
@@ -67,8 +118,38 @@ public class PurchaseService {
 
   // ── Purchase Orders ───────────────────────────────────────────────────────────
 
+  /**
+   * Raises a draft purchase order against a supplier.
+   *
+   * <p><b>The order's currency is the supplier's</b>, not the tenant's and not a literal (SJ-D24).
+   * A purchase order is a commitment to pay whoever is going to invoice, so it is denominated in
+   * the currency that supplier bills in: a UK tenant ordering from a Japanese supplier commits to
+   * JPY, and stamping GBP on it would misstate the liability, the approval threshold and every
+   * downstream total.
+   *
+   * <p>A caller naming a different currency is refused rather than silently overridden, on the
+   * SJ-D2 precedent — a request whose stated currency is not the one recorded is worse than an
+   * error. Changing what a supplier invoices in is a change to the supplier, not to one order.
+   *
+   * @throws ApiException 404 if the supplier does not exist for this tenant; 400 {@code
+   *     PURCHASE_CURRENCY_MISMATCH} if an explicit currency contradicts the supplier's; 400 {@code
+   *     PURCHASE_INVALID_CURRENCY} if it is not an ISO 4217 code
+   */
   public PurchaseOrder createPurchaseOrder(CreatePurchaseOrderRequest req, TenantContext ctx) {
-    getSupplier(ctx, req.supplierId());
+    Supplier supplier = getSupplier(ctx, req.supplierId());
+    String currency = supplier.currency();
+    if (req.currency() != null) {
+      String asked = Money.requireIso4217(req.currency());
+      if (!asked.equals(currency))
+        throw ApiException.badRequest(
+            "PURCHASE_CURRENCY_MISMATCH",
+            "currency "
+                + asked
+                + " does not match supplier "
+                + supplier.name()
+                + "'s invoicing currency "
+                + currency);
+    }
     PurchaseOrder po =
         new PurchaseOrder(
             UUID.randomUUID(),
@@ -76,15 +157,24 @@ public class PurchaseService {
             req.supplierId(),
             req.storeId(),
             Domain.PO_DRAFT,
-            req.currency() != null ? req.currency().toUpperCase(java.util.Locale.ROOT) : "GBP",
-            BigDecimal.ZERO,
-            BigDecimal.ZERO,
-            BigDecimal.ZERO,
+            currency,
+            // Scaled to the currency rather than a bare ZERO, so a JPY order opens at 0 and a
+            // GBP one at 0.00 — the same figure every later restatement will produce.
+            Totals.zero(currency).net(),
+            Totals.zero(currency).vat(),
+            Totals.zero(currency).gross(),
             req.expectedDelivery() != null
                 ? Parsing.date(req.expectedDelivery(), "expectedDelivery")
                 : null,
             Instant.now(),
             Instant.now(),
+            null,
+            null,
+            null,
+            null,
+            // Who raised it, from the verified JWT — never from the request body. Identity is
+            // subject to golden rule #3 for the same reason tenant_id is.
+            ctx.userId(),
             null,
             null);
     return repo.createPurchaseOrder(
@@ -102,6 +192,20 @@ public class PurchaseService {
                 ApiException.notFound("PURCHASE_PO_NOT_FOUND", "Purchase order not found: " + id));
   }
 
+  /**
+   * Appends a line to a draft purchase order and restates the order's totals (SJ-D22).
+   *
+   * <p>The totals were the defect. {@code total_net}, {@code total_vat} and {@code total_gross}
+   * were inserted as zero by {@link #createPurchaseOrder} and no code anywhere ever updated them,
+   * so every purchase order in the product reported a value of zero — on the API, and on the two
+   * places the procurement screen renders it. That is not a dormant column: it is a commitment
+   * figure a buyer reads before approving, and the spend authority built on top of it would have
+   * been authorising against nothing.
+   *
+   * <p>The VAT table is fetched before the transaction opens rather than inside it, so a slow
+   * pricing-svc holds no database transaction open. Its absence is not fatal — see {@link
+   * Totals#of} for why an unresolvable VAT code rates at zero instead of refusing the line.
+   */
   public PurchaseOrderLine addPurchaseOrderLine(
       TenantContext ctx, UUID poId, AddPurchaseOrderLineRequest req) {
     PurchaseOrder po = getPurchaseOrder(ctx, poId);
@@ -118,7 +222,8 @@ public class PurchaseService {
             req.unitPrice(),
             req.vatCode() != null ? req.vatCode().toUpperCase(java.util.Locale.ROOT) : "T1",
             Instant.now());
-    return repo.addPurchaseOrderLine(line);
+    return repo.addPurchaseOrderLine(
+        line, po.currency(), pricing.findVatRates(ctx.requireTenantId()));
   }
 
   public List<PurchaseOrderLine> listPurchaseOrderLines(TenantContext ctx, UUID poId) {
@@ -126,12 +231,193 @@ public class PurchaseService {
     return repo.findPurchaseOrderLines(ctx.requireTenantId(), poId);
   }
 
+  /**
+   * Submits a draft purchase order, routing it for approval when it is above the submitter's own
+   * spend authority.
+   *
+   * <p>Before this, any staff role could commit the business to any amount: {@code
+   * /purchase-orders} is not under {@code /admin/}, so the authorisation filter asked only for
+   * "some staff role", and a cashier could submit an order for a million pounds. The order now
+   * lands in {@code SUBMITTED} if the submitter's authority covers it and {@code PENDING_APPROVAL}
+   * if it does not — and either way the submission is recorded in the append-only trail, so a
+   * question about who committed what has an answer.
+   *
+   * <p><b>Separation of duties falls out of this rather than being bolted on.</b> An order only
+   * reaches PENDING_APPROVAL because it exceeded the submitter's ceiling — so by construction that
+   * same person cannot approve it, because {@link #approvePurchaseOrder} applies the identical
+   * check. There is deliberately no separate "you may not approve your own order" rule: it would be
+   * redundant here, and it would deadlock a single-owner shop where one person legitimately raises
+   * and approves everything within their unlimited authority.
+   *
+   * @throws ApiException 400 {@code PURCHASE_PO_NOT_DRAFT} if the order is not DRAFT; 409 if it
+   *     stopped being DRAFT between the read and the write
+   */
   public PurchaseOrder submitPurchaseOrder(TenantContext ctx, UUID poId) {
+    UUID tenantId = ctx.requireTenantId();
     PurchaseOrder po = getPurchaseOrder(ctx, poId);
     if (!Domain.PO_DRAFT.equals(po.status()))
       throw ApiException.badRequest("PURCHASE_PO_NOT_DRAFT", "Only DRAFT orders can be submitted");
-    repo.updatePurchaseOrderStatus(ctx.requireTenantId(), poId, Domain.PO_SUBMITTED);
+
+    SpendAuthority authority =
+        SpendAuthority.decide(po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits());
+    String landing = authority.authorised() ? Domain.PO_SUBMITTED : Domain.PO_PENDING_APPROVAL;
+
+    boolean submitted =
+        repo.submitPurchaseOrder(
+            tenantId,
+            poId,
+            landing,
+            trailRow(ctx, po, Domain.APPROVAL_REQUESTED, authority, authority.reason()));
+    if (!submitted)
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_DRAFT", "The order stopped being DRAFT before it could be submitted");
     return getPurchaseOrder(ctx, poId);
+  }
+
+  /**
+   * Approves an order that was above its submitter's authority.
+   *
+   * <p>The approver's own authority is checked against the same figure by the same function — an
+   * approval by someone who could not have submitted the order themselves would defeat the entire
+   * control, and is the obvious way to get this wrong.
+   *
+   * <p>The order's total is re-read here rather than taken from the request, and stamped onto the
+   * trail row: an order can be edited after a rejection, so approving against a figure the caller
+   * supplied would let the amount change between the review and the decision.
+   *
+   * @throws ApiException 404 if no such order; 409 {@code PURCHASE_PO_NOT_PENDING_APPROVAL} if it
+   *     is not awaiting a decision; 403 {@code PURCHASE_APPROVAL_EXCEEDS_AUTHORITY} if the
+   *     approver's own ceiling does not cover it
+   */
+  public PurchaseOrder approvePurchaseOrder(
+      TenantContext ctx, UUID poId, DecidePurchaseOrderRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    PurchaseOrder po = requirePendingApproval(ctx, poId);
+
+    SpendAuthority authority =
+        SpendAuthority.decide(po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits());
+    if (!authority.authorised())
+      throw ApiException.forbidden("PURCHASE_APPROVAL_EXCEEDS_AUTHORITY", authority.reason());
+
+    boolean decided =
+        repo.decidePurchaseOrder(
+            tenantId,
+            poId,
+            true,
+            trailRow(
+                ctx,
+                po,
+                Domain.APPROVAL_APPROVED,
+                authority,
+                req == null ? null : trimmed(req.reason())));
+    if (!decided)
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_PENDING_APPROVAL",
+          "The order was decided by someone else before this approval landed");
+    return getPurchaseOrder(ctx, poId);
+  }
+
+  /**
+   * Rejects an order awaiting approval, returning it to DRAFT so it can be corrected and
+   * resubmitted.
+   *
+   * <p>A reason is required, and an approval's is not, because only the rejection leaves somebody
+   * with work to do and no idea what to change.
+   *
+   * <p>Rejecting needs no spend authority. Refusing to commit money is not itself a commitment, and
+   * requiring authority to say no would mean an order too large for anyone configured could never
+   * be cleared out of the queue at all.
+   *
+   * @throws ApiException 404 if no such order; 409 if it is not awaiting a decision; 400 {@code
+   *     PURCHASE_APPROVAL_REASON_REQUIRED} if no reason is given
+   */
+  public PurchaseOrder rejectPurchaseOrder(
+      TenantContext ctx, UUID poId, DecidePurchaseOrderRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    PurchaseOrder po = requirePendingApproval(ctx, poId);
+    String reason = req == null ? null : trimmed(req.reason());
+    if (reason == null)
+      throw ApiException.badRequest(
+          "PURCHASE_APPROVAL_REASON_REQUIRED",
+          "A rejection must say why, so the buyer knows what to change");
+
+    SpendAuthority authority =
+        SpendAuthority.decide(po.totalNet(), po.currency(), ctx.roles(), config.approvalLimits());
+    boolean decided =
+        repo.decidePurchaseOrder(
+            tenantId, poId, false, trailRow(ctx, po, Domain.APPROVAL_REJECTED, authority, reason));
+    if (!decided)
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_PENDING_APPROVAL",
+          "The order was decided by someone else before this rejection landed");
+    return getPurchaseOrder(ctx, poId);
+  }
+
+  /**
+   * The order's complete approval history — every submission and every decision.
+   *
+   * @throws ApiException 404 if the order does not exist for this tenant
+   */
+  public List<Domain.PurchaseOrderApproval> purchaseOrderApprovals(TenantContext ctx, UUID poId) {
+    getPurchaseOrder(ctx, poId); // 404s another tenant's order before reading its trail
+    return repo.findApprovals(ctx.requireTenantId(), poId);
+  }
+
+  /**
+   * What the caller may commit in a given currency, so a UI can say so before the buyer has built
+   * the order rather than after they try to submit it.
+   *
+   * @param currency the currency to answer for; validated as ISO 4217
+   */
+  /** Whether spend authority is configured at all; false means submission is never routed. */
+  public boolean approvalEnabled() {
+    return config.approvalEnabled();
+  }
+
+  public SpendAuthority spendAuthority(TenantContext ctx, String currency) {
+    ctx.requireTenantId();
+    // A null total asks "what is my ceiling", not "may I spend this", and decide() answers both.
+    return SpendAuthority.decide(
+        null, Money.requireIso4217(currency), ctx.roles(), config.approvalLimits());
+  }
+
+  private PurchaseOrder requirePendingApproval(TenantContext ctx, UUID poId) {
+    PurchaseOrder po = getPurchaseOrder(ctx, poId);
+    if (!Domain.PO_PENDING_APPROVAL.equals(po.status()))
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_PENDING_APPROVAL",
+          "Only an order awaiting approval can be decided (status: " + po.status() + ")");
+    return po;
+  }
+
+  /**
+   * Builds one append-only trail row, capturing the figure and the authority as they stand at this
+   * moment rather than leaving either to be re-derived later from data that can change.
+   */
+  private Domain.PurchaseOrderApproval trailRow(
+      TenantContext ctx,
+      PurchaseOrder po,
+      String decision,
+      SpendAuthority authority,
+      String reason) {
+    return new Domain.PurchaseOrderApproval(
+        UUID.randomUUID(),
+        po.tenantId(),
+        po.id(),
+        decision,
+        po.totalNet(),
+        po.currency(),
+        authority.ceiling(),
+        ctx.userId(),
+        authority.role(),
+        reason,
+        Instant.now());
+  }
+
+  private static String trimmed(String s) {
+    if (s == null) return null;
+    String t = s.trim();
+    return t.isEmpty() ? null : t;
   }
 
   /**
@@ -175,14 +461,184 @@ public class PurchaseService {
     return getPurchaseOrder(ctx, poId);
   }
 
+  /**
+   * What is still outstanding on a purchase order, line by line.
+   *
+   * <p>The reason partial receipt needs a screen and not only a status: a buyer chasing a supplier
+   * has to know <em>what</em> is missing, and "PARTIALLY_RECEIVED" does not say.
+   */
+  public List<Domain.PurchaseOrderLineProgress> purchaseOrderProgress(
+      TenantContext ctx, UUID poId) {
+    getPurchaseOrder(ctx, poId); // 404s for another tenant's order before reading any quantity
+    return repo.findLineProgress(ctx.requireTenantId(), poId);
+  }
+
+  /**
+   * Short-closes a partially received order: the balance is never arriving and we have stopped
+   * waiting for it.
+   *
+   * <p>Without this a partially received order that the supplier never completes sits in
+   * PARTIALLY_RECEIVED forever — the same "stuck for good" shape SJ-D3 fixed for DRAFT and
+   * SUBMITTED, which is why building partial receipt without building this would have traded one
+   * dead end for another.
+   *
+   * <p>CLOSED rather than RECEIVED because "we got it all" and "we gave up on the rest" are
+   * different facts, and a supplier scorecard that cannot tell them apart is worthless. CLOSED
+   * rather than CANCELLED because stock is booked against this order — SJ-D3's own reason for
+   * refusing to cancel a received one.
+   */
+  public PurchaseOrder closePurchaseOrderShort(
+      TenantContext ctx, UUID poId, CancelPurchaseOrderRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    PurchaseOrder po = getPurchaseOrder(ctx, poId);
+    boolean closed = repo.closePurchaseOrderShort(tenantId, poId, req.reason().trim());
+    if (!closed)
+      throw ApiException.conflict(
+          "PURCHASE_PO_NOT_CLOSEABLE",
+          "only a PARTIALLY_RECEIVED order can be short-closed — this one is "
+              + po.status()
+              + ". Nothing delivered? Cancel it. Everything delivered? It is already RECEIVED.");
+    return getPurchaseOrder(ctx, poId);
+  }
+
+  // ── Supplier invoices (three-way match) ───────────────────────────────────────
+
+  /**
+   * Records a supplier's invoice against a purchase order and matches it three ways.
+   *
+   * <p>The invoice is stored whether or not it matches. Flagging never blocks capture: an invoice
+   * that arrived is a fact, and refusing to record one that disagrees with the order destroys the
+   * evidence of the disagreement — which is exactly what somebody needs in order to argue with the
+   * supplier.
+   *
+   * <p>The one thing that <em>is</em> refused is a currency the order was not placed in. That is
+   * not a variance to flag; it is a different document, and matching a JPY invoice against a GBP
+   * order would compare two numbers that share nothing but a decimal point (SJ-D24, SJ-D25).
+   *
+   * @throws ApiException 404 if the order does not exist for this tenant; 400 {@code
+   *     PURCHASE_CURRENCY_MISMATCH} for the wrong currency; 409 {@code PURCHASE_INVOICE_DUPLICATE}
+   *     if this supplier's invoice number was already captured
+   */
+  public Domain.SupplierInvoice captureSupplierInvoice(
+      TenantContext ctx, CaptureSupplierInvoiceRequest req) {
+    UUID tenantId = ctx.requireTenantId();
+    PurchaseOrder po = getPurchaseOrder(ctx, req.poId());
+
+    if (req.lines() == null || req.lines().isEmpty())
+      throw ApiException.badRequest(
+          "PURCHASE_INVOICE_NO_LINES", "an invoice with no lines has nothing to match");
+
+    String currency = po.currency();
+    if (req.currency() != null) {
+      String asked = Money.requireIso4217(req.currency());
+      if (!asked.equals(currency))
+        throw ApiException.badRequest(
+            "PURCHASE_CURRENCY_MISMATCH",
+            "invoice currency " + asked + " does not match the order's " + currency);
+    }
+
+    // Matched against the order and every receipt AND every earlier invoice on it — see
+    // findMatchPositions for why the invoiced leg has to be cumulative.
+    List<ThreeWayMatch.MatchLine> matched =
+        ThreeWayMatch.match(
+            req.lines().stream()
+                .map(l -> new ThreeWayMatch.InvoicedLine(l.variantId(), l.qty(), l.unitPrice()))
+                .toList(),
+            repo.findMatchPositions(tenantId, req.poId()),
+            config.matchTolerance());
+
+    BigDecimal net = BigDecimal.ZERO;
+    for (var l : req.lines()) {
+      net = net.add(Money.round(l.qty().multiply(l.unitPrice()), currency));
+    }
+    net = Money.round(net, currency);
+    BigDecimal vat =
+        Money.round(req.vatAmount() == null ? BigDecimal.ZERO : req.vatAmount(), currency);
+
+    boolean allMatched = matched.stream().allMatch(ThreeWayMatch.MatchLine::matched);
+    UUID invoiceId = UUID.randomUUID();
+    Domain.SupplierInvoice invoice =
+        new Domain.SupplierInvoice(
+            invoiceId,
+            tenantId,
+            po.id(),
+            po.supplierId(),
+            req.invoiceNumber().trim(),
+            Parsing.date(req.invoiceDate(), "invoiceDate"),
+            currency,
+            net,
+            vat,
+            net.add(vat),
+            allMatched ? Domain.INVOICE_MATCHED : Domain.INVOICE_FLAGGED,
+            Instant.now(),
+            ctx.userId(),
+            Instant.now());
+
+    List<Domain.SupplierInvoiceLine> lines = new ArrayList<>(req.lines().size());
+    for (int i = 0; i < req.lines().size(); i++) {
+      var in = req.lines().get(i);
+      lines.add(
+          new Domain.SupplierInvoiceLine(
+              UUID.randomUUID(),
+              tenantId,
+              invoiceId,
+              in.variantId(),
+              in.qty(),
+              in.unitPrice(),
+              in.vatCode() != null ? in.vatCode().toUpperCase(java.util.Locale.ROOT) : "T1",
+              String.join(",", matched.get(i).variances()),
+              Instant.now()));
+    }
+    return repo.captureSupplierInvoice(invoice, lines);
+  }
+
+  public List<Domain.SupplierInvoice> listSupplierInvoices(
+      TenantContext ctx, UUID poId, int limit) {
+    return repo.findSupplierInvoices(ctx.requireTenantId(), poId, limit);
+  }
+
+  public Domain.SupplierInvoice getSupplierInvoice(TenantContext ctx, UUID id) {
+    return repo.findSupplierInvoice(ctx.requireTenantId(), id)
+        .orElseThrow(
+            () ->
+                ApiException.notFound(
+                    "PURCHASE_INVOICE_NOT_FOUND", "Supplier invoice not found: " + id));
+  }
+
+  /**
+   * The invoice's lines with all three documents' figures beside them.
+   *
+   * <p>The variances come from the stored line rather than being recomputed, because they are the
+   * figures the decision was made against: the purchase order can be amended after an invoice is
+   * flagged, and re-matching on read would silently erase the disagreement it was flagged for. The
+   * ordered and received columns beside them are read live, so the screen can show both what was
+   * true then and what is true now.
+   */
+  public List<Domain.SupplierInvoiceLine> supplierInvoiceLines(TenantContext ctx, UUID invoiceId) {
+    getSupplierInvoice(ctx, invoiceId);
+    return repo.findSupplierInvoiceLines(ctx.requireTenantId(), invoiceId);
+  }
+
+  public List<ThreeWayMatch.OrderPosition> matchPositions(TenantContext ctx, UUID poId) {
+    getPurchaseOrder(ctx, poId);
+    return repo.findMatchPositions(ctx.requireTenantId(), poId);
+  }
+
   // ── Goods Receipts ────────────────────────────────────────────────────────────
 
   public GoodsReceipt receiveGoods(
       CreateGoodsReceiptRequest req, TenantContext ctx, String idempotencyKey) {
     PurchaseOrder po = getPurchaseOrder(ctx, req.poId());
-    if (!Domain.PO_SUBMITTED.equals(po.status()))
+    // A partially received order is still receivable — that is the whole point of the state. The
+    // authoritative check is inside the repository transaction, under a row lock; this one exists
+    // to fail a hopeless request early with a clearer message than a rolled-back transaction.
+    if (!Domain.PO_SUBMITTED.equals(po.status())
+        && !Domain.PO_PARTIALLY_RECEIVED.equals(po.status()))
       throw ApiException.badRequest(
-          "PURCHASE_PO_NOT_SUBMITTED", "Only SUBMITTED orders can be received");
+          "PURCHASE_PO_NOT_RECEIVABLE",
+          "a purchase order can only be received while SUBMITTED or PARTIALLY_RECEIVED — this one"
+              + " is "
+              + po.status());
     if (req.lines() == null || req.lines().isEmpty())
       throw ApiException.badRequest("PURCHASE_GRN_EMPTY", "GRN must have at least one line");
 
@@ -244,8 +700,13 @@ public class PurchaseService {
     UUID transferRef = req.transferRef() != null ? UUID.fromString(req.transferRef()) : null;
     String vatCode =
         req.vatCode() != null ? req.vatCode().toUpperCase(java.util.Locale.ROOT) : "T1";
+    // Intercompany invoicing is store-to-store inside one tenant, so the tenant's own currency is
+    // the right default here — unlike a purchase order, where the counterparty is an outside
+    // supplier who may invoice in their own (SJ-D23/SJ-D24).
     String currency =
-        req.currency() != null ? req.currency().toUpperCase(java.util.Locale.ROOT) : "GBP";
+        req.currency() != null
+            ? Money.requireIso4217(req.currency())
+            : resolveTenantCurrency(tenantId);
     LocalDate today = LocalDate.now();
     LocalDate dueDate = today.plusDays(BACS_TERMS_DAYS);
 

@@ -268,4 +268,28 @@ public final class Dtos {
       int transactionCount,
       @Schema(description = "ISO currency code.") String currency,
       Instant generatedAt) {}
+
+  @Schema(
+      name = "TenderMixRowResponse",
+      description = "One payment method's share of the take over a window.")
+  public record TenderMixRowResponse(
+      @Schema(description = "CASH, CARD, GIFT_CARD, VOUCHER — whatever was actually taken.")
+          String method,
+      @Schema(description = "Money taken through this method in the window.")
+          BigDecimal capturedAmount,
+      @Schema(description = "How many tenders that was.") long capturedCount,
+      @Schema(description = "Money given back through this method.") BigDecimal refundedAmount,
+      @Schema(description = "How many refunds that was.") long refundedCount,
+      @Schema(
+              description =
+                  "Tenders recorded against this method that did not capture. A climbing figure"
+                      + " against healthy volume is a terminal or acquirer problem, not a sales"
+                      + " one.")
+          long failedCount,
+      @Schema(description = "capturedAmount minus refundedAmount.") BigDecimal netAmount,
+      @Schema(
+              description =
+                  "This method's percentage of the window's total net take. Null when the total is"
+                      + " zero or negative, where a share has no meaning.")
+          BigDecimal shareOfNet) {}
 }

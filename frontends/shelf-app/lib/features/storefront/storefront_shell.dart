@@ -211,6 +211,8 @@ class _AccountAction extends ConsumerWidget {
           showFeedbackSheet(context);
         } else if (v == 'logout') {
           ref.read(storefrontAuthProvider.notifier).logout();
+        } else if (v == 'delete_account') {
+          showDialog(context: context, builder: (_) => const _DeleteAccountDialog());
         }
       },
       itemBuilder: (_) => [
@@ -223,6 +225,123 @@ class _AccountAction extends ConsumerWidget {
         const PopupMenuItem(value: 'preferences', child: Text('My preferences')),
         const PopupMenuItem(value: 'feedback', child: Text('Send feedback')),
         const PopupMenuItem(value: 'logout', child: Text('Sign out')),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+            value: 'delete_account', child: Text('Delete my account')),
+      ],
+    );
+  }
+}
+
+/// SJ-D43: the storefront's self-service "delete my account" — separate from
+/// the admin's "Anonymize" action on [_CustomerDetailDialog] in the admin
+/// console, which is a shop erasing one of its own customers. This is the
+/// person deleting their own login, platform-wide: it asks for the password
+/// again (a session left open on a shared device must not be enough), then
+/// signs the device out along with it. A shop's own records of this person —
+/// their orders, loyalty, customer profile with that shop — are unaffected;
+/// deleting them is a separate request to that shop.
+class _DeleteAccountDialog extends ConsumerStatefulWidget {
+  const _DeleteAccountDialog();
+
+  @override
+  ConsumerState<_DeleteAccountDialog> createState() =>
+      _DeleteAccountDialogState();
+}
+
+class _DeleteAccountDialogState extends ConsumerState<_DeleteAccountDialog> {
+  final _passwordCtrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_passwordCtrl.text.isEmpty) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(storefrontAuthProvider.notifier)
+          .deleteAccount(_passwordCtrl.text);
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Your account has been deleted.')),
+      );
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        final status = e is DioException ? e.response?.statusCode : null;
+        _error = status == 401
+            ? 'Incorrect password.'
+            : friendlyError(e, fallback: 'Could not delete the account.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Delete my account?'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+                'This permanently deletes your login. It cannot be undone. '
+                'Orders and loyalty you have with individual shops are not '
+                'affected — ask each shop separately if you want those erased '
+                'too.'),
+            const SizedBox(height: 16),
+            if (_error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color: cs.errorContainer,
+                    borderRadius: BorderRadius.circular(8)),
+                child:
+                    Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
+              ),
+              const SizedBox(height: 12),
+            ],
+            TextField(
+              controller: _passwordCtrl,
+              obscureText: true,
+              autofocus: true,
+              decoration: const InputDecoration(
+                  labelText: 'Confirm your password',
+                  prefixIcon: Icon(Icons.lock_outline)),
+              onSubmitted: (_) => _loading ? null : _submit(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: cs.error),
+          onPressed: _loading ? null : _submit,
+          child: _loading
+              ? SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: cs.onError))
+              : const Text('Delete account'),
+        ),
       ],
     );
   }

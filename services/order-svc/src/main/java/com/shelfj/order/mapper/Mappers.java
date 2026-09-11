@@ -1,5 +1,6 @@
 package com.shelfj.order.mapper;
 
+import com.shelfj.order.domain.Domain.ExceptionRow;
 import com.shelfj.order.domain.Domain.GiftCard;
 import com.shelfj.order.domain.Domain.GiftCardTransaction;
 import com.shelfj.order.domain.Domain.Layaway;
@@ -13,8 +14,11 @@ import com.shelfj.order.domain.Domain.PosLogEntry;
 import com.shelfj.order.domain.Domain.PosVoidLog;
 import com.shelfj.order.domain.Domain.Return;
 import com.shelfj.order.domain.Domain.ReturnItem;
+import com.shelfj.order.domain.Domain.SalesByHourRow;
+import com.shelfj.order.domain.Domain.SalesByStaffRow;
 import com.shelfj.order.domain.Domain.SpecialOrder;
 import com.shelfj.order.domain.Domain.SpecialOrderItem;
+import com.shelfj.order.dto.Dtos.ExceptionRowResponse;
 import com.shelfj.order.dto.Dtos.GiftCardResponse;
 import com.shelfj.order.dto.Dtos.GiftCardTransactionResponse;
 import com.shelfj.order.dto.Dtos.LayawayDepositResponse;
@@ -28,6 +32,8 @@ import com.shelfj.order.dto.Dtos.OrderSummaryResponse;
 import com.shelfj.order.dto.Dtos.PosLogEntryResponse;
 import com.shelfj.order.dto.Dtos.ReturnItemResponse;
 import com.shelfj.order.dto.Dtos.ReturnResponse;
+import com.shelfj.order.dto.Dtos.SalesByHourRowResponse;
+import com.shelfj.order.dto.Dtos.SalesByStaffRowResponse;
 import com.shelfj.order.dto.Dtos.SpecialOrderItemResponse;
 import com.shelfj.order.dto.Dtos.SpecialOrderResponse;
 import com.shelfj.order.dto.Dtos.VoidResponse;
@@ -55,6 +61,7 @@ public final class Mappers {
         o.subtotal(),
         o.taxAmount(),
         o.discountAmount(),
+        o.promotionDiscount() == null ? java.math.BigDecimal.ZERO : o.promotionDiscount(),
         o.total(),
         o.currency(),
         o.notes(),
@@ -204,6 +211,17 @@ public final class Mappers {
         items.stream().map(Mappers::toDto).toList());
   }
 
+  public static ExceptionRowResponse toDto(ExceptionRow r) {
+    return new ExceptionRowResponse(
+        r.groupKey(),
+        r.discounts(),
+        r.discountAmount(),
+        r.voids(),
+        r.noSales(),
+        r.sales(),
+        r.salesValue());
+  }
+
   public static PosLogEntryResponse toDto(PosLogEntry e) {
     return new PosLogEntryResponse(
         str(e.id()),
@@ -237,5 +255,20 @@ public final class Mappers {
 
   private static String ts(Instant i) {
     return i == null ? null : i.toString();
+  }
+
+  public static SalesByHourRowResponse toDto(SalesByHourRow r) {
+    return new SalesByHourRowResponse(
+        r.hourOfDay(), r.orders(), r.grossAmount(), r.discountAmount(), r.averageBasket());
+  }
+
+  public static SalesByStaffRowResponse toDto(SalesByStaffRow r) {
+    return new SalesByStaffRowResponse(
+        r.groupKey(),
+        r.sales(),
+        r.grossAmount(),
+        r.discountAmount(),
+        r.averageBasket(),
+        r.discountRate());
   }
 }

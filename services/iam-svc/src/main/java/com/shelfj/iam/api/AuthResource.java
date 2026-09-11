@@ -144,4 +144,25 @@ public class AuthResource {
     auth.changePassword(ctx.requireUserId(), req.currentPassword(), req.newPassword());
     return ApiResponse.ok("password_changed");
   }
+
+  @Operation(
+      summary = "Delete my account",
+      description =
+          "The account holder deletes their own login (SJ-D43). Requires the password again, so a"
+              + " session left open on a shared device cannot do it. The login's email, phone and"
+              + " password are erased, every refresh token is revoked, and AccountDeleted tells"
+              + " other services. Already-issued access tokens stay valid until they expire, as"
+              + " they do after logout. Records a shop holds — orders, loyalty, its own customer"
+              + " profile — stay with that shop, which erases them itself on request. A staff"
+              + " account is removed by the business that employs its holder, not here.")
+  @APIResponse(responseCode = "200", description = "Account deleted")
+  @APIResponse(responseCode = "401", description = "Password is incorrect")
+  @APIResponse(responseCode = "403", description = "A staff account cannot be deleted here")
+  @POST
+  @Path("/delete-account")
+  public ApiResponse<String> deleteAccount(com.shelfj.iam.dto.Dtos.DeleteAccountRequest req) {
+    Validations.validate(req);
+    auth.deleteAccount(ctx.requireUserId(), req.password());
+    return ApiResponse.ok("account_deleted");
+  }
 }

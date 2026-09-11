@@ -52,7 +52,12 @@ public class DemandHistoryRepository extends BaseJdbcRepository {
                 + "        CAST(COUNT(*) AS INT),"
                 + "        now()"
                 + " FROM stock_movements sm"
-                + " WHERE sm.tenant_id = ? AND sm.type = 'SALE'");
+                + " WHERE sm.tenant_id = ? AND sm.type = 'SALE'"
+                // A voided till sale is not demand. Excluded rather than netted, because this sums
+                // ABS(qty) and the void's RECEIVE would add to it (SJ-D40).
+                + " AND NOT EXISTS (SELECT 1 FROM stock_movements v"
+                + "                  WHERE v.tenant_id = sm.tenant_id AND v.type = 'RECEIVE' AND v.ref_type = 'VOID'"
+                + "                    AND v.ref_id = sm.ref_id AND v.variant_id = sm.variant_id)");
     if (storeId != null) sql.append(" AND sm.store_id = ?");
     if (since != null) sql.append(" AND sm.created_at >= ?");
     sql.append(
