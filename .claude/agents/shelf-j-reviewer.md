@@ -118,7 +118,8 @@ grep -n "= new " <changed_java_files> | grep -v "@Produces\|[Tt]est"
 |---|---|
 | Multi-line Javadoc explaining WHAT the code does (not WHY) | WARN |
 | Kafka background bean missing `@Observes @Initialized(ApplicationScoped.class)` eager-init | BLOCKER |
-| `UUID.randomUUID()` called in repo instead of service layer | NOTE |
+| `Ids.newId()` called in repo instead of service layer | NOTE |
+| `@SuppressWarnings("PMD.UseTimeOrderedIds")` on a value that is an id (only non-id values that must be fully random may keep `UUID.randomUUID()`) | WARN |
 
 ---
 

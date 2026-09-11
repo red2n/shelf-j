@@ -1,5 +1,6 @@
 package com.shelfj.payment.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.dto.Dtos.CashMovementResponse;
 import com.shelfj.payment.dto.Dtos.ZReportResponse;
 import com.shelfj.service.BaseOutboxRepository;
@@ -44,7 +45,7 @@ public class CashMovementRepository extends BaseOutboxRepository {
               return existing;
             }
           }
-          UUID id = UUID.randomUUID();
+          UUID id = Ids.newId();
           Instant now = Instant.now();
           try (PreparedStatement ps =
               c.prepareStatement(
@@ -132,7 +133,7 @@ public class CashMovementRepository extends BaseOutboxRepository {
           BigDecimal overShort = countedCash.subtract(expectedCash);
           int txCount = countTransactions(c, tenantId, storeId, businessDate, next);
 
-          UUID reportId = UUID.randomUUID();
+          UUID reportId = Ids.newId();
           Instant now = Instant.now();
           try (PreparedStatement ps =
               c.prepareStatement(

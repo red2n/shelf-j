@@ -1,5 +1,6 @@
 package com.shelfj.inventory.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.FoodSafety.CheckRecord;
 import com.shelfj.inventory.domain.FoodSafety.CheckType;
 import com.shelfj.inventory.domain.FoodSafety.CorrectiveAction;
@@ -78,7 +79,7 @@ public class FoodSafetyService {
     requireTypeShape(kind, stored, unit);
     var type =
         new CheckType(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             code,
             name.trim(),
@@ -132,7 +133,7 @@ public class FoodSafetyService {
     Instant now = Instant.now();
     var point =
         new MonitoringPoint(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             storeId,
             zoneId,
@@ -203,7 +204,7 @@ public class FoodSafetyService {
     BigDecimal value = celsius(cmd.value(), "value");
     var record =
         new CheckRecord(
-            UUID.randomUUID(),
+            Ids.newId(),
             cmd.tenantId(),
             point.storeId(),
             point.id(),
@@ -279,13 +280,7 @@ public class FoodSafetyService {
     }
     var corrective =
         new CorrectiveAction(
-            UUID.randomUUID(),
-            tenantId,
-            recordId,
-            action.trim(),
-            disposition,
-            actorId,
-            Instant.now());
+            Ids.newId(), tenantId, recordId, action.trim(), disposition, actorId, Instant.now());
     repo.insertCorrectiveAction(corrective);
     return corrective;
   }
@@ -299,7 +294,7 @@ public class FoodSafetyService {
     }
     var review =
         new Review(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             storeId,
             from,

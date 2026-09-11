@@ -1,5 +1,6 @@
 package com.shelfj.product.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.product.domain.Domain.ItemTemplate;
 import com.shelfj.product.domain.Domain.ItemTemplateApplication;
 import com.shelfj.service.BaseOutboxRepository;
@@ -104,7 +105,7 @@ public class ItemTemplateRepository extends BaseOutboxRepository {
               ps.executeUpdate();
             }
           }
-          UUID appId = UUID.randomUUID();
+          UUID appId = Ids.newId();
           String insertSql =
               "INSERT INTO item_template_applications"
                   + " (id, tenant_id, variant_id, template_id) VALUES (?,?,?,?) RETURNING *";

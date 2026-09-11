@@ -1,5 +1,6 @@
 package com.shelfj.inventory.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Recall.ActiveItem;
 import com.shelfj.inventory.domain.Recall.Detail;
 import com.shelfj.inventory.domain.Recall.Disposition;
@@ -78,7 +79,7 @@ public class RecallService {
     List<Scope> scope = cmd.scope().stream().map(RecallService::toScope).toList();
     var header =
         new Header(
-            UUID.randomUUID(),
+            Ids.newId(),
             cmd.tenantId(),
             cmd.reference().trim(),
             cmd.kind(),
@@ -132,7 +133,7 @@ public class RecallService {
     }
     var action =
         new StoreAction(
-            UUID.randomUUID(),
+            Ids.newId(),
             cmd.storeId(),
             cmd.qtyFound(),
             BigDecimal.ZERO,
@@ -183,7 +184,7 @@ public class RecallService {
           "RECALL_DATES_INVERTED", "expiryFrom must not be after expiryTo");
     }
     return new Scope(
-        UUID.randomUUID(),
+        Ids.newId(),
         line.variantId(),
         blankToNull(line.batchNo()),
         line.expiryFrom(),

@@ -1,5 +1,6 @@
 package com.shelfj.notification.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.notification.domain.Domain.NotificationLog;
 import com.shelfj.notification.domain.Domain.ShortageAlert;
 import com.shelfj.service.BaseJdbcRepository;
@@ -111,7 +112,7 @@ public class NotificationRepository extends BaseJdbcRepository {
             + " VALUES (?,?,?,?,?,?,?,?,?,?)"
             + " ON CONFLICT (event_id, type) DO NOTHING",
         ps -> {
-          ps.setObject(1, UUID.randomUUID());
+          ps.setObject(1, Ids.newId());
           ps.setObject(2, tenantId);
           ps.setObject(3, subjectId);
           ps.setObject(4, eventId);

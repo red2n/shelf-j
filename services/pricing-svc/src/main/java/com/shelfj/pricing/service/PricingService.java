@@ -1,5 +1,6 @@
 package com.shelfj.pricing.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.pricing.domain.Domain;
 import com.shelfj.pricing.domain.Domain.BasketLine;
 import com.shelfj.pricing.domain.Domain.CustomerVatStatus;
@@ -64,7 +65,7 @@ public class PricingService {
       throw ApiException.badRequest("PRICING_INVALID_RATE", "VAT rate must be between 0 and 1");
     VatRate r =
         new VatRate(
-            UUID.randomUUID(),
+            Ids.newId(),
             ctx.tenantId(),
             req.code().toUpperCase(java.util.Locale.ROOT),
             req.name(),
@@ -123,7 +124,7 @@ public class PricingService {
                     "PRICING_VAT_CODE_NOT_FOUND", "VAT code not found: " + vatCode));
     ProductVatCategory pvc =
         new ProductVatCategory(
-            UUID.randomUUID(),
+            Ids.newId(),
             ctx.tenantId(),
             UUID.fromString(req.variantId()),
             vatCode,
@@ -148,7 +149,7 @@ public class PricingService {
       UpsertCustomerVatStatusRequest req, TenantContext ctx) {
     CustomerVatStatus cvs =
         new CustomerVatStatus(
-            UUID.randomUUID(),
+            Ids.newId(),
             ctx.tenantId(),
             UUID.fromString(req.customerId()),
             req.vatNumber(),
@@ -173,7 +174,7 @@ public class PricingService {
   public PriceList createPriceList(CreatePriceListRequest req, TenantContext ctx) {
     PriceList pl =
         new PriceList(
-            UUID.randomUUID(),
+            Ids.newId(),
             ctx.tenantId(),
             req.name(),
             req.channel() != null ? req.channel() : PriceList.CHANNEL_ALL,
@@ -210,7 +211,7 @@ public class PricingService {
     getPriceList(ctx, priceListId);
     PriceListItem item =
         new PriceListItem(
-            UUID.randomUUID(),
+            Ids.newId(),
             ctx.tenantId(),
             priceListId,
             UUID.fromString(req.variantId()),
@@ -648,7 +649,7 @@ public class PricingService {
 
     Promotion p =
         new Promotion(
-            UUID.randomUUID(),
+            Ids.newId(),
             ctx.tenantId(),
             req.storeId() != null ? UUID.fromString(req.storeId()) : null,
             req.name(),
@@ -759,14 +760,7 @@ public class PricingService {
 
     Domain.StatusChange change =
         new Domain.StatusChange(
-            UUID.randomUUID(),
-            tenantId,
-            subjectType,
-            id,
-            active,
-            reason,
-            ctx.userId(),
-            Instant.now());
+            Ids.newId(), tenantId, subjectType, id, active, reason, ctx.userId(), Instant.now());
     if (!repo.setActive(table, change))
       throw ApiException.conflict(
           "PRICING_ALREADY_IN_STATE",
@@ -814,7 +808,7 @@ public class PricingService {
     UUID scopeId = req.scopeId() != null ? UUID.fromString(req.scopeId()) : null;
     PromotionItem pi =
         new PromotionItem(
-            UUID.randomUUID(), ctx.tenantId(), promotionId, scopeType, scopeId, Instant.now());
+            Ids.newId(), ctx.tenantId(), promotionId, scopeType, scopeId, Instant.now());
     return repo.addPromotionItem(pi);
   }
 
@@ -823,7 +817,7 @@ public class PricingService {
   public TaxTransaction recordTaxTransaction(RecordTaxTransactionRequest req, TenantContext ctx) {
     TaxTransaction tt =
         new TaxTransaction(
-            UUID.randomUUID(),
+            Ids.newId(),
             ctx.tenantId(),
             req.orderId(),
             req.orderLineId(),
@@ -857,7 +851,7 @@ public class PricingService {
     UUID tenantId = ctx.requireTenantId();
     var override =
         new PriceOverride(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             req.orderId() != null ? UUID.fromString(req.orderId()) : null,
             UUID.fromString(req.variantId()),

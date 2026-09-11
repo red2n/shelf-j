@@ -14,6 +14,7 @@ import com.shelfj.customer.dto.Dtos.RedeemStoreCreditRequest;
 import com.shelfj.customer.dto.Dtos.RegisterCustomerRequest;
 import com.shelfj.customer.dto.Dtos.UpdateCustomerRequest;
 import com.shelfj.customer.repo.CustomerRepository;
+import com.shelfj.ids.Ids;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.TenantContext;
@@ -54,7 +55,7 @@ public class CustomerService {
           409, "CUSTOMER_ALREADY_EXISTS", "A customer with this email already exists", List.of());
     }
     Instant now = Instant.now();
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     var customer =
         new Customer(
             id,
@@ -159,7 +160,7 @@ public class CustomerService {
     // carry the email or phone it exists to erase.
     String payload =
         Json.createObjectBuilder()
-            .add("eventId", UUID.randomUUID().toString())
+            .add("eventId", Ids.newId().toString())
             .add("eventType", "CustomerErased")
             .add("tenantId", tenantId.toString())
             .add("customerId", customerId.toString())
@@ -196,7 +197,7 @@ public class CustomerService {
         req.type() == null || req.type().isBlank() ? CustomerAddress.TYPE_HOME : req.type();
     var address =
         new CustomerAddress(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             customerId,
             type,
@@ -256,7 +257,7 @@ public class CustomerService {
         .orElseGet(
             () ->
                 new LoyaltyAccount(
-                    UUID.randomUUID(),
+                    Ids.newId(),
                     tenantId,
                     customerId,
                     BigDecimal.ZERO,
@@ -380,7 +381,7 @@ public class CustomerService {
         .orElseGet(
             () ->
                 new StoreCreditAccount(
-                    UUID.randomUUID(),
+                    Ids.newId(),
                     tenantId,
                     customerId,
                     BigDecimal.ZERO,

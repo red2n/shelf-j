@@ -127,7 +127,7 @@ High-level modules depend on abstractions, not on concrete classes.
 - **No multi-line docstrings on obvious methods.** One-line class Javadoc is fine; paragraph-length method docs are not.
 - **Money is `BigDecimal` / `NUMERIC`.** Never `double` or `float` for any monetary value, quantity, or rate.
 - **Time is `Instant` (UTC) in domain objects.** Convert to `ZonedDateTime` at the API edge only, and only when the client needs a timezone.
-- **IDs are `UUID`.** Never `long`, never `String` for primary keys.
+- **IDs are `UUID`, minted with `Ids.newId()` (UUIDv7).** Never `long`, never `String` for primary keys, and never `UUID.randomUUID()`: a random v4 key lands on a random index page on every insert. PMD `UseTimeOrderedIds` enforces it; suppress it only for a value that is not an id and must be random throughout, with a comment saying why.
 
 ---
 

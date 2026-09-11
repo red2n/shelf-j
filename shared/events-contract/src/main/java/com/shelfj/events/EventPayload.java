@@ -1,5 +1,6 @@
 package com.shelfj.events;
 
+import com.shelfj.ids.Ids;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -31,7 +32,7 @@ public final class EventPayload {
    */
   public static String base(String eventType, UUID tenantId, UUID aggregateId) {
     return "{\"eventId\":\""
-        + UUID.randomUUID()
+        + Ids.newId()
         + "\",\"eventType\":\""
         + eventType
         + "\",\"tenantId\":\""

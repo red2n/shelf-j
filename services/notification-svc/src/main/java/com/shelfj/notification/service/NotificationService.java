@@ -1,5 +1,6 @@
 package com.shelfj.notification.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.notification.domain.Domain.NotificationLog;
 import com.shelfj.notification.domain.Domain.ShortageAlert;
 import com.shelfj.notification.repo.NotificationRepository;
@@ -26,7 +27,7 @@ public class NotificationService {
       UUID eventId) {
     var alert =
         new ShortageAlert(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             storeId,
             variantId,

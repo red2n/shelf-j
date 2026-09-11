@@ -16,6 +16,11 @@
     <description>Event schemas + outbox contract shared across services. CONTRACTS ONLY — no business logic.</description>
 
     <dependencies>
+        <!-- Ids.newId(): time-ordered (UUIDv7) ids. -->
+        <dependency>
+            <groupId>com.shelfj</groupId>
+            <artifactId>common-ids</artifactId>
+        </dependency>
         <!-- JSON-B annotations only, to keep payloads serializable. Provided by Helidon BOM. -->
         <dependency>
             <groupId>jakarta.json.bind</groupId>

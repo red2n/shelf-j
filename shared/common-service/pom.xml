@@ -23,6 +23,11 @@
         <!-- Web utilities: ApiException, ApiResponse, TenantContext, etc. -->
         <dependency>
             <groupId>com.shelfj</groupId>
+            <artifactId>common-ids</artifactId>
+            <version>${shelfj.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.shelfj</groupId>
             <artifactId>common-web</artifactId>
             <version>${shelfj.version}</version>
         </dependency>

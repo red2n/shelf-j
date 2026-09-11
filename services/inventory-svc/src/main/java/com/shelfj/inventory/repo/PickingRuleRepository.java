@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Domain.PickingRule;
 import com.shelfj.inventory.domain.Domain.PickingRuleAssignment;
 import com.shelfj.inventory.domain.Domain.PickingRuleZonePriority;
@@ -28,7 +29,7 @@ public class PickingRuleRepository extends BaseJdbcRepository {
   public PickingRule createPickingRule(
       UUID tenantId, String name, String strategy, String gradePreference) {
     Instant now = Instant.now();
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     exec(
         "INSERT INTO picking_rules (id,tenant_id,name,strategy,grade_preference,status,created_at,updated_at)"
             + " VALUES (?,?,?,?,?,?,?,?)",
@@ -103,7 +104,7 @@ public class PickingRuleRepository extends BaseJdbcRepository {
           "INSERT INTO picking_rule_zone_priorities (id,tenant_id,rule_id,zone_id,priority)"
               + " VALUES (?,?,?,?,?)",
           ps -> {
-            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(1, Ids.newId());
             ps.setObject(2, tenantId);
             ps.setObject(3, ruleId);
             ps.setObject(4, p.zoneId());
@@ -128,7 +129,7 @@ public class PickingRuleRepository extends BaseJdbcRepository {
   public PickingRuleAssignment createPickingRuleAssignment(
       UUID tenantId, UUID ruleId, String scopeType, UUID scopeId) {
     Instant now = Instant.now();
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     exec(
         "INSERT INTO picking_rule_assignments (id,tenant_id,rule_id,scope_type,scope_id,created_at)"
             + " VALUES (?,?,?,?,?,?)"

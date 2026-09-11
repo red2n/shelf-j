@@ -1,5 +1,6 @@
 package com.shelfj.web;
 
+import com.shelfj.ids.Ids;
 import jakarta.annotation.Priority;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Priorities;
@@ -41,7 +42,7 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
   public void filter(ContainerRequestContext req) throws IOException {
     String requestId = req.getHeaderString(HttpHeaders.REQUEST_ID);
     if (requestId == null || requestId.isBlank()) {
-      requestId = UUID.randomUUID().toString();
+      requestId = Ids.newId().toString();
     }
 
     UUID tenantId = parseUuid(req.getHeaderString(HttpHeaders.TENANT_ID));

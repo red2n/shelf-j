@@ -1,5 +1,6 @@
 package com.shelfj.payment.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.client.OrderClient;
 import com.shelfj.payment.domain.Domain.PaymentTender;
 import com.shelfj.payment.domain.Domain.RefundTender;
@@ -89,7 +90,7 @@ public class PaymentService {
       return captureStoreCredit(req, tenantId, orderId, storeId);
     }
 
-    UUID tenderId = UUID.randomUUID();
+    UUID tenderId = Ids.newId();
     PaymentTender tender =
         new PaymentTender(
             tenderId,
@@ -134,7 +135,7 @@ public class PaymentService {
 
     customerClient.redeemStoreCredit(tenantId, customerId, req.amount(), currency, orderId);
 
-    UUID tenderId = UUID.randomUUID();
+    UUID tenderId = Ids.newId();
     PaymentTender tender =
         new PaymentTender(
             tenderId,
@@ -217,7 +218,7 @@ public class PaymentService {
           "method must be one of CASH, CARD, UPI, WALLET, GIFT_CARD, VOUCHER — got: "
               + req.method());
 
-    UUID refundId = UUID.randomUUID();
+    UUID refundId = Ids.newId();
     RefundTender refund =
         new RefundTender(
             refundId,
@@ -263,7 +264,7 @@ public class PaymentService {
       UUID orderId,
       BigDecimal requestedAmount,
       String reason) {
-    UUID refundBatchId = UUID.randomUUID();
+    UUID refundBatchId = Ids.newId();
     repo.refundOrderOnce(
         eventId,
         consumer,

@@ -1,5 +1,6 @@
 package com.shelfj.order.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.domain.Domain.GiftCard;
 import com.shelfj.order.domain.Domain.GiftCardTransaction;
 import com.shelfj.order.domain.Domain.Layaway;
@@ -815,7 +816,7 @@ public class OrderRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO pos_void_log (id,tenant_id,order_id,store_id,reason,voided_by)"
                       + " VALUES (?,?,?,?,?,?)")) {
-            UUID vid = UUID.randomUUID();
+            UUID vid = Ids.newId();
             ps.setObject(1, vid);
             ps.setObject(2, tenantId);
             ps.setObject(3, orderId);
@@ -1124,7 +1125,7 @@ public class OrderRepository extends BaseOutboxRepository {
           insertGiftCardTx(
               c,
               new GiftCardTransaction(
-                  UUID.randomUUID(),
+                  Ids.newId(),
                   tenantId,
                   gc.id(),
                   GiftCardTransaction.TX_RELOAD,
@@ -1178,7 +1179,7 @@ public class OrderRepository extends BaseOutboxRepository {
           insertGiftCardTx(
               c,
               new GiftCardTransaction(
-                  UUID.randomUUID(),
+                  Ids.newId(),
                   tenantId,
                   gc.id(),
                   GiftCardTransaction.TX_REDEEM,
@@ -1258,7 +1259,7 @@ public class OrderRepository extends BaseOutboxRepository {
             "INSERT INTO order_status_history"
                 + " (id,tenant_id,order_id,from_status,to_status,reason,changed_by)"
                 + " VALUES (?,?,?,?,?,?,?)")) {
-      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, orderId);
       ps.setString(4, fromStatus);
@@ -1785,7 +1786,7 @@ public class OrderRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO special_order_status_history (id,tenant_id,so_id,from_status,to_status,reason,changed_by)"
                 + " VALUES (?,?,?,?,?,?,?)")) {
-      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, soId);
       ps.setString(4, from);

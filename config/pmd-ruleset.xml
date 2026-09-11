@@ -94,4 +94,27 @@
 
     </rule>
 
+    <!-- ── Shelf-J rules ───────────────────────────────────────────────────── -->
+    <rule name="UseTimeOrderedIds"
+          language="java"
+          message="Mint ids with com.shelfj.ids.Ids.newId() (UUIDv7), not UUID.randomUUID()"
+          class="net.sourceforge.pmd.lang.rule.xpath.XPathRule">
+        <description>
+            UUID.randomUUID() makes version-4 ids, and each insert of one lands on a random B-tree
+            page: more page splits, half-full indexes and more WAL than time-ordered UUIDv7 ids,
+            which append at the right-hand edge. Use Ids.newId(). Where the value is not an id and
+            has to be random all the way through (a suffix cut from the first characters, which in
+            a v7 id are the clock), keep randomUUID() behind @SuppressWarnings("PMD.UseTimeOrderedIds")
+            with a comment saying why.
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="xpath">
+                <value><![CDATA[
+//MethodCall[pmd-java:matchesSig('java.util.UUID#randomUUID()')]
+                ]]></value>
+            </property>
+        </properties>
+    </rule>
+
 </ruleset>

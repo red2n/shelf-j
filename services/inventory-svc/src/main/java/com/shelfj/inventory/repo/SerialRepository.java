@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Domain.SerialMovement;
 import com.shelfj.inventory.domain.Domain.SerialNumber;
 import com.shelfj.service.BaseOutboxRepository;
@@ -46,7 +47,7 @@ public class SerialRepository extends BaseOutboxRepository {
                       + " (id, tenant_id, serial_id, from_status, to_status, ref_type)"
                       + " VALUES (?,?,?,NULL,?,?)")) {
             for (SerialNumber s : serials) {
-              ps.setObject(1, UUID.randomUUID());
+              ps.setObject(1, Ids.newId());
               ps.setObject(2, s.tenantId());
               ps.setObject(3, s.id());
               ps.setString(4, SerialNumber.IN_STOCK);
@@ -153,7 +154,7 @@ public class SerialRepository extends BaseOutboxRepository {
                   "INSERT INTO serial_movements"
                       + " (id, tenant_id, serial_id, from_status, to_status)"
                       + " VALUES (?,?,?,?,?)")) {
-            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(1, Ids.newId());
             ps.setObject(2, tenantId);
             ps.setObject(3, serialId);
             ps.setString(4, oldStatus);

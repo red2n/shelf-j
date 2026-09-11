@@ -1,5 +1,6 @@
 package com.shelfj.order.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.dto.Dtos.NoSaleResponse;
 import com.shelfj.order.dto.Dtos.ParkedSaleItemResponse;
 import com.shelfj.order.dto.Dtos.ParkedSaleResponse;
@@ -97,7 +98,7 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
       UUID tillSessionId,
       String reason,
       UUID authorisedBy) {
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     Instant now = Instant.now();
     exec(
         "INSERT INTO pos_no_sale_log (id, tenant_id, store_id, cashier_id, till_session_id,"
@@ -161,7 +162,7 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO parked_sale_items (id, tenant_id, sale_id, variant_id, qty,"
                 + " unit_price, line_total, discount_amount, notes) VALUES (?,?,?,?,?,?,?,?,?)")) {
-      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, saleId);
       ps.setObject(4, UUID.fromString(item.variantId()));

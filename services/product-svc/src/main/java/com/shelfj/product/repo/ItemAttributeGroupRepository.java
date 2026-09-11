@@ -1,5 +1,6 @@
 package com.shelfj.product.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.product.domain.Domain.ItemAttributeGroup;
 import com.shelfj.product.domain.Domain.ItemAttributeGroupField;
 import com.shelfj.product.domain.Domain.VariantAttributeGroupValues;
@@ -61,7 +62,7 @@ public class ItemAttributeGroupRepository extends BaseJdbcRepository {
             + " ON CONFLICT (tenant_id, variant_id, group_code)"
             + " DO UPDATE SET values = EXCLUDED.values, updated_at = EXCLUDED.updated_at",
         ps -> {
-          ps.setObject(1, UUID.randomUUID());
+          ps.setObject(1, Ids.newId());
           ps.setObject(2, tenantId);
           ps.setObject(3, variantId);
           ps.setString(4, groupCode);

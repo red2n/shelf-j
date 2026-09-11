@@ -3,6 +3,7 @@ package com.shelfj.iam.service;
 import com.shelfj.iam.domain.PosSession;
 import com.shelfj.iam.dto.Dtos.StartPosSessionRequest;
 import com.shelfj.iam.repo.PosSessionRepository;
+import com.shelfj.ids.Ids;
 import com.shelfj.service.StoreStatusRepository;
 import com.shelfj.service.TenantStatusRepository;
 import com.shelfj.web.ApiException;
@@ -41,7 +42,7 @@ public class PosSessionService {
           "Store is not accepting new sessions — it is closed or suspended");
     var session =
         new PosSession(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             ctx.userId(),
             storeId,

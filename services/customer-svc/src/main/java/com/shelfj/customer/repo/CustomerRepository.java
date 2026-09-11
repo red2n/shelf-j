@@ -6,6 +6,7 @@ import com.shelfj.customer.domain.Domain.LoyaltyAccount;
 import com.shelfj.customer.domain.Domain.LoyaltyLedgerEntry;
 import com.shelfj.customer.domain.Domain.StoreCreditAccount;
 import com.shelfj.customer.domain.Domain.StoreCreditLedgerEntry;
+import com.shelfj.ids.Ids;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -315,7 +316,7 @@ public class CustomerRepository extends BaseOutboxRepository {
           String newTier = LoyaltyAccount.tierFor(newLifetime);
           LoyaltyAccount updated =
               updateLoyaltyAccount(conn, tenantId, customerId, newBalance, newLifetime, newTier);
-          UUID entryId = UUID.randomUUID();
+          UUID entryId = Ids.newId();
           insertLedgerEntry(
               conn,
               new LoyaltyLedgerEntry(
@@ -367,7 +368,7 @@ public class CustomerRepository extends BaseOutboxRepository {
           insertLedgerEntry(
               conn,
               new LoyaltyLedgerEntry(
-                  UUID.randomUUID(),
+                  Ids.newId(),
                   tenantId,
                   customerId,
                   LoyaltyLedgerEntry.TYPE_EARN,
@@ -419,7 +420,7 @@ public class CustomerRepository extends BaseOutboxRepository {
           insertLedgerEntry(
               conn,
               new LoyaltyLedgerEntry(
-                  UUID.randomUUID(),
+                  Ids.newId(),
                   tenantId,
                   customerId,
                   LoyaltyLedgerEntry.TYPE_REDEEM,
@@ -450,7 +451,7 @@ public class CustomerRepository extends BaseOutboxRepository {
           insertLedgerEntry(
               conn,
               new LoyaltyLedgerEntry(
-                  UUID.randomUUID(),
+                  Ids.newId(),
                   tenantId,
                   customerId,
                   LoyaltyLedgerEntry.TYPE_ADJUST,
@@ -515,7 +516,7 @@ public class CustomerRepository extends BaseOutboxRepository {
           insertStoreCreditEntry(
               conn,
               new StoreCreditLedgerEntry(
-                  UUID.randomUUID(),
+                  Ids.newId(),
                   tenantId,
                   customerId,
                   StoreCreditLedgerEntry.TYPE_ISSUE,
@@ -559,7 +560,7 @@ public class CustomerRepository extends BaseOutboxRepository {
           insertStoreCreditEntry(
               conn,
               new StoreCreditLedgerEntry(
-                  UUID.randomUUID(),
+                  Ids.newId(),
                   tenantId,
                   customerId,
                   StoreCreditLedgerEntry.TYPE_REDEEM,
@@ -717,7 +718,7 @@ public class CustomerRepository extends BaseOutboxRepository {
             "INSERT INTO loyalty_accounts (id, tenant_id, customer_id, points_balance,"
                 + " lifetime_points, tier, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
                 + " ON CONFLICT (tenant_id, customer_id) DO NOTHING")) {
-      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, customerId);
       ps.setBigDecimal(4, BigDecimal.ZERO);
@@ -809,7 +810,7 @@ public class CustomerRepository extends BaseOutboxRepository {
             "INSERT INTO store_credit_accounts (id, tenant_id, customer_id, balance, currency,"
                 + " created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
                 + " ON CONFLICT (tenant_id, customer_id, currency) DO NOTHING")) {
-      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, customerId);
       ps.setBigDecimal(4, BigDecimal.ZERO);

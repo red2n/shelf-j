@@ -1,5 +1,6 @@
 package com.shelfj.order.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.dto.Dtos.NoSaleRequest;
 import com.shelfj.order.dto.Dtos.NoSaleResponse;
 import com.shelfj.order.dto.Dtos.ParkSaleRequest;
@@ -30,7 +31,7 @@ public class ParkedSaleService {
       throw new ApiException(400, "PARK_EMPTY", "Cannot park a sale with no items", List.of());
     }
     UUID storeId = Parsing.uuid(req.storeId(), "storeId");
-    UUID saleId = UUID.randomUUID();
+    UUID saleId = Ids.newId();
 
     List<ParkedSaleItemResponse> items =
         req.items().stream()

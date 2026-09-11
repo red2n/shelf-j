@@ -167,6 +167,7 @@ shelf-j/
 │   └── notification-svc/ reporting-svc/
 │
 ├── shared/                      # CONTRACTS + infra glue only — no business logic
+│   ├── common-ids/               # Ids.newId(): time-ordered UUIDv7 ids
 │   ├── events-contract/          # BaseEvent/DomainEvent/OutboxRecord
 │   ├── common-web/               # response envelope, error mapper, tenant context
 │   ├── common-service/           # DataSource/Flyway/Consul/health/outbox/Kafka base classes
@@ -264,6 +265,7 @@ For a service named `<service>` (e.g. `iam-svc`) and a profile `<profile>` (defa
 
 | Module | Purpose |
 |---|---|
+| `common-ids` | `Ids.newId()`: every id the platform mints — primary keys, event ids, outbox rows, request ids. UUIDv7, so inserts append to B-tree indexes instead of scattering; no dependencies, so every other module can use it. |
 | `events-contract` | Event envelope types only: `BaseEvent`, `DomainEvent`, `EventPayload`, `OutboxRecord`. Actual event names are per-service string constants — no business logic here. |
 | `common-web` | `ApiResponse`/`ErrorBody`/`ErrorCodes`, exception mappers (generic + UUID-parse), `TenantContext`/`TenantContextFilter`, `AdminAuthorizationFilter`, `Cursor` (pagination), `Validations`. |
 | `common-service` | Reusable infra: `DataSourceProducer`, `FlywayRunner`, `ConsulRegistrar`, `HealthChecks`, `BaseJdbcRepository`, the outbox pattern (`BaseOutboxRepository`/`OutboxPublisher`/`OutboxStore`), `BaseKafkaConsumer`/`KafkaConsumerRegistry`, `RedisClientProducer`, and shared tenant/store status-change projection consumers. |
@@ -469,7 +471,7 @@ For the full screen-by-screen, persona-by-persona tour of what's actually on eac
 - **Errors:** correct HTTP codes (`400` validation, `401`/`403` auth, `404`, `409` conflict, `422` business rule, `500` unexpected); stable machine `code`; never leak stack traces or SQL.
 - **Pagination:** cursor only (`?after=&limit=`, default 20 / max 100, opaque base64 keyset cursor). No page numbers.
 - **Naming:** REST paths = plural kebab nouns (`/purchase-orders`); JSON = `camelCase`; DB columns = `snake_case`; events = `PascalCase` past tense (`OrderPlaced`); Kafka topics = `shelfj.<domain>.<event>`.
-- **IDs:** UUID primary keys, service-generated.
+- **IDs:** UUIDv7 primary keys, minted in the service with `Ids.newId()` (`shared/common-ids`), never `UUID.randomUUID()` — PMD rule `UseTimeOrderedIds` fails the build. v7 ids lead with a millisecond timestamp, so new rows append to the right-hand edge of each index rather than splitting random pages. Rows stored before the switch keep their v4 ids; both live in the same `uuid` column. The id's timestamp is visible to anyone holding it: never use an id as a secret or as the business time (keep `created_at`). Column defaults are still `gen_random_uuid()` (v4) — Postgres 16 has no `uuidv7()` — and only three low-volume inserts rely on them: `product_stores`, `transaction_reason_codes`, `transaction_source_types`.
 - **Auth:** gateway validates the JWT once and re-stamps identity headers; services read `tenant_id`/`userId`/`roles` from those headers, never from the request body.
 - **Idempotency:** `Idempotency-Key` header on checkout/payment-capture/stock-receipt/cash-movement writes; the gateway forwards it verbatim; the service stores processed keys and replays the original response.
 - **Health:** `/health/started`, `/health/live`, `/health/ready` (ready checks real DB/Kafka/config reachability) + `/metrics` (Prometheus) on every service.

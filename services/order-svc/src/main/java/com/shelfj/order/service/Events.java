@@ -2,6 +2,7 @@ package com.shelfj.order.service;
 
 import static com.shelfj.events.EventPayload.esc;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.domain.Domain.ReturnItem;
 import com.shelfj.service.OutboxRow;
@@ -63,7 +64,7 @@ final class Events {
         tenantId,
         orderId,
         "{\"eventId\":\""
-            + UUID.randomUUID()
+            + Ids.newId()
             + "\",\"eventType\":\"OrderConfirmed\",\"tenantId\":\""
             + tenantId
             + "\",\"orderId\":\""
@@ -92,7 +93,7 @@ final class Events {
         String.format(
             "{\"eventId\":\"%s\",\"eventType\":\"OrderCancelled\",\"tenantId\":\"%s\","
                 + "\"orderId\":\"%s\",\"reason\":\"%s\"}",
-            UUID.randomUUID(), tenantId, orderId, esc(reason)));
+            Ids.newId(), tenantId, orderId, esc(reason)));
   }
 
   static OutboxRow orderFulfilled(
@@ -101,7 +102,7 @@ final class Events {
     // every OrderFulfilled is dropped as a malformed event and stock is never deducted.
     StringBuilder sb = new StringBuilder();
     sb.append("{\"eventId\":\"")
-        .append(UUID.randomUUID())
+        .append(Ids.newId())
         .append("\",\"eventType\":\"OrderFulfilled\",\"tenantId\":\"")
         .append(tenantId)
         .append("\",\"orderId\":\"")
@@ -136,7 +137,7 @@ final class Events {
     // refundMethod let payment-svc reverse the captured payment for ORIGINAL-tender returns.
     StringBuilder sb = new StringBuilder();
     sb.append("{\"eventId\":\"")
-        .append(UUID.randomUUID())
+        .append(Ids.newId())
         .append("\",\"eventType\":\"OrderReturned\",\"tenantId\":\"")
         .append(tenantId)
         .append("\",\"orderId\":\"")
@@ -176,7 +177,7 @@ final class Events {
     // OrderEventHandler needs to restock and dedupe per line, exactly as for OrderReturned.
     StringBuilder sb = new StringBuilder();
     sb.append("{\"eventId\":\"")
-        .append(UUID.randomUUID())
+        .append(Ids.newId())
         .append("\",\"eventType\":\"OrderVoided\",\"tenantId\":\"")
         .append(tenantId)
         .append("\",\"orderId\":\"")

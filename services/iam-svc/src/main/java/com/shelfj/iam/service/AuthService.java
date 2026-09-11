@@ -10,6 +10,7 @@ import com.shelfj.iam.dto.Dtos.ProvisionStaffResponse;
 import com.shelfj.iam.dto.Dtos.TokenResponse;
 import com.shelfj.iam.repo.RefreshTokenRepository;
 import com.shelfj.iam.repo.UserRepository;
+import com.shelfj.ids.Ids;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.service.TenantStatusRepository;
 import com.shelfj.web.ApiException;
@@ -42,7 +43,7 @@ public class AuthService {
   /** Customer self-signup → creates a CUSTOMER (global, tenantId null) and returns a token pair. */
   public TokenResponse register(String email, String password, String phone) {
     String hash = passwords.hash(password);
-    UUID userId = UUID.randomUUID();
+    UUID userId = Ids.newId();
     Instant now = Instant.now();
     var user =
         new User(
@@ -50,7 +51,7 @@ public class AuthService {
 
     String payload =
         Json.createObjectBuilder()
-            .add("eventId", UUID.randomUUID().toString())
+            .add("eventId", Ids.newId().toString())
             .add("eventType", "UserRegistered")
             .addNull("tenantId")
             .add("aggregateId", userId.toString())
@@ -96,7 +97,7 @@ public class AuthService {
           java.util.List.of());
     }
 
-    UUID userId = UUID.randomUUID();
+    UUID userId = Ids.newId();
     Instant now = Instant.now();
     var user =
         new User(
@@ -111,7 +112,7 @@ public class AuthService {
             now);
     String payload =
         Json.createObjectBuilder()
-            .add("eventId", UUID.randomUUID().toString())
+            .add("eventId", Ids.newId().toString())
             .add("eventType", "UserRegistered")
             .addNull("tenantId")
             .add("aggregateId", userId.toString())
@@ -271,7 +272,7 @@ public class AuthService {
           java.util.List.of(),
           null);
     }
-    UUID userId = UUID.randomUUID();
+    UUID userId = Ids.newId();
     Instant now = Instant.now();
     var user =
         new User(
@@ -338,7 +339,7 @@ public class AuthService {
     // Ids only: the event outlives its handling, so it must not carry what it erases.
     String payload =
         Json.createObjectBuilder()
-            .add("eventId", UUID.randomUUID().toString())
+            .add("eventId", Ids.newId().toString())
             .add("eventType", "AccountDeleted")
             .add("aggregateId", userId.toString())
             .add("occurredAt", Instant.now().toString())

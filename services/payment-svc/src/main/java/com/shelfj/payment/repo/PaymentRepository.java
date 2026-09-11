@@ -1,5 +1,6 @@
 package com.shelfj.payment.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.domain.Domain.PaymentTender;
 import com.shelfj.payment.domain.Domain.RefundTender;
 import com.shelfj.service.BaseOutboxRepository;
@@ -284,7 +285,7 @@ public class PaymentRepository extends BaseOutboxRepository {
             "INSERT INTO refund_tenders"
                 + " (id, tenant_id, order_id, payment_id, amount, method, reason, created_at)"
                 + " VALUES (?,?,?,?,?,?,?, now())")) {
-      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, orderId);
       ps.setObject(4, paymentId);

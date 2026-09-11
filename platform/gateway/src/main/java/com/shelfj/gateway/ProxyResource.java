@@ -2,6 +2,7 @@ package com.shelfj.gateway;
 
 import com.shelfj.discovery.ServiceInstance;
 import com.shelfj.discovery.ServiceRegistry;
+import com.shelfj.ids.Ids;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.ErrorBody;
 import com.shelfj.web.HttpHeaders;
@@ -22,7 +23,6 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.UriInfo;
 import java.util.Optional;
-import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
@@ -431,6 +431,6 @@ public class ProxyResource {
   }
 
   private static String newRequestId() {
-    return UUID.randomUUID().toString();
+    return Ids.newId().toString();
   }
 }
