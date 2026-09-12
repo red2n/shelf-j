@@ -1,5 +1,6 @@
 package com.shelfj.inventory.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.config.ServiceConfig;
 import com.shelfj.inventory.domain.Domain.AbcAssignment;
 import com.shelfj.inventory.domain.Domain.AbcCompileRun;
@@ -124,7 +125,7 @@ public class InventoryService {
       UUID refId,
       UUID zoneId,
       String idempotencyKey) {
-    UUID batchId = UUID.randomUUID();
+    UUID batchId = Ids.newId();
     var batch =
         new Batch(
             batchId,
@@ -269,7 +270,7 @@ public class InventoryService {
       UUID refId) {
     var batch =
         new Batch(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             storeId,
             variantId,
@@ -291,11 +292,11 @@ public class InventoryService {
   private static Batch returnBatch(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
     return new Batch(
-        UUID.randomUUID(),
+        Ids.newId(),
         tenantId,
         storeId,
         variantId,
-        "RET-" + orderId.toString().substring(0, 8),
+        "RET-" + Ids.shortRef(orderId),
         qty,
         qty,
         null,
@@ -509,7 +510,7 @@ public class InventoryService {
       Long ttlSeconds,
       String idempotencyKey) {
     long ttl = ttlSeconds == null ? config.reservationTtlSeconds() : ttlSeconds;
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     var reservation =
         new Reservation(
             id,
@@ -675,7 +676,7 @@ public class InventoryService {
   public Threshold setThreshold(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal threshold, BigDecimal maxQty) {
     return thresholdRepo.upsertThreshold(
-        new Threshold(UUID.randomUUID(), tenantId, storeId, variantId, threshold, maxQty));
+        new Threshold(Ids.newId(), tenantId, storeId, variantId, threshold, maxQty));
   }
 
   public List<Threshold> listThresholds(UUID tenantId, UUID storeId) {
@@ -705,7 +706,7 @@ public class InventoryService {
       BigDecimal target =
           t.maxQty() != null ? t.maxQty() : t.threshold().multiply(BigDecimal.valueOf(2));
       BigDecimal suggestedQty = target.subtract(available).max(BigDecimal.ONE);
-      UUID suggId = UUID.randomUUID();
+      UUID suggId = Ids.newId();
       var sugg =
           new Suggestion(
               suggId,
@@ -788,7 +789,7 @@ public class InventoryService {
             .map(
                 sno ->
                     new SerialNumber(
-                        UUID.randomUUID(),
+                        Ids.newId(),
                         tenantId,
                         storeId,
                         variantId,
@@ -897,7 +898,7 @@ public class InventoryService {
       throw new ApiException(
           400, "NO_LINES", "Move order must have at least one line", List.of(), null);
     }
-    UUID orderId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
     Instant now = Instant.now();
     MoveOrder order =
         new MoveOrder(
@@ -916,12 +917,7 @@ public class InventoryService {
             .map(
                 l ->
                     new MoveOrderLine(
-                        UUID.randomUUID(),
-                        tenantId,
-                        orderId,
-                        l.variantId(),
-                        l.requestedQty(),
-                        null))
+                        Ids.newId(), tenantId, orderId, l.variantId(), l.requestedQty(), null))
             .toList();
     return repo.createMoveOrder(order, withIds);
   }
@@ -999,7 +995,7 @@ public class InventoryService {
           List.of(),
           null);
     }
-    UUID orderId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
     Instant now = Instant.now();
     TransferOrder order =
         new TransferOrder(
@@ -1018,7 +1014,7 @@ public class InventoryService {
             .map(
                 l ->
                     new TransferOrderLine(
-                        UUID.randomUUID(),
+                        Ids.newId(),
                         tenantId,
                         orderId,
                         l.variantId(),
@@ -1117,7 +1113,7 @@ public class InventoryService {
           400, "INVALID_TOLERANCE", "tolerancePct must be 0–100", List.of(), null);
     }
 
-    UUID headerId = UUID.randomUUID();
+    UUID headerId = Ids.newId();
     Instant now = Instant.now();
     CycleCountHeader header =
         new CycleCountHeader(
@@ -1140,7 +1136,7 @@ public class InventoryService {
       BigDecimal onHand = onHandMap.getOrDefault(a.variantId(), BigDecimal.ZERO);
       lines.add(
           new CycleCountLine(
-              UUID.randomUUID(),
+              Ids.newId(),
               tenantId,
               headerId,
               storeId,
@@ -1301,14 +1297,7 @@ public class InventoryService {
     }
     var link =
         new LotGenealogyLink(
-            UUID.randomUUID(),
-            tenantId,
-            parentBatchId,
-            childBatchId,
-            qty,
-            type,
-            notes,
-            Instant.now());
+            Ids.newId(), tenantId, parentBatchId, childBatchId, qty, type, notes, Instant.now());
     return lotGenealogyRepo.createLotLink(link);
   }
 
@@ -1358,7 +1347,7 @@ public class InventoryService {
 
     List<Object[]> raw = abcRepo.abcScoringData(tenantId, storeId);
     if (raw.isEmpty()) {
-      UUID runId = UUID.randomUUID();
+      UUID runId = Ids.newId();
       AbcCompileRun emptyRun =
           new AbcCompileRun(runId, tenantId, storeId, crit, tA, tAB, 0, Instant.now());
       abcRepo.persistAbcRun(emptyRun, List.of());
@@ -1382,7 +1371,7 @@ public class InventoryService {
     BigDecimal totalScore =
         scored.stream().map(Scored::score).reduce(BigDecimal.ZERO, BigDecimal::add);
 
-    UUID runId = UUID.randomUUID();
+    UUID runId = Ids.newId();
     Instant now = Instant.now();
     List<AbcAssignment> assignments = new ArrayList<>();
     BigDecimal cumulative = BigDecimal.ZERO;
@@ -1404,7 +1393,7 @@ public class InventoryService {
 
       assignments.add(
           new AbcAssignment(
-              UUID.randomUUID(),
+              Ids.newId(),
               tenantId,
               s.storeId(),
               s.variantId(),
@@ -1473,7 +1462,7 @@ public class InventoryService {
 
     var params =
         new SafetyStockParams(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             storeId,
             variantId,
@@ -1593,7 +1582,7 @@ public class InventoryService {
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
 
   public PhysicalInventory createPhysicalInventory(UUID tenantId, UUID storeId, String notes) {
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     var pi =
         new PhysicalInventory(
             id, tenantId, storeId, PhysicalInventory.OPEN, notes, Instant.now(), null);
@@ -1623,7 +1612,7 @@ public class InventoryService {
     getPhysicalInventory(tenantId, piId);
     var tag =
         new PhysicalInventoryTag(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             piId,
             variantId,
@@ -1727,7 +1716,7 @@ public class InventoryService {
       throw ApiException.badRequest(
           "INVALID_KANBAN_TYPE", "kanban type must be one of " + KANBAN_TYPES);
     }
-    UUID cardId = UUID.randomUUID();
+    UUID cardId = Ids.newId();
     KanbanCard card =
         new KanbanCard(
             cardId,
@@ -1906,10 +1895,8 @@ public class InventoryService {
           "INSUFFICIENT_QTY", "Split qty exceeds remaining qty on source batch");
     }
     String newBatchNo =
-        batchNo != null
-            ? batchNo
-            : source.batchNo() + "-SPLIT-" + UUID.randomUUID().toString().substring(0, 8);
-    UUID newBatchId = UUID.randomUUID();
+        batchNo != null ? batchNo : source.batchNo() + "-SPLIT-" + Ids.shortRef(Ids.newId());
+    UUID newBatchId = Ids.newId();
     Batch splitBatch =
         new Batch(
             newBatchId,
@@ -2088,7 +2075,7 @@ public class InventoryService {
         UUID variantId = UUID.fromString(req.variantId());
         UUID orderId = req.orderId() != null ? UUID.fromString(req.orderId()) : null;
         long ttl = req.ttlSeconds() == null ? config.reservationTtlSeconds() : req.ttlSeconds();
-        UUID id = UUID.randomUUID();
+        UUID id = Ids.newId();
         var reservation =
             new Reservation(
                 id,

@@ -294,7 +294,7 @@ class AdminAuthorizationFilterTest {
   void cashierCanReadTillSession() throws Exception {
     ctx.set(null, null, Set.of("CASHIER"), null, null);
     assertNotAborted(
-        invoke("GET", "/admin/cash/till-sessions/00000000-0000-0000-0000-000000000001"));
+        invoke("GET", "/admin/cash/till-sessions/01a090ae-611e-7001-a690-2682e4afcb55"));
   }
 
   @Test

@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.ids.Ids;
 import jakarta.json.Json;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
@@ -19,7 +20,7 @@ class MqttChannelTest {
 
   @Test
   void topicIsScopedByTenantThenRecipient() {
-    UUID tenant = UUID.fromString("11111111-1111-1111-1111-111111111111");
+    UUID tenant = UUID.fromString("01a090ae-611e-700b-bde4-50df0324c37c");
 
     String topic = MqttChannel.topic(tenant, "store-42");
 
@@ -28,8 +29,8 @@ class MqttChannelTest {
 
   @Test
   void differentTenantsNeverShareATopic() {
-    UUID tenantA = UUID.randomUUID();
-    UUID tenantB = UUID.randomUUID();
+    UUID tenantA = Ids.newId();
+    UUID tenantB = Ids.newId();
 
     String topicA = MqttChannel.topic(tenantA, "store-1");
     String topicB = MqttChannel.topic(tenantB, "store-1");

@@ -2,6 +2,7 @@ package com.shelfj.product.service;
 
 import static java.util.stream.Collectors.toSet;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.product.domain.Domain;
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.product.domain.Domain.CatalogGroup;
@@ -151,7 +152,7 @@ public class ProductService {
   // ──────────────────────────────────────────────────────────────── products
 
   public Product createProduct(UUID tenantId, CreateProductRequest req) {
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     Instant now = Instant.now();
     var product =
         new Product(
@@ -368,7 +369,7 @@ public class ProductService {
   // ──────────────────────────────────────────────────────────────── variants
 
   public Variant createVariant(UUID tenantId, UUID productId, CreateVariantRequest req) {
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     Instant now = Instant.now();
     var variant =
         new Variant(
@@ -432,7 +433,7 @@ public class ProductService {
     getVariant(tenantId, variantId);
     return crossReferenceRepo.createCrossReference(
         new ItemCrossReference(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             variantId,
             type,
@@ -703,8 +704,7 @@ public class ProductService {
     getVariant(tenantId, variantId);
     getVariant(tenantId, relatedId);
     return itemRelationshipRepo.createRelationship(
-        new ItemRelationship(
-            UUID.randomUUID(), tenantId, variantId, relatedId, type, Instant.now()));
+        new ItemRelationship(Ids.newId(), tenantId, variantId, relatedId, type, Instant.now()));
   }
 
   public List<ItemRelationship> listRelationships(UUID tenantId, UUID variantId) {
@@ -731,7 +731,7 @@ public class ProductService {
   public UomItemConversion upsertItemConversion(
       UUID tenantId, UUID variantId, String fromUom, String toUom, BigDecimal factor) {
     return uomRepo.upsertItemConversion(
-        new UomItemConversion(UUID.randomUUID(), tenantId, variantId, fromUom, toUom, factor));
+        new UomItemConversion(Ids.newId(), tenantId, variantId, fromUom, toUom, factor));
   }
 
   public List<UomItemConversion> listItemConversions(UUID tenantId, UUID variantId) {
@@ -771,7 +771,7 @@ public class ProductService {
 
   public ItemTemplate createTemplate(
       UUID tenantId, String name, String description, String attributes) {
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     var tpl =
         new ItemTemplate(
             id, tenantId, name, description, attributes, ItemTemplate.ACTIVE, Instant.now());
@@ -815,7 +815,7 @@ public class ProductService {
 
   public ItemRevision createRevision(
       UUID tenantId, UUID variantId, String revision, String description, LocalDate effectiveDate) {
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     var rev =
         new ItemRevision(
             id,
@@ -957,7 +957,7 @@ public class ProductService {
           if (existing.isPresent()) {
             productId = existing.get().id();
           } else {
-            productId = UUID.randomUUID();
+            productId = Ids.newId();
             var product =
                 new com.shelfj.product.domain.Domain.Product(
                     productId,
@@ -997,7 +997,7 @@ public class ProductService {
               com.shelfj.web.Validations.validate(v);
               // REPLACE: drop any existing variant with this SKU first, so the sheet wins.
               if (replace) repo.deleteVariantBySku(tenantId, v.sku().trim());
-              UUID variantId = UUID.randomUUID();
+              UUID variantId = Ids.newId();
               var variant =
                   new com.shelfj.product.domain.Domain.Variant(
                       variantId,
@@ -1089,7 +1089,7 @@ public class ProductService {
     }
     return catalogGroupRepo.createCatalogGroupElement(
         new CatalogGroupElement(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             groupId,
             req.elementName().trim(),
@@ -1118,7 +1118,7 @@ public class ProductService {
     getCatalogGroup(tenantId, groupId);
     return catalogGroupRepo.createCatalogAssignment(
         new VariantCatalogAssignment(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             variantId,
             groupId,
@@ -1290,7 +1290,7 @@ public class ProductService {
     UUID defCat = parseOptionalUuid(req.defaultCatId(), "defaultCatId");
     return categorySetRepo.createCategorySet(
         new CategorySet(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             req.name(),
             req.description(),
@@ -1341,7 +1341,7 @@ public class ProductService {
         .findCategory(tenantId, catId)
         .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
     return categorySetRepo.addCategorySetMember(
-        new CategorySetMember(UUID.randomUUID(), tenantId, setId, catId, null));
+        new CategorySetMember(Ids.newId(), tenantId, setId, catId, null));
   }
 
   public List<CategorySetMember> listCategorySetMembers(UUID tenantId, UUID setId) {
@@ -1364,7 +1364,7 @@ public class ProductService {
     getCategorySet(tenantId, setId);
     return categorySetRepo.upsertVariantCategorySetAssignment(
         new VariantCategorySetAssignment(
-            UUID.randomUUID(), tenantId, variantId, setId, catId, null, null));
+            Ids.newId(), tenantId, variantId, setId, catId, null, null));
   }
 
   public List<VariantCategorySetAssignment> listVariantCategorySetAssignments(

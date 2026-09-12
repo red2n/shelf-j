@@ -37,7 +37,7 @@ const _issued = (200, '{"data":{"fullNumber":"2026-000042","number":42}}');
 Dio _dio(_Replies r) => Dio(BaseOptions(baseUrl: 'http://test'))..httpClientAdapter = r;
 
 PosReceiptData _receipt({String? number, String? note}) => PosReceiptData(
-      orderId: '9f3c2a1b-0000-0000-0000-000000000000',
+      orderId: '01a090ae-611e-701e-a773-cff68a489efe',
       storeName: 'High Street',
       dateTime: DateTime(2026, 9, 10, 11, 30),
       items: const [],
@@ -107,6 +107,44 @@ void main() {
       expect(late.fiscalNumber, '2026-000043');
       expect(late.toHtml(), contains('Receipt no.:'));
       expect(late.toHtml(), isNot(contains('not yet')));
+    });
+  });
+
+  // Order ids are UUIDv7: their first eight characters are a timestamp shared
+  // by every sale rung up in the same minute, their last eight are random.
+  group('the order ref', () {
+    PosReceiptData forOrder(String orderId) => PosReceiptData(
+          orderId: orderId,
+          storeName: 'High Street',
+          dateTime: DateTime(2026, 9, 10, 11, 30),
+          items: const [],
+          subtotal: 12,
+          discount: 0,
+          total: 12,
+          currency: 'GBP',
+          tenders: const [],
+          change: 0,
+        );
+
+    test('is the end of the order id, upper-cased', () {
+      final receipt = forOrder('01a0905d-7082-7518-9ec6-aee90d72a43e');
+      expect(receipt.shortId, '0D72A43E');
+      final html = receipt.toHtml();
+      expect(html, contains('<span>0D72A43E</span>'));
+      expect(html, contains('<title>Order 0D72A43E</title>'));
+      expect(html, isNot(contains('01A0905D')));
+    });
+
+    test('two sales rung up in the same minute print different refs', () {
+      final first = forOrder('01a0905d-7082-7518-9ec6-00000000a001');
+      final second = forOrder('01a0905d-70a4-7003-9ec6-00000000a002');
+      expect(first.shortId, '0000A001');
+      expect(second.shortId, '0000A002');
+    });
+
+    test('an id shorter than the ref prints whole', () {
+      expect(forOrder('o-1').shortId, 'O-1');
+      expect(forOrder('').shortId, '');
     });
   });
 }

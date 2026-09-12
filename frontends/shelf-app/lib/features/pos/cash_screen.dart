@@ -7,6 +7,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'cash_providers.dart';
 import 'pos_providers.dart';
+import '../../shared/util/short_ref.dart';
 
 class CashScreen extends ConsumerWidget {
   const CashScreen({super.key});
@@ -165,7 +166,7 @@ class _OpenSessionView extends ConsumerWidget {
                 ),
               ],
             ),
-            Text('#${sessionId.length >= 8 ? sessionId.substring(0, 8) : sessionId}',
+            Text('#${shortRef(sessionId)}',
                 style: TextStyle(fontFamily: 'monospace', color: cs.outline)),
             const SizedBox(height: 16),
             Card(

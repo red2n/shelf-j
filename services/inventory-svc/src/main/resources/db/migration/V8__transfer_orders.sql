@@ -3,7 +3,7 @@
 -- INTRANSIT: ship deducts source; receive adds destination; in-transit qty tracked via shipped_qty.
 
 CREATE TABLE transfer_orders (
-    id              UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID        NOT NULL,
     tenant_id       UUID        NOT NULL,
     from_store_id   UUID        NOT NULL,
     to_store_id     UUID        NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE transfer_orders (
 CREATE INDEX idx_transfer_orders_tenant ON transfer_orders (tenant_id, from_store_id, status, created_at DESC);
 
 CREATE TABLE transfer_order_lines (
-    id                  UUID           NOT NULL DEFAULT gen_random_uuid(),
+    id                  UUID           NOT NULL,
     tenant_id           UUID           NOT NULL,
     transfer_order_id   UUID           NOT NULL,
     variant_id          UUID           NOT NULL,

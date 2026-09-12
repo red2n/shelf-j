@@ -47,8 +47,8 @@ class CatalogIT {
     System.setProperty("shelfj.redis.password", "");
   }
 
-  private static final String TENANT_A = "11111111-1111-1111-1111-111111111111";
-  private static final String TENANT_B = "22222222-2222-2222-2222-222222222222";
+  private static final String TENANT_A = "01a090ae-611e-700b-bde4-50df0324c37c";
+  private static final String TENANT_B = "01a090ae-611e-700f-b645-a14095230b77";
 
   @Inject WebTarget target;
 
@@ -140,6 +140,36 @@ class CatalogIT {
         .header("X-Roles", "OWNER")
         .delete();
     assertThat(get("/catalog/products", TENANT_A), not(containsString("Rice 5kg")));
+  }
+
+  /**
+   * The update used to run its UPDATE and then re-read the row. Against a delisted variant the
+   * UPDATE matched nothing, and the re-read still answered 200 with the old values, as if the edit
+   * had been saved.
+   */
+  @Test
+  void aVariantEditIsSavedOrRefusedNeverSilentlyDropped() {
+    String productId =
+        field(
+            post("/admin/products", "{\"name\":\"Kettle\"}", TENANT_A).readEntity(String.class),
+            "id");
+    String variantId =
+        field(
+            post("/admin/products/" + productId + "/variants", "{\"sku\":\"KETTLE-1\"}", TENANT_A)
+                .readEntity(String.class),
+            "id");
+    String path = "/admin/products/" + productId + "/variants/" + variantId;
+
+    Response edited = put(path, "{\"sku\":\"KETTLE-1\",\"manufacturerPn\":\"MFR-A\"}", TENANT_A);
+    assertThat(edited.getStatus(), is(200));
+    assertThat(edited.readEntity(String.class), containsString("\"manufacturerPn\":\"MFR-A\""));
+
+    target.path(path).request().header("X-Tenant-Id", TENANT_A).header("X-Roles", "OWNER").delete();
+    Response afterDelist =
+        put(path, "{\"sku\":\"KETTLE-1\",\"manufacturerPn\":\"MFR-B\"}", TENANT_A);
+    assertThat(afterDelist.getStatus(), is(409));
+    assertThat(afterDelist.readEntity(String.class), containsString("VARIANT_NOT_ACTIVE"));
+    assertThat(getAdmin(path, TENANT_A), containsString("\"manufacturerPn\":\"MFR-A\""));
   }
 
   @Test
@@ -363,7 +393,7 @@ class CatalogIT {
     Response badParent =
         post(
             "/admin/categories",
-            "{\"name\":\"Orphan\",\"parentId\":\"99999999-9999-9999-9999-999999999999\"}",
+            "{\"name\":\"Orphan\",\"parentId\":\"01a090ae-611e-701d-9d60-a9d7516ed03b\"}",
             TENANT_A);
     assertThat(badParent.getStatus(), is(400));
 
@@ -392,7 +422,7 @@ class CatalogIT {
   @Test
   void listProductsAdminPaginatesWithCursor() {
     // Dedicated tenant so products created by other tests never leak into these pages.
-    String tenant = "33333333-3333-3333-3333-333333333333";
+    String tenant = "01a090ae-611e-7011-ae7d-1bd68c966ff6";
     var allIds = new java.util.HashSet<String>();
     for (int i = 0; i < 3; i++) {
       Response r = post("/admin/products", "{\"name\":\"Paginate " + i + "\"}", tenant);
@@ -436,7 +466,7 @@ class CatalogIT {
     assertThat(memberR.getStatus(), is(400));
 
     // AssignVariantCategorySetRequest.setId/categoryId are @NotBlank.
-    String variantId = "99999999-8888-7777-6666-555555555555";
+    String variantId = "01a090ae-611e-701c-979a-c9c9a3b8be89";
     Response assignR =
         post(
             "/admin/products/variants/" + variantId + "/category-set-assignments",

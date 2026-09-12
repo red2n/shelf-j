@@ -2,7 +2,7 @@
 -- Tracks design/spec versions of a product variant over time. Append-only.
 
 CREATE TABLE item_revisions (
-    id             UUID         NOT NULL DEFAULT gen_random_uuid(),
+    id             UUID         NOT NULL,
     tenant_id      UUID         NOT NULL,
     variant_id     UUID         NOT NULL REFERENCES product_variants(id),
     revision       TEXT         NOT NULL,

@@ -118,7 +118,8 @@ grep -n "= new " <changed_java_files> | grep -v "@Produces\|[Tt]est"
 |---|---|
 | Multi-line Javadoc explaining WHAT the code does (not WHY) | WARN |
 | Kafka background bean missing `@Observes @Initialized(ApplicationScoped.class)` eager-init | BLOCKER |
-| `UUID.randomUUID()` called in repo instead of service layer | NOTE |
+| `Ids.newId()` called in repo instead of service layer | NOTE |
+| Any id that is not UUIDv7: `@SuppressWarnings` on `UseTimeOrderedIds`/`NoDatabaseMintedIds`/`ShortRefFromIdTail`, a migration column `DEFAULT` that fills in a uuid, a seed row with a non-v7 literal id, or an `INSERT` that leaves `id` out | BLOCKER |
 
 ---
 

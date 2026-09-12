@@ -1,5 +1,6 @@
 package com.shelfj.order.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.domain.Domain;
 import com.shelfj.order.domain.Domain.ExceptionGrouping;
 import com.shelfj.order.domain.Domain.ExceptionRow;
@@ -169,7 +170,7 @@ public class OrderService {
               + " — a more senior member of staff must authorise it");
 
     return new OrderDiscount(
-        UUID.randomUUID(),
+        Ids.newId(),
         ctx.requireTenantId(),
         orderId,
         storeId,
@@ -247,7 +248,7 @@ public class OrderService {
     BigDecimal subtotal = BigDecimal.ZERO;
     BigDecimal serverTax = BigDecimal.ZERO;
     List<OrderItem> items = new ArrayList<>();
-    UUID orderId = UUID.randomUUID();
+    UUID orderId = Ids.newId();
 
     List<UUID> variantIds =
         req.items().stream().map(ir -> Parsing.uuid(ir.variantId(), "variantId")).toList();
@@ -300,14 +301,7 @@ public class OrderService {
       subtotal = subtotal.add(line);
       items.add(
           new OrderItem(
-              UUID.randomUUID(),
-              tenantId,
-              orderId,
-              variantId,
-              ir.qty(),
-              unitPrice,
-              line,
-              ir.notes()));
+              Ids.newId(), tenantId, orderId, variantId, ir.qty(), unitPrice, line, ir.notes()));
     }
 
     // Hold stock for ONLINE orders before persisting, so a short line rejects the checkout with
@@ -631,7 +625,7 @@ public class OrderService {
     String period = String.valueOf(order.createdAt().atZone(java.time.ZoneOffset.UTC).getYear());
     return receiptRepo.issue(
         new Domain.FiscalReceipt(
-            UUID.randomUUID(),
+            Ids.newId(),
             order.tenantId(),
             order.storeId(),
             series,
@@ -746,12 +740,17 @@ public class OrderService {
             .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
     ctx.requireStoreAccess(order.storeId());
 
-    if (Order.STATUS_CANCELLED.equals(order.status()) || Order.STATUS_VOIDED.equals(order.status()))
+    // Goods can only come back once they were handed over. An order still PENDING or CONFIRMED
+    // never left the store — cancel it instead; returning it recorded a refund for goods, and
+    // often money, that were never exchanged. A fully REFUNDED order has nothing left to refund.
+    if (!Order.STATUS_FULFILLED.equals(order.status())
+        && !Order.STATUS_PARTIALLY_REFUNDED.equals(order.status()))
       throw ApiException.conflict(
-          "ORDER_CANNOT_RETURN", "cannot return a voided or cancelled order");
+          "ORDER_CANNOT_RETURN",
+          "only a fulfilled order can be returned; this one is " + order.status());
 
     List<OrderItem> orderItems = repo.findOrderItems(tenantId, orderId);
-    UUID returnId = UUID.randomUUID();
+    UUID returnId = Ids.newId();
     BigDecimal totalRefund = BigDecimal.ZERO;
     List<ReturnItem> returnItems = new ArrayList<>();
     String method = req.refundMethod() != null ? req.refundMethod() : Return.METHOD_ORIGINAL;
@@ -770,13 +769,7 @@ public class OrderService {
       totalRefund = totalRefund.add(refundAmt);
       returnItems.add(
           new ReturnItem(
-              UUID.randomUUID(),
-              tenantId,
-              returnId,
-              variantId,
-              ri.qty(),
-              refundAmt,
-              ri.condition()));
+              Ids.newId(), tenantId, returnId, variantId, ri.qty(), refundAmt, ri.condition()));
     }
 
     Return ret =
@@ -853,7 +846,7 @@ public class OrderService {
     ctx.requireStoreAccess(storeId);
     UUID customerId =
         req.customerId() != null ? Parsing.uuid(req.customerId(), "customerId") : null;
-    UUID layawayId = UUID.randomUUID();
+    UUID layawayId = Ids.newId();
 
     BigDecimal total = BigDecimal.ZERO;
     List<LayawayItem> items = new ArrayList<>();
@@ -862,7 +855,7 @@ public class OrderService {
       total = total.add(line);
       items.add(
           new LayawayItem(
-              UUID.randomUUID(),
+              Ids.newId(),
               tenantId,
               layawayId,
               Parsing.uuid(li.variantId(), "variantId"),
@@ -895,7 +888,7 @@ public class OrderService {
 
     LayawayDeposit deposit =
         new LayawayDeposit(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             layawayId,
             req.initialDeposit(),
@@ -923,7 +916,7 @@ public class OrderService {
       UUID tenantId, UUID layawayId, AddDepositRequest req, TenantContext ctx) {
     LayawayDeposit deposit =
         new LayawayDeposit(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             layawayId,
             req.amount(),
@@ -950,7 +943,7 @@ public class OrderService {
     UUID tenantId = ctx.requireTenantId();
     UUID storeId = Parsing.uuid(req.storeId(), "storeId");
     ctx.requireStoreAccess(storeId);
-    UUID gcId = UUID.randomUUID();
+    UUID gcId = Ids.newId();
     String code = generateGiftCardCode();
     String currency = resolveCurrency(tenantId, req.currency());
     Instant expiresAt =
@@ -971,7 +964,7 @@ public class OrderService {
 
     GiftCardTransaction tx =
         new GiftCardTransaction(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             gcId,
             GiftCardTransaction.TX_ISSUE,
@@ -1158,7 +1151,7 @@ public class OrderService {
       throw ApiException.badRequest(
           "SPECIAL_ORDER_NO_ITEMS", "special order must have at least one item");
 
-    UUID soId = UUID.randomUUID();
+    UUID soId = Ids.newId();
     UUID storeId = Parsing.uuid(req.storeId(), "storeId");
     ctx.requireStoreAccess(storeId);
     UUID customerId =
@@ -1172,7 +1165,7 @@ public class OrderService {
       subtotal = subtotal.add(line);
       items.add(
           new SpecialOrderItem(
-              UUID.randomUUID(),
+              Ids.newId(),
               tenantId,
               soId,
               Parsing.uuid(ir.variantId(), "variantId"),
@@ -1291,7 +1284,7 @@ public class OrderService {
       throw ApiException.badRequest("POSLOG_NOT_POS", "POSLog is only for POS channel orders");
     var entry =
         new PosLogEntry(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             orderId,
             order.storeId(),
@@ -1537,7 +1530,7 @@ public class OrderService {
       List<OrderItem> items = repo.findOrderItems(tenantId, orderId);
       String body = formatReceiptEmail(order, items);
       String subject = "Your receipt — order " + shortId(order.id());
-      UUID eventId = UUID.randomUUID();
+      UUID eventId = Ids.newId();
       UUID userId = ctx != null ? ctx.userId() : null;
       java.util.Set<String> roles =
           ctx != null && ctx.roles() != null ? ctx.roles() : java.util.Set.of("CASHIER");
@@ -1556,7 +1549,7 @@ public class OrderService {
     int printCount = req.printCount() != null ? req.printCount() : 1;
     var receipt =
         new OrderReceipt(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             orderId,
             req.receiptType(),

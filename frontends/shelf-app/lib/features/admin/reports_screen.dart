@@ -7,6 +7,7 @@ import '../../shared/util/file_download.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import '../../shared/util/short_ref.dart';
 
 enum _ReportType {
   sales,
@@ -718,16 +719,12 @@ class _OnHandReport extends ConsumerWidget {
                       rows: rows
                           .map((r) => DataRow(cells: [
                                 DataCell(Text(
-                                  r.storeId.length > 8
-                                      ? r.storeId.substring(0, 8)
-                                      : r.storeId,
+                                  shortRef(r.storeId),
                                   style: const TextStyle(
                                       fontFamily: 'monospace', fontSize: 12),
                                 )),
                                 DataCell(Text(
-                                  r.variantId.length > 16
-                                      ? '${r.variantId.substring(0, 16)}…'
-                                      : r.variantId,
+                                  r.variantId.length > 16 ? '…${shortRef(r.variantId, length: 16)}' : r.variantId,
                                   style: const TextStyle(
                                       fontFamily: 'monospace', fontSize: 12),
                                 )),

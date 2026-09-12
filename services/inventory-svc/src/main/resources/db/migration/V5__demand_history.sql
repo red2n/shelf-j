@@ -3,7 +3,7 @@
 -- for use in forecasting and safety-stock calculations.
 
 CREATE TABLE demand_history (
-    id             UUID          NOT NULL DEFAULT gen_random_uuid(),
+    id             UUID          NOT NULL,
     tenant_id      UUID          NOT NULL,
     store_id       UUID          NOT NULL,
     variant_id     UUID          NOT NULL,

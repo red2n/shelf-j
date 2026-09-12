@@ -3,6 +3,7 @@ package com.shelfj.notification.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.notification.channel.NotificationChannel;
 import com.shelfj.notification.repo.NotificationRepository;
 import java.util.UUID;
@@ -16,8 +17,8 @@ import org.junit.jupiter.api.Test;
  */
 class NotifierTest {
 
-  private static final UUID EVENT = UUID.randomUUID();
-  private static final UUID TENANT = UUID.randomUUID();
+  private static final UUID EVENT = Ids.newId();
+  private static final UUID TENANT = Ids.newId();
 
   private static final class FakeChannel implements NotificationChannel {
     int sends;

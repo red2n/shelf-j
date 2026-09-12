@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
+# Look one user up by email after a run. Connection details as in validate_all.sh.
+#
+#   k6/db/validate_iam.sh someone@k6.shelfj.test
 set -euo pipefail
+cd "$(dirname "$0")/../.."
 
 EMAIL=${1:-}
 if [ -z "$EMAIL" ]; then
@@ -7,11 +11,16 @@ if [ -z "$EMAIL" ]; then
   exit 2
 fi
 
-PGHOST=${PGHOST:-localhost}
-PGPORT=${PGPORT:-5432}
-PGUSER=${PGUSER:-shelfj}
-PGDATABASE=${PGDATABASE:-shelfj}
+env_value() { grep -m1 "^$1=" .env 2>/dev/null | cut -d= -f2-; }
+export PGHOST="${PGHOST:-localhost}"
+export PGPORT="${PGPORT:-$(env_value POSTGRES_HOST_PORT)}"
+export PGPORT="${PGPORT:-5432}"
+export PGUSER="${PGUSER:-$(env_value POSTGRES_USER)}"
+export PGUSER="${PGUSER:-shelfj}"
+export PGPASSWORD="${PGPASSWORD:-$(env_value POSTGRES_PASSWORD)}"
+export PGDATABASE="${PGDATABASE:-shelfj}"
 
-psql "host=$PGHOST port=$PGPORT user=$PGUSER dbname=$PGDATABASE" -v email="$EMAIL" -c "\
+psql -X -v email="$EMAIL" <<'SQL'
 \x on
-SELECT id, email, created_at FROM iam.users WHERE email = :'email' LIMIT 1;"
+SELECT id, tenant_id, type, email, status, created_at FROM iam.users WHERE lower(email) = lower(:'email') LIMIT 1;
+SQL

@@ -3,7 +3,7 @@
 -- Adding rows restricts the product to exactly those stores.
 -- product-svc references store_id (owned by tenant-svc) but never joins across services.
 CREATE TABLE product_stores (
-    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id          UUID        PRIMARY KEY,
     tenant_id   UUID        NOT NULL,
     product_id  UUID        NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     store_id    UUID        NOT NULL,

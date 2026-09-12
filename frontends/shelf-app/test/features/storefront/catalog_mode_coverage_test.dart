@@ -54,7 +54,7 @@ class _RecordingInterceptor extends Interceptor {
         statusCode: 201,
         data: {
           'data': {
-            'id': 'aaaabbbb-cccc-dddd-eeee-ffffffffffff',
+            'id': '01a090ae-611e-702d-bfe9-b7296be05944',
             'status': 'PENDING',
             'total': 0.0,
             'currency': 'GBP',
@@ -369,7 +369,7 @@ void main() {
           _signedIn(),
           _serverOrders([
             ServerOrderSummary(
-              id: 'aabb1234-5678-0000-0000-000000000000',
+              id: '01a090ae-611e-702e-9d92-a0191d984b46',
               storeId: 'store-1',
               fulfilmentType: 'PICKUP',
               status: 'PENDING',

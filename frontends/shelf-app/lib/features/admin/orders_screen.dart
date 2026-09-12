@@ -10,6 +10,7 @@ import '../../core/format.dart';
 import '../../core/theme.dart';
 import 'providers/admin_providers.dart';
 import 'providers/orders_pagination.dart';
+import '../../shared/util/short_ref.dart';
 
 class AdminOrdersScreen extends ConsumerStatefulWidget {
   const AdminOrdersScreen({super.key});
@@ -193,7 +194,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                         title: Row(
                           children: [
                             Text(
-                              '#${o.id.length >= 8 ? o.id.substring(0, 8) : o.id}',
+                              '#${shortRef(o.id)}',
                               style: const TextStyle(fontFamily: 'monospace'),
                             ),
                             const SizedBox(width: 8),
@@ -973,7 +974,7 @@ class _CollectPaymentDialogState extends ConsumerState<_CollectPaymentDialog> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final o = widget.order;
-    final shortId = o.id.length >= 8 ? o.id.substring(0, 8) : o.id;
+    final shortId = shortRef(o.id);
     final paid = _paid;
     final outstanding = paid == null ? null : (o.total - paid);
     return AlertDialog(

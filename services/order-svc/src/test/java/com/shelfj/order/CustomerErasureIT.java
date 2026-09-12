@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -47,9 +48,9 @@ class CustomerErasureIT {
     System.setProperty("shelfj.order.erasure-sweeper.enabled", "false");
   }
 
-  private static final String T = "aaaaaaaa-4444-4444-4444-aaaaaaaaaaaa";
-  private static final String S = "bbbbbbbb-4444-4444-4444-bbbbbbbbbbbb";
-  private static final String V = "cccccccc-4444-4444-4444-cccccccccccc";
+  private static final String T = "01a090ae-611e-702b-8e05-b3c421241865";
+  private static final String S = "01a090ae-611e-7036-97eb-b0b2629f1654";
+  private static final String V = "01a090ae-611e-703b-9569-17e55100ef17";
 
   @Inject WebTarget target;
   @Inject OrderService orderService;
@@ -65,7 +66,7 @@ class CustomerErasureIT {
         .request()
         .header("X-Tenant-Id", T)
         .header("X-Roles", "OWNER")
-        .header("Idempotency-Key", UUID.randomUUID().toString())
+        .header("Idempotency-Key", Ids.newId().toString())
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
@@ -98,7 +99,7 @@ class CustomerErasureIT {
 
   private void pay(UUID order) {
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), order, UUID.randomUUID(), new BigDecimal("10.00"));
+        UUID.fromString(T), order, Ids.newId(), new BigDecimal("10.00"));
   }
 
   private static String column(String table, UUID id, String column) {
@@ -123,13 +124,12 @@ class CustomerErasureIT {
   @Test
   @DisplayName("A finished sale loses the customer's details at once, and keeps the sale")
   void settledOrdersAreRedactedNow() {
-    String customer = UUID.randomUUID().toString();
+    String customer = Ids.newId().toString();
     UUID order = place(customer, "POS", "INSTORE", "\"contactPhone\":\"07700900999\",");
     pay(order); // a till sale: FULFILLED
     assertThat(column("orders", order, "contact_phone"), is("07700900999"));
 
-    orderService.handleCustomerErased(
-        UUID.fromString(T), UUID.fromString(customer), UUID.randomUUID());
+    orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(customer), Ids.newId());
 
     assertThat(column("orders", order, "contact_phone"), nullValue());
     // The tax record stays.
@@ -140,12 +140,11 @@ class CustomerErasureIT {
   @Test
   @DisplayName("An open delivery keeps its address until it is done, then loses it")
   void openOrdersAreHeldUntilTheyFinish() {
-    String customer = UUID.randomUUID().toString();
+    String customer = Ids.newId().toString();
     UUID order = place(customer, "ONLINE", "DELIVERY", DELIVERY);
     pay(order); // online: CONFIRMED, not yet delivered
 
-    orderService.handleCustomerErased(
-        UUID.fromString(T), UUID.fromString(customer), UUID.randomUUID());
+    orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(customer), Ids.newId());
     // Still needed to deliver it.
     assertThat(column("orders", order, "delivery_line1"), is("12 High Street"));
     assertThat(column("orders", order, "delivery_recipient_phone"), is("07700900123"));
@@ -162,8 +161,8 @@ class CustomerErasureIT {
   @Test
   @DisplayName("A redelivered erasure changes nothing a second time")
   void redeliveryIsANoOp() {
-    String customer = UUID.randomUUID().toString();
-    UUID event = UUID.randomUUID();
+    String customer = Ids.newId().toString();
+    UUID event = Ids.newId();
     assertThat(
         orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(customer), event),
         is(true));
@@ -175,13 +174,12 @@ class CustomerErasureIT {
   @Test
   @DisplayName("Another customer's orders are untouched")
   void onlyTheErasedCustomer() {
-    String erased = UUID.randomUUID().toString();
-    String kept = UUID.randomUUID().toString();
+    String erased = Ids.newId().toString();
+    String kept = Ids.newId().toString();
     UUID theirs = place(kept, "POS", "INSTORE", "\"contactPhone\":\"07700900555\",");
     pay(theirs);
 
-    orderService.handleCustomerErased(
-        UUID.fromString(T), UUID.fromString(erased), UUID.randomUUID());
+    orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(erased), Ids.newId());
     orderService.sweepErasures();
 
     assertThat(column("orders", theirs, "contact_phone"), is("07700900555"));
@@ -190,12 +188,12 @@ class CustomerErasureIT {
   @Test
   @DisplayName("A receipt's email address and a held basket's name go at once, even on open sales")
   void receiptsAndParkedSalesAtOnce() {
-    String customer = UUID.randomUUID().toString();
+    String customer = Ids.newId().toString();
     UUID open = place(customer, "ONLINE", "DELIVERY", DELIVERY);
     // The row an emailed receipt leaves behind. Written directly: sending one calls
     // notification-svc,
     // which is not running here, and the send is not what this test is about.
-    UUID receiptId = UUID.randomUUID();
+    UUID receiptId = Ids.newId();
     try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
         var ps =
             c.prepareStatement(
@@ -223,8 +221,7 @@ class CustomerErasureIT {
     assertThat(parked.getStatus(), is(201));
     UUID parkedId = UUID.fromString(id(parked.readEntity(String.class)));
 
-    orderService.handleCustomerErased(
-        UUID.fromString(T), UUID.fromString(customer), UUID.randomUUID());
+    orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(customer), Ids.newId());
 
     assertThat(column("order_receipts", receiptId, "emailed_to"), nullValue());
     assertThat(column("parked_sales", parkedId, "customer_name"), nullValue());

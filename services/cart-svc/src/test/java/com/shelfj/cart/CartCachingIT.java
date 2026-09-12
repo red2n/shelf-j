@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
 import com.shelfj.cart.repo.CartRepository;
+import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import com.shelfj.test.RedisSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -49,9 +50,9 @@ class CartCachingIT {
     System.setProperty("shelfj.redis.password", "");
   }
 
-  private static final String TENANT_A = "11111111-1111-1111-1111-111111111111";
-  private static final String CUSTOMER_A = "33333333-3333-3333-3333-333333333333";
-  private static final String STORE_A = "44444444-4444-4444-4444-444444444444";
+  private static final String TENANT_A = "01a090ae-611e-700b-bde4-50df0324c37c";
+  private static final String CUSTOMER_A = "01a090ae-611e-7011-ae7d-1bd68c966ff6";
+  private static final String STORE_A = "01a090ae-611e-7014-8cd5-baf0862fa319";
 
   @Inject WebTarget target;
   @Inject CartRepository repo;
@@ -114,7 +115,7 @@ class CartCachingIT {
     assertThat(c.getStatus(), is(200));
     String cartId = field(c.readEntity(String.class), "id");
 
-    String variantId = UUID.randomUUID().toString();
+    String variantId = Ids.newId().toString();
     Response added =
         post(
             "/cart/items",
@@ -131,7 +132,7 @@ class CartCachingIT {
     assertThat(c.getStatus(), is(200));
     String cartId = field(c.readEntity(String.class), "id");
 
-    String variantId = UUID.randomUUID().toString();
+    String variantId = Ids.newId().toString();
     Response added =
         post(
             "/cart/items",
@@ -170,7 +171,7 @@ class CartCachingIT {
     assertThat(c.getStatus(), is(200));
     String cartId = field(c.readEntity(String.class), "id");
 
-    String variantId = UUID.randomUUID().toString();
+    String variantId = Ids.newId().toString();
     Response added =
         post(
             "/cart/items",

@@ -1,5 +1,6 @@
 package com.shelfj.payment.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.domain.Domain.CashDrop;
 import com.shelfj.payment.domain.Domain.TillSession;
 import com.shelfj.payment.dto.Dtos.CashDropResponse;
@@ -31,7 +32,7 @@ public class CashManagementService {
     ctx.requireStoreAccess(storeId);
     TillSession session =
         new TillSession(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             storeId,
             openedBy,
@@ -63,8 +64,7 @@ public class CashManagementService {
       throw ApiException.badRequest("INVALID_DROP_AMOUNT", "Drop amount must be positive");
     }
     CashDrop drop =
-        new CashDrop(
-            UUID.randomUUID(), tenantId, sessionId, amount, recordedBy, notes, Instant.now());
+        new CashDrop(Ids.newId(), tenantId, sessionId, amount, recordedBy, notes, Instant.now());
     repo.recordDrop(drop);
     return new CashDropResponse(drop.id(), drop.tillSessionId(), drop.amount(), drop.createdAt());
   }

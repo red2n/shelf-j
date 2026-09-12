@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.reporting.service.ReportingService;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -35,8 +36,8 @@ class ReportingIT {
     System.setProperty("shelfj.kafka.enabled", "false");
   }
 
-  private static final String T = "22222222-2222-2222-2222-222222222222";
-  private static final String OTHER = "99999999-9999-9999-9999-999999999999";
+  private static final String T = "01a090ae-611e-700f-b645-a14095230b77";
+  private static final String OTHER = "01a090ae-611e-701d-9d60-a9d7516ed03b";
 
   @Inject WebTarget target;
 
@@ -100,17 +101,11 @@ class ReportingIT {
    */
   @Test
   void salesSummaryReflectsGrossRefundedNetWithRefundDedupe() {
-    UUID tenant = UUID.randomUUID(); // fresh tenant → this test's sales only
-    UUID order = UUID.randomUUID();
+    UUID tenant = Ids.newId(); // fresh tenant → this test's sales only
+    UUID order = Ids.newId();
     reporting.recordSale(
-        tenant,
-        order,
-        UUID.randomUUID(),
-        "ONLINE",
-        UUID.randomUUID(),
-        new BigDecimal("100.00"),
-        "GBP");
-    UUID refundEvent = UUID.randomUUID();
+        tenant, order, Ids.newId(), "ONLINE", Ids.newId(), new BigDecimal("100.00"), "GBP");
+    UUID refundEvent = Ids.newId();
     reporting.applySalesRefund(refundEvent, "test", tenant, order, new BigDecimal("25.00"));
     // Redelivery of the same PaymentRefunded event must not double-count.
     reporting.applySalesRefund(refundEvent, "test", tenant, order, new BigDecimal("25.00"));
@@ -125,13 +120,11 @@ class ReportingIT {
   /** N4: OrderConfirmed is projected once per order (natural PK idempotency). */
   @Test
   void recordSaleIsIdempotentOnOrderId() {
-    UUID tenant = UUID.randomUUID();
-    UUID order = UUID.randomUUID();
-    reporting.recordSale(
-        tenant, order, UUID.randomUUID(), "POS", null, new BigDecimal("40.00"), "GBP");
+    UUID tenant = Ids.newId();
+    UUID order = Ids.newId();
+    reporting.recordSale(tenant, order, Ids.newId(), "POS", null, new BigDecimal("40.00"), "GBP");
     // Redelivered OrderConfirmed for the same order → no second row / no doubled gross.
-    reporting.recordSale(
-        tenant, order, UUID.randomUUID(), "POS", null, new BigDecimal("40.00"), "GBP");
+    reporting.recordSale(tenant, order, Ids.newId(), "POS", null, new BigDecimal("40.00"), "GBP");
 
     String body = get("/admin/reports/sales/by-day", tenant.toString()).readEntity(String.class);
     assertThat(body, containsString("\"orders\":1"));

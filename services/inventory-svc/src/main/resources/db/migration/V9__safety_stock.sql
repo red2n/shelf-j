@@ -3,7 +3,7 @@
 -- Two methods: MAD (Mean Absolute Deviation formula) and USER_DEFINED (% of avg demand).
 
 CREATE TABLE safety_stock_params (
-    id                  UUID           NOT NULL DEFAULT gen_random_uuid(),
+    id                  UUID           NOT NULL,
     tenant_id           UUID           NOT NULL,
     store_id            UUID           NOT NULL,
     variant_id          UUID           NOT NULL,

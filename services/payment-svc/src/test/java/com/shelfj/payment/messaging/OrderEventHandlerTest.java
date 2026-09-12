@@ -3,6 +3,7 @@ package com.shelfj.payment.messaging;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.service.PaymentService;
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -18,9 +19,9 @@ import org.junit.jupiter.api.Test;
  */
 class OrderEventHandlerTest {
 
-  private static final UUID EVENT = UUID.randomUUID();
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID ORDER = UUID.randomUUID();
+  private static final UUID EVENT = Ids.newId();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID ORDER = Ids.newId();
 
   private static final class CapturingPaymentService extends PaymentService {
     int calls;
@@ -65,9 +66,9 @@ class OrderEventHandlerTest {
         + "\",\"orderId\":\""
         + ORDER
         + "\",\"returnId\":\""
-        + UUID.randomUUID()
+        + Ids.newId()
         + "\",\"storeId\":\""
-        + UUID.randomUUID()
+        + Ids.newId()
         + "\",\"refundAmount\":"
         + refundAmount
         + ",\"refundMethod\":\""

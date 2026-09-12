@@ -1,5 +1,6 @@
 package com.shelfj.iam.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.service.BaseJdbcRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.sql.Timestamp;
@@ -16,7 +17,7 @@ public class RefreshTokenRepository extends BaseJdbcRepository {
         "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, revoked)"
             + " VALUES (?,?,?,?,false)",
         ps -> {
-          ps.setObject(1, UUID.randomUUID());
+          ps.setObject(1, Ids.newId());
           ps.setObject(2, userId);
           ps.setString(3, tokenHash);
           ps.setTimestamp(4, Timestamp.from(expiresAt));
@@ -37,6 +38,18 @@ public class RefreshTokenRepository extends BaseJdbcRepository {
             ps -> ps.setString(1, tokenHash),
             rs -> rs.getObject("user_id", UUID.class),
             "consume refresh token")
+        .stream()
+        .findFirst();
+  }
+
+  /** Owner of a token that {@link #consume} would still accept, without consuming it. */
+  public Optional<UUID> ownerOfActive(String tokenHash) {
+    return query(
+            "SELECT user_id FROM refresh_tokens"
+                + " WHERE token_hash = ? AND revoked = false AND expires_at > now()",
+            ps -> ps.setString(1, tokenHash),
+            rs -> rs.getObject("user_id", UUID.class),
+            "find active token owner")
         .stream()
         .findFirst();
   }

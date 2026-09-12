@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.MoveType;
 import com.shelfj.inventory.domain.Domain.MovementAttribution;
@@ -410,7 +411,7 @@ public class RecallRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO recall_batch_releases (id, tenant_id, recall_id, batch_id, reason,"
                       + " released_by) VALUES (?,?,?,?,?,?)")) {
-            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(1, Ids.newId());
             ps.setObject(2, tenantId);
             ps.setObject(3, recallId);
             ps.setObject(4, batchId);

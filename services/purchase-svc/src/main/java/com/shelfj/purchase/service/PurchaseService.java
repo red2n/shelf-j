@@ -1,5 +1,6 @@
 package com.shelfj.purchase.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.purchase.client.PricingClient;
 import com.shelfj.purchase.client.TenantClient;
 import com.shelfj.purchase.config.ServiceConfig;
@@ -92,7 +93,7 @@ public class PurchaseService {
             : resolveTenantCurrency(tenantId);
     Supplier s =
         new Supplier(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             req.name(),
             req.vatNumber(),
@@ -152,7 +153,7 @@ public class PurchaseService {
     }
     PurchaseOrder po =
         new PurchaseOrder(
-            UUID.randomUUID(),
+            Ids.newId(),
             ctx.requireTenantId(),
             req.supplierId(),
             req.storeId(),
@@ -214,7 +215,7 @@ public class PurchaseService {
           "PURCHASE_PO_NOT_DRAFT", "Lines can only be added to DRAFT purchase orders");
     PurchaseOrderLine line =
         new PurchaseOrderLine(
-            UUID.randomUUID(),
+            Ids.newId(),
             ctx.requireTenantId(),
             poId,
             req.variantId(),
@@ -401,7 +402,7 @@ public class PurchaseService {
       SpendAuthority authority,
       String reason) {
     return new Domain.PurchaseOrderApproval(
-        UUID.randomUUID(),
+        Ids.newId(),
         po.tenantId(),
         po.id(),
         decision,
@@ -556,7 +557,7 @@ public class PurchaseService {
         Money.round(req.vatAmount() == null ? BigDecimal.ZERO : req.vatAmount(), currency);
 
     boolean allMatched = matched.stream().allMatch(ThreeWayMatch.MatchLine::matched);
-    UUID invoiceId = UUID.randomUUID();
+    UUID invoiceId = Ids.newId();
     Domain.SupplierInvoice invoice =
         new Domain.SupplierInvoice(
             invoiceId,
@@ -579,7 +580,7 @@ public class PurchaseService {
       var in = req.lines().get(i);
       lines.add(
           new Domain.SupplierInvoiceLine(
-              UUID.randomUUID(),
+              Ids.newId(),
               tenantId,
               invoiceId,
               in.variantId(),
@@ -644,7 +645,7 @@ public class PurchaseService {
 
     GoodsReceipt gr =
         new GoodsReceipt(
-            UUID.randomUUID(),
+            Ids.newId(),
             ctx.requireTenantId(),
             req.poId(),
             req.storeId(),
@@ -656,7 +657,7 @@ public class PurchaseService {
             .map(
                 l ->
                     new GoodsReceiptLine(
-                        UUID.randomUUID(),
+                        Ids.newId(),
                         ctx.requireTenantId(),
                         gr.id(),
                         l.variantId(),
@@ -710,8 +711,8 @@ public class PurchaseService {
     LocalDate today = LocalDate.now();
     LocalDate dueDate = today.plusDays(BACS_TERMS_DAYS);
 
-    UUID arId = UUID.randomUUID();
-    UUID apId = UUID.randomUUID();
+    UUID arId = Ids.newId();
+    UUID apId = Ids.newId();
 
     IntercompanyInvoice ar =
         new IntercompanyInvoice(
@@ -999,15 +1000,6 @@ public class PurchaseService {
       String desc,
       UUID sourceRef) {
     return new NominalLedgerEntry(
-        UUID.randomUUID(),
-        tenantId,
-        date,
-        code,
-        name,
-        debit,
-        credit,
-        desc,
-        sourceRef,
-        Instant.now());
+        Ids.newId(), tenantId, date, code, name, debit, credit, desc, sourceRef, Instant.now());
   }
 }

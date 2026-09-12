@@ -127,7 +127,12 @@ High-level modules depend on abstractions, not on concrete classes.
 - **No multi-line docstrings on obvious methods.** One-line class Javadoc is fine; paragraph-length method docs are not.
 - **Money is `BigDecimal` / `NUMERIC`.** Never `double` or `float` for any monetary value, quantity, or rate.
 - **Time is `Instant` (UTC) in domain objects.** Convert to `ZonedDateTime` at the API edge only, and only when the client needs a timezone.
-- **IDs are `UUID`.** Never `long`, never `String` for primary keys.
+- **IDs are `UUID`, and only UUIDv7.** Never `long`, never `String` for primary keys.
+  - Mint with `Ids.newId()`. A key a redelivered event must reproduce (a dedupe id per line) is `Ids.derived(eventId, name)`. A random value that is not an id comes from `SecureRandom`.
+  - Never `UUID.randomUUID()` (v4) or `UUID.nameUUIDFromBytes()` (v3) — PMD `UseTimeOrderedIds`.
+  - Never `gen_random_uuid()` / `uuid_generate_v4()` in SQL — PMD `NoDatabaseMintedIds`. Every `INSERT` names `id` in its column list and binds `Ids.newId()`.
+  - Never a column `DEFAULT` that fills in a uuid, in any migration — the integration-test audit in `PostgresSupport.stop()` fails the build, and the Flyway `afterMigrate` check fails `flyway migrate`. Seed rows carry literal v7 ids.
+  - A short handle for people (order number, batch-number suffix) is `Ids.shortRef(id)`, the end of the id — never `id.toString().substring(0, n)` (PMD `ShortRefFromIdTail`).
 
 ---
 

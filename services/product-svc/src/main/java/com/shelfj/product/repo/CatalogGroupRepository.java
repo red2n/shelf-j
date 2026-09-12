@@ -1,5 +1,6 @@
 package com.shelfj.product.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.product.domain.Domain.CatalogGroup;
 import com.shelfj.product.domain.Domain.CatalogGroupElement;
 import com.shelfj.product.domain.Domain.VariantCatalogAssignment;
@@ -27,8 +28,7 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
   public CatalogGroup createCatalogGroup(UUID tenantId, String name, String description) {
     Instant now = Instant.now();
     var g =
-        new CatalogGroup(
-            UUID.randomUUID(), tenantId, name, description, CatalogGroup.ACTIVE, now, now);
+        new CatalogGroup(Ids.newId(), tenantId, name, description, CatalogGroup.ACTIVE, now, now);
     exec(
         "INSERT INTO catalog_groups"
             + " (id, tenant_id, name, description, status, created_at, updated_at)"

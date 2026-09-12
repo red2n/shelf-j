@@ -41,11 +41,11 @@ class PurchaseIT {
     System.setProperty("shelfj.purchase.approval.limits", "");
   }
 
-  private static final String T = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-  private static final String T2 = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
-  private static final String STORE_A = "cccccccc-cccc-cccc-cccc-cccccccccccc";
-  private static final String STORE_B = "dddddddd-dddd-dddd-dddd-dddddddddddd";
-  private static final String VARIANT = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+  private static final String T = "01a090ae-611e-702c-a97b-d1b8025478e1";
+  private static final String T2 = "01a090ae-611e-7037-a4b7-c854f0266ace";
+  private static final String STORE_A = "01a090ae-611e-703c-a378-a4972ea461c8";
+  private static final String STORE_B = "01a090ae-611e-7056-8f30-ecdbb48160eb";
+  private static final String VARIANT = "01a090ae-611e-705c-994c-5daee3fbd033";
 
   @Inject WebTarget target;
 
@@ -349,7 +349,7 @@ class PurchaseIT {
   @Test
   void aReplayedReceiptDoesNotCountTwice() {
     String poId = submittedPo("Replay Ltd", 10);
-    String key = "grn-replay-" + java.util.UUID.randomUUID();
+    String key = "grn-replay-" + com.shelfj.ids.Ids.newId();
     for (int i = 0; i < 3; i++) {
       Response r =
           target

@@ -58,6 +58,7 @@
 
     <modules>
         <!-- shared CONTRACTS only — no business logic -->
+        <module>shared/common-ids</module>
         <module>shared/events-contract</module>
         <module>shared/common-web</module>
         <module>shared/common-test</module>
@@ -82,6 +83,11 @@
     <dependencyManagement>
         <dependencies>
             <!-- Our own shared modules, version-managed here so children just declare the artifact -->
+            <dependency>
+                <groupId>com.shelfj</groupId>
+                <artifactId>common-ids</artifactId>
+                <version>${shelfj.version}</version>
+            </dependency>
             <dependency>
                 <groupId>com.shelfj</groupId>
                 <artifactId>events-contract</artifactId>

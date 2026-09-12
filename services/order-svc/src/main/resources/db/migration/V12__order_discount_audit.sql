@@ -20,7 +20,7 @@
 -- Append-only (golden rule #8): no UPDATE or DELETE. Modelled on pricing-svc's price_overrides,
 -- which already records till price overrides with their actor.
 CREATE TABLE order_discounts (
-    id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID          PRIMARY KEY,
     tenant_id       UUID          NOT NULL,
     order_id        UUID          NOT NULL,
     store_id        UUID          NOT NULL,

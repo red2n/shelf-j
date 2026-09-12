@@ -85,7 +85,7 @@ shelf-j/
 ├── docker-compose.yml       # postgres, kafka, consul, redis, zipkin, prometheus, grafana (with healthchecks)
 ├── platform/                # gateway, discovery, config
 ├── services/                # the 12 business microservices (one Maven module each)
-├── shared/                  # contracts + shared infra, NO business logic: events-contract, common-web, common-service (DataSource/Flyway/Consul/outbox/health base — reuse it, never re-implement), common-test
+├── shared/                  # contracts + shared infra, NO business logic: common-ids (`Ids.newId()`), events-contract, common-web, common-service (DataSource/Flyway/Consul/outbox/health base — reuse it, never re-implement), common-test
 ├── frontends/               # shelf-app: ONE Flutter app with four shells (storefront, admin, POS, platform console)
 ├── docs/                    # ARCHITECTURE.md, API-GUIDE.md, UI-GUIDE.md, onboarding-and-locations.md, coding-standards.md, …
 ├── PRD.md  README.md  CLAUDE.md
@@ -102,9 +102,9 @@ Per-service internal shape (copy for each): `api/ dto/ service/ domain/ repo/ me
 - **Errors:** correct HTTP codes; stable machine `code` (e.g. `INVENTORY_INSUFFICIENT_STOCK`); never leak stack/SQL.
 - **Pagination:** cursor only (`?after=&limit=`), default 20 / max 100. No page numbers.
 - **Naming:** REST paths = plural kebab nouns (`/purchase-orders`); JSON = `camelCase`; DB columns = `snake_case`; events = `PascalCase` past tense (`OrderPlaced`); Kafka topics = `shelfj.<domain>.<event>`.
-- **IDs:** UUID primary keys, service-generated.
+- **IDs:** UUIDv7 only. Mint in the service with `Ids.newId()` (`shared/common-ids`); deterministic keys with `Ids.derived(eventId, name)`. Never `UUID.randomUUID()`/`nameUUIDFromBytes()`, never `gen_random_uuid()` in SQL, never a column `DEFAULT` that fills in a uuid — every `INSERT` binds its `id`. PMD rules and the integration-test audit (`PostgresSupport.stop()`: column defaults + stored ids) fail the build on violations; a Flyway `afterMigrate` check backs them up ([ARCHITECTURE §14](docs/ARCHITECTURE.md#14-cross-cutting-conventions)).
 - **Migrations:** Flyway only (`V<n>__desc.sql`); never manual DDL in prod.
-- **Tests:** unit for `service/` logic + Testcontainers integration for the core flow (Postgres + Kafka). Not done without it.
+- **Tests:** unit for `service/` logic + Testcontainers integration for the core flow (Postgres + Kafka). Not done without it. End-to-end: `k6/run.sh` against the dockerized stack — the two **flow-guard** suites (`flow-guard-comprehensive`, `flow-guard-runtime`) must stay green after any change to onboarding, tenant/store status, authorization, carts, orders or POS sessions ([k6/README.md](k6/README.md)).
 
 ---
 

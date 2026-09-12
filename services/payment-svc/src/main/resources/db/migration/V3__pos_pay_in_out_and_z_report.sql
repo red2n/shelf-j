@@ -5,7 +5,7 @@
 -- Pay-in = cash added to drawer for non-sale reasons (e.g. change fund replenishment).
 -- Append-only: no UPDATE/DELETE.
 CREATE TABLE IF NOT EXISTS cash_movements (
-    id              UUID          NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID          NOT NULL,
     tenant_id       UUID          NOT NULL,
     store_id        UUID          NOT NULL,
     till_session_id UUID          NOT NULL,
@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_cash_movements_store
 -- Z-closed. Summarises all tender types and cash movements for reconciliation.
 -- Immutable once created (the day is settled — no corrections, use adjustments).
 CREATE TABLE IF NOT EXISTS z_reports (
-    id                UUID          NOT NULL DEFAULT gen_random_uuid(),
+    id                UUID          NOT NULL,
     tenant_id         UUID          NOT NULL,
     store_id          UUID          NOT NULL,
     business_date     DATE          NOT NULL,

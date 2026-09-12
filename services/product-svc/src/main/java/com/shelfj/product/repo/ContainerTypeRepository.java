@@ -1,5 +1,6 @@
 package com.shelfj.product.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.product.domain.Domain.ContainerType;
 import com.shelfj.product.domain.Domain.VariantContainerLink;
 import com.shelfj.service.BaseJdbcRepository;
@@ -34,7 +35,7 @@ public class ContainerTypeRepository extends BaseJdbcRepository {
       java.math.BigDecimal tareWeightKg,
       Integer maxUnits) {
     Instant now = Instant.now();
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     exec(
         "INSERT INTO container_types"
             + " (id,tenant_id,code,name,description,length_mm,width_mm,height_mm,"
@@ -142,7 +143,7 @@ public class ContainerTypeRepository extends BaseJdbcRepository {
   public VariantContainerLink createVariantContainerLink(
       UUID tenantId, UUID variantId, UUID containerTypeId, int qtyPerContainer, boolean isPrimary) {
     Instant now = Instant.now();
-    UUID id = UUID.randomUUID();
+    UUID id = Ids.newId();
     exec(
         "INSERT INTO variant_container_links"
             + " (id,tenant_id,variant_id,container_type_id,qty_per_container,is_primary,created_at)"

@@ -4,6 +4,7 @@ import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../admin/customer_providers.dart';
 import '../admin/providers/admin_providers.dart';
+import '../../shared/util/short_ref.dart';
 
 /// A single scanned line on the POS sale.
 class PosLine {
@@ -431,7 +432,7 @@ class ParkedSale {
           final vid = m['variantId'] as String? ?? '';
           return PosLine(
             variantId: vid,
-            sku: vid.length > 8 ? vid.substring(0, 8) : vid,
+            sku: shortRef(vid),
             name: 'Parked item',
             // Decimal, not truncated: a parked 0.375 kg came back as nothing.
             qty: (m['qty'] as num?)?.toDouble() ?? 1,

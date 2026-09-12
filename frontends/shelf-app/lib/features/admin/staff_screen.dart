@@ -8,6 +8,7 @@ import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import '../../shared/util/short_ref.dart';
 
 const _roles = ['OWNER', 'MANAGER', 'STOREKEEPER', 'CASHIER'];
 
@@ -107,7 +108,7 @@ class StaffScreen extends ConsumerWidget {
                         ],
                       ),
                       subtitle: Text(
-                        'Store: ${m.storeId.length > 8 ? m.storeId.substring(0, 8) : m.storeId}',
+                        'Store: ${shortRef(m.storeId)}',
                         style:
                             const TextStyle(fontFamily: 'monospace', fontSize: 11),
                       ),

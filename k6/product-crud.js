@@ -1,38 +1,32 @@
+// Converted to real JWT sign-in: the gateway strips X-Tenant-Id / X-User-Id / X-Roles, so every call
+// carries the owner's bearer token and a call with no token is a 401 at the gateway.
+//
+//   k6/run.sh product-crud
 import http from 'k6/http';
-import { check, sleep } from 'k6';
-import { baseUrl } from './common.js';
+import { check as k6check, sleep } from 'k6';
+import { ALL_CHECKS_PASS, BASE as baseUrl, onboardTenant, register, sellableVariant } from './lib/shelfj.js';
 
-export const options = { vus: 1, iterations: 1 };
+export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS, setupTimeout: '3m' };
 
 const JSON_CT = { 'Content-Type': 'application/json' };
 
-function setupTenant() {
-  const email = `k6-prod-${Date.now()}@example.com`;
-  const regRes = http.post(
-    `${baseUrl}/api/iam-svc/auth/register`,
-    JSON.stringify({ email, password: 'TestPass1!' }),
-    { headers: JSON_CT }
-  );
-  if (regRes.status < 200 || regRes.status >= 300) return null;
-  let uid = null;
-  try {
-    const token = regRes.json('data.accessToken');
-    uid = JSON.parse(atob(token.split('.')[1])).sub;
-  } catch (_) {}
-
-  const tenantRes = http.post(
-    `${baseUrl}/api/tenant-svc/onboarding/tenants`,
-    JSON.stringify({ businessName: `k6-prod-co-${Date.now()}`, legalName: 'k6 Ltd', country: 'US', currency: 'USD' }),
-    { headers: { ...JSON_CT, 'X-User-Id': uid || '00000000-0000-0000-0000-000000000001' } }
-  );
-  const tenantId = tenantRes.status < 300 ? tenantRes.json('data.id') : null;
-  return { uid, tenantId };
+/** k6's check, plus the response on failure so a red check says why. */
+function check(res, sets) {
+  const ok = k6check(res, sets);
+  if (!ok) {
+    const failed = Object.entries(sets).filter(([, fn]) => { try { return !fn(res); } catch (_) { return true; } }).map(([name]) => name);
+    console.error(`✗ ${failed.join(' | ')}: got ${res && res.status} ${String(res && res.body).slice(0, 400)}`);
+  }
+  return ok;
 }
 
-export default function () {
-  const ctx = setupTenant();
-  const tenantId = ctx && ctx.tenantId;
-  const hdrs = tenantId ? { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-Roles': 'OWNER' } : { ...JSON_CT };
+export function setup() {
+  return { tenant: onboardTenant('product', { stores: 1 }), shopper: register('product-shopper') };
+}
+
+export default function (d) {
+  const tenantId = d.tenant.tenantId;
+  const hdrs = { ...JSON_CT, Authorization: `Bearer ${d.tenant.owner.token}` };
   const noTenant = { ...JSON_CT };
 
   // ── Brands ────────────────────────────────────────────────────────────────
@@ -63,7 +57,7 @@ export default function () {
       JSON.stringify({ name: 'no-tenant-brand' }),
       { headers: noTenant }
     ),
-    { '[-] create brand no auth 403': (r) => r.status === 403 }
+    { '[-] create brand no token 401': (r) => r.status === 401 }
   );
 
   // ── Categories ────────────────────────────────────────────────────────────
@@ -128,7 +122,7 @@ export default function () {
 
   check(
     http.get(
-      `${baseUrl}/api/product-svc/catalog/products/00000000-0000-0000-0000-000000000000`,
+      `${baseUrl}/api/product-svc/catalog/products/01a090ae-611e-7000-9e1a-0f8a9e565153`,
       { headers: hdrs }
     ),
     { '[-] get product unknown 404': (r) => r.status === 404 }
@@ -198,7 +192,7 @@ export default function () {
   check(
     http.post(
       `${baseUrl}/api/product-svc/admin/uom/item-conversions`,
-      JSON.stringify({ variantId: '00000000-0000-0000-0000-000000000000', toUom: 'EA', factor: 12 }),
+      JSON.stringify({ variantId: '01a090ae-611e-7000-9e1a-0f8a9e565153', toUom: 'EA', factor: 12 }),
       { headers: hdrs }
     ),
     { '[-] item conversion missing fromUom 400': (r) => r.status === 400 }
@@ -274,7 +268,7 @@ export default function () {
   // [-] Get unknown template → 404
   check(
     http.get(
-      `${baseUrl}/api/product-svc/admin/item-templates/00000000-0000-0000-0000-000000000000`,
+      `${baseUrl}/api/product-svc/admin/item-templates/01a090ae-611e-7000-9e1a-0f8a9e565153`,
       { headers: hdrs }
     ),
     { '[-] get unknown template 404': (r) => r.status === 404 }
@@ -284,7 +278,7 @@ export default function () {
   if (variantId) {
     check(
       http.post(
-        `${baseUrl}/api/product-svc/admin/item-templates/00000000-0000-0000-0000-000000000000/apply/${variantId}`,
+        `${baseUrl}/api/product-svc/admin/item-templates/01a090ae-611e-7000-9e1a-0f8a9e565153/apply/${variantId}`,
         null,
         { headers: hdrs }
       ),
@@ -299,7 +293,7 @@ export default function () {
       JSON.stringify({ name: 'no-tenant-tpl' }),
       { headers: noTenant }
     ),
-    { '[-] create template no auth 403': (r) => r.status === 403 }
+    { '[-] create template no token 401': (r) => r.status === 401 }
   );
 
   // ── Item Revisions (Gap #12) ──────────────────────────────────────────────
@@ -395,16 +389,16 @@ export default function () {
   // [-] Revisions for unknown variant → empty list (200) or 404
   check(
     http.get(
-      `${baseUrl}/api/product-svc/admin/products/variants/00000000-0000-0000-0000-000000000000/revisions`,
+      `${baseUrl}/api/product-svc/admin/products/variants/01a090ae-611e-7000-9e1a-0f8a9e565153/revisions`,
       { headers: hdrs }
     ),
-    { '[-] list revisions unknown variant 200 or 404': (r) => r.status === 200 || r.status === 404 }
+    { '[-] list revisions of an unknown variant is an empty list': (r) => r.status === 200 && r.json('data').length === 0 }
   );
 
   // [-] Current revision for unknown variant → 404
   check(
     http.get(
-      `${baseUrl}/api/product-svc/admin/products/variants/00000000-0000-0000-0000-000000000000/revisions/current`,
+      `${baseUrl}/api/product-svc/admin/products/variants/01a090ae-611e-7000-9e1a-0f8a9e565153/revisions/current`,
       { headers: hdrs }
     ),
     { '[-] current revision unknown variant 404': (r) => r.status === 404 }
@@ -418,7 +412,7 @@ export default function () {
         JSON.stringify({ revision: 'Z', effectiveDate: '2025-01-01' }),
         { headers: noTenant }
       ),
-      { '[-] create revision no auth 403': (r) => r.status === 403 }
+      { '[-] create revision no token 401': (r) => r.status === 401 }
     );
   }
 
@@ -515,7 +509,7 @@ export default function () {
   // [-] Get unknown container type → 404
   check(
     http.get(
-      `${baseUrl}/api/product-svc/admin/container-types/00000000-0000-0000-0000-000000000000`,
+      `${baseUrl}/api/product-svc/admin/container-types/01a090ae-611e-7000-9e1a-0f8a9e565153`,
       { headers: hdrs }
     ),
     { '[-] get unknown container type 404': (r) => r.status === 404 }
@@ -528,7 +522,7 @@ export default function () {
       JSON.stringify({ code: 'BOX', name: 'Box' }),
       { headers: noTenant }
     ),
-    { '[-] create container type no auth 403': (r) => r.status === 403 }
+    { '[-] create container type no token 401': (r) => r.status === 401 }
   );
 
   // ── Item Attribute Groups (Gap #36) ──────────────────────────────────────
@@ -643,14 +637,14 @@ export default function () {
         JSON.stringify({ values: '{}' }),
         { headers: noTenant }
       ),
-      { '[-] upsert attribute group no auth 403': (r) => r.status === 403 }
+      { '[-] upsert attribute group no token 401': (r) => r.status === 401 }
     );
   }
 
   // [-] Get attribute group values for unknown variant → 404
   check(
     http.get(
-      `${baseUrl}/api/product-svc/admin/products/variants/00000000-0000-0000-0000-000000000000/attribute-groups`,
+      `${baseUrl}/api/product-svc/admin/products/variants/01a090ae-611e-7000-9e1a-0f8a9e565153/attribute-groups`,
       { headers: hdrs }
     ),
     { '[-] list attribute group values unknown variant 404': (r) => r.status === 404 }
@@ -751,7 +745,7 @@ export default function () {
     // [-] Get unknown set → 404
     check(
       http.get(
-        `${baseUrl}/api/product-svc/admin/category-sets/00000000-0000-0000-0000-000000000000`,
+        `${baseUrl}/api/product-svc/admin/category-sets/01a090ae-611e-7000-9e1a-0f8a9e565153`,
         { headers: hdrs }
       ),
       { '[-] get unknown category set 404': (r) => r.status === 404 }
@@ -774,7 +768,7 @@ export default function () {
         JSON.stringify({ name: 'k6-no-tenant', purpose: 'GENERAL', controlled: false }),
         { headers: noTenant }
       ),
-      { '[-] create category set no auth 403': (r) => r.status === 403 }
+      { '[-] create category set no token 401': (r) => r.status === 401 }
     );
 
     // Cleanup
@@ -850,6 +844,6 @@ export default function () {
       JSON.stringify({ categories: [], products: [] }),
       { headers: noTenant }
     ),
-    { '[-] bulk import no auth 403': (r) => r.status === 403 }
+    { '[-] bulk import no token 401': (r) => r.status === 401 }
   );
 }

@@ -40,28 +40,28 @@ CREATE TABLE fs_check_types (
     CONSTRAINT chk_fs_type_range CHECK (min_value IS NULL OR max_value IS NULL OR min_value <= max_value)
 );
 CREATE UNIQUE INDEX uq_fs_check_types_code
-    ON fs_check_types (COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid), code);
+    ON fs_check_types (tenant_id, code) NULLS NOT DISTINCT;
 
 INSERT INTO fs_check_types (id, tenant_id, code, name, kind, min_value, max_value, unit, basis, statutory) VALUES
- ('f5000000-0000-0000-0000-000000000001', NULL, 'CHILLED_STORAGE', 'Chilled storage', 'TEMPERATURE', NULL, 8.00, 'C',
+ ('01a090a0-1bc3-70b9-a4f2-357a63f90f41', NULL, 'CHILLED_STORAGE', 'Chilled storage', 'TEMPERATURE', NULL, 8.00, 'C',
   'Food Safety and Hygiene (England) Regulations 2013, Sch.4: chilled food at or below 8 °C', TRUE),
- ('f5000000-0000-0000-0000-000000000002', NULL, 'FROZEN_STORAGE', 'Frozen storage', 'TEMPERATURE', NULL, -18.00, 'C',
+ ('01a090a0-1bc3-70ba-b5cb-636f3ad926be', NULL, 'FROZEN_STORAGE', 'Frozen storage', 'TEMPERATURE', NULL, -18.00, 'C',
   'Quick-frozen foodstuffs kept at or below −18 °C', FALSE),
- ('f5000000-0000-0000-0000-000000000003', NULL, 'HOT_HOLDING', 'Hot holding', 'TEMPERATURE', 63.00, NULL, 'C',
+ ('01a090a0-1bc3-70bb-ac46-5c62a30a895d', NULL, 'HOT_HOLDING', 'Hot holding', 'TEMPERATURE', 63.00, NULL, 'C',
   'Food Safety and Hygiene (England) Regulations 2013, Sch.4: hot food held at or above 63 °C', TRUE),
- ('f5000000-0000-0000-0000-000000000004', NULL, 'COOKING_CORE', 'Cooking: core temperature', 'TEMPERATURE', 75.00, NULL, 'C',
+ ('01a090a0-1bc3-70bc-8922-274dfb9f853c', NULL, 'COOKING_CORE', 'Cooking: core temperature', 'TEMPERATURE', 75.00, NULL, 'C',
   'FSA guidance: a core temperature of 75 °C, or an equivalent time and temperature', FALSE),
- ('f5000000-0000-0000-0000-000000000005', NULL, 'DELIVERY_CHILLED', 'Delivery: chilled', 'TEMPERATURE', NULL, 8.00, 'C',
+ ('01a090a0-1bc3-70bd-8df6-1714b7665d5f', NULL, 'DELIVERY_CHILLED', 'Delivery: chilled', 'TEMPERATURE', NULL, 8.00, 'C',
   'Food Safety and Hygiene (England) Regulations 2013, Sch.4: chilled food at or below 8 °C', TRUE),
- ('f5000000-0000-0000-0000-000000000006', NULL, 'DELIVERY_FROZEN', 'Delivery: frozen', 'TEMPERATURE', NULL, -15.00, 'C',
+ ('01a090a0-1bc3-70be-8eb1-c6d004351829', NULL, 'DELIVERY_FROZEN', 'Delivery: frozen', 'TEMPERATURE', NULL, -15.00, 'C',
   'Accepting a frozen delivery: stored at −18 °C, with a brief rise to −15 °C tolerated in transit', FALSE),
- ('f5000000-0000-0000-0000-000000000007', NULL, 'OPENING_CHECKS', 'Opening checks', 'PASS_FAIL', NULL, NULL, NULL,
+ ('01a090a0-1bc3-70bf-ab53-eb45b1289166', NULL, 'OPENING_CHECKS', 'Opening checks', 'PASS_FAIL', NULL, NULL, NULL,
   'Safer Food, Better Business daily diary', FALSE),
- ('f5000000-0000-0000-0000-000000000008', NULL, 'CLOSING_CHECKS', 'Closing checks', 'PASS_FAIL', NULL, NULL, NULL,
+ ('01a090a0-1bc3-70c0-9dba-fe3acc9b334b', NULL, 'CLOSING_CHECKS', 'Closing checks', 'PASS_FAIL', NULL, NULL, NULL,
   'Safer Food, Better Business daily diary', FALSE),
- ('f5000000-0000-0000-0000-000000000009', NULL, 'CLEANING', 'Cleaning schedule', 'PASS_FAIL', NULL, NULL, NULL,
+ ('01a090a0-1bc3-70c1-b9d5-729021ffb57b', NULL, 'CLEANING', 'Cleaning schedule', 'PASS_FAIL', NULL, NULL, NULL,
   'Safer Food, Better Business cleaning schedule', FALSE),
- ('f5000000-0000-0000-0000-00000000000a', NULL, 'PEST_CHECK', 'Pest check', 'PASS_FAIL', NULL, NULL, NULL,
+ ('01a090a0-1bc3-70c2-90a7-6ccee7feffd8', NULL, 'PEST_CHECK', 'Pest check', 'PASS_FAIL', NULL, NULL, NULL,
   'Safer Food, Better Business pest control', FALSE);
 
 -- A chiller, a freezer, a hot cabinet, a goods-in bay, or a store's daily checklist. Its limits may

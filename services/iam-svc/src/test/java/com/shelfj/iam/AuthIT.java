@@ -5,6 +5,8 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.auth0.jwt.JWT;
+import com.auth0.jwt.interfaces.DecodedJWT;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -58,13 +60,8 @@ class AuthIT {
     String access = extract(regBody, "accessToken");
     String refresh = extract(regBody, "refreshToken");
 
-    // me with the access token
-    String me =
-        target
-            .path("/auth/me")
-            .request()
-            .header("Authorization", "Bearer " + access)
-            .get(String.class);
+    // me, as the gateway forwards it
+    String me = me(access);
     assertThat(me, containsString("it-user@example.com"));
     assertThat(me, containsString("CUSTOMER"));
 
@@ -124,12 +121,7 @@ class AuthIT {
     String access = extract(regBody, "accessToken");
     String refresh = extract(regBody, "refreshToken");
 
-    String me =
-        target
-            .path("/auth/me")
-            .request()
-            .header("Authorization", "Bearer " + access)
-            .get(String.class);
+    String me = me(access);
     String userId = extract(me, "userId");
 
     // change password (X-User-Id simulates the gateway-stamped identity header)
@@ -200,7 +192,7 @@ class AuthIT {
     assertThat(reg.getStatus(), is(201));
     String refresh = extract(reg.readEntity(String.class), "refreshToken");
 
-    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    java.util.UUID tenantId = com.shelfj.ids.Ids.newId();
     try (var c = iamConnection()) {
       try (var ps =
           c.prepareStatement(
@@ -227,6 +219,11 @@ class AuthIT {
     // An existing refresh token can't mint new access tokens either.
     Response refreshBlocked = post("/auth/refresh", "{\"refreshToken\":\"" + refresh + "\"}");
     assertThat(refreshBlocked.getStatus(), is(403));
+    // The refusal does not spend the token, so the app retrying it is refused the same way rather
+    // than taken for a stolen token (401, and every session revoked).
+    Response retried = post("/auth/refresh", "{\"refreshToken\":\"" + refresh + "\"}");
+    assertThat(retried.getStatus(), is(403));
+    assertThat(retried.readEntity(String.class), containsString("TENANT_INACTIVE"));
 
     // Reactivating the tenant restores login.
     try (var c = iamConnection();
@@ -240,11 +237,14 @@ class AuthIT {
     Response ok =
         post("/auth/login", "{\"email\":\"susp@example.com\",\"password\":\"strongpass1\"}");
     assertThat(ok.getStatus(), is(200));
+    // ...and the refresh token held through the suspension works again.
+    Response refreshed = post("/auth/refresh", "{\"refreshToken\":\"" + refresh + "\"}");
+    assertThat(refreshed.getStatus(), is(200));
   }
 
   @Test
   void provisionStaffRejectsBlankAndShortPassword() {
-    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    java.util.UUID tenantId = com.shelfj.ids.Ids.newId();
     Response blank =
         target
             .path("/auth/admin/staff-users")
@@ -274,7 +274,7 @@ class AuthIT {
 
   @Test
   void provisionStaffRequiresManagementRole() {
-    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    java.util.UUID tenantId = com.shelfj.ids.Ids.newId();
     // Asserted directly in AuthResource.provisionStaff as a backstop independent of the shared
     // filter's "/admin/" path-prefix rule — see its javadoc.
     Response asCashier =
@@ -296,7 +296,7 @@ class AuthIT {
     // roleIdByName("STAFF") — but "STAFF" is a user *type*, not a roles-table row, so every call
     // threw "role not found: STAFF" and returned 500. Now roleName is null → role assignment is
     // skipped, and the real store-scoped role arrives later via StaffAssigned event.
-    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    java.util.UUID tenantId = com.shelfj.ids.Ids.newId();
     Response resp =
         target
             .path("/auth/admin/staff-users")
@@ -324,7 +324,7 @@ class AuthIT {
 
   @Test
   void provisionStaffIsIdempotentForSameEmail() {
-    java.util.UUID tenantId = java.util.UUID.randomUUID();
+    java.util.UUID tenantId = com.shelfj.ids.Ids.newId();
     String body1 =
         target
             .path("/auth/admin/staff-users")
@@ -358,6 +358,33 @@ class AuthIT {
   }
 
   /** Tiny JSON field extractor (avoids pulling a JSON lib into the test). */
+  /**
+   * The gateway verifies the access token and forwards its subject and roles as identity headers,
+   * never the token itself.
+   */
+  private String me(String accessToken) {
+    DecodedJWT jwt = JWT.decode(accessToken);
+    return target
+        .path("/auth/me")
+        .request()
+        .header("X-User-Id", jwt.getSubject())
+        .header("X-Roles", String.join(",", jwt.getClaim("roles").asList(String.class)))
+        .get(String.class);
+  }
+
+  /** A bearer token without gateway identity is not an identity: /auth/me reads only the latter. */
+  @Test
+  void meNeedsTheGatewayIdentity() {
+    Response reg =
+        post(
+            "/auth/register", "{\"email\":\"me-direct@example.com\",\"password\":\"strongpass1\"}");
+    String access = extract(reg.readEntity(String.class), "accessToken");
+    Response bearerOnly =
+        target.path("/auth/me").request().header("Authorization", "Bearer " + access).get();
+    assertThat(bearerOnly.getStatus(), is(401));
+    assertThat(bearerOnly.readEntity(String.class), containsString("NO_USER"));
+  }
+
   private static String extract(String json, String field) {
     String key = "\"" + field + "\":\"";
     int i = json.indexOf(key);
@@ -376,13 +403,7 @@ class AuthIT {
         post("/auth/register", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
     assertThat(reg.getStatus(), is(201));
     String access = extract(reg.readEntity(String.class), "accessToken");
-    String me =
-        target
-            .path("/auth/me")
-            .request()
-            .header("Authorization", "Bearer " + access)
-            .get(String.class);
-    return extract(me, "userId");
+    return extract(me(access), "userId");
   }
 
   private Response deleteAccount(String userId, String password) {
@@ -400,13 +421,7 @@ class AuthIT {
     assertThat(reg.getStatus(), is(201));
     String regBody = reg.readEntity(String.class);
     String refresh = extract(regBody, "refreshToken");
-    String me =
-        target
-            .path("/auth/me")
-            .request()
-            .header("Authorization", "Bearer " + extract(regBody, "accessToken"))
-            .get(String.class);
-    String userId = extract(me, "userId");
+    String userId = extract(me(extract(regBody, "accessToken")), "userId");
 
     // A session left open on a shared device is not enough: the password is asked for again.
     assertThat(deleteAccount(userId, "not-my-password").getStatus(), is(401));

@@ -1,7 +1,7 @@
 -- Gap #41: POS price overrides — append-only audit log of staff-approved ad-hoc price changes.
 -- Append-only: no UPDATE or DELETE (golden rule #8).
 CREATE TABLE price_overrides (
-    id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID          PRIMARY KEY,
     tenant_id       UUID          NOT NULL,
     order_id        UUID,
     variant_id      UUID          NOT NULL,

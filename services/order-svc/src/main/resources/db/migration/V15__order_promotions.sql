@@ -16,7 +16,7 @@ ALTER TABLE orders
 -- "Summer Sale  -£5.00" beside the line it came off, and a refund that needs to know what was
 -- discounted before deciding what to give back.
 CREATE TABLE order_promotions (
-    id             UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    id             UUID          PRIMARY KEY,
     tenant_id      UUID          NOT NULL,
     order_id       UUID          NOT NULL REFERENCES orders(id),
     promotion_id   UUID          NOT NULL,

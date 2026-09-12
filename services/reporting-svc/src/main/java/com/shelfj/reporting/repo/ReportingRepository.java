@@ -1,5 +1,6 @@
 package com.shelfj.reporting.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.reporting.domain.Domain.InventoryProjection;
 import com.shelfj.reporting.domain.Domain.MovementStat;
 import com.shelfj.reporting.domain.Domain.OpenSupplyLine;
@@ -58,13 +59,14 @@ public class ReportingRepository extends BaseJdbcRepository {
           try (var ps =
               c.prepareStatement(
                   "INSERT INTO movement_events"
-                      + " (tenant_id, store_id, variant_id, event_type, qty_change)"
-                      + " VALUES (?,?,?,?,?)")) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, storeId);
-            ps.setObject(3, variantId);
-            ps.setString(4, eventType);
-            ps.setBigDecimal(5, delta);
+                      + " (id, tenant_id, store_id, variant_id, event_type, qty_change)"
+                      + " VALUES (?,?,?,?,?,?)")) {
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, storeId);
+            ps.setObject(4, variantId);
+            ps.setString(5, eventType);
+            ps.setBigDecimal(6, delta);
             ps.executeUpdate();
           }
           return true;

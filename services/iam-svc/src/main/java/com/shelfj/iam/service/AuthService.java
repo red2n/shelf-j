@@ -10,6 +10,7 @@ import com.shelfj.iam.dto.Dtos.ProvisionStaffResponse;
 import com.shelfj.iam.dto.Dtos.TokenResponse;
 import com.shelfj.iam.repo.RefreshTokenRepository;
 import com.shelfj.iam.repo.UserRepository;
+import com.shelfj.ids.Ids;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.service.TenantStatusRepository;
 import com.shelfj.web.ApiException;
@@ -42,7 +43,7 @@ public class AuthService {
   /** Customer self-signup → creates a CUSTOMER (global, tenantId null) and returns a token pair. */
   public TokenResponse register(String email, String password, String phone) {
     String hash = passwords.hash(password);
-    UUID userId = UUID.randomUUID();
+    UUID userId = Ids.newId();
     Instant now = Instant.now();
     var user =
         new User(
@@ -50,7 +51,7 @@ public class AuthService {
 
     String payload =
         Json.createObjectBuilder()
-            .add("eventId", UUID.randomUUID().toString())
+            .add("eventId", Ids.newId().toString())
             .add("eventType", "UserRegistered")
             .addNull("tenantId")
             .add("aggregateId", userId.toString())
@@ -96,7 +97,7 @@ public class AuthService {
           java.util.List.of());
     }
 
-    UUID userId = UUID.randomUUID();
+    UUID userId = Ids.newId();
     Instant now = Instant.now();
     var user =
         new User(
@@ -111,7 +112,7 @@ public class AuthService {
             now);
     String payload =
         Json.createObjectBuilder()
-            .add("eventId", UUID.randomUUID().toString())
+            .add("eventId", Ids.newId().toString())
             .add("eventType", "UserRegistered")
             .addNull("tenantId")
             .add("aggregateId", userId.toString())
@@ -207,6 +208,10 @@ public class AuthService {
   /** Rotate a refresh token → new access + new refresh token; old one is revoked. */
   public TokenResponse refresh(String refreshToken) {
     String hash = Tokens.hash(refreshToken);
+    // Refuse a suspended tenant's staff before the token is spent. Spending it would leave them a
+    // dead token whose every retry reads as theft below, revoking all their sessions and auditing
+    // a reuse that never happened, when all that should happen is a refusal until reactivation.
+    refreshTokens.ownerOfActive(hash).flatMap(users::findById).ifPresent(this::requireTenantActive);
     // Atomic consume: validate + revoke in one statement, so a token can be rotated exactly once
     // even under concurrent requests.
     UUID userId =
@@ -236,13 +241,21 @@ public class AuthService {
             .findById(userId)
             .orElseThrow(
                 () -> ApiException.unauthorized("INVALID_REFRESH", "User no longer exists"));
-    // Block token refresh for a suspended tenant too — otherwise a staff member with a live refresh
-    // token could keep minting access tokens after their business was deactivated.
+    // Again after the consume: the tenant may have been suspended since the check above.
+    requireTenantActive(user);
+    return issueTokens(user);
+  }
+
+  /**
+   * Block token refresh for a suspended tenant — otherwise a staff member with a live refresh token
+   * could keep minting access tokens after their business was deactivated. Customers carry no
+   * tenant and are unaffected.
+   */
+  private void requireTenantActive(User user) {
     if (user.tenantId() != null && !tenantStatus.isActive(user.tenantId())) {
       throw ApiException.forbidden(
           "TENANT_INACTIVE", "This business account is suspended. Contact support.");
     }
-    return issueTokens(user);
   }
 
   /**
@@ -271,7 +284,7 @@ public class AuthService {
           java.util.List.of(),
           null);
     }
-    UUID userId = UUID.randomUUID();
+    UUID userId = Ids.newId();
     Instant now = Instant.now();
     var user =
         new User(
@@ -338,7 +351,7 @@ public class AuthService {
     // Ids only: the event outlives its handling, so it must not carry what it erases.
     String payload =
         Json.createObjectBuilder()
-            .add("eventId", UUID.randomUUID().toString())
+            .add("eventId", Ids.newId().toString())
             .add("eventType", "AccountDeleted")
             .add("aggregateId", userId.toString())
             .add("occurredAt", Instant.now().toString())

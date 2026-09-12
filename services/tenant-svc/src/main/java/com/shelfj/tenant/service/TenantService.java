@@ -1,5 +1,6 @@
 package com.shelfj.tenant.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.tenant.domain.Domain.DeliveryArea;
 import com.shelfj.tenant.domain.Domain.StaffAssignment;
@@ -58,7 +59,7 @@ public class TenantService {
    * endpoints).
    */
   public Tenant createTenant(UUID ownerUserId, CreateTenantRequest req) {
-    UUID tenantId = UUID.randomUUID();
+    UUID tenantId = Ids.newId();
     Instant nowTenant = Instant.now();
     var tenant =
         new Tenant(
@@ -151,7 +152,7 @@ public class TenantService {
 
   private StoreWithZone createStoreInternal(
       UUID tenantId, CreateStoreRequest req, boolean isDefault) {
-    UUID storeId = UUID.randomUUID();
+    UUID storeId = Ids.newId();
     String type = req.type() == null || req.type().isBlank() ? Store.TYPE_STORE : req.type();
     Instant nowStore = Instant.now();
     var store =
@@ -179,7 +180,7 @@ public class TenantService {
             nowStore);
 
     // Always create a DEFAULT zone so stock has a home (golden rule of the location model).
-    UUID zoneId = UUID.randomUUID();
+    UUID zoneId = Ids.newId();
     var defaultZone =
         new Zone(
             zoneId,
@@ -206,8 +207,20 @@ public class TenantService {
             tenantId,
             zoneId,
             Events.zoneCreated(tenantId, storeId, zoneId, "DEFAULT", Zone.TYPE_DEFAULT));
+    // cart-svc, order-svc and iam-svc gate on a local store_status projection that lets through a
+    // store it has no row for (the caller's own write can race this event). Announcing the status
+    // at creation gives every projection a row naming the owner, so another tenant cannot trade
+    // against this store's id while its status has never changed.
+    var statusEvent =
+        new OutboxRow(
+            "StoreStatusChanged",
+            "shelfj.tenant.store-status-changed",
+            tenantId,
+            storeId,
+            Events.storeStatusChanged(tenantId, storeId, store.status()));
 
-    return repo.createStoreWithDefaultZone(store, defaultZone, storeEvent, zoneEvent);
+    return repo.createStoreWithDefaultZone(
+        store, defaultZone, List.of(storeEvent, zoneEvent, statusEvent));
   }
 
   /** Add a zone to a store. Publishes ZoneCreated. */
@@ -215,7 +228,7 @@ public class TenantService {
     repo.findStore(tenantId, storeId)
         .orElseThrow(
             () -> ApiException.notFound("STORE_NOT_FOUND", "No such store in this tenant"));
-    UUID zoneId = UUID.randomUUID();
+    UUID zoneId = Ids.newId();
     String type = req.type() == null || req.type().isBlank() ? "AISLE" : req.type();
     Instant nowZone = Instant.now();
     var zone =
@@ -239,8 +252,7 @@ public class TenantService {
         .orElseThrow(
             () -> ApiException.notFound("STORE_NOT_FOUND", "No such store in this tenant"));
     var assignment =
-        new StaffAssignment(
-            UUID.randomUUID(), tenantId, userId, storeId, req.role(), Instant.now());
+        new StaffAssignment(Ids.newId(), tenantId, userId, storeId, req.role(), Instant.now());
     var event =
         new OutboxRow(
             "StaffAssigned",
@@ -501,7 +513,7 @@ public class TenantService {
             tenantId,
             existing -> {
               Instant now = Instant.now();
-              UUID id = existing != null ? existing.id() : UUID.randomUUID();
+              UUID id = existing != null ? existing.id() : Ids.newId();
               Instant createdAt = existing != null ? existing.createdAt() : now;
               return new TenantInventoryConfig(
                   id,
@@ -561,8 +573,7 @@ public class TenantService {
       throw ApiException.badRequest("DELIVERY_PINCODE_REQUIRED", "pincode is required");
     }
     int priority = req.priority() != null ? req.priority() : 100;
-    var area =
-        new DeliveryArea(UUID.randomUUID(), tenantId, storeId, pincode, priority, Instant.now());
+    var area = new DeliveryArea(Ids.newId(), tenantId, storeId, pincode, priority, Instant.now());
     try {
       return Mappers.toDto(repo.insertDeliveryArea(area));
     } catch (RuntimeException e) {

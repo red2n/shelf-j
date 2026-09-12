@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Domain.Batch;
 import com.shelfj.inventory.domain.Domain.CycleCountLine;
 import com.shelfj.inventory.domain.Domain.Level;
@@ -203,7 +204,7 @@ public class InventoryRepository extends BaseOutboxRepository {
     if (delta.signum() >= 0) {
       Batch b =
           new Batch(
-              UUID.randomUUID(),
+              Ids.newId(),
               tenantId,
               storeId,
               variantId,
@@ -914,11 +915,11 @@ public class InventoryRepository extends BaseOutboxRepository {
               // positive variance: system under-counted — add stock
               Batch adj =
                   new Batch(
-                      UUID.randomUUID(),
+                      Ids.newId(),
                       tenantId,
                       line.storeId(),
                       line.variantId(),
-                      "CC-" + headerId.toString().substring(0, 8),
+                      "CC-" + Ids.shortRef(headerId),
                       line.variance(),
                       line.variance(),
                       null,
@@ -1258,7 +1259,7 @@ public class InventoryRepository extends BaseOutboxRepository {
                 + " (id, tenant_id, store_id, variant_id, batch_id, type, qty, ref_type, ref_id,"
                 + "  reason_code, actor_id)"
                 + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
-      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, storeId);
       ps.setObject(4, variantId);
@@ -1411,11 +1412,11 @@ public class InventoryRepository extends BaseOutboxRepository {
                 MovementAttribution.system());
             Batch dest =
                 new Batch(
-                    UUID.randomUUID(),
+                    Ids.newId(),
                     tenantId,
                     order.toStoreId(),
                     line.variantId(),
-                    "MO-" + orderId.toString().substring(0, 8),
+                    "MO-" + Ids.shortRef(orderId),
                     line.requestedQty(),
                     line.requestedQty(),
                     null,
@@ -1661,11 +1662,11 @@ public class InventoryRepository extends BaseOutboxRepository {
             if (isDirect) {
               Batch dest =
                   new Batch(
-                      UUID.randomUUID(),
+                      Ids.newId(),
                       tenantId,
                       order.toStoreId(),
                       line.variantId(),
-                      "TO-" + orderId.toString().substring(0, 8),
+                      "TO-" + Ids.shortRef(orderId),
                       line.requestedQty(),
                       line.requestedQty(),
                       null,
@@ -1752,11 +1753,11 @@ public class InventoryRepository extends BaseOutboxRepository {
             BigDecimal qty = line.shippedQty() == null ? line.requestedQty() : line.shippedQty();
             Batch dest =
                 new Batch(
-                    UUID.randomUUID(),
+                    Ids.newId(),
                     tenantId,
                     order.toStoreId(),
                     line.variantId(),
-                    "TO-" + orderId.toString().substring(0, 8),
+                    "TO-" + Ids.shortRef(orderId),
                     qty,
                     qty,
                     null,

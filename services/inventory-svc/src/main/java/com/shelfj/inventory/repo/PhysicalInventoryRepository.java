@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Domain.PhysicalInventory;
 import com.shelfj.inventory.domain.Domain.PhysicalInventoryTag;
 import com.shelfj.service.BaseOutboxRepository;
@@ -151,7 +152,7 @@ public class PhysicalInventoryRepository extends BaseOutboxRepository {
                 PhysicalInventoryTag tag = mapTag(rs);
                 BigDecimal adj = tag.adjustmentQty();
                 String moveType = adj.compareTo(BigDecimal.ZERO) > 0 ? "RECEIVE" : "ISSUE";
-                UUID movId = UUID.randomUUID();
+                UUID movId = Ids.newId();
                 try (PreparedStatement mps =
                     c.prepareStatement(
                         "INSERT INTO stock_movements"

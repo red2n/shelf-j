@@ -3,6 +3,7 @@ package com.shelfj.notification;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.notification.repo.NotificationRepository;
 import com.shelfj.notification.service.NotificationErasure;
 import com.shelfj.notification.service.Notifier;
@@ -35,8 +36,8 @@ class NotificationIT {
     System.setProperty("shelfj.kafka.enabled", "false");
   }
 
-  private static final String T = "11111111-1111-1111-1111-111111111111";
-  private static final String OTHER = "99999999-9999-9999-9999-999999999999";
+  private static final String T = "01a090ae-611e-700b-bde4-50df0324c37c";
+  private static final String OTHER = "01a090ae-611e-701d-9d60-a9d7516ed03b";
 
   @Inject WebTarget target;
 
@@ -79,7 +80,7 @@ class NotificationIT {
   /** N1: a delivered notification is recorded, and a redelivered event is a no-op. */
   @Test
   void notifyOnceRecordsAndIsIdempotent() {
-    UUID event = UUID.randomUUID();
+    UUID event = Ids.newId();
     UUID tenant = UUID.fromString(T);
     assertThat(notifications.alreadyNotified(event, "WELCOME"), is(false));
 
@@ -99,7 +100,7 @@ class NotificationIT {
   /** N1: no recipient → nothing recorded (e.g. a guest order or missing email). */
   @Test
   void noRecipientRecordsNothing() {
-    UUID event = UUID.randomUUID();
+    UUID event = Ids.newId();
     notifier.notifyOnce(event, "WELCOME", UUID.fromString(T), null, null, "Welcome", "hi");
     assertThat(notifications.alreadyNotified(event, "WELCOME"), is(false));
   }
@@ -127,8 +128,8 @@ class NotificationIT {
   @Test
   void erasingACustomerErasesTheMessagesThatShopSentThem() {
     UUID tenant = UUID.fromString(T);
-    UUID customer = UUID.randomUUID();
-    UUID sent = UUID.randomUUID();
+    UUID customer = Ids.newId();
+    UUID sent = Ids.newId();
     notifier.notifyOnce(
         sent,
         "ORDER_CONFIRMATION",
@@ -153,8 +154,8 @@ class NotificationIT {
 
   @Test
   void anotherShopsMessagesAboutTheSameIdAreNotTouched() {
-    UUID customer = UUID.randomUUID();
-    UUID theirs = UUID.randomUUID();
+    UUID customer = Ids.newId();
+    UUID theirs = Ids.newId();
     notifier.notifyOnce(
         theirs,
         "ORDER_CONFIRMATION",
@@ -170,9 +171,9 @@ class NotificationIT {
 
   @Test
   void deletingAnAccountErasesThePlatformsMessagesButNotAShops() {
-    UUID user = UUID.randomUUID();
-    UUID welcome = UUID.randomUUID();
-    UUID shopMessage = UUID.randomUUID();
+    UUID user = Ids.newId();
+    UUID welcome = Ids.newId();
+    UUID shopMessage = Ids.newId();
     notifier.notifyOnce(
         welcome, "WELCOME", null, user, "leaving@example.com", "Welcome to Shelf-J", "hi");
     notifier.notifyOnce(
@@ -193,8 +194,8 @@ class NotificationIT {
 
   @Test
   void aReceiptSentWithACustomerIdCanBeErased() {
-    UUID customer = UUID.randomUUID();
-    String eventId = UUID.randomUUID().toString();
+    UUID customer = Ids.newId();
+    String eventId = Ids.newId().toString();
     Response r =
         target
             .path("/notifications/send")

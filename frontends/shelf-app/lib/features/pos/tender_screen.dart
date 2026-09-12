@@ -16,6 +16,7 @@ import 'pos_fiscal_receipt.dart';
 import 'pos_providers.dart';
 import 'pos_receipt.dart';
 import 'pos_session_providers.dart';
+import '../../shared/util/short_ref.dart';
 
 /// Multi-tender payment screen: a sale can be split across cash, card, gift card
 /// and store credit. The cashier stages tenders until the balance is cleared,
@@ -464,7 +465,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(receiptData.fiscalNumber != null ? 'Receipt no. ${receiptData.fiscalNumber}' : 'Order #${orderId.length >= 8 ? orderId.substring(0, 8).toUpperCase() : orderId}'),
+            Text(receiptData.fiscalNumber != null ? 'Receipt no. ${receiptData.fiscalNumber}' : 'Order #${shortRef(orderId).toUpperCase()}'),
             if (change > 0) ...[
               const SizedBox(height: 8),
               Text('Change due: $currency ${change.toStringAsFixed(2)}',
@@ -674,7 +675,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Order #${orderId.length >= 8 ? orderId.substring(0, 8).toUpperCase() : orderId}'),
+            Text('Order #${shortRef(orderId).toUpperCase()}'),
             const SizedBox(height: 16),
             Wrap(
               spacing: 8,

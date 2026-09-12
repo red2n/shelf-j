@@ -54,6 +54,10 @@
 
         <dependency>
             <groupId>com.shelfj</groupId>
+            <artifactId>common-ids</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.shelfj</groupId>
             <artifactId>common-web</artifactId>
         </dependency>
         <dependency>

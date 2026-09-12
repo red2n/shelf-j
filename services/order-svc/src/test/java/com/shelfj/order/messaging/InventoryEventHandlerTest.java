@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.repo.OrderRepository;
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -21,10 +22,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class InventoryEventHandlerTest {
 
-  private static final UUID EVENT = UUID.randomUUID();
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID STORE = UUID.randomUUID();
-  private static final UUID VARIANT = UUID.randomUUID();
+  private static final UUID EVENT = Ids.newId();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID STORE = Ids.newId();
+  private static final UUID VARIANT = Ids.newId();
 
   @Mock OrderRepository repo;
 
@@ -126,7 +127,7 @@ class InventoryEventHandlerTest {
     // Regression: the old regex matched anywhere in the raw string, so a decoy "storeId" earlier
     // in the payload (e.g. inside a "previous" block) would have been picked up instead of the
     // real top-level field.
-    UUID decoyStore = UUID.randomUUID();
+    UUID decoyStore = Ids.newId();
     String payload =
         "{\"previous\":{\"storeId\":\""
             + decoyStore

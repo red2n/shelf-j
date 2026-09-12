@@ -3,6 +3,7 @@ package com.shelfj.payment;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.domain.Domain.PaymentTender;
 import com.shelfj.payment.domain.Domain.RefundTender;
 import com.shelfj.payment.repo.PaymentRepository;
@@ -51,7 +52,7 @@ class PaymentRefundIT {
   }
 
   private UUID captureTender(UUID tenantId, UUID orderId, String amount) {
-    UUID tenderId = UUID.randomUUID();
+    UUID tenderId = Ids.newId();
     var tender =
         new PaymentTender(
             tenderId,
@@ -85,11 +86,11 @@ class PaymentRefundIT {
 
   @Test
   void returnRefundIsAppliedOnceAndCappedAtCaptured() {
-    UUID tenant = UUID.randomUUID();
-    UUID order = UUID.randomUUID();
+    UUID tenant = Ids.newId();
+    UUID order = Ids.newId();
     captureTender(tenant, order, "40.00");
 
-    UUID event = UUID.randomUUID();
+    UUID event = Ids.newId();
     // Return refund of 15 against a 40 capture.
     service.refundForOrderEvent(event, CONSUMER, tenant, order, new BigDecimal("15.00"), "return");
     // Redelivery of the SAME order event must not refund again.
@@ -100,26 +101,26 @@ class PaymentRefundIT {
 
   @Test
   void returnRefundNeverExceedsCapturedTotal() {
-    UUID tenant = UUID.randomUUID();
-    UUID order = UUID.randomUUID();
+    UUID tenant = Ids.newId();
+    UUID order = Ids.newId();
     captureTender(tenant, order, "30.00");
 
     // A return claiming more than was captured is capped at the captured 30.
     service.refundForOrderEvent(
-        UUID.randomUUID(), CONSUMER, tenant, order, new BigDecimal("999.00"), "return");
+        Ids.newId(), CONSUMER, tenant, order, new BigDecimal("999.00"), "return");
 
     assertRefunded(tenant, order, "30.00");
   }
 
   @Test
   void cancellationRefundsAllRemainingAcrossSplitTenders() {
-    UUID tenant = UUID.randomUUID();
-    UUID order = UUID.randomUUID();
+    UUID tenant = Ids.newId();
+    UUID order = Ids.newId();
     captureTender(tenant, order, "20.00");
     captureTender(tenant, order, "5.00");
 
     // null requested amount = refund whatever is still captured (25 across two tenders).
-    service.refundForOrderEvent(UUID.randomUUID(), CONSUMER, tenant, order, null, "cancelled");
+    service.refundForOrderEvent(Ids.newId(), CONSUMER, tenant, order, null, "cancelled");
 
     assertRefunded(tenant, order, "25.00");
     // One refund row per tender touched.
@@ -129,11 +130,11 @@ class PaymentRefundIT {
 
   @Test
   void unpaidOrderCancellationIsANoOp() {
-    UUID tenant = UUID.randomUUID();
-    UUID order = UUID.randomUUID();
+    UUID tenant = Ids.newId();
+    UUID order = Ids.newId();
     // No captured tender at all (e.g. pay-later order cancelled before payment).
 
-    service.refundForOrderEvent(UUID.randomUUID(), CONSUMER, tenant, order, null, "cancelled");
+    service.refundForOrderEvent(Ids.newId(), CONSUMER, tenant, order, null, "cancelled");
 
     assertRefunded(tenant, order, "0");
   }

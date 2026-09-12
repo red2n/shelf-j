@@ -262,6 +262,13 @@ if [ -n "$LAN_IP" ]; then
       red "    Rebuild with: UI_API_BASE=http://${LAN_IP}:${GW:-8090}/api ./scripts/redeploy.sh"
       ;;
   esac
+  case ",${GATEWAY_CORS_ALLOWED_ORIGINS:-}," in
+    *",http://${LAN_IP}:${UI:-8088},"*) ;;
+    *)
+      red "  ! The gateway only accepts browser calls from the origins in GATEWAY_CORS_ALLOWED_ORIGINS."
+      red "    For Wi-Fi testing set GATEWAY_CORS_ALLOWED_ORIGINS=http://localhost:${UI:-8088},http://${LAN_IP}:${UI:-8088} in .env"
+      ;;
+  esac
 else
   red "Could not detect a LAN IP (no default route) — skipping Wi-Fi connection info."
 fi

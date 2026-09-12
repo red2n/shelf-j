@@ -1,5 +1,6 @@
 package com.shelfj.reporting.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.reporting.domain.Domain.InventoryProjection;
 import com.shelfj.reporting.domain.Domain.MovementStat;
 import com.shelfj.reporting.domain.Domain.OpenSupplyLine;
@@ -70,7 +71,7 @@ public class ReportingService {
     for (int i = 0; i < variantIds.size(); i++) {
       repo.insertSupplyLine(
           new com.shelfj.reporting.domain.Domain.OpenSupplyLine(
-              UUID.randomUUID(),
+              Ids.newId(),
               tenantId,
               fromStoreId,
               toStoreId,

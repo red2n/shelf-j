@@ -7,6 +7,7 @@
 library;
 
 import 'pos_providers.dart';
+import '../../shared/util/short_ref.dart';
 
 class PosReceiptData {
   final String orderId;
@@ -68,7 +69,7 @@ class PosReceiptData {
       );
 
   String get shortId =>
-      orderId.length >= 8 ? orderId.substring(0, 8).toUpperCase() : orderId.toUpperCase();
+      shortRef(orderId).toUpperCase();
 
   String _fmt(double v) => '$currency ${v.toStringAsFixed(2)}';
 

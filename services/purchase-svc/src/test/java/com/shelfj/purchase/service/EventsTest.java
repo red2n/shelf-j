@@ -3,6 +3,7 @@ package com.shelfj.purchase.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
@@ -32,12 +33,7 @@ class EventsTest {
 
   private static GoodsReceiptLine line(UUID variantId, String qty) {
     return new GoodsReceiptLine(
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        variantId,
-        new BigDecimal(qty),
-        Instant.now());
+        Ids.newId(), Ids.newId(), Ids.newId(), variantId, new BigDecimal(qty), Instant.now());
   }
 
   /**
@@ -48,14 +44,13 @@ class EventsTest {
    */
   @Test
   void goodsReceivedRefersToTheReceiptNotThePurchaseOrder() {
-    UUID tenant = UUID.randomUUID();
-    UUID grn = UUID.randomUUID();
-    UUID store = UUID.randomUUID();
-    UUID po = UUID.randomUUID();
+    UUID tenant = Ids.newId();
+    UUID grn = Ids.newId();
+    UUID store = Ids.newId();
+    UUID po = Ids.newId();
 
     JsonObject p =
-        payloadOf(
-            Events.goodsReceived(tenant, grn, store, po, List.of(line(UUID.randomUUID(), "6"))));
+        payloadOf(Events.goodsReceived(tenant, grn, store, po, List.of(line(Ids.newId(), "6"))));
 
     assertEquals(grn.toString(), p.getString("refId"), "refId must name the goods receipt");
     // The order is still carried, so a consumer that wants it needs no second lookup.
@@ -70,18 +65,16 @@ class EventsTest {
    */
   @Test
   void twoReceiptsAgainstOneOrderAreDistinguishable() {
-    UUID tenant = UUID.randomUUID();
-    UUID store = UUID.randomUUID();
-    UUID po = UUID.randomUUID();
-    UUID first = UUID.randomUUID();
-    UUID second = UUID.randomUUID();
+    UUID tenant = Ids.newId();
+    UUID store = Ids.newId();
+    UUID po = Ids.newId();
+    UUID first = Ids.newId();
+    UUID second = Ids.newId();
 
     JsonObject a =
-        payloadOf(
-            Events.goodsReceived(tenant, first, store, po, List.of(line(UUID.randomUUID(), "6"))));
+        payloadOf(Events.goodsReceived(tenant, first, store, po, List.of(line(Ids.newId(), "6"))));
     JsonObject b =
-        payloadOf(
-            Events.goodsReceived(tenant, second, store, po, List.of(line(UUID.randomUUID(), "4"))));
+        payloadOf(Events.goodsReceived(tenant, second, store, po, List.of(line(Ids.newId(), "4"))));
 
     assertTrue(
         !a.getString("refId").equals(b.getString("refId")),
@@ -92,15 +85,15 @@ class EventsTest {
 
   @Test
   void everyReceiptLineIsCarried() {
-    UUID v1 = UUID.randomUUID();
-    UUID v2 = UUID.randomUUID();
+    UUID v1 = Ids.newId();
+    UUID v2 = Ids.newId();
     JsonObject p =
         payloadOf(
             Events.goodsReceived(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
+                Ids.newId(),
+                Ids.newId(),
+                Ids.newId(),
+                Ids.newId(),
                 List.of(line(v1, "6"), line(v2, "4"))));
 
     var lines = p.getJsonArray("lines");

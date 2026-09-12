@@ -1,5 +1,6 @@
 package com.shelfj.service;
 
+import com.shelfj.ids.Ids;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -32,7 +33,7 @@ public abstract class BaseOutboxRepository extends BaseJdbcRepository implements
         c.prepareStatement(
             "INSERT INTO outbox (id, event_type, topic, tenant_id, aggregate_id, payload)"
                 + " VALUES (?,?,?,?,?,?)")) {
-      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(1, Ids.newId());
       ps.setString(2, o.eventType());
       ps.setString(3, o.topic());
       ps.setObject(4, o.tenantId());

@@ -5,6 +5,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiException;
 import java.math.BigDecimal;
@@ -24,9 +25,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class PaymentEventHandlerTest {
 
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID ORDER = UUID.randomUUID();
-  private static final UUID PAYMENT = UUID.randomUUID();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID ORDER = Ids.newId();
+  private static final UUID PAYMENT = Ids.newId();
 
   @Mock OrderService svc;
 
@@ -91,7 +92,7 @@ class PaymentEventHandlerTest {
     // Regression: the old regex matched "\"tenantId\"\\s*:\\s*\"...\"" anywhere in the raw
     // string, so a decoy "tenantId" placed earlier in a nested object (e.g. a future "meta"
     // block) would have been picked up instead of the real top-level field.
-    UUID decoy = UUID.randomUUID();
+    UUID decoy = Ids.newId();
     String payload =
         "{\"meta\":{\"tenantId\":\""
             + decoy

@@ -132,7 +132,7 @@ CREATE INDEX nle_tenant_date ON nominal_ledger_entries(tenant_id, entry_date);
 
 -- ── Outbox ────────────────────────────────────────────────────────────────────
 CREATE TABLE outbox (
-  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  id            UUID        PRIMARY KEY,
   event_type    VARCHAR(100) NOT NULL,
   topic         VARCHAR(200) NOT NULL,
   tenant_id     UUID        NOT NULL,

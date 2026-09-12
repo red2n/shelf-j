@@ -3,6 +3,7 @@ package com.shelfj.order;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.service.StoreStatusRepository;
 import com.shelfj.test.PostgresSupport;
 import java.lang.reflect.Field;
@@ -36,8 +37,8 @@ class StoreStatusRepositoryIT {
     }
   }
 
-  private static final UUID TENANT_A = UUID.randomUUID();
-  private static final UUID TENANT_B = UUID.randomUUID();
+  private static final UUID TENANT_A = Ids.newId();
+  private static final UUID TENANT_B = Ids.newId();
 
   @AfterAll
   static void stopDb() {
@@ -55,27 +56,27 @@ class StoreStatusRepositoryIT {
   @Test
   void neverProjectedStoreFailsOpen() {
     assertTrue(
-        REPO.isActive(TENANT_A, UUID.randomUUID()),
+        REPO.isActive(TENANT_A, Ids.newId()),
         "a store this projection has never heard about must fail open (Kafka ordering race)");
   }
 
   @Test
   void activeStoreUnderTheRightTenantPasses() {
-    UUID store = UUID.randomUUID();
+    UUID store = Ids.newId();
     REPO.upsertStoreStatus(store, TENANT_A, "ACTIVE", Instant.now());
     assertTrue(REPO.isActive(TENANT_A, store));
   }
 
   @Test
   void suspendedStoreUnderTheRightTenantFails() {
-    UUID store = UUID.randomUUID();
+    UUID store = Ids.newId();
     REPO.upsertStoreStatus(store, TENANT_A, "SUSPENDED", Instant.now());
     assertFalse(REPO.isActive(TENANT_A, store));
   }
 
   @Test
   void activeStoreUnderADifferentTenantIsRejectedRegardlessOfStatus() {
-    UUID store = UUID.randomUUID();
+    UUID store = Ids.newId();
     // TENANT_B's store, genuinely ACTIVE — but TENANT_A has no claim to it.
     REPO.upsertStoreStatus(store, TENANT_B, "ACTIVE", Instant.now());
     assertFalse(

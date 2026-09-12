@@ -1,6 +1,7 @@
 package com.shelfj.iam.repo;
 
 import com.shelfj.iam.domain.User;
+import com.shelfj.ids.Ids;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
@@ -182,7 +183,7 @@ public class UserRepository extends BaseOutboxRepository {
                   "INSERT INTO user_roles (id, user_id, role_id, store_id)"
                       + " SELECT ?, ?, ?, NULL WHERE NOT EXISTS"
                       + " (SELECT 1 FROM user_roles WHERE user_id = ? AND role_id = ? AND store_id IS NULL)")) {
-            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(1, Ids.newId());
             ps.setObject(2, userId);
             ps.setObject(3, roleId);
             ps.setObject(4, userId);
@@ -226,7 +227,7 @@ public class UserRepository extends BaseOutboxRepository {
                   "INSERT INTO user_roles (id, user_id, role_id, store_id)"
                       + " SELECT ?, ?, ?, ? WHERE NOT EXISTS"
                       + " (SELECT 1 FROM user_roles WHERE user_id = ? AND role_id = ? AND store_id = ?)")) {
-            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(1, Ids.newId());
             ps.setObject(2, userId);
             ps.setObject(3, roleId);
             ps.setObject(4, storeId);
@@ -260,7 +261,7 @@ public class UserRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO audit_log (id, tenant_id, user_id, action, detail)"
                 + " VALUES (?,?,?,?,?)")) {
-      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, userId);
       ps.setString(4, action);
@@ -370,7 +371,7 @@ public class UserRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO user_roles (id, user_id, role_id, store_id) VALUES (?,?,?,NULL)")) {
-      ps.setObject(1, UUID.randomUUID());
+      ps.setObject(1, Ids.newId());
       ps.setObject(2, userId);
       ps.setObject(3, roleId);
       ps.executeUpdate();

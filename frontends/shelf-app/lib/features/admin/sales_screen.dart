@@ -10,6 +10,7 @@ import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 import 'sales_providers.dart';
 import 'widgets/variant_picker.dart';
+import '../../shared/util/short_ref.dart';
 
 class SalesScreen extends ConsumerWidget {
   const SalesScreen({super.key});
@@ -461,7 +462,7 @@ class _LayawaysTabState extends ConsumerState<_LayawaysTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('#${l.id.length >= 8 ? l.id.substring(0, 8) : l.id}',
+                  Text('#${shortRef(l.id)}',
                       style: const TextStyle(fontFamily: 'monospace')),
                   const SizedBox(height: 8),
                   Text('Total: ${l.totalAmount.toStringAsFixed(2)}'),
@@ -875,7 +876,7 @@ class _LineItemsEditorState extends ConsumerState<_LineItemsEditor> {
             dense: true,
             contentPadding: EdgeInsets.zero,
             title: Text(
-                '${(it['variantId'] as String).substring(0, 8)}… × ${it['qty']}',
+                '…${shortRef(it['variantId'] as String)} × ${it['qty']}',
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
             trailing: IconButton(
               icon: Icon(Icons.delete_outline, size: 18, color: cs.error),

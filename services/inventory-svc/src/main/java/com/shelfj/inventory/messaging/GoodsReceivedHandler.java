@@ -1,5 +1,6 @@
 package com.shelfj.inventory.messaging;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.service.InventoryService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -10,7 +11,6 @@ import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.UUID;
 
@@ -94,8 +94,7 @@ class GoodsReceivedHandler {
 
   /** Deterministic per-line dedupe id: stable across redeliveries of the same event. */
   static UUID lineDedupeId(UUID eventId, int lineIndex) {
-    return UUID.nameUUIDFromBytes(
-        (CONSUMER_NAME + ":" + eventId + ":" + lineIndex).getBytes(StandardCharsets.UTF_8));
+    return Ids.derived(eventId, CONSUMER_NAME + ":" + lineIndex);
   }
 
   private static String nullableString(JsonObject obj, String key) {

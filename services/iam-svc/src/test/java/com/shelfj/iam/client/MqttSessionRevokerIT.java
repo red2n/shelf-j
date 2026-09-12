@@ -7,6 +7,7 @@ import com.auth0.jwt.JWT;
 import com.hivemq.client.mqtt.datatypes.MqttQos;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5BlockingClient;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5Client;
+import com.shelfj.ids.Ids;
 import com.shelfj.test.EmqxSupport;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
@@ -88,7 +89,7 @@ class MqttSessionRevokerIT {
         post("/auth/register", "{\"email\":\"kick@example.com\",\"password\":\"strongpass1\"}");
     assertThat(reg.getStatus(), is(201));
 
-    UUID tenantId = UUID.randomUUID();
+    UUID tenantId = Ids.newId();
     try (var c = iamConnection();
         var ps =
             c.prepareStatement(

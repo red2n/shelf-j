@@ -1,5 +1,6 @@
 package com.shelfj.payment.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.service.OutboxRow;
 import java.util.UUID;
 
@@ -47,6 +48,6 @@ final class Events {
         String.format(
             "{\"eventId\":\"%s\",\"eventType\":\"PaymentRefunded\",\"tenantId\":\"%s\","
                 + "\"refundId\":\"%s\",\"orderId\":\"%s\",\"amount\":%s}",
-            UUID.randomUUID(), tenantId, refundId, orderId, amount.toPlainString()));
+            Ids.newId(), tenantId, refundId, orderId, amount.toPlainString()));
   }
 }

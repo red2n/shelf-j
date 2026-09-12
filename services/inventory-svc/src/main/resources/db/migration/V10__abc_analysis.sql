@@ -4,7 +4,7 @@
 -- Default thresholds: A = top 70% of cumulative value, B = next 20%, C = bottom 10%.
 
 CREATE TABLE abc_compile_runs (
-    id              UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID        NOT NULL,
     tenant_id       UUID        NOT NULL,
     store_id        UUID,
     criteria        TEXT        NOT NULL DEFAULT 'VALUE',
@@ -20,7 +20,7 @@ CREATE TABLE abc_compile_runs (
 CREATE INDEX idx_abc_compile_runs_tenant ON abc_compile_runs (tenant_id, compiled_at DESC);
 
 CREATE TABLE abc_assignments (
-    id          UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id          UUID        NOT NULL,
     tenant_id   UUID        NOT NULL,
     store_id    UUID        NOT NULL,
     variant_id  UUID        NOT NULL,

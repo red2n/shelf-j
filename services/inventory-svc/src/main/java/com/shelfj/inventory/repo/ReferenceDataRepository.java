@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Domain.ReasonCode;
 import com.shelfj.inventory.domain.Domain.TransactionSourceType;
 import com.shelfj.inventory.domain.Domain.ZoneGlMapping;
@@ -30,12 +31,13 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
         c -> {
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "INSERT INTO transaction_reason_codes (tenant_id,code,description)"
-                      + " VALUES (?,?,?)"
+                  "INSERT INTO transaction_reason_codes (id,tenant_id,code,description)"
+                      + " VALUES (?,?,?,?)"
                       + " RETURNING id,tenant_id,code,description,active,created_at")) {
-            ps.setObject(1, tenantId);
-            ps.setString(2, code);
-            ps.setString(3, description);
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setString(3, code);
+            ps.setString(4, description);
             try (ResultSet rs = ps.executeQuery()) {
               rs.next();
               return mapReasonCode(rs);
@@ -49,7 +51,7 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
     return query(
         "SELECT id,tenant_id,code,description,active,created_at"
             + " FROM transaction_reason_codes"
-            + " WHERE tenant_id=? OR tenant_id='00000000-0000-0000-0000-000000000000'"
+            + " WHERE tenant_id=? OR tenant_id IS NULL"
             + " ORDER BY code",
         ps -> ps.setObject(1, tenantId),
         ReferenceDataRepository::mapReasonCode,
@@ -93,12 +95,13 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
         c -> {
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "INSERT INTO transaction_source_types (tenant_id,code,description)"
-                      + " VALUES (?,?,?)"
+                  "INSERT INTO transaction_source_types (id,tenant_id,code,description)"
+                      + " VALUES (?,?,?,?)"
                       + " RETURNING id,tenant_id,code,description,active,created_at")) {
-            ps.setObject(1, tenantId);
-            ps.setString(2, code);
-            ps.setString(3, description);
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setString(3, code);
+            ps.setString(4, description);
             try (ResultSet rs = ps.executeQuery()) {
               rs.next();
               return mapSourceType(rs);
@@ -112,7 +115,7 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
     return query(
         "SELECT id,tenant_id,code,description,active,created_at"
             + " FROM transaction_source_types"
-            + " WHERE tenant_id=? OR tenant_id='00000000-0000-0000-0000-000000000000'"
+            + " WHERE tenant_id=? OR tenant_id IS NULL"
             + " ORDER BY code",
         ps -> ps.setObject(1, tenantId),
         ReferenceDataRepository::mapSourceType,
@@ -158,18 +161,19 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO zone_gl_mappings"
-                      + " (tenant_id,store_id,zone_id,nominal_code,description)"
-                      + " VALUES (?,?,?,?,?)"
+                      + " (id,tenant_id,store_id,zone_id,nominal_code,description)"
+                      + " VALUES (?,?,?,?,?,?)"
                       + " ON CONFLICT (tenant_id,store_id,zone_id)"
                       + " DO UPDATE SET nominal_code=EXCLUDED.nominal_code,"
                       + " description=EXCLUDED.description, updated_at=now()"
                       + " RETURNING id,tenant_id,store_id,zone_id,nominal_code,"
                       + "description,created_at,updated_at")) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, storeId);
-            ps.setObject(3, zoneId);
-            ps.setString(4, nominalCode);
-            ps.setString(5, description);
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, storeId);
+            ps.setObject(4, zoneId);
+            ps.setString(5, nominalCode);
+            ps.setString(6, description);
             try (ResultSet rs = ps.executeQuery()) {
               rs.next();
               return mapZoneGlMapping(rs);

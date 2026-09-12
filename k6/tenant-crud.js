@@ -1,106 +1,171 @@
-import http from 'k6/http';
-import { check, sleep } from 'k6';
-import { baseUrl } from './common.js';
+// tenant-svc: the business, its stores, zones, delivery areas, staff, inventory settings, the
+// storefront's view of them and the platform console — with the refusals around each.
+//
+//   k6/run.sh tenant-crud
+import {
+  ALL_CHECKS_PASS,
+  call,
+  data,
+  expect,
+  nextCursor,
+  onboardTenant,
+  platformAdmin,
+  register,
+  truthy,
+  uniq,
+} from './lib/shelfj.js';
 
-export const options = { vus: 1, iterations: 1 };
+export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS, setupTimeout: '3m' };
 
-const JSON_CT = { 'Content-Type': 'application/json' };
+const UNKNOWN = '01a0b000-0000-7000-8000-000000000000';
 
-function setup() {
-  // Register a fresh user and create a tenant for this run
-  const email = `k6-tenant-${Date.now()}@example.com`;
-  const regRes = http.post(
-    `${baseUrl}/api/iam-svc/auth/register`,
-    JSON.stringify({ email, password: 'TestPass1!' }),
-    { headers: JSON_CT }
-  );
-  if (regRes.status < 200 || regRes.status >= 300) return null;
-  const userId = regRes.json('data.userId') || regRes.json('data.sub');
-
-  // Extract userId from JWT sub claim
-  const token = regRes.json('data.accessToken');
-  let uid = null;
-  try {
-    uid = JSON.parse(atob(token.split('.')[1])).sub;
-  } catch (_) {}
-
-  // Create tenant — gateway Phase-0 forwards X-User-Id as-is
-  const tenantRes = http.post(
-    `${baseUrl}/api/tenant-svc/onboarding/tenants`,
-    JSON.stringify({ businessName: `k6-co-${Date.now()}`, legalName: 'k6 Ltd', country: 'US', currency: 'USD' }),
-    { headers: { ...JSON_CT, 'X-User-Id': uid || '00000000-0000-0000-0000-000000000001' } }
-  );
-  if (tenantRes.status < 200 || tenantRes.status >= 300) return { uid };
-  const tenantId = tenantRes.json('data.id');
-  return { uid, tenantId };
+export function setup() {
+  return { admin: platformAdmin(), tenant: onboardTenant('tenant', { stores: 1 }), rival: onboardTenant('tenant-rival', { stores: 1 }) };
 }
 
-export default function () {
-  const ctx = setup();
-  const tenantId = ctx && ctx.tenantId;
-  const uid = ctx && ctx.uid;
-  const hdrs = tenantId
-    ? { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-User-Id': uid, 'X-Roles': 'OWNER' }
-    : { ...JSON_CT };
+export default function ({ admin, tenant, rival }) {
+  const t = tenant.owner.token;
+  const storeId = tenant.stores[0].id;
 
-  // Create tenant (already done in setup — check it passed)
-  check({ status: tenantId ? 200 : 0 }, { 'tenant created': (r) => r.status === 200 || tenantId });
-
-  sleep(0.5);
-
-  // Create a store
-  const storeRes = http.post(
-    `${baseUrl}/api/tenant-svc/admin/stores`,
-    JSON.stringify({ name: 'k6 Store', code: `K6-${Date.now()}`, line1: '1 Main St', city: 'NYC', country: 'US', pincode: '10001', timezone: 'UTC' }),
-    { headers: hdrs }
+  // ── one-shot onboarding: tenant and first store together ───────────────────
+  const founder = register('tenant-founder');
+  const combined = call('POST', '/api/tenant-svc/onboarding', {
+    token: founder.token,
+    body: { businessName: `One Shot ${uniq()}`, country: 'GB', currency: 'GBP', storeName: 'Flagship', storeCode: `FLAG-${uniq()}`.slice(0, 24), storeCity: 'Leeds', storeCountry: 'GB' },
+  });
+  expect(combined, '[+] onboard tenant and first store in one call', 201);
+  expect(
+    call('POST', '/api/tenant-svc/onboarding', { token: founder.token, body: { businessName: 'No store', country: 'GB', currency: 'GBP' } }),
+    '[-] one-shot onboarding: store name and code required',
+    400
   );
-  check(storeRes, { 'store created (2xx or 4xx due to missing tenant)': (r) => r.status < 500 });
-
-  // List stores
-  const listRes = http.get(`${baseUrl}/api/tenant-svc/admin/stores`, { headers: hdrs });
-  check(listRes, { 'list stores 2xx/4xx': (r) => r.status < 500 });
-
-  sleep(0.5);
-
-  // Onboarding status
-  const statusRes = http.get(`${baseUrl}/api/tenant-svc/onboarding/status`, { headers: hdrs });
-  check(statusRes, { 'onboarding status returned': (r) => r.status < 500 });
-
-  // ── Gap #53: Inventory org parameters ────────────────────────────────────
-
-  // [+] Upsert inventory config (PUT is create-or-update)
-  const cfgRes = http.put(
-    `${baseUrl}/api/tenant-svc/admin/inventory-config`,
-    JSON.stringify({
-      lotControlEnabled: true,
-      serialControlEnabled: false,
-      gradeControlEnabled: true,
-      expiryTrackingEnabled: true,
-      costingMethod: 'FIFO',
-      defaultUom: 'EA',
-      reorderAlertEnabled: true,
-      autoReserveOnOrder: false
-    }),
-    { headers: hdrs }
+  expect(
+    call('POST', '/api/tenant-svc/onboarding/tenants', { token: founder.token, body: { businessName: 'Bad', country: 'GBR', currency: 'GBP' } }),
+    '[-] create tenant: country is two letters',
+    400
   );
-  check(cfgRes, { '[+] upsert inventory config 200': (r) => r.status === 200 });
 
-  // [+] GET returns the saved config
-  const getCfgRes = http.get(`${baseUrl}/api/tenant-svc/admin/inventory-config`, { headers: hdrs });
-  check(getCfgRes, { '[+] get inventory config 200': (r) => r.status === 200 });
-  check(getCfgRes, { '[+] config has costingMethod': (r) => r.json('data.costingMethod') === 'FIFO' });
+  // ── tenant profile ──────────────────────────────────────────────────────────
+  const profile = call('GET', '/api/tenant-svc/admin/tenant', { token: t });
+  expect(profile, '[+] read tenant profile', 200);
+  truthy('[+] profile is our tenant, ACTIVE, in GBP', data(profile).id === tenant.tenantId && data(profile).status === 'ACTIVE' && data(profile).currency === 'GBP', data(profile));
+  expect(call('PUT', '/api/tenant-svc/admin/tenant', { token: t, body: { businessName: `Renamed ${uniq()}`, legalName: 'Renamed Ltd' } }), '[+] update tenant profile', 200);
+  expect(call('PUT', '/api/tenant-svc/admin/tenant', { token: t, body: { legalName: 'No name' } }), '[-] update tenant: business name required', 400);
+  expect(call('GET', '/api/tenant-svc/admin/tenant'), '[-] tenant profile: no token', 401);
+  expect(call('GET', '/api/tenant-svc/admin/tenant', { token: founder.token }), '[-] tenant profile: a customer token', 403);
 
-  // [+] Update a single field (partial — other fields keep previous value)
-  const patchRes = http.put(
-    `${baseUrl}/api/tenant-svc/admin/inventory-config`,
-    JSON.stringify({ costingMethod: 'AVERAGE' }),
-    { headers: hdrs }
+  // ── stores ──────────────────────────────────────────────────────────────────
+  const code = `S2-${uniq()}`.slice(0, 24);
+  expect(call('POST', '/api/tenant-svc/admin/stores', { token: t, body: { code } }), '[-] create store: name required', 400);
+  const warehouse = call('POST', '/api/tenant-svc/admin/stores', {
+    token: t,
+    body: { name: 'Back Warehouse', code, type: 'WAREHOUSE', line1: '9 Dock Rd', city: 'London', country: 'GB', pincode: 'E16 2QU', timezone: 'Europe/London', geoLat: 51.5072, geoLng: 0.0277, showPrices: false, enabledPaymentMethods: ['CARD'] },
+  });
+  expect(warehouse, '[+] create a warehouse', 201);
+  const warehouseId = data(warehouse).id;
+  truthy('[+] a second store is not the default', data(warehouse).isDefault === false && data(warehouse).type === 'WAREHOUSE', data(warehouse));
+  expect(call('POST', '/api/tenant-svc/admin/stores', { token: t, body: { name: 'Clash', code } }), '[-] create store: code taken', 409);
+  expect(call('POST', '/api/tenant-svc/admin/stores', { token: rival.owner.token, body: { name: 'Same code, other tenant', code } }), '[+] store codes are per tenant', 201);
+
+  const page1 = call('GET', '/api/tenant-svc/admin/stores?limit=1', { token: t });
+  expect(page1, '[+] list stores, one per page', 200);
+  const cursor = nextCursor(page1);
+  truthy('[+] a first page of one has a cursor', (data(page1) || []).length === 1 && cursor, { rows: data(page1), cursor });
+  const page2 = call('GET', `/api/tenant-svc/admin/stores?limit=1&after=${encodeURIComponent(cursor || '')}`, { token: t });
+  expect(page2, '[+] list stores, next page', 200);
+  truthy('[+] pages do not repeat a store', (data(page2) || []).length === 1 && data(page2)[0].id !== data(page1)[0].id, data(page2));
+  // Cursor.clampLimit: below 1 means the default page (20), above 100 means 100.
+  const clamped = call('GET', '/api/tenant-svc/admin/stores?limit=0', { token: t });
+  expect(clamped, '[-] list stores: limit below 1 falls back to the default page', 200);
+  truthy('[-] ...which holds both stores', (data(clamped) || []).length === 2, data(clamped));
+  expect(call('GET', '/api/tenant-svc/admin/stores?after=garbage', { token: t }), '[-] list stores: malformed cursor', 400);
+
+  expect(call('GET', `/api/tenant-svc/admin/stores/${warehouseId}`, { token: t }), '[+] get store', 200);
+  expect(call('GET', `/api/tenant-svc/admin/stores/${warehouseId}`, { token: rival.owner.token }), "[-] a rival cannot read our store", 404);
+  // A UUID path parameter that does not convert is a JAX-RS 404, never a 5xx.
+  expect(call('GET', '/api/tenant-svc/admin/stores/not-a-uuid', { token: t }), '[-] get store: id is not a UUID', 404);
+  expect(call('PUT', `/api/tenant-svc/admin/stores/${warehouseId}`, { token: t, body: { name: 'Main Warehouse', showPrices: true } }), '[+] update store', 200);
+  expect(call('PUT', `/api/tenant-svc/admin/stores/${UNKNOWN}`, { token: t, body: { name: 'Ghost' } }), '[-] update unknown store', 404);
+  expect(call('PATCH', `/api/tenant-svc/admin/stores/${warehouseId}/status`, { token: t, body: { status: 'CLOSED' } }), '[+] close a store', 200);
+  expect(call('PATCH', `/api/tenant-svc/admin/stores/${warehouseId}/status`, { token: t, body: { status: 'ACTIVE' } }), '[+] reopen a store', 200);
+  expect(call('PATCH', `/api/tenant-svc/admin/stores/${warehouseId}/status`, { token: t, body: { status: 'DEMOLISHED' } }), '[-] store status must be known', 400, 'INVALID_STATUS');
+
+  // ── zones ───────────────────────────────────────────────────────────────────
+  const zones = call('GET', `/api/tenant-svc/admin/stores/${warehouseId}/zones`, { token: t });
+  expect(zones, '[+] list zones', 200);
+  truthy('[+] every store starts with a DEFAULT zone', (data(zones) || []).some((z) => z.code === 'DEFAULT'), data(zones));
+  const cold = call('POST', `/api/tenant-svc/admin/stores/${warehouseId}/zones`, { token: t, body: { name: 'Cold room', code: 'COLD', type: 'COLD_ROOM' } });
+  expect(cold, '[+] add a zone', 201);
+  expect(call('POST', `/api/tenant-svc/admin/stores/${warehouseId}/zones`, { token: t, body: { name: 'Cold again', code: 'COLD' } }), '[-] zone code taken in this store', 409);
+  expect(call('POST', `/api/tenant-svc/admin/stores/${warehouseId}/zones`, { token: t, body: { code: 'NONAME' } }), '[-] add zone: name required', 400);
+  expect(call('POST', `/api/tenant-svc/admin/stores/${warehouseId}/zones`, { token: rival.owner.token, body: { name: 'Squat', code: 'SQUAT' } }), "[-] a rival cannot add zones to our store", 404);
+  expect(call('GET', `/api/tenant-svc/admin/stores/${warehouseId}/zones/${data(cold).id}`, { token: t }), '[+] get zone', 200);
+  expect(call('PUT', `/api/tenant-svc/admin/stores/${warehouseId}/zones/${data(cold).id}`, { token: t, body: { name: 'Freezer', code: 'COLD', type: 'COLD_ROOM' } }), '[+] update zone', 200);
+  expect(call('PATCH', `/api/tenant-svc/admin/stores/${warehouseId}/zones/${data(cold).id}/status`, { token: t, body: { status: 'INACTIVE' } }), '[+] deactivate zone', 200);
+  expect(call('GET', `/api/tenant-svc/admin/stores/${warehouseId}/zones/${UNKNOWN}`, { token: t }), '[-] get unknown zone', 404);
+
+  // ── delivery areas and fulfilment routing ──────────────────────────────────
+  const pincode = `K6${uniq()}`.slice(0, 12);
+  const area = call('POST', `/api/tenant-svc/admin/stores/${warehouseId}/delivery-areas`, { token: t, body: { pincode, priority: 1 } });
+  expect(area, '[+] map a delivery area', 201);
+  expect(call('POST', `/api/tenant-svc/admin/stores/${warehouseId}/delivery-areas`, { token: t, body: { pincode, priority: 2 } }), '[-] delivery area already mapped', 409);
+  expect(call('POST', `/api/tenant-svc/admin/stores/${warehouseId}/delivery-areas`, { token: t, body: { priority: 1 } }), '[-] delivery area: pincode required', 400);
+  expect(call('GET', `/api/tenant-svc/admin/stores/${warehouseId}/delivery-areas`, { token: t }), '[+] list delivery areas', 200);
+  const routed = call('GET', `/api/tenant-svc/fulfilment/resolve?pincode=${encodeURIComponent(pincode)}`, { storefront: tenant.tenantId });
+  expect(routed, '[+] a mapped pincode resolves', 200);
+  truthy('[+] ...to the store that delivers there', data(routed).storeId === warehouseId, data(routed));
+  expect(call('GET', '/api/tenant-svc/fulfilment/resolve', { storefront: tenant.tenantId }), '[-] resolve: pincode required', 400);
+  expect(call('DELETE', `/api/tenant-svc/admin/stores/${warehouseId}/delivery-areas/${data(area).id}`, { token: t }), '[+] unmap a delivery area', [200, 204]);
+
+  // ── staff ───────────────────────────────────────────────────────────────────
+  const clerk = register('tenant-clerk');
+  expect(call('POST', '/api/tenant-svc/admin/staff', { token: t, body: { userId: clerk.userId, storeId } }), '[-] assign staff: role required', 400);
+  expect(call('POST', '/api/tenant-svc/admin/staff', { token: t, body: { userId: clerk.userId, storeId: UNKNOWN, role: 'CASHIER' } }), '[-] assign staff: unknown store', 404);
+  expect(
+    call('POST', '/api/tenant-svc/admin/staff', { token: t, body: { userId: clerk.userId, storeId: rival.stores[0].id, role: 'CASHIER' } }),
+    "[-] assign staff to a rival's store",
+    404
   );
-  check(patchRes, { '[+] update costingMethod 200': (r) => r.status === 200 });
+  expect(call('POST', '/api/tenant-svc/admin/staff', { token: t, body: { userId: clerk.userId, storeId, role: 'CASHIER' } }), '[+] assign a cashier', 201);
+  const staff = call('GET', '/api/tenant-svc/admin/staff', { token: t });
+  expect(staff, '[+] list staff', 200);
+  truthy('[+] the cashier is listed', (data(staff) || []).some((s) => s.userId === clerk.userId), data(staff));
+  expect(call('DELETE', `/api/tenant-svc/admin/staff/${clerk.userId}`, { token: t }), '[-] remove staff: which store', 400, 'MISSING_STORE');
+  expect(call('DELETE', `/api/tenant-svc/admin/staff/${clerk.userId}?store=${storeId}`, { token: t }), '[+] remove staff from a store', [200, 204]);
+  truthy('[+] ...and they are no longer listed', !(data(call('GET', '/api/tenant-svc/admin/staff', { token: t })) || []).some((s) => s.userId === clerk.userId && s.storeId === storeId));
+  expect(call('POST', '/api/tenant-svc/admin/staff', { token: founder.token, body: { userId: founder.userId, storeId, role: 'OWNER' } }), '[-] a customer cannot assign staff', 403);
 
-  // [-] GET without any auth headers → 403 (RBAC blocks before tenant check)
-  check(
-    http.get(`${baseUrl}/api/tenant-svc/admin/inventory-config`, { headers: { 'Content-Type': 'application/json' } }),
-    { '[-] get config no auth 403': (r) => r.status === 403 }
-  );
+  // ── inventory settings ──────────────────────────────────────────────────────
+  expect(call('GET', '/api/tenant-svc/admin/inventory-config', { token: t }), '[-] inventory settings before any are saved', 404);
+  const settings = { lotControlEnabled: true, serialControlEnabled: false, gradeControlEnabled: true, expiryTrackingEnabled: true, costingMethod: 'FIFO', defaultUom: 'EA', reorderAlertEnabled: true, autoReserveOnOrder: false };
+  expect(call('PUT', '/api/tenant-svc/admin/inventory-config', { token: t, body: settings }), '[+] save inventory settings', 200);
+  const saved = call('GET', '/api/tenant-svc/admin/inventory-config', { token: t });
+  expect(saved, '[+] read inventory settings', 200);
+  truthy('[+] settings read back as saved', data(saved).costingMethod === 'FIFO' && data(saved).lotControlEnabled === true, data(saved));
+  expect(call('PUT', '/api/tenant-svc/admin/inventory-config', { token: t, body: { costingMethod: 'AVERAGE' } }), '[+] change one setting', 200);
+  const partial = data(call('GET', '/api/tenant-svc/admin/inventory-config', { token: t }));
+  truthy('[+] other settings keep their values', partial.costingMethod === 'AVERAGE' && partial.lotControlEnabled === true, partial);
+  expect(call('PUT', '/api/tenant-svc/admin/inventory-config', { token: t, body: { costingMethod: 'LIFO' } }), '[-] costing method must be FIFO, AVERAGE or STANDARD', 400);
+  expect(call('GET', '/api/tenant-svc/admin/inventory-config', { token: rival.owner.token }), "[-] a rival does not get our settings", 404);
+
+  // ── storefront view ─────────────────────────────────────────────────────────
+  const shop = { storefront: tenant.tenantId };
+  const cfg = call('GET', `/api/tenant-svc/storefront/config?store=${warehouseId}`, shop);
+  expect(cfg, '[+] storefront store config', 200);
+  truthy('[+] config reflects the update', data(cfg).storeId === warehouseId && data(cfg).showPrices === true, data(cfg));
+  expect(call('GET', '/api/tenant-svc/storefront/config', shop), '[-] storefront config: store required', 400, 'STORE_REQUIRED');
+  expect(call('GET', `/api/tenant-svc/storefront/config?store=${warehouseId}`, { storefront: rival.tenantId }), "[-] another shop cannot show our store", 404);
+  const active = call('GET', '/api/tenant-svc/storefront/active', shop);
+  expect(active, '[+] storefront: may the tenant trade', 200);
+  truthy('[+] ...yes', data(active).active === true, data(active));
+  expect(call('GET', '/api/tenant-svc/storefront/stores', shop), '[+] storefront store list', 200);
+
+  // ── platform console ────────────────────────────────────────────────────────
+  expect(call('GET', '/api/tenant-svc/platform/tenants', { token: t }), '[-] an owner cannot list every tenant', 403);
+  const all = call('GET', '/api/tenant-svc/platform/tenants?limit=100', { token: admin.token });
+  expect(all, '[+] platform admin lists tenants', 200);
+  truthy('[+] ...one page at a time', (data(all) || []).length > 0 && (data(all) || []).length <= 100, (data(all) || []).length);
+  expect(call('POST', `/api/tenant-svc/platform/tenants/republish-currency?tenantId=${tenant.tenantId}`, { token: t }), '[-] an owner cannot republish currencies', 403);
+  expect(call('POST', `/api/tenant-svc/platform/tenants/republish-currency?tenantId=${tenant.tenantId}`, { token: admin.token }), '[+] platform admin republishes a currency', 200);
+  expect(call('POST', '/api/tenant-svc/platform/tenants/republish-currency?tenantId=nope', { token: admin.token }), '[-] republish: tenant id is not a UUID', 400);
 }

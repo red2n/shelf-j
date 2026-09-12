@@ -4,7 +4,7 @@
 -- so variants can carry one category assignment per set independently.
 
 CREATE TABLE category_sets (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID        PRIMARY KEY,
     tenant_id       UUID        NOT NULL,
     name            TEXT        NOT NULL,
     description     TEXT,
@@ -20,7 +20,7 @@ CREATE INDEX idx_category_sets_tenant ON category_sets (tenant_id);
 
 -- Which categories are valid members of a set.
 CREATE TABLE category_set_members (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID        PRIMARY KEY,
     tenant_id       UUID        NOT NULL,
     set_id          UUID        NOT NULL REFERENCES category_sets(id) ON DELETE CASCADE,
     category_id     UUID        NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
@@ -32,7 +32,7 @@ CREATE INDEX idx_csm_tenant_set ON category_set_members (tenant_id, set_id);
 -- Per-variant category assignment within a specific set.
 -- A variant has at most one active category per set.
 CREATE TABLE variant_category_set_assignments (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID        PRIMARY KEY,
     tenant_id       UUID        NOT NULL,
     variant_id      UUID        NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
     set_id          UUID        NOT NULL REFERENCES category_sets(id) ON DELETE CASCADE,

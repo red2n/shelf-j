@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.order.client.PricingClient;
 import com.shelfj.order.config.ServiceConfig;
 import com.shelfj.order.domain.Domain;
@@ -36,9 +37,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class OrderServicePricingTest {
 
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID STORE = UUID.randomUUID();
-  private static final UUID VARIANT = UUID.randomUUID();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID STORE = Ids.newId();
+  private static final UUID VARIANT = Ids.newId();
 
   @Mock OrderRepository repo;
   @Mock ServiceConfig config;

@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
  */
 class ParsingTest {
 
-  private static final String VALID_UUID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  private static final String VALID_UUID = "01a090ae-611e-702c-a97b-d1b8025478e1";
 
   @Test
   void requiredParsersRejectMalformedInputWithTheSharedCode() {

@@ -4,20 +4,20 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.FoodSafety.CheckType;
 import com.shelfj.inventory.domain.FoodSafety.Kind;
 import com.shelfj.inventory.domain.FoodSafety.Limits;
 import com.shelfj.inventory.domain.FoodSafety.Result;
 import com.shelfj.web.ApiException;
 import java.math.BigDecimal;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class FoodSafetyServiceTest {
 
   private static final CheckType CHILLED =
       new CheckType(
-          UUID.randomUUID(),
+          Ids.newId(),
           null,
           "CHILLED_STORAGE",
           "Chilled storage",
@@ -30,7 +30,7 @@ class FoodSafetyServiceTest {
 
   private static final CheckType OPENING =
       new CheckType(
-          UUID.randomUUID(),
+          Ids.newId(),
           null,
           "OPENING_CHECKS",
           "Opening checks",

@@ -3,7 +3,7 @@
 -- EOQ = sqrt(2 × annual demand × ordering cost / holding cost per unit per year)
 
 CREATE TABLE reorder_point_plans (
-    id              UUID            NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID            NOT NULL,
     tenant_id       UUID            NOT NULL,
     store_id        UUID            NOT NULL,
     variant_id      UUID            NOT NULL,

@@ -2,6 +2,7 @@ package com.shelfj.tenant;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
@@ -13,6 +14,8 @@ import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.sql.DriverManager;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -39,8 +42,8 @@ class OnboardingIT {
     System.setProperty("shelfj.kafka.enabled", "false");
   }
 
-  private static final String OWNER = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-  private static final String TENANT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+  private static final String OWNER = "01a090ae-611e-702c-a97b-d1b8025478e1";
+  private static final String TENANT_B = "01a090ae-611e-7037-a4b7-c854f0266ace";
 
   @Inject WebTarget target;
 
@@ -121,6 +124,52 @@ class OnboardingIT {
   }
 
   /**
+   * cart-svc, order-svc and iam-svc gate trading on a local store_status projection and let through
+   * a store they have no row for. If creating a store did not announce its status, no row would
+   * name the store's owner until its status first changed, and any tenant could open carts, POS
+   * sessions and orders against the store's id.
+   */
+  @Test
+  void creatingAStoreAnnouncesItsStatus() throws Exception {
+    Response t =
+        post(
+            "/onboarding/tenants",
+            "{\"businessName\":\"Announce Ltd\",\"country\":\"gb\",\"currency\":\"gbp\"}",
+            "X-User-Id",
+            OWNER);
+    String tenantId = field(t.readEntity(String.class), "id");
+    Response first =
+        post(
+            "/onboarding/stores",
+            "{\"name\":\"First\",\"code\":\"FIRST\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-User-Id",
+            OWNER,
+            "X-Roles",
+            "OWNER");
+    Response second =
+        post(
+            "/admin/stores",
+            "{\"name\":\"Second\",\"code\":\"SECOND\"}",
+            "X-Tenant-Id",
+            tenantId,
+            "X-Roles",
+            "OWNER");
+    assertThat(first.getStatus(), is(201));
+    assertThat(second.getStatus(), is(201));
+
+    for (Response created : List.of(first, second)) {
+      String storeId = field(created.readEntity(String.class), "id");
+      List<String> announced = outboxPayloads(tenantId, "StoreStatusChanged", storeId);
+      assertThat(announced, hasSize(1));
+      assertThat(announced.get(0), containsString("\"tenantId\":\"" + tenantId + "\""));
+      assertThat(announced.get(0), containsString("\"storeId\":\"" + storeId + "\""));
+      assertThat(announced.get(0), containsString("\"status\":\"ACTIVE\""));
+    }
+  }
+
+  /**
    * Regression test for the tenant-ownership check in TenantService#createDefaultStore /
    * #onboardingStatus: the gateway's onboarding carve-out (JwtAuthFilter#isOnboarding) forwards a
    * caller-supplied X-Tenant-Id whenever the caller's JWT has no tenant claim yet, precisely so a
@@ -138,7 +187,7 @@ class OnboardingIT {
             OWNER);
     String tenantId = field(t.readEntity(String.class), "id");
 
-    String attacker = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    String attacker = "01a090ae-611e-7056-8f30-ecdbb48160eb";
     Response attackerStore =
         post(
             "/onboarding/stores",
@@ -262,7 +311,7 @@ class OnboardingIT {
     String storeId = field(sr.readEntity(String.class), "id");
 
     // assign a staff user
-    String staffUserId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    String staffUserId = "01a090ae-611e-703c-a378-a4972ea461c8";
     Response assign =
         post(
             "/admin/staff",
@@ -450,6 +499,26 @@ class OnboardingIT {
       try (var rs = ps.executeQuery()) {
         rs.next();
         return rs.getInt(1);
+      }
+    }
+  }
+
+  private static List<String> outboxPayloads(String tenantId, String eventType, String aggregateId)
+      throws Exception {
+    try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT payload FROM tenant.outbox WHERE tenant_id = ?::uuid AND event_type = ?"
+                    + " AND aggregate_id = ?::uuid")) {
+      ps.setString(1, tenantId);
+      ps.setString(2, eventType);
+      ps.setString(3, aggregateId);
+      try (var rs = ps.executeQuery()) {
+        List<String> payloads = new ArrayList<>();
+        while (rs.next()) {
+          payloads.add(rs.getString(1));
+        }
+        return payloads;
       }
     }
   }

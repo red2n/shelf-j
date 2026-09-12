@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.Domain.LotUomConversion;
 import com.shelfj.inventory.domain.Domain.ParLevelConfig;
 import com.shelfj.service.BaseJdbcRepository;
@@ -36,17 +37,18 @@ public class PlanningConfigRepository extends BaseJdbcRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO lot_uom_conversions"
-                      + " (tenant_id,batch_id,from_uom,to_uom,factor,notes)"
-                      + " VALUES (?,?,?,?,?,?)"
+                      + " (id,tenant_id,batch_id,from_uom,to_uom,factor,notes)"
+                      + " VALUES (?,?,?,?,?,?,?)"
                       + " ON CONFLICT (tenant_id,batch_id,from_uom,to_uom)"
                       + " DO UPDATE SET factor=EXCLUDED.factor, notes=EXCLUDED.notes"
                       + " RETURNING id,tenant_id,batch_id,from_uom,to_uom,factor,notes,created_at")) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, batchId);
-            ps.setString(3, fromUom);
-            ps.setString(4, toUom);
-            ps.setBigDecimal(5, factor);
-            ps.setString(6, notes);
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, batchId);
+            ps.setString(4, fromUom);
+            ps.setString(5, toUom);
+            ps.setBigDecimal(6, factor);
+            ps.setString(7, notes);
             try (ResultSet rs = ps.executeQuery()) {
               rs.next();
               return mapLotUomConversion(rs);
@@ -95,19 +97,20 @@ public class PlanningConfigRepository extends BaseJdbcRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO par_level_configs"
-                      + " (tenant_id,store_id,variant_id,par_qty,uom,review_cycle)"
-                      + " VALUES (?,?,?,?,?,?)"
+                      + " (id,tenant_id,store_id,variant_id,par_qty,uom,review_cycle)"
+                      + " VALUES (?,?,?,?,?,?,?)"
                       + " ON CONFLICT (tenant_id,store_id,variant_id)"
                       + " DO UPDATE SET par_qty=EXCLUDED.par_qty, uom=EXCLUDED.uom,"
                       + " review_cycle=EXCLUDED.review_cycle, updated_at=now()"
                       + " RETURNING id,tenant_id,store_id,variant_id,par_qty,uom,"
                       + "review_cycle,created_at,updated_at")) {
-            ps.setObject(1, tenantId);
-            ps.setObject(2, storeId);
-            ps.setObject(3, variantId);
-            ps.setBigDecimal(4, parQty);
-            ps.setString(5, uom);
-            ps.setString(6, reviewCycle == null ? ParLevelConfig.DAILY : reviewCycle);
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, storeId);
+            ps.setObject(4, variantId);
+            ps.setBigDecimal(5, parQty);
+            ps.setString(6, uom);
+            ps.setString(7, reviewCycle == null ? ParLevelConfig.DAILY : reviewCycle);
             try (ResultSet rs = ps.executeQuery()) {
               rs.next();
               return mapParLevel(rs);

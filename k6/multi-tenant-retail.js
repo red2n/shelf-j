@@ -39,6 +39,7 @@ import { check, sleep } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
 import encoding from 'k6/encoding';
 import exec from 'k6/execution';
+import { newId, newKey } from './lib/shelfj.js';
 
 // ── Custom metrics ─────────────────────────────────────────────────────────────
 const errors              = new Counter('errors');
@@ -228,7 +229,10 @@ function hdrs(token) {
 }
 
 function post(path, body, token) {
-  return http.post(`${BASE}${path}`, JSON.stringify(body), { headers: hdrs(token) });
+  const headers = hdrs(token);
+  // order-svc refuses an order without an Idempotency-Key (header, or the legacy body field).
+  if (path === '/api/order-svc/orders' && !(body && body.idempotencyKey)) headers['Idempotency-Key'] = newKey('retail-order');
+  return http.post(`${BASE}${path}`, JSON.stringify(body), { headers });
 }
 
 function put(path, body, token) {
@@ -284,11 +288,8 @@ function jwtPayload(token) {
 // Random 6-char uppercase slug.
 function slug() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
 
-// Random UUID v4.
-function genUuid() {
-  const h = () => (Math.random() * 0x10000 | 0).toString(16).padStart(4, '0');
-  return `${h()}${h()}-${h()}-4${h().slice(1)}-${(8 + (Math.random() * 4 | 0)).toString(16)}${h().slice(1)}-${h()}${h()}${h()}`;
-}
+// Shelf-J stores only UUIDv7 ids, so ids a script makes up are v7 too.
+const genUuid = newId;
 
 // Receive stock at a store and return the response.
 function apiReceiveStock(token, storeId, variantId, qty, costPrice, batchPrefix) {
@@ -459,7 +460,7 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
     effectiveFrom: '2024-01-01T00:00:00Z',
   }, ownerToken);
 
-  const plRes = post('/api/pricing-svc/price-lists', {
+  const plRes = post('/api/pricing-svc/admin/price-lists', {
     name: `Standard ${currency}`, channel: 'ALL', currency,
     effectiveFrom: '2024-01-01T00:00:00Z',
   }, ownerToken);
@@ -471,7 +472,7 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
       post('/api/pricing-svc/product-vat-categories',
         { variantId: vid, vatCode: 'T1' }, ownerToken);
       // Add price list item
-      post(`/api/pricing-svc/price-lists/${priceListId}/items`,
+      post(`/api/pricing-svc/admin/price-lists/${priceListId}/items`,
         { variantId: vid, price: isIN ? 1999.00 : 49.99, minQty: 1 }, ownerToken);
     }
   }
@@ -488,14 +489,14 @@ function seedTenant(owner, tenantPayload, store1Payload, store2Payload, products
   if (!supplierId) console.warn(`[${tag}] supplier creation failed: ${supplierRes.status}`);
 
   // Active 10% promotion scoped to ALL
-  const promoRes = post('/api/pricing-svc/promotions', {
+  const promoRes = post('/api/pricing-svc/admin/promotions', {
     name: isIN ? 'Festive Offer' : 'Summer Sale',
     type: 'PERCENT', value: 10, channel: 'ALL',
     startsAt: '2020-01-01T00:00:00Z',
   }, ownerToken);
   const promoId = (promoRes.status < 300) ? body(promoRes).id : null;
   if (promoId) {
-    post(`/api/pricing-svc/promotions/${promoId}/items`,
+    post(`/api/pricing-svc/admin/promotions/${promoId}/items`,
       { scopeType: 'ALL' }, ownerToken);
   }
 
@@ -1701,7 +1702,11 @@ export function uomManagement(d) {
   if (!d) return;
   const tenant = tenantCtx(d);
   const tag = isIN(d) ? 'IN' : 'UK';
-  const vid = tenant.variantIds[__ITER % tenant.variantIds.length];
+  // A variant of this iteration's own: VUs sharing one would delete each other's item conversion.
+  const ownVariant = post(`/api/product-svc/admin/products/${tenant.productIds[0]}/variants`,
+    { sku: `UOM-${__VU}-${__ITER}-${slug()}`, unit: 'EA' }, tenant.ownerToken);
+  if (!ok(ownVariant, `${tag} UOM variant for this iteration`)) { sleep(1); return; }
+  const vid = body(ownVariant).id;
 
   // 1. List UOM classes (system-wide — no tenant needed, but we pass tenant for auth)
   const t0 = Date.now();
@@ -1875,15 +1880,6 @@ export function moveOrders(d) {
     `/api/inventory-svc/admin/inventory/move-orders/${orderId}`, tenant.ownerToken);
   ok(getRes, `${tag} MO get by id`);
 
-  // Positive: capture source store level before pick
-  const srcBeforePick = (() => {
-    try {
-      const r = get(`/api/inventory-svc/admin/inventory/levels?store=${fromStore}`, tenant.ownerToken);
-      const items = JSON.parse(r.body).data || [];
-      const entry = items.find(l => l.variantId === vid);
-      return entry ? parseFloat(entry.onHand) : 0;
-    } catch (_) { return 0; }
-  })();
 
   // 5. Execute pick — DRAFT → COMPLETED, stock moves from fromStore to toStore
   const t1 = Date.now();
@@ -1907,12 +1903,12 @@ export function moveOrders(d) {
   });
 
   // Positive: source store stock decreased after pick
-  check(get(`/api/inventory-svc/admin/inventory/levels?store=${fromStore}`, tenant.ownerToken), {
+  // The pick's own outbound movement, not the store's total: other VUs receive and sell this
+  // variant at the same store concurrently, so a before/after total is not a reliable signal.
+  check(get(`/api/inventory-svc/admin/inventory/movements?store=${fromStore}&variant=${vid}&limit=100`, tenant.ownerToken), {
     [`${tag} MO source levels decreased after pick`]: r => {
       try {
-        const items = JSON.parse(r.body).data || [];
-        const entry = items.find(l => l.variantId === vid);
-        return entry && parseFloat(entry.onHand) < srcBeforePick;
+        return (JSON.parse(r.body).data || []).some(m => m.refId === orderId && m.refType === 'MOVE_ORDER' && parseFloat(m.qty) < 0);
       } catch (_) { return false; }
     },
   });
@@ -2027,15 +2023,6 @@ export function transferOrders(d) {
     `/api/inventory-svc/admin/inventory/transfers/${orderId}`, tenant.ownerToken);
   ok(getRes, `${tag} TO get by id`);
 
-  // Positive: capture source store level before ship (INTRANSIT deducts source on ship)
-  const srcBeforeShip = (() => {
-    try {
-      const r = get(`/api/inventory-svc/admin/inventory/levels?store=${fromStore}`, tenant.ownerToken);
-      const items = JSON.parse(r.body).data || [];
-      const entry = items.find(l => l.variantId === vid);
-      return entry ? parseFloat(entry.onHand) : 0;
-    } catch (_) { return 0; }
-  })();
 
   // 5. Ship — PENDING → SHIPPED (deducts source, sets shippedQty, stock in transit)
   const t1 = Date.now();
@@ -2059,12 +2046,11 @@ export function transferOrders(d) {
   });
 
   // Positive: INTRANSIT ship deducts from source — stock is now in transit
-  check(get(`/api/inventory-svc/admin/inventory/levels?store=${fromStore}`, tenant.ownerToken), {
+  // The shipment's own outbound movement, for the same reason as the move-order pick above.
+  check(get(`/api/inventory-svc/admin/inventory/movements?store=${fromStore}&variant=${vid}&limit=100`, tenant.ownerToken), {
     [`${tag} TO source levels decreased after INTRANSIT ship`]: r => {
       try {
-        const items = JSON.parse(r.body).data || [];
-        const entry = items.find(l => l.variantId === vid);
-        return entry && parseFloat(entry.onHand) < srcBeforeShip;
+        return (JSON.parse(r.body).data || []).some(m => m.refId === orderId && m.refType === 'TRANSFER_ORDER' && parseFloat(m.qty) < 0);
       } catch (_) { return false; }
     },
   });
@@ -2172,8 +2158,9 @@ export function costingControl(d) {
   if (!store || !tenant.variantIds.length) return;
 
   const storeId   = store.storeId;
-  const variantId = tenant.variantIds[0];
-  const tag       = `[+] costingControl(${tenant.label})`;
+  // One variant per VU: two VUs setting different methods on one variant read each other's writes.
+  const variantId = tenant.variantIds[__VU % tenant.variantIds.length];
+  const tag       = `[+] costingControl(${isIN(d) ? 'IN' : 'UK'})`;
 
   const t0 = Date.now();
 
@@ -2475,7 +2462,7 @@ export function orderPos(d) {
     channel: 'POS',
     fulfilmentType: 'INSTORE',
     items: [{ variantId, qty: 2, unitPrice: '15.00' }],
-    currency: 'USD',
+    currency: tenant.currency,
     idempotencyKey: `pos-order-${__VU}-${__ITER}`,
   }, tenant.ownerToken);
   orderPosLatency.add(Date.now() - t0);
@@ -2501,7 +2488,7 @@ export function orderPos(d) {
     channel: 'POS',
     fulfilmentType: 'INSTORE',
     items: [{ variantId, qty: 1, unitPrice: '5.00' }],
-    currency: 'USD',
+    currency: tenant.currency,
     idempotencyKey: `pos-void-${__VU}-${__ITER}`,
   }, tenant.ownerToken);
   if (placeVoidRes.status === 201) {
@@ -2603,7 +2590,7 @@ export function giftCardManagement(d) {
   const issueRes = post('/api/order-svc/gift-cards', {
     storeId,
     amount: '50.00',
-    currency: 'USD',
+    currency: tenant.currency,
   }, tenant.ownerToken);
   giftCardLatency.add(Date.now() - t0);
   if (!ok(issueRes, `${tag} issue gift card 201`)) { sleep(1); return; }
@@ -2653,7 +2640,7 @@ export function negativeTests(d) {
   if (!store || !tenant.variantIds.length) return;
   const tag    = isIN(d) ? 'IN' : 'UK';
   const vid    = tenant.variantIds[0];
-  const fakeId = '00000000-0000-0000-0000-000000000099';
+  const fakeId = '01a090ae-611e-7007-b85c-1fbac22cb87b';
 
   // Assert 4xx; record any unexpected 2xx as a metric failure. A 5xx is an infra blip, not the
   // validation/auth bypass this metric is tracking, so it must not be counted here either.
@@ -3129,7 +3116,7 @@ export function negativeTests(d) {
     storeId: store.storeId,
     channel: 'ONLINE',
     items: [{ variantId: vid, qty: 1, unitPrice: '5.00' }],
-    currency: 'USD',
+    currency: tenant.currency,
     idempotencyKey: `neg-online-${__VU}-${__ITER}`,
   }, tenant.ownerToken);
   if (onlineOrderRes.status === 201) {
@@ -3192,7 +3179,7 @@ export function negativeTests(d) {
 
   // Redeem more than balance → 409
   const gcForRedeemRes = post('/api/order-svc/gift-cards',
-    { storeId: store.storeId, amount: '10.00', currency: 'USD' }, tenant.ownerToken);
+    { storeId: store.storeId, amount: '10.00', currency: tenant.currency }, tenant.ownerToken);
   if (gcForRedeemRes.status === 201) {
     const gcCode = (() => { try { return JSON.parse(gcForRedeemRes.body).data.code; } catch (_) { return null; } })();
     if (gcCode) {
@@ -3322,7 +3309,7 @@ export function pricingVat(d) {
 
   // ── Negative: resolve price for unknown variant → 404 ────────────────────
   res = http.post(`${BASE}/api/pricing-svc/prices/resolve`,
-    JSON.stringify({ variantId: '99999999-9999-9999-9999-999999999999', channel: 'ALL', qty: 1 }),
+    JSON.stringify({ variantId: '01a090ae-611e-701d-9d60-a9d7516ed03b', channel: 'ALL', qty: 1 }),
     { headers: storefrontHdrs(tenant.tenantId) });
   check(res, { [`${tag} resolve unknown variant 404`]: r => r.status === 404 });
   if (res.status >= 200 && res.status < 300) negativeUnexpectedSuccess.add(1);
@@ -3402,10 +3389,16 @@ export function intercompanyFlow(d) {
       r = get(`/api/purchase-svc/purchase-orders/${poId}/lines`, ownerToken);
       check(r, { 'list PO lines 200': res => res.status === 200 });
 
-      // Submit
+      // Submit. Over the caller's spend authority (shelfj.purchase.approval.limits) it waits for
+      // approval — and a currency with no configured limits always does — so approve it first.
       const submitRes = post(`/api/purchase-svc/purchase-orders/${poId}/submit`, {}, ownerToken);
       check(submitRes, { 'submit PO 200': res => res.status === 200 });
-      check(submitRes, { 'PO status SUBMITTED': res => body(res)?.status === 'SUBMITTED' });
+      if (body(submitRes)?.status === 'PENDING_APPROVAL') {
+        const approveRes = post(`/api/purchase-svc/purchase-orders/${poId}/approve`, { reason: 'k6 retail run' }, ownerToken);
+        check(approveRes, { 'owner approves PO 200': res => res.status === 200 });
+      }
+      r = get(`/api/purchase-svc/purchase-orders/${poId}`, ownerToken);
+      check(r, { 'PO status SUBMITTED': res => body(res)?.status === 'SUBMITTED' });
 
       // GRN
       const grnRes = post('/api/purchase-svc/goods-receipts', {
@@ -3522,7 +3515,7 @@ export function intercompanyFlow(d) {
   check(icBadSameStore, { 'same-store IC 400': res => res.status === 400 });
 
   // ── Negative: unknown invoice ID → 404 ────────────────────────────────────
-  r = get('/api/purchase-svc/intercompany-invoices/00000000-0000-0000-0000-000000000000', ownerToken);
+  r = get('/api/purchase-svc/intercompany-invoices/01a090ae-611e-7000-9e1a-0f8a9e565153', ownerToken);
   check(r, { 'unknown IC invoice 404': res => res.status === 404 });
 
   // ── Negative: tenant isolation — other tenant cannot see invoices ──────────
@@ -3540,7 +3533,7 @@ export function intercompanyFlow(d) {
 
   // ── Negative: create PO with unknown supplier → 404 ──────────────────────
   const badPoRes = post('/api/purchase-svc/purchase-orders', {
-    supplierId: '00000000-0000-0000-0000-000000000000',
+    supplierId: '01a090ae-611e-7000-9e1a-0f8a9e565153',
     storeId:    store1,
     currency,
   }, ownerToken);
@@ -3565,7 +3558,7 @@ export function paymentFlow(d) {
     channel: 'POS',
     fulfilmentType: 'INSTORE',
     items: [{ variantId, qty: 1, unitPrice: '20.00' }],
-    currency: 'USD',
+    currency: tenant.currency,
     idempotencyKey: `pay-order-${__VU}-${__ITER}`,
   }, tenant.ownerToken);
   if (!ok(placeRes, `${tag} place order for payment 201`)) { sleep(1); return; }
@@ -3751,7 +3744,7 @@ export function gatewaySecurity(d) {
   const idemKey   = `gw-idem-${__VU}-${__ITER}-${Date.now()}`;
   const orderBody = JSON.stringify({
     storeId, channel: 'POS', fulfilmentType: 'INSTORE',
-    items: [{ variantId, qty: 1, unitPrice: '9.99' }], currency: 'USD',
+    items: [{ variantId, qty: 1, unitPrice: '9.99' }], currency: tenant.currency,
   });
   const idemHeaders = { headers: Object.assign({ 'Idempotency-Key': idemKey }, hdrs(tenant.ownerToken)) };
   const first = http.post(`${BASE}/api/order-svc/orders`, orderBody, idemHeaders);
@@ -3773,7 +3766,7 @@ export function gatewaySecurity(d) {
   for (let i = 0; i < 2; i++) {
     post('/api/order-svc/orders', {
       storeId, channel: 'POS', fulfilmentType: 'INSTORE',
-      items: [{ variantId, qty: 1, unitPrice: '1.00' }], currency: 'USD',
+      items: [{ variantId, qty: 1, unitPrice: '1.00' }], currency: tenant.currency,
     }, tenant.ownerToken);
   }
   const page1 = get('/api/order-svc/orders?limit=2', tenant.ownerToken);
@@ -3802,7 +3795,7 @@ export function gatewaySecurity(d) {
   const negTax = post('/api/order-svc/orders', {
     storeId, channel: 'POS', fulfilmentType: 'INSTORE',
     items: [{ variantId, qty: 1, unitPrice: '10.00' }],
-    taxAmount: '-5.00', currency: 'USD',
+    taxAmount: '-5.00', currency: tenant.currency,
   }, tenant.ownerToken);
   check(negTax, { [`${tag} negative taxAmount → 400`]: r => r.status === 400 });
   // Only a 2xx means the invalid input was actually accepted — a 5xx isn't validation being skipped.
@@ -3813,7 +3806,7 @@ export function gatewaySecurity(d) {
   const bigDisc = post('/api/order-svc/orders', {
     storeId, channel: 'POS', fulfilmentType: 'INSTORE',
     items: [{ variantId, qty: 1, unitPrice: '10.00' }],
-    discountAmount: '999.00', currency: 'USD',
+    discountAmount: '999.00', currency: tenant.currency,
   }, tenant.ownerToken);
   check(bigDisc, { [`${tag} discount > subtotal → 400`]: r => r.status === 400 });
   if (bigDisc.status >= 200 && bigDisc.status < 300) {
@@ -4040,8 +4033,17 @@ export function handleSummary(data) {
     }
   }
 
+  // Every check that failed at least once, worst first, so a red run says where to look.
+  const failedChecks = [];
+  (function walk(group) {
+    for (const c of group.checks || []) if (c.fails > 0) failedChecks.push(`${c.fails}/${c.passes + c.fails} ${c.name}`);
+    for (const g of group.groups || []) walk(g);
+  })(data.root_group || {});
+  failedChecks.sort((x, y) => parseInt(y, 10) - parseInt(x, 10));
+
   return {
     stdout: JSON.stringify({
+      failed_checks: failedChecks,
       overall: {
         checks_passed:  passed,
         checks_failed:  failed,

@@ -11,6 +11,7 @@ import '../../core/storage/app_storage.dart';
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
 import 'survey_widgets.dart';
+import '../../shared/util/short_ref.dart';
 
 class StorefrontCartScreen extends ConsumerStatefulWidget {
   const StorefrontCartScreen({super.key});
@@ -692,7 +693,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Order #${orderId.length >= 8 ? orderId.substring(0, 8) : orderId}'),
+              Text('Order #${shortRef(orderId)}'),
               if (payNow) ...[
                 const SizedBox(height: 6),
                 Text('$currency ${total.toStringAsFixed(2)} paid',
@@ -814,9 +815,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   }
 
   Future<String?> _showPendingOrderDialog(_PendingOrder order) {
-    final shortId = order.orderId.length >= 8
-        ? order.orderId.substring(0, 8)
-        : order.orderId;
+    final shortId = shortRef(order.orderId);
     final placedStr = AppFormat.dateTime(order.placedAt.toIso8601String());
     final cs = Theme.of(context).colorScheme;
     return showDialog<String>(

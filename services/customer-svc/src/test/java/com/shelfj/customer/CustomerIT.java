@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import com.shelfj.test.ShelfJArchRules;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
@@ -14,7 +15,6 @@ import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -39,7 +39,7 @@ class CustomerIT {
     System.setProperty("shelfj.kafka.enabled", "false");
   }
 
-  private static final String TENANT = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+  private static final String TENANT = "01a090ae-611e-703c-a378-a4972ea461c8";
 
   @Inject WebTarget target;
 
@@ -255,7 +255,7 @@ class CustomerIT {
         target
             .path("/customers")
             .request(MediaType.APPLICATION_JSON)
-            .header("X-Tenant-Id", "dddddddd-dddd-dddd-dddd-dddddddddddd")
+            .header("X-Tenant-Id", "01a090ae-611e-7056-8f30-ecdbb48160eb")
             .header("X-Roles", "OWNER")
             .get(String.class);
     assertThat(listOtherTenant, not(containsString("shared@example.com")));
@@ -320,20 +320,20 @@ class CustomerIT {
     String id = field(r.readEntity(String.class), "id");
     java.util.UUID tenant = java.util.UUID.fromString(TENANT);
     java.util.UUID customerId = java.util.UUID.fromString(id);
-    java.util.UUID eventA = java.util.UUID.randomUUID();
+    java.util.UUID eventA = com.shelfj.ids.Ids.newId();
 
     // Order A: £40 spent → 40 points at the default 1-point-per-unit rate.
     loyalty.accrueLoyaltyFromOrder(
-        eventA, tenant, customerId, java.util.UUID.randomUUID(), new java.math.BigDecimal("40.00"));
+        eventA, tenant, customerId, com.shelfj.ids.Ids.newId(), new java.math.BigDecimal("40.00"));
     // Redelivery of the SAME event must not accrue again (dedupe on eventId).
     loyalty.accrueLoyaltyFromOrder(
-        eventA, tenant, customerId, java.util.UUID.randomUUID(), new java.math.BigDecimal("40.00"));
+        eventA, tenant, customerId, com.shelfj.ids.Ids.newId(), new java.math.BigDecimal("40.00"));
     // A genuinely different order (new eventId) accrues normally → 50.
     loyalty.accrueLoyaltyFromOrder(
-        java.util.UUID.randomUUID(),
+        com.shelfj.ids.Ids.newId(),
         tenant,
         customerId,
-        java.util.UUID.randomUUID(),
+        com.shelfj.ids.Ids.newId(),
         new java.math.BigDecimal("10.00"));
 
     String acct =
@@ -362,7 +362,7 @@ class CustomerIT {
 
     // payment-svc may retry the same store-credit tender for an order; keyed on orderId, the second
     // redeem must be a no-op (not a second deduction).
-    String order = java.util.UUID.randomUUID().toString();
+    String order = com.shelfj.ids.Ids.newId().toString();
     String body = "{\"amount\":30.00,\"orderId\":\"" + order + "\",\"reason\":\"tender\"}";
     assertThat(post("/customers/" + id + "/store-credit/redeem", body).getStatus(), is(200));
     assertThat(post("/customers/" + id + "/store-credit/redeem", body).getStatus(), is(200));
@@ -428,7 +428,7 @@ class CustomerIT {
           is(403));
       assertThat(
           "another customer's record: " + path,
-          getAs("/customers/" + id + path, UUID.randomUUID().toString(), "CUSTOMER").getStatus(),
+          getAs("/customers/" + id + path, Ids.newId().toString(), "CUSTOMER").getStatus(),
           is(403));
     }
 

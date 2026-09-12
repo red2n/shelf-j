@@ -16,6 +16,11 @@
     <description>Shared JAX-RS building blocks: response envelope, error mapper, tenant-context filter, request-id. No business logic.</description>
 
     <dependencies>
+        <!-- Ids.newId(): time-ordered (UUIDv7) ids. -->
+        <dependency>
+            <groupId>com.shelfj</groupId>
+            <artifactId>common-ids</artifactId>
+        </dependency>
         <!-- JAX-RS + CDI + JSON-B APIs. Provided by the Helidon MP runtime in each service. -->
         <dependency>
             <groupId>jakarta.ws.rs</groupId>

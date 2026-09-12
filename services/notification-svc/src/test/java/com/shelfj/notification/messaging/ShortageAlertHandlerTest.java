@@ -2,6 +2,7 @@ package com.shelfj.notification.messaging;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.notification.channel.NotificationChannel;
 import com.shelfj.notification.repo.NotificationRepository;
 import com.shelfj.notification.service.NotificationService;
@@ -22,10 +23,10 @@ import org.junit.jupiter.api.Test;
  */
 class ShortageAlertHandlerTest {
 
-  private static final UUID EVENT = UUID.randomUUID();
-  private static final UUID TENANT = UUID.randomUUID();
-  private static final UUID STORE = UUID.randomUUID();
-  private static final UUID VARIANT = UUID.randomUUID();
+  private static final UUID EVENT = Ids.newId();
+  private static final UUID TENANT = Ids.newId();
+  private static final UUID STORE = Ids.newId();
+  private static final UUID VARIANT = Ids.newId();
 
   private static final class FakeNotificationService extends NotificationService {
     boolean recordResult = true;

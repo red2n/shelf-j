@@ -2,7 +2,7 @@
 -- Golden rule #8: cash_drops is append-only; till_sessions are closed (not deleted) on Z-report.
 
 CREATE TABLE IF NOT EXISTS till_sessions (
-    id              UUID          NOT NULL DEFAULT gen_random_uuid(),
+    id              UUID          NOT NULL,
     tenant_id       UUID          NOT NULL,
     store_id        UUID          NOT NULL,
     opened_by       UUID          NOT NULL,   -- user_id from JWT
@@ -20,7 +20,7 @@ CREATE INDEX IF NOT EXISTS idx_till_sessions_store
 
 -- Append-only: each row is an immutable cash-drop record.
 CREATE TABLE IF NOT EXISTS cash_drops (
-    id               UUID          NOT NULL DEFAULT gen_random_uuid(),
+    id               UUID          NOT NULL,
     tenant_id        UUID          NOT NULL,
     till_session_id  UUID          NOT NULL,
     amount           NUMERIC(14,4) NOT NULL,

@@ -10,6 +10,7 @@ import com.shelfj.cart.dto.Dtos.CreateCartRequest;
 import com.shelfj.cart.dto.Dtos.MergeCartRequest;
 import com.shelfj.cart.dto.Dtos.UpdateItemQtyRequest;
 import com.shelfj.cart.repo.CartRepository;
+import com.shelfj.ids.Ids;
 import com.shelfj.service.StoreStatusRepository;
 import com.shelfj.service.TenantStatusRepository;
 import com.shelfj.web.ApiException;
@@ -68,7 +69,7 @@ public class CartService {
 
     Cart cart =
         new Cart(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenantId,
             customerId,
             sessionId,
@@ -119,7 +120,7 @@ public class CartService {
 
     CartItem item =
         new CartItem(
-            UUID.randomUUID(),
+            Ids.newId(),
             cartId,
             tenantId,
             parseUuid(req.variantId(), "variantId"),
@@ -188,7 +189,7 @@ public class CartService {
                 () -> {
                   Cart c =
                       new Cart(
-                          UUID.randomUUID(),
+                          Ids.newId(),
                           tenantId,
                           customerId,
                           null,

@@ -1,5 +1,6 @@
 package com.shelfj.product.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.product.domain.Domain.Brand;
 import com.shelfj.service.BaseJdbcRepository;
 import com.shelfj.web.ApiException;
@@ -23,7 +24,7 @@ public class BrandRepository extends BaseJdbcRepository {
 
   public Brand createBrand(UUID tenantId, String name) {
     Instant now = Instant.now();
-    var b = new Brand(UUID.randomUUID(), tenantId, name, Brand.STATUS_ACTIVE, now, now);
+    var b = new Brand(Ids.newId(), tenantId, name, Brand.STATUS_ACTIVE, now, now);
     exec(
         "INSERT INTO brands (id, tenant_id, name, status, created_at, updated_at)"
             + " VALUES (?,?,?,?,?,?)",

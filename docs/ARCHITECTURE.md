@@ -167,6 +167,7 @@ shelf-j/
 │   └── notification-svc/ reporting-svc/
 │
 ├── shared/                      # CONTRACTS + infra glue only — no business logic
+│   ├── common-ids/               # Ids.newId(): time-ordered UUIDv7 ids
 │   ├── events-contract/          # BaseEvent/DomainEvent/OutboxRecord
 │   ├── common-web/               # response envelope, error mapper, tenant context
 │   ├── common-service/           # DataSource/Flyway/Consul/health/outbox/Kafka base classes
@@ -264,10 +265,11 @@ For a service named `<service>` (e.g. `iam-svc`) and a profile `<profile>` (defa
 
 | Module | Purpose |
 |---|---|
+| `common-ids` | `Ids.newId()`: every id the platform mints — primary keys, event ids, outbox rows, request ids. `Ids.derived(source, name)` for deterministic keys, `Ids.shortRef(id)` for handles people read. UUIDv7, so inserts append to B-tree indexes instead of scattering; no dependencies, so every other module can use it. |
 | `events-contract` | Event envelope types only: `BaseEvent`, `DomainEvent`, `EventPayload`, `OutboxRecord`. Actual event names are per-service string constants — no business logic here. |
 | `common-web` | `ApiResponse`/`ErrorBody`/`ErrorCodes`, exception mappers (generic + UUID-parse), `TenantContext`/`TenantContextFilter`, `AdminAuthorizationFilter`, `Cursor` (pagination), `Validations`. |
-| `common-service` | Reusable infra: `DataSourceProducer`, `FlywayRunner`, `ConsulRegistrar`, `HealthChecks`, `BaseJdbcRepository`, the outbox pattern (`BaseOutboxRepository`/`OutboxPublisher`/`OutboxStore`), `BaseKafkaConsumer`/`KafkaConsumerRegistry`, `RedisClientProducer`, and shared tenant/store status-change projection consumers. |
-| `common-test` | Testcontainers helpers (`PostgresSupport`, `RedisSupport`) and `ShelfJArchRules` (ArchUnit rules enforcing the layering above). |
+| `common-service` | Reusable infra: `DataSourceProducer`, `FlywayRunner`, `ConsulRegistrar`, `HealthChecks`, `BaseJdbcRepository`, the outbox pattern (`BaseOutboxRepository`/`OutboxPublisher`/`OutboxStore`), `BaseKafkaConsumer`/`KafkaConsumerRegistry`, `RedisClientProducer`, shared tenant/store status-change projection consumers, and `db/migration/afterMigrate.sql` — run after every service's migrations, it fails `flyway migrate` if a column generates its own uuid (`FlywayRunner` logs that as a warning). |
+| `common-test` | Testcontainers helpers (`PostgresSupport`, `RedisSupport`) and `ShelfJArchRules` (ArchUnit rules enforcing the layering above). `PostgresSupport.stop()` fails the test class if any column defaults to a uuid generator or any table's `id` holds a row that is not UUIDv7. |
 
 ---
 
@@ -469,7 +471,12 @@ For the full screen-by-screen, persona-by-persona tour of what's actually on eac
 - **Errors:** correct HTTP codes (`400` validation, `401`/`403` auth, `404`, `409` conflict, `422` business rule, `500` unexpected); stable machine `code`; never leak stack traces or SQL.
 - **Pagination:** cursor only (`?after=&limit=`, default 20 / max 100, opaque base64 keyset cursor). No page numbers.
 - **Naming:** REST paths = plural kebab nouns (`/purchase-orders`); JSON = `camelCase`; DB columns = `snake_case`; events = `PascalCase` past tense (`OrderPlaced`); Kafka topics = `shelfj.<domain>.<event>`.
-- **IDs:** UUID primary keys, service-generated.
+- **IDs:** UUIDv7 is the only uuid version Shelf-J stores. v7 ids lead with a millisecond timestamp, so new rows append to the right-hand edge of each index rather than splitting random pages.
+  - **Minting:** in the service, with `Ids.newId()` (`shared/common-ids`). A key that must come out the same on every redelivery — a dedupe id per event line — is `Ids.derived(eventId, name)`: the event's timestamp plus a hash. Seed rows in migrations carry literal v7 ids.
+  - **Never:** `UUID.randomUUID()` (v4), `UUID.nameUUIDFromBytes()` (v3), `gen_random_uuid()` or `uuid_generate_v4()` in SQL, or a column `DEFAULT` that fills in a uuid — every `INSERT` names `id` and binds `Ids.newId()`. The one set-based insert that cannot (`demand_history`'s `INSERT … SELECT … GROUP BY`) calls inventory's `uuid_v7()` function; switch it to Postgres 18's `uuidv7()` on upgrade.
+  - **Enforced by:** PMD rules `UseTimeOrderedIds` and `NoDatabaseMintedIds`; `PostgresSupport.stop()`, which fails an integration test class if any column defaults to a uuid generator or any table's `id` holds another version; and the Flyway `afterMigrate` check in `common-service`, which fails `flyway migrate` for the same column defaults. `FlywayRunner` logs a failed migration as a warning and keeps the service running, so CI — not startup — is what stops a violation.
+  - **Handles for people** (order numbers, batch-number suffixes) come from the end of the id with `Ids.shortRef(id)` / Dart `shortRef(id)` — the first characters are the clock.
+  - The id's timestamp is visible to anyone holding it: never use an id as a secret or as the business time (keep `created_at`).
 - **Auth:** gateway validates the JWT once and re-stamps identity headers; services read `tenant_id`/`userId`/`roles` from those headers, never from the request body.
 - **Idempotency:** `Idempotency-Key` header on checkout/payment-capture/stock-receipt/cash-movement writes; the gateway forwards it verbatim; the service stores processed keys and replays the original response.
 - **Health:** `/health/started`, `/health/live`, `/health/ready` (ready checks real DB/Kafka/config reachability) + `/metrics` (Prometheus) on every service.
@@ -510,7 +517,7 @@ Internal-only (not published to the host): `otel-collector`, `loki`, `tempo`, no
 ## 16. Testing & quality gates
 
 - **Backend:** JUnit 5 unit tests per service; Testcontainers integration tests (real Postgres + Kafka) for repos, messaging, and saga happy paths; `ArchUnit` rules (`ShelfJArchRules` in `common-test`) enforce the layering in §7; SpotBugs + PMD + `fmt-maven-plugin` run as part of `mvn clean install`.
-- **Load/contract tests (`k6/`):** `flow-guard-comprehensive.js` (47-endpoint, 8-phase happy path from onboarding to sale), `multi-tenant-retail.js`/`full-stack-simulation.js` (concurrent multi-tenant load), `gateway-rate-limit-stress.js`, `gateway-login-protection.js` (brute-force lockout), per-service `*-crud.js`; `k6/db/*.sh` runs `psql` assertions after a k6 run since k6 itself can't query Postgres directly (set `PGHOST`/`PGPORT`/`PGUSER`/`PGDATABASE`/`PGPASSWORD` to point at the running container). Always run these against the dockerized stack, never a local/raw JVM process.
+- **End-to-end and load tests (`k6/`, see [k6/README.md](../k6/README.md)):** every suite drives the dockerized stack through the gateway with real JWTs, and every functional suite requires all of its checks to pass. `k6/run.sh` runs them (waiting until each service is routable, reading the platform-admin login from `.env`) and fails if any suite fails. The **flow guard** has two suites: `flow-guard-comprehensive.js` (onboarding → first sale, each step refused when too early, by the wrong role or against another tenant) and `flow-guard-runtime.js` (a suspended tenant or closed store stops the storefront, checkout, staff login/refresh, POS sessions, carts and orders — for that tenant or store only — and reopening restores them; another tenant's store id is never operational). Per-service `*-crud.js` suites cover positive and negative cases for each service; `gateway-smoke-it.js`, `gateway-login-protection.js` (brute-force lockout) and `gateway-rate-limit-stress.js` cover the gateway; `multi-tenant-retail.js` and `full-stack-simulation.js` are the concurrent load runs (`k6/run.sh --load`). `k6/db/validate_all.sh` runs `psql` checks afterwards, including that every stored id is v7. Shared helpers live in `k6/lib/shelfj.js`. Always run these against the dockerized stack, never a raw JVM process.
 - **Frontend:** widget/unit tests under `frontends/shelf-app/test/` covering auth interceptor refresh, envelope/error mapping, cursor pagination, held-sale resume, catalog show-price mode, checkout duplicate-order guard, localization, and the adaptive nav shell.
 - **Duplication:** `scripts/duplo.sh` runs the Duplo duplicate-code finder over the Java sources.
 - **Skills** (`.claude/skills/`): `scaffold-service`, `add-endpoint`, `add-event`, `onboard-tenant`, `check-golden-rules` — use these for consistency when extending the system; a dedicated `shelf-j-reviewer` agent enforces the golden rules + SQL/SOLID rules + duplo on major changesets.

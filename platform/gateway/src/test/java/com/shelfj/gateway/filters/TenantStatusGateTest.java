@@ -8,8 +8,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.shelfj.discovery.ServiceRegistry;
+import com.shelfj.ids.Ids;
 import java.util.Optional;
-import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,7 +36,7 @@ class TenantStatusGateTest {
   void cacheNeverGrowsPastTheHardCapUnderTenantIdChurn() {
     String[] ids = new String[TenantStatusGate.MAX_ENTRIES + 5];
     for (int i = 0; i < ids.length; i++) {
-      ids[i] = UUID.randomUUID().toString();
+      ids[i] = Ids.newId().toString();
       gate.isActive(ids[i]);
     }
     verify(registry, times(ids.length)).resolve("tenant-svc");
@@ -52,7 +52,7 @@ class TenantStatusGateTest {
 
   @Test
   void activeAnswerIsCachedAndDoesNotRequeryWithinTtl() {
-    String id = UUID.randomUUID().toString();
+    String id = Ids.newId().toString();
 
     gate.isActive(id);
     gate.isActive(id);
@@ -63,6 +63,6 @@ class TenantStatusGateTest {
 
   @Test
   void failsOpenWhenTenantServiceIsUnresolvable() {
-    assertTrue(gate.isActive(UUID.randomUUID().toString()));
+    assertTrue(gate.isActive(Ids.newId().toString()));
   }
 }

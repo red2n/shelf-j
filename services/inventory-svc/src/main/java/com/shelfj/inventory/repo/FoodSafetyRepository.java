@@ -1,5 +1,6 @@
 package com.shelfj.inventory.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.FoodSafety.CheckRecord;
 import com.shelfj.inventory.domain.FoodSafety.CheckType;
 import com.shelfj.inventory.domain.FoodSafety.CorrectiveAction;
@@ -255,7 +256,7 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "INSERT INTO fs_point_status_changes (id, tenant_id, point_id, active, reason,"
                       + " changed_by) VALUES (?,?,?,?,?,?)")) {
-            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(1, Ids.newId());
             ps.setObject(2, tenantId);
             ps.setObject(3, pointId);
             ps.setBoolean(4, active);

@@ -1,11 +1,13 @@
 package com.shelfj.pricing.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -20,14 +22,22 @@ public final class Dtos {
 
   // ── VAT Rates ─────────────────────────────────────────────────────────────
 
+  // The limits mirror vat_rates' column sizes and rate CHECK: past them the insert fails in the
+  // database and the caller got a 500 instead of a 400.
   @Schema(name = "CreateVatRateRequest")
   public record CreateVatRateRequest(
-      @Schema(description = "HMRC VAT code, e.g. T1, T0, T5.") @NotBlank String code,
-      @NotBlank String name,
-      @Schema(description = "Fraction between 0 and 1, e.g. 0.20 for 20%.") @NotNull @PositiveOrZero
+      @Schema(description = "HMRC VAT code, e.g. T1, T0, T5.", maxLength = 8)
+          @NotBlank
+          @Size(max = 8)
+          String code,
+      @NotBlank @Size(max = 100) String name,
+      @Schema(description = "Fraction between 0 and 1, e.g. 0.20 for 20%.")
+          @NotNull
+          @PositiveOrZero
+          @DecimalMax("1")
           BigDecimal rate,
       @Schema(description = "True if this code is VAT-exempt (no VAT charged).") boolean exempt,
-      String description,
+      @Size(max = 255) String description,
       @Schema(description = "ISO-8601 instant this rate takes effect, e.g. 2026-01-01T00:00:00Z.")
           @NotBlank
           String effectiveFrom) {}

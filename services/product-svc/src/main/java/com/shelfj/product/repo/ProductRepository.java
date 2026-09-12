@@ -1,5 +1,6 @@
 package com.shelfj.product.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.product.domain.Domain.Product;
 import com.shelfj.product.domain.Domain.Variant;
 import com.shelfj.product.domain.Domain.VariantWithProduct;
@@ -397,12 +398,13 @@ public class ProductRepository extends BaseOutboxRepository {
           if (!storeIds.isEmpty()) {
             try (var ins =
                 c.prepareStatement(
-                    "INSERT INTO product_stores (tenant_id, product_id, store_id)"
-                        + " VALUES (?, ?, ?)")) {
+                    "INSERT INTO product_stores (id, tenant_id, product_id, store_id)"
+                        + " VALUES (?, ?, ?, ?)")) {
               for (UUID sid : storeIds) {
-                ins.setObject(1, tenantId);
-                ins.setObject(2, productId);
-                ins.setObject(3, sid);
+                ins.setObject(1, Ids.newId());
+                ins.setObject(2, tenantId);
+                ins.setObject(3, productId);
+                ins.setObject(4, sid);
                 ins.addBatch();
               }
               ins.executeBatch();
@@ -420,12 +422,13 @@ public class ProductRepository extends BaseOutboxRepository {
         c -> {
           try (var ps =
               c.prepareStatement(
-                  "INSERT INTO product_stores (tenant_id, product_id, store_id)"
-                      + " VALUES (?, ?, ?) ON CONFLICT (tenant_id, product_id, store_id) DO NOTHING")) {
+                  "INSERT INTO product_stores (id, tenant_id, product_id, store_id)"
+                      + " VALUES (?, ?, ?, ?) ON CONFLICT (tenant_id, product_id, store_id) DO NOTHING")) {
             for (UUID sid : storeIds) {
-              ps.setObject(1, tenantId);
-              ps.setObject(2, productId);
-              ps.setObject(3, sid);
+              ps.setObject(1, Ids.newId());
+              ps.setObject(2, tenantId);
+              ps.setObject(3, productId);
+              ps.setObject(4, sid);
               ps.addBatch();
             }
             ps.executeBatch();
@@ -599,22 +602,31 @@ public class ProductRepository extends BaseOutboxRepository {
       String attributes,
       String unit) {
     Instant now = Instant.now();
-    exec(
-        "UPDATE product_variants SET sku=?, barcode=?, manufacturer_pn=?, attributes=?, unit=?,"
-            + " updated_at=? WHERE tenant_id=? AND id=? AND status='ACTIVE'",
-        ps -> {
-          ps.setString(1, sku);
-          ps.setString(2, barcode);
-          ps.setString(3, manufacturerPn);
-          ps.setString(4, attributes);
-          ps.setString(5, unit);
-          ps.setObject(6, now.atOffset(ZoneOffset.UTC));
-          ps.setObject(7, tenantId);
-          ps.setObject(8, variantId);
-        },
-        "update variant");
-    return findVariant(tenantId, variantId)
-        .orElseThrow(() -> ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found"));
+    // RETURNING, not a second SELECT: a re-read could hand this caller a concurrent writer's row,
+    // and could not tell "updated" from "matched nothing because the variant is delisted".
+    return query(
+            "UPDATE product_variants SET sku=?, barcode=?, manufacturer_pn=?, attributes=?, unit=?,"
+                + " updated_at=? WHERE tenant_id=? AND id=? AND status='ACTIVE'"
+                + " RETURNING id, tenant_id, product_id, sku, barcode, manufacturer_pn, attributes,"
+                + " unit, status, created_at, updated_at",
+            ps -> {
+              ps.setString(1, sku);
+              ps.setString(2, barcode);
+              ps.setString(3, manufacturerPn);
+              ps.setString(4, attributes);
+              ps.setString(5, unit);
+              ps.setObject(6, now.atOffset(ZoneOffset.UTC));
+              ps.setObject(7, tenantId);
+              ps.setObject(8, variantId);
+            },
+            ProductRepository::mapVariant,
+            "update variant")
+        .stream()
+        .findFirst()
+        .orElseThrow(
+            () ->
+                ApiException.conflict(
+                    "VARIANT_NOT_ACTIVE", "A delisted variant cannot be edited; relist it first"));
   }
 
   public Variant delistVariant(UUID tenantId, UUID variantId) {

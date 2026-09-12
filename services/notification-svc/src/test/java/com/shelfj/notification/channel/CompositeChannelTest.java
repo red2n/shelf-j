@@ -3,12 +3,13 @@ package com.shelfj.notification.channel;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.shelfj.ids.Ids;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class CompositeChannelTest {
 
-  private static final UUID TENANT = UUID.randomUUID();
+  private static final UUID TENANT = Ids.newId();
 
   private static final class CountingChannel implements NotificationChannel {
     final String id;

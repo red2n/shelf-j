@@ -1,5 +1,6 @@
 package com.shelfj.notification.api;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.notification.dto.Dtos.SendNotificationRequest;
 import com.shelfj.notification.dto.Dtos.SendNotificationResponse;
 import com.shelfj.notification.service.Notifier;
@@ -52,7 +53,7 @@ public class SendResource {
     UUID eventId =
         req.eventId() != null && !req.eventId().isBlank()
             ? UUID.fromString(req.eventId())
-            : UUID.randomUUID();
+            : Ids.newId();
     String type = req.type() == null || req.type().isBlank() ? "MANUAL" : req.type().trim();
     UUID customerId =
         req.customerId() != null && !req.customerId().isBlank()

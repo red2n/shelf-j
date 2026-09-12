@@ -1,5 +1,6 @@
 package com.shelfj.payment.service;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.payment.client.OrderClient;
 import com.shelfj.payment.domain.Domain.PaymentIntent;
 import com.shelfj.payment.domain.Domain.PaymentTender;
@@ -93,7 +94,7 @@ public class PaymentIntentService {
     String currency =
         order.currency() == null || order.currency().isBlank() ? defaultCurrency : order.currency();
 
-    UUID intentId = UUID.randomUUID();
+    UUID intentId = Ids.newId();
     Instant now = Instant.now();
     PaymentIntent pending =
         new PaymentIntent(
@@ -321,7 +322,7 @@ public class PaymentIntentService {
    * Writes the tender, links the intent to it and emits PaymentCaptured, all in one transaction.
    */
   private PaymentTender writeCapture(PaymentIntent intent, BigDecimal amount, String reference) {
-    UUID tenderId = UUID.randomUUID();
+    UUID tenderId = Ids.newId();
     PaymentTender tender =
         new PaymentTender(
             tenderId,

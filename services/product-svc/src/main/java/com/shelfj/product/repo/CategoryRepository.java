@@ -1,5 +1,6 @@
 package com.shelfj.product.repo;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.product.domain.Domain.Category;
 import com.shelfj.service.BaseJdbcRepository;
 import com.shelfj.web.ApiException;
@@ -23,8 +24,7 @@ public class CategoryRepository extends BaseJdbcRepository {
 
   public Category createCategory(UUID tenantId, UUID parentId, String name) {
     Instant now = Instant.now();
-    var c =
-        new Category(UUID.randomUUID(), tenantId, parentId, name, Category.STATUS_ACTIVE, now, now);
+    var c = new Category(Ids.newId(), tenantId, parentId, name, Category.STATUS_ACTIVE, now, now);
     if (parentId != null && findCategory(tenantId, parentId).isEmpty()) {
       throw ApiException.badRequest("PARENT_NOT_FOUND", "parentId not found in this tenant");
     }

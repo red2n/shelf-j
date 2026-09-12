@@ -1,5 +1,5 @@
 CREATE TABLE item_templates (
-    id          UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id          UUID        NOT NULL,
     tenant_id   UUID        NOT NULL,
     name        TEXT        NOT NULL,
     description TEXT,
@@ -13,7 +13,7 @@ CREATE TABLE item_templates (
 CREATE INDEX idx_item_tpl_tenant ON item_templates (tenant_id, status);
 
 CREATE TABLE item_template_applications (
-    id          UUID        NOT NULL DEFAULT gen_random_uuid(),
+    id          UUID        NOT NULL,
     tenant_id   UUID        NOT NULL,
     variant_id  UUID        NOT NULL REFERENCES product_variants(id),
     template_id UUID        NOT NULL REFERENCES item_templates(id),

@@ -3,7 +3,7 @@
 -- plus a variant-to-container link recording how many units fit per container.
 
 CREATE TABLE container_types (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID        PRIMARY KEY,
     tenant_id       UUID        NOT NULL,
     code            TEXT        NOT NULL,
     name            TEXT        NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE container_types (
 CREATE INDEX idx_container_types_tenant ON container_types (tenant_id);
 
 CREATE TABLE variant_container_links (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                  UUID        PRIMARY KEY,
     tenant_id           UUID        NOT NULL,
     variant_id          UUID        NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
     container_type_id   UUID        NOT NULL REFERENCES container_types(id) ON DELETE CASCADE,

@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.inventory.domain.FoodSafety.CheckType;
 import com.shelfj.inventory.domain.FoodSafety.DueStatus;
 import com.shelfj.inventory.domain.FoodSafety.Kind;
@@ -66,10 +67,10 @@ class FoodSafetyTest {
   }
 
   private static PointStatus status(Instant created, Instant lastRecordedAt, int frequencyHours) {
-    UUID tenant = UUID.randomUUID();
+    UUID tenant = Ids.newId();
     var type =
         new CheckType(
-            UUID.randomUUID(),
+            Ids.newId(),
             null,
             "CHILLED_STORAGE",
             "Chilled",
@@ -81,9 +82,9 @@ class FoodSafetyTest {
             true);
     var point =
         new MonitoringPoint(
-            UUID.randomUUID(),
+            Ids.newId(),
             tenant,
-            UUID.randomUUID(),
+            Ids.newId(),
             null,
             "Dairy chiller",
             type.id(),

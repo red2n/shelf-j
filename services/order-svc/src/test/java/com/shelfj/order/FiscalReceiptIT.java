@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -50,10 +51,10 @@ class FiscalReceiptIT {
     System.setProperty("shelfj.order.inventory.reserve-enforce", "false");
   }
 
-  private static final String T = "aaaaaaaa-3333-3333-3333-aaaaaaaaaaaa";
-  private static final String S = "bbbbbbbb-3333-3333-3333-bbbbbbbbbbbb";
-  private static final String S2 = "cccccccc-3333-3333-3333-cccccccccccc";
-  private static final String V = "dddddddd-3333-3333-3333-dddddddddddd";
+  private static final String T = "01a090ae-611e-702a-9bdf-bcc7032115c4";
+  private static final String S = "01a090ae-611e-7035-a4da-400bf673cfe8";
+  private static final String S2 = "01a090ae-611e-703a-b34c-b0ca607d8240";
+  private static final String V = "01a090ae-611e-7055-9838-5de027ce9e0a";
 
   @Inject WebTarget target;
   @Inject com.shelfj.order.service.OrderService orderService;
@@ -81,7 +82,7 @@ class FiscalReceiptIT {
         .request()
         .header("X-Tenant-Id", tenant)
         .header("X-Roles", "OWNER")
-        .header("Idempotency-Key", UUID.randomUUID().toString())
+        .header("Idempotency-Key", Ids.newId().toString())
         .post(Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
@@ -180,7 +181,7 @@ class FiscalReceiptIT {
   @Test
   @DisplayName("A basket that is never paid for burns no number")
   void pendingBurnsNothing() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String abandoned = placeOnly(store);
 
     // Issuing for a PENDING order is refused — this is where gaps come from.
@@ -196,7 +197,7 @@ class FiscalReceiptIT {
   @Test
   @DisplayName("Reprinting returns the number already issued, never a second one")
   void issuingTwiceIsIdempotent() {
-    String order = sell(UUID.randomUUID().toString(), "4.00");
+    String order = sell(Ids.newId().toString(), "4.00");
     long first = numberOf(order);
 
     Response again = post("/admin/orders/" + order + "/fiscal-receipt", "{}", T);
@@ -210,8 +211,8 @@ class FiscalReceiptIT {
   @Test
   @DisplayName("Two stores keep separate sequences, and both start at one")
   void perStoreSequences() {
-    String x = UUID.randomUUID().toString();
-    String y = UUID.randomUUID().toString();
+    String x = Ids.newId().toString();
+    String y = Ids.newId().toString();
     assertThat(numberOf(sell(x, "1.00")), is(1L));
     assertThat(numberOf(sell(y, "1.00")), is(1L));
     assertThat(numberOf(sell(x, "2.00")), is(2L));
@@ -220,7 +221,7 @@ class FiscalReceiptIT {
   @Test
   @DisplayName("A voided sale keeps its number, and the sequence stays intact")
   void voidKeepsTheNumber() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     sell(store, "1.00");
     String voided = sell(store, "2.00");
     sell(store, "3.00");
@@ -246,16 +247,16 @@ class FiscalReceiptIT {
     // The first version of this sequence hooked only confirmOrder, which the till never calls:
     // till sales are confirmed by payment capture. So it numbered the sales a manager confirmed by
     // hand and almost none of the ones rung up at a till — the ones fiscal law is written about.
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String orderId = placeOnly(store);
     UUID tenant = UUID.fromString(T);
     UUID order = UUID.fromString(orderId);
 
     // A split tender: nothing is numbered until the sale is complete.
-    orderService.handlePaymentCaptured(tenant, order, UUID.randomUUID(), new BigDecimal("2.00"));
+    orderService.handlePaymentCaptured(tenant, order, Ids.newId(), new BigDecimal("2.00"));
     assertThat(get("/admin/orders/" + orderId + "/fiscal-receipt", T).getStatus(), is(404));
 
-    orderService.handlePaymentCaptured(tenant, order, UUID.randomUUID(), new BigDecimal("3.00"));
+    orderService.handlePaymentCaptured(tenant, order, Ids.newId(), new BigDecimal("3.00"));
     assertThat(numberOf(orderId), is(1L));
   }
 
@@ -266,10 +267,10 @@ class FiscalReceiptIT {
   @Test
   @DisplayName("The till can read the number it has to print; a stranger cannot")
   void theTillCanReadItsReceiptNumber() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     String orderId = placeOnly(store);
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), UUID.fromString(orderId), UUID.randomUUID(), new BigDecimal("5.00"));
+        UUID.fromString(T), UUID.fromString(orderId), Ids.newId(), new BigDecimal("5.00"));
 
     Response asCashier = getAs("/orders/" + orderId + "/fiscal-receipt", T, "CASHIER");
     assertThat(asCashier.getStatus(), is(200));
@@ -288,7 +289,7 @@ class FiscalReceiptIT {
   @Test
   @DisplayName("An unbroken series audits as intact, with no gaps listed")
   void intactSeries() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     sell(store, "1.00");
     sell(store, "2.00");
     sell(store, "3.00");
@@ -303,7 +304,7 @@ class FiscalReceiptIT {
   @Test
   @DisplayName("A hole is found, and reported with its range rather than a count")
   void aHoleIsFound() throws Exception {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     sell(store, "1.00");
     String gone = sell(store, "2.00");
     String alsoGone = sell(store, "3.00");
@@ -333,12 +334,12 @@ class FiscalReceiptIT {
   @Test
   @DisplayName("The audit is scoped to one tenant's store")
   void auditIsTenantScoped() {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     sell(store, "1.00");
     String other =
         get(
                 "/admin/fiscal-receipts/audit",
-                "99999999-9999-9999-9999-999999999999",
+                "01a090ae-611e-701d-9d60-a9d7516ed03b",
                 "storeId",
                 store,
                 "period",
@@ -353,7 +354,7 @@ class FiscalReceiptIT {
   @Test
   @DisplayName("Eight tills selling at once produce eight consecutive numbers, no duplicates")
   void concurrentTillsDoNotCollide() throws Exception {
-    String store = UUID.randomUUID().toString();
+    String store = Ids.newId().toString();
     int tills = 8;
 
     List<Callable<String>> work = new ArrayList<>();

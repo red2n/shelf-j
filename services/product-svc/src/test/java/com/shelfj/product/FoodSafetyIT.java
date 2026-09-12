@@ -47,8 +47,8 @@ class FoodSafetyIT {
     System.setProperty("shelfj.redis.password", "");
   }
 
-  private static final String T = "aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa";
-  private static final String OTHER = "bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb";
+  private static final String T = "01a090ae-611e-7029-867a-5082a55a290f";
+  private static final String OTHER = "01a090ae-611e-7034-89f9-56cd87f91b14";
 
   @Inject WebTarget target;
 

@@ -12,6 +12,7 @@ import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 import 'providers/inventory_levels_pagination.dart';
 import 'inventory_warehouse_tabs.dart';
+import '../../shared/util/short_ref.dart';
 
 class InventoryScreen extends ConsumerStatefulWidget {
   const InventoryScreen({super.key});
@@ -887,8 +888,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
 String _productNameOf(String variantId, Map<String, VariantLabel> labels) {
   final l = labels[variantId];
   if (l != null && l.productName.isNotEmpty) return l.productName;
-  final n = variantId.length >= 8 ? variantId.substring(0, 8) : variantId;
-  return '$n…';
+  return '…${shortRef(variantId)}';
 }
 
 String _skuOf(String variantId, Map<String, VariantLabel> labels) =>
@@ -966,7 +966,7 @@ class _WideTable extends StatelessWidget {
                   ],
                 )),
                 DataCell(Text(
-                  l.storeId.length > 8 ? l.storeId.substring(0, 8) : l.storeId,
+                  shortRef(l.storeId),
                   style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
                 )),
                 DataCell(Text(l.onHand.toStringAsFixed(0))),
@@ -1133,9 +1133,7 @@ class _BatchWideTable extends StatelessWidget {
                   DataCell(Text(b.batchNo,
                       style: const TextStyle(fontSize: 12))),
                   DataCell(Text(
-                    b.variantId.length > 16
-                        ? '${b.variantId.substring(0, 8)}…'
-                        : b.variantId,
+                    b.variantId.length > 16 ? '…${shortRef(b.variantId)}' : b.variantId,
                     style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
                   )),
                   DataCell(Text(
@@ -1184,7 +1182,7 @@ class _BatchNarrowList extends StatelessWidget {
             leading: const Icon(Icons.inventory_outlined),
             title: Text(b.batchNo, style: const TextStyle(fontSize: 13)),
             subtitle: Text(
-              '${b.variantId.length > 20 ? '${b.variantId.substring(0, 20)}…' : b.variantId}\n'
+              '${b.variantId.length > 20 ? '…${shortRef(b.variantId, length: 20)}' : b.variantId}\n'
               'Zone: ${b.zoneId == null ? '—' : zoneNames[b.zoneId] ?? 'Unassigned'}'
               '${b.expiryDate != null ? '  ·  Exp: ${b.expiryDate}' : ''}',
               style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
@@ -1766,7 +1764,7 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
                       ),
                       subtitle: Text([
                         if (sku.isNotEmpty) sku,
-                        'Store ${t.storeId.length > 8 ? t.storeId.substring(0, 8) : t.storeId}',
+                        'Store ${shortRef(t.storeId)}',
                         if (t.maxQty != null)
                           'max ${t.maxQty!.toStringAsFixed(0)}',
                       ].join(' · ')),

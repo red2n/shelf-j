@@ -1,57 +1,42 @@
+// Converted to real JWT sign-in: the gateway strips X-Tenant-Id / X-User-Id / X-Roles, so every call
+// carries the owner's bearer token and a call with no token is a 401 at the gateway.
+//
+//   k6/run.sh inventory-crud
 import http from 'k6/http';
-import { check, sleep } from 'k6';
-import { baseUrl } from './common.js';
+import { check as k6check, sleep } from 'k6';
+import { ALL_CHECKS_PASS, BASE as baseUrl, onboardTenant, register, sellableVariant } from './lib/shelfj.js';
 
-export const options = { vus: 1, iterations: 1 };
+export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS, setupTimeout: '3m' };
 
 const JSON_CT = { 'Content-Type': 'application/json' };
 
-function setupTenant() {
-  const email = `k6-inv-${Date.now()}@example.com`;
-  const regRes = http.post(
-    `${baseUrl}/api/iam-svc/auth/register`,
-    JSON.stringify({ email, password: 'TestPass1!' }),
-    { headers: JSON_CT }
-  );
-  if (regRes.status < 200 || regRes.status >= 300) return null;
-  let uid = null;
-  try {
-    const token = regRes.json('data.accessToken');
-    uid = JSON.parse(atob(token.split('.')[1])).sub;
-  } catch (_) {}
-
-  const tenantRes = http.post(
-    `${baseUrl}/api/tenant-svc/onboarding/tenants`,
-    JSON.stringify({ businessName: `k6-inv-co-${Date.now()}`, legalName: 'k6 Ltd', country: 'US', currency: 'USD' }),
-    { headers: { ...JSON_CT, 'X-User-Id': uid || '00000000-0000-0000-0000-000000000001' } }
-  );
-  const tenantId = tenantRes.status < 300 ? tenantRes.json('data.id') : null;
-
-  let storeId = null;
-  if (tenantId) {
-    const storeRes = http.post(
-      `${baseUrl}/api/tenant-svc/admin/stores`,
-      JSON.stringify({ name: 'k6 Warehouse', code: `K6W-${Date.now()}`, line1: '1 Dock Rd', city: 'LA', country: 'US', pincode: '90001', timezone: 'UTC' }),
-      { headers: { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-Roles': 'OWNER' } }
-    );
-    storeId = storeRes.status < 300 ? storeRes.json('data.id') : null;
+/** k6's check, plus the response on failure so a red check says why. */
+function check(res, sets) {
+  const ok = k6check(res, sets);
+  if (!ok) {
+    const failed = Object.entries(sets).filter(([, fn]) => { try { return !fn(res); } catch (_) { return true; } }).map(([name]) => name);
+    console.error(`✗ ${failed.join(' | ')}: got ${res && res.status} ${String(res && res.body).slice(0, 400)}`);
   }
-  return { uid, tenantId, storeId };
+  return ok;
 }
 
-export default function () {
-  const ctx = setupTenant();
-  const tenantId = ctx && ctx.tenantId;
-  const storeId = ctx && ctx.storeId;
-  const variantId = '00000000-0000-0000-0000-000000000099';
-  const hdrs = tenantId ? { ...JSON_CT, 'X-Tenant-Id': tenantId, 'X-Roles': 'OWNER' } : { ...JSON_CT };
+export function setup() {
+  const tenant = onboardTenant('inventory', { stores: 2 });
+  return { tenant, variantId: sellableVariant(tenant, 'Stocked beans').variantId, shopper: register('inventory-shopper') };
+}
+
+export default function (d) {
+  const tenantId = d.tenant.tenantId;
+  const storeId = d.tenant.stores[0].id;
+  const variantId = d.variantId;
+  const hdrs = { ...JSON_CT, Authorization: `Bearer ${d.tenant.owner.token}` };
 
   // ── Gap #1-#7: core inventory positive checks ─────────────────────────────
 
   const recRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/receive`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
       variantId,
       qty: 50,
       batchNo: `BATCH-${Date.now()}`,
@@ -69,7 +54,7 @@ export default function () {
   const adjRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/adjust`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
       variantId,
       delta: -5,
       reason: 'k6-test-adjustment',
@@ -97,7 +82,7 @@ export default function () {
   const abcCompileValueRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/abc/compile`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
       criteria: 'VALUE',
       thresholdA: 70,
       thresholdAB: 90,
@@ -198,7 +183,7 @@ export default function () {
   // Get assignment for nonexistent variant → 404
   const abcNotFoundRes = http.get(
     `${baseUrl}/api/inventory-svc/admin/inventory/abc/assignments/` +
-      `00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000000`,
+      `01a090ae-611e-7001-a690-2682e4afcb55/01a090ae-611e-7000-9e1a-0f8a9e565153`,
     { headers: hdrs }
   );
   check(abcNotFoundRes, {
@@ -212,7 +197,7 @@ export default function () {
     { headers: JSON_CT }
   );
   check(abcNoTenantRes, {
-    '[-] abc compile no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+    '[-] abc compile no token → 401': (r) => r.status === 401,
   });
 
   sleep(0.3);
@@ -223,7 +208,7 @@ export default function () {
   const ssMADRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
       variantId,
       method: 'MAD',
       leadTimeDays: 7,
@@ -242,11 +227,11 @@ export default function () {
   });
 
   // Set safety stock params (USER_DEFINED method)
-  const variantId2 = '00000000-0000-0000-0000-000000000098';
+  const variantId2 = '01a090ae-611e-7006-8337-8ada32e08175';
   const ssUDRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
       variantId: variantId2,
       method: 'USER_DEFINED',
       leadTimeDays: 14,
@@ -276,7 +261,7 @@ export default function () {
   // Compute safety stock (no demand history yet → returns 0 or rows=N computed)
   const ssComputeRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock/compute`,
-    JSON.stringify({ storeId: storeId || '00000000-0000-0000-0000-000000000001' }),
+    JSON.stringify({ storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55' }),
     { headers: hdrs }
   );
   check(ssComputeRes, {
@@ -304,7 +289,7 @@ export default function () {
   const ssUpsertRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
       variantId,
       method: 'MAD',
       leadTimeDays: 10,
@@ -327,7 +312,7 @@ export default function () {
   const ssMissingVariantRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
       // variantId missing
       method: 'MAD',
     }),
@@ -341,8 +326,8 @@ export default function () {
   const ssBadMethodRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
-      variantId: '00000000-0000-0000-0000-000000000097',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
+      variantId: '01a090ae-611e-7005-8b65-d402a5e8f0da',
       method: 'INVALID_METHOD',
     }),
     { headers: hdrs }
@@ -355,8 +340,8 @@ export default function () {
   const ssMissingPctRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
-      variantId: '00000000-0000-0000-0000-000000000096',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
+      variantId: '01a090ae-611e-7004-8b69-9aaf2af687c6',
       method: 'USER_DEFINED',
       // userDefinedPct missing
     }),
@@ -369,7 +354,7 @@ export default function () {
   // Get non-existent safety stock params → 404
   const ssNotFoundRes = http.get(
     `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock/` +
-      `00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000000`,
+      `01a090ae-611e-7001-a690-2682e4afcb55/01a090ae-611e-7000-9e1a-0f8a9e565153`,
     { headers: hdrs }
   );
   check(ssNotFoundRes, {
@@ -379,11 +364,11 @@ export default function () {
   // No tenant header → 401
   const ssNoTenantRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/safety-stock`,
-    JSON.stringify({ storeId: '00000000-0000-0000-0000-000000000001', variantId, method: 'MAD' }),
+    JSON.stringify({ storeId: '01a090ae-611e-7001-a690-2682e4afcb55', variantId, method: 'MAD' }),
     { headers: JSON_CT }
   );
   check(ssNoTenantRes, {
-    '[-] no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+    '[-] no token → 401': (r) => r.status === 401,
   });
 
   // Invalid UUID for storeId
@@ -506,7 +491,7 @@ export default function () {
 
   // Get non-existent cycle count → 404
   const ccNotFoundRes = http.get(
-    `${baseUrl}/api/inventory-svc/admin/inventory/cycle-counts/00000000-0000-0000-0000-000000000099`,
+    `${baseUrl}/api/inventory-svc/admin/inventory/cycle-counts/01a090ae-611e-7007-b85c-1fbac22cb87b`,
     { headers: hdrs }
   );
   check(ccNotFoundRes, {
@@ -520,13 +505,13 @@ export default function () {
     { headers: JSON_CT }
   );
   check(ccNoTenantRes, {
-    '[-] cycle count no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+    '[-] cycle count no token → 401': (r) => r.status === 401,
   });
 
   // Enter count on non-existent line → 404
   const ccBadLineRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/cycle-counts/` +
-      '00000000-0000-0000-0000-000000000099/lines/00000000-0000-0000-0000-000000000098/count',
+      '01a090ae-611e-7007-b85c-1fbac22cb87b/lines/01a090ae-611e-7006-8337-8ada32e08175/count',
     JSON.stringify({ countedQty: 10 }),
     { headers: hdrs }
   );
@@ -544,7 +529,7 @@ export default function () {
   const recRes2 = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/receive`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
       variantId,
       qty: 10,
       batchNo: `CHILD-${Date.now()}`,
@@ -558,8 +543,8 @@ export default function () {
   const lgCreateRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
     JSON.stringify({
-      parentBatchId: parentBatchId || '00000000-0000-0000-0000-000000000001',
-      childBatchId: childBatchId || '00000000-0000-0000-0000-000000000002',
+      parentBatchId: parentBatchId || '01a090ae-611e-7001-a690-2682e4afcb55',
+      childBatchId: childBatchId || '01a090ae-611e-7002-b3ac-c478c91b06ac',
       qty: 10,
       relationType: 'SPLIT',
       notes: 'k6 split test',
@@ -580,7 +565,7 @@ export default function () {
   const recRes3 = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/receive`,
     JSON.stringify({
-      storeId: storeId || '00000000-0000-0000-0000-000000000001',
+      storeId: storeId || '01a090ae-611e-7001-a690-2682e4afcb55',
       variantId,
       qty: 5,
       batchNo: `MERGE-${Date.now()}`,
@@ -595,8 +580,8 @@ export default function () {
   const lgMergeRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
     JSON.stringify({
-      parentBatchId: mergeBatchId || '00000000-0000-0000-0000-000000000003',
-      childBatchId: childBatchId || '00000000-0000-0000-0000-000000000002',
+      parentBatchId: mergeBatchId || '01a090ae-611e-7003-8eac-d9c47e691ad7',
+      childBatchId: childBatchId || '01a090ae-611e-7002-b3ac-c478c91b06ac',
       qty: 5,
       relationType: 'MERGE',
     }),
@@ -652,7 +637,7 @@ export default function () {
       { headers: hdrs }
     );
     check(lgDupRes, {
-      '[+] duplicate lot link returns 4xx (idempotent guard)': (r) => r.status >= 400 && r.status < 500,
+      '[-] duplicate lot link refused': (r) => r.status === 409,
     });
   }
 
@@ -661,7 +646,7 @@ export default function () {
   // Missing parentBatchId
   const lgNoParentRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
-    JSON.stringify({ childBatchId: childBatchId || '00000000-0000-0000-0000-000000000002', qty: 5,
+    JSON.stringify({ childBatchId: childBatchId || '01a090ae-611e-7002-b3ac-c478c91b06ac', qty: 5,
       relationType: 'SPLIT' }),
     { headers: hdrs }
   );
@@ -672,7 +657,7 @@ export default function () {
   // Missing childBatchId
   const lgNoChildRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
-    JSON.stringify({ parentBatchId: parentBatchId || '00000000-0000-0000-0000-000000000001',
+    JSON.stringify({ parentBatchId: parentBatchId || '01a090ae-611e-7001-a690-2682e4afcb55',
       qty: 5, relationType: 'SPLIT' }),
     { headers: hdrs }
   );
@@ -684,8 +669,8 @@ export default function () {
   const lgNoQtyRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
     JSON.stringify({
-      parentBatchId: parentBatchId || '00000000-0000-0000-0000-000000000001',
-      childBatchId: mergeBatchId || '00000000-0000-0000-0000-000000000003',
+      parentBatchId: parentBatchId || '01a090ae-611e-7001-a690-2682e4afcb55',
+      childBatchId: mergeBatchId || '01a090ae-611e-7003-8eac-d9c47e691ad7',
       relationType: 'SPLIT',
     }),
     { headers: hdrs }
@@ -698,8 +683,8 @@ export default function () {
   const lgBadTypeRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
     JSON.stringify({
-      parentBatchId: parentBatchId || '00000000-0000-0000-0000-000000000001',
-      childBatchId: mergeBatchId || '00000000-0000-0000-0000-000000000003',
+      parentBatchId: parentBatchId || '01a090ae-611e-7001-a690-2682e4afcb55',
+      childBatchId: mergeBatchId || '01a090ae-611e-7003-8eac-d9c47e691ad7',
       qty: 5,
       relationType: 'INVALID',
     }),
@@ -713,15 +698,15 @@ export default function () {
   const lgNoTenantRes = http.post(
     `${baseUrl}/api/inventory-svc/admin/inventory/lot-genealogy`,
     JSON.stringify({
-      parentBatchId: '00000000-0000-0000-0000-000000000001',
-      childBatchId: '00000000-0000-0000-0000-000000000002',
+      parentBatchId: '01a090ae-611e-7001-a690-2682e4afcb55',
+      childBatchId: '01a090ae-611e-7002-b3ac-c478c91b06ac',
       qty: 5,
       relationType: 'SPLIT',
     }),
     { headers: JSON_CT }
   );
   check(lgNoTenantRes, {
-    '[-] lot genealogy no X-Tenant-Id → 4xx': (r) => r.status >= 400 && r.status < 500,
+    '[-] lot genealogy no token → 401': (r) => r.status === 401,
   });
 
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
@@ -818,7 +803,7 @@ export default function () {
       JSON.stringify({ storeId: storeId }),
       { headers: JSON_CT }
     ),
-    { '[-] create PI no auth 403': (r) => r.status === 403 }
+    { '[-] create PI no token 401': (r) => r.status === 401 }
   );
 
   // ── Gap #17: Costing Methods ────────────────────────────────────────────────
@@ -1057,7 +1042,7 @@ export default function () {
   // [-] Get non-existent kanban card → 404
   check(
     http.get(
-      `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards/00000000-0000-0000-0000-000000000999`,
+      `${baseUrl}/api/inventory-svc/admin/inventory/kanban-cards/01a090ae-611e-7009-93d3-a36b72cdedb8`,
       { headers: hdrs }
     ),
     { '[-] get unknown kanban card 404': (r) => r.status === 404 }
@@ -1121,7 +1106,7 @@ export default function () {
   // [-] Get unknown ROP plan → 404
   check(
     http.get(
-      `${baseUrl}/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${storeId}&variant=00000000-0000-0000-0000-000000000998`,
+      `${baseUrl}/api/inventory-svc/admin/inventory/rop-plans/by-variant?store=${storeId}&variant=01a090ae-611e-7008-b3d2-2b7638fc65c1`,
       { headers: hdrs }
     ),
     { '[-] get unknown ROP plan 404': (r) => r.status === 404 }
@@ -1207,7 +1192,7 @@ export default function () {
     check(
       http.put(
         `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules/${zpRuleId}/zone-priorities`,
-        JSON.stringify({ zonePriorities: [{ zoneId: '00000000-0000-0000-0000-000000000001', priority: 1 }] }),
+        JSON.stringify({ zonePriorities: [{ zoneId: '01a090ae-611e-7001-a690-2682e4afcb55', priority: 1 }] }),
         { headers: hdrs }
       ),
       { '[+] set zone priorities 200': (r) => r.status === 200 }
@@ -1254,7 +1239,7 @@ export default function () {
   // [-] Get unknown picking rule → 404
   check(
     http.get(
-      `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules/00000000-0000-0000-0000-000000000000`,
+      `${baseUrl}/api/inventory-svc/admin/inventory/picking-rules/01a090ae-611e-7000-9e1a-0f8a9e565153`,
       { headers: hdrs }
     ),
     { '[-] get unknown picking rule 404': (r) => r.status === 404 }
@@ -1273,6 +1258,6 @@ export default function () {
       JSON.stringify({ name: 'x', strategy: 'FIFO' }),
       { headers: { 'Content-Type': 'application/json' } }
     ),
-    { '[-] create picking rule no auth 403': (r) => r.status === 403 }
+    { '[-] create picking rule no token 401': (r) => r.status === 401 }
   );
 }

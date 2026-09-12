@@ -2,6 +2,7 @@ package com.shelfj.notification.messaging;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.notification.service.Notifier;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,8 +15,8 @@ import org.junit.jupiter.api.Test;
  */
 class UserRegisteredHandlerTest {
 
-  private static final UUID EVENT = UUID.randomUUID();
-  private static final UUID TENANT = UUID.randomUUID();
+  private static final UUID EVENT = Ids.newId();
+  private static final UUID TENANT = Ids.newId();
 
   private static final class CapturingNotifier extends Notifier {
     int calls;
@@ -53,7 +54,7 @@ class UserRegisteredHandlerTest {
 
   @Test
   void sendsWelcomeToTheRegisteredEmail() {
-    UUID user = UUID.randomUUID();
+    UUID user = Ids.newId();
     String json =
         "{\"eventId\":\""
             + EVENT
