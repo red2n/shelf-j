@@ -43,6 +43,21 @@ public class FiscalReceiptResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Allocates the numbered fiscal receipt for a completed sale.
+   *
+   * <p>Idempotent: a second call returns the document already issued rather than allocating another
+   * number — a reprint is not a sale, and two numbers for one sale is how a day's takings get
+   * counted twice. Normally unnecessary, since the number is taken when the sale is confirmed; this
+   * is the recovery path for a sale that completed while issuance was failing.
+   *
+   * @param orderId the completed sale to receipt
+   * @param series the numbering series, defaulting to {@code MAIN}
+   * @return the receipt, newly issued or already existing
+   * @throws com.shelfj.web.ApiException {@code 400} when the order is not a completed sale —
+   *     numbering a basket that is never paid for is where gaps come from; {@code 404} when the
+   *     order does not exist
+   */
   @Operation(
       summary = "Issue the numbered receipt for a sale",
       description =
@@ -65,6 +80,14 @@ public class FiscalReceiptResource {
         .build();
   }
 
+  /**
+   * The receipt issued for a sale: its number, when it was issued, and whether the sale was later
+   * voided.
+   *
+   * @param orderId the sale whose receipt to read
+   * @return the receipt
+   * @throws com.shelfj.web.ApiException {@code 404} when no receipt has been issued for this sale
+   */
   @Operation(
       summary = "The receipt issued for a sale",
       description = "Its number, when it was issued, and whether the sale was later voided.")
@@ -76,6 +99,15 @@ public class FiscalReceiptResource {
     return Response.ok(ApiResponse.ok(svc.receiptOf(ctx.requireTenantId(), orderId))).build();
   }
 
+  /**
+   * The register a store keeps: every receipt in a series, by number.
+   *
+   * @param storeId the store whose register to read
+   * @param series the numbering series, defaulting to {@code MAIN}
+   * @param period the fiscal year, e.g. {@code 2026}; defaults to the current UTC year
+   * @param limit maximum rows, defaulting to 100
+   * @return the receipts in number order
+   */
   @Operation(
       summary = "Every receipt in a series, in order",
       description =
@@ -100,6 +132,20 @@ public class FiscalReceiptResource {
         .build();
   }
 
+  /**
+   * Proves the numbering sequence has no holes — the inspector's question, answered by the database
+   * rather than by assertion.
+   *
+   * <p>{@code intact: true} with an empty {@code gaps} array is the proof. A gap is not necessarily
+   * fraud; it is the thing that has to be explained, which is why each is given as a range rather
+   * than a count.
+   *
+   * @param storeId the store whose series to audit
+   * @param series the numbering series, defaulting to {@code MAIN}
+   * @param period the fiscal year; defaults to the current UTC year
+   * @return first and last numbers, issued and expected counts, an {@code intact} flag, and every
+   *     gap with its range
+   */
   @Operation(
       summary = "Prove the sequence has no holes",
       description =

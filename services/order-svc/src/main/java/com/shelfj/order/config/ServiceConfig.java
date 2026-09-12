@@ -12,6 +12,14 @@ import java.util.Locale;
 import java.util.Map;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
+/**
+ * Typed config for order-svc — extends {@link BaseServiceConfig} for the 9 common properties.
+ *
+ * <p>Adds the order-specific safety switches: whether prices are resolved from pricing-svc rather
+ * than trusted from the client, whether ONLINE orders hold stock, the per-role discount ceilings,
+ * and the fallback currency. The two {@code enforce} flags default to the secure setting and warn
+ * loudly at boot when overridden.
+ */
 @ApplicationScoped
 public class ServiceConfig extends BaseServiceConfig {
 
@@ -38,6 +46,11 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.order.pricing.enforce", defaultValue = "true")
   boolean pricingEnforce;
 
+  /**
+   * Whether prices are resolved from pricing-svc rather than taken from the client.
+   *
+   * @return {@code true} unless overridden; {@code false} means client-supplied prices are trusted
+   */
   public boolean pricingEnforce() {
     return pricingEnforce;
   }
@@ -55,6 +68,11 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.order.currency.default", defaultValue = "GBP")
   String defaultCurrency;
 
+  /**
+   * The fallback currency described above.
+   *
+   * @return the configured fallback, {@code GBP} unless overridden
+   */
   public String defaultCurrency() {
     return defaultCurrency;
   }
@@ -76,6 +94,11 @@ public class ServiceConfig extends BaseServiceConfig {
 
   private Map<String, BigDecimal> discountCeilings = Map.of();
 
+  /**
+   * The parsed per-role discount ceilings described above.
+   *
+   * @return an immutable role → maximum percentage map; a role absent from it may not discount
+   */
   public Map<String, BigDecimal> discountCeilings() {
     return discountCeilings;
   }
@@ -121,6 +144,11 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.order.inventory.reserve-enforce", defaultValue = "true")
   boolean reserveEnforce;
 
+  /**
+   * Whether ONLINE orders hold stock in inventory-svc before being accepted.
+   *
+   * @return {@code true} unless overridden; {@code false} means concurrent checkouts can oversell
+   */
   public boolean reserveEnforce() {
     return reserveEnforce;
   }
@@ -134,6 +162,11 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.order.inventory.reservation-ttl-seconds", defaultValue = "172800")
   long reservationTtlSeconds;
 
+  /**
+   * How long a checkout stock hold lives.
+   *
+   * @return the hold lifetime in seconds, 48 hours unless overridden
+   */
   public long reservationTtlSeconds() {
     return reservationTtlSeconds;
   }
@@ -166,16 +199,32 @@ public class ServiceConfig extends BaseServiceConfig {
     }
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the Consul registration name, {@code order-svc} unless overridden
+   */
   @Override
   public String serviceName() {
     return serviceName;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the HTTP listen port; the {@code 8007} default is a local-dev convenience only, as
+   *     every service listens on 8080 in production
+   */
   @Override
   public int servicePort() {
     return servicePort;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the Postgres schema this service owns, {@code order} unless overridden
+   */
   @Override
   public String dbSchema() {
     return dbSchema;

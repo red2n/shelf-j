@@ -17,6 +17,12 @@ public final class Mappers {
 
   private Mappers() {}
 
+  /**
+   * Converts a customer profile to its wire form.
+   *
+   * @param c the customer profile to convert
+   * @return its API representation, with ids and timestamps rendered as strings
+   */
   public static CustomerResponse toCustomer(Customer c) {
     return new CustomerResponse(
         c.id().toString(),
@@ -32,6 +38,12 @@ public final class Mappers {
         ts(c.updatedAt()));
   }
 
+  /**
+   * Converts a customer address to its wire form.
+   *
+   * @param a the customer address to convert
+   * @return its API representation
+   */
   public static AddressResponse toAddress(CustomerAddress a) {
     return new AddressResponse(
         a.id().toString(),
@@ -47,11 +59,23 @@ public final class Mappers {
         ts(a.createdAt()));
   }
 
+  /**
+   * Converts a loyalty account to its wire form.
+   *
+   * @param la the loyalty account to convert
+   * @return its API representation: balance, lifetime points and tier
+   */
   public static LoyaltyAccountResponse toLoyalty(LoyaltyAccount la) {
     return new LoyaltyAccountResponse(
         la.customerId().toString(), la.pointsBalance(), la.lifetimePoints(), la.tier());
   }
 
+  /**
+   * Converts one append-only loyalty ledger entry to its wire form.
+   *
+   * @param e the ledger entry to convert
+   * @return its API representation, including the balance the entry left behind
+   */
   public static LoyaltyLedgerEntryResponse toLedgerEntry(LoyaltyLedgerEntry e) {
     return new LoyaltyLedgerEntryResponse(
         e.id().toString(),
@@ -63,6 +87,12 @@ public final class Mappers {
         ts(e.createdAt()));
   }
 
+  /**
+   * Converts a store-credit account to its wire form.
+   *
+   * @param sc the account to convert
+   * @return its API representation: balance and the currency it is held in
+   */
   public static StoreCreditAccountResponse toStoreCredit(StoreCreditAccount sc) {
     return new StoreCreditAccountResponse(sc.customerId().toString(), sc.balance(), sc.currency());
   }

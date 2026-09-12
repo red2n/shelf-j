@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /** Demand history: SALE-movement aggregation into buckets. Extracted from AdminResource. */
@@ -33,11 +34,20 @@ public class DemandHistoryResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Aggregates SALE movements into demand buckets.
+   *
+   * <p>Upserts per-store/variant demand buckets (day/week/month) from SALE-type stock movements,
+   * feeding safety-stock and ROP/EOQ computation.
+   *
+   * @param req the request body
+   */
   @Operation(
       summary = "Aggregate SALE movements into demand buckets",
       description =
           "Upserts per-store/variant demand buckets (day/week/month) from SALE-type stock"
               + " movements, feeding safety-stock and ROP/EOQ computation.")
+  @APIResponse(responseCode = "200", description = "Aggregate SALE movements into demand buckets")
   @POST
   @Path("/demand/aggregate")
   public ApiResponse<AggregateResult> aggregateDemand(AggregateRequest req) {
@@ -55,9 +65,20 @@ public class DemandHistoryResource {
     return ApiResponse.ok(new AggregateResult(bucketsUpserted, bucketType));
   }
 
+  /**
+   * Lists demand history buckets.
+   *
+   * <p>Filterable by store, variant, and bucket type.
+   *
+   * @param store the store (query parameter)
+   * @param variant the variant (query parameter)
+   * @param bucketType the bucket type (query parameter)
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(
       summary = "List demand history buckets",
       description = "Filterable by store, variant, and bucket type.")
+  @APIResponse(responseCode = "200", description = "List demand history buckets")
   @GET
   @Path("/demand/history")
   public ApiResponse<List<DemandBucketResponse>> listDemandHistory(

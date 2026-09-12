@@ -35,6 +35,15 @@ public class PriceOverrideResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Records that a cashier sold at a different price, and why.
+   *
+   * <p>An audit row, not a price change: nothing here alters the price list the override departed
+   * from.
+   *
+   * @param req the variant, store, original and override prices, reason and who authorised it
+   * @return {@code 201} with the recorded override
+   */
   @Operation(
       summary = "Record a POS price override",
       description =
@@ -50,6 +59,15 @@ public class PriceOverrideResource {
   }
 
   /** Cursor-paginated: {@code ?after=<meta.nextCursor>&limit=1-100}. */
+  /**
+   * Cursor-paginated audit log of manual price overrides.
+   *
+   * @param storeId restrict to one store, or {@code null} for all
+   * @param variantId restrict to one variant, or {@code null} for all
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100; clamped when absent or out of range
+   * @return the page of overrides, with the next cursor in {@code meta}
+   */
   @Operation(
       summary = "List price overrides",
       description =

@@ -23,6 +23,12 @@ import java.util.UUID;
 @ApplicationScoped
 public class SafetyStockRepository extends BaseJdbcRepository {
 
+  /**
+   * Creates or replaces a safety stock params.
+   *
+   * @param p the safety to persist
+   * @return the safety stock params as stored
+   */
   public SafetyStockParams upsertSafetyStockParams(SafetyStockParams p) {
     try (var c = dataSource.getConnection();
         var ps =
@@ -57,6 +63,14 @@ public class SafetyStockRepository extends BaseJdbcRepository {
     }
   }
 
+  /**
+   * Looks a safety stock params up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @return the safety stock params, or empty when it does not exist in this tenant
+   */
   public Optional<SafetyStockParams> findSafetyStockParams(
       UUID tenantId, UUID storeId, UUID variantId) {
     List<SafetyStockParams> rows =
@@ -76,6 +90,14 @@ public class SafetyStockRepository extends BaseJdbcRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Lists the tenant's safety stock params.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<SafetyStockParams> listSafetyStockParams(UUID tenantId, UUID storeId, int limit) {
     StringBuilder sb =
         new StringBuilder(

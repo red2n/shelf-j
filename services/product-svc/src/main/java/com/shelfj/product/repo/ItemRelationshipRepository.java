@@ -19,6 +19,12 @@ import java.util.UUID;
 @ApplicationScoped
 public class ItemRelationshipRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a relationship.
+   *
+   * @param r the relationship to persist
+   * @return the relationship as stored
+   */
   public ItemRelationship createRelationship(ItemRelationship r) {
     exec(
         "INSERT INTO item_relationships"
@@ -36,6 +42,13 @@ public class ItemRelationshipRepository extends BaseJdbcRepository {
     return r;
   }
 
+  /**
+   * Lists the tenant's relationships.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<ItemRelationship> listRelationships(UUID tenantId, UUID variantId) {
     return query(
         "SELECT id, tenant_id, variant_id, related_variant_id, relationship_type, created_at"
@@ -48,6 +61,13 @@ public class ItemRelationshipRepository extends BaseJdbcRepository {
         "list item relationships");
   }
 
+  /**
+   * Deletes a relationship.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the relationship to act on
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deleteRelationship(UUID tenantId, UUID id) {
     Instant[] found = {null};
     query(

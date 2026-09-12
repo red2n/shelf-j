@@ -37,6 +37,16 @@ public class SpecialOrderResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Places a customer order for goods the store does not stock.
+   *
+   * <p>No inventory is deducted or reserved: the goods do not exist in stock yet, which is the
+   * whole point of a special order.
+   *
+   * @param req the store, customer, items and optional currency
+   * @return {@code 201} with the special order and its lines
+   * @throws com.shelfj.web.ApiException {@code 400} when no items are supplied
+   */
   @Operation(
       summary = "Create a special order",
       description =
@@ -53,6 +63,15 @@ public class SpecialOrderResource {
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(so, items))).build();
   }
 
+  /**
+   * Cursor-paginated list of the tenant's special orders, each with its lines.
+   *
+   * @param storeId restrict to one store, or {@code null}
+   * @param customerId restrict to one customer, or {@code null}
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100; clamped when absent or out of range
+   * @return the page of special orders, with the next cursor in {@code meta}
+   */
   @Operation(
       summary = "List special orders",
       description =
@@ -77,6 +96,13 @@ public class SpecialOrderResource {
         .build();
   }
 
+  /**
+   * Reads one special order with its lines.
+   *
+   * @param id the special order to read
+   * @return the special order and its lines
+   * @throws com.shelfj.web.ApiException {@code 404} when it does not exist in the caller's tenant
+   */
   @Operation(
       summary = "Get a special order by id",
       description = "Special order detail with items.")
@@ -91,6 +117,14 @@ public class SpecialOrderResource {
         .build();
   }
 
+  /**
+   * Confirms a PENDING special order once the goods are on their way.
+   *
+   * @param id the special order to confirm
+   * @return the confirmed special order with its lines
+   * @throws com.shelfj.web.ApiException {@code 404} when it does not exist; a conflict when its
+   *     status does not allow confirmation
+   */
   @Operation(
       summary = "Confirm a special order",
       description = "Transitions a PENDING special order to CONFIRMED.")
@@ -105,6 +139,14 @@ public class SpecialOrderResource {
         .build();
   }
 
+  /**
+   * Marks a CONFIRMED special order handed over to the customer.
+   *
+   * @param id the special order to fulfil
+   * @return the fulfilled special order with its lines
+   * @throws com.shelfj.web.ApiException {@code 404} when it does not exist; a conflict when its
+   *     status does not allow fulfilment
+   */
   @Operation(
       summary = "Fulfil a special order",
       description = "Transitions a CONFIRMED special order to FULFILLED.")
@@ -119,6 +161,14 @@ public class SpecialOrderResource {
         .build();
   }
 
+  /**
+   * Cancels a special order that has not yet been handed over.
+   *
+   * @param id the special order to cancel
+   * @return the cancelled special order with its lines
+   * @throws com.shelfj.web.ApiException {@code 404} when it does not exist; {@code 409} when it has
+   *     already been fulfilled
+   */
   @Operation(
       summary = "Cancel a special order",
       description = "Cancels a special order. A fulfilled special order cannot be cancelled.")

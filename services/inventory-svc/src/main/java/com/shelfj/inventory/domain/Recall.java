@@ -29,6 +29,11 @@ public final class Recall {
     /** Taken off sale, and the customers who may have bought it are told. */
     RECALL;
 
+    /**
+     * Whether this kind of action obliges the business to notify customers.
+     *
+     * @return {@code true} for a RECALL; a WITHDRAWAL only takes stock off sale
+     */
     public boolean tellsCustomers() {
       return this == RECALL;
     }
@@ -69,6 +74,16 @@ public final class Recall {
       return this != IN_SCOPE;
     }
 
+    /**
+     * The more certain of two matches, so combining evidence never weakens a hold.
+     *
+     * <p>Certainty follows declaration order, {@code IN_SCOPE} being the most certain. A {@code
+     * null} is treated as no evidence and loses to anything.
+     *
+     * @param a one match, or {@code null}
+     * @param b the other match, or {@code null}
+     * @return whichever is more certain
+     */
     public static Match moreCertain(Match a, Match b) {
       if (a == null) return b;
       if (b == null) return a;
@@ -118,6 +133,11 @@ public final class Recall {
   public record Scope(
       UUID id, UUID variantId, String batchNo, LocalDate expiryFrom, LocalDate expiryTo) {
 
+    /**
+     * Whether this line sweeps in the whole variant rather than particular packs.
+     *
+     * @return {@code true} when the line names neither a lot nor a date range
+     */
     public boolean coversEveryPack() {
       return batchNo == null && expiryFrom == null && expiryTo == null;
     }
@@ -184,6 +204,11 @@ public final class Recall {
       Instant quarantinedAt,
       Release release) {
 
+    /**
+     * Whether this batch is still quarantined.
+     *
+     * @return {@code true} until someone checks it and releases it back to sale
+     */
     public boolean isHeld() {
       return release == null;
     }
@@ -212,6 +237,14 @@ public final class Recall {
           .collect(Collectors.toCollection(TreeSet::new));
     }
 
+    /**
+     * Every store still holding a quarantined batch, whether or not any stock remains.
+     *
+     * <p>Wider than {@link #outstandingStores()}: a store that has cleared its shelves is still
+     * affected, and still has to confirm what it did with the stock.
+     *
+     * @return the affected store ids, in a stable order
+     */
     public Set<UUID> affectedStores() {
       return batches.stream()
           .filter(HeldBatch::isHeld)
@@ -219,6 +252,11 @@ public final class Recall {
           .collect(Collectors.toCollection(TreeSet::new));
     }
 
+    /**
+     * Whether any store has recorded a disposition that settles the stock for good.
+     *
+     * @return {@code true} once at least one action is final, e.g. destroyed or returned
+     */
     public boolean hasFinalAction() {
       return actions.stream().anyMatch(a -> a.disposition().isFinal());
     }

@@ -36,6 +36,16 @@ public class IntercompanyInvoiceResource {
   @Inject PurchaseService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Raises the AR and AP sides of an intercompany transfer atomically.
+   *
+   * <p>Both sides commit together, with their FRS 102 / UK GAAP double-entry nominal ledger
+   * postings. Payment due date is invoice date + 30 days (BACS terms).
+   *
+   * @param req the sending and receiving stores, the amount and the invoice date
+   * @return {@code 201} with both sides of the pair
+   * @throws com.shelfj.web.ApiException {@code 400} when the two stores are the same
+   */
   @Operation(
       summary = "Raise an intercompany invoice pair",
       description =
@@ -56,9 +66,16 @@ public class IntercompanyInvoiceResource {
         .build();
   }
 
+  /**
+   * Lists the tenant's intercompany invoices, both AR and AP sides.
+   *
+   * @param limit page size; clamped to the platform default and maximum when absent or out of range
+   * @return the invoices
+   */
   @Operation(
       summary = "List intercompany invoices",
       description = "Lists intercompany invoices for the caller's tenant.")
+  @APIResponse(responseCode = "200", description = "The invoices")
   @GET
   public Response list(@jakarta.ws.rs.QueryParam("limit") Integer limit) {
     int clamped = com.shelfj.web.Cursor.clampLimit(limit);
@@ -68,6 +85,13 @@ public class IntercompanyInvoiceResource {
         .build();
   }
 
+  /**
+   * Reads a single AR or AP intercompany invoice.
+   *
+   * @param id the invoice to read
+   * @return the invoice
+   * @throws com.shelfj.web.ApiException {@code 404} when it does not exist in the caller's tenant
+   */
   @Operation(
       summary = "Get an intercompany invoice",
       description = "Returns a single AR or AP intercompany invoice.")
@@ -78,6 +102,15 @@ public class IntercompanyInvoiceResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(svc.getIntercompanyInvoice(ctx, id)))).build();
   }
 
+  /**
+   * Settles an intercompany invoice, posting its nominal-ledger entries.
+   *
+   * <p>Which entries depends on the side: bank/debtors for AR, creditors/bank for AP.
+   *
+   * @param id the invoice to settle
+   * @return {@code 204} with no body
+   * @throws com.shelfj.web.ApiException {@code 404} when it does not exist in the caller's tenant
+   */
   @Operation(
       summary = "Settle an intercompany invoice",
       description =

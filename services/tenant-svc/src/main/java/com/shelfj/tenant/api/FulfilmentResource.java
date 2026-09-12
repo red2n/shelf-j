@@ -28,6 +28,18 @@ public class FulfilmentResource {
   @Inject TenantService service;
   @Inject TenantContext ctx;
 
+  /**
+   * The store that should fulfil a DELIVERY order for a pincode.
+   *
+   * <p>Lowest-priority mapping wins. A tenant with no delivery areas at all falls back to its
+   * default (or first) store, so a single-store shop delivers without configuring anything; once
+   * any area exists, an unmapped pincode is a 404 rather than a silent fallback.
+   *
+   * @param pincode the delivery pincode to resolve; required
+   * @return the resolved store, with the matched pincode and its priority
+   * @throws com.shelfj.web.ApiException {@code 400} when the pincode is missing; {@code 404} when
+   *     areas are configured but none covers it, or the tenant has no stores
+   */
   @Operation(
       summary = "Resolve fulfilling store by pincode",
       description =

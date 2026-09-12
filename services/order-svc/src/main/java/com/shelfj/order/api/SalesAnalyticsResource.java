@@ -46,6 +46,23 @@ public class SalesAnalyticsResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Revenue bucketed by hour, so a manager can see when the shop is actually busy.
+   *
+   * <p>Everything is stored in UTC, so {@code tz} matters: without it a London peak lands an hour
+   * out in summer and an Indian one half an hour out all year. Only CONFIRMED and FULFILLED orders
+   * count, and hours with no trade are absent rather than zero.
+   *
+   * @param storeId restrict to one store, or {@code null}
+   * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null} for both
+   * @param from inclusive start as a full ISO-8601 instant, not a bare date
+   * @param to exclusive end as a full ISO-8601 instant
+   * @param tz IANA zone name whose clock the hours are counted on
+   * @return one row per hour that traded, earliest first
+   * @throws com.shelfj.web.ApiException {@code 400} for an unknown tz or channel, an unparseable
+   *     timestamp, or {@code from} not before {@code to}; {@code 403} when the caller is not OWNER
+   *     or MANAGER
+   */
   @Operation(
       summary = "Takings by hour of the trading day",
       description =
@@ -84,6 +101,21 @@ public class SalesAnalyticsResource {
     return Response.ok(ApiResponse.ok(rows, ApiResponse.Meta.of(ctx.requestId()))).build();
   }
 
+  /**
+   * What each cashier rang up, what they discounted, and their average basket.
+   *
+   * <p>Read from the POS transaction journal, so this is in-store only — an online order has no
+   * cashier, and these totals will therefore not reconcile against the sales summary. {@code
+   * UNATTRIBUTED} buckets journal entries naming nobody rather than dropping them.
+   *
+   * @param storeId restrict to one store, or {@code null}
+   * @param from inclusive start as a full ISO-8601 instant
+   * @param to exclusive end as a full ISO-8601 instant
+   * @param limit maximum rows; clamped to the resource's own bounds
+   * @return one row per cashier, biggest taker first
+   * @throws com.shelfj.web.ApiException {@code 400} for an unparseable timestamp or storeId, or
+   *     {@code from} not before {@code to}; {@code 403} when the caller is not OWNER or MANAGER
+   */
   @Operation(
       summary = "Takings by member of staff",
       description =

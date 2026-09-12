@@ -25,6 +25,13 @@ import java.util.UUID;
 @ApplicationScoped
 public class ItemTemplateRepository extends BaseOutboxRepository {
 
+  /**
+   * Inserts a template.
+   *
+   * @param t the template to persist
+   * @param event the outbox row to commit alongside the write
+   * @return the template as stored
+   */
   public ItemTemplate createTemplate(ItemTemplate t, OutboxRow event) {
     return inTx(
         c -> {
@@ -51,6 +58,13 @@ public class ItemTemplateRepository extends BaseOutboxRepository {
         "create item template");
   }
 
+  /**
+   * Looks a template up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the template to act on
+   * @return the template, or empty when it does not exist in this tenant
+   */
   public Optional<ItemTemplate> findTemplate(UUID tenantId, UUID id) {
     var rows =
         query(
@@ -65,6 +79,12 @@ public class ItemTemplateRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Lists the tenant's templates.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the matching rows
+   */
   public List<ItemTemplate> listTemplates(UUID tenantId) {
     return query(
         "SELECT id, tenant_id, name, description, attributes, status, created_at"
@@ -74,6 +94,13 @@ public class ItemTemplateRepository extends BaseOutboxRepository {
         "list item templates");
   }
 
+  /**
+   * Soft-deletes a template by marking it inactive.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the template to act on
+   * @return the template in its deactivated state
+   */
   public ItemTemplate deactivateTemplate(UUID tenantId, UUID id) {
     exec(
         "UPDATE item_templates SET status='INACTIVE' WHERE tenant_id=? AND id=?",
@@ -86,6 +113,15 @@ public class ItemTemplateRepository extends BaseOutboxRepository {
         .orElseThrow(() -> ApiException.notFound("TEMPLATE_NOT_FOUND", "Template not found"));
   }
 
+  /**
+   * Records that a template was applied to a variant, with its event — atomically.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the variant the template was applied to
+   * @param templateId the template applied
+   * @param event the outbox row to commit alongside the write
+   * @return the recorded application
+   */
   public ItemTemplateApplication applyTemplate(
       UUID tenantId, UUID variantId, UUID templateId, OutboxRow event) {
     return inTx(

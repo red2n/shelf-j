@@ -35,6 +35,17 @@ public class StorefrontResource {
   @Inject TenantService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Display rules for the guest online shop: price visibility, enabled tenders, address.
+   *
+   * <p>Needs no identity — the tenant comes from the storefront domain the gateway resolved, so a
+   * guest browsing the shop can read it.
+   *
+   * @param store the store to read config for, as {@code ?store=<storeId>}; required
+   * @return the store's public storefront configuration
+   * @throws ApiException {@code STORE_REQUIRED} or {@code INVALID_STORE} (400) when the parameter
+   *     is missing or not a UUID; {@code 404} when no such store exists in the tenant
+   */
   @Operation(
       summary = "Get a store's public storefront config",
       description =
@@ -63,12 +74,18 @@ public class StorefrontResource {
    * Whether this tenant may currently transact — the gateway calls this (cached) to gate storefront
    * browsing and checkout, so a deactivated business's online shop stops serving. Tenant comes from
    * {@code X-Tenant-Id} (gateway sets it from the storefront domain/header).
+   *
+   * @return a single flag: whether the tenant's status is ACTIVE
+   * @throws ApiException {@code TENANT_NOT_FOUND} (404) when the tenant does not exist
    */
   @Operation(
       summary = "Check whether the tenant may currently transact",
       description =
           "Gateway calls this (cached) to gate storefront browsing and checkout, so a deactivated"
               + " business's online shop stops serving.")
+  @APIResponse(
+      responseCode = "200",
+      description = "A single flag: whether the tenant's status is ACTIVE")
   @GET
   @Path("/active")
   public ApiResponse<TenantActiveResponse> active() {
@@ -77,16 +94,31 @@ public class StorefrontResource {
     return ApiResponse.ok(new TenantActiveResponse("ACTIVE".equalsIgnoreCase(t.status())));
   }
 
-  /** Minimal active-flag projection for the gateway's storefront suspension gate. */
+  /**
+   * Minimal active-flag projection for the gateway's storefront suspension gate.
+   *
+   * @param active true if the tenant's status is ACTIVE
+   */
   @Schema(
       name = "TenantActiveResponse",
       description = "Minimal active-flag projection for the gateway's storefront suspension gate.")
   public record TenantActiveResponse(
       @Schema(description = "True if the tenant's status is ACTIVE.") boolean active) {}
 
+  /**
+   * The tenant's ACTIVE stores, for the storefront's store switcher.
+   *
+   * <p>Closed and suspended stores are filtered out, so a shopper is never offered one that cannot
+   * take an order.
+   *
+   * @return the active stores' public storefront configurations
+   */
   @Operation(
       summary = "List active stores for the tenant",
       description = "Powers the storefront's store switcher.")
+  @APIResponse(
+      responseCode = "200",
+      description = "The active stores' public storefront configurations")
   @GET
   @Path("/stores")
   public ApiResponse<List<StorefrontConfigResponse>> stores() {

@@ -42,6 +42,21 @@ public class ValuationResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Values the stock on hand.
+   *
+   * <p>Values remaining batch quantities on the costing basis configured per store and variant:
+   * FIFO values each batch at its own cost, AVERAGE values the holding at the configured standard
+   * cost. Group by STORE for a rollup or VARIANT for the detail. Quantities that carry no cost are
+   * reported as unvaluedQty rather than valued at zero, so the figure is never silently
+   * understated.
+   *
+   * @param storeId the store id (query parameter)
+   * @param groupBy the group by (query parameter)
+   * @param limit the limit (query parameter)
+   * @return rows ordered by value, largest holding first
+   * @throws com.shelfj.web.ApiException {@code 400} unknown groupBy or malformed storeId
+   */
   @Operation(
       summary = "Value the stock on hand",
       description =

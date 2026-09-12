@@ -17,6 +17,16 @@ import java.util.UUID;
 @ApplicationScoped
 public class MovementRepository extends BaseJdbcRepository {
 
+  /**
+   * Lists the tenant's movements.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param type the type to filter on
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<Movement> listMovements(
       UUID tenantId, UUID storeId, UUID variantId, String type, int limit) {
     StringBuilder sb =

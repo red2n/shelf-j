@@ -14,6 +14,12 @@ import java.util.Map;
 import java.util.Optional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
+/**
+ * Typed config for purchase-svc — extends {@link BaseServiceConfig} for the 9 common properties.
+ *
+ * <p>Adds the purchasing-specific settings: the fallback currency, the per-currency/per-role spend
+ * authority that gates purchase-order submission, and the three-way match tolerances.
+ */
 @ApplicationScoped
 public class ServiceConfig extends BaseServiceConfig {
 
@@ -21,11 +27,22 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "server.port", defaultValue = "8009")
   int servicePort;
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return always {@code purchase-svc}
+   */
   @Override
   public String serviceName() {
     return "purchase-svc";
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the HTTP listen port; the {@code 8009} default is a local-dev convenience only, as
+   *     every service listens on 8080 in production
+   */
   @Override
   public int servicePort() {
     return servicePort;
@@ -46,6 +63,11 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.purchase.currency.default", defaultValue = "GBP")
   String defaultCurrency;
 
+  /**
+   * The fallback currency described above.
+   *
+   * @return the configured fallback, {@code GBP} unless overridden
+   */
   public String defaultCurrency() {
     return defaultCurrency;
   }
@@ -92,6 +114,12 @@ public class ServiceConfig extends BaseServiceConfig {
   }
 
   /** Whether any spend authority is configured at all. When false, submission is never routed. */
+  /**
+   * Whether any spend authority is configured.
+   *
+   * @return {@code false} when the limits table is empty, in which case submission is never routed
+   *     for approval
+   */
   public boolean approvalEnabled() {
     return !approvalLimits.isEmpty();
   }
@@ -179,13 +207,21 @@ public class ServiceConfig extends BaseServiceConfig {
   BigDecimal matchQtyPercent;
 
   /**
-   * @return the configured match tolerance
+   * The configured three-way match tolerances.
+   *
+   * @return the accepted price and quantity percentages; both zero by default, which surfaces any
+   *     difference at all
    * @throws IllegalStateException at first use if either percentage is negative
    */
   public ThreeWayMatch.Tolerance matchTolerance() {
     return new ThreeWayMatch.Tolerance(matchPricePercent, matchQtyPercent);
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return always {@code purchase}, the Postgres schema this service owns
+   */
   @Override
   public String dbSchema() {
     return "purchase";

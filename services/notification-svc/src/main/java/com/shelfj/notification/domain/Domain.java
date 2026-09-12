@@ -4,6 +4,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * Internal domain records for notification-svc — alerts raised and messages delivered.
+ *
+ * <p>These never cross the HTTP boundary: {@link com.shelfj.notification.mapper.Mappers} converts
+ * them to the DTOs in {@link com.shelfj.notification.dto.Dtos} first.
+ */
 public final class Domain {
 
   private Domain() {}

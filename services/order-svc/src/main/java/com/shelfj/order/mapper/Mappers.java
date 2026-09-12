@@ -45,11 +45,24 @@ public final class Mappers {
 
   private Mappers() {}
 
+  /**
+   * Converts one order line to its wire form.
+   *
+   * @param i one order line to convert
+   * @return its API representation
+   */
   public static OrderItemResponse toDto(OrderItem i) {
     return new OrderItemResponse(
         str(i.id()), str(i.variantId()), i.qty(), i.unitPrice(), i.lineTotal(), i.notes());
   }
 
+  /**
+   * Converts an order and its lines to the full wire form.
+   *
+   * @param o the order header
+   * @param items the order's lines
+   * @return its API representation, header and lines together
+   */
   public static OrderResponse toDto(Order o, List<OrderItem> items) {
     return new OrderResponse(
         str(o.id()),
@@ -80,6 +93,12 @@ public final class Mappers {
         o.paymentMethod());
   }
 
+  /**
+   * Converts an order summary to its wire form.
+   *
+   * @param o the order summary to convert
+   * @return its API representation
+   */
   public static OrderSummaryResponse toSummary(Order o) {
     return new OrderSummaryResponse(
         str(o.id()),
@@ -98,6 +117,12 @@ public final class Mappers {
         o.paymentMethod());
   }
 
+  /**
+   * Converts one status transition to its wire form.
+   *
+   * @param h one status transition to convert
+   * @return its API representation
+   */
   public static OrderStatusHistoryResponse toDto(OrderStatusHistory h) {
     return new OrderStatusHistoryResponse(
         str(h.id()),
@@ -109,11 +134,24 @@ public final class Mappers {
         ts(h.changedAt()));
   }
 
+  /**
+   * Converts one returned line to its wire form.
+   *
+   * @param ri one returned line to convert
+   * @return its API representation
+   */
   public static ReturnItemResponse toDto(ReturnItem ri) {
     return new ReturnItemResponse(
         str(ri.id()), str(ri.variantId()), ri.qty(), ri.refundAmount(), ri.condition());
   }
 
+  /**
+   * Converts a return and its lines to the full wire form.
+   *
+   * @param r the return header
+   * @param items the returned lines
+   * @return its API representation, header and lines together
+   */
   public static ReturnResponse toDto(Return r, List<ReturnItem> items) {
     return new ReturnResponse(
         str(r.id()),
@@ -128,20 +166,46 @@ public final class Mappers {
         items.stream().map(Mappers::toDto).toList());
   }
 
+  /**
+   * Converts a recorded void to its wire form.
+   *
+   * @param vl the recorded void to convert
+   * @return its API representation
+   */
   public static VoidResponse toDto(PosVoidLog vl) {
     return new VoidResponse(str(vl.orderId()), vl.reason(), ts(vl.voidedAt()));
   }
 
+  /**
+   * Converts one layaway line to its wire form.
+   *
+   * @param li one layaway line to convert
+   * @return its API representation
+   */
   public static LayawayItemResponse toDto(LayawayItem li) {
     return new LayawayItemResponse(
         str(li.id()), str(li.variantId()), li.qty(), li.unitPrice(), li.lineTotal());
   }
 
+  /**
+   * Converts one layaway payment to its wire form.
+   *
+   * @param d one layaway payment to convert
+   * @return its API representation
+   */
   public static LayawayDepositResponse toDto(LayawayDeposit d) {
     return new LayawayDepositResponse(
         str(d.id()), d.amount(), d.paymentMethod(), d.reference(), ts(d.paidAt()));
   }
 
+  /**
+   * Converts a layaway with its goods and payments to the full wire form.
+   *
+   * @param l the layaway header, carrying the total and outstanding balance
+   * @param items the goods set aside
+   * @param deposits the payments made so far
+   * @return its API representation, header, items and deposits together
+   */
   public static LayawayResponse toDto(
       Layaway l, List<LayawayItem> items, List<LayawayDeposit> deposits) {
     return new LayawayResponse(
@@ -161,6 +225,12 @@ public final class Mappers {
         deposits.stream().map(Mappers::toDto).toList());
   }
 
+  /**
+   * Converts a gift card to its wire form.
+   *
+   * @param gc the gift card to convert
+   * @return its API representation
+   */
   public static GiftCardResponse toDto(GiftCard gc) {
     return new GiftCardResponse(
         str(gc.id()),
@@ -174,6 +244,12 @@ public final class Mappers {
         ts(gc.expiresAt()));
   }
 
+  /**
+   * Converts one gift-card transaction to its wire form.
+   *
+   * @param tx one gift-card transaction to convert
+   * @return its API representation
+   */
   public static GiftCardTransactionResponse toDto(GiftCardTransaction tx) {
     return new GiftCardTransactionResponse(
         str(tx.id()),
@@ -186,11 +262,24 @@ public final class Mappers {
         ts(tx.createdAt()));
   }
 
+  /**
+   * Converts one special-order line to its wire form.
+   *
+   * @param i one special-order line to convert
+   * @return its API representation
+   */
   public static SpecialOrderItemResponse toDto(SpecialOrderItem i) {
     return new SpecialOrderItemResponse(
         str(i.id()), str(i.variantId()), i.qty(), i.unitPrice(), i.lineTotal(), i.notes());
   }
 
+  /**
+   * Converts a special order and its lines to the full wire form.
+   *
+   * @param so the special-order header
+   * @param items the ordered lines
+   * @return its API representation, header and lines together
+   */
   public static SpecialOrderResponse toDto(SpecialOrder so, List<SpecialOrderItem> items) {
     return new SpecialOrderResponse(
         str(so.id()),
@@ -211,6 +300,12 @@ public final class Mappers {
         items.stream().map(Mappers::toDto).toList());
   }
 
+  /**
+   * Converts one exception-report row to its wire form.
+   *
+   * @param r one exception-report row to convert
+   * @return its API representation
+   */
   public static ExceptionRowResponse toDto(ExceptionRow r) {
     return new ExceptionRowResponse(
         r.groupKey(),
@@ -222,6 +317,12 @@ public final class Mappers {
         r.salesValue());
   }
 
+  /**
+   * Converts one POSLog entry to its wire form.
+   *
+   * @param e one POSLog entry to convert
+   * @return its API representation
+   */
   public static PosLogEntryResponse toDto(PosLogEntry e) {
     return new PosLogEntryResponse(
         str(e.id()),
@@ -239,6 +340,12 @@ public final class Mappers {
         ts(e.createdAt()));
   }
 
+  /**
+   * Converts one receipt event to its wire form.
+   *
+   * @param r one receipt event to convert
+   * @return its API representation
+   */
   public static OrderReceiptResponse toDto(OrderReceipt r) {
     return new OrderReceiptResponse(
         str(r.id()),
@@ -257,11 +364,23 @@ public final class Mappers {
     return i == null ? null : i.toString();
   }
 
+  /**
+   * Converts one hourly sales bucket to its wire form.
+   *
+   * @param r one hourly sales bucket to convert
+   * @return its API representation
+   */
   public static SalesByHourRowResponse toDto(SalesByHourRow r) {
     return new SalesByHourRowResponse(
         r.hourOfDay(), r.orders(), r.grossAmount(), r.discountAmount(), r.averageBasket());
   }
 
+  /**
+   * Converts one staff member's sales to its wire form.
+   *
+   * @param r one staff member's sales to convert
+   * @return its API representation
+   */
   public static SalesByStaffRowResponse toDto(SalesByStaffRow r) {
     return new SalesByStaffRowResponse(
         r.groupKey(),

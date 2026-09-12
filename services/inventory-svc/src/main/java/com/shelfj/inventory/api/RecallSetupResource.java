@@ -49,6 +49,18 @@ public class RecallSetupResource {
   @Inject RecallService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Opens a withdrawal or recall.
+   *
+   * <p>Every batch in scope, at every store, is taken off sale in the same transaction. A batch
+   * whose lot or date is not known is held too, as possibly affected. Stock that arrives later
+   * under an open recall is held as it arrives. The reference is unique, so a retried open is
+   * refused rather than opening a second recall.
+   *
+   * @param req the request body
+   * @return opened ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 409} a recall with that reference exists
+   */
   @Operation(
       summary = "Open a withdrawal or recall",
       description =
@@ -80,6 +92,16 @@ public class RecallSetupResource {
         .build();
   }
 
+  /**
+   * Closes a recall.
+   *
+   * <p>Refused while any store still holds stock the recall took off sale with no final
+   * disposition; the error names those stores.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 409} stores outstanding, or not open
+   */
   @Operation(
       summary = "Close a recall",
       description =
@@ -101,6 +123,16 @@ public class RecallSetupResource {
     return ApiResponse.ok(RecallMappers.toRecall(detail), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Cancels a recall opened in error.
+   *
+   * <p>Puts its stock back on sale. Refused once any store has returned or destroyed stock under
+   * it.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 409} stock already disposed of, or not open
+   */
   @Operation(
       summary = "Cancel a recall opened in error",
       description =

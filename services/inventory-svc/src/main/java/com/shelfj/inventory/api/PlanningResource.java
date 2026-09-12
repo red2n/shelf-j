@@ -41,9 +41,17 @@ public class PlanningResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Sets a reorder threshold for a variant at a store.
+   *
+   * <p>min threshold that triggers a low-stock suggestion, plus an optional max qty.
+   *
+   * @param req the request body
+   */
   @Operation(
       summary = "Set a reorder threshold for a variant at a store",
       description = "min threshold that triggers a low-stock suggestion, plus an optional max qty.")
+  @APIResponse(responseCode = "201", description = "Created")
   @POST
   @Path("/thresholds")
   public Response setThreshold(ThresholdRequest req) {
@@ -61,7 +69,15 @@ public class PlanningResource {
         .build();
   }
 
+  /**
+   * Lists reorder thresholds.
+   *
+   * <p>Filterable by store.
+   *
+   * @param store the store (query parameter)
+   */
   @Operation(summary = "List reorder thresholds", description = "Filterable by store.")
+  @APIResponse(responseCode = "200", description = "List reorder thresholds")
   @GET
   @Path("/thresholds")
   public ApiResponse<List<ThresholdResponse>> listThresholds(@QueryParam("store") String store) {
@@ -72,11 +88,20 @@ public class PlanningResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Runs the min-max replenishment plan.
+   *
+   * <p>Generates replenishment suggestions for variants whose available qty has fallen below its
+   * threshold.
+   *
+   * @param store the store (query parameter)
+   */
   @Operation(
       summary = "Run the min-max replenishment plan",
       description =
           "Generates replenishment suggestions for variants whose available qty has"
               + " fallen below its threshold.")
+  @APIResponse(responseCode = "200", description = "Run the min-max replenishment plan")
   @POST
   @Path("/planning/run")
   public ApiResponse<List<SuggestionResponse>> runMinMaxPlan(@QueryParam("store") String store) {
@@ -87,9 +112,19 @@ public class PlanningResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Lists replenishment suggestions.
+   *
+   * <p>Filterable by store and status.
+   *
+   * @param store the store (query parameter)
+   * @param status the status (query parameter)
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(
       summary = "List replenishment suggestions",
       description = "Filterable by store and status.")
+  @APIResponse(responseCode = "200", description = "List replenishment suggestions")
   @GET
   @Path("/planning/suggestions")
   public ApiResponse<List<SuggestionResponse>> listSuggestions(
@@ -107,6 +142,15 @@ public class PlanningResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Resolves a replenishment suggestion.
+   *
+   * <p>Sets the suggestion's status (e.g. ACCEPTED/DISMISSED).
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} no open suggestion with that id
+   */
   @Operation(
       summary = "Resolve a replenishment suggestion",
       description = "Sets the suggestion's status (e.g. ACCEPTED/DISMISSED).")

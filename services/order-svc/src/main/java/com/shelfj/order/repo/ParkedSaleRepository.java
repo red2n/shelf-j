@@ -23,6 +23,21 @@ import java.util.UUID;
 @ApplicationScoped
 public class ParkedSaleRepository extends BaseOutboxRepository {
 
+  /**
+   * Stores a parked sale with its lines — atomically.
+   *
+   * @param tenantId owning tenant
+   * @param saleId the parked sale's id, already a UUIDv7
+   * @param cashierId the cashier parking it
+   * @param storeId the store the sale was rung in
+   * @param customerId the customer, or {@code null} for an anonymous sale
+   * @param customerName a name to show on the parked list, or {@code null}
+   * @param subtotal the basket total after line discounts
+   * @param discountTotal the discount taken off across all lines
+   * @param notes free-text note, or {@code null}
+   * @param items the lines being parked
+   * @return the parked sale as stored
+   */
   public ParkedSaleResponse park(
       UUID tenantId,
       UUID saleId,
@@ -55,10 +70,27 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
         "park sale");
   }
 
+  /**
+   * Reads one parked sale with its lines.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param saleId the parked sale to read
+   * @return the parked sale
+   * @throws com.shelfj.web.ApiException a 404 when no such parked sale exists in this tenant
+   */
   public ParkedSaleResponse findById(UUID tenantId, UUID saleId) {
     return inTx(c -> buildResponse(tenantId, saleId, c), "find parked sale");
   }
 
+  /**
+   * The still-open parked sales, newest first.
+   *
+   * <p>Cancelled and resumed sales are excluded: this backs the till's "pick one back up" list.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId restrict to one store, or {@code null} for the whole tenant
+   * @return the open parked sales with their lines
+   */
   public List<ParkedSaleResponse> listOpen(UUID tenantId, UUID storeId) {
     return inTx(
         c -> {
@@ -81,6 +113,12 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
         "list parked sales");
   }
 
+  /**
+   * Marks a parked sale cancelled so it leaves the open list.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param saleId the parked sale to cancel
+   */
   public void cancel(UUID tenantId, UUID saleId) {
     exec(
         "DELETE FROM parked_sales WHERE tenant_id=? AND id=? AND resumed_at IS NULL",
@@ -91,6 +129,17 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
         "cancel parked sale");
   }
 
+  /**
+   * Appends a no-sale / open-drawer audit entry.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store whose drawer was opened, or {@code null}
+   * @param cashierId the cashier who opened it
+   * @param tillSessionId the till session it happened in, or {@code null}
+   * @param reason the stated reason
+   * @param orderId an associated order, or {@code null} — a no-sale normally has none
+   * @return the logged entry
+   */
   public NoSaleResponse logNoSale(
       UUID tenantId,
       UUID storeId,

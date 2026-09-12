@@ -322,6 +322,12 @@ public class InventoryRepository extends BaseOutboxRepository {
       return new ReserveOutcome(null, e);
     }
 
+    /**
+     * Whether this line's hold was placed.
+     *
+     * @return {@code true} when a reservation came back, {@code false} when it carries the error
+     *     that stopped it
+     */
     public boolean succeeded() {
       return error == null;
     }
@@ -583,6 +589,15 @@ public class InventoryRepository extends BaseOutboxRepository {
         "find expired reservations with tenant");
   }
 
+  /**
+   * The tenant a reservation belongs to.
+   *
+   * <p>Deliberately not tenant-scoped: the sweeper works across tenants and needs to learn which
+   * tenant an expired hold belongs to before it can act within that tenant's scope.
+   *
+   * @param reservationId the reservation to resolve
+   * @return the owning tenant id, or {@code null} when no such reservation exists
+   */
   public UUID tenantOfReservation(UUID reservationId) {
     var list =
         query(
@@ -709,6 +724,16 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   // ---------------------------------------------------------------- batches (read)
 
+  /**
+   * Lists the tenant's batches.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param materialStatus the material status
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<Batch> listBatches(
       UUID tenantId, UUID storeId, UUID variantId, String materialStatus, int limit) {
     StringBuilder sb =
@@ -746,6 +771,13 @@ public class InventoryRepository extends BaseOutboxRepository {
         "list batches");
   }
 
+  /**
+   * Looks a stock batch up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param batchId the batch to fetch
+   * @return the batch, or empty when it does not exist in this tenant
+   */
   public Optional<Batch> getBatch(UUID tenantId, UUID batchId) {
     var list =
         query(
@@ -764,6 +796,15 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   // ---------------------------------------------------------------- reservations (read)
 
+  /**
+   * Lists the tenant's reservations.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<Reservation> listReservations(UUID tenantId, UUID storeId, String status, int limit) {
     StringBuilder sb =
         new StringBuilder(
@@ -810,6 +851,13 @@ public class InventoryRepository extends BaseOutboxRepository {
         "held reservations by order");
   }
 
+  /**
+   * Looks a reservation up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param reservationId the reservation id
+   * @return the reservation, or empty when it does not exist in this tenant
+   */
   public Optional<Reservation> findReservation(UUID tenantId, UUID reservationId) {
     var list =
         query(
@@ -1310,6 +1358,13 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   // ---------------------------------------------------------------- move orders
 
+  /**
+   * Inserts a move order.
+   *
+   * @param order the order to persist
+   * @param lines the lines to store
+   * @return the move order as stored
+   */
   public MoveOrder createMoveOrder(MoveOrder order, List<MoveOrderLine> lines) {
     return inTx(
         c -> {
@@ -1336,6 +1391,15 @@ public class InventoryRepository extends BaseOutboxRepository {
         "create move order");
   }
 
+  /**
+   * Lists the tenant's move orders.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<MoveOrder> listMoveOrders(UUID tenantId, UUID storeId, String status, int limit) {
     StringBuilder sb =
         new StringBuilder(
@@ -1361,6 +1425,13 @@ public class InventoryRepository extends BaseOutboxRepository {
         "list move orders");
   }
 
+  /**
+   * Looks a move order up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the move order to act on
+   * @return the move order, or empty when it does not exist in this tenant
+   */
   public Optional<MoveOrder> findMoveOrder(UUID tenantId, UUID id) {
     List<MoveOrder> rows =
         query(
@@ -1376,6 +1447,12 @@ public class InventoryRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Lists the tenant's move order lines.
+   *
+   * @param moveOrderId the move order id
+   * @return the matching rows
+   */
   public List<MoveOrderLine> listMoveOrderLines(UUID moveOrderId) {
     return query(
         "SELECT id, tenant_id, move_order_id, variant_id, requested_qty, picked_qty"
@@ -1467,6 +1544,14 @@ public class InventoryRepository extends BaseOutboxRepository {
         "pick move order");
   }
 
+  /**
+   * Cancels a move order and writes its event — atomically.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the move order to cancel
+   * @param event the outbox row to commit alongside
+   * @return the cancelled order, or empty when it does not exist or is no longer cancellable
+   */
   public Optional<MoveOrder> cancelMoveOrder(UUID tenantId, UUID orderId, OutboxRow event) {
     return inTx(
         c -> {
@@ -1556,6 +1641,13 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   // ---------------------------------------------------------------- transfer orders
 
+  /**
+   * Inserts a transfer order.
+   *
+   * @param order the order to persist
+   * @param lines the lines to store
+   * @return the transfer order as stored
+   */
   public TransferOrder createTransferOrder(TransferOrder order, List<TransferOrderLine> lines) {
     return inTx(
         c -> {
@@ -1581,6 +1673,15 @@ public class InventoryRepository extends BaseOutboxRepository {
         "create transfer order");
   }
 
+  /**
+   * Lists the tenant's transfer orders.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<TransferOrder> listTransferOrders(
       UUID tenantId, UUID storeId, String status, int limit) {
     StringBuilder sb =
@@ -1607,6 +1708,13 @@ public class InventoryRepository extends BaseOutboxRepository {
         "list transfer orders");
   }
 
+  /**
+   * Looks a transfer order up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the transfer order to act on
+   * @return the transfer order, or empty when it does not exist in this tenant
+   */
   public Optional<TransferOrder> findTransferOrder(UUID tenantId, UUID id) {
     List<TransferOrder> rows =
         query(
@@ -1622,6 +1730,12 @@ public class InventoryRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Lists the tenant's transfer order lines.
+   *
+   * @param transferOrderId the transfer order id
+   * @return the matching rows
+   */
   public List<TransferOrderLine> listTransferOrderLines(UUID transferOrderId) {
     return query(
         "SELECT id, tenant_id, transfer_order_id, variant_id,"
@@ -1808,6 +1922,14 @@ public class InventoryRepository extends BaseOutboxRepository {
         "receive transfer order");
   }
 
+  /**
+   * Cancels a transfer order and writes its event — atomically.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the transfer order to cancel
+   * @param event the outbox row to commit alongside
+   * @return the cancelled order, or empty when it does not exist or has already shipped
+   */
   public Optional<TransferOrder> cancelTransferOrder(UUID tenantId, UUID orderId, OutboxRow event) {
     return inTx(
         c -> {
@@ -1900,6 +2022,14 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   // ── Tier-1 Gap #24: Expiry alert query ────────────────────────────────────
 
+  /**
+   * Lists the tenant's expiring batches.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param withinDays the within days
+   * @return the matching rows
+   */
   public List<Batch> listExpiringBatches(UUID tenantId, UUID storeId, int withinDays) {
     return query(
         "SELECT id,tenant_id,store_id,variant_id,batch_no,received_qty,remaining_qty,"
@@ -1920,6 +2050,14 @@ public class InventoryRepository extends BaseOutboxRepository {
 
   // ── Tier-1 Gap #25: Grade update on batch ────────────────────────────────
 
+  /**
+   * Writes a batch grade back with its new values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param batchId the batch id
+   * @param grade the stock grade
+   * @return the batch grade as stored
+   */
   public Batch updateBatchGrade(UUID tenantId, UUID batchId, String grade) {
     return inTx(
         c -> {

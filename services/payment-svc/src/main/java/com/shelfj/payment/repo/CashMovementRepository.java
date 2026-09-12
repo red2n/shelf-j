@@ -86,6 +86,13 @@ public class CashMovementRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Lists the pay-ins and pay-outs recorded against one till session.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param tillSessionId the session whose movements to list
+   * @return the movements, empty when none were recorded
+   */
   public List<CashMovementResponse> listMovements(UUID tenantId, UUID tillSessionId) {
     return query(
         "SELECT id, tenant_id, store_id, till_session_id, direction, amount, reason,"
@@ -204,6 +211,14 @@ public class CashMovementRepository extends BaseOutboxRepository {
         "generate z-report");
   }
 
+  /**
+   * Reads a settled Z-report for one store and business day.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store whose report to read
+   * @param businessDate the business date the report settled
+   * @return the report, or empty when that day has not been settled
+   */
   public Optional<ZReportResponse> findZReport(
       UUID tenantId, UUID storeId, LocalDate businessDate) {
     return inTx(

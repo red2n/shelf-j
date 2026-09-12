@@ -33,6 +33,15 @@ public class MeResource {
   @Inject TenantContext ctx;
   @Inject AuthService auth;
 
+  /**
+   * The authenticated caller's own identity.
+   *
+   * <p>Roles come from the presented access token rather than a fresh database read, so a role
+   * granted or removed since the token was minted is not reflected until it is refreshed.
+   *
+   * @return the caller's identity, tenant, type, roles and status
+   * @throws com.shelfj.web.ApiException {@code 401} when there is no authenticated user
+   */
   @Operation(
       summary = "Get the current principal",
       description = "The authenticated user's identity and the roles their access token carries.")

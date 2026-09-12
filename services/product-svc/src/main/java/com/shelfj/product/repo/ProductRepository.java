@@ -85,6 +85,13 @@ public class ProductRepository extends BaseOutboxRepository {
 
   // ──────────────────────────────────────────── products (atomic with outbox)
 
+  /**
+   * Inserts a product and its event in one transaction.
+   *
+   * @param p the product to persist
+   * @param event the outbox row to commit alongside the write
+   * @return the product as stored
+   */
   public Product createProductWithOutbox(Product p, OutboxRow event) {
     return inTx(
         c -> {
@@ -95,6 +102,13 @@ public class ProductRepository extends BaseOutboxRepository {
         "create product");
   }
 
+  /**
+   * Writes a product back and its event in one transaction.
+   *
+   * @param p the product to persist
+   * @param event the outbox row to commit alongside the write
+   * @return the product as stored
+   */
   public Product updateProductWithOutbox(Product p, OutboxRow event) {
     Product updated =
         inTx(
@@ -126,6 +140,13 @@ public class ProductRepository extends BaseOutboxRepository {
     return updated;
   }
 
+  /**
+   * Looks a product up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the product to act on
+   * @return the product, or empty when it does not exist in this tenant
+   */
   public Optional<Product> findProduct(UUID tenantId, UUID id) {
     String cacheKey = productKey(tenantId, id);
     String cached = cache.get(cacheKey);
@@ -149,6 +170,14 @@ public class ProductRepository extends BaseOutboxRepository {
 
   // ── product image (one primary image per product, BYTEA) ──────────────────
 
+  /**
+   * Creates or replaces a product image.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param productId the product id
+   * @param contentType the content type
+   * @param bytes the raw image bytes
+   */
   public void upsertProductImage(UUID tenantId, UUID productId, String contentType, byte[] bytes) {
     exec(
         "INSERT INTO product_images (product_id, tenant_id, content_type, bytes, updated_at)"
@@ -166,6 +195,13 @@ public class ProductRepository extends BaseOutboxRepository {
         "upsert product image");
   }
 
+  /**
+   * Looks a product image up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param productId the product id
+   * @return the product image, or empty when it does not exist in this tenant
+   */
   public Optional<com.shelfj.product.domain.Domain.ProductImage> findProductImage(
       UUID tenantId, UUID productId) {
     return query(
@@ -185,6 +221,12 @@ public class ProductRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Deletes a product image.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param productId the product id
+   */
   public void deleteProductImage(UUID tenantId, UUID productId) {
     exec(
         "DELETE FROM product_images WHERE tenant_id = ? AND product_id = ?",
@@ -373,6 +415,13 @@ public class ProductRepository extends BaseOutboxRepository {
 
   // ── per-store assortment ─────────────────────────────────────────────────
 
+  /**
+   * The stores a product's assortment is restricted to.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param productId the product whose assortment to read
+   * @return the store ids; an empty list means the product is sold at every store
+   */
   public List<UUID> storesForProduct(UUID tenantId, UUID productId) {
     return query(
         "SELECT store_id FROM product_stores WHERE tenant_id = ? AND product_id = ?",
@@ -544,6 +593,13 @@ public class ProductRepository extends BaseOutboxRepository {
 
   // ─────────────────────────────────────────── variants (atomic with outbox)
 
+  /**
+   * Inserts a variant and its event in one transaction.
+   *
+   * @param v the variant to persist
+   * @param event the outbox row to commit alongside the write
+   * @return the variant as stored
+   */
   public Variant createVariantWithOutbox(Variant v, OutboxRow event) {
     return inTx(
         c -> {
@@ -563,6 +619,13 @@ public class ProductRepository extends BaseOutboxRepository {
         "create variant");
   }
 
+  /**
+   * Looks a variant up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return the variant, or empty when it does not exist in this tenant
+   */
   public Optional<Variant> findVariant(UUID tenantId, UUID variantId) {
     return query(
             "SELECT id, tenant_id, product_id, sku, barcode, manufacturer_pn, attributes, unit,"
@@ -578,6 +641,13 @@ public class ProductRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's variants.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param productId the product id
+   * @return the matching rows
+   */
   public List<Variant> listVariants(UUID tenantId, UUID productId) {
     return query(
         "SELECT id, tenant_id, product_id, sku, barcode, manufacturer_pn, attributes, unit,"
@@ -593,6 +663,18 @@ public class ProductRepository extends BaseOutboxRepository {
         "list variants");
   }
 
+  /**
+   * Writes a variant back with its new values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @param sku the stock-keeping unit code
+   * @param barcode the barcode, or {@code null} when the variant has none
+   * @param manufacturerPn the manufacturer pn
+   * @param attributes the variant attributes as JSON
+   * @param unit the unit of measure the variant is sold in
+   * @return the variant as stored
+   */
   public Variant updateVariant(
       UUID tenantId,
       UUID variantId,
@@ -629,6 +711,15 @@ public class ProductRepository extends BaseOutboxRepository {
                     "VARIANT_NOT_ACTIVE", "A delisted variant cannot be edited; relist it first"));
   }
 
+  /**
+   * Marks a variant delisted so it stops being sellable.
+   *
+   * <p>The row and its history stay: a delisted line still has to resolve on old orders.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the variant to delist
+   * @return the variant in its delisted state
+   */
   public Variant delistVariant(UUID tenantId, UUID variantId) {
     Instant now = Instant.now();
     exec(

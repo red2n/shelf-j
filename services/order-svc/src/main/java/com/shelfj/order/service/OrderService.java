@@ -185,6 +185,22 @@ public class OrderService {
 
   private static final BigDecimal HUNDRED = new BigDecimal("100");
 
+  /**
+   * Places an order — the entry point for both online checkout and POS.
+   *
+   * <p>The same method serves both channels, so inventory, payments and reporting behave
+   * identically across them; only {@code channel} and {@code fulfilmentType} differ. A till sale
+   * that is paid at the counter is confirmed immediately, while an online order stays PENDING until
+   * payment is captured.
+   *
+   * @param req the store, channel, fulfilment type, lines and customer details
+   * @param ctx caller context; supplies the tenant and the acting identity
+   * @param idempotencyKey the caller's {@code Idempotency-Key}, so a retried checkout returns the
+   *     original order rather than placing a second one
+   * @return the placed order
+   * @throws ApiException {@code ORDER_NO_ITEMS} (400) when the order has no lines; a conflict when
+   *     the tenant or store is not trading
+   */
   public Order placeOrder(PlaceOrderRequest req, TenantContext ctx, String idempotencyKey) {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest("ORDER_NO_ITEMS", "order must have at least one item");
@@ -421,9 +437,33 @@ public class OrderService {
     }
   }
 
-  /** One page of orders plus the opaque cursor for the next page (null when exhausted). */
+  /**
+   * One page of orders plus the opaque cursor for the next page (null when exhausted).
+   *
+   * @param orders the page's rows
+   * @param nextCursor cursor for the following page, or {@code null} on the last page
+   */
   public record OrderPage(List<Order> orders, String nextCursor) {}
 
+  /**
+   * Cursor-paginated order search across the tenant.
+   *
+   * <p>Keyset paging on {@code (created_at, id)}, fetching one extra row to learn whether a further
+   * page exists without a second query. Every filter is optional; passing none lists the tenant's
+   * whole order history.
+   *
+   * @param tenantId owning tenant
+   * @param storeId restrict to one store, or {@code null}
+   * @param customerId restrict to one customer, or {@code null}
+   * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null}
+   * @param status restrict to one order status, or {@code null}
+   * @param from inclusive lower bound on creation time, or {@code null}
+   * @param to exclusive upper bound on creation time, or {@code null}
+   * @param afterCursor cursor from the previous page, or {@code null} to start
+   * @param limit page size
+   * @return the page and its next cursor
+   * @throws ApiException {@code INVALID_CURSOR} (400) when the cursor is malformed
+   */
   public OrderPage listOrders(
       UUID tenantId,
       UUID storeId,
@@ -470,12 +510,32 @@ public class OrderService {
         page, com.shelfj.web.Cursor.encode(last.createdAt().toString() + "|" + last.id()));
   }
 
+  /**
+   * Reads an order with tenant scoping but <strong>no</strong> object-level authorization.
+   *
+   * <p>For internal callers only — anything serving a request should use {@link #getOrder(UUID,
+   * UUID, TenantContext)} so one customer cannot read another's order.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order to read
+   * @return the order
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists in this tenant
+   */
   public Order getOrder(UUID tenantId, UUID orderId) {
     return repo.findOrder(tenantId, orderId)
         .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));
   }
 
-  /** Order-by-id read for the API: tenant scope plus object-level authorization. */
+  /**
+   * Order-by-id read for the API: tenant scope plus object-level authorization.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order to read
+   * @param ctx caller context; staff may read any order in the tenant, a customer only their own
+   * @return the order
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists or the caller may
+   *     not read it — denials are 404 so ids cannot be probed for existence
+   */
   public Order getOrder(UUID tenantId, UUID orderId, TenantContext ctx) {
     Order order = getOrder(tenantId, orderId);
     requireReadAccess(order, ctx);
@@ -512,16 +572,47 @@ public class OrderService {
         || ctx.hasRole("CASHIER");
   }
 
-  /** SIM↔POS projection rows for POS screens (gap #50). */
+  /**
+   * SIM↔POS projection rows for POS screens (gap #50).
+   *
+   * <p>Read from order-svc's own projection of inventory events, not from inventory-svc, so the
+   * figures are eventually consistent with the owning service.
+   *
+   * @param tenantId owning tenant
+   * @param storeId restrict to one store, or {@code null}
+   * @param variantId restrict to one variant, or {@code null}
+   * @param limit maximum rows
+   * @return the stock positions
+   */
   public List<com.shelfj.order.domain.Domain.PosStockPosition> listStockPositions(
       UUID tenantId, UUID storeId, UUID variantId, int limit) {
     return repo.findStockPositions(tenantId, storeId, variantId, limit);
   }
 
+  /**
+   * The lines on an order, with tenant scoping but <strong>no</strong> object-level authorization.
+   *
+   * <p>Callers serving a request must check access themselves — the resource does so by reading the
+   * order through {@link #getOrder(UUID, UUID, TenantContext)} first.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order whose lines to read
+   * @return the order's lines
+   */
   public List<OrderItem> getOrderItems(UUID tenantId, UUID orderId) {
     return repo.findOrderItems(tenantId, orderId);
   }
 
+  /**
+   * The append-only status history of an order.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order whose history to read
+   * @param ctx caller context, checked against the order before the history is read
+   * @return the status transitions, oldest first
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists or the caller may
+   *     not read it
+   */
   public List<OrderStatusHistory> getOrderHistory(UUID tenantId, UUID orderId, TenantContext ctx) {
     requireReadAccess(getOrder(tenantId, orderId), ctx);
     return repo.findOrderHistory(tenantId, orderId);
@@ -546,6 +637,19 @@ public class OrderService {
             || Order.FULFILMENT_PICKUP.equals(fulfilmentType));
   }
 
+  /**
+   * Moves an order to CONFIRMED and publishes {@code OrderConfirmed}.
+   *
+   * <p>The event carries the buyer and the settled amount because customer-svc accrues loyalty from
+   * it; inventory-svc treats confirmation as the point stock is committed.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order to confirm
+   * @param userId the staff member or system actor confirming it
+   * @return the confirmed order
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists; a conflict when
+   *     the order is not awaiting confirmation
+   */
   public Order confirmOrder(UUID tenantId, UUID orderId, UUID userId) {
     // Load the order so OrderConfirmed can carry the buyer + settled amount (loyalty accrual).
     Order order = getOrder(tenantId, orderId);
@@ -643,11 +747,34 @@ public class OrderService {
         null);
   }
 
+  /**
+   * Issues a fiscal receipt for an order looked up by id.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the completed sale to receipt
+   * @param seriesCode the numbering series, or {@code null}/blank for the default
+   * @param userId the staff member issuing it
+   * @return the issued receipt with its allocated number
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists; {@code
+   *     ORDER_NOT_SELLABLE} (409) when the sale is not completed
+   */
   public Domain.FiscalReceipt issueReceipt(
       UUID tenantId, UUID orderId, String seriesCode, UUID userId) {
     return issueReceipt(getOrder(tenantId, orderId), seriesCode, userId);
   }
 
+  /**
+   * The fiscal receipt for a sale, with tenant scoping but <strong>no</strong> object-level
+   * authorization.
+   *
+   * <p>For internal callers only — request-serving code should use the {@link TenantContext}
+   * overload.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the sale whose receipt to read
+   * @return the receipt
+   * @throws ApiException {@code ORDER_RECEIPT_NOT_ISSUED} (404) when none has been issued
+   */
   public Domain.FiscalReceipt receiptOf(UUID tenantId, UUID orderId) {
     return receiptRepo
         .findByOrder(tenantId, orderId)
@@ -660,19 +787,49 @@ public class OrderService {
   /**
    * The receipt for a sale, to whoever may read the sale: any staff member, or the customer who
    * placed it. The till prints the number from here — the admin route is management-only.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the sale whose receipt to read
+   * @param ctx caller context, checked against the order first
+   * @return the receipt
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when the caller may not read the sale;
+   *     {@code ORDER_RECEIPT_NOT_ISSUED} (404) when no receipt has been issued
    */
   public Domain.FiscalReceipt receiptOf(UUID tenantId, UUID orderId, TenantContext ctx) {
     requireReadAccess(getOrder(tenantId, orderId), ctx);
     return receiptOf(tenantId, orderId);
   }
 
+  /**
+   * The receipts in one numbering series, for a store and fiscal period.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store whose series to read
+   * @param series the numbering series, or {@code null}/blank for the default
+   * @param period the fiscal period, normally the year
+   * @param limit maximum rows; clamped to 1..500
+   * @return the receipts in the series
+   */
   public List<Domain.FiscalReceipt> receiptSeries(
       UUID tenantId, UUID storeId, String series, String period, int limit) {
     return receiptRepo.listSeries(
         tenantId, storeId, seriesOrDefault(series), period, Math.min(Math.max(limit, 1), 500));
   }
 
-  /** The gap audit: bounds, count, and every hole. An empty gap list is the proof. */
+  /**
+   * The gap audit: bounds, count, and every hole. An empty gap list is the proof.
+   *
+   * <p>What a tax inspector asks for: a fiscal series must be unbroken, so the absence of gaps is
+   * the evidence. {@code expected} is the span rather than the count, so a series holding 400
+   * receipts numbered 1..500 reads as 100 missing without anyone subtracting.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store whose series to audit
+   * @param series the numbering series, or {@code null}/blank for the default
+   * @param period the fiscal period, normally the year
+   * @return first and last number, issued and expected counts, an {@code intact} flag, and every
+   *     gap as a from/to pair
+   */
   public java.util.Map<String, Object> receiptAudit(
       UUID tenantId, UUID storeId, String series, String period) {
     String s = seriesOrDefault(series);
@@ -700,6 +857,20 @@ public class OrderService {
         : series.trim().toUpperCase(java.util.Locale.ROOT);
   }
 
+  /**
+   * Cancels a PENDING or CONFIRMED order, publishing {@code OrderCancelled}.
+   *
+   * <p>Both states must be cancellable so their stock holds are released — inventory-svc reacts to
+   * the event. A fulfilled order is returned rather than cancelled.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order to cancel
+   * @param reason free-text reason recorded on the status transition
+   * @param userId the staff member cancelling it
+   * @return the cancelled order
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists; {@code
+   *     ORDER_CANNOT_CANCEL} (409) when it is not PENDING or CONFIRMED
+   */
   public Order cancelOrder(UUID tenantId, UUID orderId, String reason, UUID userId) {
     // PENDING covers pay-later online orders awaiting confirmation; both states must be
     // cancellable so their stock holds get released (inventory-svc reacts to OrderCancelled).
@@ -718,6 +889,19 @@ public class OrderService {
         Events.orderCancelled(tenantId, orderId, reason));
   }
 
+  /**
+   * Marks a CONFIRMED order fulfilled, publishing {@code OrderFulfilled} with its lines.
+   *
+   * <p>The event carries the lines because inventory-svc deducts against them; the transition
+   * itself is guarded on CONFIRMED, so fulfilling twice fails rather than deducting twice.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order to fulfil
+   * @param userId the staff member fulfilling it
+   * @return the fulfilled order
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists; a conflict when
+   *     the order is not CONFIRMED
+   */
   public Order fulfillOrder(UUID tenantId, UUID orderId, UUID userId) {
     Order order = getOrder(tenantId, orderId);
     List<OrderItem> items = repo.findOrderItems(tenantId, orderId);
@@ -733,6 +917,21 @@ public class OrderService {
 
   // ── Returns ───────────────────────────────────────────────────────────────
 
+  /**
+   * Records a return against a fulfilled order.
+   *
+   * <p>Only a fulfilled or partly refunded order can be returned: goods can come back only once
+   * they were handed over. Returning a PENDING or CONFIRMED order would record a refund for goods,
+   * and often money, that were never exchanged — cancel it instead.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order being returned against
+   * @param req the lines and quantities coming back, and the reason
+   * @param ctx caller context, checked for access to the order's store
+   * @return the recorded return
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists; {@code
+   *     ORDER_CANNOT_RETURN} (409) when it is not FULFILLED or PARTIALLY_REFUNDED
+   */
   public Return createReturn(
       UUID tenantId, UUID orderId, CreateReturnRequest req, TenantContext ctx) {
     Order order =
@@ -799,17 +998,54 @@ public class OrderService {
             order.currency()));
   }
 
+  /**
+   * The returns recorded against one order.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order whose returns to read
+   * @param ctx caller context, checked against the order first
+   * @return the returns, empty when nothing has come back
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists or the caller may
+   *     not read it
+   */
   public List<Return> getReturns(UUID tenantId, UUID orderId, TenantContext ctx) {
     requireReadAccess(getOrder(tenantId, orderId), ctx);
     return repo.findReturns(tenantId, orderId);
   }
 
+  /**
+   * The lines on one return, with tenant scoping but <strong>no</strong> object-level
+   * authorization.
+   *
+   * <p>Callers serving a request must check access to the owning order themselves.
+   *
+   * @param tenantId owning tenant
+   * @param returnId the return whose lines to read
+   * @return the returned lines, with their per-line refund amounts
+   */
   public List<ReturnItem> getReturnItems(UUID tenantId, UUID returnId) {
     return repo.findReturnItems(tenantId, returnId);
   }
 
   // ── Post-void ─────────────────────────────────────────────────────────────
 
+  /**
+   * Voids a POS sale, restocking its lines and marking its receipt.
+   *
+   * <p>The receipt keeps its number and gains a reason rather than being removed: closing the hole
+   * in the sequence is the trick a till fraud relies on — ring the sale, take the cash, void the
+   * receipt, and a balancing till hides the theft. Here the document stays, numbered.
+   *
+   * <p>POS only: an online order is cancelled or returned instead.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the sale to void
+   * @param req the reason, recorded on both the void log and the receipt
+   * @param ctx caller context, checked for access to the sale's store
+   * @return the recorded void log entry
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists; {@code
+   *     ORDER_VOID_ONLY_POS} (409) when the order is not a POS sale
+   */
   public PosVoidLog voidOrder(UUID tenantId, UUID orderId, VoidRequest req, TenantContext ctx) {
     Order order =
         repo.findOrder(tenantId, orderId)
@@ -835,6 +1071,14 @@ public class OrderService {
 
   // ── Layaway ───────────────────────────────────────────────────────────────
 
+  /**
+   * Opens a layaway: goods set aside against a deposit, collected once paid off.
+   *
+   * @param req the store, customer, items and initial deposit
+   * @param ctx caller context; supplies the tenant and is checked for store access
+   * @return the opened layaway
+   * @throws ApiException {@code LAYAWAY_NO_ITEMS} (400) when no items are supplied
+   */
   public Layaway createLayaway(CreateLayawayRequest req, TenantContext ctx) {
     if (req.items() == null || req.items().isEmpty())
       throw ApiException.badRequest("LAYAWAY_NO_ITEMS", "layaway must have at least one item");
@@ -899,19 +1143,51 @@ public class OrderService {
     return repo.createLayaway(layaway, items, deposit, Events.layawayCreated(tenantId, layawayId));
   }
 
+  /**
+   * Reads one layaway.
+   *
+   * @param tenantId owning tenant
+   * @param layawayId the layaway to read
+   * @return the layaway with its total and outstanding balance
+   * @throws ApiException {@code LAYAWAY_NOT_FOUND} (404) when no such layaway exists in this tenant
+   */
   public Layaway getLayaway(UUID tenantId, UUID layawayId) {
     return repo.findLayaway(tenantId, layawayId)
         .orElseThrow(() -> ApiException.notFound("LAYAWAY_NOT_FOUND", "layaway not found"));
   }
 
+  /**
+   * The goods set aside on one layaway.
+   *
+   * @param tenantId owning tenant
+   * @param layawayId the layaway whose items to read
+   * @return the reserved lines with their prices
+   */
   public List<LayawayItem> getLayawayItems(UUID tenantId, UUID layawayId) {
     return repo.findLayawayItems(tenantId, layawayId);
   }
 
+  /**
+   * The payments made against one layaway.
+   *
+   * @param tenantId owning tenant
+   * @param layawayId the layaway whose deposits to read
+   * @return the deposits, which together with the total give the balance still owed
+   */
   public List<LayawayDeposit> getLayawayDeposits(UUID tenantId, UUID layawayId) {
     return repo.findLayawayDeposits(tenantId, layawayId);
   }
 
+  /**
+   * Takes a further payment against a layaway, reducing its balance.
+   *
+   * @param tenantId owning tenant
+   * @param layawayId the layaway being paid down
+   * @param req the amount, payment method and reference
+   * @param ctx caller context
+   * @return the layaway with its new balance
+   * @throws ApiException {@code LAYAWAY_NOT_FOUND} (404) when no such layaway exists
+   */
   public Layaway addDeposit(
       UUID tenantId, UUID layawayId, AddDepositRequest req, TenantContext ctx) {
     LayawayDeposit deposit =
@@ -926,10 +1202,32 @@ public class OrderService {
     return repo.addDeposit(tenantId, layawayId, deposit);
   }
 
+  /**
+   * Closes a fully paid layaway and hands the goods over, publishing {@code LayawayCompleted}.
+   *
+   * @param tenantId owning tenant
+   * @param layawayId the layaway to complete
+   * @param ctx caller context
+   * @return the completed layaway
+   * @throws ApiException {@code LAYAWAY_NOT_FOUND} (404) when no such layaway exists; a conflict
+   *     when a balance is still owed
+   */
   public Layaway completeLayaway(UUID tenantId, UUID layawayId, TenantContext ctx) {
     return repo.completeLayaway(tenantId, layawayId, Events.layawayCompleted(tenantId, layawayId));
   }
 
+  /**
+   * Cancels a layaway, releasing the goods held against it and publishing {@code LayawayCancelled}.
+   *
+   * <p>Refunding deposits already taken is a separate decision, handled through payment-svc.
+   *
+   * @param tenantId owning tenant
+   * @param layawayId the layaway to cancel
+   * @param reason free-text reason recorded against it
+   * @param ctx caller context
+   * @return the cancelled layaway
+   * @throws ApiException {@code LAYAWAY_NOT_FOUND} (404) when no such layaway exists
+   */
   public Layaway cancelLayaway(UUID tenantId, UUID layawayId, String reason, TenantContext ctx) {
     return repo.cancelLayaway(
         tenantId, layawayId, reason, Events.layawayCancelled(tenantId, layawayId));
@@ -937,6 +1235,16 @@ public class OrderService {
 
   // ── Gift cards ────────────────────────────────────────────────────────────
 
+  /**
+   * Issues a gift card with a server-generated code, recording the opening transaction.
+   *
+   * <p>The code is minted here, never supplied by the caller: it is bearer stored value, so a
+   * guessable or client-chosen code would be spendable by whoever guessed it.
+   *
+   * @param req the store, amount, optional currency and optional expiry
+   * @param ctx caller context; supplies the tenant and is checked for store access
+   * @return the issued card, including its code
+   */
   public GiftCard issueGiftCard(IssueGiftCardRequest req, TenantContext ctx) {
     // requireTenantId (not the nullable tenantId()) so issuing a gift card without a tenant in
     // context fails 401 rather than minting stored value against a null-tenant row.
@@ -978,20 +1286,59 @@ public class OrderService {
     return repo.issueGiftCard(gc, tx);
   }
 
+  /**
+   * Looks a gift card up by its code, to check the balance at the till.
+   *
+   * @param tenantId owning tenant
+   * @param code the card's code
+   * @return the card with its current balance
+   * @throws ApiException {@code GIFT_CARD_NOT_FOUND} (404) when no such card exists in this tenant
+   */
   public GiftCard getGiftCard(UUID tenantId, String code) {
     return repo.findGiftCardByCode(tenantId, code)
         .orElseThrow(() -> ApiException.notFound("GIFT_CARD_NOT_FOUND", "gift card not found"));
   }
 
+  /**
+   * Adds value to an existing gift card.
+   *
+   * @param tenantId owning tenant
+   * @param code the card's code
+   * @param req the amount to add and a reference for the transaction log
+   * @return the card with its new balance
+   * @throws ApiException {@code GIFT_CARD_NOT_FOUND} (404) when no such card exists; a conflict
+   *     when the card is not active
+   */
   public GiftCard reloadGiftCard(UUID tenantId, String code, ReloadGiftCardRequest req) {
     return repo.reloadGiftCard(tenantId, code, req.amount(), req.reference());
   }
 
+  /**
+   * Spends against a gift card, optionally attributing it to an order.
+   *
+   * <p>The balance check happens in the repository, inside the transaction that writes the
+   * transaction row, so two tills cannot together overspend one card.
+   *
+   * @param tenantId owning tenant
+   * @param code the card's code
+   * @param req the amount, the order being paid towards, and a reference
+   * @return the card with its new balance
+   * @throws ApiException {@code GIFT_CARD_NOT_FOUND} (404) when no such card exists; a conflict
+   *     when the balance is insufficient or the card is not active
+   */
   public GiftCard redeemGiftCard(UUID tenantId, String code, RedeemGiftCardRequest req) {
     UUID orderId = req.orderId() != null ? Parsing.uuid(req.orderId(), "orderId") : null;
     return repo.redeemGiftCard(tenantId, code, req.amount(), orderId, req.reference());
   }
 
+  /**
+   * The append-only transaction history of one gift card.
+   *
+   * @param tenantId owning tenant
+   * @param code the card's code
+   * @return every issue, reload and redemption against the card
+   * @throws ApiException {@code GIFT_CARD_NOT_FOUND} (404) when no such card exists in this tenant
+   */
   public List<GiftCardTransaction> getGiftCardTransactions(UUID tenantId, String code) {
     GiftCard gc =
         repo.findGiftCardByCode(tenantId, code)
@@ -1078,6 +1425,15 @@ public class OrderService {
     return repo.sweepErasures();
   }
 
+  /**
+   * Cancels a still-pending order whose payment failed, releasing its stock hold.
+   *
+   * <p>Only acts on a PENDING order: a failure arriving after the order was confirmed by another
+   * tender must not cancel a sale that has since been paid.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order whose payment failed
+   */
   public void handlePaymentFailed(java.util.UUID tenantId, java.util.UUID orderId) {
     repo.findOrder(tenantId, orderId)
         .ifPresent(
@@ -1145,6 +1501,15 @@ public class OrderService {
 
   // ── Gap #42: Special orders ───────────────────────────────────────────────
 
+  /**
+   * Opens a special order: goods a store does not stock, ordered in for a named customer.
+   *
+   * @param tenantId owning tenant
+   * @param req the store, customer, items and optional currency
+   * @param ctx caller context, checked for access to the store
+   * @return the opened special order
+   * @throws ApiException {@code SPECIAL_ORDER_NO_ITEMS} (400) when no items are supplied
+   */
   public SpecialOrder createSpecialOrder(
       UUID tenantId, CreateSpecialOrderRequest req, TenantContext ctx) {
     if (req.items() == null || req.items().isEmpty())
@@ -1205,6 +1570,17 @@ public class OrderService {
   /** One page of special orders plus the opaque cursor for the next page (null when exhausted). */
   public record SpecialOrderPage(List<SpecialOrder> orders, String nextCursor) {}
 
+  /**
+   * Cursor-paginated list of the tenant's special orders.
+   *
+   * @param tenantId owning tenant
+   * @param storeId restrict to one store, or {@code null}
+   * @param status restrict to one status, or {@code null}
+   * @param afterCursor cursor from the previous page, or {@code null} to start
+   * @param limit page size
+   * @return the page and its next cursor
+   * @throws ApiException {@code INVALID_CURSOR} (400) when the cursor is malformed
+   */
   public SpecialOrderPage listSpecialOrders(
       UUID tenantId, String storeIdStr, String customerIdStr, String afterCursor, int limit) {
     UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "storeId") : null;
@@ -1234,17 +1610,45 @@ public class OrderService {
         page, com.shelfj.web.Cursor.encode(last.createdAt().toString() + "|" + last.id()));
   }
 
+  /**
+   * Reads one special order.
+   *
+   * <p>Also the tenant-scoping guard the other special-order methods call first.
+   *
+   * @param tenantId owning tenant
+   * @param id the special order to read
+   * @return the special order
+   * @throws ApiException {@code SPECIAL_ORDER_NOT_FOUND} (404) when it does not exist in this
+   *     tenant
+   */
   public SpecialOrder getSpecialOrder(UUID tenantId, UUID id) {
     return repo.findSpecialOrder(tenantId, id)
         .orElseThrow(
             () -> ApiException.notFound("SPECIAL_ORDER_NOT_FOUND", "special order not found"));
   }
 
+  /**
+   * The lines on one special order.
+   *
+   * @param tenantId owning tenant
+   * @param soId the special order whose lines to read
+   * @return the ordered lines with their prices
+   */
   public List<SpecialOrderItem> getSpecialOrderItems(UUID tenantId, UUID soId) {
     getSpecialOrder(tenantId, soId);
     return repo.findSpecialOrderItems(tenantId, soId);
   }
 
+  /**
+   * Confirms a special order once the goods are on their way.
+   *
+   * @param tenantId owning tenant
+   * @param soId the special order to confirm
+   * @param userId the staff member confirming it
+   * @return the confirmed special order
+   * @throws ApiException {@code SPECIAL_ORDER_NOT_FOUND} (404) when it does not exist; a conflict
+   *     when its current status does not allow confirmation
+   */
   public SpecialOrder confirmSpecialOrder(UUID tenantId, UUID soId, UUID userId) {
     return repo.transitionSpecialOrderStatus(
         tenantId,
@@ -1255,6 +1659,16 @@ public class OrderService {
         userId);
   }
 
+  /**
+   * Marks a special order handed over to the customer.
+   *
+   * @param tenantId owning tenant
+   * @param soId the special order to fulfil
+   * @param userId the staff member handing it over
+   * @return the fulfilled special order
+   * @throws ApiException {@code SPECIAL_ORDER_NOT_FOUND} (404) when it does not exist; a conflict
+   *     when its current status does not allow fulfilment
+   */
   public SpecialOrder fulfilSpecialOrder(UUID tenantId, UUID soId, UUID userId) {
     return repo.transitionSpecialOrderStatus(
         tenantId,
@@ -1265,6 +1679,16 @@ public class OrderService {
         userId);
   }
 
+  /**
+   * Cancels a special order that has not yet been handed over.
+   *
+   * @param tenantId owning tenant
+   * @param soId the special order to cancel
+   * @param userId the staff member cancelling it
+   * @return the cancelled special order
+   * @throws ApiException {@code SPECIAL_ORDER_NOT_FOUND} (404) when it does not exist; {@code
+   *     SPECIAL_ORDER_FULFILLED} (409) when it has already been fulfilled
+   */
   public SpecialOrder cancelSpecialOrder(UUID tenantId, UUID soId, UUID userId) {
     var so = getSpecialOrder(tenantId, soId);
     if (SpecialOrder.STATUS_FULFILLED.equals(so.status()))
@@ -1276,6 +1700,18 @@ public class OrderService {
 
   // ── Gap #43: POSLog ───────────────────────────────────────────────────────
 
+  /**
+   * Writes a POSLog entry for a till sale — the audit record a POS audit expects.
+   *
+   * <p>POS channel only: an online order has no till transaction to log.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the sale to log
+   * @param userId the cashier who rang it
+   * @return the recorded entry
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists; {@code
+   *     POSLOG_NOT_POS} (400) when the order is not a POS sale
+   */
   public PosLogEntry recordPosLog(UUID tenantId, UUID orderId, UUID userId) {
     var order =
         repo.findOrder(tenantId, orderId)
@@ -1473,6 +1909,16 @@ public class OrderService {
   /** One page of POSLog entries plus the opaque cursor for the next page (null when exhausted). */
   public record PosLogPage(List<PosLogEntry> entries, String nextCursor) {}
 
+  /**
+   * Cursor-paginated POSLog entries for the tenant.
+   *
+   * @param tenantId owning tenant
+   * @param storeIdStr restrict to one store, or {@code null} for all
+   * @param afterCursor cursor from the previous page, or {@code null} to start
+   * @param limit page size
+   * @return the page and its next cursor
+   * @throws ApiException {@code INVALID_CURSOR} (400) when the cursor is malformed
+   */
   public PosLogPage listPosLog(UUID tenantId, String storeIdStr, String afterCursor, int limit) {
     UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "storeId") : null;
     Instant afterTransactionTs = null;
@@ -1500,6 +1946,13 @@ public class OrderService {
         page, com.shelfj.web.Cursor.encode(last.transactionTs().toString() + "|" + last.id()));
   }
 
+  /**
+   * The POSLog entries recorded against one sale.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the sale whose log entries to read
+   * @return the entries, empty when the sale was not rung on a till
+   */
   public List<PosLogEntry> getPosLogByOrder(UUID tenantId, UUID orderId) {
     return repo.findPosLogByOrder(tenantId, orderId);
   }
@@ -1516,6 +1969,20 @@ public class OrderService {
     return generateReceipt(tenantId, orderId, req, null);
   }
 
+  /**
+   * Records a print/email receipt event, optionally with the caller's context for access checks.
+   *
+   * <p>An email receipt is delivered <em>before</em> the audit row is written, so a send failure
+   * surfaces as 503 rather than telling the cashier it emailed when it did not.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the sale being receipted
+   * @param req the receipt type and, for email, the destination address
+   * @param ctx caller context, or {@code null} for an internal caller with no access check
+   * @return the recorded receipt event
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists; a 503 when an
+   *     email receipt could not be delivered
+   */
   public OrderReceipt generateReceipt(
       UUID tenantId, UUID orderId, GenerateReceiptRequest req, TenantContext ctx) {
     Order order =
@@ -1617,6 +2084,17 @@ public class OrderService {
     return sb.toString();
   }
 
+  /**
+   * Every print/email receipt event recorded against one sale.
+   *
+   * <p>Distinct from the fiscal receipt: this is the log of times a copy was produced, not the
+   * numbered tax document.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the sale whose receipt events to read
+   * @return the receipt events, empty when none were produced
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404) when no such order exists in this tenant
+   */
   public List<OrderReceipt> listReceipts(UUID tenantId, UUID orderId) {
     repo.findOrder(tenantId, orderId)
         .orElseThrow(() -> ApiException.notFound("ORDER_NOT_FOUND", "order not found"));

@@ -14,9 +14,16 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+/** JDBC access to till sessions, cash drops, and the tender/refund sums the X/Z reports total. */
 @ApplicationScoped
 public class CashManagementRepository extends BaseOutboxRepository {
 
+  /**
+   * Opens a till session and returns it as stored.
+   *
+   * @param session the session to persist; its {@code id} must already be a UUIDv7
+   * @return the row read back after insert
+   */
   public TillSession openTill(TillSession session) {
     exec(
         "INSERT INTO till_sessions"
@@ -36,6 +43,13 @@ public class CashManagementRepository extends BaseOutboxRepository {
     return session;
   }
 
+  /**
+   * Looks a till session up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param sessionId the session to fetch
+   * @return the session, or empty when no such session exists in this tenant
+   */
   public Optional<TillSession> findSession(UUID tenantId, UUID sessionId) {
     return query(
             "SELECT id, tenant_id, store_id, opened_by, float_amount, status,"
@@ -51,6 +65,12 @@ public class CashManagementRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Records a mid-shift cash drop against a session.
+   *
+   * @param drop the drop to persist; its {@code id} must already be a UUIDv7
+   * @return the row read back after insert
+   */
   public CashDrop recordDrop(CashDrop drop) {
     exec(
         "INSERT INTO cash_drops (id, tenant_id, till_session_id, amount, recorded_by, notes, created_at)"
@@ -69,6 +89,13 @@ public class CashManagementRepository extends BaseOutboxRepository {
     return drop;
   }
 
+  /**
+   * Total cash dropped to the safe during one session, which the expected-drawer figure subtracts.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param tillSessionId the session to total
+   * @return the summed amount, zero when nothing was dropped
+   */
   public BigDecimal sumCashDrops(UUID tenantId, UUID tillSessionId) {
     return query(
             "SELECT COALESCE(SUM(amount), 0) AS total FROM cash_drops"
@@ -119,6 +146,15 @@ public class CashManagementRepository extends BaseOutboxRepository {
         "sum refunds by method");
   }
 
+  /**
+   * Closes a till session, recording what was counted and how far it differed from expectation.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param sessionId the session to close
+   * @param countedCash the cash actually counted in the drawer
+   * @param overShort counted less expected — positive over, negative short
+   * @return the closed session as stored
+   */
   public TillSession closeTill(
       UUID tenantId, UUID sessionId, BigDecimal countedCash, BigDecimal overShort) {
     return inTx(

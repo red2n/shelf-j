@@ -54,6 +54,15 @@ public class SuggestionRepository extends BaseOutboxRepository {
         "insert suggestion");
   }
 
+  /**
+   * Lists the tenant's suggestions.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<Suggestion> listSuggestions(UUID tenantId, UUID storeId, String status, int limit) {
     StringBuilder sb =
         new StringBuilder(

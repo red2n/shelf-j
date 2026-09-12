@@ -63,6 +63,14 @@ public class AuthResource {
     return ApiResponse.ok(auth.provisionStaff(ctx.requireTenantId(), req.email(), req.password()));
   }
 
+  /**
+   * Public customer self-signup, minting an account and its first token pair.
+   *
+   * @param req the email, password and optional phone to register
+   * @return {@code 201} with the new account's access and refresh tokens
+   * @throws com.shelfj.web.ApiException {@code USER_ALREADY_EXISTS} (409) when the email or phone
+   *     is already registered in this scope
+   */
   @Operation(
       summary = "Register a new customer",
       description = "Public self-signup. No JWT required — this endpoint mints identity.")
@@ -76,6 +84,16 @@ public class AuthResource {
     return Response.status(Response.Status.CREATED).entity(ApiResponse.ok(tokens)).build();
   }
 
+  /**
+   * Tenant staff and customer login.
+   *
+   * <p>An email can exist in more than one tenant scope, so the password is what disambiguates
+   * which account is being signed into.
+   *
+   * @param req the email and password to authenticate
+   * @return the access and refresh token pair
+   * @throws com.shelfj.web.ApiException {@code 401} when the credentials do not match
+   */
   @Operation(
       summary = "Log in with email and password",
       description = "Public tenant/customer login. No JWT required.")
@@ -91,6 +109,11 @@ public class AuthResource {
   /**
    * Platform console login — distinct from {@link #login} so a PLATFORM_ADMIN credential is never
    * valid on a store/POS login screen, and a tenant staff credential is never valid here.
+   *
+   * @param req the email and password to authenticate
+   * @return the access and refresh token pair
+   * @throws com.shelfj.web.ApiException {@code 401} when the credentials do not match; {@code 403}
+   *     when they are valid but the account is not a {@code PLATFORM_ADMIN}
    */
   @Operation(
       summary = "Log in to the platform console",
@@ -107,6 +130,16 @@ public class AuthResource {
     return ApiResponse.ok(auth.platformLogin(req.email(), req.password()));
   }
 
+  /**
+   * Exchanges a refresh token for a fresh token pair.
+   *
+   * <p>Authenticated by the refresh token itself, so it needs no bearer JWT — which is what lets a
+   * client renew an expired session.
+   *
+   * @param req the refresh token to redeem
+   * @return a new access and refresh token pair
+   * @throws com.shelfj.web.ApiException {@code 401} when the token is unknown, expired or revoked
+   */
   @Operation(
       summary = "Exchange a refresh token for a new access token",
       description = "Public — authenticates via the refresh token itself, not a bearer JWT.")
@@ -119,6 +152,15 @@ public class AuthResource {
     return ApiResponse.ok(auth.refresh(req.refreshToken()));
   }
 
+  /**
+   * Revokes a refresh token, ending the ability to renew that session.
+   *
+   * <p>Access tokens already issued stay valid until they expire, so logout is not immediate
+   * revocation of all access.
+   *
+   * @param req the refresh token to revoke
+   * @return {@code logged_out}, also when the token was already revoked
+   */
   @Operation(
       summary = "Log out",
       description = "Revokes the given refresh token. Idempotent-friendly: revoking twice is safe.")
@@ -131,6 +173,15 @@ public class AuthResource {
     return ApiResponse.ok("logged_out");
   }
 
+  /**
+   * Changes the calling user's own password.
+   *
+   * <p>Re-verifies the current password so a session left open on a shared device cannot change it.
+   *
+   * @param req the current password and the replacement
+   * @return {@code password_changed}
+   * @throws com.shelfj.web.ApiException {@code 401} when the current password is wrong
+   */
   @Operation(
       summary = "Change the current user's password",
       description =
@@ -145,6 +196,18 @@ public class AuthResource {
     return ApiResponse.ok("password_changed");
   }
 
+  /**
+   * The account holder erases their own login (SJ-D43).
+   *
+   * <p>Customer accounts only — a staff account is removed by the business that employs its holder.
+   * What a shop holds about the person (orders, loyalty, its own customer profile) is not touched
+   * here; that shop erases it on request.
+   *
+   * @param req the password, required again as proof of presence
+   * @return {@code account_deleted}
+   * @throws com.shelfj.web.ApiException {@code 401} when the password is wrong; {@code 403} when
+   *     the caller holds a staff account
+   */
   @Operation(
       summary = "Delete my account",
       description =

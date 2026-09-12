@@ -42,6 +42,14 @@ public class CostingResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Sets the costing method for a variant at a store.
+   *
+   * <p>method must be FIFO or AVERAGE.
+   *
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 400} method is not FIFO or AVERAGE
+   */
   @Operation(
       summary = "Set the costing method for a variant at a store",
       description = "method must be FIFO or AVERAGE.")
@@ -59,7 +67,13 @@ public class CostingResource {
                 tenantId, storeId, variantId, req.method(), req.averageCost())));
   }
 
+  /**
+   * Lists costing methods for a store.
+   *
+   * @param store the store (query parameter)
+   */
   @Operation(summary = "List costing methods for a store")
+  @APIResponse(responseCode = "200", description = "List costing methods for a store")
   @GET
   @Path("/costing-methods")
   public ApiResponse<List<CostingMethodResponse>> listCostingMethods(
@@ -72,6 +86,13 @@ public class CostingResource {
             .toList());
   }
 
+  /**
+   * Gets the costing method for a specific variant at a store.
+   *
+   * @param store the store (query parameter)
+   * @param variant the variant (query parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} costing method not found
+   */
   @Operation(summary = "Get the costing method for a specific variant at a store")
   @APIResponse(responseCode = "404", description = "costing method not found")
   @GET
@@ -85,6 +106,12 @@ public class CostingResource {
         Mappers.toCostingMethod(service.getCostingMethod(tenantId, storeId, variantId)));
   }
 
+  /**
+   * Opens a new accounting period for a store.
+   *
+   * @param req the request body
+   * @return period opened ({@code 201})
+   */
   @Operation(summary = "Open a new accounting period for a store")
   @APIResponse(responseCode = "201", description = "Period opened")
   @POST
@@ -99,7 +126,13 @@ public class CostingResource {
         .build();
   }
 
+  /**
+   * Lists accounting periods for a store.
+   *
+   * @param store the store (query parameter)
+   */
   @Operation(summary = "List accounting periods for a store")
+  @APIResponse(responseCode = "200", description = "List accounting periods for a store")
   @GET
   @Path("/accounting-periods")
   public ApiResponse<List<AccountingPeriodResponse>> listPeriods(
@@ -110,6 +143,12 @@ public class CostingResource {
         service.listPeriods(tenantId, storeId).stream().map(Mappers::toPeriod).toList());
   }
 
+  /**
+   * Gets an accounting period by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} accounting period not found
+   */
   @Operation(summary = "Get an accounting period by id")
   @APIResponse(responseCode = "404", description = "accounting period not found")
   @GET
@@ -119,6 +158,14 @@ public class CostingResource {
     return ApiResponse.ok(Mappers.toPeriod(service.getPeriod(tenantId, id)));
   }
 
+  /**
+   * Closes an accounting period.
+   *
+   * <p>Locks the period so no further costed movements can post into it.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} accounting period not found
+   */
   @Operation(
       summary = "Close an accounting period",
       description = "Locks the period so no further costed movements can post into it.")

@@ -113,6 +113,26 @@ public class InventoryService {
   @Inject PlanningConfigRepository planningConfig;
 
   // ---- receive (manual GRN entry; event-driven receives go through receiveOnce instead) ----
+
+  /**
+   * Books stock into a store as a new batch — the manual goods-receipt entry.
+   *
+   * <p>Event-driven receipts go through {@code receiveOnce} instead, which dedupes on the event id;
+   * this path is for a human entering a delivery, so it is guarded by an idempotency key.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store receiving the stock
+   * @param variantId the variant received
+   * @param qty the quantity received
+   * @param batchNo the supplier's batch/lot number, or {@code null} to mint one
+   * @param costPrice the unit cost this batch landed at, which drives valuation
+   * @param expiry the batch's expiry date, or {@code null} for a non-perishable
+   * @param refType what the receipt is against, e.g. a goods receipt
+   * @param refId the referenced document's id
+   * @param zoneId the zone the stock physically sits in
+   * @param idempotencyKey the caller's key, so a retried entry does not book the delivery twice
+   * @return the created batch
+   */
   public Batch receive(
       UUID tenantId,
       UUID storeId,
@@ -163,6 +183,19 @@ public class InventoryService {
   }
 
   // ---- Gap #50: POS→SIM deduction (order fulfilled) ----
+
+  /**
+   * Deducts sold stock when an order is fulfilled, publishing {@code StockDeducted}.
+   *
+   * <p>Not deduped — the event-driven path {@code deductSaleFromOrderOnce} is the one that carries
+   * a dedupe id. Calling this twice deducts twice.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store the goods left
+   * @param variantId the variant sold
+   * @param qty the quantity sold
+   * @param orderId the order the deduction is attributed to
+   */
   public void deductSaleFromOrder(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
     repo.deductSale(
@@ -209,6 +242,19 @@ public class InventoryService {
   }
 
   // ---- Gap #50: POS→SIM receipt (order returned) ----
+
+  /**
+   * Books returned goods back into stock as a return batch.
+   *
+   * <p>Returns land in their own batch rather than rejoining the one they were sold from: the
+   * original batch's cost and expiry are not necessarily what came back.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store taking the goods back
+   * @param variantId the variant returned
+   * @param qty the quantity returned
+   * @param orderId the order being returned against
+   */
   public void receiveReturnFromOrder(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
     Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
@@ -501,6 +547,24 @@ public class InventoryService {
   }
 
   // ---- reserve ----
+
+  /**
+   * Holds stock for a checkout, publishing {@code StockReserved}.
+   *
+   * <p>A hold is not a deduction: it expires on its own if the order never completes, and the
+   * reservation sweeper reclaims it. Retrying with the same idempotency key returns the original
+   * hold rather than holding the stock twice for one checkout attempt.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store holding the stock
+   * @param variantId the variant to hold
+   * @param qty the quantity to hold
+   * @param orderId the order the hold is placed for
+   * @param ttlSeconds how long the hold lives, or {@code null} for the configured default
+   * @param idempotencyKey the caller's key, so a retried checkout reuses the existing hold
+   * @return the hold, whether newly placed or the replayed original
+   * @throws ApiException a conflict when there is not enough free stock to hold
+   */
   public Reservation reserve(
       UUID tenantId,
       UUID storeId,
@@ -542,6 +606,15 @@ public class InventoryService {
   }
 
   // ---- consume (FIFO deduct) ----
+
+  /**
+   * Turns a hold into a real deduction, taking stock FIFO across batches.
+   *
+   * <p>Not deduped — {@link #consumeOnce} is the event-driven path that carries a dedupe id.
+   *
+   * @param tenantId owning tenant
+   * @param reservationId the hold to consume
+   */
   public void consume(UUID tenantId, UUID reservationId) {
     repo.consume(tenantId, reservationId);
   }
@@ -562,6 +635,18 @@ public class InventoryService {
   }
 
   // ---- release ----
+
+  /**
+   * Gives a hold back without deducting, publishing {@code StockReleased}.
+   *
+   * <p>What a cancelled or abandoned checkout triggers, so the stock becomes available again rather
+   * than waiting out its TTL.
+   *
+   * @param tenantId owning tenant
+   * @param reservationId the hold to release
+   * @return {@code true} when a held reservation was released, {@code false} when there was nothing
+   *     left to release
+   */
   public boolean release(UUID tenantId, UUID reservationId) {
     var event =
         new OutboxRow(
@@ -574,6 +659,13 @@ public class InventoryService {
   }
 
   // ---- reads ----
+  /**
+   * On-hand levels per variant for a store.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store whose levels to read
+   * @return one level per variant holding stock at that store
+   */
   public List<Level> levels(UUID tenantId, UUID storeId) {
     return repo.levels(tenantId, storeId);
   }
@@ -623,11 +715,30 @@ public class InventoryService {
     return repo.levelsSummary(tenantId, storeId, LOW_STOCK_THRESHOLD);
   }
 
+  /**
+   * Lists the tenant's batches.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param materialStatus the material status
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<Batch> listBatches(
       UUID tenantId, UUID storeId, UUID variantId, String materialStatus, int limit) {
     return repo.listBatches(tenantId, storeId, variantId, materialStatus, limit);
   }
 
+  /**
+   * Updates a material status.
+   *
+   * @param tenantId owning tenant
+   * @param batchId the batch id
+   * @param materialStatus the material status
+   * @param reason the reason recorded against the change
+   * @return the updated material status
+   */
   public Batch updateMaterialStatus(
       UUID tenantId, UUID batchId, String materialStatus, String reason) {
     if (!List.of(
@@ -654,31 +765,86 @@ public class InventoryService {
     return repo.updateMaterialStatus(tenantId, batchId, materialStatus, reason, event);
   }
 
+  /**
+   * Reads a batch.
+   *
+   * @param tenantId owning tenant
+   * @param batchId the batch id
+   * @return the batch
+   * @throws ApiException a 404 when no such batch exists in this tenant
+   */
   public Batch getBatch(UUID tenantId, UUID batchId) {
     return repo.getBatch(tenantId, batchId)
         .orElseThrow(() -> ApiException.notFound("BATCH_NOT_FOUND", "No such batch"));
   }
 
+  /**
+   * Lists the tenant's movements.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param type the type to filter on
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<Movement> listMovements(
       UUID tenantId, UUID storeId, UUID variantId, String type, int limit) {
     return movementRepo.listMovements(tenantId, storeId, variantId, type, limit);
   }
 
+  /**
+   * Lists the tenant's reservations.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<Reservation> listReservations(UUID tenantId, UUID storeId, String status, int limit) {
     return repo.listReservations(tenantId, storeId, status, limit);
   }
 
+  /**
+   * Reads a reservation.
+   *
+   * @param tenantId owning tenant
+   * @param reservationId the reservation id
+   * @return the reservation
+   * @throws ApiException a 404 when no such reservation exists in this tenant
+   */
   public Reservation getReservation(UUID tenantId, UUID reservationId) {
     return repo.findReservation(tenantId, reservationId)
         .orElseThrow(() -> ApiException.notFound("RESERVATION_NOT_FOUND", "No such reservation"));
   }
 
+  /**
+   * Sets the reorder threshold and target maximum for a variant at a store.
+   *
+   * <p>Crossing the threshold is what raises a {@code StockBelowThreshold} alert and a
+   * replenishment suggestion; the maximum is what the suggested quantity tops up to.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store the threshold applies at
+   * @param variantId the variant concerned
+   * @param threshold the level at or below which stock is considered short
+   * @param maxQty the level replenishment should restore stock to
+   * @return the stored threshold
+   */
   public Threshold setThreshold(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal threshold, BigDecimal maxQty) {
     return thresholdRepo.upsertThreshold(
         new Threshold(Ids.newId(), tenantId, storeId, variantId, threshold, maxQty));
   }
 
+  /**
+   * Lists the tenant's thresholds.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<Threshold> listThresholds(UUID tenantId, UUID storeId) {
     return thresholdRepo.listThresholds(tenantId, storeId);
   }
@@ -733,10 +899,30 @@ public class InventoryService {
     return created;
   }
 
+  /**
+   * Lists the tenant's suggestions.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<Suggestion> listSuggestions(UUID tenantId, UUID storeId, String status, int limit) {
     return suggestionRepo.listSuggestions(tenantId, storeId, status, limit);
   }
 
+  /**
+   * Closes a replenishment suggestion as ordered or cancelled, publishing {@code
+   * ReplenishmentResolved}.
+   *
+   * @param tenantId owning tenant
+   * @param suggId the suggestion to resolve
+   * @param newStatus {@code ORDERED} or {@code CANCELLED}
+   * @return the resolved suggestion
+   * @throws ApiException {@code INVALID_SUGGESTION_STATUS} (400) when the status is neither; a 404
+   *     when no such suggestion exists in this tenant
+   */
   public Suggestion resolveSuggestion(UUID tenantId, UUID suggId, String newStatus) {
     if (!List.of(Suggestion.STATUS_ORDERED, Suggestion.STATUS_CANCELLED).contains(newStatus)) {
       throw new ApiException(
@@ -757,6 +943,23 @@ public class InventoryService {
 
   // ---- serial number control (Gap #3) ----
 
+  /**
+   * Registers serial numbers against a batch, either supplied explicitly or generated.
+   *
+   * <p>Supply {@code serials} to record the manufacturer's own numbers, or {@code autoQty} with a
+   * {@code prefix} to mint a run. An explicit list is capped at 200 per call.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store holding the serialised stock
+   * @param variantId the variant concerned
+   * @param batchId the batch the serials belong to
+   * @param serials the serial numbers to record, or {@code null} to generate them
+   * @param autoQty how many to generate when {@code serials} is absent
+   * @param prefix the prefix for generated numbers
+   * @return the registered serial numbers
+   * @throws ApiException a 400 when more than 200 serials are supplied at once, or when neither a
+   *     list nor a quantity is given
+   */
   public List<SerialNumber> registerSerials(
       UUID tenantId,
       UUID storeId,
@@ -809,23 +1012,58 @@ public class InventoryService {
     return serialRepo.registerSerials(domainSerials, event);
   }
 
+  /**
+   * Lists the tenant's serials.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<SerialNumber> listSerials(
       UUID tenantId, UUID storeId, UUID variantId, String status, int limit) {
     return serialRepo.listSerials(tenantId, storeId, variantId, status, limit);
   }
 
+  /**
+   * Reads a serial.
+   *
+   * @param tenantId owning tenant
+   * @param serialId the serial id
+   * @return the serial
+   * @throws ApiException a 404 when no such serial exists in this tenant
+   */
   public SerialNumber getSerial(UUID tenantId, UUID serialId) {
     return serialRepo
         .findSerial(tenantId, serialId)
         .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
   }
 
+  /**
+   * Resolves a scanned serial number to its record.
+   *
+   * @param tenantId owning tenant
+   * @param serialNo the serial number as scanned
+   * @return the serial's record, including the batch and status it carries
+   * @throws ApiException a 404 when no such serial exists in this tenant
+   */
   public SerialNumber lookupSerialByNo(UUID tenantId, String serialNo) {
     return serialRepo
         .findSerialByNo(tenantId, serialNo)
         .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
   }
 
+  /**
+   * Updates a serial status.
+   *
+   * @param tenantId owning tenant
+   * @param serialId the serial id
+   * @param newStatus the new status
+   * @return the updated serial status
+   * @throws ApiException a 404 when no such serial status exists in this tenant
+   */
   public SerialNumber updateSerialStatus(UUID tenantId, UUID serialId, String newStatus) {
     if (!List.of(
             SerialNumber.IN_STOCK,
@@ -854,6 +1092,13 @@ public class InventoryService {
         .orElseThrow(() -> ApiException.notFound("SERIAL_NOT_FOUND", "No such serial number"));
   }
 
+  /**
+   * Lists the tenant's serial histories.
+   *
+   * @param tenantId owning tenant
+   * @param serialId the serial id
+   * @return the matching rows
+   */
   public List<SerialMovement> listSerialHistory(UUID tenantId, UUID serialId) {
     return serialRepo.listSerialHistory(tenantId, serialId);
   }
@@ -868,6 +1113,17 @@ public class InventoryService {
 
   // ---- demand history (Gap #7) ----
 
+  /**
+   * Rolls stock movements up into demand buckets, which the planning maths reads from.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store to aggregate for
+   * @param bucketType {@code DAY}, {@code WEEK} or {@code MONTH}; defaults to {@code WEEK}
+   * @param since the earliest date to aggregate from
+   * @return how many buckets were written
+   * @throws ApiException {@code INVALID_BUCKET_TYPE} (400) when the bucket type is not one of the
+   *     three
+   */
   public int aggregateDemand(UUID tenantId, UUID storeId, String bucketType, LocalDate since) {
     String bt = bucketType == null ? DemandBucket.BUCKET_WEEK : bucketType.toUpperCase(Locale.ROOT);
     if (!List.of(DemandBucket.BUCKET_DAY, DemandBucket.BUCKET_WEEK, DemandBucket.BUCKET_MONTH)
@@ -878,6 +1134,16 @@ public class InventoryService {
     return demandHistoryRepo.aggregateDemand(tenantId, storeId, bt, since);
   }
 
+  /**
+   * Lists the tenant's demand histories.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param bucketType the bucket type
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<DemandBucket> listDemandHistory(
       UUID tenantId, UUID storeId, UUID variantId, String bucketType, int limit) {
     String bt = bucketType == null ? null : bucketType.toUpperCase(Locale.ROOT);
@@ -886,6 +1152,18 @@ public class InventoryService {
 
   // ---- move orders (Gap #5) ----
 
+  /**
+   * Creates a move order.
+   *
+   * @param tenantId owning tenant
+   * @param fromStoreId the from store id
+   * @param toStoreId the to store id
+   * @param fromZone the from zone
+   * @param toZone the to zone
+   * @param notes free-text notes
+   * @param lines the lines to store
+   * @return the created move order
+   */
   public MoveOrder createMoveOrder(
       UUID tenantId,
       UUID fromStoreId,
@@ -922,12 +1200,29 @@ public class InventoryService {
     return repo.createMoveOrder(order, withIds);
   }
 
+  /**
+   * Lists the tenant's move orders.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<MoveOrder> listMoveOrders(UUID tenantId, UUID storeId, String status, int limit) {
     return repo.listMoveOrders(tenantId, storeId, status, limit);
   }
 
   public record MoveOrderWithLines(MoveOrder order, List<MoveOrderLine> lines) {}
 
+  /**
+   * Reads a move order.
+   *
+   * @param tenantId owning tenant
+   * @param id the move order to act on
+   * @return the move order
+   * @throws ApiException a 404 when no such move order exists in this tenant
+   */
   public MoveOrderWithLines getMoveOrder(UUID tenantId, UUID id) {
     MoveOrder order =
         repo.findMoveOrder(tenantId, id)
@@ -935,6 +1230,15 @@ public class InventoryService {
     return new MoveOrderWithLines(order, repo.listMoveOrderLines(id));
   }
 
+  /**
+   * Marks a move order picked, so the stock is recorded as moved between zones.
+   *
+   * @param tenantId owning tenant
+   * @param id the move order to pick
+   * @return the picked move order with its lines
+   * @throws ApiException {@code MOVE_ORDER_NOT_FOUND} (404) when no such order exists; a conflict
+   *     when it is not in a pickable state
+   */
   public MoveOrderWithLines pickMoveOrder(UUID tenantId, UUID id) {
     MoveOrder existing =
         repo.findMoveOrder(tenantId, id)
@@ -953,6 +1257,15 @@ public class InventoryService {
     return new MoveOrderWithLines(picked, repo.listMoveOrderLines(id));
   }
 
+  /**
+   * Cancels a move order, publishing {@code MoveOrderCancelled}.
+   *
+   * @param tenantId owning tenant
+   * @param id the move order to cancel
+   * @return the cancelled move order
+   * @throws ApiException {@code MOVE_ORDER_NOT_FOUND} (404) when no such order exists; a conflict
+   *     when it has already been picked
+   */
   public MoveOrder cancelMoveOrder(UUID tenantId, UUID id) {
     return repo.cancelMoveOrder(
             tenantId,
@@ -974,6 +1287,17 @@ public class InventoryService {
 
   public record TransferOrderWithLines(TransferOrder order, List<TransferOrderLine> lines) {}
 
+  /**
+   * Creates a transfer order.
+   *
+   * @param tenantId owning tenant
+   * @param fromStoreId the from store id
+   * @param toStoreId the to store id
+   * @param transferType the transfer type
+   * @param notes free-text notes
+   * @param lines the lines to store
+   * @return the created transfer order
+   */
   public TransferOrderWithLines createTransferOrder(
       UUID tenantId,
       UUID fromStoreId,
@@ -1026,11 +1350,28 @@ public class InventoryService {
     return new TransferOrderWithLines(order, repo.listTransferOrderLines(orderId));
   }
 
+  /**
+   * Lists the tenant's transfer orders.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<TransferOrder> listTransferOrders(
       UUID tenantId, UUID storeId, String status, int limit) {
     return repo.listTransferOrders(tenantId, storeId, status, limit);
   }
 
+  /**
+   * Reads a transfer order.
+   *
+   * @param tenantId owning tenant
+   * @param id the transfer order to act on
+   * @return the transfer order
+   * @throws ApiException a 404 when no such transfer order exists in this tenant
+   */
   public TransferOrderWithLines getTransferOrder(UUID tenantId, UUID id) {
     TransferOrder order =
         repo.findTransferOrder(tenantId, id)
@@ -1039,6 +1380,18 @@ public class InventoryService {
     return new TransferOrderWithLines(order, repo.listTransferOrderLines(id));
   }
 
+  /**
+   * Ships a transfer order, deducting from the sending store and putting the stock in transit.
+   *
+   * <p>The goods belong to neither store until {@link #receiveTransferOrder} lands them, which is
+   * why reporting tracks them as an open supply line in between.
+   *
+   * @param tenantId owning tenant
+   * @param id the transfer order to ship
+   * @return the shipped transfer order with its lines
+   * @throws ApiException {@code TRANSFER_ORDER_NOT_FOUND} (404) when no such order exists; a
+   *     conflict when it is not in a shippable state
+   */
   public TransferOrderWithLines shipTransferOrder(UUID tenantId, UUID id) {
     TransferOrder existing =
         repo.findTransferOrder(tenantId, id)
@@ -1058,6 +1411,17 @@ public class InventoryService {
     return new TransferOrderWithLines(shipped, repo.listTransferOrderLines(id));
   }
 
+  /**
+   * Receives a shipped transfer, booking the stock into the destination store.
+   *
+   * <p>Closes the in-transit position the shipment opened.
+   *
+   * @param tenantId owning tenant
+   * @param id the transfer order to receive
+   * @return the received transfer order with its lines
+   * @throws ApiException {@code TRANSFER_ORDER_NOT_FOUND} (404) when no such order exists; a
+   *     conflict when it has not been shipped
+   */
   public TransferOrderWithLines receiveTransferOrder(UUID tenantId, UUID id) {
     TransferOrder existing =
         repo.findTransferOrder(tenantId, id)
@@ -1076,6 +1440,15 @@ public class InventoryService {
     return new TransferOrderWithLines(received, repo.listTransferOrderLines(id));
   }
 
+  /**
+   * Cancels a transfer order, publishing {@code TransferOrderCancelled}.
+   *
+   * @param tenantId owning tenant
+   * @param id the transfer order to cancel
+   * @return the cancelled transfer order
+   * @throws ApiException {@code TRANSFER_ORDER_NOT_FOUND} (404) when no such order exists; a
+   *     conflict when it has already shipped
+   */
   public TransferOrder cancelTransferOrder(UUID tenantId, UUID id) {
     return repo.cancelTransferOrder(
             tenantId,
@@ -1153,6 +1526,15 @@ public class InventoryService {
     return new CycleCountWithLines(header, lines);
   }
 
+  /**
+   * Lists the tenant's cycle counts.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<CycleCountWithLines> listCycleCounts(
       UUID tenantId, UUID storeId, String status, int limit) {
     List<CycleCountHeader> headers =
@@ -1165,6 +1547,14 @@ public class InventoryService {
         .toList();
   }
 
+  /**
+   * Reads a cycle count.
+   *
+   * @param tenantId owning tenant
+   * @param headerId the header id
+   * @return the cycle count
+   * @throws ApiException a 404 when no such cycle count exists in this tenant
+   */
   public CycleCountWithLines getCycleCount(UUID tenantId, UUID headerId) {
     CycleCountHeader header =
         cycleCountRepo
@@ -1277,6 +1667,17 @@ public class InventoryService {
 
   // ---- Lot Genealogy (Gap #11) ----
 
+  /**
+   * Creates a lot link.
+   *
+   * @param tenantId owning tenant
+   * @param parentBatchId the parent batch id
+   * @param childBatchId the child batch id
+   * @param qty the quantity
+   * @param relationType the relation type
+   * @param notes free-text notes
+   * @return the created lot link
+   */
   public LotGenealogyLink createLotLink(
       UUID tenantId,
       UUID parentBatchId,
@@ -1301,14 +1702,35 @@ public class InventoryService {
     return lotGenealogyRepo.createLotLink(link);
   }
 
+  /**
+   * Every batch this one came from, transitively — the "where did it come from" half of a recall.
+   *
+   * @param tenantId owning tenant
+   * @param batchId the batch to trace back from
+   * @return the ancestor links, empty when the batch was received rather than derived
+   */
   public List<LotGenealogyLink> findAncestors(UUID tenantId, UUID batchId) {
     return lotGenealogyRepo.findAncestors(tenantId, batchId);
   }
 
+  /**
+   * Every batch derived from this one, transitively — the "where did it go" half of a recall.
+   *
+   * @param tenantId owning tenant
+   * @param batchId the batch to trace forward from
+   * @return the descendant links, empty when nothing was split or merged from it
+   */
   public List<LotGenealogyLink> findDescendants(UUID tenantId, UUID batchId) {
     return lotGenealogyRepo.findDescendants(tenantId, batchId);
   }
 
+  /**
+   * The immediate parent and child links of one batch, without walking the tree.
+   *
+   * @param tenantId owning tenant
+   * @param batchId the batch whose direct links to read
+   * @return the one-hop genealogy links
+   */
   public List<LotGenealogyLink> findDirectLinks(UUID tenantId, UUID batchId) {
     return lotGenealogyRepo.findDirectLinks(tenantId, batchId);
   }
@@ -1326,6 +1748,20 @@ public class InventoryService {
    */
   public record AbcCompileResult(AbcCompileRun run, List<AbcAssignment> assignments) {}
 
+  /**
+   * Recomputes ABC classes for a store, ranking variants and cutting them into A, B and C bands.
+   *
+   * <p>Ranked by annual value or by movement velocity, depending on {@code criteria}: the two
+   * answer different questions — what the money is tied up in, versus what moves most often.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store to classify
+   * @param criteria {@code VALUE} or {@code VELOCITY}; defaults to {@code VALUE}
+   * @param thresholdA the cumulative share at which the A band ends
+   * @param thresholdAB the cumulative share at which the B band ends
+   * @return the run's outcome, including how many variants landed in each band
+   * @throws ApiException a 400 when the criteria is not one of the two
+   */
   public AbcCompileResult runAbcCompile(
       UUID tenantId, UUID storeId, String criteria, BigDecimal thresholdA, BigDecimal thresholdAB) {
 
@@ -1410,6 +1846,15 @@ public class InventoryService {
     return new AbcCompileResult(run, assignments);
   }
 
+  /**
+   * Lists the tenant's abc assignments.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param abcClass the abc class
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<AbcAssignment> listAbcAssignments(
       UUID tenantId, UUID storeId, String abcClass, int limit) {
     String cls = abcClass == null ? null : abcClass.toUpperCase(Locale.ROOT);
@@ -1419,6 +1864,15 @@ public class InventoryService {
     return abcRepo.listAbcAssignments(tenantId, storeId, cls, limit);
   }
 
+  /**
+   * Reads an abc assignment.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @return the abc assignment
+   * @throws ApiException a 404 when no such abc assignment exists in this tenant
+   */
   public AbcAssignment getAbcAssignment(UUID tenantId, UUID storeId, UUID variantId) {
     return abcRepo
         .findAbcAssignment(tenantId, storeId, variantId)
@@ -1430,6 +1884,17 @@ public class InventoryService {
 
   // ---- safety stock (Gap #8) ----
 
+  /**
+   * Sets how safety stock is calculated for a variant at a store.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store the parameters apply at
+   * @param variantId the variant concerned
+   * @param method the calculation method to use
+   * @param leadTimeDays how long replenishment takes, which the buffer has to cover
+   * @param serviceLevelPct the target availability, which sets how much buffer that implies
+   * @return the stored parameters
+   */
   public SafetyStockParams setSafetyStockParams(
       UUID tenantId,
       UUID storeId,
@@ -1476,6 +1941,15 @@ public class InventoryService {
     return safetyStockRepo.upsertSafetyStockParams(params);
   }
 
+  /**
+   * Reads a safety stock params.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @return the safety stock params
+   * @throws ApiException a 404 when no such safety stock params exists in this tenant
+   */
   public SafetyStockParams getSafetyStockParams(UUID tenantId, UUID storeId, UUID variantId) {
     return safetyStockRepo
         .findSafetyStockParams(tenantId, storeId, variantId)
@@ -1485,6 +1959,14 @@ public class InventoryService {
                     "SAFETY_STOCK_PARAMS_NOT_FOUND", "No safety stock params for this variant"));
   }
 
+  /**
+   * Lists the tenant's safety stock params.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<SafetyStockParams> listSafetyStockParams(UUID tenantId, UUID storeId, int limit) {
     return safetyStockRepo.listSafetyStockParams(tenantId, storeId, limit);
   }
@@ -1581,6 +2063,14 @@ public class InventoryService {
 
   // ── Gap #16: Physical Inventory ──────────────────────────────────────────
 
+  /**
+   * Creates a physical inventory.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param notes free-text notes
+   * @return the created physical inventory
+   */
   public PhysicalInventory createPhysicalInventory(UUID tenantId, UUID storeId, String notes) {
     UUID id = Ids.newId();
     var pi =
@@ -1596,17 +2086,43 @@ public class InventoryService {
     return physicalInventoryRepo.createPhysicalInventory(pi, event);
   }
 
+  /**
+   * Reads a physical inventory.
+   *
+   * @param tenantId owning tenant
+   * @param id the physical inventory to act on
+   * @return the physical inventory
+   * @throws ApiException a 404 when no such physical inventory exists in this tenant
+   */
   public PhysicalInventory getPhysicalInventory(UUID tenantId, UUID id) {
     return physicalInventoryRepo
         .findPhysicalInventory(tenantId, id)
         .orElseThrow(() -> ApiException.notFound("PI_NOT_FOUND", "Physical inventory not found"));
   }
 
+  /**
+   * Lists the tenant's physical inventories.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<PhysicalInventory> listPhysicalInventories(UUID tenantId, String storeId) {
     UUID storeUuid = storeId != null ? parseUuid(storeId, "storeId") : null;
     return physicalInventoryRepo.listPhysicalInventories(tenantId, storeUuid);
   }
 
+  /**
+   * Adds a tag.
+   *
+   * @param tenantId owning tenant
+   * @param piId the pi id
+   * @param variantId the product variant concerned
+   * @param zoneId the zone id
+   * @param systemQty the system qty
+   * @return the added tag
+   * @throws ApiException a 404 when no such tag exists in this tenant
+   */
   public PhysicalInventoryTag addTag(
       UUID tenantId, UUID piId, UUID variantId, UUID zoneId, BigDecimal systemQty) {
     getPhysicalInventory(tenantId, piId);
@@ -1625,11 +2141,34 @@ public class InventoryService {
     return physicalInventoryRepo.addTag(tag);
   }
 
+  /**
+   * Records the counted quantity on one physical-inventory tag.
+   *
+   * <p>Recording a count does not adjust stock — the variance is only posted when the count is
+   * completed, so a part-finished count leaves the books alone.
+   *
+   * @param tenantId owning tenant
+   * @param piId the physical inventory the tag belongs to
+   * @param tagId the tag being counted
+   * @param countedQty the quantity actually found
+   * @return the tag with its recorded count
+   */
   public PhysicalInventoryTag countTag(
       UUID tenantId, UUID piId, UUID tagId, BigDecimal countedQty) {
     return physicalInventoryRepo.countTag(tenantId, piId, tagId, countedQty);
   }
 
+  /**
+   * Completes a physical inventory, posting the counted variances and publishing {@code
+   * PhysicalInventoryCompleted}.
+   *
+   * <p>This is the point stock actually moves to match the count, so it is terminal.
+   *
+   * @param tenantId owning tenant
+   * @param piId the physical inventory to complete
+   * @return the completed physical inventory
+   * @throws ApiException a 404 when no such physical inventory exists in this tenant
+   */
   public PhysicalInventory completePhysicalInventory(UUID tenantId, UUID piId) {
     getPhysicalInventory(tenantId, piId);
     var event =
@@ -1642,12 +2181,31 @@ public class InventoryService {
     return physicalInventoryRepo.completePhysicalInventory(tenantId, piId, event);
   }
 
+  /**
+   * Lists the tenant's tags.
+   *
+   * @param tenantId owning tenant
+   * @param piId the pi id
+   * @return the matching rows
+   */
   public List<PhysicalInventoryTag> listTags(UUID tenantId, UUID piId) {
     return physicalInventoryRepo.listTags(tenantId, piId);
   }
 
   // ── Gap #19: Reorder Point + EOQ ─────────────────────────────────────────────
 
+  /**
+   * Creates or replaces a rop plan.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param leadTimeDays the lead time days
+   * @param orderingCost the ordering cost
+   * @param holdingCostPct the holding cost pct
+   * @param unitCost the unit cost
+   * @return the stored rop plan
+   */
   public ReorderPointPlan upsertRopPlan(
       UUID tenantId,
       UUID storeId,
@@ -1684,16 +2242,39 @@ public class InventoryService {
     return ropRepo.upsertRopPlan(plan, event);
   }
 
+  /**
+   * Reads a rop plan.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @return the rop plan
+   * @throws ApiException a 404 when no such rop plan exists in this tenant
+   */
   public ReorderPointPlan getRopPlan(UUID tenantId, UUID storeId, UUID variantId) {
     return ropRepo
         .findRopPlan(tenantId, storeId, variantId)
         .orElseThrow(() -> ApiException.notFound("ROP_NOT_FOUND", "ROP plan not found"));
   }
 
+  /**
+   * Lists the tenant's rop plans.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<ReorderPointPlan> listRopPlans(UUID tenantId, UUID storeId) {
     return ropRepo.listRopPlans(tenantId, storeId);
   }
 
+  /**
+   * Recomputes reorder-point plans for a store from its demand history and lead times.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store to plan for
+   * @return how many plans were written
+   */
   public int computeRopPlans(UUID tenantId, UUID storeId) {
     return ropRepo.computeRopPlans(tenantId, storeId);
   }
@@ -1703,6 +2284,19 @@ public class InventoryService {
   private static final java.util.Set<String> KANBAN_TYPES =
       java.util.Set.of("SUPPLIER", "INTER_ORG", "INTRA_ORG", "PRODUCTION");
 
+  /**
+   * Creates a kanban card.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param kanbanType the kanban type
+   * @param reorderQty the reorder qty
+   * @param sourceStoreId the source store id
+   * @param supplierRef the supplier ref
+   * @param notes free-text notes
+   * @return the created kanban card
+   */
   public KanbanCard createKanbanCard(
       UUID tenantId,
       UUID storeId,
@@ -1745,6 +2339,15 @@ public class InventoryService {
     return kanbanRepo.createKanbanCard(card, event);
   }
 
+  /**
+   * Triggers a kanban card, signalling that its bin has run down and needs refilling.
+   *
+   * @param tenantId owning tenant
+   * @param cardId the card to trigger
+   * @param notes free-text note recorded against the trigger
+   * @return the card in its triggered state
+   * @throws ApiException {@code KANBAN_NOT_FOUND} (404) when no such card exists in this tenant
+   */
   public KanbanCard triggerKanbanCard(UUID tenantId, UUID cardId, String notes) {
     KanbanCard card =
         kanbanRepo
@@ -1760,6 +2363,14 @@ public class InventoryService {
     return kanbanRepo.triggerKanbanCard(tenantId, cardId, notes, event);
   }
 
+  /**
+   * Marks a triggered kanban card refilled, returning it to circulation.
+   *
+   * @param tenantId owning tenant
+   * @param cardId the card to replenish
+   * @return the card back in its filled state
+   * @throws ApiException {@code KANBAN_NOT_FOUND} (404) when no such card exists in this tenant
+   */
   public KanbanCard replenishKanbanCard(UUID tenantId, UUID cardId) {
     KanbanCard card =
         kanbanRepo
@@ -1775,18 +2386,44 @@ public class InventoryService {
     return kanbanRepo.replenishKanbanCard(tenantId, cardId, event);
   }
 
+  /**
+   * Reads a kanban card.
+   *
+   * @param tenantId owning tenant
+   * @param cardId the card id
+   * @return the kanban card
+   * @throws ApiException a 404 when no such kanban card exists in this tenant
+   */
   public KanbanCard getKanbanCard(UUID tenantId, UUID cardId) {
     return kanbanRepo
         .findKanbanCard(tenantId, cardId)
         .orElseThrow(() -> ApiException.notFound("KANBAN_NOT_FOUND", "kanban card not found"));
   }
 
+  /**
+   * Lists the tenant's kanban cards.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param status the status to set
+   * @return the matching rows
+   */
   public List<KanbanCard> listKanbanCards(UUID tenantId, UUID storeId, String status) {
     return kanbanRepo.listKanbanCards(tenantId, storeId, status);
   }
 
   // ── Gap #17: Costing Methods ────────────────────────────────────────────────
 
+  /**
+   * Creates or replaces a costing method.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param method the calculation method
+   * @param averageCost the average cost
+   * @return the stored costing method
+   */
   public CostingMethod upsertCostingMethod(
       UUID tenantId, UUID storeId, UUID variantId, String method, BigDecimal averageCost) {
     if (!"FIFO".equals(method) && !"AVERAGE".equals(method)) {
@@ -1807,6 +2444,15 @@ public class InventoryService {
         tenantId, storeId, variantId, method, averageCost, event);
   }
 
+  /**
+   * Reads a costing method.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @return the costing method
+   * @throws ApiException a 404 when no such costing method exists in this tenant
+   */
   public CostingMethod getCostingMethod(UUID tenantId, UUID storeId, UUID variantId) {
     return costingRepo
         .findCostingMethod(tenantId, storeId, variantId)
@@ -1814,10 +2460,27 @@ public class InventoryService {
             () -> ApiException.notFound("COSTING_METHOD_NOT_FOUND", "costing method not found"));
   }
 
+  /**
+   * Lists the tenant's costing methods.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<CostingMethod> listCostingMethods(UUID tenantId, UUID storeId) {
     return costingRepo.listCostingMethods(tenantId, storeId);
   }
 
+  /**
+   * Opens an inventory accounting period for a store.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store the period belongs to
+   * @param periodName the period's display name
+   * @param periodDate the period's date, as an ISO date string
+   * @return the opened period
+   * @throws ApiException a 400 when {@code periodDate} is not a valid date
+   */
   public AccountingPeriod openPeriod(
       UUID tenantId, UUID storeId, String periodName, String periodDate) {
     LocalDate date = com.shelfj.web.Parsing.date(periodDate, "periodDate");
@@ -1831,6 +2494,15 @@ public class InventoryService {
     return costingRepo.openPeriod(tenantId, storeId, periodName, date, event);
   }
 
+  /**
+   * Closes an accounting period, freezing its valuation and publishing {@code
+   * AccountingPeriodClosed}.
+   *
+   * @param tenantId owning tenant
+   * @param periodId the period to close
+   * @return the closed period
+   * @throws ApiException a 404 when no such period exists in this tenant
+   */
   public AccountingPeriod closePeriod(UUID tenantId, UUID periodId) {
     var event =
         new OutboxRow(
@@ -1842,6 +2514,14 @@ public class InventoryService {
     return costingRepo.closePeriod(tenantId, periodId, event);
   }
 
+  /**
+   * Reads a period.
+   *
+   * @param tenantId owning tenant
+   * @param periodId the period id
+   * @return the period
+   * @throws ApiException a 404 when no such period exists in this tenant
+   */
   public AccountingPeriod getPeriod(UUID tenantId, UUID periodId) {
     return costingRepo
         .findPeriod(tenantId, periodId)
@@ -1849,34 +2529,91 @@ public class InventoryService {
             () -> ApiException.notFound("PERIOD_NOT_FOUND", "accounting period not found"));
   }
 
+  /**
+   * Lists the tenant's periods.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<AccountingPeriod> listPeriods(UUID tenantId, UUID storeId) {
     return costingRepo.listPeriods(tenantId, storeId);
   }
 
   // ── Tier-1 Gap #21: Transaction reason codes ─────────────────────────────
 
+  /**
+   * Creates a reason code.
+   *
+   * @param tenantId owning tenant
+   * @param code the code to match
+   * @param description the free-text description
+   * @return the created reason code
+   */
   public ReasonCode createReasonCode(UUID tenantId, String code, String description) {
     return refData.insertReasonCode(tenantId, code.toUpperCase(Locale.ROOT), description);
   }
 
+  /**
+   * Lists the tenant's reason codes.
+   *
+   * @param tenantId owning tenant
+   * @return the matching rows
+   */
   public List<ReasonCode> listReasonCodes(UUID tenantId) {
     return refData.listReasonCodes(tenantId);
   }
 
+  /**
+   * Enables or disables a movement reason code.
+   *
+   * <p>Disabling rather than deleting, so historical movements keep resolving the code they were
+   * recorded against.
+   *
+   * @param tenantId owning tenant
+   * @param id the reason code to switch
+   * @param active {@code true} to enable it, {@code false} to retire it
+   * @return the reason code in its new state
+   */
   public ReasonCode setReasonCodeActive(UUID tenantId, UUID id, boolean active) {
     return refData.setReasonCodeActive(tenantId, id, active);
   }
 
   // ── Tier-1 Gap #22: Transaction source types ──────────────────────────────
 
+  /**
+   * Creates a source type.
+   *
+   * @param tenantId owning tenant
+   * @param code the code to match
+   * @param description the free-text description
+   * @return the created source type
+   */
   public TransactionSourceType createSourceType(UUID tenantId, String code, String description) {
     return refData.insertSourceType(tenantId, code.toUpperCase(Locale.ROOT), description);
   }
 
+  /**
+   * Lists the tenant's source types.
+   *
+   * @param tenantId owning tenant
+   * @return the matching rows
+   */
   public List<TransactionSourceType> listSourceTypes(UUID tenantId) {
     return refData.listSourceTypes(tenantId);
   }
 
+  /**
+   * Enables or disables a transaction source type.
+   *
+   * <p>Disabling rather than deleting, so historical movements keep resolving the type they were
+   * recorded against.
+   *
+   * @param tenantId owning tenant
+   * @param id the source type to switch
+   * @param active {@code true} to enable it, {@code false} to retire it
+   * @return the source type in its new state
+   */
   public TransactionSourceType setSourceTypeActive(UUID tenantId, UUID id, boolean active) {
     return refData.setSourceTypeActive(tenantId, id, active);
   }
@@ -1885,6 +2622,21 @@ public class InventoryService {
 
   public record LotSplitResult(Batch newBatch, LotAction action) {}
 
+  /**
+   * Splits part of a batch into a new one, recording the genealogy link.
+   *
+   * <p>The child inherits the parent's cost and expiry, and the link is what lets a recall trace
+   * from either end.
+   *
+   * @param tenantId owning tenant
+   * @param sourceBatchId the batch to split from
+   * @param qty the quantity to move into the new batch
+   * @param batchNo the new batch's number, or {@code null} to mint one
+   * @param notes free-text note recorded against the split
+   * @return the source and new batches as they now stand
+   * @throws ApiException {@code BATCH_NOT_FOUND} (404) when the source does not exist; a conflict
+   *     when the quantity exceeds what the source holds
+   */
   public LotSplitResult splitLot(
       UUID tenantId, UUID sourceBatchId, BigDecimal qty, String batchNo, String notes) {
     Batch source =
@@ -1930,6 +2682,22 @@ public class InventoryService {
 
   public record LotMergeResult(Batch targetBatch, LotAction action) {}
 
+  /**
+   * Merges quantity from one batch into another, recording the genealogy link.
+   *
+   * <p>Merging mixes provenance, so the link matters: after this, a recall on either source has to
+   * reach the merged batch.
+   *
+   * @param tenantId owning tenant
+   * @param sourceBatchId the batch to take stock from
+   * @param targetBatchId the batch to merge it into
+   * @param qty the quantity to move
+   * @param notes free-text note recorded against the merge
+   * @param actorId the user performing the merge
+   * @return both batches as they now stand
+   * @throws ApiException {@code BATCH_NOT_FOUND} (404) when either batch does not exist; a conflict
+   *     when the quantity exceeds what the source holds
+   */
   public LotMergeResult mergeLot(
       UUID tenantId,
       UUID sourceBatchId,
@@ -1981,12 +2749,27 @@ public class InventoryService {
     return new LotMergeResult(updated, action);
   }
 
+  /**
+   * Lists the tenant's lot actions.
+   *
+   * @param tenantId owning tenant
+   * @param batchId the batch id
+   * @return the matching rows
+   */
   public List<LotAction> listLotActions(UUID tenantId, UUID batchId) {
     return lotActionRepo.listLotActions(tenantId, batchId);
   }
 
   // ── Tier-1 Gap #24: Expiry alert query ────────────────────────────────────
 
+  /**
+   * Lists the tenant's expiring batches.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param withinDays the within days
+   * @return the matching rows
+   */
   public List<Batch> listExpiringBatches(UUID tenantId, UUID storeId, int withinDays) {
     if (withinDays < 1 || withinDays > 3650) {
       throw ApiException.badRequest("INVALID_DAYS", "withinDays must be 1–3650");
@@ -1996,6 +2779,14 @@ public class InventoryService {
 
   // ── Tier-1 Gap #25: Grade control ─────────────────────────────────────────
 
+  /**
+   * Updates a batch grade.
+   *
+   * @param tenantId owning tenant
+   * @param batchId the batch id
+   * @param grade the stock grade
+   * @return the updated batch grade
+   */
   public Batch updateBatchGrade(UUID tenantId, UUID batchId, String grade) {
     if (grade == null || grade.isBlank()) {
       throw ApiException.badRequest("INVALID_GRADE", "grade must not be blank");
@@ -2005,6 +2796,17 @@ public class InventoryService {
 
   // ── Tier-1 Gap #26: Lot UOM conversions ──────────────────────────────────
 
+  /**
+   * Creates or replaces a lot uom conversion.
+   *
+   * @param tenantId owning tenant
+   * @param batchId the batch id
+   * @param fromUom the from uom
+   * @param toUom the to uom
+   * @param factor the conversion factor
+   * @param notes free-text notes
+   * @return the stored lot uom conversion
+   */
   public LotUomConversion upsertLotUomConversion(
       UUID tenantId, UUID batchId, String fromUom, String toUom, BigDecimal factor, String notes) {
     if (factor.compareTo(BigDecimal.ZERO) <= 0) {
@@ -2013,12 +2815,30 @@ public class InventoryService {
     return planningConfig.upsertLotUomConversion(tenantId, batchId, fromUom, toUom, factor, notes);
   }
 
+  /**
+   * Lists the tenant's lot uom conversions.
+   *
+   * @param tenantId owning tenant
+   * @param batchId the batch id
+   * @return the matching rows
+   */
   public List<LotUomConversion> listLotUomConversions(UUID tenantId, UUID batchId) {
     return planningConfig.listLotUomConversions(tenantId, batchId);
   }
 
   // ── Tier-1 Gap #27: PAR levels ────────────────────────────────────────────
 
+  /**
+   * Creates or replaces a par level.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param parQty the par qty
+   * @param uom the par to persist
+   * @param reviewCycle the review cycle
+   * @return the stored par level
+   */
   public ParLevelConfig upsertParLevel(
       UUID tenantId,
       UUID storeId,
@@ -2039,10 +2859,26 @@ public class InventoryService {
     return planningConfig.upsertParLevel(tenantId, storeId, variantId, parQty, uom, cycle);
   }
 
+  /**
+   * Lists the tenant's par levels.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<ParLevelConfig> listParLevels(UUID tenantId, UUID storeId) {
     return planningConfig.listParLevels(tenantId, storeId);
   }
 
+  /**
+   * Reads a par level.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @return the par level
+   * @throws ApiException a 404 when no such par level exists in this tenant
+   */
   public ParLevelConfig getParLevel(UUID tenantId, UUID storeId, UUID variantId) {
     return planningConfig
         .findParLevel(tenantId, storeId, variantId)
@@ -2051,11 +2887,31 @@ public class InventoryService {
 
   // ── Tier-1 Gap #28: Order modifiers ──────────────────────────────────────
 
+  /**
+   * Updates a rop order modifiers.
+   *
+   * @param tenantId owning tenant
+   * @param ropId the rop id
+   * @param min the record to persist
+   * @param max the record to persist
+   * @param lotMult the lot mult
+   * @return the updated rop order modifiers
+   */
   public ReorderPointPlan updateRopOrderModifiers(
       UUID tenantId, UUID ropId, BigDecimal min, BigDecimal max, BigDecimal lotMult) {
     return ropRepo.updateRopOrderModifiers(tenantId, ropId, min, max, lotMult);
   }
 
+  /**
+   * Updates a kanban order modifiers.
+   *
+   * @param tenantId owning tenant
+   * @param cardId the card id
+   * @param min the record to persist
+   * @param max the record to persist
+   * @param lotMult the lot mult
+   * @return the updated kanban order modifiers
+   */
   public KanbanCard updateKanbanOrderModifiers(
       UUID tenantId, UUID cardId, BigDecimal min, BigDecimal max, BigDecimal lotMult) {
     return kanbanRepo.updateKanbanOrderModifiers(tenantId, cardId, min, max, lotMult);
@@ -2065,6 +2921,16 @@ public class InventoryService {
 
   public record BulkReserveResult(int succeeded, int failed, List<Reservation> results) {}
 
+  /**
+   * Holds stock for many lines in one call, so a multi-line checkout costs one round trip.
+   *
+   * <p>Lines are attempted together; the result reports which succeeded and which could not be
+   * held, rather than failing the whole basket on one short line.
+   *
+   * @param tenantId owning tenant
+   * @param requests the lines to hold
+   * @return the holds placed and the lines that failed, with why
+   */
   public BulkReserveResult bulkReserve(
       UUID tenantId, List<com.shelfj.inventory.dto.Dtos.ReserveRequest> requests) {
     List<InventoryRepository.ReserveBatchItem> items = new ArrayList<>(requests.size());
@@ -2116,6 +2982,17 @@ public class InventoryService {
 
   // ── Tier-1 Gap #30: Purge transaction history ─────────────────────────────
 
+  /**
+   * Archives and removes stock movements older than a cutoff.
+   *
+   * <p>Refuses a cutoff inside the last 90 days: {@code stock_movements} is append-only audit, and
+   * a too-recent purge would destroy the trail behind current stock rather than trimming history.
+   *
+   * @param tenantId owning tenant
+   * @param before purge movements recorded strictly before this instant
+   * @return how many movements were purged
+   * @throws ApiException {@code PURGE_TOO_RECENT} (400) when the cutoff is less than 90 days ago
+   */
   public int purgeMovementsBefore(UUID tenantId, Instant before) {
     Instant cutoff = Instant.now().minusSeconds(90L * 24 * 3600);
     if (before.isAfter(cutoff)) {
@@ -2127,17 +3004,41 @@ public class InventoryService {
 
   // ── Tier-1 Gap #31: Zone GL mappings ─────────────────────────────────────
 
+  /**
+   * Creates or replaces a zone gl mapping.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param zoneId the zone id
+   * @param nominalCode the nominal code
+   * @param description the free-text description
+   * @return the stored zone gl mapping
+   */
   public ZoneGlMapping upsertZoneGlMapping(
       UUID tenantId, UUID storeId, UUID zoneId, String nominalCode, String description) {
     return refData.upsertZoneGlMapping(tenantId, storeId, zoneId, nominalCode, description);
   }
 
+  /**
+   * Lists the tenant's zone gl mappings.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<ZoneGlMapping> listZoneGlMappings(UUID tenantId, UUID storeId) {
     return refData.listZoneGlMappings(tenantId, storeId);
   }
 
   // ── Picking Rules (Gap #38) ──────────────────────────────────────────────
 
+  /**
+   * Creates a picking rule.
+   *
+   * @param tenantId owning tenant
+   * @param req the request body carrying the new values
+   * @return the created picking rule
+   */
   public PickingRule createPickingRule(
       UUID tenantId, com.shelfj.inventory.dto.Dtos.CreatePickingRuleRequest req) {
     String strategy = req.strategy().toUpperCase(java.util.Locale.ROOT);
@@ -2154,6 +3055,14 @@ public class InventoryService {
         tenantId, req.name().trim(), strategy, req.gradePreference());
   }
 
+  /**
+   * Reads a picking rule.
+   *
+   * @param tenantId owning tenant
+   * @param id the picking rule to act on
+   * @return the picking rule
+   * @throws ApiException a 404 when no such picking rule exists in this tenant
+   */
   public PickingRule getPickingRule(UUID tenantId, UUID id) {
     return pickingRuleRepo
         .findPickingRule(tenantId, id)
@@ -2161,15 +3070,41 @@ public class InventoryService {
             () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
   }
 
+  /**
+   * Lists the tenant's picking rules.
+   *
+   * @param tenantId owning tenant
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<PickingRule> listPickingRules(UUID tenantId, int limit) {
     return pickingRuleRepo.listPickingRules(tenantId, limit);
   }
 
+  /**
+   * Deactivates a picking rule, leaving the row in place.
+   *
+   * @param tenantId owning tenant
+   * @param id the picking rule to act on
+   * @return the picking rule in its deactivated state
+   * @throws ApiException a 404 when no such picking rule exists in this tenant
+   */
   public PickingRule deactivatePickingRule(UUID tenantId, UUID id) {
     getPickingRule(tenantId, id);
     return pickingRuleRepo.deactivatePickingRule(tenantId, id);
   }
 
+  /**
+   * Replaces a picking rule's zone priority order in full.
+   *
+   * <p>The order decides which zone a picker is sent to first when stock sits in several.
+   *
+   * @param tenantId owning tenant
+   * @param ruleId the picking rule to configure
+   * @param req the zones in the order they should be picked from
+   * @return the stored priorities
+   * @throws ApiException a 404 when no such picking rule exists in this tenant
+   */
   public List<PickingRuleZonePriority> setZonePriorities(
       UUID tenantId, UUID ruleId, com.shelfj.inventory.dto.Dtos.SetZonePrioritiesRequest req) {
     getPickingRule(tenantId, ruleId);
@@ -2184,11 +3119,27 @@ public class InventoryService {
     return pickingRuleRepo.listZonePriorities(tenantId, ruleId);
   }
 
+  /**
+   * Lists the tenant's zone priorities.
+   *
+   * @param tenantId owning tenant
+   * @param ruleId the rule id
+   * @return the matching rows
+   * @throws ApiException a 404 when no such zone prioritie exists in this tenant
+   */
   public List<PickingRuleZonePriority> listZonePriorities(UUID tenantId, UUID ruleId) {
     getPickingRule(tenantId, ruleId);
     return pickingRuleRepo.listZonePriorities(tenantId, ruleId);
   }
 
+  /**
+   * Creates a picking rule assignment.
+   *
+   * @param tenantId owning tenant
+   * @param req the request body carrying the new values
+   * @return the created picking rule assignment
+   * @throws ApiException a 404 when no such picking rule assignment exists in this tenant
+   */
   public PickingRuleAssignment createPickingRuleAssignment(
       UUID tenantId, com.shelfj.inventory.dto.Dtos.CreatePickingRuleAssignmentRequest req) {
     UUID ruleId = UUID.fromString(req.ruleId());
@@ -2215,16 +3166,41 @@ public class InventoryService {
     return pickingRuleRepo.createPickingRuleAssignment(tenantId, ruleId, scopeType, scopeId);
   }
 
+  /**
+   * Lists the tenant's picking rule assignments.
+   *
+   * @param tenantId owning tenant
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId, int limit) {
     return pickingRuleRepo.listPickingRuleAssignments(tenantId, limit);
   }
 
+  /**
+   * Deletes a picking rule assignment.
+   *
+   * @param tenantId owning tenant
+   * @param id the picking rule assignment to act on
+   * @throws ApiException a 404 when no such picking rule assignment exists in this tenant
+   */
   public void deletePickingRuleAssignment(UUID tenantId, UUID id) {
     if (!pickingRuleRepo.deletePickingRuleAssignment(tenantId, id)) {
       throw ApiException.notFound("ASSIGNMENT_NOT_FOUND", "Picking rule assignment not found");
     }
   }
 
+  /**
+   * The picking rule in force for a variant at a store.
+   *
+   * <p>Falls back to FEFO when nothing is configured, so a perishable is picked shortest-expiry
+   * first by default rather than arbitrarily.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store being picked in
+   * @param variantId the variant being picked
+   * @return the resolved strategy, grade preference and zone order
+   */
   public com.shelfj.inventory.dto.Dtos.PickingRuleResolveResponse resolvePickingRule(
       UUID tenantId, UUID storeId, UUID variantId) {
     var rule = pickingRuleRepo.resolvePickingRule(tenantId, storeId, variantId).orElse(null);

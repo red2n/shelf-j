@@ -5,6 +5,12 @@ import java.time.Instant;
 import java.util.List;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
+/**
+ * Request and response DTOs for reporting-svc — the wire contract for the report endpoints.
+ *
+ * <p>Ids are carried as {@code String} rather than {@code UUID} so the JSON contract stays stable,
+ * and money is {@code BigDecimal} throughout.
+ */
 public final class Dtos {
 
   private Dtos() {}

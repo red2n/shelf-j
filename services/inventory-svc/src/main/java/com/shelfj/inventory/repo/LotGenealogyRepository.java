@@ -19,6 +19,12 @@ import java.util.UUID;
 @ApplicationScoped
 public class LotGenealogyRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a lot link.
+   *
+   * @param link the genealogy link to persist
+   * @return the lot link as stored
+   */
   public LotGenealogyLink createLotLink(LotGenealogyLink link) {
     return inTx(
         c -> {
@@ -47,6 +53,13 @@ public class LotGenealogyRepository extends BaseJdbcRepository {
         "create lot link");
   }
 
+  /**
+   * Looks an ancestors up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param batchId the batch id
+   * @return the ancestors, or empty when it does not exist in this tenant
+   */
   public List<LotGenealogyLink> findAncestors(UUID tenantId, UUID batchId) {
     String sql =
         "WITH RECURSIVE anc(id, tenant_id, parent_batch_id, child_batch_id, qty,"
@@ -69,6 +82,13 @@ public class LotGenealogyRepository extends BaseJdbcRepository {
         "find ancestors");
   }
 
+  /**
+   * Looks a descendants up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param batchId the batch id
+   * @return the descendants, or empty when it does not exist in this tenant
+   */
   public List<LotGenealogyLink> findDescendants(UUID tenantId, UUID batchId) {
     String sql =
         "WITH RECURSIVE des(id, tenant_id, parent_batch_id, child_batch_id, qty,"
@@ -91,6 +111,13 @@ public class LotGenealogyRepository extends BaseJdbcRepository {
         "find descendants");
   }
 
+  /**
+   * Looks a direct links up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param batchId the batch id
+   * @return the direct links, or empty when it does not exist in this tenant
+   */
   public List<LotGenealogyLink> findDirectLinks(UUID tenantId, UUID batchId) {
     String sql =
         "SELECT id, tenant_id, parent_batch_id, child_batch_id, qty, relation_type, notes, created_at"

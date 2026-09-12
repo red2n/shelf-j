@@ -18,6 +18,13 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 
+/**
+ * JDBC access to payment tenders and refunds, with their outbox events.
+ *
+ * <p>Both tables are append-only: nothing here updates a captured tender in place. The refund paths
+ * enforce the cumulative refund cap inside the same transaction that writes the refund, with the
+ * payment row locked, so concurrent refunds cannot together exceed what was captured.
+ */
 @ApplicationScoped
 public class PaymentRepository extends BaseOutboxRepository {
 
@@ -311,6 +318,13 @@ public class PaymentRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Looks a tender up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param tenderId the tender to fetch
+   * @return the tender, or empty when no such tender exists in this tenant
+   */
   public Optional<PaymentTender> findTender(UUID tenantId, UUID tenderId) {
     var rows =
         query(
@@ -344,6 +358,16 @@ public class PaymentRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Lists every tender captured against one order.
+   *
+   * <p>A split-tender sale returns one row per tender, so callers totalling what was paid must sum
+   * the rows rather than take the first.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the order whose tenders to list
+   * @return the captured tenders, empty when nothing has been paid
+   */
   public List<PaymentTender> findTendersByOrder(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, amount, method, reference,"
@@ -358,6 +382,13 @@ public class PaymentRepository extends BaseOutboxRepository {
         "list tenders by order");
   }
 
+  /**
+   * Lists every refund recorded against one order.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the order whose refunds to list
+   * @return the refunds, empty when nothing has been refunded
+   */
   public List<RefundTender> findRefundsByOrder(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, payment_id, amount, method,"

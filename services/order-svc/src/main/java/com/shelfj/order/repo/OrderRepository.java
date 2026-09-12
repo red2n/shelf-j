@@ -165,6 +165,21 @@ public class OrderRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Keyset page of orders matching the given filters, newest first.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId restrict to one store, or {@code null}
+   * @param customerId restrict to one customer, or {@code null}
+   * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null}
+   * @param status restrict to one status, or {@code null}
+   * @param from inclusive lower bound on creation time, or {@code null}
+   * @param to exclusive upper bound on creation time, or {@code null}
+   * @param afterCreatedAt cursor timestamp, or {@code null} for the first page
+   * @param afterId cursor id, breaking ties on identical timestamps
+   * @param limit maximum rows; callers pass one more than the page size to detect a next page
+   * @return the page of orders
+   */
   public List<Order> listOrders(
       UUID tenantId,
       UUID storeId,
@@ -214,6 +229,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "list orders");
   }
 
+  /**
+   * Looks an order up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the order to fetch
+   * @return the order, or empty when it does not exist in this tenant
+   */
   public Optional<Order> findOrder(UUID tenantId, UUID orderId) {
     var list =
         query(
@@ -232,6 +254,24 @@ public class OrderRepository extends BaseOutboxRepository {
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
   }
 
+  /**
+   * Moves an order between statuses, appends the history row and writes the event — atomically.
+   *
+   * <p>The update is conditional on {@code fromStatus}, which is what makes the transition safe
+   * under concurrency: two callers racing to confirm or cancel the same order cannot both win, and
+   * the loser fails rather than overwriting.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the order to move
+   * @param fromStatus the status the order must currently be in
+   * @param toStatus the status to move it to
+   * @param reason free-text reason recorded on the history row
+   * @param userId the actor recorded on the history row
+   * @param event the outbox row to commit alongside the transition
+   * @return the order in its new status
+   * @throws com.shelfj.web.ApiException a conflict when the order is no longer in {@code
+   *     fromStatus}
+   */
   public Order transitionOrderStatus(
       UUID tenantId,
       UUID orderId,
@@ -665,6 +705,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "apply refund");
   }
 
+  /**
+   * The lines on one order.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the order whose lines to read
+   * @return the order's lines
+   */
   public List<OrderItem> findOrderItems(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total,"
@@ -678,6 +725,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "find order items");
   }
 
+  /**
+   * The append-only status history of one order.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the order whose history to read
+   * @return the transitions, oldest first
+   */
   public List<OrderStatusHistory> findOrderHistory(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, from_status, to_status, reason, changed_by, changed_at"
@@ -692,6 +746,15 @@ public class OrderRepository extends BaseOutboxRepository {
 
   // ── Returns ───────────────────────────────────────────────────────────────
 
+  /**
+   * Records a return with its lines, moves the order's status and writes the event — atomically.
+   *
+   * @param ret the return header to persist
+   * @param items the returned lines
+   * @param event the outbox row to commit alongside; drives the refund in payment-svc and the
+   *     restock in inventory-svc
+   * @return the return as stored
+   */
   public Return createReturn(Return ret, List<ReturnItem> items, OutboxRow event) {
     return inTx(
         c -> {
@@ -745,6 +808,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "create return");
   }
 
+  /**
+   * The returns recorded against one order.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the order whose returns to read
+   * @return the returns, empty when nothing has come back
+   */
   public List<Return> findReturns(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, store_id, reason, refund_amount, refund_method,"
@@ -758,6 +828,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "find returns");
   }
 
+  /**
+   * The lines on one return.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param returnId the return whose lines to read
+   * @return the returned lines with their per-line refund amounts
+   */
   public List<ReturnItem> findReturnItems(UUID tenantId, UUID returnId) {
     return query(
         "SELECT id, tenant_id, return_id, variant_id, qty, refund_amount, condition"
@@ -772,6 +849,18 @@ public class OrderRepository extends BaseOutboxRepository {
 
   // ── Post-void ─────────────────────────────────────────────────────────────
 
+  /**
+   * Voids a POS sale, restocking its lines and recording the void — atomically.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the sale to void
+   * @param storeId the store the sale was rung in
+   * @param reason free-text reason recorded on the void log
+   * @param userId the staff member voiding it
+   * @param eventFor builds the outbox row from the restock lines, which are only known once the
+   *     order's items have been read inside the transaction
+   * @return the recorded void log entry
+   */
   public PosVoidLog voidOrder(
       UUID tenantId,
       UUID orderId,
@@ -896,6 +985,14 @@ public class OrderRepository extends BaseOutboxRepository {
 
   // ── Layaway ───────────────────────────────────────────────────────────────
 
+  /**
+   * Opens a layaway with its items and opening deposit — atomically.
+   *
+   * @param layaway the layaway header to persist
+   * @param items the goods being set aside
+   * @param deposit the opening payment, or {@code null} when none was taken
+   * @return the layaway as stored
+   */
   public Layaway createLayaway(
       Layaway layaway, List<LayawayItem> items, LayawayDeposit deposit, OutboxRow event) {
     return inTx(
@@ -927,6 +1024,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "create layaway");
   }
 
+  /**
+   * Looks a layaway up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param layawayId the layaway to fetch
+   * @return the layaway, or empty when it does not exist in this tenant
+   */
   public Optional<Layaway> findLayaway(UUID tenantId, UUID layawayId) {
     var list =
         query(
@@ -943,6 +1047,14 @@ public class OrderRepository extends BaseOutboxRepository {
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
   }
 
+  /**
+   * Records a payment against a layaway and recomputes its balance — atomically.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param layawayId the layaway being paid down
+   * @param deposit the payment to record
+   * @return the layaway with its new balance
+   */
   public Layaway addDeposit(UUID tenantId, UUID layawayId, LayawayDeposit deposit) {
     return inTx(
         c -> {
@@ -983,6 +1095,14 @@ public class OrderRepository extends BaseOutboxRepository {
         "add layaway deposit");
   }
 
+  /**
+   * Closes a fully paid layaway and writes its event — atomically.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param layawayId the layaway to complete
+   * @param event the outbox row to commit alongside
+   * @return the completed layaway
+   */
   public Layaway completeLayaway(UUID tenantId, UUID layawayId, OutboxRow event) {
     return inTx(
         c -> {
@@ -1006,6 +1126,15 @@ public class OrderRepository extends BaseOutboxRepository {
         "complete layaway");
   }
 
+  /**
+   * Cancels a layaway and writes its event — atomically.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param layawayId the layaway to cancel
+   * @param reason free-text reason recorded against it
+   * @param event the outbox row to commit alongside
+   * @return the cancelled layaway
+   */
   public Layaway cancelLayaway(UUID tenantId, UUID layawayId, String reason, OutboxRow event) {
     return inTx(
         c -> {
@@ -1027,6 +1156,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "cancel layaway");
   }
 
+  /**
+   * The goods set aside on one layaway.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param layawayId the layaway whose items to read
+   * @return the reserved lines with their prices
+   */
   public List<LayawayItem> findLayawayItems(UUID tenantId, UUID layawayId) {
     return query(
         "SELECT id, tenant_id, layaway_id, variant_id, qty, unit_price, line_total"
@@ -1039,6 +1175,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "find layaway items");
   }
 
+  /**
+   * The payments made against one layaway.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param layawayId the layaway whose deposits to read
+   * @return the payments, oldest first
+   */
   public List<LayawayDeposit> findLayawayDeposits(UUID tenantId, UUID layawayId) {
     return query(
         "SELECT id, tenant_id, layaway_id, amount, payment_method, reference, paid_at"
@@ -1053,6 +1196,13 @@ public class OrderRepository extends BaseOutboxRepository {
 
   // ── Gift cards ────────────────────────────────────────────────────────────
 
+  /**
+   * Issues a gift card and records its opening transaction — atomically.
+   *
+   * @param gc the card to persist, with its code and opening balance
+   * @param tx the {@code ISSUE} transaction recording that balance
+   * @return the card as stored
+   */
   public GiftCard issueGiftCard(GiftCard gc, GiftCardTransaction tx) {
     return inTx(
         c -> {
@@ -1089,6 +1239,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "issue gift card");
   }
 
+  /**
+   * Looks a gift card up by its code.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param code the card's code
+   * @return the card, or empty when no such card exists in this tenant
+   */
   public Optional<GiftCard> findGiftCardByCode(UUID tenantId, String code) {
     var list =
         query(
@@ -1104,6 +1261,16 @@ public class OrderRepository extends BaseOutboxRepository {
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
   }
 
+  /**
+   * Adds value to a gift card and records the transaction — atomically.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param code the card's code
+   * @param amount the amount to add
+   * @param reference free-text reference recorded on the transaction
+   * @return the card with its new balance
+   * @throws com.shelfj.web.ApiException when the card does not exist or is not active
+   */
   public GiftCard reloadGiftCard(UUID tenantId, String code, BigDecimal amount, String reference) {
     return inTx(
         c -> {
@@ -1211,6 +1378,13 @@ public class OrderRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * The append-only transaction history of one gift card.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param giftCardId the card whose history to read
+   * @return every issue, reload and redemption against the card
+   */
   public List<GiftCardTransaction> findGiftCardTransactions(UUID tenantId, UUID giftCardId) {
     return query(
         "SELECT id, tenant_id, gift_card_id, tx_type, amount, balance_before,"
@@ -1608,6 +1782,13 @@ public class OrderRepository extends BaseOutboxRepository {
 
   // ── Gap #42: Special orders ───────────────────────────────────────────────
 
+  /**
+   * Opens a special order with its lines — atomically.
+   *
+   * @param so the special-order header to persist
+   * @param items the lines being ordered in
+   * @return the special order as stored
+   */
   public SpecialOrder createSpecialOrder(SpecialOrder so, List<SpecialOrderItem> items) {
     return inTx(
         c -> {
@@ -1703,6 +1884,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "list special orders");
   }
 
+  /**
+   * Looks a special order up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the special order to fetch
+   * @return the special order, or empty when it does not exist in this tenant
+   */
   public Optional<SpecialOrder> findSpecialOrder(UUID tenantId, UUID id) {
     var list =
         query(
@@ -1719,6 +1907,13 @@ public class OrderRepository extends BaseOutboxRepository {
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
   }
 
+  /**
+   * The lines on one special order.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param soId the special order whose lines to read
+   * @return the ordered lines with their prices
+   */
   public List<SpecialOrderItem> findSpecialOrderItems(UUID tenantId, UUID soId) {
     return query(
         "SELECT id, tenant_id, so_id, variant_id, qty, unit_price, line_total, notes"
@@ -1731,6 +1926,21 @@ public class OrderRepository extends BaseOutboxRepository {
         "find special order items");
   }
 
+  /**
+   * Moves a special order between statuses, conditional on its current one.
+   *
+   * <p>Guarded on {@code fromStatus} for the same reason order transitions are: two callers racing
+   * the same change cannot both win.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param soId the special order to move
+   * @param fromStatus the status it must currently be in
+   * @param toStatus the status to move it to
+   * @param reason free-text reason recorded on the transition
+   * @param userId the actor recorded on the transition
+   * @return the special order in its new status
+   * @throws com.shelfj.web.ApiException a conflict when it is no longer in {@code fromStatus}
+   */
   public SpecialOrder transitionSpecialOrderStatus(
       UUID tenantId,
       UUID soId,
@@ -1836,6 +2046,12 @@ public class OrderRepository extends BaseOutboxRepository {
 
   // ── Gap #43: POSLog ───────────────────────────────────────────────────────
 
+  /**
+   * Appends one POSLog entry.
+   *
+   * @param e the entry to persist; its {@code id} must already be a UUIDv7
+   * @return the entry as stored
+   */
   public PosLogEntry insertPosLogEntry(PosLogEntry e) {
     return inTx(
         c -> {
@@ -2032,6 +2248,13 @@ public class OrderRepository extends BaseOutboxRepository {
     if (to != null) ps.setObject(i++, to.atOffset(java.time.ZoneOffset.UTC));
   }
 
+  /**
+   * The POSLog entries recorded against one sale.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the sale whose entries to read
+   * @return the entries, empty when the sale was not rung on a till
+   */
   public List<PosLogEntry> findPosLogByOrder(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, store_id, cashier_id, subtotal, tax_amount,"
@@ -2099,6 +2322,12 @@ public class OrderRepository extends BaseOutboxRepository {
 
   // ── Gap #44: Receipts ─────────────────────────────────────────────────────
 
+  /**
+   * Appends one print/email receipt event.
+   *
+   * @param r the receipt event to persist; its {@code id} must already be a UUIDv7
+   * @return the event as stored
+   */
   public OrderReceipt insertOrderReceipt(OrderReceipt r) {
     return inTx(
         c -> {
@@ -2119,6 +2348,13 @@ public class OrderRepository extends BaseOutboxRepository {
         "insert order receipt");
   }
 
+  /**
+   * Every print/email receipt event recorded against one sale.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the sale whose receipt events to read
+   * @return the events, empty when no copy was ever produced
+   */
   public List<OrderReceipt> findOrderReceipts(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, receipt_type, emailed_to, print_count, generated_at"
@@ -2186,6 +2422,18 @@ public class OrderRepository extends BaseOutboxRepository {
         "upsert stock position");
   }
 
+  /**
+   * On-hand positions from order-svc's own projection of inventory events.
+   *
+   * <p>Not a read of inventory-svc's tables: this is a local projection, so the figures are
+   * eventually consistent with the owning service.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId restrict to one store, or {@code null}
+   * @param variantId restrict to one variant, or {@code null}
+   * @param limit maximum rows
+   * @return the stock positions
+   */
   public List<com.shelfj.order.domain.Domain.PosStockPosition> findStockPositions(
       UUID tenantId, UUID storeId, UUID variantId, int limit) {
     StringBuilder sql =

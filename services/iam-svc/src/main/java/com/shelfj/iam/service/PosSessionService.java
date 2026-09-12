@@ -22,6 +22,16 @@ public class PosSessionService {
   @Inject TenantStatusRepository tenantStatusRepo;
   @Inject StoreStatusRepository storeStatusRepo;
 
+  /**
+   * Opens a POS session for the calling cashier at a store.
+   *
+   * @param ctx caller context; supplies the tenant and the cashier's user id
+   * @param req the store and an optional idle timeout, defaulting to 900s
+   * @return the newly opened session
+   * @throws ApiException {@code POS_SESSION_INVALID_TIMEOUT} (400) when the timeout falls outside
+   *     60..86400; {@code TENANT_NOT_OPERATIONAL} or {@code STORE_NOT_OPERATIONAL} (409) when the
+   *     tenant or store is not trading
+   */
   public PosSession start(TenantContext ctx, StartPosSessionRequest req) {
     int timeout = req.idleTimeoutSeconds() != null ? req.idleTimeoutSeconds() : 900;
     if (timeout < 60 || timeout > 86400)
@@ -54,6 +64,14 @@ public class PosSessionService {
     return repo.insert(session);
   }
 
+  /**
+   * Resets a session's idle clock, keeping it clear of {@link #sweepIdle()}.
+   *
+   * @param ctx caller context; supplies the tenant the session must belong to
+   * @param sessionId the session to keep alive
+   * @throws ApiException {@code POS_SESSION_NOT_FOUND} (404) when no such session exists in this
+   *     tenant; {@code POS_SESSION_NOT_ACTIVE} (409) when it has already ended or expired
+   */
   public void touch(TenantContext ctx, UUID sessionId) {
     var session =
         repo.find(sessionId)
@@ -65,6 +83,17 @@ public class PosSessionService {
     repo.touch(sessionId);
   }
 
+  /**
+   * Closes a POS session.
+   *
+   * <p>Unlike {@link #touch}, an already-closed session is not an error, so signing off twice is
+   * safe.
+   *
+   * @param ctx caller context; supplies the tenant the session must belong to
+   * @param sessionId the session to close
+   * @throws ApiException {@code POS_SESSION_NOT_FOUND} (404) when no such session exists in this
+   *     tenant
+   */
   public void end(TenantContext ctx, UUID sessionId) {
     var session =
         repo.find(sessionId)
@@ -74,10 +103,24 @@ public class PosSessionService {
     repo.end(sessionId);
   }
 
+  /**
+   * Lists every currently open POS session in the tenant, across all stores.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @return the active sessions
+   */
   public List<PosSession> listActive(TenantContext ctx) {
     return repo.listActive(ctx.requireTenantId());
   }
 
+  /**
+   * Expires every session whose idle timeout has elapsed.
+   *
+   * <p>Runs across all tenants — it is driven by the scheduled sweeper, not by a request, so there
+   * is no tenant in context to scope it to.
+   *
+   * @return how many sessions were expired
+   */
   public int sweepIdle() {
     return repo.expireIdle();
   }

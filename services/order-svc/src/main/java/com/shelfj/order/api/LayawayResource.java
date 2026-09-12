@@ -34,6 +34,16 @@ public class LayawayResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Opens a layaway: goods set aside against a deposit, collected once paid off.
+   *
+   * <p>The balance is the total less the opening deposit.
+   *
+   * @param req the store, customer, items and initial deposit
+   * @return {@code 201} with the layaway, its items and its deposits
+   * @throws com.shelfj.web.ApiException {@code 400} when no items are supplied; {@code 409} when
+   *     the initial deposit exceeds the total
+   */
   @Operation(
       summary = "Create a layaway",
       description =
@@ -52,6 +62,13 @@ public class LayawayResource {
         .build();
   }
 
+  /**
+   * Reads one layaway with its goods and payments.
+   *
+   * @param id the layaway to read
+   * @return the layaway, its items and its deposits
+   * @throws com.shelfj.web.ApiException {@code 404} when it does not exist in the caller's tenant
+   */
   @Operation(
       summary = "Get a layaway by id",
       description = "Layaway detail with items and deposits.")
@@ -66,6 +83,14 @@ public class LayawayResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(layaway, items, deposits))).build();
   }
 
+  /**
+   * Takes a further payment against a layaway, reducing its balance.
+   *
+   * @param id the layaway being paid down
+   * @param req the amount, payment method and reference
+   * @return the layaway with its new balance, items and deposits
+   * @throws com.shelfj.web.ApiException {@code 404} when the layaway does not exist
+   */
   @Operation(
       summary = "Add a deposit to a layaway",
       description = "Records an additional deposit payment toward the layaway's balance.")
@@ -81,6 +106,14 @@ public class LayawayResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(layaway, items, deposits))).build();
   }
 
+  /**
+   * Closes a fully paid layaway and hands the goods over, emitting {@code LayawayCompleted}.
+   *
+   * @param id the layaway to complete
+   * @return the completed layaway with its items and deposits
+   * @throws com.shelfj.web.ApiException {@code 404} when the layaway does not exist; a conflict
+   *     when a balance is still owed
+   */
   @Operation(
       summary = "Complete a layaway",
       description = "Marks a fully-paid layaway as completed and emits LayawayCompleted.")
@@ -95,6 +128,17 @@ public class LayawayResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(layaway, items, deposits))).build();
   }
 
+  /**
+   * Cancels an active layaway, releasing the goods and emitting {@code LayawayCancelled}.
+   *
+   * <p>Refunding deposits already taken is a separate decision, handled through payment-svc. A
+   * cancel with no body is allowed; a body that <em>is</em> sent must carry a reason.
+   *
+   * @param id the layaway to cancel
+   * @param req the reason, or {@code null} to cancel without one
+   * @return the cancelled layaway with its items and deposits
+   * @throws com.shelfj.web.ApiException {@code 404} when the layaway does not exist
+   */
   @Operation(
       summary = "Cancel a layaway",
       description =

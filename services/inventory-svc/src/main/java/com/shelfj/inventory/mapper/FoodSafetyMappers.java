@@ -20,6 +20,12 @@ public final class FoodSafetyMappers {
 
   private FoodSafetyMappers() {}
 
+  /**
+   * Converts a check type to its wire form.
+   *
+   * @param t the check type to convert
+   * @return its API representation
+   */
   public static CheckTypeResponse toCheckType(CheckType t) {
     return new CheckTypeResponse(
         t.id().toString(),
@@ -35,6 +41,13 @@ public final class FoodSafetyMappers {
         t.active());
   }
 
+  /**
+   * Converts a point to its wire form.
+   *
+   * @param s the record
+   * @param now the record to persist
+   * @return its API representation
+   */
   public static PointResponse toPoint(PointStatus s, Instant now) {
     MonitoringPoint p = s.point();
     return new PointResponse(
@@ -55,6 +68,13 @@ public final class FoodSafetyMappers {
         s.openFailures());
   }
 
+  /**
+   * Converts a record to its wire form.
+   *
+   * @param e the element
+   * @param correctiveActions the corrective actions
+   * @return its API representation
+   */
   public static CheckRecordResponse toRecord(
       DiaryEntry e, List<CorrectiveAction> correctiveActions) {
     var r = e.record();
@@ -83,6 +103,12 @@ public final class FoodSafetyMappers {
             : correctiveActions.stream().map(FoodSafetyMappers::toCorrectiveAction).toList());
   }
 
+  /**
+   * Converts a corrective action to its wire form.
+   *
+   * @param a the corrective action to convert
+   * @return its API representation
+   */
   public static CorrectiveActionResponse toCorrectiveAction(CorrectiveAction a) {
     return new CorrectiveActionResponse(
         a.id().toString(),
@@ -93,6 +119,12 @@ public final class FoodSafetyMappers {
         ts(a.recordedAt()));
   }
 
+  /**
+   * Converts a review to its wire form.
+   *
+   * @param r the review to convert
+   * @return its API representation
+   */
   public static ReviewResponse toReview(Review r) {
     return new ReviewResponse(
         r.id().toString(),

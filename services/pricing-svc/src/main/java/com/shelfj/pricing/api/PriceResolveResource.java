@@ -34,6 +34,17 @@ public class PriceResolveResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * The effective price for one variant, for a product page.
+   *
+   * <p>Item-level promotions only: basket-level and coupon promotions are excluded, because a
+   * spend-threshold price shown against a single item advertises a total the shopper will not be
+   * charged. Use the basket quote at checkout.
+   *
+   * @param req the variant, optional quantity, channel and store
+   * @return the unit price with its VAT code, rate, amount and gross
+   * @throws com.shelfj.web.ApiException {@code 404} when no active price is configured
+   */
   @Operation(
       summary = "Resolve the effective price for a variant",
       description =
@@ -50,6 +61,14 @@ public class PriceResolveResource {
 
   /**
    * Batch form of {@link #resolve} — one call for every line in an order instead of one per line.
+   *
+   * <p>Each line is still priced independently, so this applies no basket-level or coupon promotion
+   * either.
+   *
+   * @param req the lines to price
+   * @return one resolved price per line, in the order supplied
+   * @throws com.shelfj.web.ApiException {@code 404} as soon as any line has no active price — the
+   *     whole call fails rather than returning a partial list
    */
   @Operation(
       summary = "Resolve effective prices for multiple lines",
@@ -66,6 +85,22 @@ public class PriceResolveResource {
     return Response.ok(ApiResponse.ok(new ResolvePriceBatchResponse(results))).build();
   }
 
+  /**
+   * Prices a whole basket: promotions, coupons and VAT together.
+   *
+   * <p>The only path that can apply basket-level rules — spend thresholds, basket percentages, BOGO
+   * — because they need the whole basket to be about. VAT is computed per line on the discounted
+   * amount, with basket-level discount apportioned by value first, so relief lands on the right
+   * rate band.
+   *
+   * <p>Quoting does not spend a coupon; {@code /redemptions} does that at checkout.
+   *
+   * @param req the lines, channel, store, customer and any coupon codes presented
+   * @return the priced lines with subtotal, discounts, VAT, total, promotions applied, and any
+   *     coupons rejected with a reason
+   * @throws com.shelfj.web.ApiException {@code 400} when a line's quantity is not positive; {@code
+   *     404} when a variant has no active price
+   */
   @Operation(
       summary = "Price a whole basket",
       description =
@@ -91,6 +126,16 @@ public class PriceResolveResource {
         .build();
   }
 
+  /**
+   * Records that an order used the promotions a quote applied.
+   *
+   * <p>Separate from quoting on purpose: a basket is quoted many times as a shopper adds items, and
+   * a coupon must not be spent by looking at it. Only checkout calls this, once the order exists to
+   * attribute the redemption to. A replay records nothing.
+   *
+   * @param req the order, customer, applied promotions and currency
+   * @return how many redemptions this call actually recorded
+   */
   @Operation(
       summary = "Record that an order used these promotions",
       description =

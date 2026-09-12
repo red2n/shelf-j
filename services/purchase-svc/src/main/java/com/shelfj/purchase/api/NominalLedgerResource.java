@@ -27,6 +27,18 @@ public class NominalLedgerResource {
   @Inject PurchaseService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Read-only double-entry journal view, cursor-paginated.
+   *
+   * @param code restrict to one nominal code, or {@code null} for all
+   * @param from inclusive start date as {@code yyyy-MM-dd}, or {@code null} for no lower bound
+   * @param to inclusive end date as {@code yyyy-MM-dd}, or {@code null} for no upper bound
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100
+   * @return the page of ledger entries plus a {@code nextCursor}
+   * @throws com.shelfj.web.ApiException {@code 400} when the cursor is malformed or a date is not
+   *     {@code yyyy-MM-dd}
+   */
   @Operation(
       summary = "List nominal ledger entries",
       description =

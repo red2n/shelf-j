@@ -4,6 +4,10 @@ import com.shelfj.service.BaseStoreStatusChangedConsumer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+/**
+ * Keeps iam-svc's local store-status projection current, so a POS session cannot be opened against
+ * a store that has since closed or been suspended.
+ */
 @ApplicationScoped
 class StoreStatusChangedConsumer extends BaseStoreStatusChangedConsumer {
 

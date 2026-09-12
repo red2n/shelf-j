@@ -41,11 +41,20 @@ public class ReorderPointResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Upserts a reorder-point/EOQ plan.
+   *
+   * <p>Sets the lead time, ordering cost, holding cost %, and unit cost inputs used to compute the
+   * variant's ROP and economic order quantity.
+   *
+   * @param req the request body
+   */
   @Operation(
       summary = "Upsert a reorder-point/EOQ plan",
       description =
           "Sets the lead time, ordering cost, holding cost %, and unit cost inputs used"
               + " to compute the variant's ROP and economic order quantity.")
+  @APIResponse(responseCode = "200", description = "Upsert a reorder-point/EOQ plan")
   @PUT
   @Path("/rop-plans")
   public ApiResponse<RopPlanResponse> upsertRopPlan(UpsertRopPlanRequest req) {
@@ -65,7 +74,13 @@ public class ReorderPointResource {
                 req.unitCost())));
   }
 
+  /**
+   * Lists ROP/EOQ plans for a store.
+   *
+   * @param store the store (query parameter)
+   */
   @Operation(summary = "List ROP/EOQ plans for a store")
+  @APIResponse(responseCode = "200", description = "List ROP/EOQ plans for a store")
   @GET
   @Path("/rop-plans")
   public ApiResponse<List<RopPlanResponse>> listRopPlans(@QueryParam("store") String store) {
@@ -75,6 +90,13 @@ public class ReorderPointResource {
         service.listRopPlans(tenantId, storeId).stream().map(Mappers::toRopPlan).toList());
   }
 
+  /**
+   * Gets the ROP/EOQ plan for a specific variant at a store.
+   *
+   * @param store the store (query parameter)
+   * @param variant the variant (query parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} rOP plan not found
+   */
   @Operation(summary = "Get the ROP/EOQ plan for a specific variant at a store")
   @APIResponse(responseCode = "404", description = "ROP plan not found")
   @GET
@@ -87,9 +109,17 @@ public class ReorderPointResource {
     return ApiResponse.ok(Mappers.toRopPlan(service.getRopPlan(tenantId, storeId, variantId)));
   }
 
+  /**
+   * Recomputes ROP and EOQ for a store's plans.
+   *
+   * <p>Recalculates avgDailyDemand-derived rop and eoq for every plan at the store.
+   *
+   * @param store the store (query parameter)
+   */
   @Operation(
       summary = "Recompute ROP and EOQ for a store's plans",
       description = "Recalculates avgDailyDemand-derived rop and eoq for every plan at the store.")
+  @APIResponse(responseCode = "200", description = "Recompute ROP and EOQ for a store's plans")
   @POST
   @Path("/rop-plans/compute")
   public ApiResponse<ComputeRopResult> computeRopPlans(@QueryParam("store") String store) {
@@ -99,6 +129,15 @@ public class ReorderPointResource {
     return ApiResponse.ok(new ComputeRopResult(count));
   }
 
+  /**
+   * Updates a ROP plan's order modifiers.
+   *
+   * <p>Sets min/max order quantity and lot-size multiplier applied to the computed EOQ (Gap #28).
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} rOP plan not found
+   */
   @Operation(
       summary = "Update a ROP plan's order modifiers",
       description =

@@ -23,6 +23,21 @@ import java.util.UUID;
 @ApplicationScoped
 public class ContainerTypeRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a container type.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param code the code to set
+   * @param name the name to set
+   * @param description the free-text description
+   * @param lengthMm the length mm
+   * @param widthMm the width mm
+   * @param heightMm the height mm
+   * @param maxWeightKg the max weight kg
+   * @param tareWeightKg the tare weight kg
+   * @param maxUnits the max units
+   * @return the container type as stored
+   */
   public ContainerType createContainerType(
       UUID tenantId,
       String code,
@@ -64,6 +79,13 @@ public class ContainerTypeRepository extends BaseJdbcRepository {
             () -> ApiException.notFound("CONTAINER_TYPE_NOT_FOUND", "Container type not found"));
   }
 
+  /**
+   * Looks a container type up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the container type to act on
+   * @return the container type, or empty when it does not exist in this tenant
+   */
   public Optional<ContainerType> findContainerType(UUID tenantId, UUID id) {
     return query(
             "SELECT id,tenant_id,code,name,description,length_mm,width_mm,height_mm,"
@@ -79,6 +101,12 @@ public class ContainerTypeRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's container types.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the matching rows
+   */
   public List<ContainerType> listContainerTypes(UUID tenantId) {
     return query(
         "SELECT id,tenant_id,code,name,description,length_mm,width_mm,height_mm,"
@@ -89,6 +117,21 @@ public class ContainerTypeRepository extends BaseJdbcRepository {
         "list container types");
   }
 
+  /**
+   * Writes a container type back with its new values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the container type to act on
+   * @param name the name to set
+   * @param description the free-text description
+   * @param lengthMm the length mm
+   * @param widthMm the width mm
+   * @param heightMm the height mm
+   * @param maxWeightKg the max weight kg
+   * @param tareWeightKg the tare weight kg
+   * @param maxUnits the max units
+   * @return the container type as stored
+   */
   public ContainerType updateContainerType(
       UUID tenantId,
       UUID id,
@@ -125,6 +168,13 @@ public class ContainerTypeRepository extends BaseJdbcRepository {
             () -> ApiException.notFound("CONTAINER_TYPE_NOT_FOUND", "Container type not found"));
   }
 
+  /**
+   * Soft-deletes a container type by marking it inactive.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the container type to act on
+   * @return the container type in its deactivated state
+   */
   public ContainerType deactivateContainerType(UUID tenantId, UUID id) {
     Instant now = Instant.now();
     exec(
@@ -140,6 +190,16 @@ public class ContainerTypeRepository extends BaseJdbcRepository {
             () -> ApiException.notFound("CONTAINER_TYPE_NOT_FOUND", "Container type not found"));
   }
 
+  /**
+   * Inserts a variant container link.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @param containerTypeId the container type id
+   * @param qtyPerContainer the qty per container
+   * @param isPrimary the is primary
+   * @return the variant container link as stored
+   */
   public VariantContainerLink createVariantContainerLink(
       UUID tenantId, UUID variantId, UUID containerTypeId, int qtyPerContainer, boolean isPrimary) {
     Instant now = Instant.now();
@@ -163,6 +223,13 @@ public class ContainerTypeRepository extends BaseJdbcRepository {
             () -> ApiException.notFound("CONTAINER_LINK_NOT_FOUND", "Container link not found"));
   }
 
+  /**
+   * Looks a variant container link up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the variant container link to act on
+   * @return the variant container link, or empty when it does not exist in this tenant
+   */
   public Optional<VariantContainerLink> findVariantContainerLink(UUID tenantId, UUID id) {
     return query(
             "SELECT id,tenant_id,variant_id,container_type_id,qty_per_container,is_primary,created_at"
@@ -177,6 +244,13 @@ public class ContainerTypeRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's variant container links.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<VariantContainerLink> listVariantContainerLinks(UUID tenantId, UUID variantId) {
     return query(
         "SELECT id,tenant_id,variant_id,container_type_id,qty_per_container,is_primary,created_at"
@@ -189,6 +263,13 @@ public class ContainerTypeRepository extends BaseJdbcRepository {
         "list variant container links");
   }
 
+  /**
+   * Deletes a variant container link.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the variant container link to act on
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deleteVariantContainerLink(UUID tenantId, UUID id) {
     Instant[] found = {null};
     query(

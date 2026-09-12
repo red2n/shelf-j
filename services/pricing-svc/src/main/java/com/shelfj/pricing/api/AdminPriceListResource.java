@@ -65,6 +65,12 @@ public class AdminPriceListResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Creates a price list, active from creation.
+   *
+   * @param req the name, channel (defaulting to ALL), currency and effective window
+   * @return {@code 201} with the created price list
+   */
   @Operation(
       summary = "Create a price list",
       description =
@@ -81,6 +87,15 @@ public class AdminPriceListResource {
         .build();
   }
 
+  /**
+   * Sets one variant's price on a price list, publishing {@code PriceChanged}.
+   *
+   * @param id the price list to write to
+   * @param req the variant, price and optional minimum quantity for a quantity break
+   * @return the stored item
+   * @throws com.shelfj.web.ApiException {@code 404} when the price list does not exist in the
+   *     caller's tenant
+   */
   @Operation(
       summary = "Upsert a price list item",
       description = "Sets or updates the price for a single variant on this price list.")
@@ -95,6 +110,19 @@ public class AdminPriceListResource {
         .build();
   }
 
+  /**
+   * Sets many prices on one price list in a single call.
+   *
+   * <p>Not atomic: a bad row is collected as an error rather than rolling back the rest, so one
+   * malformed line in a bulk upload does not discard the whole file. A partial success still
+   * returns success — the caller must read {@code errors}.
+   *
+   * @param id the price list to write to
+   * @param req the items to upsert
+   * @return how many succeeded, and one message per failure
+   * @throws com.shelfj.web.ApiException {@code 404} when the price list does not exist in the
+   *     caller's tenant
+   */
   @Operation(
       summary = "Batch upsert price list items",
       description =
@@ -120,6 +148,15 @@ public class AdminPriceListResource {
     return Response.ok(ApiResponse.ok(result)).build();
   }
 
+  /**
+   * Stops a price list, recording why.
+   *
+   * @param id the price list to stop
+   * @param req the reason, which is required
+   * @return the recorded status change
+   * @throws com.shelfj.web.ApiException {@code 400} when no reason is given; {@code 404} when the
+   *     price list does not exist; {@code 409} when it is already stopped
+   */
   @Operation(
       summary = "Stop a price list",
       description =
@@ -140,6 +177,18 @@ public class AdminPriceListResource {
         .build();
   }
 
+  /**
+   * Starts a stopped price list again, recording why.
+   *
+   * <p>A reason is required in this direction too: restarting is the change more likely to be
+   * questioned later.
+   *
+   * @param id the price list to start
+   * @param req the reason, which is required
+   * @return the recorded status change
+   * @throws com.shelfj.web.ApiException {@code 400} when no reason is given; {@code 404} when the
+   *     price list does not exist; {@code 409} when it is already active
+   */
   @Operation(summary = "Start a stopped price list again", description = "Requires a reason too.")
   @APIResponse(responseCode = "200", description = "Started")
   @APIResponse(responseCode = "409", description = "Already running")
@@ -152,6 +201,12 @@ public class AdminPriceListResource {
         .build();
   }
 
+  /**
+   * The append-only on/off history for one price list.
+   *
+   * @param id the price list whose history to read
+   * @return the recorded status changes, newest first
+   */
   @Operation(
       summary = "A price list's on/off history",
       description =

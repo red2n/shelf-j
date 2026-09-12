@@ -4,6 +4,10 @@ import com.shelfj.service.BaseTenantStatusChangedConsumer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+/**
+ * Keeps iam-svc's local tenant-status projection current, so a POS session cannot be opened for a
+ * suspended or blocked tenant.
+ */
 @ApplicationScoped
 class TenantStatusChangedConsumer extends BaseTenantStatusChangedConsumer {
 

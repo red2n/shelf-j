@@ -18,6 +18,13 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * JDBC access to reporting-svc's own projection tables.
+ *
+ * <p>Write methods are called from Kafka handlers and are idempotent — the {@code *Once} variants
+ * fold the dedupe check into the same statement as the projection write, so a redelivered event
+ * cannot double-count. Read methods back the report endpoints.
+ */
 @ApplicationScoped
 public class ReportingRepository extends BaseJdbcRepository {
 
@@ -76,6 +83,14 @@ public class ReportingRepository extends BaseJdbcRepository {
 
   // ── Open supply lines (intransit transfers) ───────────────────────────────
 
+  /**
+   * Records one in-transit transfer line.
+   *
+   * <p>{@code ON CONFLICT (id) DO NOTHING} makes a redelivered {@code TransferShipped} a no-op: the
+   * caller derives each line's id from the event, so the retry reuses the same primary key.
+   *
+   * @param line the supply line to open, keyed by the shipping event's id
+   */
   public void insertSupplyLine(OpenSupplyLine line) {
     exec(
         "INSERT INTO open_supply_lines"
@@ -94,6 +109,14 @@ public class ReportingRepository extends BaseJdbcRepository {
         "insert open supply line");
   }
 
+  /**
+   * Retires every in-transit line opened by one shipment.
+   *
+   * <p>Not tenant-scoped, unusually for this codebase: {@code event_id} is a globally unique UUIDv7
+   * that already pins the rows to the tenant that emitted the shipment.
+   *
+   * @param eventId the {@code TransferShipped} event id the lines were opened under
+   */
   public void deleteSupplyLinesByEvent(UUID eventId) {
     exec(
         "DELETE FROM open_supply_lines WHERE event_id = ?",

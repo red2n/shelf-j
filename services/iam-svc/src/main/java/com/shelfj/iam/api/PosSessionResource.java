@@ -40,6 +40,14 @@ public class PosSessionResource {
   @Inject PosSessionService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Opens a POS session for the calling cashier at a store.
+   *
+   * @param req the store and an optional idle timeout, defaulting to 900s
+   * @return {@code 201} with the newly opened session
+   * @throws com.shelfj.web.ApiException {@code 400} when the timeout falls outside 60..86400;
+   *     {@code 409} when the tenant or store is not trading
+   */
   @Operation(
       summary = "Start a POS cashier session",
       description = "Opens a session for the given store; tenant is taken from the caller's JWT.")
@@ -53,6 +61,14 @@ public class PosSessionResource {
     return Response.status(201).entity(ApiResponse.ok(toDto(session))).build();
   }
 
+  /**
+   * Heartbeat that resets a session's idle timer, keeping it clear of the sweeper.
+   *
+   * @param id the session to keep alive
+   * @return {@code 204} with no body
+   * @throws com.shelfj.web.ApiException {@code 404} when the session is not in the caller's tenant;
+   *     {@code 409} when it has already ended or expired
+   */
   @Operation(
       summary = "Record session activity",
       description = "Heartbeat that resets the session's idle timer.")
@@ -66,6 +82,15 @@ public class PosSessionResource {
     return Response.noContent().build();
   }
 
+  /**
+   * Closes a POS session at sign-off.
+   *
+   * <p>Ending an already-closed session is not an error, so a repeated sign-off is safe.
+   *
+   * @param id the session to close
+   * @return {@code 204} with no body
+   * @throws com.shelfj.web.ApiException {@code 404} when the session is not in the caller's tenant
+   */
   @Operation(summary = "End a POS session", description = "Explicitly closes an active session.")
   @APIResponse(responseCode = "204", description = "Session ended")
   @APIResponse(responseCode = "404", description = "Session not found")
@@ -76,6 +101,11 @@ public class PosSessionResource {
     return Response.noContent().build();
   }
 
+  /**
+   * Lists the tenant's open POS sessions across every store.
+   *
+   * @return the active sessions, most recently started first
+   */
   @Operation(
       summary = "List active POS sessions",
       description = "Active cashier sessions for the caller's tenant.")
@@ -91,6 +121,9 @@ public class PosSessionResource {
    * platform-wide maintenance operation (it ignores tenant scope), so it is restricted to platform
    * administrators — without this guard any authenticated caller could revoke POS sessions across
    * every tenant.
+   *
+   * @return the number of sessions expired by this sweep
+   * @throws com.shelfj.web.ApiException {@code 403} when the caller is not a {@code PLATFORM_ADMIN}
    */
   @Operation(
       summary = "Sweep idle POS sessions",

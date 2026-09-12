@@ -97,25 +97,63 @@ public class ProductService {
 
   // ─────────────────────────────────────────────────────────────────── brands
 
+  /**
+   * Creates a brand.
+   *
+   * @param tenantId owning tenant
+   * @param req the request body carrying the new values
+   * @return the created brand
+   */
   public Brand createBrand(UUID tenantId, CreateBrandRequest req) {
     return brandRepo.createBrand(tenantId, req.name().trim());
   }
 
+  /**
+   * Reads a brand.
+   *
+   * @param tenantId owning tenant
+   * @param id the brand to act on
+   * @return the brand
+   * @throws ApiException a 404 when no such brand exists in this tenant
+   */
   public Brand getBrand(UUID tenantId, UUID id) {
     return brandRepo
         .findBrand(tenantId, id)
         .orElseThrow(() -> ApiException.notFound("BRAND_NOT_FOUND", "Brand not found"));
   }
 
+  /**
+   * Lists the tenant's brands.
+   *
+   * @param tenantId owning tenant
+   * @return the matching rows
+   */
   public List<Brand> listBrands(UUID tenantId) {
     return brandRepo.listBrands(tenantId);
   }
 
+  /**
+   * Renames a brand.
+   *
+   * @param tenantId owning tenant
+   * @param id the brand to act on
+   * @param req the request body carrying the new values
+   * @return the renamed brand
+   * @throws ApiException a 404 when no such brand exists in this tenant
+   */
   public Brand renameBrand(UUID tenantId, UUID id, UpdateBrandRequest req) {
     getBrand(tenantId, id);
     return brandRepo.updateBrand(tenantId, id, req.name().trim());
   }
 
+  /**
+   * Deactivates a brand, leaving the row in place.
+   *
+   * @param tenantId owning tenant
+   * @param id the brand to act on
+   * @return the brand in its deactivated state
+   * @throws ApiException a 404 when no such brand exists in this tenant
+   */
   public Brand deactivateBrand(UUID tenantId, UUID id) {
     getBrand(tenantId, id);
     return brandRepo.deactivateBrand(tenantId, id);
@@ -123,27 +161,65 @@ public class ProductService {
 
   // ──────────────────────────────────────────────────────────────── categories
 
+  /**
+   * Creates a category.
+   *
+   * @param tenantId owning tenant
+   * @param req the request body carrying the new values
+   * @return the created category
+   */
   public Category createCategory(UUID tenantId, CreateCategoryRequest req) {
     UUID parentId = parseOptionalUuid(req.parentId(), "parentId");
     return categoryRepo.createCategory(tenantId, parentId, req.name().trim());
   }
 
+  /**
+   * Reads a category.
+   *
+   * @param tenantId owning tenant
+   * @param id the category to act on
+   * @return the category
+   * @throws ApiException a 404 when no such category exists in this tenant
+   */
   public Category getCategory(UUID tenantId, UUID id) {
     return categoryRepo
         .findCategory(tenantId, id)
         .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
   }
 
+  /**
+   * Lists the tenant's categories.
+   *
+   * @param tenantId owning tenant
+   * @return the matching rows
+   */
   public List<Category> listCategories(UUID tenantId) {
     return categoryRepo.listCategories(tenantId);
   }
 
+  /**
+   * Updates a category.
+   *
+   * @param tenantId owning tenant
+   * @param id the category to act on
+   * @param req the request body carrying the new values
+   * @return the updated category
+   * @throws ApiException a 404 when no such category exists in this tenant
+   */
   public Category updateCategory(UUID tenantId, UUID id, UpdateCategoryRequest req) {
     getCategory(tenantId, id);
     UUID parentId = parseOptionalUuid(req.parentId(), "parentId");
     return categoryRepo.updateCategory(tenantId, id, req.name().trim(), parentId);
   }
 
+  /**
+   * Deactivates a category, leaving the row in place.
+   *
+   * @param tenantId owning tenant
+   * @param id the category to act on
+   * @return the category in its deactivated state
+   * @throws ApiException a 404 when no such category exists in this tenant
+   */
   public Category deactivateCategory(UUID tenantId, UUID id) {
     getCategory(tenantId, id);
     return categoryRepo.deactivateCategory(tenantId, id);
@@ -151,6 +227,13 @@ public class ProductService {
 
   // ──────────────────────────────────────────────────────────────── products
 
+  /**
+   * Creates a product.
+   *
+   * @param tenantId owning tenant
+   * @param req the request body carrying the new values
+   * @return the created product
+   */
   public Product createProduct(UUID tenantId, CreateProductRequest req) {
     UUID id = Ids.newId();
     Instant now = Instant.now();
@@ -177,6 +260,15 @@ public class ProductService {
     return repo.createProductWithOutbox(product, event);
   }
 
+  /**
+   * Updates a product.
+   *
+   * @param tenantId owning tenant
+   * @param productId the product concerned
+   * @param req the request body carrying the new values
+   * @return the updated product
+   * @throws ApiException a 404 when no such product exists in this tenant
+   */
   public Product updateProduct(UUID tenantId, UUID productId, UpdateProductRequest req) {
     Product existing =
         repo.findProduct(tenantId, productId)
@@ -232,6 +324,14 @@ public class ProductService {
     return repo.updateProductWithOutbox(delisted, event);
   }
 
+  /**
+   * Reads a product.
+   *
+   * @param tenantId owning tenant
+   * @param productId the product concerned
+   * @return the product
+   * @throws ApiException a 404 when no such product exists in this tenant
+   */
   public Product getProduct(UUID tenantId, UUID productId) {
     return repo.findProduct(tenantId, productId)
         .orElseThrow(() -> ApiException.notFound("PRODUCT_NOT_FOUND", "No such product"));
@@ -253,6 +353,20 @@ public class ProductService {
   private static final java.util.Set<String> IMAGE_CONTENT_TYPES =
       java.util.Set.of("image/jpeg", "image/png", "image/webp");
 
+  /**
+   * Stores a product image after checking the product exists and the type is allowed.
+   *
+   * <p>The product is resolved first, so bytes are never accepted for a foreign or unknown product.
+   * Only JPEG, PNG and WebP are accepted; any {@code ;charset=} suffix on the content type is
+   * stripped before the check.
+   *
+   * @param tenantId owning tenant
+   * @param productId the product to attach the image to
+   * @param contentType the declared MIME type
+   * @param bytes the raw image bytes
+   * @throws ApiException a 404 when the product does not exist in this tenant; {@code
+   *     PRODUCT_IMAGE_TYPE_INVALID} (400) when the type is not an accepted image type
+   */
   public void uploadProductImage(UUID tenantId, UUID productId, String contentType, byte[] bytes) {
     getProduct(tenantId, productId); // 404 before accepting bytes for a foreign/unknown product
     String normalized =
@@ -274,17 +388,43 @@ public class ProductService {
     repo.upsertProductImage(tenantId, productId, normalized, bytes);
   }
 
+  /**
+   * Reads a product image.
+   *
+   * @param tenantId owning tenant
+   * @param productId the product concerned
+   * @return the product image
+   * @throws ApiException a 404 when no such product image exists in this tenant
+   */
   public com.shelfj.product.domain.Domain.ProductImage getProductImage(
       UUID tenantId, UUID productId) {
     return repo.findProductImage(tenantId, productId)
         .orElseThrow(() -> ApiException.notFound("PRODUCT_IMAGE_NOT_FOUND", "no image"));
   }
 
+  /**
+   * Deletes a product image.
+   *
+   * @param tenantId owning tenant
+   * @param productId the product concerned
+   * @throws ApiException a 404 when no such product image exists in this tenant
+   */
   public void deleteProductImage(UUID tenantId, UUID productId) {
     getProduct(tenantId, productId);
     repo.deleteProductImage(tenantId, productId);
   }
 
+  /**
+   * Lists the tenant's products.
+   *
+   * @param tenantId owning tenant
+   * @param categoryId the category id
+   * @param onlineOnly the online only
+   * @param posOnly the pos only
+   * @param storeId the store id
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<Product> listProducts(
       UUID tenantId,
       UUID categoryId,
@@ -298,6 +438,16 @@ public class ProductService {
   /** One page of admin products plus the opaque cursor for the next page (null when exhausted). */
   public record ProductPage(List<Product> products, String nextCursor) {}
 
+  /**
+   * Lists the tenant's products admins.
+   *
+   * @param tenantId owning tenant
+   * @param categoryId the category id
+   * @param status the status to set
+   * @param afterCursor the after cursor
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public ProductPage listProductsAdmin(
       UUID tenantId, UUID categoryId, String status, String afterCursor, int limit) {
     Instant afterCreatedAt = null;
@@ -325,6 +475,19 @@ public class ProductService {
         page, com.shelfj.web.Cursor.encode(last.createdAt().toString() + "|" + last.id()));
   }
 
+  /**
+   * Searches the catalogue by free text, SKU or barcode, with channel and store filters.
+   *
+   * @param tenantId owning tenant
+   * @param q free-text query, or {@code null}
+   * @param sku exact SKU to match, or {@code null}
+   * @param barcode exact barcode to match, or {@code null}
+   * @param onlineOnly restrict to products sold online
+   * @param posOnly restrict to products sold in store
+   * @param storeId restrict to products in one store's assortment, or {@code null}
+   * @param limit maximum rows
+   * @return the matching products
+   */
   public List<Product> searchProducts(
       UUID tenantId,
       String q,
@@ -349,6 +512,17 @@ public class ProductService {
     repo.setStoresForProduct(tenantId, productId, storeIds);
   }
 
+  /**
+   * Resolves a scanned barcode to its variant and parent product.
+   *
+   * <p>Matches active variants only, so a delisted line does not ring up at the till.
+   *
+   * @param tenantId owning tenant
+   * @param barcode the scanned barcode
+   * @return the variant with its product
+   * @throws ApiException {@code VARIANT_NOT_FOUND} (404) when no active variant carries that
+   *     barcode
+   */
   public com.shelfj.product.domain.Domain.VariantWithProduct findVariantByBarcode(
       UUID tenantId, String barcode) {
     return repo.findVariantByBarcode(tenantId, barcode)
@@ -368,6 +542,14 @@ public class ProductService {
 
   // ──────────────────────────────────────────────────────────────── variants
 
+  /**
+   * Creates a variant.
+   *
+   * @param tenantId owning tenant
+   * @param productId the product concerned
+   * @param req the request body carrying the new values
+   * @return the created variant
+   */
   public Variant createVariant(UUID tenantId, UUID productId, CreateVariantRequest req) {
     UUID id = Ids.newId();
     Instant now = Instant.now();
@@ -394,15 +576,40 @@ public class ProductService {
     return repo.createVariantWithOutbox(variant, event);
   }
 
+  /**
+   * Reads a variant.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @return the variant
+   * @throws ApiException a 404 when no such variant exists in this tenant
+   */
   public Variant getVariant(UUID tenantId, UUID variantId) {
     return repo.findVariant(tenantId, variantId)
         .orElseThrow(() -> ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found"));
   }
 
+  /**
+   * Lists the tenant's variants.
+   *
+   * @param tenantId owning tenant
+   * @param productId the product concerned
+   * @return the matching rows
+   */
   public List<Variant> listVariants(UUID tenantId, UUID productId) {
     return repo.listVariants(tenantId, productId);
   }
 
+  /**
+   * Updates a variant.
+   *
+   * @param tenantId owning tenant
+   * @param productId the product concerned
+   * @param variantId the product variant concerned
+   * @param req the request body carrying the new values
+   * @return the updated variant
+   * @throws ApiException a 404 when no such variant exists in this tenant
+   */
   public Variant updateVariant(
       UUID tenantId, UUID productId, UUID variantId, UpdateVariantRequest req) {
     getVariant(tenantId, variantId);
@@ -416,6 +623,15 @@ public class ProductService {
         req.unit());
   }
 
+  /**
+   * Delists a variant so it stops being sellable, leaving the row and its history in place.
+   *
+   * @param tenantId owning tenant
+   * @param productId the parent product
+   * @param variantId the variant to delist
+   * @return the variant in its delisted state
+   * @throws ApiException a 404 when the variant does not exist in this tenant
+   */
   public Variant delistVariant(UUID tenantId, UUID productId, UUID variantId) {
     getVariant(tenantId, variantId);
     return repo.delistVariant(tenantId, variantId);
@@ -423,6 +639,15 @@ public class ProductService {
 
   // ── Supplier / Customer Cross-References (Gap #33) ──────────────────────
 
+  /**
+   * Creates a cross reference.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param req the request body carrying the new values
+   * @return the created cross reference
+   * @throws ApiException a 404 when no such cross reference exists in this tenant
+   */
   public ItemCrossReference createCrossReference(
       UUID tenantId, UUID variantId, CreateItemCrossReferenceRequest req) {
     String type = req.partyType().toUpperCase(java.util.Locale.ROOT);
@@ -443,6 +668,15 @@ public class ProductService {
             Instant.now()));
   }
 
+  /**
+   * Lists the tenant's cross references.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param partyType the party type
+   * @return the matching rows
+   * @throws ApiException a 404 when no such cross reference exists in this tenant
+   */
   public List<ItemCrossReference> listCrossReferences(
       UUID tenantId, UUID variantId, String partyType) {
     getVariant(tenantId, variantId);
@@ -455,6 +689,11 @@ public class ProductService {
   private static final java.util.Set<String> SOLD_BY =
       java.util.Set.of("EACH", "WEIGHT", "VOLUME", "LENGTH");
 
+  /**
+   * Lists the tenant's allergens.
+   *
+   * @return the matching rows
+   */
   public List<Domain.Allergen> listAllergens() {
     return complianceRepo.listAllergens();
   }
@@ -497,11 +736,27 @@ public class ProductService {
     return complianceRepo.findCompliance(tenantId, variantId);
   }
 
+  /**
+   * The allergens declared against one variant.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the variant whose declaration to read
+   * @return the declared allergens with their presence, empty when nothing is declared
+   * @throws ApiException a 404 when the variant does not exist in this tenant
+   */
   public List<Domain.VariantAllergen> allergensOf(UUID tenantId, UUID variantId) {
     getVariant(tenantId, variantId);
     return complianceRepo.listVariantAllergens(tenantId, variantId);
   }
 
+  /**
+   * Every variant declaring a given allergen — the recall question.
+   *
+   * @param tenantId owning tenant
+   * @param code the regulated allergen code
+   * @param presence restrict to {@code CONTAINS} or {@code MAY_CONTAIN}, or {@code null} for both
+   * @return the matching variant ids
+   */
   public List<UUID> variantsWithAllergen(UUID tenantId, String code, String presence) {
     return complianceRepo.variantsWithAllergen(
         tenantId,
@@ -509,10 +764,30 @@ public class ProductService {
         presence == null ? null : presence.trim().toUpperCase(java.util.Locale.ROOT));
   }
 
+  /**
+   * Variants with no allergen declaration at all — the compliance gap list.
+   *
+   * <p>"Not declared" is not the same as "no allergens": these are the lines nobody has answered
+   * for yet.
+   *
+   * @param tenantId owning tenant
+   * @param limit maximum rows; clamped to 1..500
+   * @return the undeclared variant ids
+   */
   public List<UUID> undeclaredVariants(UUID tenantId, int limit) {
     return complianceRepo.undeclaredVariants(tenantId, Math.min(Math.max(limit, 1), 500));
   }
 
+  /**
+   * The compliance record for one variant: origin, restriction category, allergen status and
+   * labelling detail.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the variant whose compliance to read
+   * @return the compliance record
+   * @throws ApiException {@code VARIANT_NOT_FOUND} (404) when the variant does not exist or has no
+   *     compliance record
+   */
   public Domain.VariantCompliance complianceOf(UUID tenantId, UUID variantId) {
     getVariant(tenantId, variantId);
     var c = complianceRepo.findCompliance(tenantId, variantId);
@@ -522,6 +797,15 @@ public class ProductService {
     return c;
   }
 
+  /**
+   * Updates a compliance.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param req the request body carrying the new values
+   * @return the updated compliance
+   * @throws ApiException a 404 when no such compliance exists in this tenant
+   */
   public Domain.VariantCompliance updateCompliance(
       UUID tenantId, UUID variantId, VariantComplianceRequest req) {
     getVariant(tenantId, variantId);
@@ -626,6 +910,15 @@ public class ProductService {
         override ? tenantId : null, cc, c.restrictionCategory(), age, null);
   }
 
+  /**
+   * The age-restriction rules in force for a country.
+   *
+   * <p>Tenant-specific rules override the platform defaults for the same category.
+   *
+   * @param tenantId owning tenant
+   * @param country ISO country code the rules apply in
+   * @return the applicable rules
+   */
   public List<Domain.AgeRestrictionRule> ageRules(UUID tenantId, String country) {
     return complianceRepo.rulesFor(tenantId, requireCountry(country));
   }
@@ -682,6 +975,13 @@ public class ProductService {
     return v == null || v.isBlank() ? null : v.trim().toUpperCase(java.util.Locale.ROOT);
   }
 
+  /**
+   * Deletes a cross reference.
+   *
+   * @param tenantId owning tenant
+   * @param id the cross reference to act on
+   * @throws ApiException a 404 when no such cross reference exists in this tenant
+   */
   public void deleteCrossReference(UUID tenantId, UUID id) {
     if (!crossReferenceRepo.deleteCrossReference(tenantId, id)) {
       throw ApiException.notFound("CROSS_REF_NOT_FOUND", "Cross reference not found");
@@ -690,6 +990,15 @@ public class ProductService {
 
   // ── Item Relationships (Gap #32) ────────────────────────────────────────
 
+  /**
+   * Creates a relationship.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param req the request body carrying the new values
+   * @return the created relationship
+   * @throws ApiException a 404 when no such relationship exists in this tenant
+   */
   public ItemRelationship createRelationship(
       UUID tenantId, UUID variantId, CreateItemRelationshipRequest req) {
     UUID relatedId = com.shelfj.web.Parsing.uuid(req.relatedVariantId(), "relatedVariantId");
@@ -707,11 +1016,26 @@ public class ProductService {
         new ItemRelationship(Ids.newId(), tenantId, variantId, relatedId, type, Instant.now()));
   }
 
+  /**
+   * Lists the tenant's relationships.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   * @throws ApiException a 404 when no such relationship exists in this tenant
+   */
   public List<ItemRelationship> listRelationships(UUID tenantId, UUID variantId) {
     getVariant(tenantId, variantId);
     return itemRelationshipRepo.listRelationships(tenantId, variantId);
   }
 
+  /**
+   * Deletes a relationship.
+   *
+   * @param tenantId owning tenant
+   * @param id the relationship to act on
+   * @throws ApiException a 404 when no such relationship exists in this tenant
+   */
   public void deleteRelationship(UUID tenantId, UUID id) {
     if (!itemRelationshipRepo.deleteRelationship(tenantId, id)) {
       throw ApiException.notFound("RELATIONSHIP_NOT_FOUND", "Item relationship not found");
@@ -720,28 +1044,79 @@ public class ProductService {
 
   // ---- UOM (Gap #2) ----
 
+  /**
+   * Lists the tenant's uom classes.
+   *
+   * @return the matching rows
+   */
   public List<UomClass> listUomClasses() {
     return uomRepo.listUomClasses();
   }
 
+  /**
+   * Lists the tenant's uom definitions.
+   *
+   * @param classCode the class code
+   * @return the matching rows
+   */
   public List<UomDefinition> listUomDefinitions(String classCode) {
     return uomRepo.listUomDefinitions(classCode);
   }
 
+  /**
+   * Creates or replaces an item conversion.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param fromUom the from uom
+   * @param toUom the to uom
+   * @param factor the conversion factor
+   * @return the stored item conversion
+   */
   public UomItemConversion upsertItemConversion(
       UUID tenantId, UUID variantId, String fromUom, String toUom, BigDecimal factor) {
     return uomRepo.upsertItemConversion(
         new UomItemConversion(Ids.newId(), tenantId, variantId, fromUom, toUom, factor));
   }
 
+  /**
+   * Lists the tenant's item conversions.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<UomItemConversion> listItemConversions(UUID tenantId, UUID variantId) {
     return uomRepo.listItemConversions(tenantId, variantId);
   }
 
+  /**
+   * Deletes an item conversion.
+   *
+   * @param tenantId owning tenant
+   * @param id the item conversion to act on
+   * @return whether a row was removed
+   */
   public boolean deleteItemConversion(UUID tenantId, UUID id) {
     return uomRepo.deleteItemConversion(tenantId, id);
   }
 
+  /**
+   * Converts a quantity between units of measure.
+   *
+   * <p>Resolved in precedence order: identical units are the identity, then a variant-specific
+   * factor, then the standard factor for the pair. A variant override beats the standard because "a
+   * case of this" is a per-product fact, not a general one.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the variant whose own factors to prefer, or {@code null} to use only standard
+   *     conversions
+   * @param fromUom the unit converting from
+   * @param toUom the unit converting to
+   * @param qty the quantity to convert
+   * @return the converted quantity with the factor used and which source supplied it
+   * @throws ApiException a 400 when no conversion exists between the two units
+   */
   public ConvertResult convert(
       UUID tenantId, UUID variantId, String fromUom, String toUom, BigDecimal qty) {
     if (fromUom.equalsIgnoreCase(toUom)) {
@@ -769,6 +1144,15 @@ public class ProductService {
 
   // ── Item Templates (Gap #13) ─────────────────────────────────────────────
 
+  /**
+   * Creates a template.
+   *
+   * @param tenantId owning tenant
+   * @param name the name to match
+   * @param description the free-text description
+   * @param attributes the variant attributes as JSON
+   * @return the created template
+   */
   public ItemTemplate createTemplate(
       UUID tenantId, String name, String description, String attributes) {
     UUID id = Ids.newId();
@@ -785,21 +1169,52 @@ public class ProductService {
     return itemTemplateRepo.createTemplate(tpl, event);
   }
 
+  /**
+   * Reads a template.
+   *
+   * @param tenantId owning tenant
+   * @param id the template to act on
+   * @return the template
+   * @throws ApiException a 404 when no such template exists in this tenant
+   */
   public ItemTemplate getTemplate(UUID tenantId, UUID id) {
     return itemTemplateRepo
         .findTemplate(tenantId, id)
         .orElseThrow(() -> ApiException.notFound("TEMPLATE_NOT_FOUND", "Template not found"));
   }
 
+  /**
+   * Lists the tenant's templates.
+   *
+   * @param tenantId owning tenant
+   * @return the matching rows
+   */
   public List<ItemTemplate> listTemplates(UUID tenantId) {
     return itemTemplateRepo.listTemplates(tenantId);
   }
 
+  /**
+   * Deactivates a template, leaving the row in place.
+   *
+   * @param tenantId owning tenant
+   * @param id the template to act on
+   * @return the template in its deactivated state
+   * @throws ApiException a 404 when no such template exists in this tenant
+   */
   public ItemTemplate deactivateTemplate(UUID tenantId, UUID id) {
     getTemplate(tenantId, id);
     return itemTemplateRepo.deactivateTemplate(tenantId, id);
   }
 
+  /**
+   * Applies an item template to a variant, publishing {@code ItemTemplateApplied}.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the variant to apply the template to
+   * @param templateId the template to apply
+   * @return the recorded application
+   * @throws ApiException a 404 when the variant or template does not exist in this tenant
+   */
   public ItemTemplateApplication applyTemplate(UUID tenantId, UUID variantId, UUID templateId) {
     var event =
         new OutboxRow(
@@ -813,6 +1228,16 @@ public class ProductService {
 
   // ── Item Revisions (Gap #12) ──────────────────────────────────────────────
 
+  /**
+   * Creates a revision.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param revision the revision number
+   * @param description the free-text description
+   * @param effectiveDate the effective date
+   * @return the created revision
+   */
   public ItemRevision createRevision(
       UUID tenantId, UUID variantId, String revision, String description, LocalDate effectiveDate) {
     UUID id = Ids.newId();
@@ -836,10 +1261,25 @@ public class ProductService {
     return itemRevisionRepo.createRevisionWithOutbox(rev, event);
   }
 
+  /**
+   * Lists the tenant's revisions.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<ItemRevision> listRevisions(UUID tenantId, UUID variantId) {
     return itemRevisionRepo.listRevisions(tenantId, variantId);
   }
 
+  /**
+   * The variant's active revision.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the variant whose current revision to read
+   * @return the active revision
+   * @throws ApiException {@code REVISION_NOT_FOUND} (404) when the variant has no active revision
+   */
   public ItemRevision currentRevision(UUID tenantId, UUID variantId) {
     return itemRevisionRepo
         .currentRevision(tenantId, variantId)
@@ -848,6 +1288,14 @@ public class ProductService {
                 ApiException.notFound("REVISION_NOT_FOUND", "No active revision for this variant"));
   }
 
+  /**
+   * Reads a revision.
+   *
+   * @param tenantId owning tenant
+   * @param revisionId the revision id
+   * @return the revision
+   * @throws ApiException a 404 when no such revision exists in this tenant
+   */
   public ItemRevision getRevision(UUID tenantId, UUID revisionId) {
     return itemRevisionRepo
         .findRevision(tenantId, revisionId)
@@ -856,6 +1304,22 @@ public class ProductService {
 
   // ── Bulk Import ──────────────────────────────────────────────────────────
 
+  /**
+   * Imports a catalogue sheet, creating categories, brands, products and variants as needed.
+   *
+   * <p>Two modes: {@code ADD} (the default) creates new rows and errors on a duplicate SKU, while
+   * {@code REPLACE} upserts by SKU, reusing the product matched on name and category and replacing
+   * its variants.
+   *
+   * <p>Deliberately not atomic: a bad row is collected into {@code errors} rather than rolling back
+   * the sheet, so one malformed line in a large import does not discard the rest. Callers must read
+   * {@code errors} — a partial import still succeeds.
+   *
+   * @param tenantId owning tenant
+   * @param req the rows to import and the mode to import them under
+   * @return counts of what was created or skipped, the imported variants, and one entry per failed
+   *     row
+   */
   public BulkImportResult bulkImport(UUID tenantId, BulkImportRequest req) {
     int catCreated = 0;
     int catSkipped = 0;
@@ -1056,10 +1520,25 @@ public class ProductService {
 
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
 
+  /**
+   * Creates a catalog group.
+   *
+   * @param tenantId owning tenant
+   * @param req the request body carrying the new values
+   * @return the created catalog group
+   */
   public CatalogGroup createCatalogGroup(UUID tenantId, CreateCatalogGroupRequest req) {
     return catalogGroupRepo.createCatalogGroup(tenantId, req.name().trim(), req.description());
   }
 
+  /**
+   * Reads a catalog group.
+   *
+   * @param tenantId owning tenant
+   * @param id the catalog group to act on
+   * @return the catalog group
+   * @throws ApiException a 404 when no such catalog group exists in this tenant
+   */
   public CatalogGroup getCatalogGroup(UUID tenantId, UUID id) {
     return catalogGroupRepo
         .findCatalogGroup(tenantId, id)
@@ -1067,15 +1546,38 @@ public class ProductService {
             () -> ApiException.notFound("CATALOG_GROUP_NOT_FOUND", "Catalog group not found"));
   }
 
+  /**
+   * Lists the tenant's catalog groups.
+   *
+   * @param tenantId owning tenant
+   * @return the matching rows
+   */
   public List<CatalogGroup> listCatalogGroups(UUID tenantId) {
     return catalogGroupRepo.listCatalogGroups(tenantId);
   }
 
+  /**
+   * Deactivates a catalog group, leaving the row in place.
+   *
+   * @param tenantId owning tenant
+   * @param id the catalog group to act on
+   * @return the catalog group in its deactivated state
+   * @throws ApiException a 404 when no such catalog group exists in this tenant
+   */
   public CatalogGroup deactivateCatalogGroup(UUID tenantId, UUID id) {
     getCatalogGroup(tenantId, id);
     return catalogGroupRepo.deactivateCatalogGroup(tenantId, id);
   }
 
+  /**
+   * Creates a catalog group element.
+   *
+   * @param tenantId owning tenant
+   * @param groupId the group id
+   * @param req the request body carrying the new values
+   * @return the created catalog group element
+   * @throws ApiException a 404 when no such catalog group element exists in this tenant
+   */
   public CatalogGroupElement createCatalogGroupElement(
       UUID tenantId, UUID groupId, CreateCatalogGroupElementRequest req) {
     getCatalogGroup(tenantId, groupId);
@@ -1100,16 +1602,39 @@ public class ProductService {
             Instant.now()));
   }
 
+  /**
+   * Lists the tenant's catalog group elements.
+   *
+   * @param tenantId owning tenant
+   * @param groupId the group id
+   * @return the matching rows
+   */
   public List<CatalogGroupElement> listCatalogGroupElements(UUID tenantId, UUID groupId) {
     return catalogGroupRepo.listCatalogGroupElements(tenantId, groupId);
   }
 
+  /**
+   * Deletes a catalog group element.
+   *
+   * @param tenantId owning tenant
+   * @param elementId the element id
+   * @throws ApiException a 404 when no such catalog group element exists in this tenant
+   */
   public void deleteCatalogGroupElement(UUID tenantId, UUID elementId) {
     if (!catalogGroupRepo.deleteCatalogGroupElement(tenantId, elementId)) {
       throw ApiException.notFound("ELEMENT_NOT_FOUND", "Catalog group element not found");
     }
   }
 
+  /**
+   * Assigns a catalog group.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param req the request body carrying the new values
+   * @return the assignment as stored
+   * @throws ApiException a 404 when no such catalog group exists in this tenant
+   */
   public VariantCatalogAssignment assignCatalogGroup(
       UUID tenantId, UUID variantId, AssignCatalogGroupRequest req) {
     getVariant(tenantId, variantId);
@@ -1127,6 +1652,14 @@ public class ProductService {
             Instant.now()));
   }
 
+  /**
+   * Reads a catalog assignment.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @return the catalog assignment
+   * @throws ApiException a 404 when no such catalog assignment exists in this tenant
+   */
   public VariantCatalogAssignment getCatalogAssignment(UUID tenantId, UUID variantId) {
     return catalogGroupRepo
         .findCatalogAssignment(tenantId, variantId)
@@ -1136,11 +1669,26 @@ public class ProductService {
                     "ASSIGNMENT_NOT_FOUND", "No catalog assignment for this variant"));
   }
 
+  /**
+   * Updates a catalog assignment.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param req the request body carrying the new values
+   * @return the updated catalog assignment
+   */
   public VariantCatalogAssignment updateCatalogAssignment(
       UUID tenantId, UUID variantId, UpdateCatalogAssignmentRequest req) {
     return catalogGroupRepo.updateCatalogAssignment(tenantId, variantId, req.elementVals());
   }
 
+  /**
+   * Deletes a catalog assignment.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @throws ApiException a 404 when no such catalog assignment exists in this tenant
+   */
   public void deleteCatalogAssignment(UUID tenantId, UUID variantId) {
     if (!catalogGroupRepo.deleteCatalogAssignment(tenantId, variantId)) {
       throw ApiException.notFound("ASSIGNMENT_NOT_FOUND", "No catalog assignment for this variant");
@@ -1149,6 +1697,13 @@ public class ProductService {
 
   // ── Container Types (Gap #37) ────────────────────────────────────────────
 
+  /**
+   * Creates a container type.
+   *
+   * @param tenantId owning tenant
+   * @param req the request body carrying the new values
+   * @return the created container type
+   */
   public ContainerType createContainerType(
       UUID tenantId, com.shelfj.product.dto.Dtos.CreateContainerTypeRequest req) {
     return containerTypeRepo.createContainerType(
@@ -1164,6 +1719,14 @@ public class ProductService {
         req.maxUnits());
   }
 
+  /**
+   * Reads a container type.
+   *
+   * @param tenantId owning tenant
+   * @param id the container type to act on
+   * @return the container type
+   * @throws ApiException a 404 when no such container type exists in this tenant
+   */
   public ContainerType getContainerType(UUID tenantId, UUID id) {
     return containerTypeRepo
         .findContainerType(tenantId, id)
@@ -1171,10 +1734,25 @@ public class ProductService {
             () -> ApiException.notFound("CONTAINER_TYPE_NOT_FOUND", "Container type not found"));
   }
 
+  /**
+   * Lists the tenant's container types.
+   *
+   * @param tenantId owning tenant
+   * @return the matching rows
+   */
   public List<ContainerType> listContainerTypes(UUID tenantId) {
     return containerTypeRepo.listContainerTypes(tenantId);
   }
 
+  /**
+   * Updates a container type.
+   *
+   * @param tenantId owning tenant
+   * @param id the container type to act on
+   * @param req the request body carrying the new values
+   * @return the updated container type
+   * @throws ApiException a 404 when no such container type exists in this tenant
+   */
   public ContainerType updateContainerType(
       UUID tenantId, UUID id, com.shelfj.product.dto.Dtos.UpdateContainerTypeRequest req) {
     getContainerType(tenantId, id);
@@ -1191,11 +1769,28 @@ public class ProductService {
         req.maxUnits());
   }
 
+  /**
+   * Deactivates a container type, leaving the row in place.
+   *
+   * @param tenantId owning tenant
+   * @param id the container type to act on
+   * @return the container type in its deactivated state
+   * @throws ApiException a 404 when no such container type exists in this tenant
+   */
   public ContainerType deactivateContainerType(UUID tenantId, UUID id) {
     getContainerType(tenantId, id);
     return containerTypeRepo.deactivateContainerType(tenantId, id);
   }
 
+  /**
+   * Creates a variant container link.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param req the request body carrying the new values
+   * @return the created variant container link
+   * @throws ApiException a 404 when no such variant container link exists in this tenant
+   */
   public VariantContainerLink createVariantContainerLink(
       UUID tenantId,
       UUID variantId,
@@ -1211,11 +1806,25 @@ public class ProductService {
         req.isPrimary() != null && req.isPrimary());
   }
 
+  /**
+   * Lists the tenant's variant container links.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<VariantContainerLink> listVariantContainerLinks(UUID tenantId, UUID variantId) {
     requireVariant(tenantId, variantId);
     return containerTypeRepo.listVariantContainerLinks(tenantId, variantId);
   }
 
+  /**
+   * Deletes a variant container link.
+   *
+   * @param tenantId owning tenant
+   * @param id the variant container link to act on
+   * @throws ApiException a 404 when no such variant container link exists in this tenant
+   */
   public void deleteVariantContainerLink(UUID tenantId, UUID id) {
     if (!containerTypeRepo.deleteVariantContainerLink(tenantId, id)) {
       throw ApiException.notFound("CONTAINER_LINK_NOT_FOUND", "Container link not found");
@@ -1224,10 +1833,22 @@ public class ProductService {
 
   // ── Item Attribute Groups (Gap #36) ─────────────────────────────────────
 
+  /**
+   * Lists the tenant's attribute groups.
+   *
+   * @return the matching rows
+   */
   public List<ItemAttributeGroup> listAttributeGroups() {
     return itemAttributeGroupRepo.listAttributeGroups();
   }
 
+  /**
+   * Reads an attribute group.
+   *
+   * @param groupCode the group code
+   * @return the attribute group
+   * @throws ApiException a 404 when no such attribute group exists in this tenant
+   */
   public ItemAttributeGroup getAttributeGroup(String groupCode) {
     return itemAttributeGroupRepo
         .findAttributeGroup(groupCode.toUpperCase(java.util.Locale.ROOT))
@@ -1237,11 +1858,27 @@ public class ProductService {
                     "ATTRIBUTE_GROUP_NOT_FOUND", "Attribute group not found: " + groupCode));
   }
 
+  /**
+   * Lists the tenant's attribute group fields.
+   *
+   * @param groupCode the group code
+   * @return the matching rows
+   */
   public List<ItemAttributeGroupField> listAttributeGroupFields(String groupCode) {
     return itemAttributeGroupRepo.listAttributeGroupFields(
         groupCode.toUpperCase(java.util.Locale.ROOT));
   }
 
+  /**
+   * Creates or replaces a variant attribute group values.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param groupCode the group code
+   * @param values the values to store
+   * @return the stored variant attribute group values
+   * @throws ApiException a 404 when no such variant attribute group values exists in this tenant
+   */
   public VariantAttributeGroupValues upsertVariantAttributeGroupValues(
       UUID tenantId, UUID variantId, String groupCode, String values) {
     String code = groupCode.toUpperCase(java.util.Locale.ROOT);
@@ -1256,6 +1893,15 @@ public class ProductService {
         tenantId, variantId, code, values);
   }
 
+  /**
+   * Reads a variant attribute group values.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param groupCode the group code
+   * @return the variant attribute group values
+   * @throws ApiException a 404 when no such variant attribute group values exists in this tenant
+   */
   public VariantAttributeGroupValues getVariantAttributeGroupValues(
       UUID tenantId, UUID variantId, String groupCode) {
     String code = groupCode.toUpperCase(java.util.Locale.ROOT);
@@ -1269,12 +1915,27 @@ public class ProductService {
                     "No attribute group values for group " + groupCode + " on this variant"));
   }
 
+  /**
+   * Lists the tenant's variant attribute group values.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<VariantAttributeGroupValues> listVariantAttributeGroupValues(
       UUID tenantId, UUID variantId) {
     requireVariant(tenantId, variantId);
     return itemAttributeGroupRepo.listVariantAttributeGroupValues(tenantId, variantId);
   }
 
+  /**
+   * Deletes a variant attribute group values.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param groupCode the group code
+   * @throws ApiException a 404 when no such variant attribute group values exists in this tenant
+   */
   public void deleteVariantAttributeGroupValues(UUID tenantId, UUID variantId, String groupCode) {
     String code = groupCode.toUpperCase(java.util.Locale.ROOT);
     if (!itemAttributeGroupRepo.deleteVariantAttributeGroupValues(tenantId, variantId, code)) {
@@ -1286,6 +1947,13 @@ public class ProductService {
 
   // ── Gap #39: Category sets ────────────────────────────────────────────────
 
+  /**
+   * Creates a category set.
+   *
+   * @param tenantId owning tenant
+   * @param req the request body carrying the new values
+   * @return the created category set
+   */
   public CategorySet createCategorySet(UUID tenantId, CreateCategorySetRequest req) {
     UUID defCat = parseOptionalUuid(req.defaultCatId(), "defaultCatId");
     return categorySetRepo.createCategorySet(
@@ -1302,10 +1970,24 @@ public class ProductService {
             null));
   }
 
+  /**
+   * Lists the tenant's category sets.
+   *
+   * @param tenantId owning tenant
+   * @return the matching rows
+   */
   public List<CategorySet> listCategorySets(UUID tenantId) {
     return categorySetRepo.listCategorySets(tenantId);
   }
 
+  /**
+   * Reads a category set.
+   *
+   * @param tenantId owning tenant
+   * @param id the category set to act on
+   * @return the category set
+   * @throws ApiException a 404 when no such category set exists in this tenant
+   */
   public CategorySet getCategorySet(UUID tenantId, UUID id) {
     return categorySetRepo
         .findCategorySet(tenantId, id)
@@ -1313,6 +1995,15 @@ public class ProductService {
             () -> ApiException.notFound("CATEGORY_SET_NOT_FOUND", "Category set not found"));
   }
 
+  /**
+   * Updates a category set.
+   *
+   * @param tenantId owning tenant
+   * @param id the category set to act on
+   * @param req the request body carrying the new values
+   * @return the updated category set
+   * @throws ApiException a 404 when no such category set exists in this tenant
+   */
   public CategorySet updateCategorySet(UUID tenantId, UUID id, UpdateCategorySetRequest req) {
     getCategorySet(tenantId, id);
     UUID defCat = parseOptionalUuid(req.defaultCatId(), "defaultCatId");
@@ -1327,12 +2018,28 @@ public class ProductService {
         req.status());
   }
 
+  /**
+   * Deletes a category set.
+   *
+   * @param tenantId owning tenant
+   * @param id the category set to act on
+   * @throws ApiException a 404 when no such category set exists in this tenant
+   */
   public void deleteCategorySet(UUID tenantId, UUID id) {
     if (!categorySetRepo.deleteCategorySet(tenantId, id)) {
       throw ApiException.notFound("CATEGORY_SET_NOT_FOUND", "Category set not found");
     }
   }
 
+  /**
+   * Adds a category set member.
+   *
+   * @param tenantId owning tenant
+   * @param setId the set id
+   * @param req the request body carrying the new values
+   * @return the added category set member
+   * @throws ApiException a 404 when no such category set member exists in this tenant
+   */
   public CategorySetMember addCategorySetMember(
       UUID tenantId, UUID setId, AddCategorySetMemberRequest req) {
     getCategorySet(tenantId, setId);
@@ -1344,11 +2051,27 @@ public class ProductService {
         new CategorySetMember(Ids.newId(), tenantId, setId, catId, null));
   }
 
+  /**
+   * Lists the tenant's category set members.
+   *
+   * @param tenantId owning tenant
+   * @param setId the set id
+   * @return the matching rows
+   * @throws ApiException a 404 when no such category set member exists in this tenant
+   */
   public List<CategorySetMember> listCategorySetMembers(UUID tenantId, UUID setId) {
     getCategorySet(tenantId, setId);
     return categorySetRepo.listCategorySetMembers(tenantId, setId);
   }
 
+  /**
+   * Deletes a category set member.
+   *
+   * @param tenantId owning tenant
+   * @param setId the set id
+   * @param categoryId the category id
+   * @throws ApiException a 404 when no such category set member exists in this tenant
+   */
   public void deleteCategorySetMember(UUID tenantId, UUID setId, UUID categoryId) {
     if (!categorySetRepo.deleteCategorySetMember(tenantId, setId, categoryId)) {
       throw ApiException.notFound(
@@ -1356,6 +2079,15 @@ public class ProductService {
     }
   }
 
+  /**
+   * Assigns a variant category set.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param req the request body carrying the new values
+   * @return the assignment as stored
+   * @throws ApiException a 404 when no such variant category set exists in this tenant
+   */
   public VariantCategorySetAssignment assignVariantCategorySet(
       UUID tenantId, UUID variantId, AssignVariantCategorySetRequest req) {
     requireVariant(tenantId, variantId);
@@ -1367,12 +2099,27 @@ public class ProductService {
             Ids.newId(), tenantId, variantId, setId, catId, null, null));
   }
 
+  /**
+   * Lists the tenant's variant category set assignments.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<VariantCategorySetAssignment> listVariantCategorySetAssignments(
       UUID tenantId, UUID variantId) {
     requireVariant(tenantId, variantId);
     return categorySetRepo.listVariantCategorySetAssignments(tenantId, variantId);
   }
 
+  /**
+   * Deletes a variant category set assignment.
+   *
+   * @param tenantId owning tenant
+   * @param variantId the product variant concerned
+   * @param setId the set id
+   * @throws ApiException a 404 when no such variant category set assignment exists in this tenant
+   */
   public void deleteVariantCategorySetAssignment(UUID tenantId, UUID variantId, UUID setId) {
     if (!categorySetRepo.deleteVariantCategorySetAssignment(tenantId, variantId, setId)) {
       throw ApiException.notFound(

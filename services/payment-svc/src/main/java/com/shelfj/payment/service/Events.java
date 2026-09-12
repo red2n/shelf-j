@@ -4,6 +4,12 @@ import com.shelfj.ids.Ids;
 import com.shelfj.service.OutboxRow;
 import java.util.UUID;
 
+/**
+ * Builds the outbox rows payment-svc publishes.
+ *
+ * <p>Each factory returns an {@link OutboxRow} for a caller to write in the same transaction as the
+ * state change it announces, so the event and the write commit together.
+ */
 final class Events {
 
   private Events() {}

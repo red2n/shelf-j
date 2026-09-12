@@ -38,6 +38,18 @@ public class PosStockResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * On-hand quantities per store/variant, from order-svc's local projection.
+   *
+   * <p>Eventually consistent — updated asynchronously from inventory-svc events — so it is fine for
+   * showing a cashier what is on the shelf, and <strong>not</strong> to be used for reservation
+   * decisions.
+   *
+   * @param storeIdStr restrict to one store, or {@code null}
+   * @param variantIdStr restrict to one variant, or {@code null}
+   * @param limit maximum rows, defaulting to 50 and capped at 100
+   * @return the stock positions
+   */
   @Operation(
       summary = "List POS stock positions",
       description =

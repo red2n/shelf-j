@@ -255,6 +255,21 @@ public class PaymentIntentRepository extends BaseOutboxRepository {
         "check webhook event seen");
   }
 
+  /**
+   * Claims a provider webhook event for processing, exactly once.
+   *
+   * <p>The insert is the claim: the unique constraint on {@code (provider, providerEventId)} is
+   * what makes a redelivered webhook a no-op, so this must be called before acting on the event
+   * rather than after.
+   *
+   * <p>Not tenant-scoped — the provider's event id is the key, and the tenant is only known once
+   * the referenced intent is resolved.
+   *
+   * @param provider the provider that sent the event, e.g. {@code STRIPE}
+   * @param providerEventId the provider's own event id
+   * @param eventType the provider's event type, recorded for traceability
+   * @return {@code true} when this call claimed the event, {@code false} when it was already seen
+   */
   public boolean markWebhookSeenIfNew(String provider, String providerEventId, String eventType) {
     return inTx(
         c -> {

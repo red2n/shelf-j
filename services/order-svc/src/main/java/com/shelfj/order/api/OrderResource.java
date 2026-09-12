@@ -48,6 +48,15 @@ public class OrderResource {
    * PENDING|CONFIRMED|FULFILLED|CANCELLED|VOIDED — filter by status ?from= ISO-8601 datetime —
    * created_at >= from ?to= ISO-8601 datetime — created_at <= to ?after= opaque cursor from the
    * previous page's meta.nextCursor ?limit= 1-100 (default 20)
+   *
+   * @param store restrict to one store, or {@code null}
+   * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null}
+   * @param status restrict to one order status, or {@code null}
+   * @param from inclusive ISO-8601 lower bound on creation time, or {@code null}
+   * @param to exclusive ISO-8601 upper bound, or {@code null}
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100; clamped when absent or out of range
+   * @return the page of order summaries, with the next cursor in {@code meta}
    */
   @Operation(
       summary = "List orders",
@@ -81,6 +90,12 @@ public class OrderResource {
    * header (a customer account is global) and results are filtered to the authenticated customerId,
    * so a customer can only ever see their own orders — never another customer's or the tenant's
    * full order book.
+   *
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100; clamped when absent or out of range
+   * @return the page of the caller's own order summaries
+   * @throws com.shelfj.web.ApiException {@code NO_CUSTOMER} (401) when the token carries no
+   *     customer identity
    */
   @Operation(
       summary = "List the signed-in customer's own orders",
@@ -106,6 +121,20 @@ public class OrderResource {
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  /**
+   * Places an ONLINE or POS order — the single entry point both channels share.
+   *
+   * <p>ONLINE orders reserve stock in inventory-svc before persisting; POS orders deduct on
+   * fulfilment. Supplying an {@code Idempotency-Key} is what makes a retried checkout replay the
+   * original order instead of creating a duplicate.
+   *
+   * @param idempotencyKey the {@code Idempotency-Key} header; the body field is a legacy fallback
+   * @param req the store, channel, fulfilment type, lines and customer details
+   * @return {@code 201} with the placed order
+   * @throws com.shelfj.web.ApiException {@code 400} when the order has no lines or the request is
+   *     malformed; {@code 403} when a POS order is placed without a cashier/manager/owner role;
+   *     {@code 409} when the tenant or store is not trading
+   */
   @Operation(
       summary = "Place an order",
       description =
@@ -144,6 +173,14 @@ public class OrderResource {
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  /**
+   * Reads one order with its lines.
+   *
+   * @param id the order to read
+   * @return the order and its lines
+   * @throws com.shelfj.web.ApiException {@code 404} when no such order exists in the tenant or the
+   *     caller may not read it — a denial is a 404 so ids cannot be probed for existence
+   */
   @Operation(
       summary = "Get an order by id",
       description =
@@ -161,6 +198,14 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  /**
+   * Moves a PENDING order to CONFIRMED and emits {@code OrderConfirmed}.
+   *
+   * @param id the order to confirm
+   * @return the confirmed order with its lines
+   * @throws com.shelfj.web.ApiException {@code 404} when the order does not exist; {@code 409} when
+   *     it is not PENDING
+   */
   @Operation(
       summary = "Confirm an order",
       description = "Transitions a PENDING order to CONFIRMED and emits OrderConfirmed.")
@@ -175,6 +220,18 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  /**
+   * Cancels a PENDING or CONFIRMED order, releasing its stock holds via {@code OrderCancelled}.
+   *
+   * <p>A cancel with no body at all is allowed; a body that <em>is</em> sent must carry a reason
+   * rather than silently passing an empty one through.
+   *
+   * @param id the order to cancel
+   * @param req the reason, or {@code null} to cancel without one
+   * @return the cancelled order with its lines
+   * @throws com.shelfj.web.ApiException {@code 404} when the order does not exist; {@code 409} when
+   *     it is neither PENDING nor CONFIRMED
+   */
   @Operation(
       summary = "Cancel an order",
       description =
@@ -203,6 +260,14 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  /**
+   * Moves a CONFIRMED order to FULFILLED and emits {@code OrderFulfilled} with its lines.
+   *
+   * @param id the order to fulfil
+   * @return the fulfilled order with its lines
+   * @throws com.shelfj.web.ApiException {@code 404} when the order does not exist; {@code 409} when
+   *     it is not CONFIRMED
+   */
   @Operation(
       summary = "Fulfil an order",
       description =
@@ -219,6 +284,14 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  /**
+   * The order's append-only status transition log.
+   *
+   * @param id the order whose history to read
+   * @return the transitions, oldest first
+   * @throws com.shelfj.web.ApiException {@code 404} when no such order exists or the caller may not
+   *     read it
+   */
   @Operation(
       summary = "Get an order's status history",
       description = "Append-only status transition log for the order (object-level authorized).")
@@ -233,6 +306,17 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(hist.stream().map(Mappers::toDto).toList())).build();
   }
 
+  /**
+   * The numbered fiscal receipt for a sale.
+   *
+   * <p>The number is issued when the payment completing the sale reaches order-svc, so for a few
+   * seconds after a sale this answers 404 and the till waits rather than printing without one.
+   *
+   * @param id the sale whose receipt to read
+   * @return the receipt
+   * @throws com.shelfj.web.ApiException {@code 404} when the caller may not read the sale, or no
+   *     receipt has been issued for it yet
+   */
   @Operation(
       summary = "The receipt number issued for a sale",
       description =
@@ -253,6 +337,18 @@ public class OrderResource {
 
   // ── Post-void (Gap #14) ───────────────────────────────────────────────────
 
+  /**
+   * Voids a POS sale after the fact, emitting {@code OrderVoided} to restock its lines.
+   *
+   * <p>The fiscal receipt keeps its number and gains a reason rather than disappearing — a closed
+   * gap in the sequence is what a till fraud relies on.
+   *
+   * @param id the sale to void
+   * @param req the reason, which is required
+   * @return the recorded void
+   * @throws com.shelfj.web.ApiException {@code 404} when the order does not exist; {@code 409} when
+   *     it is not a POS-channel order
+   */
   @Operation(
       summary = "Void a POS order",
       description = "Voids a POS-channel order after the fact and emits OrderVoided.")
@@ -269,6 +365,18 @@ public class OrderResource {
 
   // ── Returns (Gap #14) ─────────────────────────────────────────────────────
 
+  /**
+   * Refunds one or more lines of a fulfilled order.
+   *
+   * <p>Cannot be used on a voided or cancelled order: goods can only come back once they were
+   * handed over.
+   *
+   * @param id the order being returned against
+   * @param req the lines and quantities coming back, the reason and the refund method
+   * @return {@code 201} with the recorded return and its lines
+   * @throws com.shelfj.web.ApiException {@code 404} when the order does not exist or a returned
+   *     variant is not on it; {@code 409} when the order is voided or cancelled
+   */
   @Operation(
       summary = "Create a return for an order",
       description =
@@ -294,6 +402,14 @@ public class OrderResource {
     return s == null || s.isBlank() ? null : com.shelfj.web.Parsing.instant(s, field);
   }
 
+  /**
+   * All returns recorded against one order.
+   *
+   * @param id the order whose returns to read
+   * @return the returns with their lines, empty when nothing has come back
+   * @throws com.shelfj.web.ApiException {@code 404} when no such order exists or the caller may not
+   *     read it
+   */
   @Operation(
       summary = "List returns for an order",
       description = "All returns recorded against the given order.")

@@ -22,6 +22,14 @@ import java.util.UUID;
 @ApplicationScoped
 public class CategoryRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a category.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param parentId the parent to nest under, or {@code null} for a root
+   * @param name the name to set
+   * @return the category as stored
+   */
   public Category createCategory(UUID tenantId, UUID parentId, String name) {
     Instant now = Instant.now();
     var c = new Category(Ids.newId(), tenantId, parentId, name, Category.STATUS_ACTIVE, now, now);
@@ -44,6 +52,13 @@ public class CategoryRepository extends BaseJdbcRepository {
     return c;
   }
 
+  /**
+   * Looks a category up by name within the tenant.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param name the name to match
+   * @return the category, or empty when nothing matches
+   */
   public Optional<Category> findCategoryByName(UUID tenantId, String name) {
     return query(
             "SELECT id, tenant_id, parent_id, name, status, created_at, updated_at"
@@ -58,6 +73,13 @@ public class CategoryRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Looks a category up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the category to act on
+   * @return the category, or empty when it does not exist in this tenant
+   */
   public Optional<Category> findCategory(UUID tenantId, UUID id) {
     return query(
             "SELECT id, tenant_id, parent_id, name, status, created_at, updated_at"
@@ -72,6 +94,12 @@ public class CategoryRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's categories.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the matching rows
+   */
   public List<Category> listCategories(UUID tenantId) {
     return query(
         "SELECT id, tenant_id, parent_id, name, status, created_at, updated_at"
@@ -81,6 +109,15 @@ public class CategoryRepository extends BaseJdbcRepository {
         "list categories");
   }
 
+  /**
+   * Writes a category back with its new values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the category to act on
+   * @param name the name to set
+   * @param parentId the parent to nest under, or {@code null} for a root
+   * @return the category as stored
+   */
   public Category updateCategory(UUID tenantId, UUID id, String name, UUID parentId) {
     Instant now = Instant.now();
     exec(
@@ -98,6 +135,13 @@ public class CategoryRepository extends BaseJdbcRepository {
         .orElseThrow(() -> ApiException.notFound("CATEGORY_NOT_FOUND", "Category not found"));
   }
 
+  /**
+   * Soft-deletes a category by marking it inactive.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the category to act on
+   * @return the category in its deactivated state
+   */
   public Category deactivateCategory(UUID tenantId, UUID id) {
     Instant now = Instant.now();
     exec(

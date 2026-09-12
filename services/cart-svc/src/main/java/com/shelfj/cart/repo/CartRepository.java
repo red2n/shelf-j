@@ -147,6 +147,14 @@ public class CartRepository extends BaseJdbcRepository {
 
   // ── Carts ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Inserts a cart and returns it as stored.
+   *
+   * @param c the cart to persist; its {@code id} must already be a {@code Ids.newId()} UUIDv7
+   * @return the row read back after insert, with the server-side timestamps applied
+   * @throws com.shelfj.web.ApiException {@code DUPLICATE} when the partial unique index on an
+   *     active cart per customer/session rejects a concurrent second insert
+   */
   public Cart insert(Cart c) {
     exec(
         "INSERT INTO carts (id, tenant_id, customer_id, session_id, store_id, status,"
@@ -163,6 +171,13 @@ public class CartRepository extends BaseJdbcRepository {
     return findById(c.tenantId(), c.id()).orElseThrow();
   }
 
+  /**
+   * Looks a cart up by id, reading through the row cache.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param cartId the cart to fetch
+   * @return the cart, or empty when no such cart exists in this tenant
+   */
   public Optional<Cart> findById(UUID tenantId, UUID cartId) {
     Optional<Cart> cached = cachedCart(tenantId, cartId);
     if (cached.isPresent()) return cached;
@@ -329,6 +344,16 @@ public class CartRepository extends BaseJdbcRepository {
     return result;
   }
 
+  /**
+   * Looks a single cart item up by id.
+   *
+   * <p>Not cart-scoped: callers that care which cart the item belongs to must compare {@code
+   * cartId} themselves, as {@code CartService} does before mutating an item.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param itemId the cart item to fetch
+   * @return the item, or empty when no such item exists in this tenant
+   */
   public Optional<CartItem> findItemById(UUID tenantId, UUID itemId) {
     return query(
             "SELECT id, cart_id, tenant_id, variant_id, qty, unit_price, added_at"
@@ -343,6 +368,13 @@ public class CartRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists a cart's items oldest-first, reading through the item-list cache.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param cartId the cart whose items to list
+   * @return the items ordered by {@code added_at}, empty when the cart has none
+   */
   public List<CartItem> findItemsByCart(UUID tenantId, UUID cartId) {
     Optional<List<CartItem>> cached = cachedItems(tenantId, cartId);
     if (cached.isPresent()) return cached.get();
@@ -360,6 +392,14 @@ public class CartRepository extends BaseJdbcRepository {
     return fresh;
   }
 
+  /**
+   * Sets a cart item's quantity and evicts the cart's cached item list.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param cartId the owning cart, also matched so an item cannot be moved between carts
+   * @param itemId the cart item to update
+   * @param qty the new quantity
+   */
   public void updateItemQty(UUID tenantId, UUID cartId, UUID itemId, BigDecimal qty) {
     exec(
         "UPDATE cart_items SET qty = ? WHERE tenant_id = ? AND cart_id = ? AND id = ?",
@@ -373,6 +413,13 @@ public class CartRepository extends BaseJdbcRepository {
     evictItems(tenantId, cartId);
   }
 
+  /**
+   * Deletes a cart item and evicts the cart's cached item list.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param cartId the owning cart, also matched so one cart cannot delete another's item
+   * @param itemId the cart item to delete
+   */
   public void deleteItem(UUID tenantId, UUID cartId, UUID itemId) {
     exec(
         "DELETE FROM cart_items WHERE tenant_id = ? AND cart_id = ? AND id = ?",

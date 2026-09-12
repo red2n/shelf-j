@@ -38,6 +38,14 @@ public class PhysicalInventoryResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Starts a full physical inventory count for a store.
+   *
+   * <p>Creates the count header; tags for each variant/zone are added separately.
+   *
+   * @param req the request body
+   * @return physical inventory created ({@code 201})
+   */
   @Operation(
       summary = "Start a full physical inventory count for a store",
       description = "Creates the count header; tags for each variant/zone are added separately.")
@@ -55,7 +63,15 @@ public class PhysicalInventoryResource {
         .build();
   }
 
+  /**
+   * Lists physical inventories.
+   *
+   * <p>Filterable by store.
+   *
+   * @param store the store (query parameter)
+   */
   @Operation(summary = "List physical inventories", description = "Filterable by store.")
+  @APIResponse(responseCode = "200", description = "List physical inventories")
   @GET
   @Path("/physical-inventories")
   public ApiResponse<List<PhysicalInventoryResponse>> listPhysicalInventories(
@@ -67,6 +83,12 @@ public class PhysicalInventoryResource {
             .toList());
   }
 
+  /**
+   * Gets a physical inventory by id, with its tags.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} physical inventory not found
+   */
   @Operation(summary = "Get a physical inventory by id, with its tags")
   @APIResponse(responseCode = "404", description = "Physical inventory not found")
   @GET
@@ -77,11 +99,20 @@ public class PhysicalInventoryResource {
     return ApiResponse.ok(Mappers.toPhysicalInventory(pi, service.listTags(tenantId, id)));
   }
 
+  /**
+   * Adds a count tag to a physical inventory.
+   *
+   * <p>Registers a variant (optionally at a zone) with its known system quantity to be counted.
+   *
+   * @param piId the pi id (path parameter)
+   * @param req the request body
+   */
   @Operation(
       summary = "Add a count tag to a physical inventory",
       description =
           "Registers a variant (optionally at a zone) with its known system quantity to"
               + " be counted.")
+  @APIResponse(responseCode = "200", description = "Add a count tag to a physical inventory")
   @POST
   @Path("/physical-inventories/{id}/tags")
   public ApiResponse<PhysicalInventoryTagResponse> addTag(
@@ -94,6 +125,16 @@ public class PhysicalInventoryResource {
         Mappers.toTag(service.addTag(tenantId, piId, variantId, zoneId, req.systemQty())));
   }
 
+  /**
+   * Records a counted quantity for a tag.
+   *
+   * <p>Sets the counted qty and computes its adjustment against system qty.
+   *
+   * @param piId the pi id (path parameter)
+   * @param tagId the tag id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} physical inventory tag not found
+   */
   @Operation(
       summary = "Record a counted quantity for a tag",
       description = "Sets the counted qty and computes its adjustment against system qty.")
@@ -107,6 +148,14 @@ public class PhysicalInventoryResource {
     return ApiResponse.ok(Mappers.toTag(service.countTag(tenantId, piId, tagId, req.countedQty())));
   }
 
+  /**
+   * Completes a physical inventory.
+   *
+   * <p>Marks the count complete and posts stock adjustments for tag variances.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} physical inventory not found
+   */
   @Operation(
       summary = "Complete a physical inventory",
       description = "Marks the count complete and posts stock adjustments for tag variances.")

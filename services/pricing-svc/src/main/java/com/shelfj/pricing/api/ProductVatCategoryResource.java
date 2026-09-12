@@ -32,6 +32,16 @@ public class ProductVatCategoryResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Assigns a variant to a VAT code.
+   *
+   * <p>The code is checked against the tenant's own rates, so a typo cannot leave a product
+   * pointing at a band that does not exist and silently falling back to standard rate at checkout.
+   *
+   * @param req the variant and the VAT code to assign it
+   * @return the stored assignment
+   * @throws com.shelfj.web.ApiException {@code 404} when the VAT code is not configured
+   */
   @Operation(
       summary = "Assign a VAT category to a variant",
       description = "Sets the HMRC VAT code applied to a product variant's price resolution.")
@@ -45,6 +55,16 @@ public class ProductVatCategoryResource {
         .build();
   }
 
+  /**
+   * Reads a variant's VAT assignment.
+   *
+   * <p>Reports absence as a 404, unlike price resolution, which quietly falls back to the standard
+   * rate: the admin screen needs to know a product was never categorised.
+   *
+   * @param variantId the variant to look up
+   * @return the assignment
+   * @throws com.shelfj.web.ApiException {@code 404} when none is assigned
+   */
   @Operation(
       summary = "Get a variant's VAT category",
       description = "Looks up the VAT code assigned to a product variant.")

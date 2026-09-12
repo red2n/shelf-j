@@ -25,6 +25,17 @@ public class PlanningConfigRepository extends BaseJdbcRepository {
 
   // ── Lot-specific UOM conversions ──────────────────────────────────────────
 
+  /**
+   * Creates or replaces a lot uom conversion.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param batchId the batch id
+   * @param fromUom the unit converting from
+   * @param toUom the unit converting to
+   * @param factor the conversion factor
+   * @param notes free-text notes
+   * @return the lot uom conversion as stored
+   */
   public LotUomConversion upsertLotUomConversion(
       UUID tenantId,
       UUID batchId,
@@ -58,6 +69,13 @@ public class PlanningConfigRepository extends BaseJdbcRepository {
         "upsert lot uom conversion");
   }
 
+  /**
+   * Lists the tenant's lot uom conversions.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param batchId the batch id
+   * @return the matching rows
+   */
   public List<LotUomConversion> listLotUomConversions(UUID tenantId, UUID batchId) {
     return query(
         "SELECT id,tenant_id,batch_id,from_uom,to_uom,factor,notes,created_at"
@@ -85,6 +103,17 @@ public class PlanningConfigRepository extends BaseJdbcRepository {
 
   // ── Replenishment PAR-level configs ───────────────────────────────────────
 
+  /**
+   * Creates or replaces a par level.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param parQty the par qty
+   * @param uom the par to persist
+   * @param reviewCycle the review cycle
+   * @return the par level as stored
+   */
   public ParLevelConfig upsertParLevel(
       UUID tenantId,
       UUID storeId,
@@ -120,6 +149,13 @@ public class PlanningConfigRepository extends BaseJdbcRepository {
         "upsert par level");
   }
 
+  /**
+   * Lists the tenant's par levels.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<ParLevelConfig> listParLevels(UUID tenantId, UUID storeId) {
     return query(
         "SELECT id,tenant_id,store_id,variant_id,par_qty,uom,review_cycle,created_at,updated_at"
@@ -132,6 +168,14 @@ public class PlanningConfigRepository extends BaseJdbcRepository {
         "list par levels");
   }
 
+  /**
+   * Looks a par level up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @return the par level, or empty when it does not exist in this tenant
+   */
   public Optional<ParLevelConfig> findParLevel(UUID tenantId, UUID storeId, UUID variantId) {
     return query(
             "SELECT id,tenant_id,store_id,variant_id,par_qty,uom,review_cycle,created_at,updated_at"

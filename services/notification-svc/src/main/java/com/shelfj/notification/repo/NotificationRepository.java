@@ -11,6 +11,13 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * JDBC access to notification-svc's alert and notification-log tables.
+ *
+ * <p>The {@code *Once} and {@code alreadyNotified} methods are the send-once guards: they fold the
+ * dedupe check into the write so a redelivered Kafka event cannot raise a duplicate alert or send a
+ * second copy of the same message. The {@code redact*} methods back GDPR erasure.
+ */
 @ApplicationScoped
 public class NotificationRepository extends BaseJdbcRepository {
 
@@ -44,6 +51,14 @@ public class NotificationRepository extends BaseJdbcRepository {
         "insert shortage alert");
   }
 
+  /**
+   * Lists a store's shortage alerts, newest first.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store whose alerts to list
+   * @param limit maximum rows to return; the caller is expected to have capped this
+   * @return the matching alerts, newest first
+   */
   public List<ShortageAlert> listAlerts(UUID tenantId, UUID storeId, int limit) {
     StringBuilder sb =
         new StringBuilder(
@@ -62,6 +77,14 @@ public class NotificationRepository extends BaseJdbcRepository {
         "list shortage alerts");
   }
 
+  /**
+   * Lists one variant's shortage alerts across every store, newest first.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant whose alerts to list
+   * @param limit maximum rows to return; the caller is expected to have capped this
+   * @return the matching alerts, newest first
+   */
   public List<ShortageAlert> listAlertsByVariant(UUID tenantId, UUID variantId, int limit) {
     return query(
         "SELECT id, tenant_id, store_id, variant_id, available, threshold, event_id, alerted_at"

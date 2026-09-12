@@ -36,6 +36,14 @@ public class MoveOrderResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Creates a move order.
+   *
+   * <p>Requests one or more variants be moved from one zone to another within the same store.
+   *
+   * @param req the request body
+   * @return move order created ({@code 201})
+   */
   @Operation(
       summary = "Create a move order",
       description =
@@ -70,7 +78,17 @@ public class MoveOrderResource {
         .build();
   }
 
+  /**
+   * Lists move orders.
+   *
+   * <p>Filterable by store and status.
+   *
+   * @param store the store (query parameter)
+   * @param status the status (query parameter)
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(summary = "List move orders", description = "Filterable by store and status.")
+  @APIResponse(responseCode = "200", description = "List move orders")
   @GET
   @Path("/move-orders")
   public ApiResponse<List<MoveOrderResponse>> listMoveOrders(
@@ -86,6 +104,12 @@ public class MoveOrderResource {
             .toList());
   }
 
+  /**
+   * Gets a move order by id, with its lines.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such move order
+   */
   @Operation(summary = "Get a move order by id, with its lines")
   @APIResponse(responseCode = "404", description = "No such move order")
   @GET
@@ -95,6 +119,15 @@ public class MoveOrderResource {
     return ApiResponse.ok(Mappers.toMoveOrder(wl.order(), wl.lines()));
   }
 
+  /**
+   * Picks a move order.
+   *
+   * <p>Marks the move order picked, deducting the moved qty from the source zone.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such move order; {@code 422} move order is
+   *     not in a pickable state
+   */
   @Operation(
       summary = "Pick a move order",
       description = "Marks the move order picked, deducting the moved qty from the source zone.")
@@ -107,6 +140,13 @@ public class MoveOrderResource {
     return ApiResponse.ok(Mappers.toMoveOrder(wl.order(), wl.lines()));
   }
 
+  /**
+   * Cancels a move order.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such move order; {@code 422} move order
+   *     cannot be cancelled in its current state
+   */
   @Operation(summary = "Cancel a move order")
   @APIResponse(responseCode = "404", description = "No such move order")
   @APIResponse(

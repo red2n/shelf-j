@@ -21,16 +21,32 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.db.schema", defaultValue = "tenant")
   String dbSchema;
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the Consul registration name, {@code tenant-svc} unless overridden
+   */
   @Override
   public String serviceName() {
     return serviceName;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the HTTP listen port; the {@code 8002} default is a local-dev convenience only, as
+   *     every service listens on 8080 in production
+   */
   @Override
   public int servicePort() {
     return servicePort;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the Postgres schema this service owns, {@code tenant} unless overridden
+   */
   @Override
   public String dbSchema() {
     return dbSchema;

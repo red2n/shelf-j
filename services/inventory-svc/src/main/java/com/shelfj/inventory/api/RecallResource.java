@@ -49,9 +49,19 @@ public class RecallResource {
   @Inject RecallService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Lists recalls.
+   *
+   * <p>Newest first, cursor-paginated, optionally by status.
+   *
+   * @param status the status (query parameter)
+   * @param after the after (query parameter)
+   * @param limit the limit (query parameter)
+   */
   @Operation(
       summary = "List recalls",
       description = "Newest first, cursor-paginated, optionally by status.")
+  @APIResponse(responseCode = "200", description = "List recalls")
   @GET
   public ApiResponse<List<RecallSummaryResponse>> list(
       @QueryParam("status") String status,
@@ -63,11 +73,18 @@ public class RecallResource {
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  /**
+   * Thes items under an open recall.
+   *
+   * <p>Every scope line of every open recall. The till keeps this list and checks each item against
+   * it, so a scan never waits on the network.
+   */
   @Operation(
       summary = "The items under an open recall",
       description =
           "Every scope line of every open recall. The till keeps this list and checks each item"
               + " against it, so a scan never waits on the network.")
+  @APIResponse(responseCode = "200", description = "The items under an open recall")
   @GET
   @Path("/active")
   public ApiResponse<List<ActiveRecallItemResponse>> active() {
@@ -76,6 +93,14 @@ public class RecallResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Gets a recall.
+   *
+   * <p>Its scope, every batch it holds, what each store recorded, and progress.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such recall
+   */
   @Operation(
       summary = "Get a recall",
       description = "Its scope, every batch it holds, what each store recorded, and progress.")
@@ -88,6 +113,19 @@ public class RecallResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Records what a store found and did.
+   *
+   * <p>RETURNED_TO_SUPPLIER or DESTROYED takes the store's held stock off the books with a movement
+   * attributed to the caller; HELD_FOR_COLLECTION does not. A store may record more than once.
+   *
+   * @param id the id (path parameter)
+   * @param storeId the store id (path parameter)
+   * @param req the request body
+   * @return recorded ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 403} not assigned to that store; {@code 409} the
+   *     recall is not open
+   */
   @Operation(
       summary = "Record what a store found and did",
       description =
@@ -121,6 +159,18 @@ public class RecallResource {
         .build();
   }
 
+  /**
+   * Releases a batch found not to be affected.
+   *
+   * <p>Only a batch held because its lot or date was unknown. Its status is restored once no open
+   * recall holds it.
+   *
+   * @param id the id (path parameter)
+   * @param batchId the batch id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} the recall does not hold that batch; {@code
+   *     409} the batch is certainly in scope, or released
+   */
   @Operation(
       summary = "Release a batch found not to be affected",
       description =

@@ -22,6 +22,12 @@ import java.util.UUID;
 @ApplicationScoped
 public class CategorySetRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a category set.
+   *
+   * @param s the category to persist
+   * @return the category set as stored
+   */
   public CategorySet createCategorySet(CategorySet s) {
     exec(
         "INSERT INTO category_sets"
@@ -41,6 +47,13 @@ public class CategorySetRepository extends BaseJdbcRepository {
     return findCategorySet(s.tenantId(), s.id()).orElseThrow();
   }
 
+  /**
+   * Looks a category set up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the category set to act on
+   * @return the category set, or empty when it does not exist in this tenant
+   */
   public Optional<CategorySet> findCategorySet(UUID tenantId, UUID id) {
     return query(
             "SELECT id, tenant_id, name, description, purpose, default_cat_id, controlled,"
@@ -56,6 +69,12 @@ public class CategorySetRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's category sets.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the matching rows
+   */
   public List<CategorySet> listCategorySets(UUID tenantId) {
     return query(
         "SELECT id, tenant_id, name, description, purpose, default_cat_id, controlled,"
@@ -66,6 +85,19 @@ public class CategorySetRepository extends BaseJdbcRepository {
         "list category sets");
   }
 
+  /**
+   * Writes a category set back with its new values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the category set to act on
+   * @param name the name to set
+   * @param description the free-text description
+   * @param purpose what the set is for
+   * @param defaultCatId the default cat id
+   * @param controlled whether the set is controlled, restricting who may change its members
+   * @param status the status to set
+   * @return the category set as stored
+   */
   public CategorySet updateCategorySet(
       UUID tenantId,
       UUID id,
@@ -95,6 +127,13 @@ public class CategorySetRepository extends BaseJdbcRepository {
     return findCategorySet(tenantId, id).orElseThrow();
   }
 
+  /**
+   * Deletes a category set.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the category set to act on
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deleteCategorySet(UUID tenantId, UUID id) {
     return inTx(
         c -> {
@@ -108,6 +147,12 @@ public class CategorySetRepository extends BaseJdbcRepository {
         "delete category set");
   }
 
+  /**
+   * Adds one member to a category set.
+   *
+   * @param m the member to persist; its {@code id} must already be a UUIDv7
+   * @return the member as stored
+   */
   public CategorySetMember addCategorySetMember(CategorySetMember m) {
     exec(
         "INSERT INTO category_set_members (id, tenant_id, set_id, category_id)"
@@ -136,6 +181,13 @@ public class CategorySetRepository extends BaseJdbcRepository {
         .orElseThrow();
   }
 
+  /**
+   * Lists the tenant's category set members.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param setId the set id
+   * @return the matching rows
+   */
   public List<CategorySetMember> listCategorySetMembers(UUID tenantId, UUID setId) {
     return query(
         "SELECT id, tenant_id, set_id, category_id, created_at"
@@ -148,6 +200,14 @@ public class CategorySetRepository extends BaseJdbcRepository {
         "list category set members");
   }
 
+  /**
+   * Deletes a category set member.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param setId the set id
+   * @param categoryId the category id
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deleteCategorySetMember(UUID tenantId, UUID setId, UUID categoryId) {
     return inTx(
         c -> {
@@ -164,6 +224,12 @@ public class CategorySetRepository extends BaseJdbcRepository {
         "delete category set member");
   }
 
+  /**
+   * Creates or replaces a variant category set assignment.
+   *
+   * @param a the variant to persist
+   * @return the variant category set assignment as stored
+   */
   public VariantCategorySetAssignment upsertVariantCategorySetAssignment(
       VariantCategorySetAssignment a) {
     exec(
@@ -195,6 +261,13 @@ public class CategorySetRepository extends BaseJdbcRepository {
         .orElseThrow();
   }
 
+  /**
+   * Lists the tenant's variant category set assignments.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<VariantCategorySetAssignment> listVariantCategorySetAssignments(
       UUID tenantId, UUID variantId) {
     return query(
@@ -209,6 +282,14 @@ public class CategorySetRepository extends BaseJdbcRepository {
         "list variant category set assignments");
   }
 
+  /**
+   * Deletes a variant category set assignment.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @param setId the set id
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deleteVariantCategorySetAssignment(UUID tenantId, UUID variantId, UUID setId) {
     return inTx(
         c -> {

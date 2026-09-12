@@ -24,6 +24,13 @@ import java.util.UUID;
 @ApplicationScoped
 public class PhysicalInventoryRepository extends BaseOutboxRepository {
 
+  /**
+   * Inserts a physical inventory.
+   *
+   * @param pi the physical to persist
+   * @param event the outbox row to commit alongside the write
+   * @return the physical inventory as stored
+   */
   public PhysicalInventory createPhysicalInventory(PhysicalInventory pi, OutboxRow event) {
     return inTx(
         c -> {
@@ -47,6 +54,13 @@ public class PhysicalInventoryRepository extends BaseOutboxRepository {
         "create physical inventory");
   }
 
+  /**
+   * Looks a physical inventory up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the physical inventory to act on
+   * @return the physical inventory, or empty when it does not exist in this tenant
+   */
   public Optional<PhysicalInventory> findPhysicalInventory(UUID tenantId, UUID id) {
     var rows =
         query(
@@ -61,6 +75,13 @@ public class PhysicalInventoryRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Lists the tenant's physical inventories.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<PhysicalInventory> listPhysicalInventories(UUID tenantId, UUID storeId) {
     return query(
         "SELECT id, tenant_id, store_id, status, notes, started_at, completed_at"
@@ -75,6 +96,13 @@ public class PhysicalInventoryRepository extends BaseOutboxRepository {
         "list physical inventories");
   }
 
+  /**
+   * Lists the tenant's tags.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param physicalInventoryId the physical inventory id
+   * @return the matching rows
+   */
   public List<PhysicalInventoryTag> listTags(UUID tenantId, UUID physicalInventoryId) {
     return query(
         "SELECT id, tenant_id, physical_inventory_id, variant_id, zone_id, system_qty,"
@@ -88,6 +116,12 @@ public class PhysicalInventoryRepository extends BaseOutboxRepository {
         "list physical inventory tags");
   }
 
+  /**
+   * Adds a count tag to a physical inventory, snapshotting the system quantity to count against.
+   *
+   * @param tag the tag to persist; its {@code id} must already be a UUIDv7
+   * @return the tag as stored
+   */
   public PhysicalInventoryTag addTag(PhysicalInventoryTag tag) {
     return inTx(
         c -> {
@@ -111,6 +145,15 @@ public class PhysicalInventoryRepository extends BaseOutboxRepository {
         "add physical inventory tag");
   }
 
+  /**
+   * Records the counted quantity on one tag and marks it COUNTED.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param physicalInventoryId the count the tag belongs to, also matched
+   * @param tagId the tag being counted
+   * @param countedQty the quantity actually found
+   * @return the tag with its recorded count
+   */
   public PhysicalInventoryTag countTag(
       UUID tenantId, UUID physicalInventoryId, UUID tagId, BigDecimal countedQty) {
     return inTx(
@@ -133,6 +176,14 @@ public class PhysicalInventoryRepository extends BaseOutboxRepository {
         "count pi tag");
   }
 
+  /**
+   * Completes a physical inventory, posting each tag's variance and writing the event — atomically.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param piId the physical inventory to complete
+   * @param event the outbox row to commit alongside
+   * @return the completed physical inventory
+   */
   public PhysicalInventory completePhysicalInventory(UUID tenantId, UUID piId, OutboxRow event) {
     return inTx(
         c -> {

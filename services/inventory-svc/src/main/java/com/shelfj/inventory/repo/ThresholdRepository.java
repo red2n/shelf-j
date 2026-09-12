@@ -17,6 +17,12 @@ import java.util.UUID;
 @ApplicationScoped
 public class ThresholdRepository extends BaseJdbcRepository {
 
+  /**
+   * Creates or replaces a threshold.
+   *
+   * @param t the threshold to persist
+   * @return the threshold as stored
+   */
   public Threshold upsertThreshold(Threshold t) {
     return inTx(
         c -> {
@@ -44,6 +50,13 @@ public class ThresholdRepository extends BaseJdbcRepository {
         "upsert threshold");
   }
 
+  /**
+   * Lists the tenant's thresholds.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<Threshold> listThresholds(UUID tenantId, UUID storeId) {
     StringBuilder sb =
         new StringBuilder(

@@ -19,6 +19,12 @@ public final class Mappers {
 
   private Mappers() {}
 
+  /**
+   * Converts a tenant to its wire form.
+   *
+   * @param t the tenant to convert
+   * @return its API representation
+   */
   public static TenantResponse toTenant(Tenant t) {
     return new TenantResponse(
         t.id().toString(),
@@ -31,6 +37,12 @@ public final class Mappers {
         ts(t.updatedAt()));
   }
 
+  /**
+   * Converts a store to its wire form.
+   *
+   * @param s the store to convert
+   * @return its API representation, with the stored tender CSV split into a list
+   */
   public static StoreResponse toStore(Store s) {
     return new StoreResponse(
         s.id().toString(),
@@ -56,11 +68,26 @@ public final class Mappers {
   }
 
   /** CSV column → JSON list; a null/blank column (pre-migration row) falls back to the default. */
+  /**
+   * Splits the stored comma-separated tender list into its parts.
+   *
+   * <p>Kept as CSV in the column but exposed as a list, so the wire contract does not leak the
+   * storage shape.
+   *
+   * @param csv the stored value, which may be {@code null} or blank
+   * @return the tender codes, empty when nothing is stored
+   */
   public static java.util.List<String> paymentMethodsList(String csv) {
     String effective = csv == null || csv.isBlank() ? Store.DEFAULT_PAYMENT_METHODS : csv;
     return java.util.Arrays.stream(effective.split(",")).map(String::trim).toList();
   }
 
+  /**
+   * Converts a zone to its wire form.
+   *
+   * @param z the zone to convert
+   * @return its API representation
+   */
   public static ZoneResponse toZone(Zone z) {
     return new ZoneResponse(
         z.id().toString(),
@@ -73,6 +100,12 @@ public final class Mappers {
         ts(z.updatedAt()));
   }
 
+  /**
+   * Converts a staff assignment to its wire form.
+   *
+   * @param s the staff assignment to convert
+   * @return its API representation: the user, the store and the role granted there
+   */
   public static StaffResponse toStaff(StaffAssignment s) {
     return new StaffResponse(
         s.id().toString(),
@@ -82,6 +115,12 @@ public final class Mappers {
         ts(s.createdAt()));
   }
 
+  /**
+   * Converts the tenant's inventory-control parameters to their wire form.
+   *
+   * @param c the configuration to convert
+   * @return its API representation
+   */
   public static TenantInventoryConfigResponse toDto(TenantInventoryConfig c) {
     return new TenantInventoryConfigResponse(
         c.id().toString(),
@@ -98,6 +137,12 @@ public final class Mappers {
         ts(c.updatedAt()));
   }
 
+  /**
+   * Converts a delivery area to its wire form.
+   *
+   * @param a the delivery area to convert
+   * @return its API representation: the pincode and its priority
+   */
   public static DeliveryAreaResponse toDto(DeliveryArea a) {
     return new DeliveryAreaResponse(
         a.id().toString(), a.storeId().toString(), a.pincode(), a.priority(), ts(a.createdAt()));

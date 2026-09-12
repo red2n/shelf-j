@@ -78,6 +78,14 @@ public class CostingRepository extends BaseOutboxRepository {
         "upsert costing method");
   }
 
+  /**
+   * Looks a costing method up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @return the costing method, or empty when it does not exist in this tenant
+   */
   public Optional<CostingMethod> findCostingMethod(UUID tenantId, UUID storeId, UUID variantId) {
     return query(
             "SELECT id, tenant_id, store_id, variant_id, method, average_cost, updated_at"
@@ -93,6 +101,13 @@ public class CostingRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's costing methods.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<CostingMethod> listCostingMethods(UUID tenantId, UUID storeId) {
     return query(
         "SELECT id, tenant_id, store_id, variant_id, method, average_cost, updated_at"
@@ -105,6 +120,16 @@ public class CostingRepository extends BaseOutboxRepository {
         "list costing methods");
   }
 
+  /**
+   * Opens an accounting period and writes its event — atomically.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store the period belongs to
+   * @param periodName the period's display name
+   * @param periodDate the period's date
+   * @param event the outbox row to commit alongside
+   * @return the opened period
+   */
   public AccountingPeriod openPeriod(
       UUID tenantId, UUID storeId, String periodName, LocalDate periodDate, OutboxRow event) {
     return inTx(
@@ -143,6 +168,16 @@ public class CostingRepository extends BaseOutboxRepository {
         "open accounting period");
   }
 
+  /**
+   * Closes an open accounting period and writes its event — atomically.
+   *
+   * <p>Guarded on {@code status='OPEN'}, so closing twice cannot re-stamp the closing time.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param periodId the period to close
+   * @param event the outbox row to commit alongside
+   * @return the closed period
+   */
   public AccountingPeriod closePeriod(UUID tenantId, UUID periodId, OutboxRow event) {
     return inTx(
         c -> {
@@ -165,6 +200,13 @@ public class CostingRepository extends BaseOutboxRepository {
         "close accounting period");
   }
 
+  /**
+   * Looks a period up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param periodId the period id
+   * @return the period, or empty when it does not exist in this tenant
+   */
   public Optional<AccountingPeriod> findPeriod(UUID tenantId, UUID periodId) {
     return query(
             "SELECT id, tenant_id, store_id, period_name, period_date, status, opened_at, closed_at"
@@ -179,6 +221,13 @@ public class CostingRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's periods.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<AccountingPeriod> listPeriods(UUID tenantId, UUID storeId) {
     return query(
         "SELECT id, tenant_id, store_id, period_name, period_date, status, opened_at, closed_at"

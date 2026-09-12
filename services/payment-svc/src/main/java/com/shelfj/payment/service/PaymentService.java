@@ -19,6 +19,16 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
+/**
+ * Business logic for payment-svc. Thin resource → this service → repository.
+ *
+ * <p>Two capture paths with different trust models: {@link #recordTender} is staff-initiated, where
+ * the caller's role is the trust boundary, and {@link #recordOnlinePayment} is customer-initiated,
+ * where the claim is verified against order-svc before anything is captured. Both funnel into the
+ * same private capture, so the tender rules hold identically across POS and online.
+ *
+ * <p>Payments and refunds are append-only: nothing here updates a captured tender in place.
+ */
 @ApplicationScoped
 public class PaymentService {
 
@@ -50,7 +60,17 @@ public class PaymentService {
   @Inject com.shelfj.payment.client.TenantStoreClient storeClient;
   @Inject com.shelfj.payment.client.CustomerClient customerClient;
 
-  /** Staff-recorded tender (POS/back-office) — the caller's role is the trust boundary. */
+  /**
+   * Staff-recorded tender (POS/back-office) — the caller's role is the trust boundary.
+   *
+   * @param req the order, amount, method and optional reference/notes
+   * @param ctx caller context; supplies the tenant and is checked for store access
+   * @param idempotencyKey the caller's {@code Idempotency-Key}, so a retried capture does not take
+   *     payment twice
+   * @return the captured tender
+   * @throws ApiException {@code PAYMENT_INVALID_METHOD} (400) for an unknown method; {@code
+   *     PAYMENT_METHOD_DISABLED} (422) when the store owner has switched that method off
+   */
   public PaymentTender recordTender(
       RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
     UUID tenantId = ctx.requireTenantId();
@@ -66,6 +86,14 @@ public class PaymentService {
    * against order-svc (the data owner) before it's captured: the order must exist in the tenant,
    * must be an ONLINE order, must belong to the caller when the caller is an authenticated
    * customer, and the claimed amount must match the order total exactly.
+   *
+   * @param req the order, amount, method and optional reference/notes
+   * @param ctx caller context; supplies the tenant and the customer identity, if any
+   * @param idempotencyKey the caller's {@code Idempotency-Key}, so a retried capture does not take
+   *     payment twice
+   * @return the captured tender
+   * @throws ApiException when the order does not exist in the tenant, is not an {@code ONLINE}
+   *     order, does not belong to the caller, or the amount does not match the order total
    */
   public PaymentTender recordOnlinePayment(
       RecordTenderRequest req, TenantContext ctx, String idempotencyKey) {
@@ -168,22 +196,63 @@ public class PaymentService {
           method + " payments are not enabled for this store (enabled: " + enabled.get() + ")");
   }
 
+  /**
+   * Reads a tender by id with tenant scoping but <strong>no</strong> object-level authorization.
+   *
+   * <p>For internal callers only — anything serving a request should use {@link #getTender(UUID,
+   * UUID, TenantContext)} so a customer cannot read another customer's payment.
+   *
+   * @param tenantId owning tenant
+   * @param tenderId the tender to read
+   * @return the tender
+   * @throws ApiException {@code PAYMENT_NOT_FOUND} (404) when no such tender exists in this tenant
+   */
   public PaymentTender getTender(UUID tenantId, UUID tenderId) {
     return repo.findTender(tenantId, tenderId)
         .orElseThrow(() -> ApiException.notFound("PAYMENT_NOT_FOUND", "payment tender not found"));
   }
 
-  /** Payment-by-id read for the API: tenant scope plus object-level authorization. */
+  /**
+   * Payment-by-id read for the API: tenant scope plus object-level authorization.
+   *
+   * @param tenantId owning tenant
+   * @param tenderId the tender to read
+   * @param ctx caller context, resolved against the tender's order to decide access
+   * @return the tender
+   * @throws ApiException {@code PAYMENT_NOT_FOUND} (404) when no such tender exists or the caller
+   *     may not read it — denials are 404 so ids cannot be probed for existence
+   */
   public PaymentTender getTender(UUID tenantId, UUID tenderId, TenantContext ctx) {
     PaymentTender tender = getTender(tenantId, tenderId);
     requireReadAccess(tenantId, tender.orderId(), ctx);
     return tender;
   }
 
+  /**
+   * Lists an order's captured tenders with tenant scoping but <strong>no</strong> object-level
+   * authorization.
+   *
+   * <p>For internal callers only — request-serving code should use the {@link TenantContext}
+   * overload. A split-tender sale returns one row per tender.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order whose tenders to list
+   * @return the captured tenders, empty when nothing has been paid
+   */
   public List<PaymentTender> listTendersByOrder(UUID tenantId, UUID orderId) {
     return repo.findTendersByOrder(tenantId, orderId);
   }
 
+  /**
+   * Lists an order's captured tenders for the API: tenant scope plus object-level authorization.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order whose tenders to list
+   * @param ctx caller context, resolved against the order to decide access
+   * @return the captured tenders, empty when nothing has been paid
+   * @throws ApiException {@code PAYMENT_NOT_FOUND} (404) when the caller may not read this order's
+   *     payments
+   */
   public List<PaymentTender> listTendersByOrder(UUID tenantId, UUID orderId, TenantContext ctx) {
     requireReadAccess(tenantId, orderId, ctx);
     return listTendersByOrder(tenantId, orderId);
@@ -209,6 +278,21 @@ public class PaymentService {
         () -> ApiException.notFound("PAYMENT_NOT_FOUND", "payment tender not found"));
   }
 
+  /**
+   * Records a refund against a previously captured tender.
+   *
+   * <p>Existence, order-match and the cumulative refund cap are enforced inside one transaction
+   * with the payment row locked, so two concurrent refunds cannot together exceed the original
+   * payment.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order being refunded
+   * @param req the payment being refunded against, the amount, method and reason
+   * @param idempotencyKey the caller's {@code Idempotency-Key}, so a retry does not refund twice
+   * @return the recorded refund
+   * @throws ApiException {@code PAYMENT_INVALID_METHOD} (400) for an unknown method; a conflict
+   *     when the refund would exceed what was captured
+   */
   public RefundTender recordRefund(
       UUID tenantId, UUID orderId, RecordRefundRequest req, String idempotencyKey) {
     String method = req.method().toUpperCase(Locale.ROOT);
@@ -239,10 +323,31 @@ public class PaymentService {
         refund, Events.paymentRefunded(tenantId, refundId, orderId, req.amount()));
   }
 
+  /**
+   * Lists an order's refunds with tenant scoping but <strong>no</strong> object-level
+   * authorization.
+   *
+   * <p>For internal callers only — request-serving code should use the {@link TenantContext}
+   * overload.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order whose refunds to list
+   * @return the refunds, empty when nothing has been refunded
+   */
   public List<RefundTender> listRefundsByOrder(UUID tenantId, UUID orderId) {
     return repo.findRefundsByOrder(tenantId, orderId);
   }
 
+  /**
+   * Lists an order's refunds for the API: tenant scope plus object-level authorization.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order whose refunds to list
+   * @param ctx caller context, resolved against the order to decide access
+   * @return the refunds, empty when nothing has been refunded
+   * @throws ApiException {@code PAYMENT_NOT_FOUND} (404) when the caller may not read this order's
+   *     payments
+   */
   public List<RefundTender> listRefundsByOrder(UUID tenantId, UUID orderId, TenantContext ctx) {
     requireReadAccess(tenantId, orderId, ctx);
     return listRefundsByOrder(tenantId, orderId);
@@ -256,6 +361,14 @@ public class PaymentService {
    * remaining captured total. Orders with nothing captured (e.g. unpaid pay-later cancellations)
    * are a no-op. Distributes the refund across the order's captured tenders so the per-tender cap
    * invariant holds even for split-tender sales.
+   *
+   * @param eventId the order event's id, the idempotency key for this refund
+   * @param consumer the consumer name recorded alongside the dedupe mark
+   * @param tenantId owning tenant
+   * @param orderId the order being refunded
+   * @param requestedAmount the amount to refund, capped at what remains captured, or {@code null}
+   *     to refund everything still captured (the cancellation case)
+   * @param reason free-text reason recorded against each refund
    */
   public void refundForOrderEvent(
       UUID eventId,

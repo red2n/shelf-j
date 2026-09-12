@@ -124,6 +124,13 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
     }
   }
 
+  /**
+   * The receipt issued for one sale.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the sale whose receipt to read
+   * @return the receipt, or empty when none has been issued yet
+   */
   public Optional<FiscalReceipt> findByOrder(UUID tenantId, UUID orderId) {
     var rows =
         query(
@@ -162,6 +169,16 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
         "void fiscal receipt");
   }
 
+  /**
+   * Every receipt in one series, by number — the register a store keeps.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store whose register to read
+   * @param series the numbering series
+   * @param period the fiscal period, normally the year
+   * @param limit maximum rows
+   * @return the receipts in number order
+   */
   public List<FiscalReceipt> listSeries(
       UUID tenantId, UUID storeId, String series, String period, int limit) {
     return query(

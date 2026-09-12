@@ -38,6 +38,14 @@ public class PosLogResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Cursor-paginated POSLog entries for the tenant.
+   *
+   * @param storeId restrict to one store, or {@code null}
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100; clamped when absent or out of range
+   * @return the page of entries, with the next cursor in {@code meta}
+   */
   @Operation(
       summary = "List POSLog entries",
       description =
@@ -56,6 +64,12 @@ public class PosLogResource {
         .build();
   }
 
+  /**
+   * The POSLog entries recorded against one sale.
+   *
+   * @param orderId the sale whose entries to read
+   * @return the entries, empty when the sale was not rung on a till
+   */
   @Operation(
       summary = "List POSLog entries for an order",
       description = "All POSLog entries recorded against the given order.")

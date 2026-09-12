@@ -39,6 +39,15 @@ public class PlanningConfigResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Upserts a lot's unit-of-measure conversion.
+   *
+   * <p>Defines the factor to convert between two UOMs for a specific batch.
+   *
+   * @param batchId the batch id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 400} uOM conversion factor must be positive
+   */
   @Operation(
       summary = "Upsert a lot's unit-of-measure conversion",
       description = "Defines the factor to convert between two UOMs for a specific batch.")
@@ -55,7 +64,13 @@ public class PlanningConfigResource {
     return ApiResponse.ok(Mappers.toLotUomConversion(c));
   }
 
+  /**
+   * Lists a batch's UOM conversions.
+   *
+   * @param batchId the batch id (path parameter)
+   */
   @Operation(summary = "List a batch's UOM conversions")
+  @APIResponse(responseCode = "200", description = "List a batch's UOM conversions")
   @GET
   @Path("/lots/{batchId}/uom-conversions")
   public ApiResponse<List<LotUomConversionResponse>> listLotUomConversions(
@@ -67,6 +82,14 @@ public class PlanningConfigResource {
             .toList());
   }
 
+  /**
+   * Upserts a PAR level.
+   *
+   * <p>Sets the target periodic-automatic-replenishment quantity for a variant at a store.
+   *
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 400} parQty must be positive
+   */
   @Operation(
       summary = "Upsert a PAR level",
       description =
@@ -89,7 +112,13 @@ public class PlanningConfigResource {
     return ApiResponse.ok(Mappers.toParLevel(p));
   }
 
+  /**
+   * Lists PAR levels for a store.
+   *
+   * @param store the store (query parameter)
+   */
   @Operation(summary = "List PAR levels for a store")
+  @APIResponse(responseCode = "200", description = "List PAR levels for a store")
   @GET
   @Path("/par-levels")
   public ApiResponse<List<ParLevelResponse>> listParLevels(@QueryParam("store") String store) {

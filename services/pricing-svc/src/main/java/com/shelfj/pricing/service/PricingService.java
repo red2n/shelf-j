@@ -60,6 +60,14 @@ public class PricingService {
 
   // ── VAT Rates ─────────────────────────────────────────────────────────────
 
+  /**
+   * Creates a VAT rate for the tenant.
+   *
+   * @param req the code, name, rate as a fraction (0.20 = 20%), exempt flag and effective date
+   * @param ctx caller context; supplies the tenant
+   * @return the created rate, its code upper-cased
+   * @throws ApiException {@code PRICING_INVALID_RATE} (400) when the rate exceeds 1
+   */
   public VatRate createVatRate(CreateVatRateRequest req, TenantContext ctx) {
     if (req.rate().compareTo(BigDecimal.ONE) > 0)
       throw ApiException.badRequest("PRICING_INVALID_RATE", "VAT rate must be between 0 and 1");
@@ -78,10 +86,24 @@ public class PricingService {
     return repo.createVatRate(r);
   }
 
+  /**
+   * Lists the tenant's VAT rates.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @return the configured rates
+   */
   public List<VatRate> listVatRates(TenantContext ctx) {
     return repo.findVatRates(ctx.tenantId());
   }
 
+  /**
+   * Reads one VAT rate by code.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param code the VAT code, matched case-insensitively
+   * @return the rate
+   * @throws ApiException {@code PRICING_VAT_CODE_NOT_FOUND} (404) when no such code exists
+   */
   public VatRate getVatRate(TenantContext ctx, String code) {
     return repo.findVatRate(ctx.tenantId(), code.toUpperCase(java.util.Locale.ROOT))
         .orElseThrow(
@@ -89,6 +111,20 @@ public class PricingService {
                 ApiException.notFound("PRICING_VAT_CODE_NOT_FOUND", "VAT code not found: " + code));
   }
 
+  /**
+   * Updates a VAT rate in place.
+   *
+   * <p>Overwrites the rate rather than superseding it, so historical tax transactions already
+   * recorded against this code keep the figures they were stamped with, while future ones use the
+   * new value.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param code the VAT code to update
+   * @param req the new name, rate, exempt flag and optional effective date
+   * @return the updated rate
+   * @throws ApiException {@code PRICING_VAT_CODE_NOT_FOUND} (404) when no such code exists; {@code
+   *     PRICING_INVALID_RATE} (400) when the rate exceeds 1
+   */
   public VatRate updateVatRate(TenantContext ctx, String code, CreateVatRateRequest req) {
     VatRate existing = getVatRate(ctx, code);
     if (req.rate().compareTo(BigDecimal.ONE) > 0)
@@ -114,6 +150,17 @@ public class PricingService {
 
   // ── Product VAT Categories ────────────────────────────────────────────────
 
+  /**
+   * Assigns a variant to a VAT code.
+   *
+   * <p>The code is checked against the tenant's own rates first, so a typo cannot leave a product
+   * pointing at a band that does not exist and silently falling back to standard rate at checkout.
+   *
+   * @param req the variant and the VAT code to assign it
+   * @param ctx caller context; supplies the tenant
+   * @return the stored assignment
+   * @throws ApiException {@code PRICING_VAT_CODE_NOT_FOUND} (404) when the code is not configured
+   */
   public ProductVatCategory upsertProductVatCategory(
       UpsertProductVatCategoryRequest req, TenantContext ctx) {
     String vatCode = req.vatCode().toUpperCase(java.util.Locale.ROOT);
@@ -134,6 +181,17 @@ public class PricingService {
     return repo.upsertProductVatCategory(pvc);
   }
 
+  /**
+   * Reads a variant's VAT assignment.
+   *
+   * <p>Unlike price resolution, which falls back to the standard rate, this reports the absence:
+   * the admin screen needs to know a product was never categorised.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param variantId the variant to look up
+   * @return the assignment
+   * @throws ApiException {@code PRICING_VAT_CATEGORY_NOT_FOUND} (404) when none is assigned
+   */
   public ProductVatCategory getProductVatCategory(TenantContext ctx, UUID variantId) {
     return repo.findProductVatCategory(ctx.tenantId(), variantId)
         .orElseThrow(
@@ -145,6 +203,14 @@ public class PricingService {
 
   // ── Customer VAT Status ───────────────────────────────────────────────────
 
+  /**
+   * Records a customer's VAT registration and reverse-charge eligibility.
+   *
+   * @param req the customer, VAT number, registration and reverse-charge flags, and country
+   *     (defaulting to {@code GB})
+   * @param ctx caller context; supplies the tenant
+   * @return the stored status
+   */
   public CustomerVatStatus upsertCustomerVatStatus(
       UpsertCustomerVatStatusRequest req, TenantContext ctx) {
     CustomerVatStatus cvs =
@@ -161,6 +227,14 @@ public class PricingService {
     return repo.upsertCustomerVatStatus(cvs);
   }
 
+  /**
+   * Reads a customer's VAT status.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param customerId the customer to look up
+   * @return the stored status
+   * @throws ApiException {@code PRICING_CUSTOMER_VAT_NOT_FOUND} (404) when none is recorded
+   */
   public CustomerVatStatus getCustomerVatStatus(TenantContext ctx, UUID customerId) {
     return repo.findCustomerVatStatus(ctx.tenantId(), customerId)
         .orElseThrow(
@@ -171,6 +245,14 @@ public class PricingService {
 
   // ── Price Lists ───────────────────────────────────────────────────────────
 
+  /**
+   * Creates a price list, active from the moment it is created.
+   *
+   * @param req the name, channel (defaulting to ALL), currency (defaulting to GBP) and effective
+   *     window
+   * @param ctx caller context; supplies the tenant
+   * @return the created price list
+   */
   public PriceList createPriceList(CreatePriceListRequest req, TenantContext ctx) {
     PriceList pl =
         new PriceList(
@@ -186,7 +268,14 @@ public class PricingService {
     return repo.createPriceList(pl);
   }
 
-  /** Cursor-paginated price lists. The cursor wraps the last row's created_at|id keyset. */
+  /**
+   * Cursor-paginated price lists. The cursor wraps the last row's created_at|id keyset.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param after cursor from the previous page, or {@code null} to start
+   * @param limit page size
+   * @return the page of price lists
+   */
   public Cursor.Page<PriceList> listPriceLists(TenantContext ctx, String after, int limit) {
     Cursor.CreatedAtId key = Cursor.decodeCreatedAtId(after);
     List<PriceList> rows =
@@ -198,6 +287,16 @@ public class PricingService {
     return Cursor.page(rows, limit, pl -> pl.createdAt() + "|" + pl.id());
   }
 
+  /**
+   * Reads one price list.
+   *
+   * <p>Also the tenant-scoping guard the price-list-item methods call first.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param id the price list to read
+   * @return the price list
+   * @throws ApiException {@code PRICING_LIST_NOT_FOUND} (404) when it does not exist in this tenant
+   */
   public PriceList getPriceList(TenantContext ctx, UUID id) {
     return repo.findPriceList(ctx.tenantId(), id)
         .orElseThrow(
@@ -206,6 +305,16 @@ public class PricingService {
 
   // ── Price List Items ──────────────────────────────────────────────────────
 
+  /**
+   * Sets a variant's price on a price list, publishing {@code PriceChanged}.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param priceListId the price list to write to
+   * @param req the variant, price and optional minimum quantity (defaulting to 1)
+   * @return the stored item
+   * @throws ApiException {@code PRICING_LIST_NOT_FOUND} (404) when the price list does not exist in
+   *     this tenant
+   */
   public PriceListItem upsertPriceListItem(
       TenantContext ctx, UUID priceListId, UpsertPriceListItemRequest req) {
     getPriceList(ctx, priceListId);
@@ -222,6 +331,20 @@ public class PricingService {
     return repo.upsertPriceListItem(item, Events.priceChanged(ctx.tenantId(), priceListId));
   }
 
+  /**
+   * Sets many prices on one price list in a single call.
+   *
+   * <p>Deliberately not atomic: each item is attempted independently and a failure is collected
+   * rather than rolled back, so one bad row in a bulk price upload does not discard the rest. The
+   * caller must read {@code errors} — a partial success still returns 200.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param priceListId the price list to write to
+   * @param req the items to upsert
+   * @return how many succeeded, and one message per failure
+   * @throws ApiException {@code PRICING_LIST_NOT_FOUND} (404) when the price list does not exist in
+   *     this tenant
+   */
   public BatchUpsertResult batchUpsertPriceListItems(
       TenantContext ctx, UUID priceListId, BatchUpsertPriceListItemsRequest req) {
     getPriceList(ctx, priceListId);
@@ -239,6 +362,15 @@ public class PricingService {
     return new BatchUpsertResult(upserted, errors);
   }
 
+  /**
+   * Lists the priced variants on one price list.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param priceListId the price list whose items to list
+   * @return the items
+   * @throws ApiException {@code PRICING_LIST_NOT_FOUND} (404) when the price list does not exist in
+   *     this tenant
+   */
   public List<PriceListItem> listPriceListItems(TenantContext ctx, UUID priceListId) {
     getPriceList(ctx, priceListId);
     return repo.findPriceListItems(ctx.tenantId(), priceListId);
@@ -246,6 +378,21 @@ public class PricingService {
 
   // ── Price Resolution ──────────────────────────────────────────────────────
 
+  /**
+   * Prices one variant for a product page: base price, item-level promotions, and VAT.
+   *
+   * <p>Basket-level and coupon promotions are excluded on purpose — a spend-threshold price shown
+   * against a single item advertises a total the shopper will not be charged, and a coupon they
+   * have not presented is not theirs yet. {@link #quoteBasket} is where those can be tested.
+   *
+   * <p>A variant with no VAT category falls back to the standard rate rather than failing.
+   *
+   * @param req the variant, optional quantity (defaulting to 1), channel and store
+   * @param ctx caller context; supplies the tenant
+   * @return the resolved unit price with its VAT code, rate, amount and gross
+   * @throws ApiException {@code PRICING_PRICE_NOT_FOUND} (404) when no active price is configured
+   *     for the variant
+   */
   public ResolvedPrice resolvePrice(ResolvePriceRequest req, TenantContext ctx) {
     UUID tenantId = ctx.tenantId();
     UUID variantId = UUID.fromString(req.variantId());
@@ -353,6 +500,15 @@ public class PricingService {
    * {@link #resolvePrice}), but collapsing this into one service call removes the per-line HTTP
    * round trip (and circuit-breaker/retry overhead) a caller like order-svc's checkout would
    * otherwise pay once per order line.
+   *
+   * <p>Independent resolution also means this cannot see the basket: it applies no basket-level or
+   * coupon promotion, exactly as {@link #resolvePrice} does not.
+   *
+   * @param reqs the lines to price
+   * @param ctx caller context; supplies the tenant
+   * @return one resolved price per request, in the order supplied
+   * @throws ApiException {@code PRICING_PRICE_NOT_FOUND} (404) as soon as any line has no active
+   *     price — the whole call fails rather than returning a partial list
    */
   public java.util.List<ResolvedPrice> resolvePrices(
       java.util.List<ResolvePriceRequest> reqs, TenantContext ctx) {
@@ -416,8 +572,13 @@ public class PricingService {
    * evenly because lines can sit at different rates, and the zero-rated line must not absorb a
    * share of relief that belongs to the standard-rated one.
    *
-   * @param couponCodes what the customer presented; codes that do not apply come back in {@code
-   *     rejectedCoupons} with a reason rather than being silently dropped
+   * @param req the lines, channel, store, customer and any coupon codes the customer presented;
+   *     codes that do not apply come back in {@code rejectedCoupons} with a reason rather than
+   *     being silently dropped
+   * @param ctx caller context; supplies the tenant
+   * @return the priced lines with subtotal, discounts, VAT, total and the promotions applied
+   * @throws ApiException {@code PRICING_INVALID_QTY} (400) when a line's quantity is not positive;
+   *     {@code PRICING_PRICE_NOT_FOUND} (404) when a variant has no active price
    */
   public QuoteBasketResponse quoteBasket(QuoteBasketRequest req, TenantContext ctx) {
     UUID tenantId = ctx.tenantId();
@@ -615,6 +776,11 @@ public class PricingService {
    * a coupon must not be spent by looking at it. Only the checkout calls this, once the order
    * exists to attribute the redemption to.
    *
+   * @param ctx caller context; supplies the tenant
+   * @param orderId the order the redemptions are attributed to
+   * @param customerId the redeeming customer, or {@code null} for a guest
+   * @param applied the promotions the quote applied, summed per promotion here
+   * @param currency the order's currency
    * @return how many redemptions this call actually recorded; a replay records none
    */
   public int recordRedemptions(
@@ -642,6 +808,13 @@ public class PricingService {
    * BOGO is a promotion that silently discounts nothing, which is the failure mode this whole
    * rebuild exists to end, and it must not be reachable however the row is written. What this adds
    * is the message — a constraint violation tells a caller only that something was wrong.
+   *
+   * @param req the promotion's type, value, window, scope-affecting settings and optional coupon
+   * @param ctx caller context; supplies the tenant
+   * @return the created promotion, active immediately
+   * @throws ApiException {@code PRICING_INVALID_PROMOTION_TYPE}, {@code PRICING_INCOMPLETE_BOGO},
+   *     {@code PRICING_INVALID_PROMOTION_SHAPE}, {@code PRICING_MISSING_THRESHOLD} or {@code
+   *     PRICING_INVALID_PERCENT} (all 400) when the shape does not match the type
    */
   public Promotion createPromotion(CreatePromotionRequest req, TenantContext ctx) {
     String type = req.type().toUpperCase(java.util.Locale.ROOT);
@@ -738,6 +911,12 @@ public class PricingService {
    * runaway promotion should not both be told they did it, and the trail must not gain a row for a
    * switch that did not move.
    *
+   * @param ctx caller context; supplies the tenant and the user recorded against the change
+   * @param subjectType {@code PROMOTION} or {@code PRICE_LIST}
+   * @param id the promotion or price list to switch
+   * @param active {@code true} to start it, {@code false} to stop it
+   * @param req the reason, required in both directions
+   * @return the recorded status change
    * @throws ApiException 400 if no reason is given; 404 if there is no such subject for this
    *     tenant; 409 {@code PRICING_ALREADY_IN_STATE} if it is already on or off as requested
    */
@@ -768,11 +947,27 @@ public class PricingService {
     return change;
   }
 
-  /** The on/off history for one promotion or price list. */
+  /**
+   * The on/off history for one promotion or price list.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param subjectType {@code PROMOTION} or {@code PRICE_LIST}
+   * @param id the promotion or price list whose history to read
+   * @return the recorded status changes
+   */
   public List<Domain.StatusChange> statusChanges(TenantContext ctx, String subjectType, UUID id) {
     return repo.findStatusChanges(subjectType, ctx.requireTenantId(), id);
   }
 
+  /**
+   * Every currently active promotion in the tenant.
+   *
+   * <p>Filters on the {@code active} flag only — a promotion whose window has not opened, or has
+   * closed, still appears here. The engine applies the date test when quoting.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @return the active promotions
+   */
   public List<Promotion> listActivePromotions(TenantContext ctx) {
     return repo.findAllActivePromotions(ctx.tenantId());
   }
@@ -787,6 +982,14 @@ public class PricingService {
    * needs the variant→category mapping, which product-svc owns and publishes on no topic; that
    * projection is the same one sales-by-category is blocked on, and is written up in
    * docs/reporting-api-gap-analysis.md.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param promotionId the promotion to scope
+   * @param req the scope type ({@code VARIANT} or {@code ALL}) and, for VARIANT, the variant id
+   * @return the stored scope row
+   * @throws ApiException {@code PRICING_CATEGORY_SCOPE_UNSUPPORTED} or {@code
+   *     PRICING_INVALID_SCOPE} (both 400) when the scope is a category, unknown, or a VARIANT scope
+   *     with no variant named
    */
   public PromotionItem addPromotionItem(
       TenantContext ctx, UUID promotionId, AddPromotionItemRequest req) {
@@ -814,6 +1017,17 @@ public class PricingService {
 
   // ── Tax Transactions ──────────────────────────────────────────────────────
 
+  /**
+   * Records one line's tax position against an order, for the VAT return and tax summary.
+   *
+   * <p>Append-only: the figures are stamped as they stood at the tax point, so a later rate change
+   * does not rewrite what was charged.
+   *
+   * @param req the order, line, variant, store, VAT code and rate, net/VAT/gross amounts, exempt
+   *     flag, tax point and invoice reference
+   * @param ctx caller context; supplies the tenant
+   * @return the recorded transaction
+   */
   public TaxTransaction recordTaxTransaction(RecordTaxTransactionRequest req, TenantContext ctx) {
     TaxTransaction tt =
         new TaxTransaction(
@@ -835,18 +1049,31 @@ public class PricingService {
     return repo.recordTaxTransaction(tt);
   }
 
+  /**
+   * The tax lines recorded against one order.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param orderId the order whose tax lines to read
+   * @return the transactions, empty when none were recorded
+   */
   public List<TaxTransaction> listTaxTransactionsByOrder(TenantContext ctx, UUID orderId) {
     return repo.findTaxTransactionsByOrder(ctx.tenantId(), orderId);
   }
 
   // ── MTD VAT Return ────────────────────────────────────────────────────────
 
-  /**
-   * Compute HMRC MTD VAT return boxes 1-9. Box 4 (input VAT on purchases) and boxes 7-9 remain zero
-   * until purchase-svc is built (Gap #20).
-   */
   // ── Gap #41: Price overrides ──────────────────────────────────────────────
 
+  /**
+   * Records a manual price override against a store, and optionally an order.
+   *
+   * <p>An audit row, not a price change: it captures that someone sold at a different figure and
+   * why. Nothing here alters the price list the override departed from.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param req the variant, store, original and override prices, reason and who authorised it
+   * @return the recorded override
+   */
   public PriceOverride createPriceOverride(TenantContext ctx, CreatePriceOverrideRequest req) {
     UUID tenantId = ctx.requireTenantId();
     var override =
@@ -864,7 +1091,16 @@ public class PricingService {
     return repo.insertPriceOverride(override);
   }
 
-  /** Cursor-paginated price overrides (admin audit log). */
+  /**
+   * Cursor-paginated price overrides (admin audit log).
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param storeIdStr restrict to one store, or {@code null} for all
+   * @param variantIdStr restrict to one variant, or {@code null} for all
+   * @param after cursor from the previous page, or {@code null} to start
+   * @param limit page size
+   * @return the page of overrides
+   */
   public Cursor.Page<PriceOverride> listPriceOverrides(
       TenantContext ctx, String storeIdStr, String variantIdStr, String after, int limit) {
     UUID tenantId = ctx.requireTenantId();
@@ -899,7 +1135,9 @@ public class PricingService {
    * @param toStr exclusive ISO-8601 upper bound
    * @param storeIdStr restrict to one store, or null/blank for all
    * @param groupByStr CODE, STORE or MONTH; defaults to CODE
-   * @throws ApiException 400 when the period is malformed or not strictly increasing
+   * @return the grouped rows with folded totals and the period they cover
+   * @throws ApiException 400 when the period is malformed or not strictly increasing, or {@code
+   *     groupBy} is not one of the three groupings
    */
   public TaxSummary taxSummary(
       TenantContext ctx, String fromStr, String toStr, String storeIdStr, String groupByStr) {
@@ -956,6 +1194,20 @@ public class PricingService {
     }
   }
 
+  /**
+   * Computes HMRC MTD VAT return boxes 1-9 for a period.
+   *
+   * <p>Box 4 (input VAT on purchases) and boxes 7-9 are still zero: they need purchase-side figures
+   * this service does not yet consume (Gap #20), so a return filed from this is incomplete for a
+   * business that reclaims input VAT.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param fromStr inclusive ISO-8601 lower bound on the tax point
+   * @param toStr exclusive ISO-8601 upper bound
+   * @return the nine box figures with the period they cover
+   * @throws ApiException {@code PRICING_INVALID_PERIOD} (400) when the period is malformed or not
+   *     strictly increasing
+   */
   public VatReturn computeVatReturn(TenantContext ctx, String fromStr, String toStr) {
     UUID tenantId = ctx.tenantId();
     Instant from = Parsing.instant(fromStr, "from");

@@ -18,6 +18,17 @@ import java.util.UUID;
 @ApplicationScoped
 public class MovementArchiveRepository extends BaseJdbcRepository {
 
+  /**
+   * Copies movements older than a cutoff into the archive table and deletes the originals —
+   * atomically.
+   *
+   * <p>Archive-then-delete in one transaction, so the append-only trail is never simply thrown
+   * away: it moves. The caller enforces the minimum age.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param before purge movements recorded strictly before this instant
+   * @return how many movements were archived and removed
+   */
   public int purgeMovementsBefore(UUID tenantId, Instant before) {
     OffsetDateTime cutoff = OffsetDateTime.ofInstant(before, ZoneOffset.UTC);
     return inTx(

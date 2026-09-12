@@ -51,6 +51,12 @@ public class AdminResource {
 
   // ── tenant profile ───────────────────────────────────────────────────────
 
+  /**
+   * Returns the caller's own tenant, resolved from the JWT.
+   *
+   * @return the tenant profile
+   * @throws com.shelfj.web.ApiException {@code 404} when the tenant no longer exists
+   */
   @Operation(summary = "Get the tenant profile", description = "Returns the caller's tenant.")
   @APIResponse(responseCode = "404", description = "Tenant not found")
   @GET
@@ -59,6 +65,15 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toTenant(service.getTenant(ctx.requireTenantId())));
   }
 
+  /**
+   * Renames the caller's tenant.
+   *
+   * <p>Country and currency are fixed at onboarding and cannot be changed here.
+   *
+   * @param req the new business name and optional legal name
+   * @return the updated tenant profile
+   * @throws com.shelfj.web.ApiException {@code 404} when the tenant no longer exists
+   */
   @Operation(
       summary = "Update the tenant profile",
       description = "Updates business name and legal name for the caller's tenant.")
@@ -72,9 +87,19 @@ public class AdminResource {
 
   // ── stores ───────────────────────────────────────────────────────────────
 
+  /**
+   * Cursor-paginated list of the tenant's stores.
+   *
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100; clamped when absent or out of range
+   * @return the page of stores, with the next cursor in {@code meta}
+   */
   @Operation(
       summary = "List the tenant's stores",
       description = "Cursor-paginated: ?after=<meta.nextCursor>&limit=1-100.")
+  @APIResponse(
+      responseCode = "200",
+      description = "The page of stores, with the next cursor in {@code meta}")
   @GET
   @Path("/stores")
   public ApiResponse<List<StoreResponse>> listStores(
@@ -84,6 +109,14 @@ public class AdminResource {
     return ApiResponse.ok(stores, new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  /**
+   * Adds a store to the caller's tenant, together with its DEFAULT zone.
+   *
+   * <p>The zone comes automatically so stock always has somewhere to sit.
+   *
+   * @param req the store's name, code, type, address and trading settings
+   * @return {@code 201} with the created store
+   */
   @Operation(
       summary = "Add a store",
       description = "Adds a new store (+ its DEFAULT zone) to the caller's tenant.")
@@ -98,6 +131,13 @@ public class AdminResource {
         .build();
   }
 
+  /**
+   * Reads a single store.
+   *
+   * @param storeId the store to read
+   * @return the store
+   * @throws com.shelfj.web.ApiException {@code 404} when it does not exist in the caller's tenant
+   */
   @Operation(summary = "Get a store", description = "Returns a single store in the tenant.")
   @APIResponse(responseCode = "404", description = "No such store in this tenant")
   @GET
@@ -106,6 +146,18 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toStore(service.getStore(ctx.requireTenantId(), storeId)));
   }
 
+  /**
+   * Updates a store's address, geo, hours, price visibility and enabled tenders.
+   *
+   * <p>Omitting {@code showPrices} or {@code enabledPaymentMethods} keeps the current value, so a
+   * partial update cannot silently switch the shop to catalogue-only or strip its tenders.
+   *
+   * @param storeId the store to update
+   * @param req the replacement details
+   * @return the updated store
+   * @throws com.shelfj.web.ApiException {@code 400} when the tender list is empty or names an
+   *     unknown method; {@code 404} when the store does not exist in the caller's tenant
+   */
   @Operation(
       summary = "Update a store",
       description =
@@ -121,6 +173,18 @@ public class AdminResource {
         Mappers.toStore(service.updateStore(ctx.requireTenantId(), storeId, req)));
   }
 
+  /**
+   * Changes a store's trading status and announces it.
+   *
+   * <p>Publishes {@code StoreStatusChanged} so iam-svc can terminate that store's POS sessions and
+   * cart/order-svc stop accepting trade against it.
+   *
+   * @param storeId the store whose status to change
+   * @param req the new status
+   * @return the store with its new status
+   * @throws com.shelfj.web.ApiException {@code 400} when the status is not a known one; {@code 404}
+   *     when the store does not exist in the caller's tenant
+   */
   @Operation(
       summary = "Change a store's status",
       description = "Publishes StoreStatusChanged so other services (e.g. iam-svc) can react.")
@@ -136,6 +200,16 @@ public class AdminResource {
 
   // ── zones ────────────────────────────────────────────────────────────────
 
+  /**
+   * Cursor-paginated list of one store's zones.
+   *
+   * @param storeId the store whose zones to page through
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100; clamped when absent or out of range
+   * @return the page of zones, with the next cursor in {@code meta}
+   * @throws com.shelfj.web.ApiException {@code 404} when the store does not exist in the caller's
+   *     tenant
+   */
   @Operation(
       summary = "List a store's zones",
       description = "Cursor-paginated: ?after=<meta.nextCursor>&limit=1-100.")
@@ -151,6 +225,15 @@ public class AdminResource {
     return ApiResponse.ok(zones, new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  /**
+   * Creates an aisle/rack/cold-room/back-store zone under a store.
+   *
+   * @param storeId the store to add the zone to
+   * @param req the zone's name, code and type; a blank type defaults to {@code AISLE}
+   * @return {@code 201} with the created zone
+   * @throws com.shelfj.web.ApiException {@code 404} when the store does not exist in the caller's
+   *     tenant
+   */
   @Operation(
       summary = "Add a zone to a store",
       description = "Creates an aisle/rack/cold-room/back-store zone under the given store.")
@@ -166,6 +249,14 @@ public class AdminResource {
         .build();
   }
 
+  /**
+   * Reads a single zone.
+   *
+   * @param storeId the store in the path; the lookup is tenant-scoped and does not match on it
+   * @param zoneId the zone to read
+   * @return the zone
+   * @throws com.shelfj.web.ApiException {@code 404} when no such zone exists in the caller's tenant
+   */
   @Operation(summary = "Get a zone", description = "Returns a single zone in the tenant.")
   @APIResponse(responseCode = "404", description = "No such zone")
   @GET
@@ -175,6 +266,15 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toZone(service.getZone(ctx.requireTenantId(), zoneId)));
   }
 
+  /**
+   * Updates a zone's name, code or type.
+   *
+   * @param storeId the store in the path; the lookup is tenant-scoped and does not match on it
+   * @param zoneId the zone to update
+   * @param req the new name, code and type
+   * @return the updated zone
+   * @throws com.shelfj.web.ApiException {@code 404} when no such zone exists in the caller's tenant
+   */
   @Operation(summary = "Update a zone", description = "Updates a zone's name, code, or type.")
   @APIResponse(responseCode = "404", description = "No such zone")
   @PUT
@@ -185,6 +285,17 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toZone(service.updateZone(ctx.requireTenantId(), zoneId, req)));
   }
 
+  /**
+   * Changes a zone's status.
+   *
+   * <p>Publishes nothing: no other service projects zone status.
+   *
+   * @param storeId the store in the path; the lookup is tenant-scoped and does not match on it
+   * @param zoneId the zone whose status to change
+   * @param req the new status
+   * @return the zone with its new status
+   * @throws com.shelfj.web.ApiException {@code 404} when no such zone exists in the caller's tenant
+   */
   @Operation(summary = "Change a zone's status", description = "Updates a zone's status.")
   @APIResponse(responseCode = "404", description = "No such zone")
   @PATCH
@@ -200,6 +311,17 @@ public class AdminResource {
 
   // ── staff ────────────────────────────────────────────────────────────────
 
+  /**
+   * Grants a user a role at a store.
+   *
+   * <p>The user must already exist in iam-svc — provision the account there first. Publishing
+   * {@code StaffAssigned} is what makes iam-svc bind the store-scoped role.
+   *
+   * @param req the user, store and role to grant
+   * @return {@code 201} with {@code assigned}
+   * @throws com.shelfj.web.ApiException {@code 404} when the store does not exist in the caller's
+   *     tenant
+   */
   @Operation(
       summary = "Assign staff to a store",
       description = "Grants a user a role at a store. userId must already exist (see iam-svc).")
@@ -213,9 +335,19 @@ public class AdminResource {
     return Response.status(Response.Status.CREATED).entity(ApiResponse.ok("assigned")).build();
   }
 
+  /**
+   * Cursor-paginated list of the tenant's staff assignments.
+   *
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100; clamped when absent or out of range
+   * @return the page of assignments, with the next cursor in {@code meta}
+   */
   @Operation(
       summary = "List staff assignments",
       description = "Cursor-paginated: ?after=<meta.nextCursor>&limit=1-100.")
+  @APIResponse(
+      responseCode = "200",
+      description = "The page of assignments, with the next cursor in {@code meta}")
   @GET
   @Path("/staff")
   public ApiResponse<List<StaffResponse>> listStaff(
@@ -226,6 +358,17 @@ public class AdminResource {
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  /**
+   * Removes a user's role assignment at one store.
+   *
+   * <p>Scoped to a single store rather than the whole tenant, so revoking someone's access at one
+   * site leaves their other assignments intact. Does not delete their iam-svc login.
+   *
+   * @param userId the staff member to unassign
+   * @param storeParam the store to unassign them from, as {@code ?store=<storeId>}; required
+   * @return {@code removed}
+   * @throws com.shelfj.web.ApiException {@code 400} when {@code store} is missing or not a UUID
+   */
   @Operation(
       summary = "Remove a staff assignment",
       description = "Removes a user's role assignment at the given store (?store=<storeId>).")

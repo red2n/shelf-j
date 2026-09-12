@@ -95,6 +95,12 @@ public class AdminResource {
 
   // ── brands ───────────────────────────────────────────────────────────────
 
+  /**
+   * Creates a brand.
+   *
+   * @param req the request body
+   * @return brand created ({@code 201})
+   */
   @Operation(summary = "Create a brand")
   @APIResponse(responseCode = "201", description = "Brand created")
   @Tag(name = "Brands")
@@ -105,8 +111,10 @@ public class AdminResource {
     return created(Mappers.toBrand(service.createBrand(ctx.requireTenantId(), req)));
   }
 
+  /** Lists brands. */
   @Operation(summary = "List brands")
   @Tag(name = "Brands")
+  @APIResponse(responseCode = "200", description = "List brands")
   @GET
   @Path("/brands")
   public ApiResponse<List<BrandResponse>> listBrands() {
@@ -114,6 +122,12 @@ public class AdminResource {
         service.listBrands(ctx.requireTenantId()).stream().map(Mappers::toBrand).toList());
   }
 
+  /**
+   * Gets a brand by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} brand not found
+   */
   @Operation(summary = "Get a brand by id")
   @APIResponse(responseCode = "404", description = "Brand not found")
   @Tag(name = "Brands")
@@ -123,6 +137,13 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toBrand(service.getBrand(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Renames a brand.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} brand not found
+   */
   @Operation(summary = "Rename a brand")
   @APIResponse(responseCode = "404", description = "Brand not found")
   @Tag(name = "Brands")
@@ -133,6 +154,14 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toBrand(service.renameBrand(ctx.requireTenantId(), id, req)));
   }
 
+  /**
+   * Deactivates a brand.
+   *
+   * <p>Soft delete: sets the brand's status to inactive.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} brand not found
+   */
   @Operation(
       summary = "Deactivate a brand",
       description = "Soft delete: sets the brand's status to inactive.")
@@ -146,6 +175,12 @@ public class AdminResource {
 
   // ── categories ───────────────────────────────────────────────────────────
 
+  /**
+   * Creates a category.
+   *
+   * @param req the request body
+   * @return category created ({@code 201})
+   */
   @Operation(summary = "Create a category")
   @APIResponse(responseCode = "201", description = "Category created")
   @Tag(name = "Categories")
@@ -156,8 +191,10 @@ public class AdminResource {
     return created(Mappers.toCategory(service.createCategory(ctx.requireTenantId(), req)));
   }
 
+  /** Lists categories. */
   @Operation(summary = "List categories")
   @Tag(name = "Categories")
+  @APIResponse(responseCode = "200", description = "List categories")
   @GET
   @Path("/categories")
   public ApiResponse<List<CategoryResponse>> listCategories() {
@@ -165,6 +202,12 @@ public class AdminResource {
         service.listCategories(ctx.requireTenantId()).stream().map(Mappers::toCategory).toList());
   }
 
+  /**
+   * Gets a category by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} category not found
+   */
   @Operation(summary = "Get a category by id")
   @APIResponse(responseCode = "404", description = "Category not found")
   @Tag(name = "Categories")
@@ -174,6 +217,13 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toCategory(service.getCategory(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Updates a category.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} category not found
+   */
   @Operation(summary = "Update a category")
   @APIResponse(responseCode = "404", description = "Category not found")
   @Tag(name = "Categories")
@@ -186,6 +236,14 @@ public class AdminResource {
         Mappers.toCategory(service.updateCategory(ctx.requireTenantId(), id, req)));
   }
 
+  /**
+   * Deactivates a category.
+   *
+   * <p>Soft delete: sets the category's status to inactive.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} category not found
+   */
   @Operation(
       summary = "Deactivate a category",
       description = "Soft delete: sets the category's status to inactive.")
@@ -200,6 +258,12 @@ public class AdminResource {
 
   // ── products ─────────────────────────────────────────────────────────────
 
+  /**
+   * Creates a product.
+   *
+   * @param req the request body
+   * @return product created ({@code 201})
+   */
   @Operation(summary = "Create a product")
   @APIResponse(responseCode = "201", description = "Product created")
   @Tag(name = "Products")
@@ -238,6 +302,12 @@ public class AdminResource {
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  /**
+   * Gets a product by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such product
+   */
   @Operation(summary = "Get a product by id")
   @APIResponse(responseCode = "404", description = "No such product")
   @Tag(name = "Products")
@@ -247,6 +317,13 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toProduct(service.getProduct(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Updates a product.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} no such product
+   */
   @Operation(summary = "Update a product")
   @APIResponse(responseCode = "404", description = "No such product")
   @Tag(name = "Products")
@@ -258,6 +335,14 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toProduct(service.updateProduct(ctx.requireTenantId(), id, req)));
   }
 
+  /**
+   * Delists a product.
+   *
+   * <p>Soft delete: sets status DELISTED and publishes ProductDelisted.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such product
+   */
   @Operation(
       summary = "Delist a product",
       description = "Soft delete: sets status DELISTED and publishes ProductDelisted.")
@@ -298,8 +383,14 @@ public class AdminResource {
     return ApiResponse.ok("uploaded");
   }
 
+  /**
+   * Removes a product's primary image.
+   *
+   * @param id the id (path parameter)
+   */
   @Operation(summary = "Remove a product's primary image")
   @Tag(name = "Product Images")
+  @APIResponse(responseCode = "200", description = "Remove a product's primary image")
   @DELETE
   @Path("/products/{id}/image")
   public ApiResponse<String> deleteProductImage(@PathParam("id") UUID id) {
@@ -342,6 +433,13 @@ public class AdminResource {
 
   // ── variants ─────────────────────────────────────────────────────────────
 
+  /**
+   * Creates a variant under a product.
+   *
+   * @param productId the product id (path parameter)
+   * @param req the request body
+   * @return variant created ({@code 201})
+   */
   @Operation(summary = "Create a variant under a product")
   @APIResponse(responseCode = "201", description = "Variant created")
   @Tag(name = "Variants")
@@ -352,8 +450,14 @@ public class AdminResource {
     return created(Mappers.toVariant(service.createVariant(ctx.requireTenantId(), productId, req)));
   }
 
+  /**
+   * Lists a product's variants (admin).
+   *
+   * @param productId the product id (path parameter)
+   */
   @Operation(summary = "List a product's variants (admin)")
   @Tag(name = "Variants")
+  @APIResponse(responseCode = "200", description = "List a product's variants (admin)")
   @GET
   @Path("/products/{id}/variants")
   public ApiResponse<List<VariantResponse>> listVariants(@PathParam("id") UUID productId) {
@@ -375,6 +479,7 @@ public class AdminResource {
               + " screens can show human-readable labels instead of raw UUIDs. Unknown ids are"
               + " simply omitted from the result.")
   @Tag(name = "Variants")
+  @APIResponse(responseCode = "200", description = "Batch-resolve variant ids")
   @GET
   @Path("/products/variants/resolve")
   public ApiResponse<List<VariantScanResponse>> resolveVariants(@QueryParam("ids") String ids) {
@@ -395,6 +500,13 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Gets a variant by id.
+   *
+   * @param productId the product id (path parameter)
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} variant not found
+   */
   @Operation(summary = "Get a variant by id")
   @APIResponse(responseCode = "404", description = "Variant not found")
   @Tag(name = "Variants")
@@ -405,6 +517,14 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toVariant(service.getVariant(ctx.requireTenantId(), variantId)));
   }
 
+  /**
+   * Updates a variant.
+   *
+   * @param productId the product id (path parameter)
+   * @param variantId the variant id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} variant not found
+   */
   @Operation(summary = "Update a variant")
   @APIResponse(responseCode = "404", description = "Variant not found")
   @Tag(name = "Variants")
@@ -419,6 +539,15 @@ public class AdminResource {
         Mappers.toVariant(service.updateVariant(ctx.requireTenantId(), productId, variantId, req)));
   }
 
+  /**
+   * Delists a variant.
+   *
+   * <p>Soft delete: sets the variant's status to DELISTED.
+   *
+   * @param productId the product id (path parameter)
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} variant not found
+   */
   @Operation(
       summary = "Delist a variant",
       description = "Soft delete: sets the variant's status to DELISTED.")
@@ -434,16 +563,26 @@ public class AdminResource {
 
   // ── UOM ──────────────────────────────────────────────────────────────────
 
+  /** Lists UOM classes. */
   @Operation(summary = "List UOM classes")
   @Tag(name = "Units of Measure")
+  @APIResponse(responseCode = "200", description = "List UOM classes")
   @GET
   @Path("/uom/classes")
   public ApiResponse<List<UomClassResponse>> listUomClasses() {
     return ApiResponse.ok(service.listUomClasses().stream().map(Mappers::toUomClass).toList());
   }
 
+  /**
+   * Lists UOM unit definitions.
+   *
+   * <p>Optionally filtered by ?class=.
+   *
+   * @param classCode the class code (query parameter)
+   */
   @Operation(summary = "List UOM unit definitions", description = "Optionally filtered by ?class=.")
   @Tag(name = "Units of Measure")
+  @APIResponse(responseCode = "200", description = "List UOM unit definitions")
   @GET
   @Path("/uom/units")
   public ApiResponse<List<UomDefinitionResponse>> listUomUnits(
@@ -452,6 +591,19 @@ public class AdminResource {
         service.listUomDefinitions(classCode).stream().map(Mappers::toUomDefinition).toList());
   }
 
+  /**
+   * Converts a quantity between two UOMs.
+   *
+   * <p>Uses a variant-specific conversion factor when ?variant= is given and one exists, else falls
+   * back to the standard class-wide factor.
+   *
+   * @param from the from (query parameter)
+   * @param to the to (query parameter)
+   * @param qty the qty (query parameter)
+   * @param variantId the variant id (query parameter)
+   * @throws com.shelfj.web.ApiException {@code 400} from, to, or qty missing; {@code 404} no
+   *     conversion path from the source to the target UOM
+   */
   @Operation(
       summary = "Convert a quantity between two UOMs",
       description =
@@ -484,10 +636,20 @@ public class AdminResource {
             qty));
   }
 
+  /**
+   * Upserts a variant-specific UOM conversion factor.
+   *
+   * <p>Creates or replaces the factor between two UOMs for a specific variant.
+   *
+   * @param req the request body
+   */
   @Operation(
       summary = "Upsert a variant-specific UOM conversion factor",
       description = "Creates or replaces the factor between two UOMs for a specific variant.")
   @Tag(name = "Units of Measure")
+  @APIResponse(
+      responseCode = "200",
+      description = "Upsert a variant-specific UOM conversion factor")
   @POST
   @Path("/uom/item-conversions")
   public Response upsertItemConversion(UomItemConversionRequest req) {
@@ -507,10 +669,18 @@ public class AdminResource {
         .build();
   }
 
+  /**
+   * Lists variant-specific UOM conversions.
+   *
+   * <p>Optionally filtered by ?variant=.
+   *
+   * @param variantId the variant id (query parameter)
+   */
   @Operation(
       summary = "List variant-specific UOM conversions",
       description = "Optionally filtered by ?variant=.")
   @Tag(name = "Units of Measure")
+  @APIResponse(responseCode = "200", description = "List variant-specific UOM conversions")
   @GET
   @Path("/uom/item-conversions")
   public ApiResponse<List<UomItemConversionResponse>> listItemConversions(
@@ -523,6 +693,12 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Deletes a variant-specific UOM conversion.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} item conversion not found
+   */
   @Operation(summary = "Delete a variant-specific UOM conversion")
   @APIResponse(responseCode = "404", description = "Item conversion not found")
   @Tag(name = "Units of Measure")
@@ -539,6 +715,12 @@ public class AdminResource {
 
   // ── Item Templates (Gap #13) ─────────────────────────────────────────────
 
+  /**
+   * Creates an item attribute template.
+   *
+   * @param req the request body
+   * @return template created ({@code 201})
+   */
   @Operation(summary = "Create an item attribute template")
   @APIResponse(responseCode = "201", description = "Template created")
   @Tag(name = "Item Templates")
@@ -553,8 +735,10 @@ public class AdminResource {
                 tenantId, req.name().trim(), req.description(), req.attributes())));
   }
 
+  /** Lists item templates. */
   @Operation(summary = "List item templates")
   @Tag(name = "Item Templates")
+  @APIResponse(responseCode = "200", description = "List item templates")
   @GET
   @Path("/item-templates")
   public ApiResponse<List<ItemTemplateResponse>> listTemplates() {
@@ -562,6 +746,12 @@ public class AdminResource {
         service.listTemplates(ctx.requireTenantId()).stream().map(Mappers::toTemplate).toList());
   }
 
+  /**
+   * Gets an item template by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} template not found
+   */
   @Operation(summary = "Get an item template by id")
   @APIResponse(responseCode = "404", description = "Template not found")
   @Tag(name = "Item Templates")
@@ -571,6 +761,12 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toTemplate(service.getTemplate(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Deactivates an item template.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} template not found
+   */
   @Operation(summary = "Deactivate an item template")
   @APIResponse(responseCode = "404", description = "Template not found")
   @Tag(name = "Item Templates")
@@ -581,10 +777,19 @@ public class AdminResource {
         Mappers.toTemplate(service.deactivateTemplate(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Applies a template's attributes to a variant.
+   *
+   * <p>Publishes ItemTemplateApplied.
+   *
+   * @param templateId the template id (path parameter)
+   * @param variantId the variant id (path parameter)
+   */
   @Operation(
       summary = "Apply a template's attributes to a variant",
       description = "Publishes ItemTemplateApplied.")
   @Tag(name = "Item Templates")
+  @APIResponse(responseCode = "200", description = "Apply a template's attributes to a variant")
   @POST
   @Path("/item-templates/{id}/apply/{variantId}")
   public ApiResponse<ItemTemplateApplicationResponse> applyTemplate(
@@ -596,6 +801,17 @@ public class AdminResource {
 
   // ── Supplier / Customer Cross-References (Gap #33) ───────────────────────
 
+  /**
+   * Creates a supplier/customer cross-reference for a variant.
+   *
+   * <p>partyType must be SUPPLIER or CUSTOMER.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param req the request body
+   * @return cross-reference created ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 400} partyType is not SUPPLIER or CUSTOMER, or
+   *     partyId is not a UUID; {@code 404} variant not found
+   */
   @Operation(
       summary = "Create a supplier/customer cross-reference for a variant",
       description = "partyType must be SUPPLIER or CUSTOMER.")
@@ -615,6 +831,15 @@ public class AdminResource {
             service.createCrossReference(ctx.requireTenantId(), variantId, req)));
   }
 
+  /**
+   * Lists a variant's cross-references.
+   *
+   * <p>Optionally filtered by ?partyType= (SUPPLIER or CUSTOMER).
+   *
+   * @param variantId the variant id (path parameter)
+   * @param partyType the party type (query parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} variant not found
+   */
   @Operation(
       summary = "List a variant's cross-references",
       description = "Optionally filtered by ?partyType= (SUPPLIER or CUSTOMER).")
@@ -630,6 +855,13 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Deletes a cross-reference.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} cross reference not found
+   */
   @Operation(summary = "Delete a cross-reference")
   @APIResponse(responseCode = "404", description = "Cross reference not found")
   @Tag(name = "Cross-References")
@@ -643,6 +875,17 @@ public class AdminResource {
 
   // ── Item Relationships (Gap #32) ─────────────────────────────────────────
 
+  /**
+   * Creates a related-item link between two variants.
+   *
+   * <p>relationshipType must be SUBSTITUTE or COMPLEMENTARY. A variant cannot relate to itself.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param req the request body
+   * @return relationship created ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 400} relationshipType invalid, or relatedVariantId
+   *     equals variantId; {@code 404} either variant not found
+   */
   @Operation(
       summary = "Create a related-item link between two variants",
       description =
@@ -663,6 +906,12 @@ public class AdminResource {
     return created(Mappers.toRelationship(service.createRelationship(tenantId, variantId, req)));
   }
 
+  /**
+   * Lists a variant's item relationships.
+   *
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} variant not found
+   */
   @Operation(summary = "List a variant's item relationships")
   @APIResponse(responseCode = "404", description = "Variant not found")
   @Tag(name = "Item Relationships")
@@ -677,6 +926,13 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Deletes an item relationship.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} item relationship not found
+   */
   @Operation(summary = "Delete an item relationship")
   @APIResponse(responseCode = "404", description = "Item relationship not found")
   @Tag(name = "Item Relationships")
@@ -690,6 +946,16 @@ public class AdminResource {
 
   // ── Item Revisions (Gap #12) ──────────────────────────────────────────────
 
+  /**
+   * Creates a dated revision of a variant's spec.
+   *
+   * <p>Publishes ItemRevisionCreated.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param req the request body
+   * @return revision created ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 400} effectiveDate is not a valid date
+   */
   @Operation(
       summary = "Create a dated revision of a variant's spec",
       description = "Publishes ItemRevisionCreated.")
@@ -710,8 +976,14 @@ public class AdminResource {
     return created(Mappers.toRevision(rev));
   }
 
+  /**
+   * Lists a variant's revisions.
+   *
+   * @param variantId the variant id (path parameter)
+   */
   @Operation(summary = "List a variant's revisions")
   @Tag(name = "Item Revisions")
+  @APIResponse(responseCode = "200", description = "List a variant's revisions")
   @GET
   @Path("/products/variants/{variantId}/revisions")
   public ApiResponse<List<ItemRevisionResponse>> listRevisions(
@@ -721,6 +993,12 @@ public class AdminResource {
         service.listRevisions(tenantId, variantId).stream().map(Mappers::toRevision).toList());
   }
 
+  /**
+   * Gets a variant's current active revision.
+   *
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no active revision for this variant
+   */
   @Operation(summary = "Get a variant's current active revision")
   @APIResponse(responseCode = "404", description = "No active revision for this variant")
   @Tag(name = "Item Revisions")
@@ -731,6 +1009,13 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toRevision(service.currentRevision(tenantId, variantId)));
   }
 
+  /**
+   * Gets a specific revision by id.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such revision
+   */
   @Operation(summary = "Get a specific revision by id")
   @APIResponse(responseCode = "404", description = "No such revision")
   @Tag(name = "Item Revisions")
@@ -805,6 +1090,12 @@ public class AdminResource {
 
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
 
+  /**
+   * Creates a merchandising catalog group.
+   *
+   * @param req the request body
+   * @return catalog group created ({@code 201})
+   */
   @Operation(summary = "Create a merchandising catalog group")
   @APIResponse(responseCode = "201", description = "Catalog group created")
   @Tag(name = "Catalog Groups")
@@ -817,8 +1108,14 @@ public class AdminResource {
     return created(Mappers.toCatalogGroup(group, List.of()));
   }
 
+  /**
+   * Lists catalog groups.
+   *
+   * <p>Includes each group's elements.
+   */
   @Operation(summary = "List catalog groups", description = "Includes each group's elements.")
   @Tag(name = "Catalog Groups")
+  @APIResponse(responseCode = "200", description = "List catalog groups")
   @GET
   @Path("/catalog-groups")
   public ApiResponse<List<CatalogGroupResponse>> listCatalogGroups() {
@@ -835,6 +1132,14 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Gets a catalog group by id.
+   *
+   * <p>Includes the group's elements.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} catalog group not found
+   */
   @Operation(summary = "Get a catalog group by id", description = "Includes the group's elements.")
   @APIResponse(responseCode = "404", description = "Catalog group not found")
   @Tag(name = "Catalog Groups")
@@ -850,6 +1155,12 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toCatalogGroup(group, elements));
   }
 
+  /**
+   * Deactivates a catalog group.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} catalog group not found
+   */
   @Operation(summary = "Deactivate a catalog group")
   @APIResponse(responseCode = "404", description = "Catalog group not found")
   @Tag(name = "Catalog Groups")
@@ -860,6 +1171,17 @@ public class AdminResource {
     return Response.noContent().build();
   }
 
+  /**
+   * Adds an element (attribute) to a catalog group.
+   *
+   * <p>dataType must be TEXT, NUMBER, BOOLEAN, or DATE.
+   *
+   * @param groupId the group id (path parameter)
+   * @param req the request body
+   * @return element created ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 400} dataType is not TEXT, NUMBER, BOOLEAN, or DATE;
+   *     {@code 404} catalog group not found
+   */
   @Operation(
       summary = "Add an element (attribute) to a catalog group",
       description = "dataType must be TEXT, NUMBER, BOOLEAN, or DATE.")
@@ -877,6 +1199,13 @@ public class AdminResource {
         Mappers.toCatalogGroupElement(service.createCatalogGroupElement(tenantId, groupId, req)));
   }
 
+  /**
+   * Deletes a catalog group element.
+   *
+   * @param groupId the group id (path parameter)
+   * @param elementId the element id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} catalog group element not found
+   */
   @Operation(summary = "Delete a catalog group element")
   @APIResponse(responseCode = "404", description = "Catalog group element not found")
   @Tag(name = "Catalog Groups")
@@ -888,6 +1217,15 @@ public class AdminResource {
     return Response.noContent().build();
   }
 
+  /**
+   * Assigns a variant to a catalog group.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param req the request body
+   * @return assignment created ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 400} groupId missing or malformed; {@code 404}
+   *     variant or catalog group not found
+   */
   @Operation(summary = "Assign a variant to a catalog group")
   @APIResponse(responseCode = "201", description = "Assignment created")
   @APIResponse(responseCode = "400", description = "groupId missing or malformed")
@@ -903,6 +1241,12 @@ public class AdminResource {
         Mappers.toCatalogAssignment(service.assignCatalogGroup(tenantId, variantId, req)));
   }
 
+  /**
+   * Gets a variant's catalog group assignment.
+   *
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no catalog assignment for this variant
+   */
   @Operation(summary = "Get a variant's catalog group assignment")
   @APIResponse(responseCode = "404", description = "No catalog assignment for this variant")
   @Tag(name = "Catalog Groups")
@@ -915,8 +1259,17 @@ public class AdminResource {
             service.getCatalogAssignment(ctx.requireTenantId(), variantId)));
   }
 
+  /**
+   * Updates a variant's catalog group element values.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param req the request body
+   */
   @Operation(summary = "Update a variant's catalog group element values")
   @Tag(name = "Catalog Groups")
+  @APIResponse(
+      responseCode = "200",
+      description = "Update a variant's catalog group element values")
   @PUT
   @Path("/products/variants/{variantId}/catalog-assignment")
   public ApiResponse<CatalogAssignmentResponse> updateCatalogAssignment(
@@ -926,6 +1279,12 @@ public class AdminResource {
         Mappers.toCatalogAssignment(service.updateCatalogAssignment(tenantId, variantId, req)));
   }
 
+  /**
+   * Removes a variant's catalog group assignment.
+   *
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no catalog assignment for this variant
+   */
   @Operation(summary = "Remove a variant's catalog group assignment")
   @APIResponse(responseCode = "404", description = "No catalog assignment for this variant")
   @Tag(name = "Catalog Groups")
@@ -938,6 +1297,14 @@ public class AdminResource {
 
   // ── Container Types (Gap #37) ────────────────────────────────────────────
 
+  /**
+   * Creates a container type.
+   *
+   * <p>Packaging/container type used for variant packing hierarchy.
+   *
+   * @param req the request body
+   * @return container type created ({@code 201})
+   */
   @Operation(
       summary = "Create a container type",
       description = "Packaging/container type used for variant packing hierarchy.")
@@ -951,8 +1318,10 @@ public class AdminResource {
         Mappers.toContainerType(service.createContainerType(ctx.requireTenantId(), req)));
   }
 
+  /** Lists container types. */
   @Operation(summary = "List container types")
   @Tag(name = "Container Types")
+  @APIResponse(responseCode = "200", description = "List container types")
   @GET
   @Path("/container-types")
   public ApiResponse<List<ContainerTypeResponse>> listContainerTypes() {
@@ -962,6 +1331,12 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Gets a container type by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} container type not found
+   */
   @Operation(summary = "Get a container type by id")
   @APIResponse(responseCode = "404", description = "Container type not found")
   @Tag(name = "Container Types")
@@ -972,6 +1347,13 @@ public class AdminResource {
         Mappers.toContainerType(service.getContainerType(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Updates a container type.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} container type not found
+   */
   @Operation(summary = "Update a container type")
   @APIResponse(responseCode = "404", description = "Container type not found")
   @Tag(name = "Container Types")
@@ -984,6 +1366,12 @@ public class AdminResource {
         Mappers.toContainerType(service.updateContainerType(ctx.requireTenantId(), id, req)));
   }
 
+  /**
+   * Deactivates a container type.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} container type not found
+   */
   @Operation(summary = "Deactivate a container type")
   @APIResponse(responseCode = "404", description = "Container type not found")
   @Tag(name = "Container Types")
@@ -994,6 +1382,14 @@ public class AdminResource {
         Mappers.toContainerType(service.deactivateContainerType(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Links a variant to a container type.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param req the request body
+   * @return container link created ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 404} variant or container type not found
+   */
   @Operation(summary = "Link a variant to a container type")
   @APIResponse(responseCode = "201", description = "Container link created")
   @APIResponse(responseCode = "404", description = "Variant or container type not found")
@@ -1009,6 +1405,12 @@ public class AdminResource {
     return created(Mappers.toVariantContainerLink(link, ct.code(), ct.name()));
   }
 
+  /**
+   * Lists a variant's container links.
+   *
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} variant not found
+   */
   @Operation(summary = "List a variant's container links")
   @APIResponse(responseCode = "404", description = "Variant not found")
   @Tag(name = "Container Types")
@@ -1027,6 +1429,13 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Deletes a variant-to-container-type link.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} container link not found
+   */
   @Operation(summary = "Delete a variant-to-container-type link")
   @APIResponse(responseCode = "404", description = "Container link not found")
   @Tag(name = "Container Types")
@@ -1040,10 +1449,16 @@ public class AdminResource {
 
   // ── Item Attribute Groups (Gap #36) ─────────────────────────────────────
 
+  /**
+   * Lists structured attribute-group definitions.
+   *
+   * <p>Includes each group's fields.
+   */
   @Operation(
       summary = "List structured attribute-group definitions",
       description = "Includes each group's fields.")
   @Tag(name = "Attribute Groups")
+  @APIResponse(responseCode = "200", description = "List structured attribute-group definitions")
   @GET
   @Path("/attribute-groups")
   public ApiResponse<List<ItemAttributeGroupResponse>> listAttributeGroups() {
@@ -1059,6 +1474,14 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Gets a structured attribute group by code.
+   *
+   * <p>Includes the group's fields.
+   *
+   * @param groupCode the group code (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} attribute group not found
+   */
   @Operation(
       summary = "Get a structured attribute group by code",
       description = "Includes the group's fields.")
@@ -1076,6 +1499,14 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toAttributeGroup(group, fields));
   }
 
+  /**
+   * Sets a variant's values for an attribute group.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param groupCode the group code (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} attribute group or variant not found
+   */
   @Operation(summary = "Set a variant's values for an attribute group")
   @APIResponse(responseCode = "404", description = "Attribute group or variant not found")
   @Tag(name = "Attribute Groups")
@@ -1093,6 +1524,12 @@ public class AdminResource {
                 tenantId, variantId, groupCode, req.values())));
   }
 
+  /**
+   * Lists a variant's attribute group values (all groups).
+   *
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} variant not found
+   */
   @Operation(summary = "List a variant's attribute group values (all groups)")
   @APIResponse(responseCode = "404", description = "Variant not found")
   @Tag(name = "Attribute Groups")
@@ -1107,6 +1544,14 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Gets a variant's values for one attribute group.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param groupCode the group code (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no attribute group values for this group on
+   *     this variant
+   */
   @Operation(summary = "Get a variant's values for one attribute group")
   @APIResponse(
       responseCode = "404",
@@ -1122,6 +1567,14 @@ public class AdminResource {
             service.getVariantAttributeGroupValues(tenantId, variantId, groupCode)));
   }
 
+  /**
+   * Removes a variant's values for one attribute group.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param groupCode the group code (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no attribute group values for this group on
+   *     this variant
+   */
   @Operation(summary = "Remove a variant's values for one attribute group")
   @APIResponse(
       responseCode = "404",
@@ -1137,6 +1590,14 @@ public class AdminResource {
 
   // ──────────────────────────────────────────────── category sets (Gap #39) ──
 
+  /**
+   * Creates a category set.
+   *
+   * <p>An alternate category hierarchy independent of the main category tree.
+   *
+   * @param req the request body
+   * @return category set created ({@code 201})
+   */
   @Operation(
       summary = "Create a category set",
       description = "An alternate category hierarchy independent of the main category tree.")
@@ -1150,8 +1611,10 @@ public class AdminResource {
     return created(Mappers.toCategorySet(cs));
   }
 
+  /** Lists category sets. */
   @Operation(summary = "List category sets")
   @Tag(name = "Category Sets")
+  @APIResponse(responseCode = "200", description = "List category sets")
   @GET
   @Path("/category-sets")
   public ApiResponse<List<CategorySetResponse>> listCategorySets() {
@@ -1160,6 +1623,12 @@ public class AdminResource {
         service.listCategorySets(tenantId).stream().map(Mappers::toCategorySet).toList());
   }
 
+  /**
+   * Gets a category set by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} category set not found
+   */
   @Operation(summary = "Get a category set by id")
   @APIResponse(responseCode = "404", description = "Category set not found")
   @Tag(name = "Category Sets")
@@ -1169,6 +1638,13 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toCategorySet(service.getCategorySet(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Updates a category set.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} category set not found
+   */
   @Operation(summary = "Update a category set")
   @APIResponse(responseCode = "404", description = "Category set not found")
   @Tag(name = "Category Sets")
@@ -1180,6 +1656,12 @@ public class AdminResource {
         Mappers.toCategorySet(service.updateCategorySet(ctx.requireTenantId(), id, req)));
   }
 
+  /**
+   * Deletes a category set.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} category set not found
+   */
   @Operation(summary = "Delete a category set")
   @APIResponse(responseCode = "404", description = "Category set not found")
   @Tag(name = "Category Sets")
@@ -1190,6 +1672,14 @@ public class AdminResource {
     return Response.noContent().build();
   }
 
+  /**
+   * Adds a category as a member of a category set.
+   *
+   * @param setId the set id (path parameter)
+   * @param req the request body
+   * @return member added ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 404} category set or category not found
+   */
   @Operation(summary = "Add a category as a member of a category set")
   @APIResponse(responseCode = "201", description = "Member added")
   @APIResponse(responseCode = "404", description = "Category set or category not found")
@@ -1203,6 +1693,12 @@ public class AdminResource {
     return created(Mappers.toCategorySetMember(m));
   }
 
+  /**
+   * Lists a category set's member categories.
+   *
+   * @param setId the set id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} category set not found
+   */
   @Operation(summary = "List a category set's member categories")
   @APIResponse(responseCode = "404", description = "Category set not found")
   @Tag(name = "Category Sets")
@@ -1217,6 +1713,13 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Removes a category from a category set.
+   *
+   * @param setId the set id (path parameter)
+   * @param categoryId the category id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} category not a member of this set
+   */
   @Operation(summary = "Remove a category from a category set")
   @APIResponse(responseCode = "404", description = "Category not a member of this set")
   @Tag(name = "Category Sets")
@@ -1228,6 +1731,14 @@ public class AdminResource {
     return Response.noContent().build();
   }
 
+  /**
+   * Assigns a variant into a category set.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param req the request body
+   * @return assignment created ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 404} variant or category set not found
+   */
   @Operation(summary = "Assign a variant into a category set")
   @APIResponse(responseCode = "201", description = "Assignment created")
   @APIResponse(responseCode = "404", description = "Variant or category set not found")
@@ -1241,6 +1752,12 @@ public class AdminResource {
     return created(Mappers.toVariantCategorySetAssignment(a));
   }
 
+  /**
+   * Lists a variant's category set assignments.
+   *
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} variant not found
+   */
   @Operation(summary = "List a variant's category set assignments")
   @APIResponse(responseCode = "404", description = "Variant not found")
   @Tag(name = "Category Sets")
@@ -1255,6 +1772,13 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Removes a variant's category set assignment.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param setId the set id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} category set assignment not found
+   */
   @Operation(summary = "Remove a variant's category set assignment")
   @APIResponse(responseCode = "404", description = "Category set assignment not found")
   @Tag(name = "Category Sets")
@@ -1281,6 +1805,21 @@ public class AdminResource {
   // Writes only. The reads live on /catalog because a shopper is entitled to the allergen
   // declaration and a till needs the age check, and neither runs as management.
 
+  /**
+   * Declares a variant's allergens.
+   *
+   * <p>Replaces the whole declaration. Sending an empty list is how a product is declared free from
+   * all fourteen — a positive statement, not an omission — and it moves the variant from UNDECLARED
+   * to DECLARED either way. The distinction the status column exists for: an empty list on an
+   * UNDECLARED variant means nobody has checked, and must never be shown to a customer as 'free
+   * from'.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param req the request body
+   * @return declared
+   * @throws com.shelfj.web.ApiException {@code 400} not one of the fourteen, presence not
+   *     CONTAINS/MAY_CONTAIN, or declared twice; {@code 404} variant not found
+   */
   @Operation(
       summary = "Declare a variant's allergens",
       description =
@@ -1306,6 +1845,19 @@ public class AdminResource {
             service.declareAllergens(ctx.requireTenantId(), variantId, req, ctx.userId())));
   }
 
+  /**
+   * Sets origin, age restriction and how the item is sold.
+   *
+   * <p>Country of origin (ISO 3166-1 alpha-2), the age-restriction category if any, ingredients,
+   * and the weighed-item fields: soldBy, net content and its unit, tare weight, and catchWeight for
+   * items whose price is not knowable until they are on the scale.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param req the request body
+   * @return updated
+   * @throws com.shelfj.web.ApiException {@code 400} bad country code, unknown UOM, negative tare,
+   *     or sold by weight with no unit; {@code 404} variant not found
+   */
   @Operation(
       summary = "Set origin, age restriction and how the item is sold",
       description =
@@ -1327,6 +1879,16 @@ public class AdminResource {
         Mappers.toCompliance(service.updateCompliance(ctx.requireTenantId(), variantId, req)));
   }
 
+  /**
+   * Products whose allergens have never been declared.
+   *
+   * <p>The list a food business is asked for when it is inspected, and the list that says which
+   * shelves cannot lawfully be filled yet. Oldest first, because the ones that have been sitting
+   * undeclared longest are the ones most likely to be on sale.
+   *
+   * @param limit the limit (query parameter)
+   * @return variant ids, oldest first
+   */
   @Operation(
       summary = "Products whose allergens have never been declared",
       description =
@@ -1344,6 +1906,16 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Everies product carrying one allergen.
+   *
+   * <p>The query a recall runs. Optionally filtered to ?presence=CONTAINS or MAY_CONTAIN; both are
+   * returned by default, because a withdrawal usually has to cover both.
+   *
+   * @param code the code (path parameter)
+   * @param presence the presence (query parameter)
+   * @return variant ids
+   */
   @Operation(
       summary = "Every product carrying one allergen",
       description =
@@ -1361,6 +1933,15 @@ public class AdminResource {
             .toList());
   }
 
+  /**
+   * Ages rules in force in a country.
+   *
+   * <p>The statutory defaults, with this tenant's overrides shadowing them. tenantOverride says
+   * which is which.
+   *
+   * @param country the country (query parameter)
+   * @return rules by category
+   */
   @Operation(
       summary = "Age rules in force in a country",
       description =
@@ -1376,6 +1957,17 @@ public class AdminResource {
         service.ageRules(ctx.requireTenantId(), country).stream().map(Mappers::toAgeRule).toList());
   }
 
+  /**
+   * Sets this tenant's own age rule.
+   *
+   * <p>May be stricter than the statute and never laxer — a chain adopting Challenge-25 is making a
+   * policy decision, a chain setting alcohol to 16 in the UK is committing an offence, and a system
+   * that lets them configure it has helped.
+   *
+   * @param req the request body
+   * @return rule set
+   * @throws com.shelfj.web.ApiException {@code 400} below the statutory minimum for that country
+   */
   @Operation(
       summary = "Set this tenant's own age rule",
       description =

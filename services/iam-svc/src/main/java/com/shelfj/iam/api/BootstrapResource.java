@@ -45,6 +45,16 @@ public class BootstrapResource {
   @Schema(name = "BootstrapResponse")
   public record BootstrapResponse(String userId, String email, String role) {}
 
+  /**
+   * Creates the first platform administrator on a fresh deployment.
+   *
+   * <p>Deliberately not gated by a JWT — the deployment has no admin to authenticate as yet — so it
+   * is instead one-shot: it refuses once any {@code PLATFORM_ADMIN} exists.
+   *
+   * @param req the email and password for the new administrator
+   * @return {@code 201} with the created account's id, email and role
+   * @throws com.shelfj.web.ApiException {@code 409} when a platform administrator already exists
+   */
   @Operation(
       summary = "Create the first platform administrator",
       description =

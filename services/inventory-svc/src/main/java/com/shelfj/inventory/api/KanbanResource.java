@@ -42,11 +42,20 @@ public class KanbanResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Creates a kanban replenishment card.
+   *
+   * <p>Defines a fixed reorder quantity card for a variant at a store, optionally sourced from
+   * another store.
+   *
+   * @param req the request body
+   */
   @Operation(
       summary = "Create a kanban replenishment card",
       description =
           "Defines a fixed reorder quantity card for a variant at a store, optionally"
               + " sourced from another store.")
+  @APIResponse(responseCode = "201", description = "Created")
   @POST
   @Path("/kanban-cards")
   public Response createKanbanCard(CreateKanbanCardRequest req) {
@@ -73,7 +82,16 @@ public class KanbanResource {
         .build();
   }
 
+  /**
+   * Lists kanban cards.
+   *
+   * <p>Filterable by store and status.
+   *
+   * @param store the store (query parameter)
+   * @param status the status (query parameter)
+   */
   @Operation(summary = "List kanban cards", description = "Filterable by store and status.")
+  @APIResponse(responseCode = "200", description = "List kanban cards")
   @GET
   @Path("/kanban-cards")
   public ApiResponse<List<KanbanCardResponse>> listKanbanCards(
@@ -86,6 +104,12 @@ public class KanbanResource {
             .toList());
   }
 
+  /**
+   * Gets a kanban card by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} kanban card not found
+   */
   @Operation(summary = "Get a kanban card by id")
   @APIResponse(responseCode = "404", description = "kanban card not found")
   @GET
@@ -95,6 +119,15 @@ public class KanbanResource {
     return ApiResponse.ok(Mappers.toKanbanCard(service.getKanbanCard(tenantId, id)));
   }
 
+  /**
+   * Triggers a kanban card.
+   *
+   * <p>Signals the card's reorder point has been hit, moving it to TRIGGERED status.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} kanban card not found
+   */
   @Operation(
       summary = "Trigger a kanban card",
       description = "Signals the card's reorder point has been hit, moving it to TRIGGERED status.")
@@ -109,6 +142,14 @@ public class KanbanResource {
             service.triggerKanbanCard(tenantId, id, req != null ? req.notes() : null)));
   }
 
+  /**
+   * Marks a kanban card as replenished.
+   *
+   * <p>Closes the reorder cycle for a triggered card.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} kanban card not found
+   */
   @Operation(
       summary = "Mark a kanban card as replenished",
       description = "Closes the reorder cycle for a triggered card.")
@@ -120,6 +161,16 @@ public class KanbanResource {
     return ApiResponse.ok(Mappers.toKanbanCard(service.replenishKanbanCard(tenantId, id)));
   }
 
+  /**
+   * Updates a kanban card's order modifiers.
+   *
+   * <p>Sets min/max order quantity and lot-size multiplier applied when computing the actual
+   * reorder qty (Gap #28).
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} kanban card not found
+   */
   @Operation(
       summary = "Update a kanban card's order modifiers",
       description =

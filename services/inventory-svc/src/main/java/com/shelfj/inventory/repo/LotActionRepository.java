@@ -20,6 +20,17 @@ import java.util.UUID;
 @ApplicationScoped
 public class LotActionRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a lot action.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param actionType the action type
+   * @param sourceBatchId the source batch id
+   * @param resultBatchId the result batch id
+   * @param qty the quantity
+   * @param notes free-text notes
+   * @return the lot action as stored
+   */
   public LotAction insertLotAction(
       UUID tenantId,
       String actionType,
@@ -52,6 +63,13 @@ public class LotActionRepository extends BaseJdbcRepository {
         "insert lot action");
   }
 
+  /**
+   * Lists the tenant's lot actions.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param batchId the batch id
+   * @return the matching rows
+   */
   public List<LotAction> listLotActions(UUID tenantId, UUID batchId) {
     return query(
         "SELECT id,tenant_id,action_type,source_batch_id,result_batch_id,qty,notes,created_at"

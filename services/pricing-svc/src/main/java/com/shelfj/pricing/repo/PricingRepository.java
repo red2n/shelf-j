@@ -32,6 +32,12 @@ public class PricingRepository extends BaseOutboxRepository {
 
   // ── VAT Rates ─────────────────────────────────────────────────────────────
 
+  /**
+   * Inserts a VAT rate.
+   *
+   * @param r the rate to persist; its {@code id} must already be a UUIDv7
+   * @return the rate as stored
+   */
   public VatRate createVatRate(VatRate r) {
     return inTx(
         c -> {
@@ -65,6 +71,12 @@ public class PricingRepository extends BaseOutboxRepository {
         "create vat rate");
   }
 
+  /**
+   * Lists a tenant's VAT rates.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the configured rates
+   */
   public List<VatRate> findVatRates(UUID tenantId) {
     return query(
         "SELECT id,tenant_id,code,name,rate,exempt,description,effective_from,effective_to,created_at"
@@ -74,6 +86,13 @@ public class PricingRepository extends BaseOutboxRepository {
         "list vat rates");
   }
 
+  /**
+   * Looks a VAT rate up by code.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param code the VAT code; callers upper-case it first, as stored
+   * @return the rate, or empty when the code is not configured
+   */
   public Optional<VatRate> findVatRate(UUID tenantId, String code) {
     var list =
         query(
@@ -88,6 +107,12 @@ public class PricingRepository extends BaseOutboxRepository {
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
   }
 
+  /**
+   * Writes a VAT rate back in place.
+   *
+   * @param r the rate carrying the new values; its id and tenant select the row
+   * @return the rate as stored
+   */
   public VatRate updateVatRate(VatRate r) {
     exec(
         "UPDATE vat_rates SET name=?,rate=?,exempt=?,description=?,effective_from=?,effective_to=?"
@@ -123,6 +148,12 @@ public class PricingRepository extends BaseOutboxRepository {
 
   // ── Product VAT Categories ────────────────────────────────────────────────
 
+  /**
+   * Assigns a variant to a VAT code, replacing any existing assignment.
+   *
+   * @param pvc the assignment to store
+   * @return the assignment as stored
+   */
   public ProductVatCategory upsertProductVatCategory(ProductVatCategory pvc) {
     return inTx(
         c -> {
@@ -147,6 +178,14 @@ public class PricingRepository extends BaseOutboxRepository {
         "upsert product vat category");
   }
 
+  /**
+   * Reads a variant's VAT assignment.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the variant to look up
+   * @return the assignment, or empty when the variant was never categorised — price resolution
+   *     treats that as the standard rate
+   */
   public Optional<ProductVatCategory> findProductVatCategory(UUID tenantId, UUID variantId) {
     var list =
         query(
@@ -173,6 +212,12 @@ public class PricingRepository extends BaseOutboxRepository {
 
   // ── Customer VAT Status ───────────────────────────────────────────────────
 
+  /**
+   * Records a customer's VAT status, replacing any existing one.
+   *
+   * @param cvs the status to store
+   * @return the status as stored
+   */
   public CustomerVatStatus upsertCustomerVatStatus(CustomerVatStatus cvs) {
     return inTx(
         c -> {
@@ -202,6 +247,13 @@ public class PricingRepository extends BaseOutboxRepository {
         "upsert customer vat status");
   }
 
+  /**
+   * Reads a customer's VAT status.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer to look up
+   * @return the status, or empty when none is recorded
+   */
   public Optional<CustomerVatStatus> findCustomerVatStatus(UUID tenantId, UUID customerId) {
     var list =
         query(
@@ -229,6 +281,12 @@ public class PricingRepository extends BaseOutboxRepository {
 
   // ── Price Lists ───────────────────────────────────────────────────────────
 
+  /**
+   * Inserts a price list.
+   *
+   * @param pl the price list to persist; its {@code id} must already be a UUIDv7
+   * @return the price list as stored
+   */
   public PriceList createPriceList(PriceList pl) {
     return inTx(
         c -> {
@@ -261,7 +319,15 @@ public class PricingRepository extends BaseOutboxRepository {
         "create price list");
   }
 
-  /** Keyset page of price lists: rows strictly after the cursor in (created_at, id) order. */
+  /**
+   * Keyset page of price lists: rows strictly after the cursor in (created_at, id) order.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param afterCreatedAt cursor timestamp, or {@code null} for the first page
+   * @param afterId cursor id, breaking ties on identical timestamps
+   * @param limit maximum rows; callers pass one more than the page size to detect a next page
+   * @return the page of price lists
+   */
   public List<PriceList> findPriceLists(
       UUID tenantId, Instant afterCreatedAt, UUID afterId, int limit) {
     StringBuilder sql =
@@ -285,6 +351,13 @@ public class PricingRepository extends BaseOutboxRepository {
         "list price lists");
   }
 
+  /**
+   * Looks a price list up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the price list to fetch
+   * @return the price list, or empty when it does not exist in this tenant
+   */
   public Optional<PriceList> findPriceList(UUID tenantId, UUID id) {
     var list =
         query(
@@ -315,6 +388,13 @@ public class PricingRepository extends BaseOutboxRepository {
 
   // ── Price List Items ──────────────────────────────────────────────────────
 
+  /**
+   * Sets a variant's price on a price list and writes the {@code PriceChanged} event atomically.
+   *
+   * @param item the price to store, keyed by price list, variant and minimum quantity
+   * @param event the outbox row to commit alongside the write
+   * @return the item as stored
+   */
   public PriceListItem upsertPriceListItem(PriceListItem item, OutboxRow event) {
     return inTx(
         c -> {
@@ -339,6 +419,13 @@ public class PricingRepository extends BaseOutboxRepository {
         "upsert price list item");
   }
 
+  /**
+   * Lists the priced variants on one price list, ordered by variant then quantity break.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param priceListId the price list whose items to list
+   * @return the items
+   */
   public List<PriceListItem> findPriceListItems(UUID tenantId, UUID priceListId) {
     return query(
         "SELECT id,tenant_id,price_list_id,variant_id,price,min_qty,created_at,updated_at"
@@ -360,7 +447,18 @@ public class PricingRepository extends BaseOutboxRepository {
         "list price list items");
   }
 
-  /** Resolve best price: active price list matching channel + qty-break tier, lowest price wins. */
+  /**
+   * Resolve best price: active price list matching channel + qty-break tier, lowest price wins.
+   *
+   * <p>Lowest wins rather than most-specific, so overlapping price lists cannot overcharge: a
+   * shopper gets the best price any applicable list offers.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the variant being priced
+   * @param channel the sales channel, matched against the list's channel or {@code ALL}
+   * @param qty the quantity, which selects the qty-break tier
+   * @return the winning item, or empty when no active price covers the variant
+   */
   public Optional<PriceListItem> resolveBasePrice(
       UUID tenantId, UUID variantId, String channel, BigDecimal qty) {
     var list =
@@ -421,6 +519,13 @@ public class PricingRepository extends BaseOutboxRepository {
 
   // ── Promotions ────────────────────────────────────────────────────────────
 
+  /**
+   * Inserts a promotion and writes its activation event atomically.
+   *
+   * @param p the promotion to persist; its {@code id} must already be a UUIDv7
+   * @param event the outbox row to commit alongside the insert
+   * @return the promotion as stored
+   */
   public Promotion createPromotion(Promotion p, OutboxRow event) {
     return inTx(
         c -> {
@@ -727,6 +832,15 @@ public class PricingRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Every promotion flagged active in the tenant, highest priority first.
+   *
+   * <p>Applies no date filter — a promotion whose window has not opened, or has closed, still
+   * appears. Use {@link #findCandidatePromotions} for the set the engine may actually apply.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the active promotions
+   */
   public List<Promotion> findAllActivePromotions(UUID tenantId) {
     return query(
         "SELECT id,tenant_id,store_id,name,type,value,min_order_amount,"
@@ -739,6 +853,12 @@ public class PricingRepository extends BaseOutboxRepository {
         "list active promotions");
   }
 
+  /**
+   * Records what a promotion applies to.
+   *
+   * @param pi the scope row to persist; its {@code id} must already be a UUIDv7
+   * @return the scope row as stored
+   */
   public PromotionItem addPromotionItem(PromotionItem pi) {
     exec(
         "INSERT INTO promotion_items (id,tenant_id,promotion_id,scope_type,scope_id)"
@@ -794,6 +914,12 @@ public class PricingRepository extends BaseOutboxRepository {
 
   // ── Tax Transactions ──────────────────────────────────────────────────────
 
+  /**
+   * Appends one tax line to the append-only tax-transaction record.
+   *
+   * @param tt the transaction to persist; its {@code id} must already be a UUIDv7
+   * @return the transaction as stored
+   */
   public TaxTransaction recordTaxTransaction(TaxTransaction tt) {
     exec(
         "INSERT INTO tax_transactions"
@@ -821,6 +947,13 @@ public class PricingRepository extends BaseOutboxRepository {
     return tt;
   }
 
+  /**
+   * The tax lines recorded against one order, oldest first.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param orderId the order whose tax lines to read
+   * @return the transactions, empty when none were recorded
+   */
   public List<TaxTransaction> findTaxTransactionsByOrder(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id,tenant_id,order_id,order_line_id,variant_id,store_id,"
@@ -859,6 +992,17 @@ public class PricingRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
   }
 
+  /**
+   * Total net sales over a period — VAT return Box 6.
+   *
+   * <p>Unlike output VAT, this includes exempt supplies: Box 6 is total sales excluding VAT, not
+   * total VATable sales.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param from inclusive lower bound on the tax point
+   * @param to exclusive upper bound
+   * @return the summed net amount, zero when nothing falls in the period
+   */
   public BigDecimal sumNetSales(UUID tenantId, Instant from, Instant to) {
     var rows =
         query(
@@ -877,6 +1021,12 @@ public class PricingRepository extends BaseOutboxRepository {
 
   // ── Gap #41: Price overrides ──────────────────────────────────────────────
 
+  /**
+   * Records a manual price override in the audit log.
+   *
+   * @param p the override to persist; its {@code id} must already be a UUIDv7
+   * @return the override as stored
+   */
   public PriceOverride insertPriceOverride(PriceOverride p) {
     return inTx(
         c -> {

@@ -25,6 +25,11 @@ import java.util.UUID;
 @ApplicationScoped
 public class ItemAttributeGroupRepository extends BaseJdbcRepository {
 
+  /**
+   * Lists the tenant's attribute groups.
+   *
+   * @return the matching rows
+   */
   public List<ItemAttributeGroup> listAttributeGroups() {
     return query(
         "SELECT group_code, name, description FROM item_attribute_groups ORDER BY group_code",
@@ -33,6 +38,12 @@ public class ItemAttributeGroupRepository extends BaseJdbcRepository {
         "list attribute groups");
   }
 
+  /**
+   * Looks an attribute group up by id.
+   *
+   * @param groupCode the group code
+   * @return the attribute group, or empty when it does not exist in this tenant
+   */
   public Optional<ItemAttributeGroup> findAttributeGroup(String groupCode) {
     return query(
             "SELECT group_code, name, description FROM item_attribute_groups WHERE group_code = ?",
@@ -43,6 +54,12 @@ public class ItemAttributeGroupRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's attribute group fields.
+   *
+   * @param groupCode the group code
+   * @return the matching rows
+   */
   public List<ItemAttributeGroupField> listAttributeGroupFields(String groupCode) {
     return query(
         "SELECT group_code, field_code, label, data_type, required, sort_order"
@@ -52,6 +69,15 @@ public class ItemAttributeGroupRepository extends BaseJdbcRepository {
         "list attribute group fields");
   }
 
+  /**
+   * Creates or replaces a variant attribute group values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @param groupCode the group code
+   * @param values the attribute values to store
+   * @return the variant attribute group values as stored
+   */
   public VariantAttributeGroupValues upsertVariantAttributeGroupValues(
       UUID tenantId, UUID variantId, String groupCode, String values) {
     Instant now = Instant.now();
@@ -78,6 +104,14 @@ public class ItemAttributeGroupRepository extends BaseJdbcRepository {
                     "ATTRIBUTE_GROUP_VALUES_NOT_FOUND", "Attribute group values not found"));
   }
 
+  /**
+   * Looks a variant attribute group values up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @param groupCode the group code
+   * @return the variant attribute group values, or empty when it does not exist in this tenant
+   */
   public Optional<VariantAttributeGroupValues> findVariantAttributeGroupValues(
       UUID tenantId, UUID variantId, String groupCode) {
     return query(
@@ -95,6 +129,13 @@ public class ItemAttributeGroupRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's variant attribute group values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<VariantAttributeGroupValues> listVariantAttributeGroupValues(
       UUID tenantId, UUID variantId) {
     return query(
@@ -109,6 +150,14 @@ public class ItemAttributeGroupRepository extends BaseJdbcRepository {
         "list variant attribute group values");
   }
 
+  /**
+   * Deletes a variant attribute group values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @param groupCode the group code
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deleteVariantAttributeGroupValues(
       UUID tenantId, UUID variantId, String groupCode) {
     Instant[] found = {null};

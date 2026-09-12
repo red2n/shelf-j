@@ -33,6 +33,20 @@ public class PaymentResource {
   @Inject PaymentService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Records a staff-taken tender against an order (POS or back-office).
+   *
+   * <p>The caller's role is the trust boundary here — unlike {@link #payOnline}, the claim is not
+   * re-verified against order-svc.
+   *
+   * @param idempotencyKey the {@code Idempotency-Key} header, so a retry does not take payment
+   *     twice; falls back to the key on the body when absent
+   * @param req the order, amount, method and optional reference/notes
+   * @return {@code 201} with the captured tender
+   * @throws com.shelfj.web.ApiException {@code 400} for an unknown method or a store-credit tender
+   *     with no customer; {@code 403} without a cashier/manager/owner role; {@code 422} when the
+   *     store owner has switched that method off
+   */
   @Operation(
       summary = "Record a payment tender",
       description =
@@ -60,6 +74,14 @@ public class PaymentResource {
    * authenticated, amount matches the order total) before it's captured and {@code PaymentCaptured}
    * is emitted so order-svc confirms the order. (Hardening TODO: integrate a real payment provider
    * — this still self-attests that money actually moved.)
+   *
+   * @param idempotencyKey the {@code Idempotency-Key} header, so a retry does not take payment
+   *     twice; falls back to the key on the body when absent
+   * @param req the order, amount and cashless method
+   * @return {@code 201} with the captured tender
+   * @throws com.shelfj.web.ApiException {@code 400} when cash is tendered online or the amount does
+   *     not match the order total; {@code 404} when the order is not found, is not {@code ONLINE},
+   *     or is not the caller's; {@code 409} when the order is not awaiting payment
    */
   @Operation(
       summary = "Capture an online customer payment",
@@ -90,6 +112,14 @@ public class PaymentResource {
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(tender))).build();
   }
 
+  /**
+   * Reads one payment tender.
+   *
+   * @param id the tender to read
+   * @return the tender
+   * @throws com.shelfj.web.ApiException {@code 404} when no such tender exists in the tenant or the
+   *     caller may not read it — a denial is a 404 so ids cannot be probed for existence
+   */
   @Operation(
       summary = "Get a payment tender by id",
       description =
@@ -104,7 +134,15 @@ public class PaymentResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(tender))).build();
   }
 
-  /** List all payment tenders recorded for a given order. */
+  /**
+   * Lists all payment tenders recorded for a given order.
+   *
+   * <p>A split-tender sale returns one row per tender.
+   *
+   * @param orderId the order whose tenders to list
+   * @return the captured tenders, empty when nothing has been paid
+   * @throws com.shelfj.web.ApiException {@code 404} when the caller may not read this order
+   */
   @Operation(
       summary = "List payment tenders for an order",
       description = "All tenders recorded against the given order.")
@@ -117,7 +155,17 @@ public class PaymentResource {
     return Response.ok(ApiResponse.ok(tenders.stream().map(Mappers::toDto).toList())).build();
   }
 
-  /** Record a refund against a previously captured tender. MANAGER or above only. */
+  /**
+   * Records a refund against a previously captured tender. MANAGER or above only.
+   *
+   * @param idempotencyKey the {@code Idempotency-Key} header, so a retry does not refund twice;
+   *     falls back to the key on the body when absent
+   * @param orderId the order being refunded
+   * @param req the payment being refunded against, the amount, method and reason
+   * @return {@code 201} with the recorded refund
+   * @throws com.shelfj.web.ApiException {@code 400} for an unknown method; {@code 403} without a
+   *     manager/owner role; a conflict when the refund would exceed what was captured
+   */
   @Operation(
       summary = "Record a refund",
       description =
@@ -149,7 +197,13 @@ public class PaymentResource {
     return header != null && !header.isBlank() ? header : bodyField;
   }
 
-  /** List all refunds for a given order. */
+  /**
+   * Lists all refunds recorded for a given order.
+   *
+   * @param orderId the order whose refunds to list
+   * @return the refunds, empty when nothing has been refunded
+   * @throws com.shelfj.web.ApiException {@code 404} when the caller may not read this order
+   */
   @Operation(
       summary = "List refunds for an order",
       description = "All refunds recorded against the given order.")

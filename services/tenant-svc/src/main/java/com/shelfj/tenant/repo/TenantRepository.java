@@ -35,6 +35,13 @@ public class TenantRepository extends BaseOutboxRepository {
 
   // ─────────────────────────────────────────────── create (atomic with outbox)
 
+  /**
+   * Inserts a tenant and its {@code TenantCreated} event in one transaction.
+   *
+   * @param t the tenant to persist; its {@code id} must already be a UUIDv7
+   * @param event the outbox row to commit alongside the insert
+   * @return the tenant as stored
+   */
   public Tenant createTenantWithOutbox(Tenant t, OutboxRow event) {
     return inTx(
         c -> {
@@ -45,6 +52,18 @@ public class TenantRepository extends BaseOutboxRepository {
         "create tenant");
   }
 
+  /**
+   * Inserts a store, its DEFAULT zone and all their events in one transaction.
+   *
+   * <p>The zone is not optional: stock must always have somewhere to sit, so a store without one
+   * would be unusable the moment inventory arrived.
+   *
+   * @param store the store to persist
+   * @param defaultZone the DEFAULT zone created alongside it
+   * @param events the outbox rows to commit with them — store created, zone created, and the
+   *     store's initial status
+   * @return the store with its zone
+   */
   public StoreWithZone createStoreWithDefaultZone(
       Store store, Zone defaultZone, List<OutboxRow> events) {
     return inTx(
@@ -60,6 +79,13 @@ public class TenantRepository extends BaseOutboxRepository {
         "create store");
   }
 
+  /**
+   * Inserts a zone and its {@code ZoneCreated} event in one transaction.
+   *
+   * @param zone the zone to persist; its {@code id} must already be a UUIDv7
+   * @param event the outbox row to commit alongside the insert
+   * @return the zone as stored
+   */
   public Zone createZoneWithOutbox(Zone zone, OutboxRow event) {
     return inTx(
         c -> {
@@ -70,6 +96,14 @@ public class TenantRepository extends BaseOutboxRepository {
         "create zone");
   }
 
+  /**
+   * Inserts a staff assignment and its {@code StaffAssigned} event in one transaction.
+   *
+   * <p>The event is what makes iam-svc bind the store-scoped role, so the two must not separate.
+   *
+   * @param s the assignment to persist
+   * @param event the outbox row to commit alongside the insert
+   */
   public void createStaffWithOutbox(StaffAssignment s, OutboxRow event) {
     inTx(
         c -> {
@@ -90,6 +124,12 @@ public class TenantRepository extends BaseOutboxRepository {
 
   // ─────────────────────────────────────────────────────── tenant reads/writes
 
+  /**
+   * Looks a tenant up by id.
+   *
+   * @param tenantId the tenant to fetch
+   * @return the tenant, or empty when no such tenant exists
+   */
   public Optional<Tenant> findTenant(UUID tenantId) {
     return one(
         "SELECT id, name, legal_name, status, plan_id, owner_user_id, country, currency,"
@@ -98,6 +138,16 @@ public class TenantRepository extends BaseOutboxRepository {
         TenantRepository::mapTenant);
   }
 
+  /**
+   * Sets a tenant's status without announcing it.
+   *
+   * <p>Publishes nothing — a status change other services must see should go through {@link
+   * #updateTenantStatusWithOutbox} instead.
+   *
+   * @param tenantId the tenant to update
+   * @param status the status to set
+   * @return the tenant with its new status
+   */
   public Tenant updateTenantStatus(UUID tenantId, String status) {
     Instant now = Instant.now();
     exec(
@@ -171,6 +221,14 @@ public class TenantRepository extends BaseOutboxRepository {
         .orElseThrow(() -> ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found"));
   }
 
+  /**
+   * Renames a tenant.
+   *
+   * @param tenantId the tenant to update
+   * @param businessName the new trading name
+   * @param legalName the new registered name, or {@code null} to clear it
+   * @return the tenant as stored
+   */
   public Tenant updateTenant(UUID tenantId, String businessName, String legalName) {
     Instant now = Instant.now();
     exec(
@@ -188,6 +246,12 @@ public class TenantRepository extends BaseOutboxRepository {
 
   // ──────────────────────────────────────────────────────── store reads/writes
 
+  /**
+   * Every store in the tenant, unpaginated.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the tenant's stores
+   */
   public List<Store> listStores(UUID tenantId) {
     return many(
         "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
@@ -197,7 +261,15 @@ public class TenantRepository extends BaseOutboxRepository {
         TenantRepository::mapStore);
   }
 
-  /** Keyset page of stores: rows strictly after the cursor in (created_at, id) order. */
+  /**
+   * Keyset page of stores: rows strictly after the cursor in (created_at, id) order.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param afterCreatedAt cursor timestamp, or {@code null} for the first page
+   * @param afterId cursor id, breaking ties on identical timestamps
+   * @param limit maximum rows; callers pass one more than the page size to detect a next page
+   * @return the page of stores
+   */
   public List<Store> listStores(UUID tenantId, Instant afterCreatedAt, UUID afterId, int limit) {
     StringBuilder sql =
         new StringBuilder(
@@ -222,6 +294,15 @@ public class TenantRepository extends BaseOutboxRepository {
         "list stores page");
   }
 
+  /**
+   * Looks a store up by id.
+   *
+   * <p>Also the existence-and-ownership guard the zone, staff and delivery-area writes call first.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store to fetch
+   * @return the store, or empty when it does not exist in this tenant
+   */
   public Optional<Store> findStore(UUID tenantId, UUID storeId) {
     return query(
             "SELECT id, tenant_id, name, code, type, line1, line2, city, state, country, pincode,"
@@ -237,6 +318,29 @@ public class TenantRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Writes a store's address, hours and trading settings back.
+   *
+   * <p>Takes every value explicitly rather than a partial patch — the caller has already resolved
+   * which fields keep their current values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store to update
+   * @param name trading name
+   * @param line1 address line 1
+   * @param line2 address line 2, may be {@code null}
+   * @param city town or city
+   * @param state county or region, may be {@code null}
+   * @param country ISO country code
+   * @param pincode postal code
+   * @param geoLat latitude, may be {@code null}
+   * @param geoLng longitude, may be {@code null}
+   * @param timezone IANA zone the store trades in
+   * @param businessHours opening hours, may be {@code null}
+   * @param showPrices whether the storefront shows prices or runs as a catalogue
+   * @param enabledPaymentMethods the canonicalised comma-separated tender list
+   * @return the store as stored
+   */
   public Store updateStore(
       UUID tenantId,
       UUID storeId,
@@ -282,6 +386,17 @@ public class TenantRepository extends BaseOutboxRepository {
         .orElseThrow(() -> ApiException.notFound("STORE_NOT_FOUND", "Store not found"));
   }
 
+  /**
+   * Sets a store's status without announcing it.
+   *
+   * <p>Publishes nothing — a status change other services must see should go through {@link
+   * #updateStoreStatusWithOutbox} instead.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store to update
+   * @param status the status to set
+   * @return the store with its new status
+   */
   public Store updateStoreStatus(UUID tenantId, UUID storeId, String status) {
     Instant now = Instant.now();
     exec(
@@ -325,6 +440,15 @@ public class TenantRepository extends BaseOutboxRepository {
         .orElseThrow(() -> ApiException.notFound("STORE_NOT_FOUND", "Store not found"));
   }
 
+  /**
+   * Whether the tenant already has a default store.
+   *
+   * <p>Decides whether the next store created becomes the default, and backs the onboarding
+   * checklist's "first store" step.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return {@code true} once a default store exists
+   */
   public boolean hasDefaultStore(UUID tenantId) {
     return !query(
             "SELECT 1 FROM stores WHERE tenant_id = ? AND is_default = true LIMIT 1",
@@ -336,7 +460,16 @@ public class TenantRepository extends BaseOutboxRepository {
 
   // ──────────────────────────────────────────────────────── zone reads/writes
 
-  /** Keyset page of a store's zones: rows strictly after the cursor in (created_at, id) order. */
+  /**
+   * Keyset page of a store's zones: rows strictly after the cursor in (created_at, id) order.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store whose zones to page through
+   * @param afterCreatedAt cursor timestamp, or {@code null} for the first page
+   * @param afterId cursor id, breaking ties on identical timestamps
+   * @param limit maximum rows; callers pass one more than the page size to detect a next page
+   * @return the page of zones
+   */
   public List<Zone> listZones(
       UUID tenantId, UUID storeId, Instant afterCreatedAt, UUID afterId, int limit) {
     StringBuilder sql =
@@ -361,6 +494,13 @@ public class TenantRepository extends BaseOutboxRepository {
         "list zones page");
   }
 
+  /**
+   * Looks a zone up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param zoneId the zone to fetch
+   * @return the zone, or empty when it does not exist in this tenant
+   */
   public Optional<Zone> findZone(UUID tenantId, UUID zoneId) {
     return query(
             "SELECT id, tenant_id, store_id, name, code, type, status, created_at, updated_at"
@@ -375,6 +515,16 @@ public class TenantRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Renames or retypes a zone.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param zoneId the zone to update
+   * @param name the new display name
+   * @param code the new short code
+   * @param type the new zone type
+   * @return the zone as stored
+   */
   public Zone updateZone(UUID tenantId, UUID zoneId, String name, String code, String type) {
     Instant now = Instant.now();
     exec(
@@ -393,6 +543,14 @@ public class TenantRepository extends BaseOutboxRepository {
         .orElseThrow(() -> ApiException.notFound("ZONE_NOT_FOUND", "Zone not found"));
   }
 
+  /**
+   * Sets a zone's status.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param zoneId the zone to update
+   * @param status the status to set
+   * @return the zone with its new status
+   */
   public Zone updateZoneStatus(UUID tenantId, UUID zoneId, String status) {
     Instant now = Instant.now();
     exec(
@@ -410,7 +568,15 @@ public class TenantRepository extends BaseOutboxRepository {
 
   // ──────────────────────────────────────────────────────── staff reads/writes
 
-  /** Keyset page of staff assignments: rows strictly after the cursor in (created_at, id) order. */
+  /**
+   * Keyset page of staff assignments: rows strictly after the cursor in (created_at, id) order.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param afterCreatedAt cursor timestamp, or {@code null} for the first page
+   * @param afterId cursor id, breaking ties on identical timestamps
+   * @param limit maximum rows; callers pass one more than the page size to detect a next page
+   * @return the page of assignments
+   */
   public List<StaffAssignment> listStaff(
       UUID tenantId, Instant afterCreatedAt, UUID afterId, int limit) {
     StringBuilder sql =
@@ -434,6 +600,13 @@ public class TenantRepository extends BaseOutboxRepository {
         "list staff page");
   }
 
+  /**
+   * Deletes one staff assignment.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param userId the staff member to unassign
+   * @param storeId the store to unassign them from
+   */
   public void removeStaff(UUID tenantId, UUID userId, UUID storeId) {
     exec(
         "DELETE FROM staff_assignments WHERE tenant_id = ? AND user_id = ? AND store_id = ?",
@@ -622,6 +795,15 @@ public class TenantRepository extends BaseOutboxRepository {
 
   // ── Gap #53: Inventory org config ────────────────────────────────────────
 
+  /**
+   * Writes an inventory configuration wholesale.
+   *
+   * <p>Replaces every field, so a partial update must go through {@link
+   * #upsertInventoryConfigMerged} to avoid clearing what it does not mention.
+   *
+   * @param cfg the configuration to store
+   * @return the configuration as stored
+   */
   public TenantInventoryConfig upsertInventoryConfig(TenantInventoryConfig cfg) {
     return inTx(c -> upsertInventoryConfigTx(c, cfg), "upsert inventory config");
   }
@@ -732,6 +914,12 @@ public class TenantRepository extends BaseOutboxRepository {
         "list all tenants page");
   }
 
+  /**
+   * Reads the tenant's inventory configuration.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the configuration, or empty when the tenant has never set one
+   */
   public Optional<TenantInventoryConfig> findInventoryConfig(UUID tenantId) {
     return inTx(
         c -> {
@@ -824,6 +1012,14 @@ public class TenantRepository extends BaseOutboxRepository {
 
   // ── delivery areas ─────────────────────────────────────────────────────────
 
+  /**
+   * Maps a pincode to a store.
+   *
+   * @param a the delivery area to persist; its {@code id} must already be a UUIDv7
+   * @return the delivery area as stored
+   * @throws RuntimeException when the unique {@code (tenant, store, pincode)} constraint rejects a
+   *     duplicate; the service turns this into a 409
+   */
   public DeliveryArea insertDeliveryArea(DeliveryArea a) {
     inTx(
         c -> {
@@ -845,6 +1041,13 @@ public class TenantRepository extends BaseOutboxRepository {
     return a;
   }
 
+  /**
+   * Lists the pincodes one store delivers to.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store whose areas to list
+   * @return the delivery areas, empty when none are mapped
+   */
   public List<DeliveryArea> listDeliveryAreas(UUID tenantId, UUID storeId) {
     return query(
         "SELECT id, tenant_id, store_id, pincode, priority, created_at FROM delivery_areas"
@@ -857,6 +1060,14 @@ public class TenantRepository extends BaseOutboxRepository {
         "list delivery areas");
   }
 
+  /**
+   * Unmaps a pincode from a store.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store the area belongs to
+   * @param areaId the delivery area to remove
+   * @return {@code true} when a row was deleted, {@code false} when nothing matched
+   */
   public boolean deleteDeliveryArea(UUID tenantId, UUID storeId, UUID areaId) {
     return inTx(
         c -> {
@@ -890,6 +1101,15 @@ public class TenantRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Whether the tenant has mapped any delivery areas at all.
+   *
+   * <p>Distinguishes "this pincode is not covered" from "delivery mapping was never set up", which
+   * is what lets a single-store tenant deliver everywhere without configuring anything.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return {@code true} once at least one area exists
+   */
   public boolean hasAnyDeliveryAreas(UUID tenantId) {
     return inTx(
         c -> {

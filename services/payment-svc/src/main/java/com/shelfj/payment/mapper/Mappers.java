@@ -9,10 +9,17 @@ import com.shelfj.payment.dto.Dtos.RefundResponse;
 import com.shelfj.payment.dto.Dtos.TenderMixRowResponse;
 import com.shelfj.payment.dto.Dtos.TenderResponse;
 
+/** Maps payment-svc domain records to the DTOs served over HTTP. */
 public final class Mappers {
 
   private Mappers() {}
 
+  /**
+   * Converts a captured tender to its wire form.
+   *
+   * @param t the captured tender to convert
+   * @return its API representation
+   */
   public static TenderResponse toDto(PaymentTender t) {
     return new TenderResponse(
         t.id(),
@@ -25,6 +32,12 @@ public final class Mappers {
         t.createdAt());
   }
 
+  /**
+   * Converts a refund to its wire form.
+   *
+   * @param r the refund to convert
+   * @return its API representation
+   */
   public static RefundResponse toDto(RefundTender r) {
     return new RefundResponse(
         r.id(),
@@ -57,6 +70,12 @@ public final class Mappers {
         i.createdAt().toString());
   }
 
+  /**
+   * Converts one tender-mix row to its wire form.
+   *
+   * @param r the per-method totals to convert
+   * @return its API representation, including that method's share of net takings
+   */
   public static TenderMixRowResponse toTenderMixRow(TenderMixRow r) {
     return new TenderMixRowResponse(
         r.method(),

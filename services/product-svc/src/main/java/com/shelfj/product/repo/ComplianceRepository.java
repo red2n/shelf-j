@@ -24,6 +24,11 @@ public class ComplianceRepository extends BaseJdbcRepository {
 
   // ── the regulated list ──────────────────────────────────────────────────────
 
+  /**
+   * Lists the tenant's allergens.
+   *
+   * @return the matching rows
+   */
   public List<Allergen> listAllergens() {
     return query(
         "SELECT code, name, detail, regulation FROM allergens ORDER BY code",
@@ -34,6 +39,13 @@ public class ComplianceRepository extends BaseJdbcRepository {
 
   // ── declarations ────────────────────────────────────────────────────────────
 
+  /**
+   * Lists the tenant's variant allergens.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<VariantAllergen> listVariantAllergens(UUID tenantId, UUID variantId) {
     return query(
         "SELECT tenant_id, variant_id, allergen_code, presence, declared_by, declared_at"
@@ -156,6 +168,13 @@ public class ComplianceRepository extends BaseJdbcRepository {
 
   // ── the variant's own compliance fields ─────────────────────────────────────
 
+  /**
+   * Looks a compliance up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return the compliance, or empty when it does not exist in this tenant
+   */
   public VariantCompliance findCompliance(UUID tenantId, UUID variantId) {
     var rows =
         query(
@@ -265,6 +284,12 @@ public class ComplianceRepository extends BaseJdbcRepository {
         "rules for country");
   }
 
+  /**
+   * Creates or replaces a tenant rule.
+   *
+   * @param rule the compliance rule to apply
+   * @param setBy the set by
+   */
   public void upsertTenantRule(AgeRestrictionRule rule, UUID setBy) {
     exec(
         "INSERT INTO tenant_age_restriction_rules"

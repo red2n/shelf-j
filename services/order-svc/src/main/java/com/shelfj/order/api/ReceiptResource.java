@@ -35,6 +35,19 @@ public class ReceiptResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Produces a print or email receipt for a sale and records that it happened.
+   *
+   * <p>An email receipt is delivered before the audit row is written, so a delivery failure
+   * surfaces as 503 rather than telling the cashier it emailed when it did not.
+   *
+   * @param orderId the sale being receipted
+   * @param req the receipt type and, for {@code EMAIL}, the destination address
+   * @return {@code 201} with the recorded receipt event
+   * @throws com.shelfj.web.ApiException {@code 400} when {@code emailedTo} is missing for an EMAIL
+   *     receipt; {@code 404} when the order does not exist; {@code 503} when notification-svc is
+   *     unavailable and the email was not sent
+   */
   @Operation(
       summary = "Generate a receipt record",
       description =
@@ -52,6 +65,16 @@ public class ReceiptResource {
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(receipt))).build();
   }
 
+  /**
+   * Every print/email receipt produced for one sale.
+   *
+   * <p>Distinct from the fiscal receipt: this is the log of times a copy was produced, not the
+   * numbered tax document.
+   *
+   * @param orderId the sale whose receipt records to read
+   * @return the receipt records, empty when no copy was ever produced
+   * @throws com.shelfj.web.ApiException {@code 404} when the order does not exist
+   */
   @Operation(
       summary = "List receipt records for an order",
       description = "All receipt-generation records (print/email) for the order.")

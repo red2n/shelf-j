@@ -27,6 +27,16 @@ public final class MqttChannel implements NotificationChannel {
   private final Mqtt5BlockingClient client;
   private volatile boolean connected;
 
+  /**
+   * Builds the client without opening a connection — see the class note on lazy connect.
+   *
+   * @param host broker hostname
+   * @param port broker port
+   * @param clientId MQTT client identifier this service registers under
+   * @param username broker account; blank or {@code null} disables authentication
+   * @param password password for {@code username}, from the secret store — never committed
+   * @param tls whether to connect over TLS
+   */
   public MqttChannel(
       String host, int port, String clientId, String username, String password, boolean tls) {
     var builder =
@@ -49,11 +59,24 @@ public final class MqttChannel implements NotificationChannel {
     this.client = builder.buildBlocking();
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return always {@code MQTT}
+   */
   @Override
   public String name() {
     return "MQTT";
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Connects on first use, then publishes at QoS 1 to the recipient's own tenant-scoped topic.
+   *
+   * @throws IllegalStateException when the broker is unreachable or the publish is rejected, so the
+   *     delivery is not recorded and the Kafka consumer redelivers
+   */
   @Override
   public void send(UUID tenantId, String recipient, String subject, String body) {
     ensureConnected();

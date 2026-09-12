@@ -88,19 +88,43 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
+/**
+ * Maps inventory-svc domain records to the DTOs served over HTTP.
+ *
+ * <p>Domain records never cross the HTTP boundary; quantities and money stay {@code BigDecimal}
+ * throughout, and ids are rendered as strings so the JSON contract stays stable.
+ */
 public final class Mappers {
 
   private Mappers() {}
 
+  /**
+   * Converts a level summary to its wire form.
+   *
+   * @param s the level summary to convert
+   * @return its API representation
+   */
   public static LevelSummaryResponse toLevelSummary(LevelSummary s) {
     return new LevelSummaryResponse(s.skuCount(), s.lowStockCount());
   }
 
+  /**
+   * Converts a level to its wire form.
+   *
+   * @param l the level to convert
+   * @return its API representation
+   */
   public static LevelResponse toLevel(Level l) {
     return new LevelResponse(
         l.storeId().toString(), l.variantId().toString(), l.onHand(), l.reserved(), l.available());
   }
 
+  /**
+   * Converts a batch to its wire form.
+   *
+   * @param b the batch to convert
+   * @return its API representation
+   */
   public static BatchResponse toBatch(Batch b) {
     return new BatchResponse(
         b.id().toString(),
@@ -119,6 +143,12 @@ public final class Mappers {
         b.zoneId() == null ? null : b.zoneId().toString());
   }
 
+  /**
+   * Converts a reservation to its wire form.
+   *
+   * @param r the reservation to convert
+   * @return its API representation
+   */
   public static ReservationResponse toReservation(Reservation r) {
     return new ReservationResponse(
         r.id().toString(),
@@ -131,21 +161,45 @@ public final class Mappers {
         ts(r.createdAt()));
   }
 
+  /**
+   * Converts a low stock row to its wire form.
+   *
+   * @param r the low stock row to convert
+   * @return its API representation
+   */
   public static LowStockRowResponse toLowStockRow(LowStockRow r) {
     return new LowStockRowResponse(
         r.storeId(), r.variantId(), r.signal(), r.reorderLevel(), r.availableQty(), r.shortfall());
   }
 
+  /**
+   * Converts a valuation row to its wire form.
+   *
+   * @param r the valuation row to convert
+   * @return its API representation
+   */
   public static ValuationRowResponse toValuationRow(ValuationRow r) {
     return new ValuationRowResponse(
         r.groupKey(), r.method(), r.onHandQty(), r.unvaluedQty(), r.value());
   }
 
+  /**
+   * Converts a shrinkage row to its wire form.
+   *
+   * @param r the shrinkage row to convert
+   * @return its API representation
+   */
   public static ShrinkageRowResponse toShrinkageRow(ShrinkageRow r) {
     return new ShrinkageRowResponse(
         r.groupKey(), r.qtyWrittenOff(), r.qtyFound(), r.netQty(), r.movements());
   }
 
+  /**
+   * Converts a stock turn row to its wire form.
+   *
+   * @param r the stock turn row to convert
+   * @return its API representation
+   */
   public static StockTurnRowResponse toStockTurnRow(StockTurnRow r) {
     return new StockTurnRowResponse(
         r.groupKey(),
@@ -158,6 +212,12 @@ public final class Mappers {
         r.daysOnHand());
   }
 
+  /**
+   * Converts a stock turn report to its wire form.
+   *
+   * @param report the stock turn report to convert
+   * @return its API representation
+   */
   public static StockTurnReportResponse toStockTurnReport(StockTurnReport report) {
     return new StockTurnReportResponse(
         report.rows().stream().map(Mappers::toStockTurnRow).toList(),
@@ -165,6 +225,12 @@ public final class Mappers {
         report.windowDays());
   }
 
+  /**
+   * Converts a dead stock row to its wire form.
+   *
+   * @param r the dead stock row to convert
+   * @return its API representation
+   */
   public static DeadStockRowResponse toDeadStockRow(DeadStockRow r) {
     return new DeadStockRowResponse(
         r.groupKey(),
@@ -175,6 +241,12 @@ public final class Mappers {
         r.neverSold());
   }
 
+  /**
+   * Converts a movement to its wire form.
+   *
+   * @param m the movement to convert
+   * @return its API representation
+   */
   public static MovementResponse toMovement(Movement m) {
     return new MovementResponse(
         m.id().toString(),
@@ -190,6 +262,12 @@ public final class Mappers {
         ts(m.createdAt()));
   }
 
+  /**
+   * Converts a threshold to its wire form.
+   *
+   * @param t the threshold to convert
+   * @return its API representation
+   */
   public static ThresholdResponse toThreshold(Threshold t) {
     return new ThresholdResponse(
         t.id().toString(),
@@ -199,6 +277,12 @@ public final class Mappers {
         t.maxQty());
   }
 
+  /**
+   * Converts a suggestion to its wire form.
+   *
+   * @param s the suggestion to convert
+   * @return its API representation
+   */
   public static SuggestionResponse toSuggestion(Suggestion s) {
     return new SuggestionResponse(
         s.id().toString(),
@@ -213,6 +297,12 @@ public final class Mappers {
         ts(s.resolvedAt()));
   }
 
+  /**
+   * Converts a serial to its wire form.
+   *
+   * @param s the serial to convert
+   * @return its API representation
+   */
   public static SerialNumberResponse toSerial(SerialNumber s) {
     return new SerialNumberResponse(
         s.id().toString(),
@@ -225,6 +315,12 @@ public final class Mappers {
         ts(s.soldAt()));
   }
 
+  /**
+   * Converts a serial movement to its wire form.
+   *
+   * @param m the serial movement to convert
+   * @return its API representation
+   */
   public static SerialMovementResponse toSerialMovement(SerialMovement m) {
     return new SerialMovementResponse(
         m.id().toString(),
@@ -236,6 +332,12 @@ public final class Mappers {
         ts(m.createdAt()));
   }
 
+  /**
+   * Converts a demand bucket to its wire form.
+   *
+   * @param b the demand bucket to convert
+   * @return its API representation
+   */
   public static DemandBucketResponse toDemandBucket(DemandBucket b) {
     return new DemandBucketResponse(
         b.storeId().toString(),
@@ -247,6 +349,12 @@ public final class Mappers {
         ts(b.computedAt()));
   }
 
+  /**
+   * Converts a transfer order line to its wire form.
+   *
+   * @param l the transfer order line to convert
+   * @return its API representation
+   */
   public static TransferOrderLineResponse toTransferOrderLine(TransferOrderLine l) {
     return new TransferOrderLineResponse(
         l.id().toString(),
@@ -256,6 +364,13 @@ public final class Mappers {
         l.receivedQty());
   }
 
+  /**
+   * Converts a transfer order to its wire form.
+   *
+   * @param o the record to persist
+   * @param lines the lines to store
+   * @return its API representation
+   */
   public static TransferOrderResponse toTransferOrder(
       TransferOrder o, List<TransferOrderLine> lines) {
     return new TransferOrderResponse(
@@ -271,11 +386,24 @@ public final class Mappers {
         lines.stream().map(Mappers::toTransferOrderLine).toList());
   }
 
+  /**
+   * Converts a move order line to its wire form.
+   *
+   * @param l the move order line to convert
+   * @return its API representation
+   */
   public static MoveOrderLineResponse toMoveOrderLine(MoveOrderLine l) {
     return new MoveOrderLineResponse(
         l.id().toString(), l.variantId().toString(), l.requestedQty(), l.pickedQty());
   }
 
+  /**
+   * Converts a move order to its wire form.
+   *
+   * @param o the record to persist
+   * @param lines the lines to store
+   * @return its API representation
+   */
   public static MoveOrderResponse toMoveOrder(MoveOrder o, List<MoveOrderLine> lines) {
     return new MoveOrderResponse(
         o.id().toString(),
@@ -290,6 +418,12 @@ public final class Mappers {
         lines.stream().map(Mappers::toMoveOrderLine).toList());
   }
 
+  /**
+   * Converts a lot link to its wire form.
+   *
+   * @param l the lot link to convert
+   * @return its API representation
+   */
   public static LotGenealogyLinkResponse toLotLink(LotGenealogyLink l) {
     return new LotGenealogyLinkResponse(
         l.id().toString(),
@@ -301,6 +435,12 @@ public final class Mappers {
         ts(l.createdAt()));
   }
 
+  /**
+   * Converts a cycle count line to its wire form.
+   *
+   * @param l the cycle count line to convert
+   * @return its API representation
+   */
   public static CycleCountLineResponse toCycleCountLine(CycleCountLine l) {
     return new CycleCountLineResponse(
         l.id().toString(),
@@ -313,6 +453,13 @@ public final class Mappers {
         ts(l.countedAt()));
   }
 
+  /**
+   * Converts a cycle count header to its wire form.
+   *
+   * @param h the record to persist
+   * @param lines the lines to store
+   * @return its API representation
+   */
   public static CycleCountHeaderResponse toCycleCountHeader(
       CycleCountHeader h, List<CycleCountLine> lines) {
     int counted = (int) lines.stream().filter(l -> !CycleCountLine.OPEN.equals(l.status())).count();
@@ -338,6 +485,12 @@ public final class Mappers {
         ts(h.completedAt()));
   }
 
+  /**
+   * Converts an abc compile run to its wire form.
+   *
+   * @param r the abc compile run to convert
+   * @return its API representation
+   */
   public static AbcCompileRunResponse toAbcCompileRun(AbcCompileRun r) {
     return new AbcCompileRunResponse(
         r.id().toString(),
@@ -349,6 +502,12 @@ public final class Mappers {
         ts(r.compiledAt()));
   }
 
+  /**
+   * Converts an abc assignment to its wire form.
+   *
+   * @param a the abc assignment to convert
+   * @return its API representation
+   */
   public static AbcAssignmentResponse toAbcAssignment(AbcAssignment a) {
     return new AbcAssignmentResponse(
         a.id().toString(),
@@ -361,6 +520,12 @@ public final class Mappers {
         ts(a.assignedAt()));
   }
 
+  /**
+   * Converts a safety stock params to its wire form.
+   *
+   * @param p the safety stock params to convert
+   * @return its API representation
+   */
   public static SafetyStockParamsResponse toSafetyStockParams(SafetyStockParams p) {
     return new SafetyStockParamsResponse(
         p.id().toString(),
@@ -375,6 +540,12 @@ public final class Mappers {
         ts(p.createdAt()));
   }
 
+  /**
+   * Converts a tag to its wire form.
+   *
+   * @param t the tag to convert
+   * @return its API representation
+   */
   public static PhysicalInventoryTagResponse toTag(PhysicalInventoryTag t) {
     return new PhysicalInventoryTagResponse(
         t.id().toString(),
@@ -387,6 +558,13 @@ public final class Mappers {
         ts(t.countedAt()));
   }
 
+  /**
+   * Converts a physical inventory to its wire form.
+   *
+   * @param pi the record to persist
+   * @param tags the count tags
+   * @return its API representation
+   */
   public static PhysicalInventoryResponse toPhysicalInventory(
       PhysicalInventory pi, List<PhysicalInventoryTag> tags) {
     return new PhysicalInventoryResponse(
@@ -399,6 +577,12 @@ public final class Mappers {
         tags.stream().map(Mappers::toTag).toList());
   }
 
+  /**
+   * Converts a rop plan to its wire form.
+   *
+   * @param p the rop plan to convert
+   * @return its API representation
+   */
   public static RopPlanResponse toRopPlan(ReorderPointPlan p) {
     return new RopPlanResponse(
         p.id().toString(),
@@ -418,6 +602,12 @@ public final class Mappers {
         ts(p.createdAt()));
   }
 
+  /**
+   * Converts a kanban card to its wire form.
+   *
+   * @param k the kanban card to convert
+   * @return its API representation
+   */
   public static KanbanCardResponse toKanbanCard(KanbanCard k) {
     return new KanbanCardResponse(
         k.id().toString(),
@@ -437,6 +627,12 @@ public final class Mappers {
         ts(k.replenishedAt()));
   }
 
+  /**
+   * Converts a costing method to its wire form.
+   *
+   * @param cm the costing method to convert
+   * @return its API representation
+   */
   public static CostingMethodResponse toCostingMethod(CostingMethod cm) {
     return new CostingMethodResponse(
         cm.id().toString(),
@@ -447,6 +643,12 @@ public final class Mappers {
         cm.updatedAt().toString());
   }
 
+  /**
+   * Converts a period to its wire form.
+   *
+   * @param ap the period to convert
+   * @return its API representation
+   */
   public static AccountingPeriodResponse toPeriod(AccountingPeriod ap) {
     return new AccountingPeriodResponse(
         ap.id().toString(),
@@ -460,6 +662,12 @@ public final class Mappers {
 
   // ── Tier-1 mappers ────────────────────────────────────────────────────────
 
+  /**
+   * Converts a reason code to its wire form.
+   *
+   * @param r the reason code to convert
+   * @return its API representation
+   */
   public static ReasonCodeResponse toReasonCode(ReasonCode r) {
     return new ReasonCodeResponse(
         r.id().toString(),
@@ -470,6 +678,12 @@ public final class Mappers {
         ts(r.createdAt()));
   }
 
+  /**
+   * Converts a source type to its wire form.
+   *
+   * @param t the source type to convert
+   * @return its API representation
+   */
   public static SourceTypeResponse toSourceType(TransactionSourceType t) {
     return new SourceTypeResponse(
         t.id().toString(),
@@ -480,6 +694,12 @@ public final class Mappers {
         ts(t.createdAt()));
   }
 
+  /**
+   * Converts a lot action to its wire form.
+   *
+   * @param a the lot action to convert
+   * @return its API representation
+   */
   public static LotActionResponse toLotAction(LotAction a) {
     return new LotActionResponse(
         a.id().toString(),
@@ -491,6 +711,12 @@ public final class Mappers {
         ts(a.createdAt()));
   }
 
+  /**
+   * Converts an expiring batch to its wire form.
+   *
+   * @param b the expiring batch to convert
+   * @return its API representation
+   */
   public static ExpiringBatchResponse toExpiringBatch(Batch b) {
     long daysUntil =
         b.expiryDate() == null
@@ -506,6 +732,12 @@ public final class Mappers {
         daysUntil);
   }
 
+  /**
+   * Converts a lot uom conversion to its wire form.
+   *
+   * @param c the lot uom conversion to convert
+   * @return its API representation
+   */
   public static LotUomConversionResponse toLotUomConversion(LotUomConversion c) {
     return new LotUomConversionResponse(
         c.id().toString(),
@@ -517,6 +749,12 @@ public final class Mappers {
         ts(c.createdAt()));
   }
 
+  /**
+   * Converts a par level to its wire form.
+   *
+   * @param p the par level to convert
+   * @return its API representation
+   */
   public static ParLevelResponse toParLevel(ParLevelConfig p) {
     return new ParLevelResponse(
         p.id().toString(),
@@ -529,6 +767,12 @@ public final class Mappers {
         ts(p.updatedAt()));
   }
 
+  /**
+   * Converts a zone gl mapping to its wire form.
+   *
+   * @param z the zone gl mapping to convert
+   * @return its API representation
+   */
   public static ZoneGlMappingResponse toZoneGlMapping(ZoneGlMapping z) {
     return new ZoneGlMappingResponse(
         z.id().toString(),
@@ -540,6 +784,12 @@ public final class Mappers {
         ts(z.updatedAt()));
   }
 
+  /**
+   * Converts a picking rule to its wire form.
+   *
+   * @param r the picking rule to convert
+   * @return its API representation
+   */
   public static PickingRuleResponse toPickingRule(PickingRule r) {
     return new PickingRuleResponse(
         r.id().toString(),
@@ -551,11 +801,23 @@ public final class Mappers {
         ts(r.updatedAt()));
   }
 
+  /**
+   * Converts a zone priority to its wire form.
+   *
+   * @param p the zone priority to convert
+   * @return its API representation
+   */
   public static PickingRuleZonePriorityResponse toZonePriority(PickingRuleZonePriority p) {
     return new PickingRuleZonePriorityResponse(
         p.id().toString(), p.zoneId().toString(), p.priority());
   }
 
+  /**
+   * Converts a picking rule assignment to its wire form.
+   *
+   * @param a the picking rule assignment to convert
+   * @return its API representation
+   */
   public static PickingRuleAssignmentResponse toPickingRuleAssignment(PickingRuleAssignment a) {
     return new PickingRuleAssignmentResponse(
         a.id().toString(),

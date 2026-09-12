@@ -81,6 +81,16 @@ public class DemandHistoryRepository extends BaseJdbcRepository {
     }
   }
 
+  /**
+   * Lists the tenant's demand histories.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param bucketType the bucket type
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<DemandBucket> listDemandHistory(
       UUID tenantId, UUID storeId, UUID variantId, String bucketType, int limit) {
     StringBuilder sb =

@@ -14,6 +14,12 @@ import java.util.UUID;
 @ApplicationScoped
 public class PosSessionRepository extends BaseJdbcRepository {
 
+  /**
+   * Opens a POS session and returns it as stored.
+   *
+   * @param s the session to persist; its {@code id} must already be a {@code Ids.newId()} UUIDv7
+   * @return the row read back after insert, with the server-side timestamps applied
+   */
   public PosSession insert(PosSession s) {
     exec(
         "INSERT INTO pos_sessions (id,tenant_id,user_id,store_id,idle_timeout_seconds,status)"
@@ -30,6 +36,14 @@ public class PosSessionRepository extends BaseJdbcRepository {
     return find(s.id()).orElseThrow();
   }
 
+  /**
+   * Resets a session's idle clock.
+   *
+   * <p>Matches on {@code status = 'ACTIVE'}, so touching an ended or expired session is a silent
+   * no-op and cannot resurrect it.
+   *
+   * @param id the session to keep alive
+   */
   public void touch(UUID id) {
     exec(
         "UPDATE pos_sessions SET last_activity_at = now() WHERE id = ? AND status = 'ACTIVE'",
@@ -37,6 +51,14 @@ public class PosSessionRepository extends BaseJdbcRepository {
         "touch pos session");
   }
 
+  /**
+   * Closes a session.
+   *
+   * <p>Matches on {@code status = 'ACTIVE'}, so ending an already-closed session is a silent no-op
+   * and leaves the original {@code ended_at} intact.
+   *
+   * @param id the session to close
+   */
   public void end(UUID id) {
     exec(
         "UPDATE pos_sessions SET status = 'ENDED', ended_at = now() WHERE id = ? AND status = 'ACTIVE'",
@@ -111,6 +133,15 @@ public class PosSessionRepository extends BaseJdbcRepository {
         "end all pos sessions for store");
   }
 
+  /**
+   * Looks a POS session up by id.
+   *
+   * <p>Not tenant-scoped: callers must compare {@link PosSession#tenantId()} against the caller's
+   * tenant before acting on the result, as {@code PosSessionService} does.
+   *
+   * @param id the session to fetch
+   * @return the session, or empty when no such session exists
+   */
   public Optional<PosSession> find(UUID id) {
     return query(
             "SELECT id, tenant_id, user_id, store_id, started_at, last_activity_at,"
@@ -123,6 +154,12 @@ public class PosSessionRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists a tenant's open POS sessions across every store, most recently started first.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the active sessions
+   */
   public List<PosSession> listActive(UUID tenantId) {
     return query(
         "SELECT id, tenant_id, user_id, store_id, started_at, last_activity_at,"
@@ -134,8 +171,13 @@ public class PosSessionRepository extends BaseJdbcRepository {
   }
 
   /**
-   * Expire sessions idle past their timeout. Returns the number expired and revokes their tokens
-   * via the provided revokeCallback.
+   * Expires every session idle past its own timeout and revokes the affected cashiers' refresh
+   * tokens in the same transaction.
+   *
+   * <p>Runs across all tenants — the scheduled sweeper calls it with no tenant in context, and each
+   * session is judged against the {@code idle_timeout_seconds} it was opened with.
+   *
+   * @return how many sessions were expired
    */
   public int expireIdle() {
     return inTx(

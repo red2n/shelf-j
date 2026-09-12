@@ -60,6 +60,25 @@ public class StockTurnResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Hows many times the holding turned over.
+   *
+   * <p>Cost of goods sold in the window against the average value held to produce it, per store or
+   * per variant. Cost comes from the batches the sales actually drew down, so a historical window
+   * is answered with the costs of the day rather than today's. from and to are both required — a
+   * turnover ratio has no meaning without a window, and daysOnHand divides by its length. Both
+   * accept a full ISO-8601 instant (2026-01-31T00:00:00Z), not a bare date. Rows come back
+   * slowest-turning first, which is the end of the list worth acting on.
+   *
+   * @param storeId the store id (query parameter)
+   * @param from the from (query parameter)
+   * @param to the to (query parameter)
+   * @param groupBy the group by (query parameter)
+   * @param limit the limit (query parameter)
+   * @return rows plus whether opening values are complete
+   * @throws com.shelfj.web.ApiException {@code 400} missing or unparseable from/to, from not before
+   *     to, or unknown groupBy
+   */
   @Operation(
       summary = "How many times the holding turned over",
       description =
@@ -97,6 +116,22 @@ public class StockTurnResource {
     return Response.ok(ApiResponse.ok(report, ApiResponse.Meta.of(ctx.requestId()))).build();
   }
 
+  /**
+   * Stocks on hand, aged by time since it last sold.
+   *
+   * <p>The ageing ladder — 0-30, 31-60, 61-90, 91-180, 180+ days — with the value sitting in each
+   * band. Age runs from the last sale of that item at that store, not from receipt: stock that
+   * arrived two years ago and sold this morning is not dead. Stock that has never sold ages from
+   * the arrival of its oldest remaining batch, and says so. Group by BUCKET for the ladder, or by
+   * STORE or VARIANT to find what is in it.
+   *
+   * @param storeId the store id (query parameter)
+   * @param asOf the as of (query parameter)
+   * @param groupBy the group by (query parameter)
+   * @param limit the limit (query parameter)
+   * @return rows ordered by value at risk, largest first
+   * @throws com.shelfj.web.ApiException {@code 400} unknown groupBy or unparseable asOf/storeId
+   */
   @Operation(
       summary = "Stock on hand, aged by time since it last sold",
       description =

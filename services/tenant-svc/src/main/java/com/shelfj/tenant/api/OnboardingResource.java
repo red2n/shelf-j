@@ -41,6 +41,16 @@ public class OnboardingResource {
   @Inject TenantService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Single-call onboarding: creates the tenant and its first store together.
+   *
+   * <p>Preferred over calling {@link #createTenant} then {@link #createStore}, because the tenant
+   * id is minted here and passed straight through — the caller never needs a refreshed JWT carrying
+   * the new tenant claim, so there is no async race to lose.
+   *
+   * @param req the business details and the first store's details in one payload
+   * @return {@code 201} with the created tenant and store
+   */
   @Operation(
       summary = "Onboard a new tenant and its first store",
       description =
@@ -59,6 +69,15 @@ public class OnboardingResource {
         .build();
   }
 
+  /**
+   * Creates the business and binds the authenticated caller as its OWNER.
+   *
+   * <p>The caller has no tenant claim yet, so the owner is taken from the gateway-forwarded
+   * identity rather than from a tenant in the token.
+   *
+   * @param req the business name, legal name, country and currency
+   * @return {@code 201} with the created tenant
+   */
   @Operation(
       summary = "Create the business",
       description =
@@ -76,6 +95,17 @@ public class OnboardingResource {
         .build();
   }
 
+  /**
+   * Creates the tenant's default store and its DEFAULT zone.
+   *
+   * <p>Reachable with a caller-supplied tenant id (the gateway's onboarding carve-out), so the
+   * caller is additionally checked to be that tenant's owner — the tenant id alone is not proof.
+   *
+   * @param req the store's name, code, type and address
+   * @return {@code 201} with the created store
+   * @throws com.shelfj.web.ApiException {@code TENANT_ACCESS_DENIED} (403) when the caller does not
+   *     own the tenant
+   */
   @Operation(
       summary = "Create the first/default store",
       description =
@@ -94,9 +124,17 @@ public class OnboardingResource {
         .build();
   }
 
+  /**
+   * Setup-checklist state: tenant active, default store present, and what to do next.
+   *
+   * @return the checklist flags and the next-step prompts
+   * @throws com.shelfj.web.ApiException {@code TENANT_ACCESS_DENIED} (403) when the caller does not
+   *     own the tenant; {@code TENANT_NOT_FOUND} (404) when it does not exist
+   */
   @Operation(
       summary = "Get onboarding status",
       description = "Setup-checklist state: tenant active, default store present, and next steps.")
+  @APIResponse(responseCode = "200", description = "The checklist flags and the next-step prompts")
   @GET
   @Path("/status")
   public ApiResponse<OnboardingStatus> status() {

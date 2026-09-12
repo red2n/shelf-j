@@ -37,6 +37,16 @@ public class SafetyStockResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Sets safety-stock parameters for a variant at a store.
+   *
+   * <p>method must be MAD or USER_DEFINED; USER_DEFINED requires a positive userDefinedPct.
+   *
+   * @param req the request body
+   * @return safety-stock parameters set ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 400} invalid method, or userDefinedPct missing when
+   *     method is USER_DEFINED
+   */
   @Operation(
       summary = "Set safety-stock parameters for a variant at a store",
       description =
@@ -65,7 +75,14 @@ public class SafetyStockResource {
         .build();
   }
 
+  /**
+   * Lists safety-stock parameters for a store.
+   *
+   * @param store the store (query parameter)
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(summary = "List safety-stock parameters for a store")
+  @APIResponse(responseCode = "200", description = "List safety-stock parameters for a store")
   @GET
   @Path("/safety-stock")
   public ApiResponse<List<SafetyStockParamsResponse>> listSafetyStock(
@@ -80,7 +97,16 @@ public class SafetyStockResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Gets safety-stock parameters for a specific variant at a store.
+   *
+   * @param storeId the store id (path parameter)
+   * @param variantId the variant id (path parameter)
+   */
   @Operation(summary = "Get safety-stock parameters for a specific variant at a store")
+  @APIResponse(
+      responseCode = "200",
+      description = "Get safety-stock parameters for a specific variant at a store")
   @GET
   @Path("/safety-stock/{storeId}/{variantId}")
   public ApiResponse<SafetyStockParamsResponse> getSafetyStock(
@@ -90,11 +116,20 @@ public class SafetyStockResource {
         Mappers.toSafetyStockParams(service.getSafetyStockParams(tenantId, storeId, variantId)));
   }
 
+  /**
+   * Recomputes safety-stock quantities.
+   *
+   * <p>Recalculates safetyStockQty from demand-history buckets for the given store/variant scope
+   * (or all, if omitted).
+   *
+   * @param req the request body
+   */
   @Operation(
       summary = "Recompute safety-stock quantities",
       description =
           "Recalculates safetyStockQty from demand-history buckets for the given"
               + " store/variant scope (or all, if omitted).")
+  @APIResponse(responseCode = "200", description = "Recompute safety-stock quantities")
   @POST
   @Path("/safety-stock/compute")
   public ApiResponse<ComputeSafetyStockResult> computeSafetyStock(ComputeSafetyStockRequest req) {
