@@ -399,6 +399,13 @@ public class OrderService {
     BigDecimal total = subtotal.add(tax).subtract(disc).subtract(promoDiscount);
 
     boolean taxExempt = req.taxExempt() != null && req.taxExempt();
+    // SJ-D41: a catalog-mode till order is placed without prices and waits for a manager; it is
+    // not PENDING, so the stranded-order sweeper leaves it alone.
+    boolean awaitingPrice = Boolean.TRUE.equals(req.awaitingPrice());
+    if (awaitingPrice && !"POS".equalsIgnoreCase(req.channel())) {
+      throw ApiException.badRequest(
+          "ORDER_AWAITING_PRICE_POS_ONLY", "only a till order can be placed awaiting a price");
+    }
     Order order =
         new Order(
             orderId,
@@ -408,7 +415,7 @@ public class OrderService {
             loginId,
             req.channel(),
             fulfilment,
-            Order.STATUS_PENDING,
+            awaitingPrice ? Order.STATUS_AWAITING_PRICE : Order.STATUS_PENDING,
             subtotal,
             tax,
             disc,
@@ -1107,9 +1114,11 @@ public class OrderService {
           "ORDER_PARTLY_FULFILLED",
           "some of the goods were handed over; take them back as a return or hand over the rest");
     if (!Order.STATUS_PENDING.equals(order.status())
+        && !Order.STATUS_AWAITING_PRICE.equals(order.status())
         && !Order.STATUS_CONFIRMED.equals(order.status()))
       throw ApiException.conflict(
-          "ORDER_CANNOT_CANCEL", "only PENDING or CONFIRMED orders can be cancelled");
+          "ORDER_CANNOT_CANCEL",
+          "only PENDING, AWAITING_PRICE or CONFIRMED orders can be cancelled");
     return repo.transitionOrderStatus(
         tenantId,
         orderId,
@@ -1135,6 +1144,36 @@ public class OrderService {
    */
   public Order fulfillOrder(UUID tenantId, UUID orderId, UUID userId) {
     return fulfilOrder(tenantId, orderId, null, userId, null);
+  }
+
+  /**
+   * Prices a catalog-mode till order (SJ-D41): a manager gives every line its unit price, the
+   * totals are recomputed, and the order becomes PENDING — payable at the till or in Admin → Orders
+   * → Collect payment, and swept as stranded only if it then sits unpaid.
+   *
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404); {@code ORDER_NOT_AWAITING_PRICE} (409);
+   *     {@code ORDER_PRICE_LINE_MISSING} / {@code ORDER_PRICE_LINE_UNKNOWN} (400)
+   */
+  public Order priceOrder(
+      UUID tenantId,
+      UUID orderId,
+      com.shelfj.order.dto.Dtos.PriceOrderRequest req,
+      UUID userId,
+      TenantContext ctx) {
+    Order order = getOrder(tenantId, orderId);
+    ctx.requireStoreAccess(order.storeId());
+    Map<UUID, BigDecimal> prices = new LinkedHashMap<>();
+    for (var line : req.lines()) {
+      if (line.unitPrice() == null || line.unitPrice().signum() < 0) {
+        throw ApiException.badRequest("ORDER_PRICE_INVALID", "a unit price cannot be negative");
+      }
+      prices.put(Parsing.uuid(line.variantId(), "variantId"), line.unitPrice());
+    }
+    if (prices.isEmpty()) {
+      throw ApiException.badRequest("ORDER_PRICE_LINE_MISSING", "no prices given");
+    }
+    BigDecimal tax = req.taxAmount() == null ? BigDecimal.ZERO : req.taxAmount();
+    return repo.priceOrder(tenantId, orderId, prices, tax, userId);
   }
 
   /**

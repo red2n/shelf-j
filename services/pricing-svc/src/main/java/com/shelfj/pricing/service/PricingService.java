@@ -1218,10 +1218,11 @@ public class PricingService {
     BigDecimal box1 = repo.sumOutputVat(tenantId, from, to).setScale(2, RoundingMode.HALF_UP);
     BigDecimal box2 = BigDecimal.ZERO;
     BigDecimal box3 = box1.add(box2);
-    BigDecimal box4 = BigDecimal.ZERO;
+    // SJ-D39: box 4 and box 7 from the supplier invoices purchase-svc captured, by invoice date.
+    BigDecimal box4 = repo.sumInputVat(tenantId, from, to).setScale(2, RoundingMode.HALF_UP);
     BigDecimal box5 = box3.subtract(box4).abs();
     BigDecimal box6 = repo.sumNetSales(tenantId, from, to).setScale(2, RoundingMode.HALF_UP);
-    BigDecimal box7 = BigDecimal.ZERO;
+    BigDecimal box7 = repo.sumNetPurchases(tenantId, from, to).setScale(2, RoundingMode.HALF_UP);
     BigDecimal box8 = BigDecimal.ZERO;
     BigDecimal box9 = BigDecimal.ZERO;
 

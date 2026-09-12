@@ -1258,4 +1258,59 @@ class PurchaseIT {
     assertThat(putAs("/suppliers/" + Ids.newId(), body, T, "OWNER").getStatus(), is(404));
     assertThat(putAs("/suppliers/" + id, body, T, "MANAGER").getStatus(), is(200));
   }
+
+  // ── SJ-D39: the invoice tells pricing-svc what box 4 is made of ─────────────
+
+  private static java.util.List<String> outboxPayloads(String eventType) {
+    var out = new java.util.ArrayList<String>();
+    try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT payload FROM purchase.outbox WHERE event_type = ? ORDER BY created_at")) {
+      ps.setString(1, eventType);
+      try (var rs = ps.executeQuery()) {
+        while (rs.next()) {
+          out.add(rs.getString(1));
+        }
+      }
+    } catch (java.sql.SQLException e) {
+      throw new IllegalStateException(e);
+    }
+    return out;
+  }
+
+  @Test
+  void capturingAnInvoicePublishesItsVatForTheReturn() {
+    String po = draftPurchaseOrder("Box Four Ltd");
+    addLine(po, "60", "2.50");
+    Response r =
+        post(
+            "/supplier-invoices",
+            invoice(po, "INV-VAT-1", "60", "2.50")
+                .replace("\"lines\"", "\"vatAmount\":30.00,\"lines\""),
+            T);
+    assertThat(r.getStatus(), is(201));
+    String invoiceId = extractId(r.readEntity(String.class));
+    var events = outboxPayloads("SupplierInvoiceCaptured");
+    assertThat(events.size(), is(1));
+    String e = events.get(0);
+    // The event id is the invoice id: a redelivery is the same event, recorded once downstream.
+    assertThat(e, containsString("\"eventId\":\"" + invoiceId + "\""));
+    assertThat(e, containsString("\"tenantId\":\"" + T + "\""));
+    assertThat(e, containsString("\"netAmount\":150.00"));
+    assertThat(e, containsString("\"vatAmount\":30.00"));
+    assertThat(e, containsString("\"grossAmount\":180.00"));
+    assertThat(e, containsString("\"invoiceDate\":\"2026-02-01\""));
+    assertThat(e, containsString("\"invoiceNumber\":\"INV-VAT-1\""));
+    // An invoice that is refused publishes nothing: no lines, no invoice, no VAT.
+    Response refused =
+        post(
+            "/supplier-invoices",
+            "{\"poId\":\""
+                + po
+                + "\",\"invoiceNumber\":\"INV-VAT-2\",\"invoiceDate\":\"2026-02-01\",\"lines\":[]}",
+            T);
+    assertThat(refused.getStatus(), is(400));
+    assertThat(outboxPayloads("SupplierInvoiceCaptured").size(), is(1));
+  }
 }

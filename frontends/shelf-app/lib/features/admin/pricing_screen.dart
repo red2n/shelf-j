@@ -1351,7 +1351,29 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                     style: TextStyle(color: cs.outline),
                   ),
                   const SizedBox(height: 16),
-                  // SJ-D39: the return says on its face which boxes are real.
+                  // SJ-D39: the return says on its face which boxes are real — and, once
+                  // it is fit to file, what the zero boxes assume.
+                  if (vr.fitToFile && vr.caveat != null) ...[
+                    Container(
+                      key: const Key('vat-return-note'),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.info_outline, color: cs.onSurfaceVariant),
+                          const SizedBox(width: 10),
+                          Expanded(
+                              child: Text(vr.caveat!,
+                                  style: TextStyle(color: cs.onSurfaceVariant))),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   if (!vr.fitToFile) ...[
                     Container(
                       key: const Key('vat-return-caveat'),
@@ -1400,8 +1422,11 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                         ),
                         title: Text(_boxLabels[n] ?? 'Box $n'),
                         subtitle: notComputed
-                            ? Text('Not computed — recorded elsewhere, not carried here',
-                                style: TextStyle(color: cs.error))
+                            ? Text(
+                                vr.fitToFile
+                                    ? 'Not modelled — zero unless you have Northern Ireland protocol trade'
+                                    : 'Not computed — recorded elsewhere, not carried here',
+                                style: TextStyle(color: vr.fitToFile ? cs.outline : cs.error))
                             : null,
                         trailing: notComputed
                             ? Text('—',

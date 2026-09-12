@@ -692,7 +692,8 @@ public class PurchaseService {
               String.join(",", matched.get(i).variances()),
               Instant.now()));
     }
-    return repo.captureSupplierInvoice(invoice, lines);
+    return repo.captureSupplierInvoice(
+        invoice, lines, Events.supplierInvoiceCaptured(tenantId, invoice));
   }
 
   /**

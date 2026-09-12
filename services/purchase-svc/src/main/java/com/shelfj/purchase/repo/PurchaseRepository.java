@@ -840,7 +840,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
    * @throws ApiException 409 if this supplier's invoice number has already been captured
    */
   public Domain.SupplierInvoice captureSupplierInvoice(
-      Domain.SupplierInvoice invoice, List<Domain.SupplierInvoiceLine> lines) {
+      Domain.SupplierInvoice invoice, List<Domain.SupplierInvoiceLine> lines, OutboxRow event) {
     return inTx(
         c -> {
           try (var ps =
@@ -893,6 +893,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
             }
             ps.executeBatch();
           }
+          // The event commits with the invoice (golden rule 6): pricing-svc reads box 4 from it.
+          insertOutbox(c, event);
           return invoice;
         },
         "capture supplier invoice");

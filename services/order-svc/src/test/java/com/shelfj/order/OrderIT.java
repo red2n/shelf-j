@@ -46,6 +46,7 @@ class OrderIT {
 
   private static final String T = "01a090ae-611e-700b-bde4-50df0324c37c";
   private static final String S = "01a090ae-611e-700f-b645-a14095230b77";
+  private static final String USER = "01a090ae-611e-7099-8000-000000000001";
   private static final String V = "01a090ae-611e-7011-ae7d-1bd68c966ff6";
 
   @Inject WebTarget target;
@@ -1766,5 +1767,127 @@ class OrderIT {
     assertThat(body, containsString("\"status\":\"FULFILLED\""));
     assertThat(fulfilledQtyOf(body).compareTo(new BigDecimal("2")), is(0));
     assertThat(outboxCount(order, "OrderFulfilled"), is(1L));
+  }
+
+  // ── SJ-D41: a catalog-mode till order waits for a price, and is not swept ───
+
+  private UUID placeAwaitingPrice() {
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"PICKUP\",\"awaitingPrice\":true,"
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":3,\"unitPrice\":0}],\"currency\":\"USD\"}",
+            T,
+            "it-catalog-" + Ids.newId());
+    String body = placed.readEntity(String.class);
+    assertThat(body, placed.getStatus(), is(201));
+    assertThat(body, containsString("\"status\":\"AWAITING_PRICE\""));
+    return UUID.fromString(extractId(body));
+  }
+
+  private static String priceBody(String variantId, String unitPrice, String tax) {
+    return "{\"lines\":[{\"variantId\":\""
+        + variantId
+        + "\",\"unitPrice\":"
+        + unitPrice
+        + "}],\"taxAmount\":"
+        + tax
+        + "}";
+  }
+
+  @Test
+  @DisplayName("A catalog-mode order is not swept as stranded, however old it is")
+  void awaitingPriceOrderIsNotSwept() {
+    UUID order = placeAwaitingPrice();
+    // TTL 0: every PENDING order is expired. This one is not PENDING; it is waiting for a person.
+    orderService.sweepExpiredPendingOrders(0, 200);
+    String body = get("/orders/" + order, T).readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"AWAITING_PRICE\""));
+    assertThat(body, not(containsString("CANCELLED")));
+  }
+
+  @Test
+  @DisplayName("A manager prices it; the totals follow and it becomes an ordinary PENDING order")
+  void managerPricesTheOrder() {
+    UUID order = placeAwaitingPrice();
+    Response priced =
+        postAs(
+            "/orders/" + order + "/price", priceBody(V, "4.50", "2.70"), T, USER, "MANAGER", null);
+    assertThat(priced.getStatus(), is(200));
+    String body = priced.readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"PENDING\""));
+    assertThat(body, containsString("\"subtotal\":13.50"));
+    assertThat(body, containsString("\"taxAmount\":2.70"));
+    assertThat(body, containsString("\"total\":16.20"));
+    assertThat(body, containsString("\"unitPrice\":4.50"));
+    assertThat(body, containsString("\"lineTotal\":13.50"));
+    assertThat(
+        get("/orders/" + order + "/history", T).readEntity(String.class),
+        containsString("priced: total 16.20"));
+    // Priced, it is paid for like any other till order — and handed over when the payment lands.
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), order, Ids.newId(), new BigDecimal("16.20"));
+    assertThat(statusOf(order), is("FULFILLED"));
+    // And it cannot be priced twice.
+    Response again =
+        postAs("/orders/" + order + "/price", priceBody(V, "9.99", "0"), T, USER, "MANAGER", null);
+    assertThat(again.getStatus(), is(409));
+    assertThat(again.readEntity(String.class), containsString("ORDER_NOT_AWAITING_PRICE"));
+  }
+
+  @Test
+  @DisplayName("Pricing needs every line, a price of at least zero, and a manager")
+  void pricingIsCheckedAndManagementOnly() {
+    UUID order = placeAwaitingPrice();
+    Response cashier =
+        postAs("/orders/" + order + "/price", priceBody(V, "4.50", "0"), T, USER, "CASHIER", null);
+    assertThat(cashier.getStatus(), is(403));
+    Response negative =
+        postAs("/orders/" + order + "/price", priceBody(V, "-1", "0"), T, USER, "MANAGER", null);
+    assertThat(negative.getStatus(), is(400));
+    Response unknown =
+        postAs(
+            "/orders/" + order + "/price",
+            priceBody(Ids.newId().toString(), "4.50", "0"),
+            T,
+            USER,
+            "MANAGER",
+            null);
+    assertThat(unknown.getStatus(), is(400));
+    assertThat(unknown.readEntity(String.class), containsString("ORDER_PRICE_LINE"));
+    Response empty =
+        postAs("/orders/" + order + "/price", "{\"lines\":[]}", T, USER, "MANAGER", null);
+    assertThat(empty.getStatus(), is(400));
+    // Nothing moved.
+    String body = get("/orders/" + order, T).readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"AWAITING_PRICE\""));
+    // An ordinary PENDING order is not "awaiting a price", and an online order cannot be placed as
+    // one.
+    UUID pending = placeAt("POS", "INSTORE");
+    Response notAwaiting =
+        postAs(
+            "/orders/" + pending + "/price", priceBody(V, "4.50", "0"), T, USER, "MANAGER", null);
+    assertThat(notAwaiting.getStatus(), is(409));
+    Response online =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"ONLINE\",\"fulfilmentType\":\"PICKUP\",\"awaitingPrice\":true,"
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":0}],\"currency\":\"USD\"}",
+            T,
+            "it-catalog-online-" + Ids.newId());
+    assertThat(online.getStatus(), is(400));
+    assertThat(online.readEntity(String.class), containsString("ORDER_AWAITING_PRICE_POS_ONLY"));
+    // A manager may also decide not to price it at all.
+    assertThat(
+        post("/orders/" + order + "/cancel", "{\"reason\":\"not stocked\"}", T).getStatus(),
+        is(200));
   }
 }

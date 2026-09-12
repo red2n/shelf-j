@@ -30,9 +30,9 @@ class _Server implements HttpClientAdapter {
     String body = '{"data":[]}';
     if (o.path.endsWith('/vat-return')) {
       body = honest
-          ? '{"data":{"box1":40.00,"box2":0,"box3":40.00,"box4":0,"box5":40.00,"box6":200.00,"box7":0,"box8":0,"box9":0,'
-              '"computedBoxes":[1,3,5,6],"notComputedBoxes":[2,4,7,8,9],"fitToFile":false,'
-              '"caveat":"Boxes 2, 4, 7, 8 and 9 are not computed. Not fit to file."}}'
+          ? '{"data":{"box1":40.00,"box2":0,"box3":40.00,"box4":30.00,"box5":10.00,"box6":200.00,"box7":150.00,"box8":0,"box9":0,'
+              '"computedBoxes":[1,3,4,5,6,7],"notComputedBoxes":[2,8,9],"fitToFile":true,'
+              '"caveat":"Boxes 4 and 7 come from the supplier invoices purchasing captured. Boxes 2, 8 and 9 are zero because no Northern Ireland protocol trade is modelled."}}'
           : '{"data":{"box1":40.00,"box2":0,"box3":40.00,"box4":0,"box5":40.00,"box6":200.00,"box7":0,"box8":0,"box9":0}}';
     }
     return ResponseBody.fromString(body, 200,
@@ -55,17 +55,22 @@ Future<void> _pump(WidgetTester tester, {required bool honest}) async {
 }
 
 void main() {
-  testWidgets('says on its face which boxes are not computed, and that it is not fit to file',
+  testWidgets('with box 4 real, the return is fit to file and says what the zero boxes assume',
       (tester) async {
     await _pump(tester, honest: true);
-    expect(find.byKey(const Key('vat-return-caveat')), findsOneWidget);
-    expect(find.textContaining('Not fit to file'), findsOneWidget);
-    // The real boxes carry figures; the others carry no figure at all.
-    expect(find.text('40.00'), findsNWidgets(3)); // boxes 1, 3 and 5
-    expect(find.byKey(const Key('vat-box-4-not-computed')), findsOneWidget);
-    expect(find.byKey(const Key('vat-box-7-not-computed')), findsOneWidget);
-    expect(find.textContaining('Not computed'), findsNWidgets(5));
-    expect(find.text('0.00'), findsNothing, reason: 'a zero would read as a figure someone might file');
+    expect(find.byKey(const Key('vat-return-caveat')), findsNothing,
+        reason: 'no red notice once every computed box is real');
+    expect(find.byKey(const Key('vat-return-note')), findsOneWidget);
+    expect(find.textContaining('Northern Ireland'), findsWidgets);
+    // Box 4 carries the reclaim, box 7 the net purchases; 2, 8 and 9 are not modelled.
+    expect(find.text('30.00'), findsOneWidget);
+    expect(find.text('150.00'), findsOneWidget);
+    expect(find.byKey(const Key('vat-box-2-not-computed')), findsOneWidget);
+    expect(find.byKey(const Key('vat-box-8-not-computed')), findsOneWidget);
+    expect(find.byKey(const Key('vat-box-9-not-computed')), findsOneWidget);
+    expect(find.byKey(const Key('vat-box-4-not-computed')), findsNothing);
+    expect(find.textContaining('Not modelled'), findsNWidgets(3));
+    expect(find.textContaining('Not computed'), findsNothing);
   });
 
   testWidgets('an older server that does not say defaults to not fit to file', (tester) async {

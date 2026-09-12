@@ -239,30 +239,27 @@ public final class Mappers {
         vr.periodTo(),
         VAT_BOXES_COMPUTED,
         VAT_BOXES_NOT_COMPUTED,
-        false,
+        true,
         VAT_RETURN_CAVEAT);
   }
 
   /**
-   * Boxes 1, 3, 5 and 6 come from tax_transactions; 2, 8 and 9 model nothing; 4 and 7 are
-   * elsewhere.
+   * Boxes 1, 3, 5, 6 from tax_transactions; 4, 7 from input_tax_transactions; 2, 8, 9 not modelled.
    */
-  static final java.util.List<Integer> VAT_BOXES_COMPUTED = java.util.List.of(1, 3, 5, 6);
+  static final java.util.List<Integer> VAT_BOXES_COMPUTED = java.util.List.of(1, 3, 4, 5, 6, 7);
 
-  static final java.util.List<Integer> VAT_BOXES_NOT_COMPUTED = java.util.List.of(2, 4, 7, 8, 9);
+  static final java.util.List<Integer> VAT_BOXES_NOT_COMPUTED = java.util.List.of(2, 8, 9);
 
   /**
-   * SJ-D39: the honest position, stated on the return itself rather than only in the guides. Box 4
-   * (input VAT reclaimed) and box 7 (net purchases) are captured by purchase-svc on every supplier
-   * invoice, and database-per-service means this service cannot read them; box 5 is therefore
-   * overstated by exactly the VAT the business may reclaim. That is an accounting decision — where
-   * the ledger seam lives — not more code here.
+   * SJ-D39 closed: box 4 (input VAT reclaimed) and box 7 (net purchases) are projected from the
+   * supplier invoices purchase-svc captures, by invoice date. Boxes 2, 8 and 9 concern Northern
+   * Ireland protocol acquisitions and supplies, which nothing here models; for a business without
+   * them they are genuinely zero, and the caveat says so rather than leaving a reader to guess.
    */
   static final String VAT_RETURN_CAVEAT =
-      "Boxes 2, 4, 7, 8 and 9 are not computed. Box 4 (VAT reclaimed on purchases) and box 7 (net"
-          + " purchases) are recorded by purchasing on every supplier invoice and are not carried"
-          + " here, so box 5 (net VAT to pay) is overstated by the VAT you are entitled to reclaim."
-          + " Not fit to file.";
+      "Boxes 4 and 7 come from the supplier invoices purchasing captured in the period, by invoice"
+          + " date. Boxes 2, 8 and 9 are zero because no Northern Ireland protocol acquisitions or"
+          + " supplies are modelled — check that applies to you before filing.";
 
   /**
    * Converts a manual price override to its wire form.

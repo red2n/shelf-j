@@ -619,6 +619,9 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         'channel': 'POS',
         'fulfilmentType': 'PICKUP',
         'currency': currency,
+        // SJ-D41: placed without prices, for a manager to price — not a
+        // PENDING order the stranded-order sweeper would cancel overnight.
+        'awaitingPrice': true,
         if (customer != null) 'customerId': customer.id,
         'contactPhone': customer != null ? '' : walkInPhone,
         'items': [

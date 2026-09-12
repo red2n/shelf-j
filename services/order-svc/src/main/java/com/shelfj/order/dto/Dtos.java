@@ -87,7 +87,27 @@ public final class Dtos {
               description =
                   "How the customer intends to pay: CASH, CARD, UPI, or WALLET. CASH + DELIVERY is"
                       + " cash-on-delivery; settlement itself is recorded by payment-svc.")
-          String paymentMethod) {}
+          String paymentMethod,
+      @Schema(
+              description =
+                  "A catalog-mode till order (SJ-D41): the goods are known, the prices are not."
+                      + " Placed as AWAITING_PRICE for a manager to price; never swept as"
+                      + " stranded. POS channel only.")
+          Boolean awaitingPrice) {}
+
+  @Schema(
+      name = "PriceOrderRequest",
+      description = "A manager's prices for an AWAITING_PRICE order, one per variant on it.")
+  public record PriceOrderRequest(
+      @NotNull @Valid List<PriceLine> lines,
+      @Schema(description = "VAT on the priced order; zero when omitted.") @PositiveOrZero
+          BigDecimal taxAmount) {}
+
+  @Schema(name = "PriceLine")
+  public record PriceLine(
+      @NotNull String variantId,
+      @Schema(description = "Unit price, in the order's currency.") @NotNull @PositiveOrZero
+          BigDecimal unitPrice) {}
 
   @Schema(name = "OrderItemResponse")
   public record OrderItemResponse(

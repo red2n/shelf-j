@@ -138,6 +138,22 @@ export default function ({ tenant, rival, shopper, stranger }) {
   const partialHistory = JSON.stringify(data(call('GET', `/api/order-svc/orders/${partial.id}/history`, { token: t })));
   truthy('[+] the history says how much went when', partialHistory.includes('part-fulfilled: 1 of 4'), partialHistory);
 
+  // ── catalog mode: placed without prices, priced by a manager (SJ-D41) ─────
+  const catalog = place({ storeId, channel: 'POS', fulfilmentType: 'PICKUP', awaitingPrice: true, items: [{ variantId, qty: 3, unitPrice: 0 }] });
+  expect(catalog, '[+] a catalog-mode till order is placed without prices', 201);
+  truthy('[+] and waits for a price rather than sitting PENDING for the sweeper', data(catalog).status === 'AWAITING_PRICE', data(catalog));
+  const cashierToken = tenant.cashier ? tenant.cashier.token : null;
+  expect(call('POST', `/api/order-svc/orders/${data(catalog).id}/price`, { token: t, body: { lines: [{ variantId, unitPrice: -1 }], taxAmount: 0 } }), '[-] a price below zero', 400);
+  expect(call('POST', `/api/order-svc/orders/${data(catalog).id}/price`, { token: t, body: { lines: [{ variantId: UNKNOWN, unitPrice: 4.5 }], taxAmount: 0 } }), '[-] a line that is not on the order', 400, 'ORDER_PRICE_LINE_UNKNOWN');
+  const priced = call('POST', `/api/order-svc/orders/${data(catalog).id}/price`, { token: t, body: { lines: [{ variantId, unitPrice: 4.5 }], taxAmount: 2.7 } });
+  expect(priced, '[+] a manager prices it', 200);
+  truthy('[+] PENDING, totals recomputed: 3 × 4.50 + 2.70', data(priced).status === 'PENDING' && Number(data(priced).total) === 16.2 && Number(data(priced).subtotal) === 13.5, data(priced));
+  expect(call('POST', `/api/order-svc/orders/${data(catalog).id}/price`, { token: t, body: { lines: [{ variantId, unitPrice: 9 }], taxAmount: 0 } }), '[-] priced twice', 409, 'ORDER_NOT_AWAITING_PRICE');
+  expect(pay(data(priced)), '[+] and paid for like any other till order', [200, 201]);
+  poll(30, () => statusOf(data(catalog).id) === 'FULFILLED');
+  truthy('[+] handed over when the payment lands', statusOf(data(catalog).id) === 'FULFILLED', statusOf(data(catalog).id));
+  expect(place({ storeId, channel: 'ONLINE', fulfilmentType: 'PICKUP', awaitingPrice: true, items: [{ variantId, qty: 1 }] }), '[-] an online order cannot be placed awaiting a price', 400, 'ORDER_AWAITING_PRICE_POS_ONLY');
+
   // ── cancel and void ─────────────────────────────────────────────────────────
   const toCancel = data(place(sale()));
   expect(call('POST', `/api/order-svc/orders/${toCancel.id}/cancel`, { token: t, body: {} }), '[-] cancel: a body must give a reason', 400);

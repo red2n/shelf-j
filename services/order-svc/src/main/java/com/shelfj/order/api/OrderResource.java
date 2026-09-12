@@ -307,6 +307,33 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  /**
+   * Prices a catalog-mode till order (SJ-D41). Management-only.
+   *
+   * @param id the AWAITING_PRICE order
+   * @param req a unit price per variant, and the VAT
+   * @return the order, now PENDING with its totals
+   */
+  @Operation(
+      summary = "Price an order that was placed without prices",
+      description =
+          "A catalog-mode till places the goods and leaves the prices to a manager. Every line on"
+              + " the order gets its unit price here; the totals are recomputed and the order"
+              + " becomes PENDING, payable like any other. Management-only (SJ-D41).")
+  @APIResponse(responseCode = "200", description = "Order priced, now PENDING")
+  @APIResponse(responseCode = "400", description = "A line unpriced, unknown, or priced below zero")
+  @APIResponse(responseCode = "409", description = "Order is not AWAITING_PRICE")
+  @POST
+  @Path("/{id}/price")
+  public Response price(
+      @PathParam("id") String id, com.shelfj.order.dto.Dtos.PriceOrderRequest req) {
+    ctx.requireAnyRole("OWNER", "MANAGER", "PLATFORM_ADMIN");
+    com.shelfj.web.Validations.validate(req);
+    var order = svc.priceOrder(ctx.tenantId(), Parsing.uuid(id, "id"), req, ctx.userId(), ctx);
+    var items = svc.getOrderItems(ctx.tenantId(), order.id());
+    return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
+  }
+
   /** Parses the optional fulfil body; a JAX-RS String entity keeps an absent body legal. */
   private static final jakarta.json.bind.Jsonb FULFIL_JSON =
       jakarta.json.bind.JsonbBuilder.create();

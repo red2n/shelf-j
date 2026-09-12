@@ -520,7 +520,7 @@ public class OrderRepository extends BaseOutboxRepository {
   public List<PendingOrderRef> findExpiredPendingOrders(int ttlHours, int limit) {
     return query(
         "SELECT tenant_id, id FROM orders"
-            + " WHERE status = 'PENDING' AND created_at < now() - make_interval(hours => ?)"
+            + " WHERE status = 'PENDING' AND updated_at < now() - make_interval(hours => ?)"
             + " ORDER BY created_at ASC LIMIT ?",
         ps -> {
           ps.setInt(1, ttlHours);
@@ -693,6 +693,106 @@ public class OrderRepository extends BaseOutboxRepository {
       ps.setObject(2, orderId);
       ps.executeUpdate();
     }
+  }
+
+  /**
+   * Prices an AWAITING_PRICE order (SJ-D41) in one transaction: every line gets its unit price and
+   * line total, the order its subtotal, tax and total, and it moves to PENDING — from where it is
+   * paid for like any other order. The sweeper counts its time-to-live from this moment, not from
+   * the day it was placed.
+   *
+   * @param prices unit price per variant; every variant on the order must be present
+   * @throws ApiException {@code ORDER_NOT_AWAITING_PRICE} (409); {@code ORDER_PRICE_LINE_MISSING}
+   *     (400) when a line on the order was not priced; {@code ORDER_PRICE_LINE_UNKNOWN} (400)
+   */
+  public Order priceOrder(
+      UUID tenantId, UUID orderId, Map<UUID, BigDecimal> prices, BigDecimal tax, UUID changedBy) {
+    return inTx(
+        c -> {
+          String status;
+          BigDecimal discount;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT status, discount_amount FROM orders WHERE tenant_id=? AND id=? FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next()) {
+                throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
+              }
+              status = rs.getString(1);
+              discount = rs.getBigDecimal(2) == null ? BigDecimal.ZERO : rs.getBigDecimal(2);
+            }
+          }
+          if (!Order.STATUS_AWAITING_PRICE.equals(status)) {
+            throw ApiException.conflict(
+                "ORDER_NOT_AWAITING_PRICE",
+                "only an order awaiting a price can be priced; this one is " + status);
+          }
+          List<OrderItem> items = new java.util.ArrayList<>();
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total, notes,"
+                      + " weighing_instrument_id, fulfilled_qty FROM order_items"
+                      + " WHERE tenant_id=? AND order_id=? ORDER BY created_at FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              while (rs.next()) {
+                items.add(mapOrderItem(rs));
+              }
+            }
+          }
+          for (UUID v : prices.keySet()) {
+            if (items.stream().noneMatch(i -> i.variantId().equals(v))) {
+              throw ApiException.badRequest(
+                  "ORDER_PRICE_LINE_UNKNOWN", "variant " + v + " is not on this order");
+            }
+          }
+          BigDecimal subtotal = BigDecimal.ZERO;
+          for (OrderItem i : items) {
+            BigDecimal price = prices.get(i.variantId());
+            if (price == null) {
+              throw ApiException.badRequest(
+                  "ORDER_PRICE_LINE_MISSING", "no price given for variant " + i.variantId());
+            }
+            BigDecimal lineTotal =
+                price.multiply(i.qty()).setScale(2, java.math.RoundingMode.HALF_UP);
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE order_items SET unit_price=?, line_total=? WHERE tenant_id=? AND id=?")) {
+              ps.setBigDecimal(1, price);
+              ps.setBigDecimal(2, lineTotal);
+              ps.setObject(3, tenantId);
+              ps.setObject(4, i.id());
+              ps.executeUpdate();
+            }
+            subtotal = subtotal.add(lineTotal);
+          }
+          BigDecimal total = subtotal.add(tax).subtract(discount).max(BigDecimal.ZERO);
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET subtotal=?, tax_amount=?, total=?, status=?, updated_at=now()"
+                      + " WHERE tenant_id=? AND id=?")) {
+            ps.setBigDecimal(1, subtotal);
+            ps.setBigDecimal(2, tax);
+            ps.setBigDecimal(3, total);
+            ps.setString(4, Order.STATUS_PENDING);
+            ps.setObject(5, tenantId);
+            ps.setObject(6, orderId);
+            ps.executeUpdate();
+          }
+          appendStatusHistory(
+              c,
+              tenantId,
+              orderId,
+              Order.STATUS_AWAITING_PRICE,
+              Order.STATUS_PENDING,
+              "priced: total " + total.toPlainString(),
+              changedBy);
+          return findOrderInTx(c, tenantId, orderId);
+        },
+        "price order " + orderId);
   }
 
   /** One line's share of a fulfilment, for the event and the caller. */

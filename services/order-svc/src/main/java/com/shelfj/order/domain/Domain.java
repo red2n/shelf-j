@@ -165,6 +165,14 @@ public final class Domain {
     public static final String FULFILMENT_DELIVERY = "DELIVERY";
     public static final String FULFILMENT_INSTORE = "INSTORE";
     public static final String STATUS_PENDING = "PENDING";
+
+    /**
+     * A catalog-mode till order: placed with the goods but no prices, waiting for a manager to
+     * price it (SJ-D41). Not PENDING, so the stranded-order sweeper never cancels it; priced, it
+     * becomes PENDING and takes payment like any other order.
+     */
+    public static final String STATUS_AWAITING_PRICE = "AWAITING_PRICE";
+
     public static final String STATUS_CONFIRMED = "CONFIRMED";
     public static final String STATUS_FULFILLED = "FULFILLED";
 

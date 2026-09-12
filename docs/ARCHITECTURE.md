@@ -336,7 +336,7 @@ Payment capture/refund plus till sessions, cash drawer movements, and end-of-day
 Suppliers, purchase orders, goods receipts, and finance-adjacent intercompany invoicing.
 - **API:** `/suppliers`; `/purchase-orders` create/submit/lines; `/goods-receipts`; `/intercompany-invoices` (+settle); `/nominal-ledger` (read-only double-entry view).
 - **Tables:** `suppliers`, `purchase_orders`, `purchase_order_lines`, `goods_receipts`, `intercompany_invoices`, `nominal_ledger_entries`.
-- **Events:** publishes `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`.
+- **Events:** publishes `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`, `SupplierInvoiceCaptured`.
 - **Notable:** FRS 102/UK GAAP-style double-entry nominal ledger; intercompany AR/AP invoicing for inter-org transfers.
 
 ### customer-svc — Customers, Loyalty, Store Credit
@@ -383,6 +383,7 @@ tenant-svc   ──REST──►  iam-svc         (verify user on staff assignme
 | `TenantCreated` / `TenantStatusChanged` | tenant-svc | iam-svc, cart-svc, order-svc (status projections) |
 | `StoreCreated` / `StoreStatusChanged` | tenant-svc | iam-svc, cart-svc, order-svc |
 | `GoodsReceived` | purchase-svc | inventory-svc, reporting-svc |
+| `SupplierInvoiceCaptured` | purchase-svc | pricing-svc (input VAT → VAT return boxes 4 and 7) |
 | `StockReceived` / `StockDeducted` / `StockAdjusted` | inventory-svc | reporting-svc, order-svc (POS stock-position projection) |
 | `StockBelowThreshold` | inventory-svc | notification-svc |
 | `OrderPlaced` / `OrderConfirmed` | order-svc | inventory-svc, customer-svc, cart-svc, reporting-svc, notification-svc |
