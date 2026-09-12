@@ -76,6 +76,7 @@ class BruteForceFilterLockoutTest {
     when(config.bruteForceMaxFailures()).thenReturn(2);
     when(config.bruteForceBlockMinutes()).thenReturn(15);
     lenient().when(config.bruteForceLoginPath()).thenReturn("/auth/login");
+    lenient().when(config.bruteForceTokenPaths()).thenReturn("/marketing/unsubscribe");
     lenient().when(config.trustForwardedHeaders()).thenReturn(false);
 
     filter = new BruteForceFilter();
@@ -159,5 +160,72 @@ class BruteForceFilterLockoutTest {
     filter.filter(request);
 
     verify(request, never()).abortWith(any());
+  }
+
+  @Test
+  void guessedUnsubscribeTokensLockTheAddressOut() throws IOException {
+    // The opt-out link is public by design (PECR reg.23). A wrong token is a 404 from the
+    // service, and enough of them from one address must be treated like enough wrong passwords.
+    lenient().when(uriInfo.getPath()).thenReturn("api/customer-svc/marketing/unsubscribe");
+    when(response.getStatus()).thenReturn(404);
+
+    for (int i = 0; i < 2; i++) {
+      freshBody();
+      filter.filter(request);
+      filter.filter(request, response);
+    }
+    verify(request, never()).abortWith(any());
+
+    freshBody();
+    filter.filter(request);
+    verify(request).abortWith(any());
+  }
+
+  @Test
+  void aMalformedUnsubscribeIsNotAGuess() throws IOException {
+    // A 400 is a body the service could not read, not a token that missed: it must not count,
+    // or a client with a bug would lock itself out of an endpoint that exists to be easy.
+    lenient().when(uriInfo.getPath()).thenReturn("api/customer-svc/marketing/unsubscribe");
+    lenient().when(response.getStatus()).thenReturn(400);
+
+    for (int i = 0; i < 5; i++) {
+      freshBody();
+      filter.filter(request);
+      filter.filter(request, response);
+    }
+    verify(request, never()).abortWith(any());
+  }
+
+  @Test
+  void aRightTokenClearsTheCounter() throws IOException {
+    lenient().when(uriInfo.getPath()).thenReturn("api/customer-svc/marketing/unsubscribe");
+    when(response.getStatus()).thenReturn(404, 200, 404, 404);
+
+    freshBody();
+    filter.filter(request);
+    filter.filter(request, response); // 404: one miss
+    freshBody();
+    filter.filter(request);
+    filter.filter(request, response); // 200: the right token clears it
+    freshBody();
+    filter.filter(request);
+    filter.filter(request, response); // 404
+    freshBody();
+    filter.filter(request); // still one short of the limit
+    verify(request, never()).abortWith(any());
+  }
+
+  @Test
+  void unsubscribeMissesDoNotLockLoginAndViceVersa() throws IOException {
+    // Same address, different counters? No — the IP key is shared on purpose: an address that is
+    // guessing tokens is an address that is guessing, and login uses the same key. What must NOT
+    // happen is a token miss being counted twice, or a user key being invented from the body.
+    lenient().when(uriInfo.getPath()).thenReturn("api/customer-svc/marketing/unsubscribe");
+    when(response.getStatus()).thenReturn(404);
+    freshBody();
+    filter.filter(request);
+    filter.filter(request, response);
+    org.junit.jupiter.api.Assertions.assertNull(
+        props.get("login.userKey"), "a token path must not derive an account key from the body");
   }
 }

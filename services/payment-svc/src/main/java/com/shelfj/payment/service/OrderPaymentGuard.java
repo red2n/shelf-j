@@ -61,10 +61,14 @@ public class OrderPaymentGuard {
           "PAYMENT_ORDER_NOT_PAYABLE",
           "order " + orderId + " is not awaiting payment (status: " + order.status() + ")");
     }
+    // Matched on the login the order was placed with: that is the id the shopper's token carries.
+    // It used to be compared against customerId, which worked only because order-svc stamped the
+    // login into that column — the confusion SJ-D44 unpicked. A guest order has neither id, and
+    // stays payable by whoever holds its id, as before.
     UUID callerId = ctx.userId();
     if (callerId != null
-        && order.customerId() != null
-        && !order.customerId().equals(callerId.toString())) {
+        && order.loginId() != null
+        && !order.loginId().equals(callerId.toString())) {
       throw ApiException.notFound("PAYMENT_ORDER_NOT_FOUND", "order " + orderId + " not found");
     }
     if (order.total().compareTo(amount) != 0) {
@@ -128,12 +132,17 @@ public class OrderPaymentGuard {
     // class note above for why this is not SJ-D13's bypass: that one keyed on the CALLER having no
     // principal, which is attacker-controlled; this keys on the ORDER having no customer, which is
     // a fact about the order and cannot be arranged by the caller.
-    if (order.customerId() == null) {
+    // An order with no login was not placed by a signed-in shopper: either a guest checkout, whose
+    // intent id is the capability, or a till sale, which no customer token can reach anyway because
+    // this branch is only reached without a staff role. Checking customerId here instead would deny
+    // the owner their own intent, since that id is the shop's record of them and not what their
+    // token carries (SJ-D44).
+    if (order.loginId() == null) {
       return;
     }
     // ctx.userId() is null for an unidentified caller. Compare from the order's side so a null
     // principal cannot reach a .toString() — the NPE SJ-D13 uncovered when the exemption went away.
-    if (ctx.userId() == null || !order.customerId().equals(ctx.userId().toString())) {
+    if (ctx.userId() == null || !order.loginId().equals(ctx.userId().toString())) {
       throw notFound.get();
     }
   }

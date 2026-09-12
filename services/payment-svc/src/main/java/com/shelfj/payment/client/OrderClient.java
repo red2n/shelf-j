@@ -55,6 +55,12 @@ public class OrderClient {
   /** The order-svc fields needed to validate a payment claim against the order it targets. */
   public record OrderInfo(
       String customerId,
+      /**
+       * The login that placed the order, for a signed-in shopper's online sale. This — not {@code
+       * customerId} — is what a caller's token carries, so it is what ownership is checked against
+       * (SJ-D44). Null for a guest checkout and for a till sale.
+       */
+      String loginId,
       String channel,
       BigDecimal total,
       String status,
@@ -129,6 +135,7 @@ public class OrderClient {
       JsonObject data = reader.readObject().getJsonObject("data");
       return new OrderInfo(
           optionalString(data, "customerId"),
+          optionalString(data, "loginId"),
           data.getString("channel"),
           data.getJsonNumber("total").bigDecimalValue(),
           data.getString("status"),

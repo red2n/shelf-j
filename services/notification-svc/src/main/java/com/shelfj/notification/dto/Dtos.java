@@ -76,11 +76,25 @@ public final class Dtos {
           @jakarta.validation.constraints.Pattern(
               regexp = "^[0-9a-fA-F-]{36}$",
               message = "customerId must be a UUID")
-          String customerId) {}
+          String customerId,
+      @Schema(
+              description =
+                  "TRANSACTIONAL (the default) for a message about something the person did — an"
+                      + " order, a receipt, a password. MARKETING for anything promoting the"
+                      + " business, which PECR reg.22 allows only with recorded consent and which"
+                      + " is refused outright without it. A marketing send must name the customer,"
+                      + " because consent belongs to a person rather than to an address.")
+          String category) {}
 
   @Schema(name = "SendNotificationResponse")
   public record SendNotificationResponse(
       @Schema(description = "Event id used for dedupe.") String eventId,
       String type,
       @Schema(description = "SENT when delivered or already delivered.") String status) {}
+
+  @Schema(
+      name = "MarketingAllowance",
+      description = "customer-svc's answer to whether one marketing message may be sent.")
+  public record MarketingAllowance(
+      boolean allowed, String basis, String reason, String unsubscribeToken) {}
 }

@@ -282,6 +282,13 @@ final routerProvider = Provider<GoRouter>((ref) {
               builder: (_) => storefront_lib.StorefrontOrdersScreen(),
             ),
           ),
+          GoRoute(
+            path: '/store/privacy',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: storefront_lib.loadLibrary,
+              builder: (_) => storefront_lib.StorefrontPrivacyScreen(),
+            ),
+          ),
         ],
       ),
     ],

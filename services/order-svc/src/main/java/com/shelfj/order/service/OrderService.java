@@ -67,6 +67,7 @@ public class OrderService {
   @Inject StoreStatusRepository storeStatusRepo;
   @Inject com.shelfj.order.config.ServiceConfig config;
   @Inject com.shelfj.order.client.PricingClient pricing;
+  @Inject com.shelfj.order.client.CustomerLinkClient customerLink;
   @Inject com.shelfj.order.client.InventoryClient inventory;
   @Inject com.shelfj.order.client.NotificationClient notifications;
   @Inject com.shelfj.order.client.TenantClient tenants;
@@ -214,11 +215,19 @@ public class OrderService {
           "Tenant is suspended or blocked — orders cannot be placed at this time");
     // A signed-in storefront customer is bound to their own order from the authenticated identity —
     // never from the (untrusted) request body. Staff placing a POS order may still attach a
-    // customer
-    // explicitly via the body.
+    // customer explicitly via the body.
+    //
+    // SJ-D44: the two ids are not the same id. A login is global; the shop's customer record is
+    // per-tenant. Stamping the login into customer_id made every customer-keyed path — loyalty,
+    // the confirmation email, erasure — miss every online order. The login is recorded as a login,
+    // and the shop's record of that person is resolved from customer-svc, which creates one the
+    // first time. If that call fails the order still stands with its login id: a sale is never
+    // lost over a link, and the next order makes it.
+    UUID loginId = null;
     UUID customerId;
     if (ctx.hasRole("CUSTOMER") && ctx.userId() != null) {
-      customerId = ctx.userId();
+      loginId = ctx.userId();
+      customerId = customerLink.customerIdFor(tenantId, loginId, ctx.email()).orElse(null);
     } else {
       customerId = req.customerId() != null ? Parsing.uuid(req.customerId(), "customerId") : null;
     }
@@ -381,6 +390,7 @@ public class OrderService {
             tenantId,
             storeId,
             customerId,
+            loginId,
             req.channel(),
             fulfilment,
             Order.STATUS_PENDING,
@@ -410,7 +420,7 @@ public class OrderService {
           repo.createOrder(
               order,
               items,
-              Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId),
+              Events.orderPlaced(tenantId, orderId, req.channel(), customerId, loginId, storeId),
               discountAudit,
               quoted == null ? List.of() : quoted.applied());
       // Spending the coupon is deliberately the last thing, and deliberately outside the order's
@@ -455,6 +465,8 @@ public class OrderService {
    * @param tenantId owning tenant
    * @param storeId restrict to one store, or {@code null}
    * @param customerId restrict to one customer, or {@code null}
+   * @param loginId restrict to the orders one login placed, or {@code null} — a shopper's own
+   *     history filters on this, not on the customer id (SJ-D44)
    * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null}
    * @param status restrict to one order status, or {@code null}
    * @param from inclusive lower bound on creation time, or {@code null}
@@ -468,6 +480,7 @@ public class OrderService {
       UUID tenantId,
       UUID storeId,
       UUID customerId,
+      UUID loginId,
       String channel,
       String status,
       Instant from,
@@ -494,6 +507,7 @@ public class OrderService {
             tenantId,
             storeId,
             customerId,
+            loginId,
             channel,
             status,
             from,
@@ -509,6 +523,30 @@ public class OrderService {
     return new OrderPage(
         page, com.shelfj.web.Cursor.encode(last.createdAt().toString() + "|" + last.id()));
   }
+
+  /** Hard cap on one export, so a data request cannot read an unbounded table into memory. */
+  private static final int EXPORT_MAX_ORDERS = 2000;
+
+  /**
+   * Every order one person placed at this shop, with their lines — the sales half of a data export
+   * (UK GDPR art.20), assembled by customer-svc.
+   *
+   * @param tenantId owning tenant
+   * @param customerId the shop's record of the person, or {@code null}
+   * @param loginId the login they sign in with, or {@code null}
+   * @return the orders newest first, each with its lines; empty when both ids are null
+   */
+  public List<OrderWithItems> exportOrdersFor(UUID tenantId, UUID customerId, UUID loginId) {
+    if (customerId == null && loginId == null) {
+      return List.of();
+    }
+    return repo.listOrdersForSubject(tenantId, customerId, loginId, EXPORT_MAX_ORDERS).stream()
+        .map(o -> new OrderWithItems(o, repo.findOrderItems(tenantId, o.id())))
+        .toList();
+  }
+
+  /** An order and its lines, as the export needs them together. */
+  public record OrderWithItems(Order order, List<com.shelfj.order.domain.Domain.OrderItem> items) {}
 
   /**
    * Reads an order with tenant scoping but <strong>no</strong> object-level authorization.
@@ -560,7 +598,10 @@ public class OrderService {
     // request carries a tenant and no principal too, so the shape was reachable from outside and
     // any id could be read by anyone who had one. The internal callers now stamp a staff role
     // (payment-svc OrderClient, notification-svc CustomerClient), so nothing needs the exemption.
-    if (order.customerId() == null || !order.customerId().equals(ctx.userId()))
+    // Matched on the login the order was placed with, not the customer id: they are different ids
+    // (SJ-D44), and the login is the one the token carries. An order with no login was not placed
+    // by a shopper, so no shopper may read it.
+    if (order.loginId() == null || !order.loginId().equals(ctx.userId()))
       throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
   }
 
@@ -1414,10 +1455,16 @@ public class OrderService {
    * open ones keep their delivery details until they finish, then {@link #sweepErasures} takes
    * them.
    *
+   * @param tenantId the shop that erased the customer
+   * @param customerId the erased customer record
+   * @param loginId the login that record was linked to, or {@code null} for a walk-in — the orders
+   *     that shopper placed online are filed under it (SJ-D44)
+   * @param eventId the event's id, which makes this idempotent
    * @return false when the event had already been applied
    */
-  public boolean handleCustomerErased(UUID tenantId, UUID customerId, UUID eventId) {
-    return repo.applyCustomerErasure(tenantId, customerId, eventId, "order-svc/customer-erased");
+  public boolean handleCustomerErased(UUID tenantId, UUID customerId, UUID loginId, UUID eventId) {
+    return repo.applyCustomerErasure(
+        tenantId, customerId, loginId, eventId, "order-svc/customer-erased");
   }
 
   /** Redacts orders that have finished since their customer was erased. */

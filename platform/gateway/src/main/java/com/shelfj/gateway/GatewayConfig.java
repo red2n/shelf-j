@@ -64,6 +64,19 @@ public class GatewayConfig {
   String bruteForceLoginPath;
 
   /**
+   * Unauthenticated endpoints that accept a secret in the body and answer 404 when it is wrong,
+   * comma-separated and suffix-matched like the login path. A wrong secret counts as a failure
+   * against the client IP under the same lockout as a wrong password: the opt-out link in a
+   * marketing message is a bearer token, and while 256 random bits cannot be guessed, an endpoint
+   * that would let someone try forever is the kind of thing an auditor asks about.
+   */
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.gateway.brute-force.token-paths",
+      defaultValue = "/marketing/unsubscribe")
+  String bruteForceTokenPaths;
+
+  /**
    * Browser origins allowed to call the API (CORS). Absent/empty (the default) means no CORS
    * headers are emitted at all, so browser frontends are denied until origins are configured
    * explicitly. "*" allows any origin (dev only). Injected as Optional because MP Config treats an
@@ -201,6 +214,13 @@ public class GatewayConfig {
 
   public boolean bruteForceEnabled() {
     return bruteForceEnabled;
+  }
+
+  /**
+   * @return the token-bearing public paths guarded against guessing, as configured
+   */
+  public String bruteForceTokenPaths() {
+    return bruteForceTokenPaths;
   }
 
   public int bruteForceMaxFailures() {

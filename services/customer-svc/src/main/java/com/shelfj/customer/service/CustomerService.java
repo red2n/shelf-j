@@ -4,15 +4,27 @@ import com.shelfj.customer.domain.Domain.Customer;
 import com.shelfj.customer.domain.Domain.CustomerAddress;
 import com.shelfj.customer.domain.Domain.LoyaltyAccount;
 import com.shelfj.customer.domain.Domain.LoyaltyLedgerEntry;
+import com.shelfj.customer.domain.Domain.MarketingConsentEntry;
+import com.shelfj.customer.domain.Domain.MarketingPreference;
 import com.shelfj.customer.domain.Domain.StoreCreditAccount;
 import com.shelfj.customer.dto.Dtos.AddAddressRequest;
+import com.shelfj.customer.dto.Dtos.AddressResponse;
 import com.shelfj.customer.dto.Dtos.AdjustPointsRequest;
+import com.shelfj.customer.dto.Dtos.DataExportResponse;
 import com.shelfj.customer.dto.Dtos.EarnPointsRequest;
+import com.shelfj.customer.dto.Dtos.ExportSubject;
 import com.shelfj.customer.dto.Dtos.IssueStoreCreditRequest;
+import com.shelfj.customer.dto.Dtos.LoyaltyAccountResponse;
+import com.shelfj.customer.dto.Dtos.LoyaltyLedgerEntryResponse;
+import com.shelfj.customer.dto.Dtos.MarketingChannelChoice;
 import com.shelfj.customer.dto.Dtos.RedeemPointsRequest;
 import com.shelfj.customer.dto.Dtos.RedeemStoreCreditRequest;
 import com.shelfj.customer.dto.Dtos.RegisterCustomerRequest;
+import com.shelfj.customer.dto.Dtos.SetMarketingPreferencesRequest;
+import com.shelfj.customer.dto.Dtos.StoreCreditAccountResponse;
+import com.shelfj.customer.dto.Dtos.StoreCreditLedgerEntryResponse;
 import com.shelfj.customer.dto.Dtos.UpdateCustomerRequest;
+import com.shelfj.customer.mapper.Mappers;
 import com.shelfj.customer.repo.CustomerRepository;
 import com.shelfj.ids.Ids;
 import com.shelfj.service.OutboxRow;
@@ -41,6 +53,8 @@ public class CustomerService {
   public static final String ORDER_CONFIRMED_CONSUMER = "customer-svc/order-confirmed";
 
   @Inject CustomerRepository repo;
+  @Inject com.shelfj.customer.client.OrderClient orders;
+  @Inject MarketingConsentService marketing;
 
   /** Points awarded per unit of order currency spent (e.g. 1 → 1 point per £1). */
   @Inject
@@ -72,6 +86,7 @@ public class CustomerService {
         new Customer(
             id,
             tenantId,
+            null,
             req.email().toLowerCase(Locale.ROOT),
             req.phone(),
             req.firstName().trim(),
@@ -93,7 +108,202 @@ public class CustomerService {
     var event =
         new OutboxRow(
             "CustomerRegistered", "shelfj.customer.customer-registered", tenantId, id, payload);
-    return repo.createCustomer(customer, event);
+    Customer created = repo.createCustomer(customer, event);
+    // The consent tick at signup, recorded where consent lives rather than only as a timestamp on
+    // the customer row: PECR asks what the person agreed to and UK GDPR art.7(1) asks for evidence
+    // of it, and a single column can answer neither. Written after the customer exists rather than
+    // with it — if this fails, the shop has a customer it may not market to, which is the safe way
+    // round for the failure to land.
+    if (Boolean.TRUE.equals(req.gdprConsent())) {
+      marketing.setPreferences(
+          tenantId,
+          created,
+          new SetMarketingPreferencesRequest(
+              List.of(
+                  new MarketingChannelChoice(
+                      MarketingPreference.CHANNEL_EMAIL, true, MarketingPreference.BASIS_CONSENT)),
+              "Marketing consent given when the customer record was created"),
+          MarketingConsentEntry.SOURCE_SIGNUP,
+          null);
+    }
+    return created;
+  }
+
+  /**
+   * Returns the customer record the signed-in shopper owns in this tenant, creating it on first use
+   * (SJ-D44).
+   *
+   * <p>A login is global and a shop's customer record is not, so until a shopper buys somewhere,
+   * the shop holds nothing about them. This is the join: it runs at checkout, so the order carries
+   * a customer id the shop can actually resolve — which is what lets loyalty award points for an
+   * online order, the confirmation email find an address, and an erasure reach what the order
+   * holds.
+   *
+   * <p>The identity comes from the verified token, never the request: the caller may ask only for
+   * their own record.
+   *
+   * @param tenantId owning tenant
+   * @param loginId the authenticated login, from the token
+   * @param email that login's own email, from the token
+   * @return the linked customer record, whether it already existed or was created here
+   * @throws ApiException {@code CUSTOMER_LOGIN_UNIDENTIFIED} (400) when the token carried no email,
+   *     since a record with no way to reach the person is worse than none
+   */
+  public Customer linkLogin(UUID tenantId, UUID loginId, String email) {
+    if (email == null || email.isBlank()) {
+      throw ApiException.badRequest(
+          "CUSTOMER_LOGIN_UNIDENTIFIED", "the token carries no email to identify the shopper by");
+    }
+    String normalized = email.trim().toLowerCase(Locale.ROOT);
+    UUID newId = Ids.newId();
+    String payload =
+        Json.createObjectBuilder()
+            .add("customerId", newId.toString())
+            .add("tenantId", tenantId.toString())
+            .add("email", normalized)
+            .build()
+            .toString();
+    var event =
+        new OutboxRow(
+            "CustomerRegistered", "shelfj.customer.customer-registered", tenantId, newId, payload);
+    return repo.linkLogin(tenantId, loginId, normalized, newId, event);
+  }
+
+  /**
+   * The customer record a login owns in this tenant, if there is one.
+   *
+   * @param tenantId owning tenant
+   * @param loginId the authenticated login, from the token
+   * @return the linked customer record, or empty when this tenant holds none
+   */
+  public java.util.Optional<Customer> findByLogin(UUID tenantId, UUID loginId) {
+    return repo.findByLogin(tenantId, loginId);
+  }
+
+  /**
+   * Reads the customer record a login owns in this tenant, without creating one.
+   *
+   * @param tenantId owning tenant
+   * @param loginId the authenticated login, from the token
+   * @return the linked customer record
+   * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when this tenant holds no record for that
+   *     login
+   */
+  public Customer getByLogin(UUID tenantId, UUID loginId) {
+    return repo.findByLogin(tenantId, loginId)
+        .orElseThrow(() -> ApiException.notFound("CUSTOMER_NOT_FOUND", "Customer not found"));
+  }
+
+  /** Hard cap on the ledgers an export carries, so one request cannot read an unbounded table. */
+  private static final int EXPORT_LEDGER_LIMIT = 5000;
+
+  /**
+   * Everything this shop holds about one person, in one machine-readable document (UK GDPR art.20 —
+   * the right to receive your data in a structured, commonly used, machine-readable format).
+   *
+   * <p>Assembled, not stored. The profile, addresses, loyalty and store credit are this service's;
+   * the orders belong to order-svc and are asked for (golden rule #1). Both ids are passed on,
+   * because a person's purchases are split across them — online sales under the login, till sales
+   * under the customer record (SJ-D44) — and an export that carried half of somebody's history
+   * while claiming to be their data would be a false answer rather than a thin one.
+   *
+   * <p>A person with no customer record still gets an export: they may have bought as a signed-in
+   * shopper before the shop ever wrote one down.
+   *
+   * @param tenantId owning tenant
+   * @param customer the shop's record of the person, or {@code null} when it holds none
+   * @param loginId the login they sign in with, or {@code null}
+   * @param loginEmail the email on that login, used when there is no customer record to take one
+   *     from
+   * @return the assembled export
+   * @throws ApiException {@code EXPORT_NO_SUBJECT} (400) when neither a customer nor a login was
+   *     given; {@code EXPORT_ORDERS_UNAVAILABLE} (503) when order-svc could not be reached
+   */
+  public DataExportResponse export(
+      UUID tenantId, Customer customer, UUID loginId, String loginEmail) {
+    UUID customerId = customer == null ? null : customer.id();
+    if (customerId == null && loginId == null) {
+      throw ApiException.badRequest("EXPORT_NO_SUBJECT", "no customer and no login to export");
+    }
+    List<AddressResponse> addresses =
+        customerId == null
+            ? List.of()
+            : repo.listAddresses(tenantId, customerId).stream().map(Mappers::toAddress).toList();
+    LoyaltyAccountResponse loyalty =
+        customerId == null
+            ? null
+            : repo.findLoyaltyAccount(tenantId, customerId).map(Mappers::toLoyalty).orElse(null);
+    List<LoyaltyLedgerEntryResponse> loyaltyLedger =
+        customerId == null
+            ? List.of()
+            : repo.listLedger(tenantId, customerId, EXPORT_LEDGER_LIMIT).stream()
+                .map(Mappers::toLedgerEntry)
+                .toList();
+    List<StoreCreditAccountResponse> credit =
+        customerId == null
+            ? List.of()
+            : repo.listStoreCreditAccounts(tenantId, customerId).stream()
+                .map(Mappers::toStoreCredit)
+                .toList();
+    List<StoreCreditLedgerEntryResponse> creditLedger =
+        customerId == null
+            ? List.of()
+            : repo.listStoreCreditLedger(tenantId, customerId, EXPORT_LEDGER_LIMIT).stream()
+                .map(Mappers::toStoreCreditEntry)
+                .toList();
+
+    List<com.shelfj.customer.dto.Dtos.MarketingPreferenceResponse> preferences =
+        customerId == null
+            ? List.of()
+            : marketing.preferences(tenantId, customerId).stream()
+                .map(Mappers::toMarketingPreference)
+                .toList();
+    List<com.shelfj.customer.dto.Dtos.MarketingConsentEntryResponse> consentLog =
+        customerId == null
+            ? List.of()
+            : marketing.consentLog(tenantId, customerId).stream()
+                .map(Mappers::toMarketingConsentEntry)
+                .toList();
+
+    return new DataExportResponse(
+        Instant.now().toString(),
+        tenantId.toString(),
+        new ExportSubject(
+            customerId == null ? null : customerId.toString(),
+            loginId == null ? null : loginId.toString(),
+            customer != null ? customer.email() : loginEmail),
+        customer == null ? null : Mappers.toCustomer(customer),
+        addresses,
+        loyalty,
+        loyaltyLedger,
+        credit,
+        creditLedger,
+        preferences,
+        consentLog,
+        ordersOf(tenantId, customerId, loginId));
+  }
+
+  /**
+   * The orders half of the export, with every way of not getting them turned into one refusal.
+   *
+   * <p>An open circuit throws {@code CircuitBreakerOpenException} from the interceptor, before the
+   * client's own method body runs, so the client cannot catch it — and left alone it would surface
+   * as a 500 saying nothing. Either way the answer is the same: the shop cannot produce a complete
+   * export right now, and must say so rather than serve a partial one.
+   */
+  private jakarta.json.JsonArray ordersOf(UUID tenantId, UUID customerId, UUID loginId) {
+    try {
+      return orders.ordersOf(tenantId, customerId, loginId);
+    } catch (ApiException e) {
+      throw e;
+    } catch (RuntimeException e) {
+      throw new ApiException(
+          503,
+          "EXPORT_ORDERS_UNAVAILABLE",
+          "order-svc could not be reached, so the export would be incomplete",
+          List.of(),
+          e);
+    }
   }
 
   /**
@@ -193,6 +403,7 @@ public class CustomerService {
         new Customer(
             existing.id(),
             tenantId,
+            existing.loginId(),
             existing.email(),
             req.phone(),
             req.firstName().trim(),
@@ -220,18 +431,24 @@ public class CustomerService {
    *     tenant
    */
   public Customer anonymize(UUID tenantId, UUID customerId) {
-    get(tenantId, customerId);
+    Customer existing = get(tenantId, customerId);
     // Ids only. The event outlives its handling — in the outbox and on the topic — so it must not
     // carry the email or phone it exists to erase.
-    String payload =
+    //
+    // The login goes with it when the record has one: this shop's orders file an online sale under
+    // the shopper's login, so an erasure that named only the customer id could not reach the
+    // delivery name, phone and address on exactly the orders that carry them (SJ-D44).
+    var builder =
         Json.createObjectBuilder()
             .add("eventId", Ids.newId().toString())
             .add("eventType", "CustomerErased")
             .add("tenantId", tenantId.toString())
             .add("customerId", customerId.toString())
-            .add("occurredAt", Instant.now().toString())
-            .build()
-            .toString();
+            .add("occurredAt", Instant.now().toString());
+    if (existing.loginId() != null) {
+      builder.add("loginId", existing.loginId().toString());
+    }
+    String payload = builder.build().toString();
     return repo.anonymize(
         tenantId,
         customerId,

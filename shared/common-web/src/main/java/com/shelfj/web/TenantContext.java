@@ -24,6 +24,7 @@ public class TenantContext {
 
   private UUID tenantId;
   private UUID userId;
+  private String email;
   private Set<String> roles = Set.of();
   private Set<UUID> storeIds = Set.of();
   private String requestId;
@@ -40,6 +41,17 @@ public class TenantContext {
    */
   public UUID userId() {
     return userId;
+  }
+
+  /**
+   * The caller's own email address, as the gateway read it from the verified JWT. Present only for
+   * a request that carried a token with an email claim: a guest storefront request, a
+   * service-to-service call and a token minted before the claim existed all have none.
+   *
+   * @return the caller's email address, or {@code null} if the request carried none
+   */
+  public String email() {
+    return email;
   }
 
   /**
@@ -142,5 +154,15 @@ public class TenantContext {
     this.roles = roles == null ? Set.of() : Set.copyOf(roles);
     this.storeIds = storeIds == null ? Set.of() : Set.copyOf(storeIds);
     this.requestId = requestId;
+  }
+
+  /**
+   * Records the caller's email address. Separate from {@link #set} so the identity a service
+   * already trusts is not re-plumbed through every test that builds a context.
+   *
+   * @param email the email claim from the verified JWT, or {@code null}
+   */
+  void setEmail(String email) {
+    this.email = email == null || email.isBlank() ? null : email.trim();
   }
 }

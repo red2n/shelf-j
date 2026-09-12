@@ -205,6 +205,7 @@ A sidebar (wide) / chip selector (narrow) between fifteen read-only tables, each
 - List/search customers; **Add** (name, email, phone, etc.) and **Edit** (adds gender, DOB).
 - **Customer detail**: loyalty points balance + tier, store-credit balance, and four quick actions — **Earn points**, **Redeem points**, **Issue credit**, **Redeem credit** — each opening an amount + reason mini-dialog. A scrollable **loyalty ledger** shows the last 20 movements with reason and +/- amount.
 - **Addresses**: add/edit saved addresses tagged Home/Work/Billing/Shipping, with a "Default" indicator.
+- **Export data** — a subject access / portability request (art.15/20) that reached the shop by phone or letter: the same document the storefront's *Download my data* produces, copied to the clipboard and shown. All of it or none of it — if order-svc cannot be reached nothing partial is produced.
 - **Anonymize** (with confirmation) — a GDPR-style right-to-be-forgotten control that scrubs the customer's personal details and their saved addresses, and tells order-svc/notification-svc to redact what each holds about them (SJ-D43): a settled order is redacted at once, an order still being fulfilled once it finishes.
 
 ### 4.9 Sales tools (3 tabs)
@@ -281,7 +282,8 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 
 **Account & engagement surfaces (dialogs/sheets, not separate screens):**
 - **Sign in / Create account** — email + password (+ phone required to register); reusable from the account menu or at checkout.
-- **Account menu** (signed in): My orders, My preferences, Send feedback, Sign out, **Delete my account**. (Guest): Sign in, Send feedback.
+- **Account menu** (signed in): My orders, My preferences, **Privacy & marketing**, Send feedback, Sign out, **Delete my account**. (Guest): Sign in, Send feedback.
+- **Privacy & marketing** (`/store/privacy`) — the shopper's preference centre and their data. Four marketing switches (email, text, phone, post), all off until the shopper turns one on; each change is saved with the wording shown beside them, because UK GDPR art.7(1) makes the shop prove what was agreed to (PECR reg.22). Below it, **Download my data** (art.20): everything this shop holds — profile, addresses, loyalty and store credit with their histories, consent trail, every order — as one JSON document, copied to the clipboard and shown. It fails loudly rather than partially: if order-svc cannot be reached the shopper is told to try again and nothing is handed over. Signed-out visitors are asked to sign in.
 - **Delete my account** (SJ-D43) — self-service login deletion, separate from a shop erasing its record of the customer (§4.8's Anonymize). Re-asks the password (a session left open on a shared device isn't enough), then deletes the login and signs the device out. What individual shops hold — orders, loyalty, their own customer profile — is untouched; each is a separate request to that shop.
 - **Preferences** — "Shopping for" (Myself/Family/Business, multi-select) and a notification preference (Order updates / Promotions / Both / None); shown once automatically right after first sign-in/registration if not yet answered, or reachable anytime.
 - **Feedback** — category (Bug / Feature request / Compliment / Other), free-text description, optional 1–5 star rating; available any time.

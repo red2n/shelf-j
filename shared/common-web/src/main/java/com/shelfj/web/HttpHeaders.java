@@ -21,6 +21,14 @@ public final class HttpHeaders {
   /** User id extracted from the verified JWT by the gateway. */
   public static final String USER_ID = "X-User-Id";
 
+  /**
+   * Email address extracted from the verified JWT by the gateway — the caller's own, never a
+   * subject they named. A service needs it to reach the person behind a login: customer-svc matches
+   * a shopper's login to the shop's customer record with it (SJ-D44), and without it an online
+   * order belongs to nobody the shop can email, credit or erase.
+   */
+  public static final String USER_EMAIL = "X-User-Email";
+
   /** Comma-separated roles extracted from the verified JWT by the gateway. */
   public static final String ROLES = "X-Roles";
 

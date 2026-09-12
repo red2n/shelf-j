@@ -51,6 +51,7 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
     Set<UUID> storeIds = parseUuids(req.getHeaderString(HttpHeaders.STORE_IDS));
 
     context.set(tenantId, userId, roles, storeIds, requestId);
+    context.setEmail(req.getHeaderString(HttpHeaders.USER_EMAIL));
     // stash for the response filter
     req.setProperty(HttpHeaders.REQUEST_ID, requestId);
   }

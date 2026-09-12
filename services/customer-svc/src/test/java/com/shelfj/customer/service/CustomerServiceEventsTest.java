@@ -51,6 +51,7 @@ class CustomerServiceEventsTest {
                 new Customer(
                     CUSTOMER,
                     TENANT,
+                    null,
                     "a@example.com",
                     null,
                     "A",

@@ -27,16 +27,22 @@ class CustomerErasedHandler {
     UUID eventId;
     UUID tenantId;
     UUID customerId;
+    UUID loginId;
     try (var reader = Json.createReader(new StringReader(payload))) {
       JsonObject obj = reader.readObject();
       eventId = UUID.fromString(obj.getString("eventId"));
       tenantId = UUID.fromString(obj.getString("tenantId"));
       customerId = UUID.fromString(obj.getString("customerId"));
+      // Absent for a walk-in the till created, and on events published before the link existed.
+      loginId =
+          obj.containsKey("loginId") && !obj.isNull("loginId")
+              ? UUID.fromString(obj.getString("loginId"))
+              : null;
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed CustomerErased payload skipped: " + e.getMessage());
       return;
     }
-    if (svc.handleCustomerErased(tenantId, customerId, eventId)) {
+    if (svc.handleCustomerErased(tenantId, customerId, loginId, eventId)) {
       LOG.log(
           Level.INFO,
           "Customer {0} erased: settled orders redacted, open orders held until they finish",

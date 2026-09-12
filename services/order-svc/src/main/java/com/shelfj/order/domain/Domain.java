@@ -47,6 +47,7 @@ public final class Domain {
       UUID tenantId,
       UUID storeId,
       UUID customerId,
+      UUID loginId,
       String channel,
       String fulfilmentType,
       String status,

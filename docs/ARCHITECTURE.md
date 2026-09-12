@@ -243,7 +243,7 @@ Single `ProxyResource` (`/api/{service}/{path}`) in front of a Consul-resolved a
 1. **CorsFilter** — answers preflight; only emits CORS headers if an allowed-origins list is configured.
 2. **RateLimitFilter** — Redis-backed fixed-window counter (default 100 req/min), shared across gateway replicas so round-robin can't bypass it.
 3. **BruteForceFilter** — login-path-specific Redis counter (default 5 failures / 15 min block).
-4. **JwtAuthFilter** — strips any client-supplied `X-Tenant-Id`/`X-User-Id`/`X-Roles`, validates the Bearer JWT, and **re-stamps** identity headers only from verified claims. Whitelists genuinely public paths (register/login/refresh, storefront catalog reads).
+4. **JwtAuthFilter** — strips any client-supplied `X-Tenant-Id`/`X-User-Id`/`X-User-Email`/`X-Roles`/`X-Store-Ids`, validates the Bearer JWT, and **re-stamps** identity headers only from verified claims. What actually reaches a service is `ProxyResource.FORWARDED_HEADERS` — a stamped header not on that list is dropped (SJ-D46), and a test holds the two together. Whitelists genuinely public paths (register/login/refresh, storefront catalog reads).
 5. **TenantStatusGate** — rejects with `403` if the resolved tenant isn't `ACTIVE`.
 6. **ProxyResource** — forwards `Idempotency-Key`, generates `X-Request-Id`, per-upstream circuit breaker, faithfully forwards `Content-Type` and raw bytes (so binary bodies like product images round-trip intact).
 

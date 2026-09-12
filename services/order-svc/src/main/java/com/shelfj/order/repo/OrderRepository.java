@@ -66,38 +66,40 @@ public class OrderRepository extends BaseOutboxRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO orders"
-                      + " (id,tenant_id,store_id,customer_id,channel,fulfilment_type,status,"
+                      + " (id,tenant_id,store_id,customer_id,login_id,channel,fulfilment_type,"
+                      + "  status,"
                       + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
                       + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
                       + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone,"
                       + "  payment_method,promotion_discount)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, order.id());
             ps.setObject(2, order.tenantId());
             ps.setObject(3, order.storeId());
             ps.setObject(4, order.customerId());
-            ps.setString(5, order.channel());
-            ps.setString(6, order.fulfilmentType());
-            ps.setString(7, order.status());
-            ps.setBigDecimal(8, order.subtotal());
-            ps.setBigDecimal(9, order.taxAmount());
-            ps.setBigDecimal(10, order.discountAmount());
-            ps.setBigDecimal(11, order.total());
-            ps.setString(12, order.currency());
-            ps.setString(13, order.notes());
-            ps.setString(14, order.idempotencyKey());
-            ps.setBoolean(15, order.taxExempt());
-            ps.setString(16, order.exemptReason());
-            ps.setString(17, order.deliveryLine1());
-            ps.setString(18, order.deliveryLine2());
-            ps.setString(19, order.deliveryCity());
-            ps.setString(20, order.deliveryPostalCode());
-            ps.setString(21, order.deliveryRecipientName());
-            ps.setString(22, order.deliveryRecipientPhone());
-            ps.setString(23, order.contactPhone());
-            ps.setString(24, order.paymentMethod());
+            ps.setObject(5, order.loginId());
+            ps.setString(6, order.channel());
+            ps.setString(7, order.fulfilmentType());
+            ps.setString(8, order.status());
+            ps.setBigDecimal(9, order.subtotal());
+            ps.setBigDecimal(10, order.taxAmount());
+            ps.setBigDecimal(11, order.discountAmount());
+            ps.setBigDecimal(12, order.total());
+            ps.setString(13, order.currency());
+            ps.setString(14, order.notes());
+            ps.setString(15, order.idempotencyKey());
+            ps.setBoolean(16, order.taxExempt());
+            ps.setString(17, order.exemptReason());
+            ps.setString(18, order.deliveryLine1());
+            ps.setString(19, order.deliveryLine2());
+            ps.setString(20, order.deliveryCity());
+            ps.setString(21, order.deliveryPostalCode());
+            ps.setString(22, order.deliveryRecipientName());
+            ps.setString(23, order.deliveryRecipientPhone());
+            ps.setString(24, order.contactPhone());
+            ps.setString(25, order.paymentMethod());
             ps.setBigDecimal(
-                25,
+                26,
                 order.promotionDiscount() == null
                     ? java.math.BigDecimal.ZERO
                     : order.promotionDiscount());
@@ -149,7 +151,7 @@ public class OrderRepository extends BaseOutboxRepository {
   /** Look up an order by its idempotency key — used to replay a retried checkout. */
   public Optional<Order> findOrderByIdempotencyKey(UUID tenantId, String idempotencyKey) {
     return query(
-            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+            "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
@@ -171,6 +173,9 @@ public class OrderRepository extends BaseOutboxRepository {
    * @param tenantId owning tenant; the first condition of the query
    * @param storeId restrict to one store, or {@code null}
    * @param customerId restrict to one customer, or {@code null}
+   * @param loginId restrict to the orders one login placed, or {@code null}. Separate from {@code
+   *     customerId} because they are different ids: this is what a shopper's own order history
+   *     filters on, and it matches orders placed before the customer link existed (SJ-D44)
    * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null}
    * @param status restrict to one status, or {@code null}
    * @param from inclusive lower bound on creation time, or {@code null}
@@ -184,6 +189,7 @@ public class OrderRepository extends BaseOutboxRepository {
       UUID tenantId,
       UUID storeId,
       UUID customerId,
+      UUID loginId,
       String channel,
       String status,
       Instant from,
@@ -193,7 +199,7 @@ public class OrderRepository extends BaseOutboxRepository {
       int limit) {
     StringBuilder sql =
         new StringBuilder(
-            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+            "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
@@ -201,6 +207,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " FROM orders WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
+    if (loginId != null) sql.append(" AND login_id=?");
     if (channel != null) sql.append(" AND channel=?");
     if (status != null) sql.append(" AND status=?");
     if (from != null) sql.append(" AND created_at >= ?");
@@ -215,6 +222,7 @@ public class OrderRepository extends BaseOutboxRepository {
           ps.setObject(i++, tenantId);
           if (storeId != null) ps.setObject(i++, storeId);
           if (customerId != null) ps.setObject(i++, customerId);
+          if (loginId != null) ps.setObject(i++, loginId);
           if (channel != null) ps.setString(i++, channel.toUpperCase(java.util.Locale.ROOT));
           if (status != null) ps.setString(i++, status.toUpperCase(java.util.Locale.ROOT));
           if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
@@ -239,7 +247,7 @@ public class OrderRepository extends BaseOutboxRepository {
   public Optional<Order> findOrder(UUID tenantId, UUID orderId) {
     var list =
         query(
-            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+            "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
@@ -344,7 +352,7 @@ public class OrderRepository extends BaseOutboxRepository {
    * @return false for a redelivered event, which changes nothing
    */
   public boolean applyCustomerErasure(
-      UUID tenantId, UUID customerId, UUID eventId, String consumer) {
+      UUID tenantId, UUID customerId, UUID loginId, UUID eventId, String consumer) {
     return inTx(
         c -> {
           if (!markProcessedIfNewTx(c, eventId, consumer)) {
@@ -352,32 +360,51 @@ public class OrderRepository extends BaseOutboxRepository {
           }
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "INSERT INTO customer_erasures (tenant_id, customer_id, event_id)"
-                      + " VALUES (?,?,?) ON CONFLICT DO NOTHING")) {
+                  "INSERT INTO customer_erasures (tenant_id, customer_id, login_id, event_id)"
+                      + " VALUES (?,?,?,?)"
+                      + " ON CONFLICT (tenant_id, customer_id) DO UPDATE SET login_id ="
+                      + " COALESCE(customer_erasures.login_id, EXCLUDED.login_id)")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, customerId);
-            ps.setObject(3, eventId);
+            ps.setObject(3, loginId);
+            ps.setObject(4, eventId);
             ps.executeUpdate();
           }
-          redactCustomerInTx(c, tenantId, customerId);
+          redactCustomerInTx(c, tenantId, customerId, loginId);
           return true;
         },
         "apply customer erasure");
   }
 
-  private static void redactCustomerInTx(Connection c, UUID tenantId, UUID customerId)
+  /**
+   * Both ids, everywhere an order is matched: the shop's customer id, and the login the same person
+   * signed in with. An online order is filed under the login and a till sale under the customer, so
+   * a redaction that knew only one of them left the other kind of sale identifying the person it
+   * was erasing (SJ-D44). {@code o.login_id = ?} with a null parameter matches nothing, which is
+   * exactly right for a walk-in that has no login.
+   */
+  private static final String ORDER_IS_THEIRS = " (o.customer_id = ? OR o.login_id = ?)";
+
+  /** The same match, joined through the erasure row, for the cross-tenant sweep. */
+  private static final String SWEPT_ORDER_IS_THEIRS =
+      " (o.customer_id = e.customer_id OR o.login_id = e.login_id)";
+
+  private static void redactCustomerInTx(Connection c, UUID tenantId, UUID customerId, UUID loginId)
       throws SQLException {
     // Settled orders only: an open delivery still needs its address to arrive.
     try (PreparedStatement ps =
         c.prepareStatement(
             "UPDATE orders o"
                 + REDACT_ORDER
-                + " WHERE o.tenant_id = ? AND o.customer_id = ? AND o.status IN "
+                + " WHERE o.tenant_id = ? AND"
+                + ORDER_IS_THEIRS
+                + " AND o.status IN "
                 + SETTLED_ORDER
                 + " AND"
                 + ORDER_STILL_IDENTIFIES)) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
+      ps.setObject(3, loginId);
       ps.executeUpdate();
     }
     try (PreparedStatement ps =
@@ -403,9 +430,12 @@ public class OrderRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "UPDATE order_receipts r SET emailed_to = NULL FROM orders o"
                 + " WHERE r.tenant_id = ? AND o.tenant_id = r.tenant_id AND o.id = r.order_id"
-                + " AND o.customer_id = ? AND r.emailed_to IS NOT NULL")) {
+                + " AND"
+                + ORDER_IS_THEIRS
+                + " AND r.emailed_to IS NOT NULL")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
+      ps.setObject(3, loginId);
       ps.executeUpdate();
     }
     try (PreparedStatement ps =
@@ -439,7 +469,8 @@ public class OrderRepository extends BaseOutboxRepository {
                   "UPDATE orders o"
                       + REDACT_ORDER
                       + " FROM customer_erasures e"
-                      + " WHERE o.tenant_id = e.tenant_id AND o.customer_id = e.customer_id"
+                      + " WHERE o.tenant_id = e.tenant_id AND"
+                      + SWEPT_ORDER_IS_THEIRS
                       + " AND o.status IN "
                       + SETTLED_ORDER
                       + " AND"
@@ -466,7 +497,8 @@ public class OrderRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "UPDATE order_receipts r SET emailed_to = NULL FROM orders o, customer_erasures e"
                       + " WHERE o.tenant_id = r.tenant_id AND o.id = r.order_id"
-                      + " AND e.tenant_id = o.tenant_id AND e.customer_id = o.customer_id"
+                      + " AND e.tenant_id = o.tenant_id AND"
+                      + SWEPT_ORDER_IS_THEIRS
                       + " AND r.emailed_to IS NOT NULL")) {
             ps.executeUpdate();
           }
@@ -703,6 +735,40 @@ public class OrderRepository extends BaseOutboxRepository {
           return null;
         },
         "apply refund");
+  }
+
+  /**
+   * Every order one person placed at this shop, newest first, for a data export (UK GDPR art.20).
+   *
+   * <p>Matched on both ids for the reason SJ-D44 records: an online sale is filed under the
+   * shopper's login and a till sale under the shop's customer record, so a export that knew only
+   * one of them would hand the person half their history and call it complete. A null parameter
+   * matches nothing, which is what a walk-in with no login, or a login with no customer record,
+   * should contribute.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the shop's record of the person, or {@code null}
+   * @param loginId the login they sign in with, or {@code null}
+   * @param limit hard cap on rows, so one export cannot read an unbounded table into memory
+   * @return the person's orders, newest first
+   */
+  public List<Order> listOrdersForSubject(UUID tenantId, UUID customerId, UUID loginId, int limit) {
+    return query(
+        "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
+            + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
+            + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
+            + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
+            + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
+            + " FROM orders WHERE tenant_id=? AND (customer_id=? OR login_id=?)"
+            + " ORDER BY created_at DESC, id DESC LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, customerId);
+          ps.setObject(3, loginId);
+          ps.setInt(4, limit);
+        },
+        rs -> mapOrder(rs),
+        "list orders for subject");
   }
 
   /**
@@ -1447,7 +1513,7 @@ public class OrderRepository extends BaseOutboxRepository {
   private Order findOrderInTx(Connection c, UUID tenantId, UUID orderId) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+            "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
@@ -1588,6 +1654,7 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getObject("tenant_id", UUID.class),
         rs.getObject("store_id", UUID.class),
         rs.getObject("customer_id", UUID.class),
+        rs.getObject("login_id", UUID.class),
         rs.getString("channel"),
         rs.getString("fulfilment_type"),
         rs.getString("status"),

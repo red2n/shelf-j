@@ -25,7 +25,7 @@ Every call goes through one public entry point and lands on one of 12 independen
 
 ## The gateway (the one public door)
 
-The gateway is the single public door to the whole platform — nothing else is internet-reachable. Every call comes in as `/api/{service}/{path...}` (an equivalent `/api/v1/{service}/{path...}` form exists too; the version prefix is currently informational, and the unversioned alias is marked `Deprecation`/`Link`-to-`/api/v1` on every response to steer clients forward). The gateway only proxies to the 12 declared business services (an explicit allowlist — `iam-svc, tenant-svc, product-svc, inventory-svc, pricing-svc, cart-svc, order-svc, payment-svc, purchase-svc, customer-svc, notification-svc, reporting-svc`); anything else, even if it happens to be registered in service discovery, is unreachable. It terminates and verifies the JWT, strips any client-supplied identity headers, and re-stamps `X-Tenant-Id` / `X-User-Id` / `X-Roles` from the verified token so every business service can trust those headers unconditionally; it also forwards `Idempotency-Key` and the real `Content-Type` (so binary uploads like product images pass through intact) untouched.
+The gateway is the single public door to the whole platform — nothing else is internet-reachable. Every call comes in as `/api/{service}/{path...}` (an equivalent `/api/v1/{service}/{path...}` form exists too; the version prefix is currently informational, and the unversioned alias is marked `Deprecation`/`Link`-to-`/api/v1` on every response to steer clients forward). The gateway only proxies to the 12 declared business services (an explicit allowlist — `iam-svc, tenant-svc, product-svc, inventory-svc, pricing-svc, cart-svc, order-svc, payment-svc, purchase-svc, customer-svc, notification-svc, reporting-svc`); anything else, even if it happens to be registered in service discovery, is unreachable. It terminates and verifies the JWT, strips any client-supplied identity headers, and re-stamps `X-Tenant-Id` / `X-User-Id` / `X-User-Email` / `X-Roles` / `X-Store-Ids` from the verified token so every business service can trust those headers unconditionally (`ProxyResource.FORWARDED_HEADERS` is the one list of what reaches a service — a header stamped but not listed is dropped, which is how `X-Store-Ids` went missing for as long as it did, SJ-D46); it also forwards `Idempotency-Key` and the real `Content-Type` (so binary uploads like product images pass through intact) untouched.
 
 Guest/customer storefront access is carved out by an explicit path whitelist keyed on an `X-Storefront-Tenant` header (catalog browse, price resolve, active promotions, per-store storefront config, stock availability, and — for a signed-in customer only — placing an order and paying online); everything else requires a verified staff or customer Bearer token.
 
@@ -77,7 +77,19 @@ Customer master data for the storefront and POS.
 - `GET /customers/lookup?email=&phone=` — find a customer by email or phone (POS/CRM lookup).
 - `GET /customers/{id}` — get a customer profile.
 - `PUT /customers/{id}` — update a customer profile.
-- `DELETE /customers/{id}` — GDPR erasure/anonymize a customer (SJ-D43: also deletes their saved addresses and publishes `CustomerErased` so order-svc and notification-svc redact what they hold about them).
+- `DELETE /customers/{id}` — GDPR erasure/anonymize a customer (SJ-D43: also deletes their saved addresses and publishes `CustomerErased` so order-svc and notification-svc redact what they hold about them; the event names the login as well as the customer id, so the redaction reaches web orders — SJ-D44).
+- `POST /customers/me` — the signed-in shopper's own record in this shop, created on first use from the token's login and email, or adopted from the unlinked record the till already held for that address (SJ-D44). Identity comes from the token only. order-svc calls this at checkout so an online order carries a customer id the shop can resolve; loyalty, the confirmation email and erasure all key on it.
+- `GET /customers/me` — the same record, never created: 404 for a shopper who has not bought here.
+- `GET /customers/me/export` · `GET /customers/{id}/export` — UK GDPR art.20 data export, for the shopper and for staff handling a request that arrived by phone or letter. One JSON document: profile, addresses, loyalty and store credit with both ledgers, marketing preferences with their evidence trail, and every order (fetched from order-svc by both ids). Fails closed: an unreachable order-svc is a 503 `EXPORT_ORDERS_UNAVAILABLE` and no file, never a partial export.
+
+### Marketing consent (`/customers/me/marketing`, `/customers/{id}/marketing`, `/marketing/unsubscribe`)
+
+PECR reg.22/23 and UK GDPR art.7(1). `marketing_preferences` is what is true now; the append-only `marketing_consent_log` is the evidence — who, when, how (`SIGNUP`, `CHECKOUT`, `PREFERENCE_CENTRE`, `STAFF`, `UNSUBSCRIBE_LINK`, `IMPORT`) and the wording shown. Four channels (`EMAIL`, `SMS`, `PHONE`, `POST`); basis `CONSENT` or `SOFT_OPT_IN`, kept apart because the law keeps them apart. **Silence is not consent:** a channel with no row is refused.
+
+- `GET /customers/me/marketing` · `PUT /customers/me/marketing` — the shopper's preference centre. Channels left out of a `PUT` are untouched. Body: `{ channels: [{ channel, granted, basis? }], notice? }`.
+- `GET /customers/{id}/marketing` · `PUT /customers/{id}/marketing` — the staff view, and consent taken over the counter; the acting staff member is recorded.
+- `GET /customers/{id}/marketing/allowance?channel=` — whether one marketing message may be sent. Asked by notification-svc before every `MARKETING` send; answers no for an unknown channel, no preference, an opt-out or an erased record, and returns the per-send `unsubscribeToken` the message must carry when the answer is yes.
+- `POST /marketing/unsubscribe` — the opt-out link. Public and unauthenticated by design (the token is the capability); stops every channel unless one is named; a second click is not an error. The gateway locks an address out after five wrong tokens (`429 TOKEN_LOCKED`), the same way it does wrong passwords.
 - `POST /customers/{id}/addresses` — add a delivery/billing address.
 - `GET /customers/{id}/addresses` — list a customer's addresses.
 - `PUT /customers/{id}/addresses/{addressId}` — update an address.
@@ -102,7 +114,8 @@ Customer master data for the storefront and POS.
 
 **Events**
 - Consumes: `OrderConfirmed` (auto-accrues loyalty points).
-- Publishes: `CustomerRegistered`, `LoyaltyEarned`, `LoyaltyRedeemed`, `LoyaltyAdjusted`, `StoreCreditIssued`, `StoreCreditRedeemed`, `CustomerErased` (SJ-D43; ids only — no email/phone, since the event outlives the erasure it announces).
+- Publishes: `CustomerRegistered` (also for a record created by `POST /customers/me`), `LoyaltyEarned`, `LoyaltyRedeemed`, `LoyaltyAdjusted`, `StoreCreditIssued`, `StoreCreditRedeemed`, `CustomerErased` (SJ-D43; ids only — `customerId` and, when linked, `loginId` — no email/phone, since the event outlives the erasure it announces).
+- Calls: order-svc `GET /orders/export` (the sales half of a data export; fail-closed).
 
 ---
 
@@ -311,7 +324,7 @@ A withdrawal takes stock off sale; a recall also tells the customers who may hav
 Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `GET /admin/notifications/shortage-alerts` — list low-stock shortage alerts (by store or variant).
 - `GET /admin/notifications` — in-app notification feed (welcome, order-confirmation, POS receipt, etc.), newest first.
-- `POST /notifications/send` — staff-triggered send (order-svc uses this for EMAIL receipts). Body: `recipient`, `subject`, `body`, optional `type`/`eventId`.
+- `POST /notifications/send` — staff-triggered send (order-svc uses this for EMAIL receipts). Body: `recipient`, `subject`, `body`, optional `type`/`eventId`/`customerId`/`category`. `category: MARKETING` (PECR reg.22) must name the customer and is sent only after customer-svc's `/marketing/allowance` says yes — otherwise `409 MARKETING_CONSENT_MISSING`, and also when the answer cannot be had (fail-closed: sending without provable consent is the offence). An allowed marketing message has the opt-out link appended by notification-svc itself (reg.23).
 
 **Business rules**
 - Channel is selected by `shelfj.notification.channel`: `app` (default, in-app only), `email`/`smtp` (SMTP **plus** in-app via a composite channel so the feed still fills when email is on), or `mqtt` (device-facing push — POS terminals, kiosk/back-store displays, platform console — **plus** in-app; topic `shelfj/notifications/{tenantId}/{recipient}`).
@@ -328,6 +341,7 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 ### Order Lifecycle (`/orders`)
 - `GET /orders` — list orders for the tenant (filter by store/channel/status/date range).
 - `GET /orders/mine` — the signed-in customer's own order history (never another customer's, never the tenant's full book).
+- `GET /orders/export?customer=&login=` — every order one person placed here, with lines, for a data export (art.20). Staff-only, and read service-to-service by customer-svc, which assembles the whole document. Both ids are accepted because a person has both: an online sale is filed under their login and a till sale under the shop's customer record (SJ-D44). Neither id is a 400; a shopper token is a 403 — the read allowlist no longer takes a literal such as `export` for an order id, and the resource requires a staff role itself.
 - `POST /orders` — place a new order (POS or ONLINE channel); requires an `Idempotency-Key`.
 - `POST /pos/log/orders/{orderId}` — journal a completed POS sale to the transaction log. **Staff-reachable** (CASHIER/MANAGER/OWNER) and idempotent on the order, so a retry or a replayed offline sale returns the existing entry. This write used to sit under `/admin/pos-log`, which is management-gated — the cashier who took the sale could not journal it, so nothing ever did and the table was empty for the life of the product. The read side stays at `GET /admin/pos-log`.
 - `GET /admin/reports/exceptions?from&to&storeId&groupBy=ACTOR|STORE` — staff exception report: discounts, voids and no-sale drawer opens per staff member or store, with journalled sales as the denominator. Check `journalCoverage` before reading any rate; when false, nothing journalled a sale in the period and the counts have nothing to divide by.

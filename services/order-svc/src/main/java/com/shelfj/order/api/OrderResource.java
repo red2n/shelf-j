@@ -1,6 +1,7 @@
 package com.shelfj.order.api;
 
 import com.shelfj.order.dto.Dtos.CreateReturnRequest;
+import com.shelfj.order.dto.Dtos.OrderResponse;
 import com.shelfj.order.dto.Dtos.OrderSummaryResponse;
 import com.shelfj.order.dto.Dtos.PlaceOrderRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
@@ -79,10 +80,53 @@ public class OrderResource {
     Instant toInst = parseInstant(to, "to");
     int clamped = Cursor.clampLimit(limit);
     var page =
-        svc.listOrders(tenantId, storeId, null, channel, status, fromInst, toInst, after, clamped);
+        svc.listOrders(
+            tenantId, storeId, null, null, channel, status, fromInst, toInst, after, clamped);
     return ApiResponse.ok(
         page.orders().stream().map(Mappers::toSummary).toList(),
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
+  }
+
+  /**
+   * Every order one person placed here, for a data-portability request (UK GDPR art.20).
+   *
+   * <p>Staff-only, and read service-to-service by customer-svc, which assembles the whole export.
+   * Both ids are accepted because a person has both: an online sale is filed under their login and
+   * a till sale under the shop's customer record (SJ-D44). The shopper's own route is {@code GET
+   * /customers/me/export}; this one is how it gets the orders.
+   *
+   * @param customer the shop's customer record for the person, or {@code null}
+   * @param login the login they sign in with, or {@code null}
+   * @return that person's orders, newest first, each with its lines
+   */
+  @Operation(
+      summary = "Export one person's orders",
+      description =
+          "The sales half of a GDPR art.20 data export. Matches on the customer id, the login id,"
+              + " or both — an online order is filed under the login and a till sale under the"
+              + " customer record, and an export that knew only one would be incomplete.")
+  @APIResponse(responseCode = "200", description = "The person's orders, newest first")
+  @APIResponse(responseCode = "400", description = "Neither a customer nor a login was named")
+  @GET
+  @Path("/export")
+  public ApiResponse<List<OrderResponse>> export(
+      @QueryParam("customer") String customer, @QueryParam("login") String login) {
+    // Belt and braces with the read filter: this route names a subject, so it is never a
+    // self-read, whatever shape the path happens to match upstream.
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
+    UUID tenantId = ctx.requireTenantId();
+    UUID customerId =
+        customer != null && !customer.isBlank() ? Parsing.uuid(customer, "customer") : null;
+    UUID loginId = login != null && !login.isBlank() ? Parsing.uuid(login, "login") : null;
+    if (customerId == null && loginId == null) {
+      throw com.shelfj.web.ApiException.badRequest(
+          "ORDER_EXPORT_NO_SUBJECT", "name a customer, a login, or both");
+    }
+    var orders =
+        svc.exportOrdersFor(tenantId, customerId, loginId).stream()
+            .map(o -> Mappers.toDto(o.order(), o.items()))
+            .toList();
+    return ApiResponse.ok(orders, ApiResponse.Meta.of(ctx.requestId()));
   }
 
   /**
@@ -109,13 +153,16 @@ public class OrderResource {
   public ApiResponse<List<OrderSummaryResponse>> mine(
       @QueryParam("after") String after, @QueryParam("limit") Integer limit) {
     UUID tenantId = ctx.requireTenantId();
-    UUID customerId = ctx.userId();
-    if (customerId == null) {
+    UUID loginId = ctx.userId();
+    if (loginId == null) {
       throw com.shelfj.web.ApiException.unauthorized(
           "NO_CUSTOMER", "a customer token is required for order history");
     }
     int clamped = Cursor.clampLimit(limit);
-    var page = svc.listOrders(tenantId, null, customerId, null, null, null, null, after, clamped);
+    // Filtered on the login, not the customer id: the shopper's own history is the orders their
+    // login placed, including any placed before the customer record existed (SJ-D44).
+    var page =
+        svc.listOrders(tenantId, null, null, loginId, null, null, null, null, after, clamped);
     return ApiResponse.ok(
         page.orders().stream().map(Mappers::toSummary).toList(),
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));

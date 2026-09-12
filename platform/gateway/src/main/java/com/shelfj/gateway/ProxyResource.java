@@ -299,13 +299,30 @@ public class ProxyResource {
    */
   private void stampIdentity(
       io.helidon.webclient.api.HttpClientRequest req, jakarta.ws.rs.core.HttpHeaders inbound) {
-    forward(req, inbound, HttpHeaders.TENANT_ID);
-    forward(req, inbound, HttpHeaders.USER_ID);
-    forward(req, inbound, HttpHeaders.ROLES);
-    // Client-controlled, not identity — forwarded so downstream writes can dedupe retries
-    // (golden rule #11). Not stripped/overwritten: the client owns this value.
-    forward(req, inbound, HttpHeaders.IDEMPOTENCY_KEY);
+    for (String header : FORWARDED_HEADERS) {
+      forward(req, inbound, header);
+    }
   }
+
+  /**
+   * Every header the proxy passes upstream. An explicit list, because everything else a client
+   * sends stops here — and that is why two identity headers went missing for as long as they did:
+   * {@link JwtAuthFilter} stamped {@code X-Store-Ids} on every request and this list never carried
+   * it, so no service ever saw a store restriction and {@code TenantContext.requireStoreAccess} was
+   * a no-op for everyone (SJ-D46). {@code X-User-Email} was added to the filter the same way and
+   * would have gone the same way (SJ-D44). The list is package-visible so a test can hold it
+   * against the filter's.
+   */
+  static final java.util.List<String> FORWARDED_HEADERS =
+      java.util.List.of(
+          HttpHeaders.TENANT_ID,
+          HttpHeaders.USER_ID,
+          HttpHeaders.USER_EMAIL,
+          HttpHeaders.ROLES,
+          HttpHeaders.STORE_IDS,
+          // Client-controlled, not identity — forwarded so downstream writes can dedupe retries
+          // (golden rule #11). Not stripped/overwritten: the client owns this value.
+          HttpHeaders.IDEMPOTENCY_KEY);
 
   private void forward(
       io.helidon.webclient.api.HttpClientRequest req,

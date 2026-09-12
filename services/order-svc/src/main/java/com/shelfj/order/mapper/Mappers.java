@@ -68,6 +68,7 @@ public final class Mappers {
         str(o.id()),
         str(o.storeId()),
         str(o.customerId()),
+        str(o.loginId()),
         o.channel(),
         o.fulfilmentType(),
         o.status(),

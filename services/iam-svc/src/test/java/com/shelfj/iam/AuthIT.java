@@ -466,6 +466,77 @@ class AuthIT {
   }
 
   @Test
+  @org.junit.jupiter.api.DisplayName(
+      "SJ-D45: the sign-in trail keeps its history and loses the deleted address")
+  void deletingAnAccountRedactsTheAuditTrail() throws Exception {
+    String email = "audited@example.com";
+    String userId = registerAndGetUserId(email);
+    // A successful sign-in and a failed one: both recorded the address until this fix.
+    assertThat(
+        post("/auth/login", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}")
+            .getStatus(),
+        is(200));
+    assertThat(
+        post("/auth/login", "{\"email\":\"" + email + "\",\"password\":\"wrongpass99\"}")
+            .getStatus(),
+        is(401));
+
+    try (var c = iamConnection();
+        var ps =
+            c.prepareStatement("SELECT count(*) FROM audit_log WHERE user_id = ? AND detail = ?")) {
+      ps.setObject(1, java.util.UUID.fromString(userId));
+      ps.setString(2, email);
+      try (var rs = ps.executeQuery()) {
+        rs.next();
+        assertThat("the address is in the trail before the deletion", rs.getInt(1) > 0, is(true));
+      }
+    }
+
+    assertThat(deleteAccount(userId, "strongpass1").getStatus(), is(200));
+
+    try (var c = iamConnection()) {
+      try (var ps =
+          c.prepareStatement("SELECT count(*) FROM audit_log WHERE user_id = ? AND detail = ?")) {
+        ps.setObject(1, java.util.UUID.fromString(userId));
+        ps.setString(2, email);
+        try (var rs = ps.executeQuery()) {
+          rs.next();
+          assertThat(rs.getInt(1), is(0));
+        }
+      }
+      // Append-only holds: the rows are still there, and so is what happened.
+      try (var ps =
+          c.prepareStatement(
+              "SELECT count(*) FROM audit_log WHERE user_id = ? AND action IN"
+                  + " ('USER_REGISTERED','LOGIN_OK','LOGIN_FAILED','ACCOUNT_DELETED')")) {
+        ps.setObject(1, java.util.UUID.fromString(userId));
+        try (var rs = ps.executeQuery()) {
+          rs.next();
+          assertThat(rs.getInt(1) >= 4, is(true));
+        }
+      }
+    }
+  }
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "SJ-D44: the access token carries the holder's email, so a shop can match them to a record")
+  void theAccessTokenCarriesTheEmail() {
+    String email = "claims@example.com";
+    Response reg =
+        post("/auth/register", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
+    assertThat(reg.getStatus(), is(201));
+    String access = extract(reg.readEntity(String.class), "accessToken");
+
+    String payload = access.split("\\.")[1];
+    String claims =
+        new String(
+            java.util.Base64.getUrlDecoder().decode(payload),
+            java.nio.charset.StandardCharsets.UTF_8);
+    assertThat(claims.contains("\"email\":\"" + email + "\""), is(true));
+  }
+
+  @Test
   void deletingTwiceIsRefusedNotRepeated() {
     String userId = registerAndGetUserId("twice@example.com");
     assertThat(deleteAccount(userId, "strongpass1").getStatus(), is(200));

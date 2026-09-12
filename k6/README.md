@@ -39,7 +39,9 @@ non-zero if any suite fails. `BASE_URL` points it at another gateway (default
 | `notification-crud` | Shortage alerts raised by real stock movements, send with event dedupe, notification log | 21 |
 | `reporting-crud` | On-hand, supply/demand, movement stats and sales reports fed by a real receipt and a paid sale | 26 |
 | `gateway-smoke-it` | Health, a public contract, sign-up, login and an authenticated call through the gateway | 7 |
+| `privacy-flow` | The login-to-customer link, loyalty and the confirmation email on a web order, marketing consent and the opt-out link, the data export and erasure — each step with the wrong caller (guest, another shopper, a rival tenant's owner) and the wrong input beside the right one | 75 |
 | `gateway-login-protection` | Five failed logins lock the account and the IP (429 `LOGIN_LOCKED`, `Retry-After`) | 13 |
+| `gateway-unsubscribe-protection` | Five guessed opt-out tokens lock the IP out of the public unsubscribe endpoint (429 `TOKEN_LOCKED`); a malformed body is not a guess; the customer stays subscribed; the rest of the API is unaffected | 11 |
 | `full-stack-simulation` *(load)* | One business browsing, reserving, selling at the till and restocking concurrently | ~1100 |
 | `multi-tenant-retail` *(load)* | Two tenants (IN/INR, UK/GBP) across 28 concurrent scenarios; gates on zero isolation and security violations and a low error count | ~24000 |
 | `gateway-rate-limit-stress` *(load)* | Exactly the configured per-IP budget is admitted in a 60 s window, then 429 `RATE_LIMITED`, never 5xx | ~30600 |
@@ -48,7 +50,7 @@ Every functional suite requires **all** checks to pass (`thresholds: { checks: [
 
 Things to know:
 
-- **Gateway suites lock this host out.** `gateway-login-protection` blocks logins from the k6
+- **Gateway suites lock this host out.** `gateway-login-protection` blocks logins and `gateway-unsubscribe-protection` blocks the opt-out endpoint from the k6
   machine for 15 minutes and `gateway-rate-limit-stress` spends its whole rate budget. `run.sh`
   clears those counters in the local `shelfj-redis` afterwards; run them directly with `k6 run`, or
   against a remote stack, and logins from this host stay blocked.

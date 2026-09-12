@@ -238,6 +238,59 @@ class JwtAuthFilterTest {
         "01a090ae-611e-700b-bde4-50df0324c37c", headers.getFirst("X-User-Id"));
   }
 
+  private String customerToken() {
+    return com.auth0
+        .jwt
+        .JWT
+        .create()
+        .withIssuer("shelfj")
+        .withSubject("01a090ae-611e-700b-bde4-50df0324c37c")
+        .withClaim("type", "CUSTOMER")
+        .withArrayClaim("roles", new String[] {"CUSTOMER"})
+        .sign(
+            com.auth0.jwt.algorithms.Algorithm.HMAC256("unit-test-secret-of-at-least-32-chars!!"));
+  }
+
+  @Test
+  void customerTokenOpensItsOwnOrderById() throws IOException {
+    // A shopper could list their orders through /orders/mine and open none of them: no tenant was
+    // derived for the read by id. The id-shaped self-reads now get the storefront tenant too;
+    // order-svc's object-level check decides whose order it is.
+    for (String path :
+        new String[] {
+          "api/order-svc/orders/01a09509-72ec-72e9-9f08-94a93df26a36",
+          "api/order-svc/orders/01a09509-72ec-72e9-9f08-94a93df26a36/history",
+          "api/order-svc/orders/01a09509-72ec-72e9-9f08-94a93df26a36/fiscal-receipt"
+        }) {
+      headers.clear();
+      when(uriInfo.getPath()).thenReturn(path);
+      when(requestContext.getMethod()).thenReturn("GET");
+      when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + customerToken());
+      when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+      filter.filter(requestContext);
+      org.junit.jupiter.api.Assertions.assertEquals(
+          "tenant-abc", headers.getFirst("X-Tenant-Id"), path);
+    }
+  }
+
+  @Test
+  void customerTokenGetsNoTenantForALiteralOrderChild() throws IOException {
+    // /orders/export names a subject and is staff-only; a literal must never pass as an order id
+    // here any more than it does in the downstream read allowlist.
+    for (String path : new String[] {"api/order-svc/orders/export", "api/order-svc/orders/abc"}) {
+      headers.clear();
+      when(uriInfo.getPath()).thenReturn(path);
+      when(requestContext.getMethod()).thenReturn("GET");
+      when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + customerToken());
+      // lenient: the point is that the filter never asks for the storefront header on these paths.
+      org.mockito.Mockito.lenient()
+          .when(requestContext.getHeaderString("X-Storefront-Tenant"))
+          .thenReturn("tenant-abc");
+      filter.filter(requestContext);
+      org.junit.jupiter.api.Assertions.assertNull(headers.getFirst("X-Tenant-Id"), path);
+    }
+  }
+
   @Test
   void customerTokenCannotNameTenantForAdminOrderList() throws IOException {
     // The storefront-tenant fallback must be scoped to whitelisted customer paths — a customer

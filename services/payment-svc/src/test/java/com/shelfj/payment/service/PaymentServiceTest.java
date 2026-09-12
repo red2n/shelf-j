@@ -138,7 +138,7 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null, "POS", new BigDecimal("10.00"), "PENDING", Ids.newId().toString(), "GBP"));
+            null, null, "POS", new BigDecimal("10.00"), "PENDING", Ids.newId().toString(), "GBP"));
 
     var ex =
         assertThrows(
@@ -157,6 +157,7 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
+            Ids.newId().toString(),
             ownerId.toString(),
             "ONLINE",
             new BigDecimal("10.00"),
@@ -180,7 +181,13 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null, "ONLINE", new BigDecimal("10.00"), "CONFIRMED", Ids.newId().toString(), "GBP"));
+            null,
+            null,
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "CONFIRMED",
+            Ids.newId().toString(),
+            "GBP"));
 
     var ex =
         assertThrows(
@@ -198,7 +205,13 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null, "ONLINE", new BigDecimal("10.00"), "PENDING", Ids.newId().toString(), "GBP"));
+            null,
+            null,
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "PENDING",
+            Ids.newId().toString(),
+            "GBP"));
 
     var ex =
         assertThrows(
@@ -216,7 +229,13 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
-            null, "ONLINE", new BigDecimal("10.00"), "PENDING", Ids.newId().toString(), "GBP"));
+            null,
+            null,
+            "ONLINE",
+            new BigDecimal("10.00"),
+            "PENDING",
+            Ids.newId().toString(),
+            "GBP"));
     svc.repo = capturingRepo();
     svc.storeClient = permissiveStoreClient();
 
@@ -235,6 +254,7 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
+            Ids.newId().toString(),
             customerId.toString(),
             "ONLINE",
             new BigDecimal("25.50"),
@@ -397,6 +417,7 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
+            Ids.newId().toString(),
             customerId.toString(),
             "ONLINE",
             new BigDecimal("10.00"),
@@ -419,6 +440,7 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
+            Ids.newId().toString(),
             ownerId.toString(),
             "ONLINE",
             new BigDecimal("10.00"),
@@ -473,6 +495,7 @@ class PaymentServiceTest {
         svc,
         new OrderClient.OrderInfo(
             Ids.newId().toString(),
+            Ids.newId().toString(),
             "ONLINE",
             new BigDecimal("10.00"),
             "CONFIRMED",
@@ -495,6 +518,7 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
+            Ids.newId().toString(),
             ownerId.toString(),
             "ONLINE",
             new BigDecimal("10.00"),
@@ -532,6 +556,7 @@ class PaymentServiceTest {
     wireOrder(
         svc,
         new OrderClient.OrderInfo(
+            Ids.newId().toString(),
             ownerId.toString(),
             "ONLINE",
             new BigDecimal("10.00"),

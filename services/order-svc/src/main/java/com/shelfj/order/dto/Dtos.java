@@ -96,6 +96,13 @@ public final class Dtos {
       String id,
       String storeId,
       String customerId,
+      @Schema(
+              description =
+                  "The login that placed the order, for an online sale by a signed-in shopper."
+                      + " Distinct from customerId, which is the shop's own record of that person:"
+                      + " a login is global and a customer record is per-tenant (SJ-D44). Null for"
+                      + " a guest checkout and for a till sale.")
+          String loginId,
       @Schema(description = "ONLINE or POS.") String channel,
       String fulfilmentType,
       @Schema(description = "PENDING, CONFIRMED, FULFILLED, CANCELLED, or VOIDED.") String status,

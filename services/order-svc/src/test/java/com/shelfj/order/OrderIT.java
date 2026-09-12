@@ -986,21 +986,29 @@ class OrderIT {
 
   @Test
   void orderByIdReadsAreObjectLevelAuthorized() {
+    // Placed by the shopper themselves, which is what "their order" means: the order records the
+    // login their token carries. It used to be placed at a till with an invented customerId that
+    // the test then sent as a user id — two different kinds of id that only matched because the
+    // same string played both parts (SJ-D44).
     String owningCustomer = Ids.newId().toString();
     Response placed =
-        post(
-            "/orders",
-            "{\"storeId\":\""
-                + S
-                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
-                + "\"customerId\":\""
-                + owningCustomer
-                + "\","
-                + "\"items\":[{\"variantId\":\""
-                + V
-                + "\",\"qty\":1,\"unitPrice\":5.00}],\"currency\":\"USD\"}",
-            T,
-            "it-idor-guard");
+        target
+            .path("/orders")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CUSTOMER")
+            .header("X-User-Id", owningCustomer)
+            .header("X-User-Email", "owner@example.com")
+            .header("Idempotency-Key", "it-idor-guard")
+            .post(
+                Entity.entity(
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"ONLINE\",\"fulfilmentType\":\"PICKUP\","
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,\"unitPrice\":5.00}],\"currency\":\"USD\"}",
+                    MediaType.APPLICATION_JSON));
     assertThat(placed.getStatus(), is(201));
     String orderId = extractId(placed.readEntity(String.class));
 
@@ -1033,6 +1041,27 @@ class OrderIT {
     // stamps a staff role instead (see payment-svc OrderClient).
     Response anonymous = target.path("/orders/" + orderId).request().header("X-Tenant-Id", T).get();
     assertThat(anonymous.getStatus(), is(404));
+
+    // A till sale attached to a customer record is not reachable by a shopper's token: it carries
+    // no login, and a customer id is not a login id. Staff see it; the storefront does not.
+    Response till =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"customerId\":\""
+                + owningCustomer
+                + "\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":5.00}],\"currency\":\"USD\"}",
+            T,
+            "it-idor-guard-pos");
+    assertThat(till.getStatus(), is(201));
+    String tillOrder = extractId(till.readEntity(String.class));
+    assertThat(getAs("/orders/" + tillOrder, T, owningCustomer, "CUSTOMER").getStatus(), is(404));
+    assertThat(getAs("/orders/" + tillOrder, T, null, "CASHIER").getStatus(), is(200));
   }
 
   @Test

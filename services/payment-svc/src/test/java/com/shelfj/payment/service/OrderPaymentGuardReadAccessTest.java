@@ -55,11 +55,22 @@ class OrderPaymentGuardReadAccessTest {
     return c;
   }
 
-  private void orderOwnedBy(String customerId) {
+  /**
+   * The order is owned by a login, which is what the caller's token carries. Its customerId is a
+   * different, unrelated id on purpose — the shop's own record of that person — so these tests fail
+   * if ownership is ever checked against the wrong one again (SJ-D44).
+   */
+  private void orderOwnedBy(String loginId) {
     when(orderClient.getOrder(any(), any()))
         .thenReturn(
             new OrderClient.OrderInfo(
-                customerId, "ONLINE", new java.math.BigDecimal("10.00"), "CONFIRMED", null, "GBP"));
+                loginId == null ? null : Ids.newId().toString(),
+                loginId,
+                "ONLINE",
+                new java.math.BigDecimal("10.00"),
+                "CONFIRMED",
+                null,
+                "GBP"));
   }
 
   private void check(TenantContext c) {

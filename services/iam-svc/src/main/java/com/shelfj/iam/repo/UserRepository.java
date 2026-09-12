@@ -341,6 +341,20 @@ public class UserRepository extends BaseOutboxRepository {
               ps.executeUpdate();
             }
           }
+          // SJ-D45: the audit trail recorded the email on every registration and every sign-in,
+          // successful or not, so a deleted account's address stayed legible in audit_log after
+          // the users row had been scrubbed — which is the address the erasure existed to remove.
+          //
+          // audit_log is append-only (golden rule #8) and stays append-only: no row is deleted and
+          // no action or timestamp is rewritten. Only the one field that names the person is
+          // cleared, exactly as a settled order keeps its lines and loses its delivery address. The
+          // history of who did what, and when, is intact; what is gone is the identifier.
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE audit_log SET detail = NULL WHERE user_id = ? AND detail IS NOT NULL")) {
+            ps.setObject(1, user.id());
+            ps.executeUpdate();
+          }
           insertOutbox(c, event);
           return null;
         },

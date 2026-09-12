@@ -50,7 +50,12 @@ public class JwtService {
 
   /** Issue a signed access token for a user. */
   public String issueAccessToken(
-      UUID userId, UUID tenantId, String userType, Set<String> roles, Set<UUID> storeIds) {
+      UUID userId,
+      UUID tenantId,
+      String userType,
+      String email,
+      Set<String> roles,
+      Set<UUID> storeIds) {
     Instant now = Instant.now();
     var builder =
         JWT.create()
@@ -62,6 +67,14 @@ public class JwtService {
             .withExpiresAt(now.plusSeconds(config.accessTtlSeconds()));
     if (tenantId != null) {
       builder.withClaim("tenant", tenantId.toString());
+    }
+    // The holder's own email, which the gateway forwards downstream as X-User-Email. A shopper's
+    // login is global while the shop's customer record is not, so without it customer-svc has no
+    // way to know who the person signing in actually is, and an online order belongs to nobody the
+    // shop can email, credit or erase (SJ-D44). Omitted rather than empty for a deleted login,
+    // whose email has been erased.
+    if (email != null && !email.isBlank()) {
+      builder.withClaim("email", email);
     }
     // Omitted (not an empty claim) when unrestricted, so the gateway/TenantContext distinguish
     // "no claim present" from "claim present but empty" — both mean unrestricted, but only the

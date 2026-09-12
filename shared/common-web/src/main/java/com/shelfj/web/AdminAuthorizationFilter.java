@@ -149,11 +149,29 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
    * @param path the service-local request path
    * @return {@code true} for exactly those five shapes
    */
+  private static boolean looksLikeUuid(String segment) {
+    return segment.length() == 36
+        && segment
+            .chars()
+            .allMatch(
+                c ->
+                    c == '-'
+                        || (c >= '0' && c <= '9')
+                        || (c >= 'a' && c <= 'f')
+                        || (c >= 'A' && c <= 'F'));
+  }
+
   private static boolean isOrderSelfRead(String path) {
     if (!path.startsWith("/orders/")) return false;
     String rest = path.substring("/orders/".length());
     if (rest.isEmpty()) return false;
     int slash = rest.indexOf('/');
+    String first = slash < 0 ? rest : rest.substring(0, slash);
+    // Only an id-shaped segment is a self-read. The order resource also has literal children —
+    // /orders/mine, and /orders/export, which names a subject and is staff-only — and a literal
+    // matched here would sail past the role check straight to a resource that expects the filter
+    // to have done its job. A negative test found exactly that on /orders/export before it shipped.
+    if (!looksLikeUuid(first)) return "mine".equals(first) && slash < 0;
     if (slash < 0) return true;
     String tail = rest.substring(slash + 1);
     // fiscal-receipt: the till prints the legal receipt number from here, and a customer may read
@@ -219,6 +237,12 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // probed. Matched by shape, like the order reads, so a sub-resource added later stays
         // denied until someone decides what it should be.
         || isPaymentIntentSelfRead(path)
+        // The shopper's own customer record, and the data export art.20 entitles them to. Both
+        // resolve the caller's login from the verified token and can reach no other record; the
+        // asymmetry with /customers/{id} above is deliberate — this shape cannot name a subject.
+        || "/customers/me".equals(path)
+        || "/customers/me/export".equals(path)
+        || "/customers/me/marketing".equals(path)
         // Storefront promotions, the read side of what /prices/resolve already exposes.
         || "/promotions".equals(path)
         // The caller's own principal — it describes the caller, so it leaks nothing new.
@@ -294,6 +318,19 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // same lookup for every order line in one call instead of one call per line.
         || "/prices/resolve".equals(path)
         || "/prices/resolve-batch".equals(path)
+        // A signed-in shopper claiming the customer record this shop holds for them. Identity
+        // comes from the verified token and nothing else — the caller cannot name another login,
+        // another email or another tenant — so the only record reachable here is their own. It is
+        // also how order-svc makes the link at checkout, forwarding the shopper's own identity.
+        || "/customers/me".equals(path)
+        // The shopper's own preference centre. Same shape and same reason as /customers/me: the
+        // login comes from the token, so the only preferences reachable are the caller's.
+        || "/customers/me/marketing".equals(path)
+        // The opt-out link in a marketing message. Deliberately unauthenticated: the token is the
+        // capability, and PECR reg.23 asks for a simple means of refusing — one that works from a
+        // forwarded email, on a device that was never signed in, for a customer who has no
+        // password at all. It can only ever withdraw permission, never grant it.
+        || "/marketing/unsubscribe".equals(path)
         // Guest storefront checkout: an online shopper places an order with no staff role.
         // Reachable only via the gateway's storefront whitelist (tenant from X-Storefront-Tenant)
         // or by an authenticated customer. POS channel orders require a staff role — enforced
