@@ -32,6 +32,13 @@ public class CustomerVatStatusResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Records a customer's VAT registration and reverse-charge eligibility.
+   *
+   * @param req the customer, VAT number, registration and reverse-charge flags, and country
+   *     (defaulting to {@code GB})
+   * @return the stored status
+   */
   @Operation(
       summary = "Set a customer's VAT status",
       description =
@@ -51,6 +58,10 @@ public class CustomerVatStatusResource {
    * here for a customer JWT today), but reads aren't covered by the write-only default-deny filter
    * ({@link com.shelfj.web.AdminAuthorizationFilter}), so this needs its own gate rather than
    * relying on that distant routing detail to stay true.
+   *
+   * @param customerId the customer to look up
+   * @return the stored status
+   * @throws com.shelfj.web.ApiException {@code 404} when none is recorded
    */
   @Operation(
       summary = "Get a customer's VAT status",

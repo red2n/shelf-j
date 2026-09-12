@@ -22,10 +22,17 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+/** Maps reporting-svc domain projections to the response DTOs served by the report endpoints. */
 public final class Mappers {
 
   private Mappers() {}
 
+  /**
+   * Builds the cross-store on-hand report, summing a grand total across every row.
+   *
+   * @param rows on-hand projections, one per store/variant
+   * @return the report rows plus the grand total
+   */
   public static OnHandReport toOnHandReport(List<InventoryProjection> rows) {
     BigDecimal total =
         rows.stream().map(InventoryProjection::onHand).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -42,6 +49,16 @@ public final class Mappers {
     return new OnHandReport(dtoRows, total);
   }
 
+  /**
+   * Builds the supply/demand netting report, adding in-transit supply to on-hand stock.
+   *
+   * <p>Supply lines are grouped by their <em>destination</em> store, so stock still in transit
+   * counts towards the store expecting it rather than the one that shipped it. On-hand rows drive
+   * the output: a variant with inbound supply but no on-hand row does not appear.
+   *
+   * @param result on-hand projections paired with the open supply lines
+   * @return one row per on-hand store/variant with on-hand, in-transit and net available
+   */
   public static NettingReport toNettingReport(NettingResult result) {
     // group supply lines by (storeId=toStoreId, variantId) to sum in-transit qty
     Map<String, BigDecimal> supplyTotals =
@@ -67,6 +84,12 @@ public final class Mappers {
     return new NettingReport(rows);
   }
 
+  /**
+   * Builds the movement-statistics report, deriving net movement per bucket.
+   *
+   * @param stats per-bucket in/out totals
+   * @return the report rows, each carrying in, out and their difference
+   */
   public static MovementStatsReport toMovementStatsReport(List<MovementStat> stats) {
     var rows =
         stats.stream()
@@ -83,6 +106,12 @@ public final class Mappers {
     return new MovementStatsReport(rows);
   }
 
+  /**
+   * Builds the aggregate sales-summary report.
+   *
+   * @param rows sales totals grouped by currency
+   * @return the report rows, one per currency
+   */
   public static SalesSummaryReport toSalesSummaryReport(List<SalesSummary> rows) {
     var dtoRows =
         rows.stream()
@@ -93,6 +122,12 @@ public final class Mappers {
     return new SalesSummaryReport(dtoRows);
   }
 
+  /**
+   * Builds the day-by-day sales report.
+   *
+   * @param rows sales totals bucketed by day and currency
+   * @return the report rows, one per day/currency pair
+   */
   public static SalesByDayReport toSalesByDayReport(List<SalesDayStat> rows) {
     var dtoRows =
         rows.stream()

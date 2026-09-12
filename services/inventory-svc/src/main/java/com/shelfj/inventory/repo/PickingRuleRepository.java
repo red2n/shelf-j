@@ -26,6 +26,15 @@ import java.util.UUID;
 @ApplicationScoped
 public class PickingRuleRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a picking rule.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param name the name to set
+   * @param strategy the picking strategy
+   * @param gradePreference the grade preference
+   * @return the picking rule as stored
+   */
   public PickingRule createPickingRule(
       UUID tenantId, String name, String strategy, String gradePreference) {
     Instant now = Instant.now();
@@ -49,6 +58,13 @@ public class PickingRuleRepository extends BaseJdbcRepository {
             () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
   }
 
+  /**
+   * Looks a picking rule up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the picking rule to act on
+   * @return the picking rule, or empty when it does not exist in this tenant
+   */
   public Optional<PickingRule> findPickingRule(UUID tenantId, UUID id) {
     return query(
             "SELECT id,tenant_id,name,strategy,grade_preference,status,created_at,updated_at"
@@ -63,6 +79,13 @@ public class PickingRuleRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's picking rules.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<PickingRule> listPickingRules(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,name,strategy,grade_preference,status,created_at,updated_at"
@@ -75,6 +98,13 @@ public class PickingRuleRepository extends BaseJdbcRepository {
         "list picking rules");
   }
 
+  /**
+   * Soft-deletes a picking rule by marking it inactive.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the picking rule to act on
+   * @return the picking rule in its deactivated state
+   */
   public PickingRule deactivatePickingRule(UUID tenantId, UUID id) {
     Instant now = Instant.now();
     exec(
@@ -90,6 +120,16 @@ public class PickingRuleRepository extends BaseJdbcRepository {
             () -> ApiException.notFound("PICKING_RULE_NOT_FOUND", "Picking rule not found"));
   }
 
+  /**
+   * Replaces a rule's zone priority order wholesale.
+   *
+   * <p>Deletes then reinserts rather than merging, so the stored order is exactly what the caller
+   * sent and a removed zone does not linger.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param ruleId the picking rule to configure
+   * @param items the zones in the order they should be picked from
+   */
   public void replaceZonePriorities(
       UUID tenantId, UUID ruleId, List<PickingRuleZonePriority> items) {
     exec(
@@ -114,6 +154,13 @@ public class PickingRuleRepository extends BaseJdbcRepository {
     }
   }
 
+  /**
+   * Lists the tenant's zone priorities.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param ruleId the rule id
+   * @return the matching rows
+   */
   public List<PickingRuleZonePriority> listZonePriorities(UUID tenantId, UUID ruleId) {
     return query(
         "SELECT id,tenant_id,rule_id,zone_id,priority FROM picking_rule_zone_priorities"
@@ -126,6 +173,15 @@ public class PickingRuleRepository extends BaseJdbcRepository {
         "list zone priorities");
   }
 
+  /**
+   * Inserts a picking rule assignment.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param ruleId the rule id
+   * @param scopeType the scope type
+   * @param scopeId the scope id
+   * @return the picking rule assignment as stored
+   */
   public PickingRuleAssignment createPickingRuleAssignment(
       UUID tenantId, UUID ruleId, String scopeType, UUID scopeId) {
     Instant now = Instant.now();
@@ -151,6 +207,14 @@ public class PickingRuleRepository extends BaseJdbcRepository {
                 ApiException.notFound("ASSIGNMENT_NOT_FOUND", "Picking rule assignment not found"));
   }
 
+  /**
+   * Looks a picking rule assignment up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param scopeType the scope type
+   * @param scopeId the scope id
+   * @return the picking rule assignment, or empty when it does not exist in this tenant
+   */
   public Optional<PickingRuleAssignment> findPickingRuleAssignment(
       UUID tenantId, String scopeType, UUID scopeId) {
     return query(
@@ -171,6 +235,13 @@ public class PickingRuleRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's picking rule assignments.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<PickingRuleAssignment> listPickingRuleAssignments(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,rule_id,scope_type,scope_id,created_at"
@@ -184,6 +255,13 @@ public class PickingRuleRepository extends BaseJdbcRepository {
         "list picking rule assignments");
   }
 
+  /**
+   * Deletes a picking rule assignment.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the picking rule assignment to act on
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deletePickingRuleAssignment(UUID tenantId, UUID id) {
     Instant[] found = {null};
     query(

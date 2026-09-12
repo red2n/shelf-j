@@ -17,6 +17,10 @@ import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
+/**
+ * Thin JAX-RS resource for the back-office alert and notification feeds — validate, delegate to
+ * {@link NotificationService}, wrap in envelope. No logic here.
+ */
 @Path("/admin/notifications")
 @RequestScoped
 @Produces(MediaType.APPLICATION_JSON)
@@ -26,6 +30,15 @@ public class AdminResource {
   @Inject NotificationService service;
   @Inject TenantContext ctx;
 
+  /**
+   * List shortage alerts for the tenant, newest first.
+   *
+   * @param storeId restrict to one store, or {@code null} for every store; ignored when {@code
+   *     variantId} is given
+   * @param variantId restrict to one variant across all stores, or {@code null}
+   * @param limit page size; values outside 1..100 fall back to 20 rather than being rejected
+   * @return the matching alerts as DTOs
+   */
   @Operation(
       summary = "List shortage alerts",
       description =
@@ -52,7 +65,13 @@ public class AdminResource {
     return ApiResponse.ok(dtos);
   }
 
-  /** In-app notifications feed (welcome / order-confirmation / …) for the tenant, newest first. */
+  /**
+   * In-app notifications feed (welcome / order-confirmation / …) for the tenant, newest first.
+   *
+   * @param recipient restrict to one recipient, or {@code null} for the whole tenant feed
+   * @param limit page size; values outside 1..100 fall back to 20 rather than being rejected
+   * @return the matching notifications as DTOs
+   */
   @Operation(
       summary = "List in-app notifications",
       description =

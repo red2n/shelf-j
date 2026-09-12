@@ -54,11 +54,21 @@ public class FoodSafetyResource {
   @Inject FoodSafetyService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Lists a store's monitoring points.
+   *
+   * <p>Each point with its check type, limits, last check and due status (OK, DUE, OVERDUE), and
+   * how many of its failures have no corrective action yet.
+   *
+   * @param storeId the store id (query parameter)
+   * @param includeInactive the include inactive (query parameter)
+   */
   @Operation(
       summary = "List a store's monitoring points",
       description =
           "Each point with its check type, limits, last check and due status (OK, DUE, OVERDUE),"
               + " and how many of its failures have no corrective action yet.")
+  @APIResponse(responseCode = "200", description = "List a store's monitoring points")
   @GET
   @Path("/points")
   public ApiResponse<List<PointResponse>> listPoints(
@@ -73,10 +83,16 @@ public class FoodSafetyResource {
     return ApiResponse.ok(points, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Lists check types.
+   *
+   * <p>The platform's reference types, which carry the statutory limits, and the tenant's own.
+   */
   @Operation(
       summary = "List check types",
       description =
           "The platform's reference types, which carry the statutory limits, and the tenant's own.")
+  @APIResponse(responseCode = "200", description = "List check types")
   @GET
   @Path("/check-types")
   public ApiResponse<List<CheckTypeResponse>> listCheckTypes() {
@@ -86,6 +102,19 @@ public class FoodSafetyResource {
     return ApiResponse.ok(types, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Records a check.
+   *
+   * <p>A reading for a temperature check or passed for a pass/fail check. The server judges the
+   * result against the limits in force and stores those limits with the record. A failure alerts
+   * the store. Supports Idempotency-Key, so a tablet retrying on poor Wi-Fi records the check once.
+   *
+   * @param idempotencyKey the idempotency key (header parameter)
+   * @param req the request body
+   * @return check recorded ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 403} caller is not assigned to the point's store;
+   *     {@code 409} the point is switched off
+   */
   @Operation(
       summary = "Record a check",
       description =
@@ -125,11 +154,27 @@ public class FoodSafetyResource {
         .build();
   }
 
+  /**
+   * Lists the check diary.
+   *
+   * <p>Newest first, cursor-paginated. from is inclusive and to exclusive. openOnly keeps failures
+   * with no corrective action.
+   *
+   * @param storeId the store id (query parameter)
+   * @param pointId the point id (query parameter)
+   * @param result the result (query parameter)
+   * @param openOnly the open only (query parameter)
+   * @param from the from (query parameter)
+   * @param to the to (query parameter)
+   * @param after the after (query parameter)
+   * @param limit the limit (query parameter)
+   */
   @Operation(
       summary = "List the check diary",
       description =
           "Newest first, cursor-paginated. from is inclusive and to exclusive. openOnly keeps"
               + " failures with no corrective action.")
+  @APIResponse(responseCode = "200", description = "List the check diary")
   @GET
   @Path("/records")
   public ApiResponse<List<CheckRecordResponse>> listRecords(
@@ -157,6 +202,12 @@ public class FoodSafetyResource {
     return ApiResponse.ok(items, new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  /**
+   * Gets a check record with its corrective actions.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such record
+   */
   @Operation(summary = "Get a check record with its corrective actions")
   @APIResponse(responseCode = "404", description = "No such record")
   @GET
@@ -169,6 +220,17 @@ public class FoodSafetyResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Records a corrective action on a failed check.
+   *
+   * <p>What was done and what happened to the food. A failure stays open until one is recorded;
+   * more than one may be.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @return corrective action recorded ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 404} no such record; {@code 409} the check passed
+   */
   @Operation(
       summary = "Record a corrective action on a failed check",
       description =

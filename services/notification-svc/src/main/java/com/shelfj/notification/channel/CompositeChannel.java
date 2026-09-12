@@ -13,16 +13,32 @@ public final class CompositeChannel implements NotificationChannel {
   private final NotificationChannel inApp;
   private final NotificationChannel external;
 
+  /**
+   * @param inApp the APP channel, always run and never allowed to fail the send
+   * @param external the outbound channel (e.g. SMTP) whose failures propagate to the caller
+   */
   public CompositeChannel(NotificationChannel inApp, NotificationChannel external) {
     this.inApp = inApp;
     this.external = external;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the external channel's name, which is what gets recorded against the delivery
+   */
   @Override
   public String name() {
     return external.name();
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Runs the in-app path first so the feed is populated even if the external send then throws.
+   *
+   * @throws RuntimeException whatever the external channel raises, so the caller retries
+   */
   @Override
   public void send(UUID tenantId, String recipient, String subject, String body) {
     // In-app first (no-op + debug log); never blocks external delivery.

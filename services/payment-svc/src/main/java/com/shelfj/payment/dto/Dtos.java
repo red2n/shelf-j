@@ -11,6 +11,12 @@ import java.util.Map;
 import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
+/**
+ * Request and response DTOs for payment-svc — the wire contract for the tender, refund, intent and
+ * cash-management endpoints.
+ *
+ * <p>Money is {@code BigDecimal} throughout, never a floating-point type.
+ */
 public final class Dtos {
 
   private Dtos() {}

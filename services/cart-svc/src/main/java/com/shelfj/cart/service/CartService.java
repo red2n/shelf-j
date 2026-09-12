@@ -94,6 +94,17 @@ public class CartService {
     }
   }
 
+  /**
+   * Returns a cart together with its items.
+   *
+   * @param ctx caller context; supplies the tenant and the authenticated identity
+   * @param cartId cart id to look up, or {@code null} to resolve by session/identity
+   * @param sessionId guest session token, or {@code null} for an authenticated caller
+   * @return the cart and its items
+   * @throws ApiException {@code CART_NO_IDENTITY} (400) when none of cartId, sessionId or an
+   *     authenticated identity is supplied; {@code CART_NOT_FOUND} (404) when no cart matches or
+   *     the caller does not own it
+   */
   public CartViewResponse viewCart(TenantContext ctx, String cartId, String sessionId) {
     UUID tenantId = ctx.requireTenantId();
 
@@ -105,6 +116,17 @@ public class CartService {
 
   // ── Item operations ───────────────────────────────────────────────────────
 
+  /**
+   * Adds an item to the cart, incrementing the quantity if the variant is already present.
+   *
+   * @param ctx caller context; supplies the tenant and the authenticated identity
+   * @param req the target cart, the variant, the quantity and the unit price
+   * @return the inserted or incremented cart item
+   * @throws ApiException {@code CART_NOT_FOUND} (404) when the cart does not exist or the caller
+   *     does not own it; {@code CART_NOT_ACTIVE} (409) when the cart is already checked out or
+   *     abandoned; {@code TENANT_NOT_OPERATIONAL}/{@code STORE_NOT_OPERATIONAL} (409) when the
+   *     tenant or store is not open for business
+   */
   public CartItemResponse addItem(TenantContext ctx, AddItemRequest req) {
     UUID tenantId = ctx.requireTenantId();
     UUID cartId = parseUuid(req.cartId(), "cartId");
@@ -130,6 +152,17 @@ public class CartService {
     return toItemResponse(repo.upsertItem(item));
   }
 
+  /**
+   * Sets the quantity of an existing cart item.
+   *
+   * @param ctx caller context; supplies the tenant and the authenticated identity
+   * @param itemId the cart item to change
+   * @param req the owning cart and the new quantity
+   * @return the item with its updated quantity
+   * @throws ApiException {@code CART_NOT_FOUND} (404) when the cart does not exist or the caller
+   *     does not own it; {@code CART_ITEM_NOT_FOUND} (404) when the item does not exist or belongs
+   *     to a different cart
+   */
   public CartItemResponse updateItemQty(TenantContext ctx, UUID itemId, UpdateItemQtyRequest req) {
     UUID tenantId = ctx.requireTenantId();
     UUID cartId = parseUuid(req.cartId(), "cartId");
@@ -149,6 +182,17 @@ public class CartService {
     return toItemResponse(repo.findItemById(tenantId, itemId).orElseThrow());
   }
 
+  /**
+   * Removes an item from the cart.
+   *
+   * @param ctx caller context; supplies the tenant and the authenticated identity
+   * @param itemId the cart item to delete
+   * @param cartIdStr the owning cart id
+   * @param sessionId guest session token, or {@code null} for an authenticated caller
+   * @throws ApiException {@code CART_NOT_FOUND} (404) when the cart does not exist or the caller
+   *     does not own it; {@code CART_ITEM_NOT_FOUND} (404) when the item does not exist or belongs
+   *     to a different cart
+   */
   public void removeItem(TenantContext ctx, UUID itemId, String cartIdStr, String sessionId) {
     UUID tenantId = ctx.requireTenantId();
     UUID cartId = parseUuid(cartIdStr, "cartId");
@@ -206,6 +250,17 @@ public class CartService {
 
   // ── Called by OrderPlacedHandler ─────────────────────────────────────────
 
+  /**
+   * Marks the customer's active cart at a store as checked out once their order is placed.
+   *
+   * <p>Idempotent, as the {@code OrderPlaced} consumer may redeliver: a cart already moved out of
+   * {@code ACTIVE} is left untouched. Guest and POS orders carry no customer id and are ignored —
+   * they have no server-side cart to retire.
+   *
+   * @param tenantId owning tenant
+   * @param customerId the ordering customer, or {@code null} for a guest/POS order
+   * @param storeId the store the order was placed against
+   */
   public void onOrderPlaced(UUID tenantId, UUID customerId, UUID storeId) {
     if (customerId == null) return; // guest or POS order — no cart to mark
     repo.markCheckedOutByCustomerAndStore(tenantId, customerId, storeId);

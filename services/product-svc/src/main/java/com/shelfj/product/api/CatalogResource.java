@@ -50,6 +50,23 @@ public class CatalogResource {
   @Inject ProductService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Browses or search the public catalog.
+   *
+   * <p>Lists ACTIVE products; the online channel further filters to sellable_online, POS channel to
+   * sellable_pos. At least one of q/sku/barcode routes to the search path; otherwise the standard
+   * filtered list is returned. Tenant comes from X-Tenant-Id.
+   *
+   * @param category the category (query parameter)
+   * @param q the q (query parameter)
+   * @param sku the sku (query parameter)
+   * @param barcode the barcode (query parameter)
+   * @param store the store (query parameter)
+   * @param channel the channel (query parameter)
+   * @param limit the limit (query parameter)
+   * @throws com.shelfj.web.ApiException {@code 400} storefront tenant not resolved, or store is not
+   *     a UUID
+   */
   @Operation(
       summary = "Browse or search the public catalog",
       description =
@@ -105,6 +122,7 @@ public class CatalogResource {
   @Operation(
       summary = "List storefront categories",
       description = "Public category list for browse-by-category. Tenant from X-Tenant-Id.")
+  @APIResponse(responseCode = "200", description = "List storefront categories")
   @GET
   @Path("/categories")
   public ApiResponse<List<CategoryResponse>> categories() {
@@ -112,6 +130,12 @@ public class CatalogResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Gets a storefront product by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such product for this tenant
+   */
   @Operation(summary = "Get a storefront product by id")
   @APIResponse(responseCode = "404", description = "No such product for this tenant")
   @GET
@@ -120,7 +144,13 @@ public class CatalogResource {
     return ApiResponse.ok(Mappers.toProduct(service.getProduct(requireTenant(), id)));
   }
 
+  /**
+   * Lists a product's variants.
+   *
+   * @param id the id (path parameter)
+   */
   @Operation(summary = "List a product's variants")
+  @APIResponse(responseCode = "200", description = "List a product's variants")
   @GET
   @Path("/products/{id}/variants")
   public ApiResponse<List<VariantResponse>> variants(@PathParam("id") UUID id) {
@@ -196,6 +226,14 @@ public class CatalogResource {
 
   // ── Food safety and age restriction: reads a shopper and a till both need ──
 
+  /**
+   * Thes fourteen regulated allergens.
+   *
+   * <p>Reference data from Regulation (EU) 1169/2011 Annex II. Set by regulation, not by the
+   * business, so it is read-only.
+   *
+   * @return the fourteen, by code
+   */
   @Operation(
       summary = "The fourteen regulated allergens",
       description =
@@ -209,6 +247,19 @@ public class CatalogResource {
     return ApiResponse.ok(service.listAllergens().stream().map(Mappers::toAllergen).toList());
   }
 
+  /**
+   * As product's allergen declaration.
+   *
+   * <p>Open to shoppers deliberately: since Natasha's Law a customer is entitled to this
+   * information before buying, so putting it behind a login would defeat it. **Read the status, not
+   * the list length.** UNDECLARED with an empty list means nobody has checked yet; DECLARED with an
+   * empty list means the product has been checked and contains none of the fourteen. Treating the
+   * first as the second is how an allergic customer is told a product is safe when nobody knows.
+   *
+   * @param variantId the variant id (path parameter)
+   * @return the declaration and its status
+   * @throws com.shelfj.web.ApiException {@code 404} variant not found
+   */
   @Operation(
       summary = "A product's allergen declaration",
       description =
@@ -236,6 +287,21 @@ public class CatalogResource {
             rows.isEmpty() ? null : rows.get(0).declaredAt().toString()));
   }
 
+  /**
+   * Is this item age-restricted here, and from what age.
+   *
+   * <p>The question a till asks before it will take payment for a scanned line. Takes the country
+   * the store is in, because the same bottle of wine is 18 in the UK, 20 in Japan and 21 in the US
+   * — the restriction belongs to the product, the age belongs to the jurisdiction. A tenant's own
+   * rule wins over the statutory default, and may only ever be stricter. `minimumAge` null means
+   * the item is not restricted at all.
+   *
+   * @param variantId the variant id (path parameter)
+   * @param country the country (query parameter)
+   * @return the check to perform, or no restriction
+   * @throws com.shelfj.web.ApiException {@code 400} the item is restricted but this country has no
+   *     rule for it — set one first; {@code 404} variant not found
+   */
   @Operation(
       summary = "Is this item age-restricted here, and from what age",
       description =
@@ -275,6 +341,15 @@ public class CatalogResource {
                 rule.tenantId() != null));
   }
 
+  /**
+   * Hows an item is sold, and where it is from.
+   *
+   * <p>Country of origin, ingredients, and whether the item is sold by the each or by weight — what
+   * a shelf edge and a scale both need to price it.
+   *
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} variant not found
+   */
   @Operation(
       summary = "How an item is sold, and where it is from",
       description =

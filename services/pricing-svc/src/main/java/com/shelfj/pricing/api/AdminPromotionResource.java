@@ -50,6 +50,16 @@ public class AdminPromotionResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Creates a promotion, active immediately.
+   *
+   * <p>The shape is validated against the type, so a half-configured BOGO or a threshold promotion
+   * with no threshold is rejected rather than stored as something that silently discounts nothing.
+   *
+   * @param req the type, value, window, priority, coupon and any type-specific settings
+   * @return {@code 201} with the created promotion
+   * @throws com.shelfj.web.ApiException {@code 400} when the shape does not match the type
+   */
   @Operation(
       summary = "Create a promotion",
       description =
@@ -66,6 +76,18 @@ public class AdminPromotionResource {
         .build();
   }
 
+  /**
+   * Scopes a promotion to a variant, or to everything.
+   *
+   * <p>{@code CATEGORY} is rejected: pricing-svc has no variant→category mapping, so such a
+   * promotion would be stored and never fire.
+   *
+   * @param id the promotion to scope
+   * @param req the scope type ({@code VARIANT} or {@code ALL}) and, for VARIANT, the variant id
+   * @return the stored scope row
+   * @throws com.shelfj.web.ApiException {@code 400} when the scope is a category, unknown, or a
+   *     VARIANT scope with no variant named
+   */
   @Operation(
       summary = "Add a scope item to a promotion",
       description = "Attaches the promotion to a scope (ALL, VARIANT or CATEGORY).")
@@ -79,6 +101,17 @@ public class AdminPromotionResource {
         .build();
   }
 
+  /**
+   * Stops a promotion, recording why.
+   *
+   * <p>The only way to end a promotion created with no end date.
+   *
+   * @param id the promotion to stop
+   * @param req the reason, which is required
+   * @return the recorded status change
+   * @throws com.shelfj.web.ApiException {@code 400} when no reason is given; {@code 404} when the
+   *     promotion does not exist; {@code 409} when it is already stopped
+   */
   @Operation(
       summary = "Stop a promotion",
       description =
@@ -99,6 +132,18 @@ public class AdminPromotionResource {
         .build();
   }
 
+  /**
+   * Starts a stopped promotion again, recording why.
+   *
+   * <p>A reason is required in this direction too: restarting a discount is the change more likely
+   * to be questioned later.
+   *
+   * @param id the promotion to start
+   * @param req the reason, which is required
+   * @return the recorded status change
+   * @throws com.shelfj.web.ApiException {@code 400} when no reason is given; {@code 404} when the
+   *     promotion does not exist; {@code 409} when it is already active
+   */
   @Operation(summary = "Start a stopped promotion again", description = "Requires a reason too.")
   @APIResponse(responseCode = "200", description = "Started")
   @APIResponse(responseCode = "409", description = "Already running")
@@ -111,6 +156,12 @@ public class AdminPromotionResource {
         .build();
   }
 
+  /**
+   * The append-only on/off history for one promotion.
+   *
+   * @param id the promotion whose history to read
+   * @return the recorded status changes, newest first
+   */
   @Operation(
       summary = "A promotion's on/off history",
       description =

@@ -8,6 +8,10 @@ import org.eclipse.microprofile.openapi.annotations.media.Schema;
 /**
  * Request/response DTOs for iam-svc. DTOs are the API contract (golden rule #10). No tenant fields
  * in requests.
+ *
+ * <p>Ids are carried as {@code String} rather than {@code UUID} so the JSON contract stays stable.
+ * Bean Validation annotations on the request records are what {@code Validations.validate} enforces
+ * at the boundary.
  */
 public final class Dtos {
 
@@ -78,6 +82,14 @@ public final class Dtos {
       @Schema(description = "Always \"Bearer\".") String tokenType,
       @Schema(description = "Access token lifetime in seconds from issuance.")
           long expiresInSeconds) {
+    /**
+     * Builds a {@code Bearer} token pair.
+     *
+     * @param access the short-lived access token
+     * @param refresh the long-lived refresh token
+     * @param ttl the access token's lifetime in seconds from issuance
+     * @return the response with {@code tokenType} fixed to {@code Bearer}
+     */
     public static TokenResponse bearer(String access, String refresh, long ttl) {
       return new TokenResponse(access, refresh, "Bearer", ttl);
     }

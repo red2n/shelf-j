@@ -22,6 +22,13 @@ import java.util.UUID;
 @ApplicationScoped
 public class KanbanRepository extends BaseOutboxRepository {
 
+  /**
+   * Inserts a kanban card.
+   *
+   * @param card the kanban card to persist
+   * @param event the outbox row to commit alongside the write
+   * @return the kanban card as stored
+   */
   public KanbanCard createKanbanCard(KanbanCard card, OutboxRow event) {
     return inTx(
         c -> {
@@ -56,6 +63,15 @@ public class KanbanRepository extends BaseOutboxRepository {
         "create kanban card");
   }
 
+  /**
+   * Marks a kanban card TRIGGERED and writes its event — atomically.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param cardId the card to trigger
+   * @param notes free-text note recorded against the trigger
+   * @param event the outbox row to commit alongside
+   * @return the card in its triggered state
+   */
   public KanbanCard triggerKanbanCard(UUID tenantId, UUID cardId, String notes, OutboxRow event) {
     return inTx(
         c -> {
@@ -83,6 +99,14 @@ public class KanbanRepository extends BaseOutboxRepository {
         "trigger kanban card");
   }
 
+  /**
+   * Marks a triggered kanban card refilled and writes its event — atomically.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param cardId the card to replenish
+   * @param event the outbox row to commit alongside
+   * @return the card back in its filled state
+   */
   public KanbanCard replenishKanbanCard(UUID tenantId, UUID cardId, OutboxRow event) {
     return inTx(
         c -> {
@@ -108,6 +132,13 @@ public class KanbanRepository extends BaseOutboxRepository {
         "replenish kanban card");
   }
 
+  /**
+   * Looks a kanban card up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param cardId the card id
+   * @return the kanban card, or empty when it does not exist in this tenant
+   */
   public Optional<KanbanCard> findKanbanCard(UUID tenantId, UUID cardId) {
     return query(
             "SELECT id, tenant_id, store_id, variant_id, kanban_type, status, reorder_qty,"
@@ -124,6 +155,14 @@ public class KanbanRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's kanban cards.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param status the status to set
+   * @return the matching rows
+   */
   public List<KanbanCard> listKanbanCards(UUID tenantId, UUID storeId, String status) {
     if (status != null && !status.isBlank()) {
       return query(
@@ -153,6 +192,16 @@ public class KanbanRepository extends BaseOutboxRepository {
         "list kanban cards");
   }
 
+  /**
+   * Writes a kanban order modifiers back with its new values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the kanban order modifiers to act on
+   * @param minOrderQty the min order qty
+   * @param maxOrderQty the max order qty
+   * @param lotMultiplier the lot multiplier
+   * @return the kanban order modifiers as stored
+   */
   public KanbanCard updateKanbanOrderModifiers(
       UUID tenantId,
       UUID id,

@@ -74,6 +74,15 @@ public class AbcAnalysisRepository extends BaseJdbcRepository {
         "persist abc run");
   }
 
+  /**
+   * Lists the tenant's abc assignments.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param abcClass the abc class
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<AbcAssignment> listAbcAssignments(
       UUID tenantId, UUID storeId, String abcClass, int limit) {
     StringBuilder sb =
@@ -96,6 +105,14 @@ public class AbcAnalysisRepository extends BaseJdbcRepository {
         "list abc assignments");
   }
 
+  /**
+   * Looks an abc assignment up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @return the abc assignment, or empty when it does not exist in this tenant
+   */
   public Optional<AbcAssignment> findAbcAssignment(UUID tenantId, UUID storeId, UUID variantId) {
     List<AbcAssignment> rows =
         query(

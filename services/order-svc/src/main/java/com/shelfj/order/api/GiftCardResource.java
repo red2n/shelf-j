@@ -33,6 +33,15 @@ public class GiftCardResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Issues a gift card with a server-generated code and an opening balance.
+   *
+   * <p>The code is minted server-side, never supplied by the caller: it is bearer stored value, so
+   * a guessable code would be spendable by whoever guessed it.
+   *
+   * @param req the store, amount, optional currency and optional expiry
+   * @return {@code 201} with the issued card, including its code
+   */
   @Operation(
       summary = "Issue a gift card",
       description = "Issues a new gift card for a store with an initial stored-value balance.")
@@ -44,6 +53,13 @@ public class GiftCardResource {
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(gc))).build();
   }
 
+  /**
+   * Looks a gift card up by its code, to check the balance at the till.
+   *
+   * @param code the card's code
+   * @return the card with its current balance
+   * @throws com.shelfj.web.ApiException {@code 404} when no such card exists in the tenant
+   */
   @Operation(summary = "Get a gift card by code", description = "Looks up a gift card by its code.")
   @APIResponse(responseCode = "200", description = "Gift card found")
   @APIResponse(responseCode = "404", description = "Gift card not found")
@@ -54,6 +70,15 @@ public class GiftCardResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(gc))).build();
   }
 
+  /**
+   * Adds stored value to an existing gift card.
+   *
+   * @param code the card's code
+   * @param req the amount to add and a reference for the transaction log
+   * @return the card with its new balance
+   * @throws com.shelfj.web.ApiException {@code 404} when no such card exists; a conflict when the
+   *     card is not active
+   */
   @Operation(
       summary = "Reload a gift card",
       description = "Adds stored value to an existing gift card's balance.")
@@ -67,6 +92,18 @@ public class GiftCardResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(gc))).build();
   }
 
+  /**
+   * Spends stored value from a gift card as tender for a purchase.
+   *
+   * <p>The balance check happens in the same transaction as the write, so two tills cannot together
+   * overspend one card.
+   *
+   * @param code the card's code
+   * @param req the amount, the order being paid towards, and a reference
+   * @return the card with its new balance
+   * @throws com.shelfj.web.ApiException {@code 404} when no such card exists; a conflict when the
+   *     balance is insufficient or the card is not active
+   */
   @Operation(
       summary = "Redeem a gift card",
       description =
@@ -82,6 +119,13 @@ public class GiftCardResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(gc))).build();
   }
 
+  /**
+   * The append-only issue/reload/redeem history for one gift card.
+   *
+   * @param code the card's code
+   * @return every transaction against the card
+   * @throws com.shelfj.web.ApiException {@code 404} when no such card exists in the tenant
+   */
   @Operation(
       summary = "List a gift card's transactions",
       description = "Append-only issue/reload/redeem transaction history for the gift card.")

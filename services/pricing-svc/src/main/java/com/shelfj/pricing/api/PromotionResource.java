@@ -35,6 +35,14 @@ public class PromotionResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * The tenant's active promotions, highest priority first.
+   *
+   * <p>Filters on the active flag only — a promotion whose window has not opened, or has closed,
+   * still appears. The engine applies the date test when quoting.
+   *
+   * @return the active promotions
+   */
   @Operation(
       summary = "List active promotions",
       description = "All currently-active promotions for the tenant.")

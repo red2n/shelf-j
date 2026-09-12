@@ -30,11 +30,21 @@ public class InventoryConfigResource {
   @Inject TenantService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Merges the given fields into the tenant's inventory-control parameters.
+   *
+   * <p>Unset fields keep their current (or default) value, so a partial body is safe. A {@code
+   * null} body is allowed and upserts the defaults.
+   *
+   * @param req the fields to change, or {@code null} to upsert defaults
+   * @return the merged configuration
+   */
   @Operation(
       summary = "Upsert inventory-control config",
       description =
           "Merges the given fields into the tenant's inventory-control parameters; unset fields"
               + " keep their current (or default) value. A null body upserts defaults.")
+  @APIResponse(responseCode = "200", description = "The merged configuration")
   @PUT
   public Response upsert(UpsertInventoryConfigRequest req) {
     // Body is optional (PUT with no body = upsert defaults); validate only when one is supplied.
@@ -50,6 +60,12 @@ public class InventoryConfigResource {
     return Response.ok(ApiResponse.ok(body)).build();
   }
 
+  /**
+   * Returns the tenant's current inventory-control parameters.
+   *
+   * @return the stored configuration
+   * @throws com.shelfj.web.ApiException {@code 404} when the tenant has never set one
+   */
   @Operation(
       summary = "Get inventory-control config",
       description = "Returns the tenant's current inventory-control parameters.")

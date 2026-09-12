@@ -39,6 +39,15 @@ public class CycleCountResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Creates a cycle count.
+   *
+   * <p>Generates a count header with one line per variant in the given ABC classes for the store,
+   * pre-populated with system quantity.
+   *
+   * @param req the request body
+   * @return cycle count created ({@code 201})
+   */
   @Operation(
       summary = "Create a cycle count",
       description =
@@ -63,7 +72,17 @@ public class CycleCountResource {
         .build();
   }
 
+  /**
+   * Lists cycle counts.
+   *
+   * <p>Filterable by store and status.
+   *
+   * @param storeId the store id (query parameter)
+   * @param status the status (query parameter)
+   * @param limit the limit (query parameter)
+   */
   @Operation(summary = "List cycle counts", description = "Filterable by store and status.")
+  @APIResponse(responseCode = "200", description = "List cycle counts")
   @GET
   @Path("/cycle-counts")
   public ApiResponse<List<CycleCountHeaderResponse>> listCycleCounts(
@@ -78,6 +97,12 @@ public class CycleCountResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Gets a cycle count by id, with its lines.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such cycle count
+   */
   @Operation(summary = "Get a cycle count by id, with its lines")
   @APIResponse(responseCode = "404", description = "No such cycle count")
   @GET
@@ -90,6 +115,17 @@ public class CycleCountResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Enters a counted quantity for a cycle-count line.
+   *
+   * <p>Records the counted qty and computes variance against system qty.
+   *
+   * @param headerId the header id (path parameter)
+   * @param lineId the line id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 400} countedQty must be >= 0; {@code 404} no such
+   *     cycle count or count line
+   */
   @Operation(
       summary = "Enter a counted quantity for a cycle-count line",
       description = "Records the counted qty and computes variance against system qty.")
@@ -105,6 +141,15 @@ public class CycleCountResource {
     return ApiResponse.ok(Mappers.toCycleCountLine(line), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Approves a cycle count within tolerance.
+   *
+   * <p>Auto-approves lines whose variance percentage is within the count's tolerance and flags the
+   * rest for manual review.
+   *
+   * @param headerId the header id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such cycle count
+   */
   @Operation(
       summary = "Approve a cycle count within tolerance",
       description =
@@ -121,6 +166,14 @@ public class CycleCountResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Posts stock adjustments for an approved cycle count.
+   *
+   * <p>Writes a StockAdjusted movement per approved line with a non-zero variance.
+   *
+   * @param headerId the header id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such cycle count
+   */
   @Operation(
       summary = "Post stock adjustments for an approved cycle count",
       description = "Writes a StockAdjusted movement per approved line with a non-zero variance.")

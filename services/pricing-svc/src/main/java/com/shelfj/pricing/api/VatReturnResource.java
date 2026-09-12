@@ -27,6 +27,19 @@ public class VatReturnResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Computes HMRC MTD VAT return boxes 1-9 for a period.
+   *
+   * <p>Box 4 (input VAT on purchases) and boxes 7-9 are still zero: they need purchase-side figures
+   * this service does not yet consume, so a return filed from this is incomplete for a business
+   * that reclaims input VAT.
+   *
+   * @param from inclusive ISO-8601 lower bound on the tax point
+   * @param to exclusive ISO-8601 upper bound
+   * @return the nine box figures with the period they cover
+   * @throws com.shelfj.web.ApiException {@code 400} when the period is malformed or not strictly
+   *     increasing
+   */
   @Operation(
       summary = "Compute the MTD VAT return for a period",
       description =

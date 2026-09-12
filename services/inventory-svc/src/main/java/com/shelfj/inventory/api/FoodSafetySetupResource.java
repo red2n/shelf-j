@@ -55,6 +55,17 @@ public class FoodSafetySetupResource {
   @Inject FoodSafetyService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Creates a monitoring point.
+   *
+   * <p>Limits default to the check type's and may only be stricter: a chiller cannot be set to 10
+   * °C when the law says 8.
+   *
+   * @param req the request body
+   * @return point created ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 409} the store already has a point with that name;
+   *     {@code 422} limits laxer than the check type's
+   */
   @Operation(
       summary = "Create a monitoring point",
       description =
@@ -85,6 +96,17 @@ public class FoodSafetySetupResource {
         .build();
   }
 
+  /**
+   * Updates a monitoring point.
+   *
+   * <p>Its name, zone, limits and frequency. Its store and check type are fixed, because the
+   * records already made against it depend on both.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} no such point; {@code 422} limits laxer than
+   *     the check type's
+   */
   @Operation(
       summary = "Update a monitoring point",
       description =
@@ -109,6 +131,15 @@ public class FoodSafetySetupResource {
         FoodSafetyMappers.toPoint(point, Instant.now()), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Switches a monitoring point on.
+   *
+   * <p>Requires a reason, kept in a trail.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 409} already switched on
+   */
   @Operation(
       summary = "Switch a monitoring point on",
       description = "Requires a reason, kept in a trail.")
@@ -120,6 +151,15 @@ public class FoodSafetySetupResource {
     return switchPoint(id, true, req);
   }
 
+  /**
+   * Switches a monitoring point off.
+   *
+   * <p>A decommissioned chiller stops being due. Requires a reason; its records are kept.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 409} already switched off
+   */
   @Operation(
       summary = "Switch a monitoring point off",
       description =
@@ -132,6 +172,13 @@ public class FoodSafetySetupResource {
     return switchPoint(id, false, req);
   }
 
+  /**
+   * Creates a check type of the tenant's own.
+   *
+   * @param req the request body
+   * @return check type created ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 409} code already taken
+   */
   @Operation(summary = "Create a check type of the tenant's own")
   @APIResponse(responseCode = "201", description = "Check type created")
   @APIResponse(responseCode = "409", description = "Code already taken")
@@ -156,6 +203,14 @@ public class FoodSafetySetupResource {
         .build();
   }
 
+  /**
+   * Updates one of the tenant's own check types.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} no such check type; {@code 409} a platform
+   *     type, which cannot be changed
+   */
   @Operation(summary = "Update one of the tenant's own check types")
   @APIResponse(responseCode = "404", description = "No such check type")
   @APIResponse(responseCode = "409", description = "A platform type, which cannot be changed")
@@ -176,6 +231,15 @@ public class FoodSafetySetupResource {
         FoodSafetyMappers.toCheckType(type), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Signs off a store's records for a period.
+   *
+   * <p>The verification step HACCP requires. Stores the counts the manager was signing off —
+   * records, failures, and failures still without a corrective action — as they stood.
+   *
+   * @param req the request body
+   * @return review recorded ({@code 201})
+   */
   @Operation(
       summary = "Sign off a store's records for a period",
       description =
@@ -202,7 +266,17 @@ public class FoodSafetySetupResource {
         .build();
   }
 
+  /**
+   * Lists reviews.
+   *
+   * <p>Newest first, cursor-paginated.
+   *
+   * @param storeId the store id (query parameter)
+   * @param after the after (query parameter)
+   * @param limit the limit (query parameter)
+   */
   @Operation(summary = "List reviews", description = "Newest first, cursor-paginated.")
+  @APIResponse(responseCode = "200", description = "List reviews")
   @GET
   @Path("/reviews")
   public ApiResponse<List<ReviewResponse>> listReviews(

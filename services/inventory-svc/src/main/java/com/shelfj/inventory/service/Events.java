@@ -42,6 +42,16 @@ public final class Events {
         + "\"}";
   }
 
+  /**
+   * The {@code StockDeducted} payload.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store the stock left
+   * @param variantId the variant deducted
+   * @param reservationId the hold consumed, or the order the deduction is attributed to
+   * @param qty the quantity deducted
+   * @return the event payload as JSON
+   */
   public static String stockDeducted(
       UUID tenantId, UUID storeId, UUID variantId, UUID reservationId, BigDecimal qty) {
     return EventPayload.base("StockDeducted", tenantId, reservationId)
@@ -61,6 +71,16 @@ public final class Events {
         + "}";
   }
 
+  /**
+   * The {@code StockBelowThreshold} payload, which notification-svc turns into a shortage alert.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store that is short
+   * @param variantId the variant that is short
+   * @param available what is actually on hand
+   * @param threshold the level it fell below
+   * @return the event payload as JSON
+   */
   public static String stockBelowThreshold(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal available, BigDecimal threshold) {
     return EventPayload.base("StockBelowThreshold", tenantId, variantId)

@@ -69,15 +69,25 @@ public final class ThreeWayMatch {
       BigDecimal invoicedUnitPrice,
       List<String> variances) {
 
+    /** Defensively copies {@code variances} so a stored match cannot be edited after the fact. */
     public MatchLine {
       variances = List.copyOf(variances);
     }
 
-    /** Everything billed for this variant on this order, including this invoice. */
+    /**
+     * Everything billed for this variant on this order, including this invoice.
+     *
+     * @return earlier invoiced quantity plus this invoice's
+     */
     public BigDecimal qtyInvoicedTotal() {
       return qtyInvoicedBefore.add(qtyInvoicedNow);
     }
 
+    /**
+     * Whether this line agreed across all three documents.
+     *
+     * @return {@code true} when no variance was found
+     */
     public boolean matched() {
       return variances.isEmpty();
     }
@@ -97,8 +107,14 @@ public final class ThreeWayMatch {
    */
   public record Tolerance(BigDecimal pricePercent, BigDecimal qtyPercent) {
 
+    /** Zero on both axes: every difference, however small, is surfaced. */
     public static final Tolerance EXACT = new Tolerance(BigDecimal.ZERO, BigDecimal.ZERO);
 
+    /**
+     * Rejects a nonsensical tolerance at construction rather than letting it skew a match.
+     *
+     * @throws IllegalArgumentException when either percentage is null or negative
+     */
     public Tolerance {
       if (pricePercent == null || qtyPercent == null) {
         throw new IllegalArgumentException("tolerances must not be null");

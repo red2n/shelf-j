@@ -25,6 +25,12 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 @RequestScoped
+/**
+ * Thin JAX-RS resource for goods receipts — validate, delegate to {@link PurchaseService}, wrap in
+ * envelope. No logic here.
+ *
+ * <p>Booking a receipt is what moves stock into inventory-svc, via the {@code GoodsReceived} event.
+ */
 @Path("/goods-receipts")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
@@ -34,6 +40,16 @@ public class GoodsReceiptResource {
   @Inject PurchaseService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Books a delivery against a purchase order and publishes {@code GoodsReceived}.
+   *
+   * @param idempotencyKey the {@code Idempotency-Key} header, so a retried delivery is not booked
+   *     twice
+   * @param req the purchase order and the quantities received per variant
+   * @return {@code 201} with the recorded receipt
+   * @throws com.shelfj.web.ApiException {@code 400} when the order is not receivable or the receipt
+   *     has no lines; {@code 404} when the order does not exist
+   */
   @Operation(
       summary = "Record a goods receipt",
       description =
@@ -53,6 +69,14 @@ public class GoodsReceiptResource {
     return Response.status(201).entity(ApiResponse.ok(Mappers.toDto(gr, List.of()))).build();
   }
 
+  /**
+   * Lists the deliveries booked against one purchase order.
+   *
+   * @param poId the purchase order whose receipts to list; required
+   * @return the goods receipts, headers only
+   * @throws com.shelfj.web.ApiException {@code 400} when {@code poId} is missing; {@code 404} when
+   *     the order does not exist
+   */
   @Operation(
       summary = "List goods receipts for a purchase order",
       description = "Requires ?poId=<purchase order id>.")

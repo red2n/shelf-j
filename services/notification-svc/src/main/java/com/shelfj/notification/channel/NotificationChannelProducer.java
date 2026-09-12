@@ -86,6 +86,16 @@ public class NotificationChannelProducer {
   @ConfigProperty(name = "shelfj.jwt.issuer", defaultValue = "shelfj")
   String jwtIssuer;
 
+  /**
+   * Builds the single application-scoped channel the rest of the service injects.
+   *
+   * <p>Both external transports are wrapped in a {@link CompositeChannel} alongside {@link
+   * AppChannel}, so turning on email or MQTT adds a transport rather than replacing the in-app
+   * feed. An unrecognised {@code shelfj.notification.channel} falls back to in-app rather than
+   * failing startup.
+   *
+   * @return the configured channel: in-app alone, or in-app composed with SMTP or MQTT
+   */
   @Produces
   @ApplicationScoped
   public NotificationChannel channel() {
@@ -120,6 +130,13 @@ public class NotificationChannelProducer {
 
   // Disposer, not a destructor call site: releases the MQTT connection on app shutdown /
   // redeploy so no netty threads leak. A no-op for the app/SMTP channels.
+  /**
+   * Releases the MQTT connection on shutdown or redeploy so no netty threads leak.
+   *
+   * <p>A no-op for the in-app and SMTP channels, which hold nothing to close.
+   *
+   * @param channel the channel being destroyed, supplied by CDI
+   */
   public void disposeChannel(@Disposes NotificationChannel channel) {
     if (channel instanceof CompositeChannel composite
         && composite.external() instanceof MqttChannel mqtt) {

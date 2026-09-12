@@ -32,6 +32,13 @@ public class VatRateResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Creates a VAT rate for the tenant.
+   *
+   * @param req the code, name, rate as a fraction (0.20 = 20%), exempt flag and effective date
+   * @return the created rate
+   * @throws com.shelfj.web.ApiException {@code 400} when the rate exceeds 1
+   */
   @Operation(
       summary = "Create a VAT rate",
       description = "Registers a new VAT rate/code (e.g. T1 standard, T0 zero, T5 exempt).")
@@ -45,6 +52,11 @@ public class VatRateResource {
         .build();
   }
 
+  /**
+   * All VAT rates configured for the tenant.
+   *
+   * @return the configured rates
+   */
   @Operation(summary = "List VAT rates", description = "All VAT rates configured for the tenant.")
   @APIResponse(responseCode = "200", description = "List of VAT rates")
   @GET
@@ -53,6 +65,13 @@ public class VatRateResource {
         .build();
   }
 
+  /**
+   * Looks up one VAT rate by its code.
+   *
+   * @param code the VAT code, matched case-insensitively
+   * @return the rate
+   * @throws com.shelfj.web.ApiException {@code 404} when the code is not configured
+   */
   @Operation(summary = "Get a VAT rate by code", description = "Looks up a VAT rate by its code.")
   @APIResponse(responseCode = "200", description = "VAT rate found")
   @APIResponse(responseCode = "404", description = "VAT code not found")
@@ -62,6 +81,18 @@ public class VatRateResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(svc.getVatRate(ctx, code)))).build();
   }
 
+  /**
+   * Updates a VAT rate in place.
+   *
+   * <p>Tax transactions already recorded keep the figures they were stamped with; only future ones
+   * use the new value.
+   *
+   * @param code the VAT code to update
+   * @param req the new name, rate, exempt flag and optional effective date
+   * @return the updated rate
+   * @throws com.shelfj.web.ApiException {@code 400} when the rate exceeds 1; {@code 404} when the
+   *     code is not configured
+   */
   @Operation(
       summary = "Update a VAT rate",
       description = "Updates the name, rate, exemption flag, description, or effective-from date.")

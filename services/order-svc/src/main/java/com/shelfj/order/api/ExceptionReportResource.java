@@ -40,6 +40,22 @@ public class ExceptionReportResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Discounts granted, sales voided and no-sale drawer opens over a period, heaviest first.
+   *
+   * <p>Each row carries the journalled POS sales for its group so the counts can be read as a rate.
+   * Check {@code journalCoverage} first: when it is false nothing journalled any sale in the
+   * period, every sales figure is zero, and the counts have no denominator to be judged against.
+   *
+   * @param storeId restrict to one store, or {@code null}
+   * @param from inclusive start as an ISO-8601 instant, or {@code null}
+   * @param to exclusive end as an ISO-8601 instant, or {@code null}
+   * @param groupBy group by the staff member responsible or by store
+   * @return one row per group, most exceptions first
+   * @throws com.shelfj.web.ApiException {@code 400} for an unknown {@code groupBy}, an unparseable
+   *     timestamp, or a storeId that is not a UUID; {@code 403} when the caller is not OWNER or
+   *     MANAGER
+   */
   @Operation(
       summary = "Staff exception report",
       description =

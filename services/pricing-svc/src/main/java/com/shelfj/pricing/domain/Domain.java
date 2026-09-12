@@ -180,6 +180,11 @@ public final class Domain {
       List<UUID> appliedPromotionIds,
       Map<String, String> rejectedCoupons) {
 
+    /**
+     * Everything this outcome takes off the basket.
+     *
+     * @return the line and basket discounts summed together
+     */
     public BigDecimal totalDiscount() {
       return java.util.stream.Stream.concat(lineDiscounts.stream(), basketDiscounts.stream())
           .map(LineDiscount::amount)

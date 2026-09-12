@@ -15,11 +15,22 @@ public final class AppChannel implements NotificationChannel {
 
   private static final Logger LOG = System.getLogger(AppChannel.class.getName());
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return always {@code APP}
+   */
   @Override
   public String name() {
     return "APP";
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>A no-op beyond a debug log: the {@code notification_log} row written by the notifier is
+   * itself the in-app delivery, so there is nothing to push.
+   */
   @Override
   public void send(UUID tenantId, String recipient, String subject, String body) {
     // In-app delivery is the notification_log record itself (written by the Notifier); nothing is

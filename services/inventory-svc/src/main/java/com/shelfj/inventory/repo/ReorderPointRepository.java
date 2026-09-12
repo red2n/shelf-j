@@ -22,6 +22,13 @@ import java.util.UUID;
 @ApplicationScoped
 public class ReorderPointRepository extends BaseOutboxRepository {
 
+  /**
+   * Creates or replaces a rop plan.
+   *
+   * @param plan the reorder-point plan to persist
+   * @param event the outbox row to commit alongside the write
+   * @return the rop plan as stored
+   */
   public ReorderPointPlan upsertRopPlan(ReorderPointPlan plan, OutboxRow event) {
     return inTx(
         c -> {
@@ -103,6 +110,14 @@ public class ReorderPointRepository extends BaseOutboxRepository {
         "compute rop plans");
   }
 
+  /**
+   * Looks a rop plan up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @return the rop plan, or empty when it does not exist in this tenant
+   */
   public Optional<ReorderPointPlan> findRopPlan(UUID tenantId, UUID storeId, UUID variantId) {
     return query(
             "SELECT id, tenant_id, store_id, variant_id, lead_time_days, ordering_cost,"
@@ -120,6 +135,13 @@ public class ReorderPointRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's rop plans.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<ReorderPointPlan> listRopPlans(UUID tenantId, UUID storeId) {
     return query(
         "SELECT id, tenant_id, store_id, variant_id, lead_time_days, ordering_cost,"
@@ -134,6 +156,16 @@ public class ReorderPointRepository extends BaseOutboxRepository {
         "list rop plans");
   }
 
+  /**
+   * Writes a rop order modifiers back with its new values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the rop order modifiers to act on
+   * @param minOrderQty the min order qty
+   * @param maxOrderQty the max order qty
+   * @param lotMultiplier the lot multiplier
+   * @return the rop order modifiers as stored
+   */
   public ReorderPointPlan updateRopOrderModifiers(
       UUID tenantId,
       UUID id,

@@ -49,6 +49,13 @@ public class CustomerResource {
 
   // ── profile ───────────────────────────────────────────────────────────────
 
+  /**
+   * Registers a customer profile for the caller's tenant.
+   *
+   * @param req the email, name and optional phone, date of birth, gender and GDPR consent
+   * @return {@code 201} with the created customer
+   * @throws com.shelfj.web.ApiException {@code 409} when that email is already registered here
+   */
   @Operation(
       summary = "Register a new customer",
       description = "Creates a customer profile for the caller's tenant.")
@@ -65,6 +72,13 @@ public class CustomerResource {
         .build();
   }
 
+  /**
+   * Cursor-paginated list of the tenant's customers.
+   *
+   * @param after cursor — the {@code nextCursor} from the previous page, or {@code null} to start
+   * @param limit page size; capped at 100
+   * @return the page plus a {@code nextCursor}, which is {@code null} on the last page
+   */
   @Operation(
       summary = "List customers",
       description = "Cursor-paginated list of customers for the caller's tenant.")
@@ -82,6 +96,17 @@ public class CustomerResource {
         new CustomerListResponse(items, nextCursor), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * POS barcode/QR-code lookup by email or phone.
+   *
+   * <p>Email wins when both are supplied.
+   *
+   * @param email the email to match, case-insensitively, or {@code null}
+   * @param phone the phone to match, or {@code null}
+   * @return the matching customer
+   * @throws com.shelfj.web.ApiException {@code 400} when neither is supplied; {@code 404} when
+   *     nothing matches
+   */
   @Operation(
       summary = "Look up a customer by email or phone",
       description = "POS barcode/QR-code lookup. One of email or phone must be provided.")
@@ -98,6 +123,14 @@ public class CustomerResource {
     return ApiResponse.ok(Mappers.toCustomer(customer), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Reads one customer.
+   *
+   * @param id the customer to read
+   * @return the customer
+   * @throws com.shelfj.web.ApiException {@code 404} when no such customer exists in the tenant or
+   *     the caller may not read it — a denial is a 404 so ids cannot be probed for existence
+   */
   @Operation(
       summary = "Get a customer by id",
       description =
@@ -114,6 +147,17 @@ public class CustomerResource {
         Mappers.toCustomer(service.get(tenantId, id, ctx)), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Updates a customer's profile fields.
+   *
+   * <p>Email is not changeable here — it identifies the record.
+   *
+   * @param id the customer to update
+   * @param req the replacement name, phone, date of birth, gender and consent flag
+   * @return the updated customer
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist; {@code 409}
+   *     when it has already been anonymized
+   */
   @Operation(summary = "Update a customer", description = "Updates the customer's profile fields.")
   @APIResponse(responseCode = "200", description = "Customer updated")
   @APIResponse(responseCode = "404", description = "Customer not found")
@@ -135,6 +179,11 @@ public class CustomerResource {
    * Restricted to management roles; the shared filter's generic "any staff role" rule would
    * otherwise let a CASHIER erase a customer's PII (this path isn't under {@code /admin/}, so it
    * doesn't get that filter's stricter rule for free).
+   *
+   * @param id the customer to erase
+   * @return {@code 204} with no body
+   * @throws com.shelfj.web.ApiException {@code 403} without an admin/owner/manager role; {@code
+   *     404} when the customer does not exist
    */
   @Operation(
       summary = "Anonymize a customer (GDPR erasure)",
@@ -156,6 +205,14 @@ public class CustomerResource {
 
   // ── addresses ─────────────────────────────────────────────────────────────
 
+  /**
+   * Adds an address to the customer's address book.
+   *
+   * @param customerId the customer to add the address to
+   * @param req the address lines and optional type, defaulting to {@code HOME}
+   * @return {@code 201} with the created address
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist
+   */
   @Operation(
       summary = "Add a customer address",
       description = "Adds an address to the customer's address book.")
@@ -173,6 +230,14 @@ public class CustomerResource {
         .build();
   }
 
+  /**
+   * Lists a customer's addresses.
+   *
+   * @param customerId the customer whose addresses to list
+   * @return the addresses, empty when none are on file
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist or the caller
+   *     may not read it
+   */
   @Operation(
       summary = "List a customer's addresses",
       description =
@@ -192,6 +257,18 @@ public class CustomerResource {
     return ApiResponse.ok(addresses, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Replaces an existing address in full.
+   *
+   * <p>Every field is overwritten, so a field the caller omits is cleared rather than preserved.
+   *
+   * @param customerId the customer the address belongs to
+   * @param addressId the address to replace
+   * @param req the replacement address
+   * @return the updated address
+   * @throws com.shelfj.web.ApiException {@code 404} when the address does not exist or belongs to a
+   *     different customer
+   */
   @Operation(summary = "Update a customer address", description = "Replaces an existing address.")
   @APIResponse(responseCode = "200", description = "Address updated")
   @APIResponse(responseCode = "404", description = "Address not found")
@@ -208,6 +285,15 @@ public class CustomerResource {
     return ApiResponse.ok(Mappers.toAddress(address), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Removes an address from the customer's address book.
+   *
+   * @param customerId the customer the address belongs to
+   * @param addressId the address to delete
+   * @return {@code 204} with no body
+   * @throws com.shelfj.web.ApiException {@code 404} when the address does not exist or belongs to a
+   *     different customer
+   */
   @Operation(summary = "Delete a customer address", description = "Removes an address.")
   @APIResponse(responseCode = "204", description = "Address deleted")
   @APIResponse(responseCode = "404", description = "Address not found")
@@ -223,6 +309,16 @@ public class CustomerResource {
 
   // ── loyalty ───────────────────────────────────────────────────────────────
 
+  /**
+   * Reads a customer's points balance and tier.
+   *
+   * <p>A customer who has never earned points gets a zero-balance BRONZE account rather than a 404.
+   *
+   * @param customerId the customer whose account to read
+   * @return the loyalty account
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist or the caller
+   *     may not read it
+   */
   @Operation(
       summary = "Get a customer's loyalty account",
       description =
@@ -239,6 +335,17 @@ public class CustomerResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Manually awards points to the customer's loyalty ledger (append-only).
+   *
+   * <p>Not idempotent — calling it twice awards twice. Points for a confirmed order accrue
+   * automatically from the {@code OrderConfirmed} event instead.
+   *
+   * @param customerId the customer to credit
+   * @param req the points, an optional originating order and a reason for the ledger
+   * @return the account with its new balance
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist
+   */
   @Operation(
       summary = "Earn loyalty points",
       description = "Manually awards points to the customer's loyalty ledger (append-only).")
@@ -255,6 +362,17 @@ public class CustomerResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Spends points from the customer's balance and records a ledger entry.
+   *
+   * <p>Lifetime points are untouched, so redeeming never demotes a customer's tier.
+   *
+   * @param customerId the customer to debit
+   * @param req the points, an optional order being paid towards and a reason for the ledger
+   * @return the account with its new balance
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist; {@code 422}
+   *     when the balance is insufficient
+   */
   @Operation(
       summary = "Redeem loyalty points",
       description = "Deducts points from the customer's balance and records a ledger entry.")
@@ -272,6 +390,17 @@ public class CustomerResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Applies a signed manual correction to the customer's points balance.
+   *
+   * <p>Negative values remove points. This is the goodwill/correction path, distinct from earn and
+   * redeem.
+   *
+   * @param customerId the customer whose balance to correct
+   * @param req the signed point delta and a reason for the ledger
+   * @return the account with its new balance
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist
+   */
   @Operation(
       summary = "Adjust loyalty points",
       description =
@@ -290,6 +419,15 @@ public class CustomerResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Append-only history of loyalty earn/redeem/adjust entries, most recent first.
+   *
+   * @param customerId the customer whose ledger to read
+   * @param limit page size; capped at 100
+   * @return the ledger entries, newest first
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist or the caller
+   *     may not read it
+   */
   @Operation(
       summary = "Get the loyalty ledger",
       description = "Append-only history of loyalty earn/redeem/adjust entries, most recent first.")
@@ -310,6 +448,18 @@ public class CustomerResource {
 
   // ── store credit ──────────────────────────────────────────────────────────
 
+  /**
+   * Reads a customer's store-credit balance in one currency.
+   *
+   * <p>Balances are held per currency; a customer with none in that currency gets a zero balance
+   * rather than a 404.
+   *
+   * @param customerId the customer whose balance to read
+   * @param currency ISO-4217 code, defaulting to {@code GBP}
+   * @return the store-credit account
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist or the caller
+   *     may not read it
+   */
   @Operation(
       summary = "Get a customer's store-credit balance",
       description = "Returns a zero balance if no account exists yet for the given currency.")
@@ -327,6 +477,16 @@ public class CustomerResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Adds to the customer's store-credit balance and records a ledger entry.
+   *
+   * <p>Not idempotent — calling it twice issues twice.
+   *
+   * @param customerId the customer to credit
+   * @param req the amount, optional currency (defaults to GBP), originating order and reason
+   * @return the account with its new balance
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist
+   */
   @Operation(
       summary = "Issue store credit",
       description = "Adds to the customer's store-credit balance; recorded in the ledger.")
@@ -344,6 +504,18 @@ public class CustomerResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Deducts from the customer's store-credit balance and records a ledger entry.
+   *
+   * <p>Idempotent per order when an {@code orderId} is supplied, which is what lets payment-svc
+   * retry a store-credit tender safely.
+   *
+   * @param customerId the customer to debit
+   * @param req the amount, optional currency (defaults to GBP), order being paid and reason
+   * @return the account with its new balance
+   * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist; {@code 422}
+   *     when the balance is insufficient
+   */
   @Operation(
       summary = "Redeem store credit",
       description =

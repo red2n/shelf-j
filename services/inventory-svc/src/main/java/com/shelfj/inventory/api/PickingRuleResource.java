@@ -43,6 +43,14 @@ public class PickingRuleResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Creates a picking rule.
+   *
+   * <p>Defines a named picking strategy (e.g. FIFO/FEFO) with an optional grade preference.
+   *
+   * @param req the request body
+   * @return picking rule created ({@code 201})
+   */
   @Operation(
       summary = "Create a picking rule",
       description =
@@ -60,7 +68,13 @@ public class PickingRuleResource {
         .build();
   }
 
+  /**
+   * Lists picking rules.
+   *
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(summary = "List picking rules")
+  @APIResponse(responseCode = "200", description = "List picking rules")
   @GET
   @Path("/picking-rules")
   public ApiResponse<List<PickingRuleResponse>> listPickingRules(
@@ -72,6 +86,12 @@ public class PickingRuleResource {
             .toList());
   }
 
+  /**
+   * Gets a picking rule by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} picking rule not found
+   */
   @Operation(summary = "Get a picking rule by id")
   @APIResponse(responseCode = "404", description = "Picking rule not found")
   @GET
@@ -80,6 +100,12 @@ public class PickingRuleResource {
     return ApiResponse.ok(Mappers.toPickingRule(service.getPickingRule(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Deactivates a picking rule.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} picking rule not found
+   */
   @Operation(summary = "Deactivate a picking rule")
   @APIResponse(responseCode = "404", description = "Picking rule not found")
   @DELETE
@@ -89,6 +115,15 @@ public class PickingRuleResource {
         Mappers.toPickingRule(service.deactivatePickingRule(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Sets a picking rule's zone priorities.
+   *
+   * <p>Replaces the ordered list of zone pick priorities for the rule.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} picking rule not found
+   */
   @Operation(
       summary = "Set a picking rule's zone priorities",
       description = "Replaces the ordered list of zone pick priorities for the rule.")
@@ -104,7 +139,13 @@ public class PickingRuleResource {
             .toList());
   }
 
+  /**
+   * Lists a picking rule's zone priorities.
+   *
+   * @param id the id (path parameter)
+   */
   @Operation(summary = "List a picking rule's zone priorities")
+  @APIResponse(responseCode = "200", description = "List a picking rule's zone priorities")
   @GET
   @Path("/picking-rules/{id}/zone-priorities")
   public ApiResponse<List<PickingRuleZonePriorityResponse>> listZonePriorities(
@@ -115,6 +156,15 @@ public class PickingRuleResource {
             .toList());
   }
 
+  /**
+   * Assigns a picking rule to a scope.
+   *
+   * <p>Binds a picking rule to a scope (e.g. tenant/store/category) so it applies automatically to
+   * matching resolves.
+   *
+   * @param req the request body
+   * @return assignment created ({@code 201})
+   */
   @Operation(
       summary = "Assign a picking rule to a scope",
       description =
@@ -133,7 +183,13 @@ public class PickingRuleResource {
         .build();
   }
 
+  /**
+   * Lists picking rule assignments.
+   *
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(summary = "List picking rule assignments")
+  @APIResponse(responseCode = "200", description = "List picking rule assignments")
   @GET
   @Path("/picking-rule-assignments")
   public ApiResponse<List<PickingRuleAssignmentResponse>> listPickingRuleAssignments(
@@ -145,6 +201,13 @@ public class PickingRuleResource {
             .toList());
   }
 
+  /**
+   * Deletes a picking rule assignment.
+   *
+   * @param id the id (path parameter)
+   * @return assignment deleted ({@code 204})
+   * @throws com.shelfj.web.ApiException {@code 404} picking rule assignment not found
+   */
   @Operation(summary = "Delete a picking rule assignment")
   @APIResponse(responseCode = "204", description = "Assignment deleted")
   @APIResponse(responseCode = "404", description = "Picking rule assignment not found")
@@ -155,6 +218,16 @@ public class PickingRuleResource {
     return Response.noContent().build();
   }
 
+  /**
+   * Resolves the applicable picking rule and pick order for a variant at a store.
+   *
+   * <p>Previews the batch pick order (e.g. FIFO/FEFO with grade preference) the resolved rule would
+   * produce.
+   *
+   * @param store the store (query parameter)
+   * @param variant the variant (query parameter)
+   * @throws com.shelfj.web.ApiException {@code 400} store and variant query params are required
+   */
   @Operation(
       summary = "Resolve the applicable picking rule and pick order for a variant at a store",
       description =

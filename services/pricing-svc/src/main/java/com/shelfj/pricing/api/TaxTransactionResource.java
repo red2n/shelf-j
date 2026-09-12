@@ -33,6 +33,16 @@ public class TaxTransactionResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Records one line's tax position for the VAT return and tax summary.
+   *
+   * <p>Append-only: figures are stamped as at the tax point, so a later rate change does not
+   * rewrite what was charged.
+   *
+   * @param req the order, line, variant, store, VAT code and rate, amounts, exempt flag, tax point
+   *     and invoice reference
+   * @return the recorded transaction
+   */
   @Operation(
       summary = "Record a tax transaction",
       description =
@@ -47,6 +57,12 @@ public class TaxTransactionResource {
         .build();
   }
 
+  /**
+   * The tax lines recorded against one order.
+   *
+   * @param orderId the order whose tax lines to read
+   * @return the transactions, empty when none were recorded
+   */
   @Operation(
       summary = "List tax transactions for an order",
       description = "All tax transaction journal entries recorded for the given order.")

@@ -26,6 +26,14 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
 
   // ── Transaction reason codes ──────────────────────────────────────────────
 
+  /**
+   * Inserts a reason code.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param code the code to set
+   * @param description the free-text description
+   * @return the reason code as stored
+   */
   public ReasonCode insertReasonCode(UUID tenantId, String code, String description) {
     return inTx(
         c -> {
@@ -47,6 +55,12 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
         "insert reason code");
   }
 
+  /**
+   * Lists the tenant's reason codes.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the matching rows
+   */
   public List<ReasonCode> listReasonCodes(UUID tenantId) {
     return query(
         "SELECT id,tenant_id,code,description,active,created_at"
@@ -58,6 +72,17 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
         "list reason codes");
   }
 
+  /**
+   * Enables or disables a movement reason code.
+   *
+   * <p>Switched rather than deleted, so historical movements keep resolving the code they were
+   * recorded against.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the reason code to switch
+   * @param active {@code true} to enable it, {@code false} to retire it
+   * @return the reason code in its new state
+   */
   public ReasonCode setReasonCodeActive(UUID tenantId, UUID id, boolean active) {
     return inTx(
         c -> {
@@ -90,6 +115,14 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
 
   // ── Transaction source types ──────────────────────────────────────────────
 
+  /**
+   * Inserts a source type.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param code the code to set
+   * @param description the free-text description
+   * @return the source type as stored
+   */
   public TransactionSourceType insertSourceType(UUID tenantId, String code, String description) {
     return inTx(
         c -> {
@@ -111,6 +144,12 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
         "insert source type");
   }
 
+  /**
+   * Lists the tenant's source types.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the matching rows
+   */
   public List<TransactionSourceType> listSourceTypes(UUID tenantId) {
     return query(
         "SELECT id,tenant_id,code,description,active,created_at"
@@ -122,6 +161,17 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
         "list source types");
   }
 
+  /**
+   * Enables or disables a transaction source type.
+   *
+   * <p>Switched rather than deleted, so historical movements keep resolving the type they were
+   * recorded against.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the source type to switch
+   * @param active {@code true} to enable it, {@code false} to retire it
+   * @return the source type in its new state
+   */
   public TransactionSourceType setSourceTypeActive(UUID tenantId, UUID id, boolean active) {
     return inTx(
         c -> {
@@ -154,6 +204,16 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
 
   // ── Zone → GL nominal-code mappings ───────────────────────────────────────
 
+  /**
+   * Creates or replaces a zone gl mapping.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param zoneId the zone id
+   * @param nominalCode the nominal code
+   * @param description the free-text description
+   * @return the zone gl mapping as stored
+   */
   public ZoneGlMapping upsertZoneGlMapping(
       UUID tenantId, UUID storeId, UUID zoneId, String nominalCode, String description) {
     return inTx(
@@ -183,6 +243,13 @@ public class ReferenceDataRepository extends BaseJdbcRepository {
         "upsert zone gl mapping");
   }
 
+  /**
+   * Lists the tenant's zone gl mappings.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @return the matching rows
+   */
   public List<ZoneGlMapping> listZoneGlMappings(UUID tenantId, UUID storeId) {
     return query(
         "SELECT id,tenant_id,store_id,zone_id,nominal_code,description,created_at,updated_at"

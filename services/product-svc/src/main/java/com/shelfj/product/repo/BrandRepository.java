@@ -22,6 +22,13 @@ import java.util.UUID;
 @ApplicationScoped
 public class BrandRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a brand.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param name the name to set
+   * @return the brand as stored
+   */
   public Brand createBrand(UUID tenantId, String name) {
     Instant now = Instant.now();
     var b = new Brand(Ids.newId(), tenantId, name, Brand.STATUS_ACTIVE, now, now);
@@ -40,6 +47,13 @@ public class BrandRepository extends BaseJdbcRepository {
     return b;
   }
 
+  /**
+   * Looks a brand up by name within the tenant.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param name the name to match
+   * @return the brand, or empty when nothing matches
+   */
   public Optional<Brand> findBrandByName(UUID tenantId, String name) {
     return query(
             "SELECT id, tenant_id, name, status, created_at, updated_at"
@@ -54,6 +68,13 @@ public class BrandRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Looks a brand up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the brand to act on
+   * @return the brand, or empty when it does not exist in this tenant
+   */
   public Optional<Brand> findBrand(UUID tenantId, UUID id) {
     return query(
             "SELECT id, tenant_id, name, status, created_at, updated_at"
@@ -68,6 +89,12 @@ public class BrandRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's brands.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the matching rows
+   */
   public List<Brand> listBrands(UUID tenantId) {
     return query(
         "SELECT id, tenant_id, name, status, created_at, updated_at"
@@ -77,6 +104,14 @@ public class BrandRepository extends BaseJdbcRepository {
         "list brands");
   }
 
+  /**
+   * Writes a brand back with its new values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the brand to act on
+   * @param name the name to set
+   * @return the brand as stored
+   */
   public Brand updateBrand(UUID tenantId, UUID id, String name) {
     Instant now = Instant.now();
     exec(
@@ -92,6 +127,13 @@ public class BrandRepository extends BaseJdbcRepository {
         .orElseThrow(() -> ApiException.notFound("BRAND_NOT_FOUND", "Brand not found"));
   }
 
+  /**
+   * Soft-deletes a brand by marking it inactive.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the brand to act on
+   * @return the brand in its deactivated state
+   */
   public Brand deactivateBrand(UUID tenantId, UUID id) {
     Instant now = Instant.now();
     exec(

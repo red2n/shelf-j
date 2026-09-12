@@ -106,10 +106,26 @@ public class PurchaseService {
     return repo.createSupplier(s);
   }
 
+  /**
+   * Lists the tenant's suppliers.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param limit maximum rows; the caller is expected to have clamped this
+   * @return the suppliers
+   */
   public List<Supplier> listSuppliers(TenantContext ctx, int limit) {
     return repo.findSuppliers(ctx.requireTenantId(), limit);
   }
 
+  /**
+   * Reads one supplier.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param id the supplier to read
+   * @return the supplier
+   * @throws ApiException {@code PURCHASE_SUPPLIER_NOT_FOUND} (404) when it does not exist in this
+   *     tenant
+   */
   public Supplier getSupplier(TenantContext ctx, UUID id) {
     return repo.findSupplier(ctx.requireTenantId(), id)
         .orElseThrow(
@@ -182,10 +198,28 @@ public class PurchaseService {
         po, Events.purchaseOrderCreated(ctx.requireTenantId(), po.id()));
   }
 
+  /**
+   * Lists the tenant's purchase orders.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param limit maximum rows; the caller is expected to have clamped this
+   * @return the purchase orders
+   */
   public List<PurchaseOrder> listPurchaseOrders(TenantContext ctx, int limit) {
     return repo.findPurchaseOrders(ctx.requireTenantId(), limit);
   }
 
+  /**
+   * Reads one purchase order.
+   *
+   * <p>Also the tenant-scoping guard the other purchase-order methods lean on: they call this first
+   * so an order from another tenant reads as absent rather than being operated on.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param id the purchase order to read
+   * @return the purchase order
+   * @throws ApiException {@code PURCHASE_PO_NOT_FOUND} (404) when it does not exist in this tenant
+   */
   public PurchaseOrder getPurchaseOrder(TenantContext ctx, UUID id) {
     return repo.findPurchaseOrder(ctx.requireTenantId(), id)
         .orElseThrow(
@@ -227,6 +261,15 @@ public class PurchaseService {
         line, po.currency(), pricing.findVatRates(ctx.requireTenantId()));
   }
 
+  /**
+   * Lists a purchase order's lines.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param poId the purchase order whose lines to list
+   * @return the order's lines
+   * @throws ApiException {@code PURCHASE_PO_NOT_FOUND} (404) when the order does not exist in this
+   *     tenant
+   */
   public List<PurchaseOrderLine> listPurchaseOrderLines(TenantContext ctx, UUID poId) {
     getPurchaseOrder(ctx, poId);
     return repo.findPurchaseOrderLines(ctx.requireTenantId(), poId);
@@ -365,16 +408,25 @@ public class PurchaseService {
   }
 
   /**
-   * What the caller may commit in a given currency, so a UI can say so before the buyer has built
-   * the order rather than after they try to submit it.
+   * Whether spend authority is configured at all; false means submission is never routed.
    *
-   * @param currency the currency to answer for; validated as ISO 4217
+   * @return {@code true} when at least one approval limit is configured
    */
-  /** Whether spend authority is configured at all; false means submission is never routed. */
   public boolean approvalEnabled() {
     return config.approvalEnabled();
   }
 
+  /**
+   * The caller's own spend ceiling in one currency.
+   *
+   * <p>Asks "what is my ceiling", not "may I spend this" — the same decision routine answers both,
+   * given a null total.
+   *
+   * @param ctx caller context; supplies the tenant and the roles the ceiling is derived from
+   * @param currency ISO-4217 code; limits are configured per currency because Shelf-J does no FX
+   * @return the caller's authority in that currency
+   * @throws ApiException {@code 400} when the currency is not an ISO-4217 code
+   */
   public SpendAuthority spendAuthority(TenantContext ctx, String currency) {
     ctx.requireTenantId();
     // A null total asks "what is my ceiling", not "may I spend this", and decide() answers both.
@@ -593,11 +645,28 @@ public class PurchaseService {
     return repo.captureSupplierInvoice(invoice, lines);
   }
 
+  /**
+   * Lists the supplier invoices captured against a purchase order.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param poId the purchase order whose invoices to list
+   * @param limit maximum rows; the caller is expected to have clamped this
+   * @return the supplier invoices
+   */
   public List<Domain.SupplierInvoice> listSupplierInvoices(
       TenantContext ctx, UUID poId, int limit) {
     return repo.findSupplierInvoices(ctx.requireTenantId(), poId, limit);
   }
 
+  /**
+   * Reads one supplier invoice.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param id the invoice to read
+   * @return the supplier invoice
+   * @throws ApiException {@code PURCHASE_INVOICE_NOT_FOUND} (404) when it does not exist in this
+   *     tenant
+   */
   public Domain.SupplierInvoice getSupplierInvoice(TenantContext ctx, UUID id) {
     return repo.findSupplierInvoice(ctx.requireTenantId(), id)
         .orElseThrow(
@@ -620,6 +689,17 @@ public class PurchaseService {
     return repo.findSupplierInvoiceLines(ctx.requireTenantId(), invoiceId);
   }
 
+  /**
+   * What the order and the receipts say about each variant, before any new invoice is applied.
+   *
+   * <p>The baseline a three-way match is computed against.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param poId the purchase order to read positions for
+   * @return one position per ordered variant
+   * @throws ApiException {@code PURCHASE_PO_NOT_FOUND} (404) when the order does not exist in this
+   *     tenant
+   */
   public List<ThreeWayMatch.OrderPosition> matchPositions(TenantContext ctx, UUID poId) {
     getPurchaseOrder(ctx, poId);
     return repo.findMatchPositions(ctx.requireTenantId(), poId);
@@ -627,6 +707,21 @@ public class PurchaseService {
 
   // ── Goods Receipts ────────────────────────────────────────────────────────────
 
+  /**
+   * Books a delivery against a purchase order, moving it to PARTIALLY_RECEIVED or RECEIVED.
+   *
+   * <p>A partially received order is still receivable — that is the point of the state. The status
+   * check here only fails a hopeless request early with a clear message; the authoritative
+   * over-receipt check runs inside the repository transaction under a row lock.
+   *
+   * @param req the purchase order and the quantities received per variant
+   * @param ctx caller context; supplies the tenant
+   * @param idempotencyKey the caller's {@code Idempotency-Key}, so a retried delivery is not booked
+   *     twice
+   * @return the recorded goods receipt
+   * @throws ApiException {@code PURCHASE_PO_NOT_FOUND} (404) when the order does not exist; {@code
+   *     PURCHASE_PO_NOT_RECEIVABLE} (400) when it is not SUBMITTED or PARTIALLY_RECEIVED
+   */
   public GoodsReceipt receiveGoods(
       CreateGoodsReceiptRequest req, TenantContext ctx, String idempotencyKey) {
     PurchaseOrder po = getPurchaseOrder(ctx, req.poId());
@@ -670,6 +765,15 @@ public class PurchaseService {
         Events.goodsReceived(ctx.requireTenantId(), gr.id(), gr.storeId(), gr.poId(), lines));
   }
 
+  /**
+   * Lists the deliveries booked against a purchase order.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param poId the purchase order whose receipts to list
+   * @return the goods receipts
+   * @throws ApiException {@code PURCHASE_PO_NOT_FOUND} (404) when the order does not exist in this
+   *     tenant
+   */
   public List<GoodsReceipt> listGoodsReceipts(TenantContext ctx, UUID poId) {
     getPurchaseOrder(ctx, poId);
     return repo.findGoodsReceiptsByPo(ctx.requireTenantId(), poId);
@@ -880,16 +984,43 @@ public class PurchaseService {
     return entries;
   }
 
+  /**
+   * Reads one intercompany invoice.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param id the invoice to read
+   * @return the invoice, either the AR or the AP side of a pair
+   * @throws ApiException {@code PURCHASE_INVOICE_NOT_FOUND} (404) when it does not exist in this
+   *     tenant
+   */
   public IntercompanyInvoice getIntercompanyInvoice(TenantContext ctx, UUID id) {
     return repo.findIntercompanyInvoice(ctx.requireTenantId(), id)
         .orElseThrow(
             () -> ApiException.notFound("PURCHASE_INVOICE_NOT_FOUND", "Invoice not found: " + id));
   }
 
+  /**
+   * Lists the tenant's intercompany invoices, both AR and AP sides.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param limit maximum rows; the caller is expected to have clamped this
+   * @return the invoices
+   */
   public List<IntercompanyInvoice> listIntercompanyInvoices(TenantContext ctx, int limit) {
     return repo.findIntercompanyInvoices(ctx.requireTenantId(), limit);
   }
 
+  /**
+   * Settles an intercompany invoice, posting the matching nominal-ledger entries.
+   *
+   * <p>Which entries depends on the side: an AR invoice debits Bank and credits Debtors, an AP one
+   * the mirror image, so the two books stay in agreement.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param id the invoice to settle
+   * @throws ApiException {@code PURCHASE_INVOICE_NOT_FOUND} (404) when it does not exist in this
+   *     tenant
+   */
   public void settleIntercompanyInvoice(TenantContext ctx, UUID id) {
     IntercompanyInvoice inv = getIntercompanyInvoice(ctx, id);
     LocalDate today = LocalDate.now();

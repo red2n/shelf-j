@@ -21,11 +21,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Till sessions and their X/Z reports — the cash-drawer side of POS.
+ *
+ * <p>Every entry point resolves the session first and asserts the caller has access to its store,
+ * so a cashier cannot read or close another store's till.
+ */
 @ApplicationScoped
 public class CashManagementService {
 
   @Inject CashManagementRepository repo;
 
+  /**
+   * Opens a till session with its starting float.
+   *
+   * @param tenantId owning tenant
+   * @param openedBy the cashier opening the till
+   * @param req the store and the float the drawer starts with
+   * @param ctx caller context, checked for access to the store
+   * @return the newly opened session
+   */
   public TillSessionResponse openTill(
       UUID tenantId, UUID openedBy, OpenTillRequest req, TenantContext ctx) {
     UUID storeId = UUID.fromString(req.storeId());
@@ -45,10 +60,35 @@ public class CashManagementService {
     return toSessionResponse(repo.openTill(session));
   }
 
+  /**
+   * Reads one till session.
+   *
+   * @param tenantId owning tenant
+   * @param sessionId the session to read
+   * @param ctx caller context, checked for access to the session's store
+   * @return the session
+   * @throws ApiException {@code TILL_SESSION_NOT_FOUND} (404) when no such session exists in this
+   *     tenant
+   */
   public TillSessionResponse getSession(UUID tenantId, UUID sessionId, TenantContext ctx) {
     return toSessionResponse(requireSession(tenantId, sessionId, ctx));
   }
 
+  /**
+   * Records a cash drop — money moved out of the drawer to the safe mid-shift.
+   *
+   * <p>Drops reduce the cash the Z-report expects to find in the drawer at close.
+   *
+   * @param tenantId owning tenant
+   * @param sessionId the open till session the drop is against
+   * @param recordedBy the cashier recording the drop
+   * @param amount the amount removed; must be positive
+   * @param notes free-text context, may be {@code null}
+   * @param ctx caller context, checked for access to the session's store
+   * @return the recorded drop
+   * @throws ApiException {@code TILL_CLOSED} (400) when the session is already closed; {@code
+   *     INVALID_DROP_AMOUNT} (400) when the amount is not positive
+   */
   public CashDropResponse recordDrop(
       UUID tenantId,
       UUID sessionId,
@@ -69,13 +109,38 @@ public class CashManagementService {
     return new CashDropResponse(drop.id(), drop.tillSessionId(), drop.amount(), drop.createdAt());
   }
 
-  /** X-report: read-only snapshot of the current session's totals. Does not close the session. */
+  /**
+   * X-report: read-only snapshot of the current session's totals. Does not close the session.
+   *
+   * <p>Safe to run repeatedly mid-shift. {@code countedCash} and the over/short figure are absent,
+   * since nothing has been counted yet.
+   *
+   * @param tenantId owning tenant
+   * @param sessionId the session to report on
+   * @param ctx caller context, checked for access to the session's store
+   * @return the totals so far
+   * @throws ApiException {@code TILL_SESSION_NOT_FOUND} (404) when no such session exists in this
+   *     tenant
+   */
   public TillReportResponse xReport(UUID tenantId, UUID sessionId, TenantContext ctx) {
     TillSession session = requireSession(tenantId, sessionId, ctx);
     return buildReport(session, null);
   }
 
-  /** Z-report: computes totals, records counted cash, closes the session. */
+  /**
+   * Z-report: computes totals, records counted cash, closes the session.
+   *
+   * <p>The over/short figure is the counted cash less what the float, cash sales, cash refunds and
+   * drops say should be in the drawer. Terminal — the session cannot be reopened afterwards.
+   *
+   * @param tenantId owning tenant
+   * @param sessionId the session to close
+   * @param req the cash actually counted in the drawer
+   * @param ctx caller context, checked for access to the session's store
+   * @return the final totals, including over/short
+   * @throws ApiException {@code TILL_SESSION_NOT_FOUND} (404) when no such session exists in this
+   *     tenant; {@code TILL_CLOSED} (400) when it is already closed
+   */
   public TillReportResponse zReport(
       UUID tenantId, UUID sessionId, CloseTillRequest req, TenantContext ctx) {
     TillSession session = requireSession(tenantId, sessionId, ctx);

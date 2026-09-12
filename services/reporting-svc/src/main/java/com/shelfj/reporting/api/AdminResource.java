@@ -17,6 +17,13 @@ import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
+/**
+ * Thin JAX-RS resource for the back-office inventory reports — validate, delegate to {@link
+ * ReportingService}, wrap in envelope. No logic here.
+ *
+ * <p>Every figure served here comes from reporting-svc's own event-sourced projections, never from
+ * a join against inventory-svc: the numbers are eventually consistent with the owning service.
+ */
 @Path("/admin/reports/inventory")
 @RequestScoped
 @Produces(MediaType.APPLICATION_JSON)

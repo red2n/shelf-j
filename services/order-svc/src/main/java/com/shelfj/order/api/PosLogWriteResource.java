@@ -41,6 +41,18 @@ public class PosLogWriteResource {
   @Inject OrderService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Appends the transaction journal entry for a POS sale, called by the till once it completes.
+   *
+   * <p>Idempotent on the order, so a retry — or an offline sale replayed later — returns the
+   * existing entry rather than failing or double-journalling.
+   *
+   * @param orderId the completed sale to journal
+   * @return {@code 201} with the entry, whether newly written or already present
+   * @throws com.shelfj.web.ApiException {@code 400} when the order is not a POS-channel order;
+   *     {@code 403} when the caller holds no POS-eligible role; {@code 404} when the order does not
+   *     exist
+   */
   @Operation(
       summary = "Journal a completed POS sale",
       description =

@@ -40,6 +40,13 @@ public class ParkedSaleResource {
   @Inject ParkedSaleService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Holds an in-progress cashier sale so the next customer can be served.
+   *
+   * @param req the store and the basket as rung so far
+   * @return {@code 201} with the parked sale
+   * @throws com.shelfj.web.ApiException {@code 403} when the caller holds no POS-eligible role
+   */
   @Operation(
       summary = "Park a sale",
       description =
@@ -60,6 +67,13 @@ public class ParkedSaleResource {
         .build();
   }
 
+  /**
+   * The tenant's active parked sales, for a cashier picking one back up.
+   *
+   * @param storeId restrict to one store, or {@code null} for the whole tenant
+   * @return the parked sales
+   * @throws com.shelfj.web.ApiException {@code 403} when the caller holds no POS-eligible role
+   */
   @Operation(
       summary = "List parked sales",
       description = "Active parked sales for the tenant, optionally filtered by store.")
@@ -75,6 +89,14 @@ public class ParkedSaleResource {
     return ApiResponse.ok(sales, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Reads one parked sale, to resume it at the till.
+   *
+   * @param id the parked sale to read
+   * @return the parked sale with its basket
+   * @throws com.shelfj.web.ApiException {@code 403} when the caller holds no POS-eligible role;
+   *     {@code 404} when no such parked sale exists in the tenant
+   */
   @Operation(summary = "Get a parked sale by id", description = "Retrieves a single parked sale.")
   @APIResponse(responseCode = "200", description = "Parked sale found")
   @APIResponse(responseCode = "403", description = "Caller lacks a POS-eligible role")
@@ -87,6 +109,16 @@ public class ParkedSaleResource {
     return ApiResponse.ok(svc.get(tenantId, id), ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Discards a parked sale without resuming it.
+   *
+   * <p>Nothing was sold and no stock was committed, so there is nothing to reverse.
+   *
+   * @param id the parked sale to discard
+   * @return {@code 204} with no body
+   * @throws com.shelfj.web.ApiException {@code 403} when the caller holds no POS-eligible role;
+   *     {@code 404} when no such parked sale exists in the tenant
+   */
   @Operation(
       summary = "Cancel/discard a parked sale",
       description = "Removes a parked sale without resuming it.")
@@ -102,6 +134,16 @@ public class ParkedSaleResource {
     return Response.noContent().build();
   }
 
+  /**
+   * Records a cash-drawer open with no accompanying sale.
+   *
+   * <p>Audit exists precisely because an unexplained drawer open is how cash leaves a till without
+   * a transaction to show for it.
+   *
+   * @param req the store and the stated reason for opening the drawer
+   * @return {@code 201} with the logged entry
+   * @throws com.shelfj.web.ApiException {@code 403} when the caller holds no POS-eligible role
+   */
   @Operation(
       summary = "Log a no-sale / open-drawer event",
       description = "Records a cash-drawer open with no accompanying sale, for audit purposes.")

@@ -75,16 +75,36 @@ public class StripePaymentProvider implements PaymentProvider {
             .build();
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return always {@code STRIPE}
+   */
   @Override
   public String name() {
     return PaymentIntent.PROVIDER_STRIPE;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return always {@code Stripe-Signature}
+   */
   @Override
   public String signatureHeaderName() {
     return "Stripe-Signature";
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Creates the intent with {@code capture_method=manual}, so the funds are held now and taken
+   * at fulfilment. Our own ids travel in Stripe metadata, so a webhook can be traced back even if
+   * the provider reference is lost on our side.
+   *
+   * @throws ProviderException non-retryable when Stripe rejects the request or no secret key is
+   *     configured; retryable when Stripe is unreachable or returns a 5xx
+   */
   @Override
   public Authorization authorize(AuthorizeRequest request) {
     Map<String, String> form = new LinkedHashMap<>();
@@ -107,6 +127,16 @@ public class StripePaymentProvider implements PaymentProvider {
         body.getString("id"), statusFrom(body.getString("status", "")), nextActionUrl(body));
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Takes the funds already held by {@link #authorize}. The {@code amount} argument is not sent
+   * to Stripe — the full authorised amount is captured, and the figure returned is what Stripe
+   * reports as actually received.
+   *
+   * @throws ProviderException non-retryable when Stripe rejects the capture; retryable when Stripe
+   *     is unreachable or returns a 5xx
+   */
   @Override
   public Capture capture(String providerRef, BigDecimal amount, String idempotencyKey) {
     JsonObject body =
@@ -119,6 +149,14 @@ public class StripePaymentProvider implements PaymentProvider {
     return new Capture(providerRef, majorUnits(captured, currency), providerRef);
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Releases the hold rather than refunding: nothing was taken, so nothing is owed back.
+   *
+   * @throws ProviderException non-retryable when Stripe rejects the cancellation; retryable when
+   *     Stripe is unreachable or returns a 5xx
+   */
   @Override
   public void cancel(String providerRef, String idempotencyKey) {
     post("/v1/payment_intents/" + providerRef + "/cancel", Map.of(), idempotencyKey);
@@ -138,6 +176,11 @@ public class StripePaymentProvider implements PaymentProvider {
    *       a time to anyone willing to measure;
    *   <li>the timestamp must be inside a tolerance, or a captured delivery can be replayed forever.
    * </ul>
+   *
+   * @throws ProviderException always non-retryable — a body that does not verify will not verify on
+   *     a second attempt — when no webhook secret is configured, the header is missing or
+   *     malformed, the timestamp is outside {@value #TOLERANCE_SECONDS} seconds, or the signature
+   *     does not match
    */
   @Override
   public WebhookEvent verifyWebhook(byte[] rawBody, String signatureHeader) {
@@ -286,6 +329,13 @@ public class StripePaymentProvider implements PaymentProvider {
     };
   }
 
+  /**
+   * Converts a major-unit amount to the minor units Stripe quotes in.
+   *
+   * @param amount the amount in major units
+   * @param currency ISO-4217 code, which decides the exponent
+   * @return the amount in minor units, half-up rounded
+   */
   static long minorUnits(BigDecimal amount, String currency) {
     return amount
         .movePointRight(exponent(currency))
@@ -293,10 +343,25 @@ public class StripePaymentProvider implements PaymentProvider {
         .longValueExact();
   }
 
+  /**
+   * Converts a minor-unit amount reported by Stripe back to major units.
+   *
+   * @param minor the amount in minor units
+   * @param currency ISO-4217 code, which decides the exponent
+   * @return the amount in major units
+   */
   static BigDecimal majorUnits(long minor, String currency) {
     return BigDecimal.valueOf(minor).movePointLeft(exponent(currency));
   }
 
+  /**
+   * Computes the lowercase hex HMAC-SHA256 used to verify a webhook signature.
+   *
+   * @param secret the endpoint's webhook secret
+   * @param payload the signed string, {@code "<timestamp>.<raw body>"}
+   * @return the digest as lowercase hex
+   * @throws ProviderException non-retryable when the JVM cannot provide HMAC-SHA256
+   */
   static String hmacSha256Hex(String secret, String payload) {
     try {
       Mac mac = Mac.getInstance("HmacSHA256");

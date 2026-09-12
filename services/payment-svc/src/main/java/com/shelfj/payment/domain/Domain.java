@@ -4,6 +4,13 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * Internal domain records for payment-svc — tenders, refunds, intents and till state.
+ *
+ * <p>Money is {@code BigDecimal} throughout and every amount carries its currency explicitly. These
+ * never cross the HTTP boundary: {@link com.shelfj.payment.mapper.Mappers} converts them to the
+ * DTOs in {@link com.shelfj.payment.dto.Dtos} first.
+ */
 public final class Domain {
 
   private Domain() {}

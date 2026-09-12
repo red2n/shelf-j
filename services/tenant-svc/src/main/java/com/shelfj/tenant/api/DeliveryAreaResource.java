@@ -34,6 +34,14 @@ public class DeliveryAreaResource {
   @Inject TenantService service;
   @Inject TenantContext ctx;
 
+  /**
+   * The pincodes this store fulfils for home delivery, lowest priority first.
+   *
+   * @param storeId the store whose areas to list
+   * @return the delivery areas, empty when none are mapped
+   * @throws com.shelfj.web.ApiException {@code 404} when the store does not exist in the caller's
+   *     tenant
+   */
   @Operation(
       summary = "List delivery areas for a store",
       description = "Pincodes this store fulfils for home delivery, lowest priority first.")
@@ -44,6 +52,16 @@ public class DeliveryAreaResource {
     return ApiResponse.ok(service.listDeliveryAreas(ctx.requireTenantId(), storeId));
   }
 
+  /**
+   * Maps a pincode to this store.
+   *
+   * @param storeId the store that will fulfil the pincode
+   * @param req the pincode and optional priority, defaulting to 100; lower wins when two stores
+   *     cover the same pincode
+   * @return {@code 201} with the created delivery area
+   * @throws com.shelfj.web.ApiException {@code 404} when the store does not exist in the caller's
+   *     tenant; {@code 409} when it already covers that pincode
+   */
   @Operation(
       summary = "Add a delivery area",
       description =
@@ -58,6 +76,17 @@ public class DeliveryAreaResource {
     return Response.status(Response.Status.CREATED).entity(ApiResponse.ok(area)).build();
   }
 
+  /**
+   * Stops this store covering a pincode.
+   *
+   * <p>Removing the tenant's last delivery area anywhere returns fulfilment to the default-store
+   * fallback, so delivery does not simply stop working.
+   *
+   * @param storeId the store the area belongs to
+   * @param areaId the delivery area to remove
+   * @return {@code 204} with no body
+   * @throws com.shelfj.web.ApiException {@code 404} when no such delivery area exists
+   */
   @Operation(
       summary = "Remove a delivery area",
       description = "Stops this store covering the pincode.")

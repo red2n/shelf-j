@@ -24,6 +24,13 @@ import java.util.UUID;
 @ApplicationScoped
 public class ItemRevisionRepository extends BaseOutboxRepository {
 
+  /**
+   * Inserts a revision and its event in one transaction.
+   *
+   * @param rev the revision to persist
+   * @param event the outbox row to commit alongside the write
+   * @return the revision as stored
+   */
   public ItemRevision createRevisionWithOutbox(ItemRevision rev, OutboxRow event) {
     return inTx(
         c -> {
@@ -62,6 +69,13 @@ public class ItemRevisionRepository extends BaseOutboxRepository {
         "create item revision");
   }
 
+  /**
+   * Lists the tenant's revisions.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<ItemRevision> listRevisions(UUID tenantId, UUID variantId) {
     return query(
         "SELECT id, tenant_id, variant_id, revision, description, effective_date, status, created_at"
@@ -75,6 +89,13 @@ public class ItemRevisionRepository extends BaseOutboxRepository {
         "list item revisions");
   }
 
+  /**
+   * The variant's active revision.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the variant whose current revision to read
+   * @return the active revision, or empty when the variant has none
+   */
   public Optional<ItemRevision> currentRevision(UUID tenantId, UUID variantId) {
     var rows =
         query(
@@ -91,6 +112,13 @@ public class ItemRevisionRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Looks a revision up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param revisionId the revision id
+   * @return the revision, or empty when it does not exist in this tenant
+   */
   public Optional<ItemRevision> findRevision(UUID tenantId, UUID revisionId) {
     var rows =
         query(

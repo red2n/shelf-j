@@ -49,6 +49,22 @@ public class ShrinkageResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Stocks write-offs, grouped.
+   *
+   * <p>Sums ADJUST movements over a period. Group by REASON to see what stock is being lost to, by
+   * ACTOR to see who is writing it off, or by STORE to compare sites. Write-offs and finds are
+   * reported separately, because a store that wrote off 100 units and found 100 others is not the
+   * same as one that did nothing.
+   *
+   * @param storeId the store id (query parameter)
+   * @param from the from (query parameter)
+   * @param to the to (query parameter)
+   * @param groupBy the group by (query parameter)
+   * @return one row per group, heaviest write-off first
+   * @throws com.shelfj.web.ApiException {@code 400} unknown groupBy, unparseable timestamp, or from
+   *     is not before to
+   */
   @Operation(
       summary = "Stock write-offs, grouped",
       description =
@@ -81,6 +97,22 @@ public class ShrinkageResource {
     return Response.ok(ApiResponse.ok(rows, ApiResponse.Meta.of(ctx.requestId()))).build();
   }
 
+  /**
+   * Whiches variants a write-off total is made of.
+   *
+   * <p>The variants behind a summary row, so an investigation can go from 'this member of staff
+   * wrote off 400 units' to what they actually wrote off. Filter by reasonCode and/or actorId to
+   * drill into one line of the grouped report.
+   *
+   * @param storeId the store id (query parameter)
+   * @param from the from (query parameter)
+   * @param to the to (query parameter)
+   * @param reasonCode the reason code (query parameter)
+   * @param actorId the actor id (query parameter)
+   * @param limit the limit (query parameter)
+   * @return one row per variant, heaviest write-off first
+   * @throws com.shelfj.web.ApiException {@code 400} unparseable timestamp, or from is not before to
+   */
   @Operation(
       summary = "Which variants a write-off total is made of",
       description =

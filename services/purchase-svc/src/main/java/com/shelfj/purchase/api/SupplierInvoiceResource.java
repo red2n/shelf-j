@@ -40,6 +40,19 @@ public class SupplierInvoiceResource {
   @Inject PurchaseService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * Records a supplier's invoice against a purchase order and matches it three ways.
+   *
+   * <p>Quantity is matched against what was <em>received</em>, because you pay for what turned up;
+   * price against what was <em>ordered</em>, because a delivery note does not renegotiate the
+   * price. Variances flag the invoice rather than block it, and the flags are stored as found.
+   *
+   * @param req the purchase order, invoice number, date, currency and lines
+   * @return {@code 201} with the captured invoice, status MATCHED or FLAGGED
+   * @throws com.shelfj.web.ApiException {@code 400} when there are no lines or the currency differs
+   *     from the order's; {@code 404} when the order does not exist; {@code 409} when this
+   *     supplier's invoice number was already captured
+   */
   @Operation(
       summary = "Capture a supplier invoice and match it three ways",
       description =
@@ -75,6 +88,13 @@ public class SupplierInvoiceResource {
         .build();
   }
 
+  /**
+   * Lists supplier invoices, newest first.
+   *
+   * @param poId restrict to one purchase order, or {@code null} for the whole tenant
+   * @param limit page size, defaulting to 20
+   * @return the invoices, newest first
+   */
   @Operation(
       summary = "List supplier invoices",
       description = "Optionally filtered to one purchase order.")
@@ -96,6 +116,18 @@ public class SupplierInvoiceResource {
         .build();
   }
 
+  /**
+   * One supplier invoice with the order, the receipts and the invoice side by side.
+   *
+   * <p>Each line carries what was ordered, what was received, what earlier invoices billed, what
+   * this one bills, and every variance found. The variances are those stored at capture, not
+   * recomputed — the order can be amended afterwards, and re-matching on read would erase the
+   * disagreement the invoice was flagged for.
+   *
+   * @param id the invoice to read
+   * @return the invoice and its match
+   * @throws com.shelfj.web.ApiException {@code 404} when it does not exist in the caller's tenant
+   */
   @Operation(
       summary = "One supplier invoice, with all three documents side by side",
       description =

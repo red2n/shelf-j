@@ -145,7 +145,16 @@ public class TenantService {
     return createStoreInternal(tenantId, req, isDefault);
   }
 
-  /** Add a store (not necessarily default). */
+  /**
+   * Add a store (not necessarily default).
+   *
+   * <p>Unlike {@link #createDefaultStore} this is an ordinary admin call, reached with a
+   * JWT-supplied tenant, so it needs no owner check. The store still gets a DEFAULT zone.
+   *
+   * @param tenantId owning tenant
+   * @param req the store's name, code, type, address and settings
+   * @return the new store with its DEFAULT zone
+   */
   public StoreWithZone addStore(UUID tenantId, CreateStoreRequest req) {
     return createStoreInternal(tenantId, req, false);
   }
@@ -274,11 +283,27 @@ public class TenantService {
     return Cursor.page(rows, limit, t -> t.createdAt() + "|" + t.id());
   }
 
+  /**
+   * Reads one tenant.
+   *
+   * @param tenantId the tenant to read
+   * @return the tenant
+   * @throws ApiException {@code TENANT_NOT_FOUND} (404) when no such tenant exists
+   */
   public Tenant getTenant(UUID tenantId) {
     return repo.findTenant(tenantId)
         .orElseThrow(() -> ApiException.notFound("TENANT_NOT_FOUND", "Tenant not found"));
   }
 
+  /**
+   * Every store in the tenant, unpaginated.
+   *
+   * <p>For internal use where the whole set is wanted at once; the API list uses the cursor-paged
+   * overload.
+   *
+   * @param tenantId owning tenant
+   * @return the tenant's stores
+   */
   public List<Store> listStores(UUID tenantId) {
     return repo.listStores(tenantId);
   }
@@ -339,6 +364,18 @@ public class TenantService {
     }
   }
 
+  /**
+   * Activates or deactivates a tenant and announces the change.
+   *
+   * <p>The event matters as much as the row: deactivating a tenant must lock its staff out across
+   * iam-svc, cart-svc and order-svc, not just flip a column they cannot see.
+   *
+   * @param tenantId the tenant whose status to change
+   * @param req the new status, {@code ACTIVE} or {@code INACTIVE}
+   * @return the tenant with its new status
+   * @throws ApiException {@code TENANT_NOT_FOUND} (404) when no such tenant exists; {@code
+   *     INVALID_STATUS} (400) when the status is neither ACTIVE nor INACTIVE
+   */
   public Tenant patchTenantStatus(UUID tenantId, PatchStatusRequest req) {
     getTenant(tenantId);
     String status = req.status().toUpperCase(Locale.ROOT);
@@ -390,6 +427,17 @@ public class TenantService {
     return repo.publishEvents(events);
   }
 
+  /**
+   * Renames a tenant.
+   *
+   * <p>Country and currency are not editable here — they are stamped at onboarding and downstream
+   * services have already projected them.
+   *
+   * @param tenantId the tenant to update
+   * @param req the new business name and optional legal name
+   * @return the updated tenant
+   * @throws ApiException {@code TENANT_NOT_FOUND} (404) when no such tenant exists
+   */
   public Tenant updateTenant(UUID tenantId, UpdateTenantRequest req) {
     getTenant(tenantId);
     return repo.updateTenant(
@@ -398,11 +446,34 @@ public class TenantService {
         req.legalName() == null ? null : req.legalName().trim());
   }
 
+  /**
+   * Reads one store.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store to read
+   * @return the store
+   * @throws ApiException {@code STORE_NOT_FOUND} (404) when it does not exist in this tenant
+   */
   public Store getStore(UUID tenantId, UUID storeId) {
     return repo.findStore(tenantId, storeId)
         .orElseThrow(() -> ApiException.notFound("STORE_NOT_FOUND", "No such store"));
   }
 
+  /**
+   * Updates a store's address, hours and trading settings.
+   *
+   * <p>{@code showPrices} and {@code enabledPaymentMethods} are preserved when the request omits
+   * them, so a partial update cannot silently switch a shop to catalogue-only or strip its tenders.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store to update
+   * @param req the replacement details; null {@code showPrices}/{@code enabledPaymentMethods} keep
+   *     the current values
+   * @return the updated store
+   * @throws ApiException {@code STORE_NOT_FOUND} (404) when it does not exist in this tenant;
+   *     {@code STORE_PAYMENT_METHOD_INVALID} or {@code STORE_PAYMENT_METHODS_EMPTY} (400) when the
+   *     tender list is unusable
+   */
   public Store updateStore(UUID tenantId, UUID storeId, UpdateStoreRequest req) {
     Store existing = getStore(tenantId, storeId);
     return repo.updateStore(
@@ -450,6 +521,19 @@ public class TenantService {
     return String.join(",", canonical);
   }
 
+  /**
+   * Changes a store's trading status and announces the change.
+   *
+   * <p>Published so iam-svc can terminate that store's POS sessions and cart/order-svc can stop
+   * accepting trade against it.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store whose status to change
+   * @param req the new status, one of {@link Store#STATUSES}
+   * @return the store with its new status
+   * @throws ApiException {@code STORE_NOT_FOUND} (404) when it does not exist in this tenant;
+   *     {@code INVALID_STATUS} (400) when the status is not a known one
+   */
   public Store patchStoreStatus(UUID tenantId, UUID storeId, PatchStatusRequest req) {
     getStore(tenantId, storeId);
     String status = req.status().toUpperCase(Locale.ROOT);
@@ -467,17 +551,46 @@ public class TenantService {
     return repo.updateStoreStatusWithOutbox(tenantId, storeId, status, event);
   }
 
+  /**
+   * Reads one zone.
+   *
+   * @param tenantId owning tenant
+   * @param zoneId the zone to read
+   * @return the zone
+   * @throws ApiException {@code ZONE_NOT_FOUND} (404) when it does not exist in this tenant
+   */
   public Zone getZone(UUID tenantId, UUID zoneId) {
     return repo.findZone(tenantId, zoneId)
         .orElseThrow(() -> ApiException.notFound("ZONE_NOT_FOUND", "No such zone"));
   }
 
+  /**
+   * Renames or retypes a zone.
+   *
+   * @param tenantId owning tenant
+   * @param zoneId the zone to update
+   * @param req the new name, code and type; a blank type falls back to {@code AISLE}
+   * @return the updated zone
+   * @throws ApiException {@code ZONE_NOT_FOUND} (404) when it does not exist in this tenant
+   */
   public Zone updateZone(UUID tenantId, UUID zoneId, UpdateZoneRequest req) {
     getZone(tenantId, zoneId);
     String type = req.type() == null || req.type().isBlank() ? "AISLE" : req.type();
     return repo.updateZone(tenantId, zoneId, req.name(), req.code(), type);
   }
 
+  /**
+   * Changes a zone's status.
+   *
+   * <p>Unlike a store status change, this publishes no event — no other service projects zone
+   * status; inventory-svc only references the zone id a batch sits in.
+   *
+   * @param tenantId owning tenant
+   * @param zoneId the zone whose status to change
+   * @param req the new status
+   * @return the zone with its new status
+   * @throws ApiException {@code ZONE_NOT_FOUND} (404) when it does not exist in this tenant
+   */
   public Zone patchZoneStatus(UUID tenantId, UUID zoneId, PatchStatusRequest req) {
     getZone(tenantId, zoneId);
     return repo.updateZoneStatus(tenantId, zoneId, req.status());
@@ -496,12 +609,32 @@ public class TenantService {
     return Cursor.page(rows, limit, s -> s.createdAt() + "|" + s.id());
   }
 
+  /**
+   * Unassigns a staff member from a store.
+   *
+   * <p>Removes the assignment row only; it does not delete the person's iam-svc login.
+   *
+   * @param tenantId owning tenant
+   * @param userId the staff member to unassign
+   * @param storeId the store to unassign them from
+   */
   public void removeStaff(UUID tenantId, UUID userId, UUID storeId) {
     repo.removeStaff(tenantId, userId, storeId);
   }
 
   // ── Gap #53: Inventory org parameters ────────────────────────────────────
 
+  /**
+   * Creates or partially updates the tenant's inventory parameters.
+   *
+   * <p>A null field on the request keeps the stored value, so callers can send only what they mean
+   * to change. The read and the merge both happen inside one transaction with the row locked, so
+   * two concurrent partial updates cannot each merge against the same stale snapshot.
+   *
+   * @param tenantId owning tenant
+   * @param req the fields to change; nulls keep their current values
+   * @return the merged configuration as stored
+   */
   public TenantInventoryConfigResponse upsertInventoryConfig(
       UUID tenantId, UpsertInventoryConfigRequest req) {
     // The read (existing) and the merge both happen inside repo.upsertInventoryConfigMerged's
@@ -550,6 +683,13 @@ public class TenantService {
     return Mappers.toDto(merged);
   }
 
+  /**
+   * Reads the tenant's inventory parameters.
+   *
+   * @param tenantId owning tenant
+   * @return the stored configuration
+   * @throws ApiException {@code INVENTORY_CONFIG_NOT_FOUND} (404) when the tenant has never set one
+   */
   public TenantInventoryConfigResponse getInventoryConfig(UUID tenantId) {
     return repo.findInventoryConfig(tenantId)
         .map(Mappers::toDto)
@@ -561,6 +701,18 @@ public class TenantService {
 
   // ── delivery areas ─────────────────────────────────────────────────────────
 
+  /**
+   * Maps a delivery pincode to a store.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store that will fulfil this pincode
+   * @param req the pincode and optional priority, defaulting to 100; lower wins when two stores
+   *     cover the same pincode
+   * @return the created delivery area
+   * @throws ApiException {@code STORE_NOT_FOUND} (404) when the store does not exist in this
+   *     tenant; {@code DELIVERY_PINCODE_REQUIRED} (400) when the pincode is blank; {@code
+   *     DELIVERY_AREA_EXISTS} (409) when this store already covers it
+   */
   public DeliveryAreaResponse addDeliveryArea(
       UUID tenantId, UUID storeId, CreateDeliveryAreaRequest req) {
     repo.findStore(tenantId, storeId)
@@ -587,6 +739,14 @@ public class TenantService {
     }
   }
 
+  /**
+   * Lists the pincodes one store delivers to.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store whose areas to list
+   * @return the delivery areas, empty when none are mapped
+   * @throws ApiException {@code STORE_NOT_FOUND} (404) when the store does not exist in this tenant
+   */
   public List<DeliveryAreaResponse> listDeliveryAreas(UUID tenantId, UUID storeId) {
     repo.findStore(tenantId, storeId)
         .orElseThrow(
@@ -596,6 +756,17 @@ public class TenantService {
     return repo.listDeliveryAreas(tenantId, storeId).stream().map(Mappers::toDto).toList();
   }
 
+  /**
+   * Unmaps a pincode from a store.
+   *
+   * <p>Removing the tenant's last delivery area returns fulfilment to the default-store fallback
+   * described on {@link #resolveFulfilment}.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store the area belongs to
+   * @param areaId the delivery area to remove
+   * @throws ApiException {@code DELIVERY_AREA_NOT_FOUND} (404) when no such area exists
+   */
   public void deleteDeliveryArea(UUID tenantId, UUID storeId, UUID areaId) {
     if (!repo.deleteDeliveryArea(tenantId, storeId, areaId)) {
       throw new ApiException(404, "DELIVERY_AREA_NOT_FOUND", "No such delivery area", List.of());
@@ -606,6 +777,13 @@ public class TenantService {
    * Resolve the fulfilling store for a home-delivery pincode. When the tenant has no delivery areas
    * configured, falls back to the tenant's default (or first) store so single-store tenants keep
    * working without mapping. When areas exist but the pincode is unmapped → 404.
+   *
+   * @param tenantId owning tenant
+   * @param pincode the delivery pincode to resolve
+   * @return the fulfilling store, with the matched pincode and its priority
+   * @throws ApiException {@code FULFILMENT_PINCODE_REQUIRED} (400) when the pincode is blank;
+   *     {@code FULFILMENT_AREA_NOT_COVERED} (404) when areas exist but none covers it; {@code
+   *     STORE_NOT_FOUND} (404) when the mapped store is gone or the tenant has no stores
    */
   public FulfilmentResolveResponse resolveFulfilment(UUID tenantId, String pincode) {
     if (pincode == null || pincode.isBlank()) {

@@ -12,6 +12,13 @@ import java.util.UUID;
 @ApplicationScoped
 public class RefreshTokenRepository extends BaseJdbcRepository {
 
+  /**
+   * Records a newly issued refresh token.
+   *
+   * @param userId the user the token authenticates
+   * @param tokenHash the hash of the token; the raw value is never persisted
+   * @param expiresAt when the token stops being redeemable, UTC
+   */
   public void store(UUID userId, String tokenHash, Instant expiresAt) {
     exec(
         "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, revoked)"
@@ -82,6 +89,13 @@ public class RefreshTokenRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Revokes every refresh token held by one user, ending all their renewable sessions.
+   *
+   * <p>Access tokens already issued stay valid until they expire.
+   *
+   * @param userId the user whose tokens to revoke
+   */
   public void revokeAllForUser(UUID userId) {
     exec(
         "UPDATE refresh_tokens SET revoked = true WHERE user_id = ?",

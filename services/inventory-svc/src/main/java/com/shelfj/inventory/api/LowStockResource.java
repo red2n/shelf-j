@@ -40,6 +40,20 @@ public class LowStockResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Items below a configured reorder level.
+   *
+   * <p>Live, per item, against that item's own level rather than a flat number. Where a threshold,
+   * a safety stock and a reorder point are all configured, the highest wins and the response names
+   * which one bound. Availability is on hand minus held reservations, matching the levels list.
+   * Items that have run out entirely are included — they are the most urgent case, and they have no
+   * batch rows at all.
+   *
+   * @param storeId the store id (query parameter)
+   * @param limit the limit (query parameter)
+   * @return rows ordered by shortfall, deepest first
+   * @throws com.shelfj.web.ApiException {@code 400} malformed storeId
+   */
   @Operation(
       summary = "Items below a configured reorder level",
       description =

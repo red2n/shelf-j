@@ -26,6 +26,17 @@ public class ParkedSaleService {
 
   @Inject ParkedSaleRepository repo;
 
+  /**
+   * Parks an in-progress sale, totalling its lines and discounts as it stands.
+   *
+   * <p>No stock is committed — a parked sale is a draft, so nothing is held against it.
+   *
+   * @param tenantId owning tenant
+   * @param cashierId the cashier parking it
+   * @param req the store, customer and the basket rung so far
+   * @return the parked sale with its computed subtotal and discount total
+   * @throws ApiException {@code PARK_EMPTY} (400) when the sale has no items
+   */
   public ParkedSaleResponse park(UUID tenantId, UUID cashierId, ParkSaleRequest req) {
     if (req.items() == null || req.items().isEmpty()) {
       throw new ApiException(400, "PARK_EMPTY", "Cannot park a sale with no items", List.of());
@@ -72,18 +83,52 @@ public class ParkedSaleService {
         items);
   }
 
+  /**
+   * Reads one parked sale, to resume it at the till.
+   *
+   * @param tenantId owning tenant
+   * @param saleId the parked sale to read
+   * @return the parked sale with its basket
+   * @throws ApiException a 404 when no such parked sale exists in this tenant
+   */
   public ParkedSaleResponse get(UUID tenantId, UUID saleId) {
     return repo.findById(tenantId, saleId);
   }
 
+  /**
+   * The tenant's still-open parked sales.
+   *
+   * @param tenantId owning tenant
+   * @param storeId restrict to one store, or {@code null} for the whole tenant
+   * @return the open parked sales
+   */
   public List<ParkedSaleResponse> list(UUID tenantId, UUID storeId) {
     return repo.listOpen(tenantId, storeId);
   }
 
+  /**
+   * Discards a parked sale without resuming it.
+   *
+   * <p>Nothing was sold and no stock was committed, so there is nothing to reverse.
+   *
+   * @param tenantId owning tenant
+   * @param saleId the parked sale to discard
+   */
   public void cancel(UUID tenantId, UUID saleId) {
     repo.cancel(tenantId, saleId);
   }
 
+  /**
+   * Records a cash-drawer open with no accompanying sale.
+   *
+   * <p>Audited because an unexplained drawer open is how cash leaves a till with no transaction to
+   * show for it.
+   *
+   * @param tenantId owning tenant
+   * @param cashierId the cashier who opened the drawer
+   * @param req the store, till session and stated reason
+   * @return the logged entry
+   */
   public NoSaleResponse logNoSale(UUID tenantId, UUID cashierId, NoSaleRequest req) {
     UUID storeId = req.storeId() == null ? null : Parsing.uuid(req.storeId(), "storeId");
     UUID sessionId =

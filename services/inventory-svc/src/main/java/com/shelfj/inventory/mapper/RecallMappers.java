@@ -27,6 +27,12 @@ public final class RecallMappers {
 
   private RecallMappers() {}
 
+  /**
+   * Converts a summary to its wire form.
+   *
+   * @param s the summary to convert
+   * @return its API representation
+   */
   public static RecallSummaryResponse toSummary(Summary s) {
     Header h = s.header();
     return new RecallSummaryResponse(
@@ -44,6 +50,12 @@ public final class RecallMappers {
         s.qtyHeld());
   }
 
+  /**
+   * Converts a recall to its wire form.
+   *
+   * @param d the recall to convert
+   * @return its API representation
+   */
   public static RecallResponse toRecall(Detail d) {
     Header h = d.header();
     return new RecallResponse(
@@ -67,6 +79,12 @@ public final class RecallMappers {
         stores(d));
   }
 
+  /**
+   * Converts an active item to its wire form.
+   *
+   * @param i the active item to convert
+   * @return its API representation
+   */
   public static ActiveRecallItemResponse toActiveItem(ActiveItem i) {
     Scope s = i.scope();
     return new ActiveRecallItemResponse(
@@ -81,6 +99,12 @@ public final class RecallMappers {
         str(s.expiryTo()));
   }
 
+  /**
+   * Converts a store action to its wire form.
+   *
+   * @param a the store action to convert
+   * @return its API representation
+   */
   public static StoreActionResponse toStoreAction(StoreAction a) {
     return new StoreActionResponse(
         a.id().toString(),

@@ -34,6 +34,13 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   // ─────────────────────────────────────────── customers
 
+  /**
+   * Inserts a customer and its {@code CustomerRegistered} event in one transaction.
+   *
+   * @param c the customer to persist; its {@code id} must already be a UUIDv7
+   * @param event the outbox row to commit alongside the insert
+   * @return the customer as stored
+   */
   public Customer createCustomer(Customer c, OutboxRow event) {
     return inTx(
         conn -> {
@@ -44,6 +51,13 @@ public class CustomerRepository extends BaseOutboxRepository {
         "create customer");
   }
 
+  /**
+   * Looks a customer up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer to fetch
+   * @return the customer, or empty when no such customer exists in this tenant
+   */
   public Optional<Customer> findById(UUID tenantId, UUID customerId) {
     return query(
             "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
@@ -75,6 +89,13 @@ public class CustomerRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Looks a customer up by email within a tenant.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param email the email to match; callers lower-case it first, as stored
+   * @return the customer, or empty when nothing matches
+   */
   public Optional<Customer> findByEmail(UUID tenantId, String email) {
     return query(
             "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
@@ -90,6 +111,13 @@ public class CustomerRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Looks a customer up by phone within a tenant.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param phone the phone number to match exactly, as stored
+   * @return the customer, or empty when nothing matches
+   */
   public Optional<Customer> findByPhone(UUID tenantId, String phone) {
     return query(
             "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
@@ -105,7 +133,17 @@ public class CustomerRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
-  /** Cursor-based page — returns up to limit+1 rows so caller can detect next page. */
+  /**
+   * Cursor-based page — returns up to limit+1 rows so caller can detect next page.
+   *
+   * <p>The extra row is the caller's next-page signal, not data to render: whoever calls this must
+   * trim to {@code limit} before returning it.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param afterId cursor — the last id from the previous page, or {@code null} to start
+   * @param limit page size; one extra row is fetched beyond it
+   * @return up to {@code limit + 1} customers, newest first; anonymized customers are excluded
+   */
   public List<Customer> listCustomers(UUID tenantId, String afterId, int limit) {
     if (afterId == null) {
       return query(
@@ -134,6 +172,12 @@ public class CustomerRepository extends BaseOutboxRepository {
         "list customers paged");
   }
 
+  /**
+   * Writes a customer's mutable profile fields back.
+   *
+   * @param c the customer carrying the new values; its id and tenant select the row
+   * @return the customer as stored
+   */
   public Customer updateCustomer(Customer c) {
     // `AND status != 'ANONYMIZED'` makes the guard atomic with the write — without it, a profile
     // update racing a concurrent GDPR anonymize (or simply targeting an already-anonymized
@@ -181,6 +225,11 @@ public class CustomerRepository extends BaseOutboxRepository {
    *
    * <p>The event is written only by the call that actually erased the customer, so repeating the
    * request does not ask every other service to do it again.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer to erase
+   * @param erasedEvent the outbox row to commit alongside the erasure; carries ids only
+   * @return the anonymized record, kept for audit
    */
   public Customer anonymize(UUID tenantId, UUID customerId, OutboxRow erasedEvent) {
     Instant now = Instant.now();
@@ -218,6 +267,12 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   // ─────────────────────────────────────────── addresses
 
+  /**
+   * Inserts a customer address.
+   *
+   * @param a the address to persist; its {@code id} must already be a UUIDv7
+   * @return the address as stored
+   */
   public CustomerAddress createAddress(CustomerAddress a) {
     return inTx(
         conn -> {
@@ -230,6 +285,13 @@ public class CustomerRepository extends BaseOutboxRepository {
         "create address");
   }
 
+  /**
+   * Lists a customer's addresses.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer whose addresses to list
+   * @return the addresses, empty when none are on file
+   */
   public List<CustomerAddress> listAddresses(UUID tenantId, UUID customerId) {
     return query(
         "SELECT id, tenant_id, customer_id, type, line1, line2, city, state, country,"
@@ -243,6 +305,12 @@ public class CustomerRepository extends BaseOutboxRepository {
         "list addresses");
   }
 
+  /**
+   * Writes an address back in full.
+   *
+   * @param a the address carrying the new values; its id, customer and tenant select the row
+   * @return the address as stored
+   */
   public CustomerAddress updateAddress(CustomerAddress a) {
     return inTx(
         conn -> {
@@ -272,6 +340,13 @@ public class CustomerRepository extends BaseOutboxRepository {
         "update address tx");
   }
 
+  /**
+   * Deletes one of a customer's addresses.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the owning customer, also matched so one customer cannot delete another's
+   * @param addressId the address to delete
+   */
   public void deleteAddress(UUID tenantId, UUID customerId, UUID addressId) {
     exec(
         "DELETE FROM customer_addresses WHERE tenant_id = ? AND customer_id = ? AND id = ?",
@@ -283,6 +358,14 @@ public class CustomerRepository extends BaseOutboxRepository {
         "delete address");
   }
 
+  /**
+   * Looks one of a customer's addresses up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the owning customer, also matched
+   * @param addressId the address to fetch
+   * @return the address, or empty when it does not exist or belongs to another customer
+   */
   public Optional<CustomerAddress> findAddress(UUID tenantId, UUID customerId, UUID addressId) {
     return query(
             "SELECT id, tenant_id, customer_id, type, line1, line2, city, state, country,"
@@ -301,6 +384,21 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   // ─────────────────────────────────────────── loyalty
 
+  /**
+   * Credits points, appends the ledger entry, re-derives the tier and writes the event —
+   * atomically.
+   *
+   * <p>Creates the loyalty account on first use. The tier follows lifetime points, not the
+   * spendable balance, so redeeming never demotes a customer.
+   *
+   * @param tenantId owning tenant
+   * @param customerId the customer to credit
+   * @param points the points to add
+   * @param orderId the originating order, or {@code null} for a manual award
+   * @param reason free-text reason recorded on the ledger entry
+   * @param event the outbox row to commit alongside
+   * @return the account with its new balance and tier
+   */
   public LoyaltyAccount earnPoints(
       UUID tenantId,
       UUID customerId,
@@ -396,6 +494,20 @@ public class CustomerRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Debits points, appends the ledger entry and writes the event — atomically.
+   *
+   * <p>The balance check happens inside the transaction, so concurrent redemptions cannot together
+   * overdraw the account. Lifetime points are untouched, so the tier does not fall.
+   *
+   * @param tenantId owning tenant
+   * @param customerId the customer to debit
+   * @param points the points to spend
+   * @param orderId the order being paid towards, or {@code null}
+   * @param reason free-text reason recorded on the ledger entry
+   * @param event the outbox row to commit alongside
+   * @return the account with its new balance
+   */
   public LoyaltyAccount redeemPoints(
       UUID tenantId,
       UUID customerId,
@@ -435,6 +547,17 @@ public class CustomerRepository extends BaseOutboxRepository {
         "redeem loyalty points");
   }
 
+  /**
+   * Applies a signed manual correction to a points balance, atomically with its ledger entry and
+   * event.
+   *
+   * @param tenantId owning tenant
+   * @param customerId the customer whose balance to correct
+   * @param points the signed delta; negative removes points
+   * @param reason free-text reason recorded on the ledger entry
+   * @param event the outbox row to commit alongside
+   * @return the account with its new balance
+   */
   public LoyaltyAccount adjustPoints(
       UUID tenantId, UUID customerId, BigDecimal points, String reason, OutboxRow event) {
     return inTx(
@@ -466,6 +589,13 @@ public class CustomerRepository extends BaseOutboxRepository {
         "adjust loyalty points");
   }
 
+  /**
+   * Reads a customer's loyalty account.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer whose account to read
+   * @return the account, or empty when the customer has never earned points
+   */
   public Optional<LoyaltyAccount> findLoyaltyAccount(UUID tenantId, UUID customerId) {
     return query(
             "SELECT id, tenant_id, customer_id, points_balance, lifetime_points, tier,"
@@ -481,6 +611,14 @@ public class CustomerRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Reads the append-only loyalty ledger for a customer.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer whose ledger to read
+   * @param limit maximum rows; the caller is expected to have capped this
+   * @return the entries, newest first
+   */
   public List<LoyaltyLedgerEntry> listLedger(UUID tenantId, UUID customerId, int limit) {
     return query(
         "SELECT id, tenant_id, customer_id, type, points, balance_after, order_id,"
@@ -498,6 +636,20 @@ public class CustomerRepository extends BaseOutboxRepository {
 
   // ─────────────────────────────────────────── store credit
 
+  /**
+   * Credits store credit, appends the ledger entry and writes the event — atomically.
+   *
+   * <p>Creates the per-currency account on first use.
+   *
+   * @param tenantId owning tenant
+   * @param customerId the customer to credit
+   * @param amount the amount to add
+   * @param currency ISO-4217 code the balance is held in
+   * @param orderId the originating order, or {@code null}
+   * @param reason free-text reason recorded on the ledger entry
+   * @param event the outbox row to commit alongside
+   * @return the account with its new balance
+   */
   public StoreCreditAccount issueStoreCredit(
       UUID tenantId,
       UUID customerId,
@@ -532,6 +684,21 @@ public class CustomerRepository extends BaseOutboxRepository {
         "issue store credit");
   }
 
+  /**
+   * Debits store credit, appends the ledger entry and writes the event — atomically.
+   *
+   * <p>The balance check happens inside the transaction, so concurrent redemptions cannot together
+   * overdraw the account.
+   *
+   * @param tenantId owning tenant
+   * @param customerId the customer to debit
+   * @param amount the amount to spend
+   * @param currency ISO-4217 code the balance is held in
+   * @param orderId the order being paid towards, or {@code null}
+   * @param reason free-text reason recorded on the ledger entry
+   * @param event the outbox row to commit alongside
+   * @return the account with its new balance
+   */
   public StoreCreditAccount redeemStoreCredit(
       UUID tenantId,
       UUID customerId,
@@ -591,6 +758,14 @@ public class CustomerRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Reads a customer's store-credit balance in one currency.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer whose balance to read
+   * @param currency ISO-4217 code; balances are held per currency
+   * @return the account, or empty when the customer holds no credit in that currency
+   */
   public Optional<StoreCreditAccount> findStoreCreditAccount(
       UUID tenantId, UUID customerId, String currency) {
     return query(

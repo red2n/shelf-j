@@ -32,6 +32,14 @@ public class StorefrontResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Gets per-variant availability for a store.
+   *
+   * <p>Public, read-only in-stock/out-of-stock flag per variant. No quantities are exposed.
+   *
+   * @param store the store (query parameter)
+   * @throws com.shelfj.web.ApiException {@code 400} store must be a UUID
+   */
   @Operation(
       summary = "Get per-variant availability for a store",
       description =

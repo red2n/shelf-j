@@ -175,6 +175,13 @@ public class RecallRepository extends BaseOutboxRepository {
 
   // ── reads ──────────────────────────────────────────────────────────────────
 
+  /**
+   * One recall in full: header, scope, held batches and store actions.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param recallId the recall to read
+   * @return the recall detail, or empty when it does not exist in this tenant
+   */
   public Optional<Detail> find(UUID tenantId, UUID recallId) {
     Optional<Header> header =
         query(
@@ -196,6 +203,15 @@ public class RecallRepository extends BaseOutboxRepository {
                 listStoreActions(tenantId, recallId)));
   }
 
+  /**
+   * Keyset page of recall summaries, with the counts a manager scans for.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param status restrict to one status, or {@code null} for all
+   * @param after cursor keyset, or {@code null} for the first page
+   * @param limitPlusOne page size plus one, so the caller can detect a next page
+   * @return the page of summaries
+   */
   public List<Summary> list(
       UUID tenantId, Status status, Cursor.CreatedAtId after, int limitPlusOne) {
     StringBuilder sql =

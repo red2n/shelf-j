@@ -38,6 +38,17 @@ public class PlatformResource {
   @Inject TenantService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Cross-tenant list of every business on the platform.
+   *
+   * <p>One of the few reads that deliberately crosses tenant boundaries, so it is gated on {@code
+   * PLATFORM_ADMIN} rather than an ordinary tenant role.
+   *
+   * @param after cursor from the previous page's {@code meta.nextCursor}, or {@code null} to start
+   * @param limit page size, 1..100; clamped when absent or out of range
+   * @return the page of tenants, with the next cursor in {@code meta}
+   * @throws com.shelfj.web.ApiException {@code 403} when the caller is not a {@code PLATFORM_ADMIN}
+   */
   @Operation(
       summary = "List all tenants",
       description =
@@ -54,6 +65,20 @@ public class PlatformResource {
     return ApiResponse.ok(tenants, new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
   }
 
+  /**
+   * Suspends or reactivates a tenant.
+   *
+   * <p>Publishes {@code TenantStatusChanged} so the effect reaches the services that must act on it
+   * — iam-svc locking staff out, cart/order-svc refusing trade — rather than only flipping a row
+   * here.
+   *
+   * @param tenantId the tenant whose status to change; taken from the path, as this is a
+   *     cross-tenant platform operation
+   * @param req the new status, {@code ACTIVE} or {@code INACTIVE}
+   * @return the tenant with its new status
+   * @throws com.shelfj.web.ApiException {@code 400} when the status is neither; {@code 403} when
+   *     the caller is not a {@code PLATFORM_ADMIN}; {@code 404} when the tenant does not exist
+   */
   @Operation(
       summary = "Suspend or reactivate a tenant",
       description =
@@ -71,6 +96,19 @@ public class PlatformResource {
     return ApiResponse.ok(Mappers.toTenant(service.patchTenantStatus(tenantId, req)));
   }
 
+  /**
+   * Re-publishes {@code TenantCurrencyDeclared} so downstream projections can be rebuilt.
+   *
+   * <p>A repair tool, not a migration: a tenant onboarded before a consumer existed has no currency
+   * projection there, and that consumer silently falls back to a platform default — so the tenant
+   * trades in the wrong currency with nothing to signal it. Safe to run repeatedly, because each
+   * replay carries fresh event ids and is therefore re-applied rather than deduped away.
+   *
+   * @param tenantId one tenant to re-announce, or {@code null} for every tenant
+   * @return how many tenants were announced; zero when the named tenant has no currency recorded
+   * @throws com.shelfj.web.ApiException {@code 400} when {@code tenantId} is not a UUID; {@code
+   *     403} when the caller is not a {@code PLATFORM_ADMIN}
+   */
   @Operation(
       summary = "Re-announce tenants' declared currencies",
       description =

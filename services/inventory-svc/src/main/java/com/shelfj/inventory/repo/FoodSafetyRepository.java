@@ -98,6 +98,13 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
         "list food-safety check types");
   }
 
+  /**
+   * Looks a check type up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the check type to act on
+   * @return the check type, or empty when it does not exist in this tenant
+   */
   public Optional<CheckType> findCheckType(UUID tenantId, UUID id) {
     return query(
             "SELECT "
@@ -114,6 +121,12 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Inserts a check type.
+   *
+   * @param type the type to filter on
+   * @param actorId the actor id
+   */
   public void insertCheckType(CheckType type, UUID actorId) {
     inTx(
         c -> {
@@ -165,6 +178,12 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
 
   // ── monitoring points ──────────────────────────────────────────────────────
 
+  /**
+   * Inserts a point.
+   *
+   * @param point the monitoring point to persist
+   * @param actorId the actor id
+   */
   public void insertPoint(MonitoringPoint point, UUID actorId) {
     inTx(
         c -> {
@@ -193,6 +212,13 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
         "create food-safety monitoring point");
   }
 
+  /**
+   * Looks a point up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the point to act on
+   * @return the point, or empty when it does not exist in this tenant
+   */
   public Optional<MonitoringPoint> findPoint(UUID tenantId, UUID id) {
     return query(
             "SELECT "
@@ -208,6 +234,16 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * Writes a point back with its new values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the point to act on
+   * @param zoneId the zone id
+   * @param name the name to set
+   * @param limits the accepted bounds
+   * @param frequencyHours the frequency hours
+   */
   public void updatePoint(
       UUID tenantId, UUID id, UUID zoneId, String name, Limits limits, int frequencyHours) {
     inTx(
@@ -284,6 +320,13 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
         "list food-safety monitoring points");
   }
 
+  /**
+   * Looks a point status up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param pointId the point id
+   * @return the point status, or empty when it does not exist in this tenant
+   */
   public Optional<PointStatus> findPointStatus(UUID tenantId, UUID pointId) {
     return query(
             POINT_STATUS_SELECT + " WHERE p.tenant_id = ? AND p.id = ?",
@@ -299,6 +342,13 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
 
   // ── records ────────────────────────────────────────────────────────────────
 
+  /**
+   * Looks a record by idempotency key up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param idempotencyKey the idempotency key
+   * @return the record by idempotency key, or empty when it does not exist in this tenant
+   */
   public Optional<CheckRecord> findRecordByIdempotencyKey(UUID tenantId, String idempotencyKey) {
     return query(
             "SELECT "
@@ -354,6 +404,13 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
         "record food-safety check");
   }
 
+  /**
+   * Looks a diary entry up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param recordId the record id
+   * @return the diary entry, or empty when it does not exist in this tenant
+   */
   public Optional<DiaryEntry> findDiaryEntry(UUID tenantId, UUID recordId) {
     return query(
             DIARY_SELECT + " WHERE r.tenant_id = ? AND r.id = ?",
@@ -419,6 +476,11 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
 
   // ── corrective actions ─────────────────────────────────────────────────────
 
+  /**
+   * Inserts a corrective action.
+   *
+   * @param action the corrective action to record
+   */
   public void insertCorrectiveAction(CorrectiveAction action) {
     exec(
         "INSERT INTO fs_corrective_actions (id, tenant_id, record_id, action, food_disposition,"
@@ -435,6 +497,13 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
         "record food-safety corrective action");
   }
 
+  /**
+   * Lists the tenant's corrective actions.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param recordId the record id
+   * @return the matching rows
+   */
   public List<CorrectiveAction> listCorrectiveActions(UUID tenantId, UUID recordId) {
     return query(
         "SELECT a.id, a.tenant_id, a.record_id, a.action, a.food_disposition, a.recorded_by,"
@@ -458,6 +527,18 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
 
   // ── reviews ────────────────────────────────────────────────────────────────
 
+  /**
+   * The headline counts a food-safety review is signed off against.
+   *
+   * <p>An open failure is one with no corrective action recorded — the figure an inspector asks
+   * about first, which is why it is counted separately from failures overall.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store being reviewed
+   * @param from inclusive start of the review period
+   * @param to exclusive end of the review period
+   * @return total records, failures, and failures still unanswered
+   */
   public ReviewCounts countForReview(UUID tenantId, UUID storeId, Instant from, Instant to) {
     return query(
             "SELECT COUNT(*) AS records,"
@@ -481,6 +562,11 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
         .get(0);
   }
 
+  /**
+   * Inserts a review.
+   *
+   * @param review the review to persist
+   */
   public void insertReview(Review review) {
     exec(
         "INSERT INTO fs_reviews (id, tenant_id, store_id, period_from, period_to, records_count,"
@@ -502,6 +588,15 @@ public class FoodSafetyRepository extends BaseOutboxRepository {
         "record food-safety review");
   }
 
+  /**
+   * Lists the tenant's reviews.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param after cursor from the previous page, or {@code null} to start
+   * @param limitPlusOne the limit plus one
+   * @return the matching rows
+   */
   public List<Review> listReviews(
       UUID tenantId, UUID storeId, Cursor.CreatedAtId after, int limitPlusOne) {
     StringBuilder sql =

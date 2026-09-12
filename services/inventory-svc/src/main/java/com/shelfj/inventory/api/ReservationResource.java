@@ -41,6 +41,17 @@ public class ReservationResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Holds stock for an order.
+   *
+   * <p>Places a time-bounded HELD reservation against available stock (FIFO/expiry-ordered).
+   * Supports Idempotency-Key so a retried checkout does not double-reserve.
+   *
+   * @param idempotencyKey the idempotency key (header parameter)
+   * @param req the request body
+   * @return reservation held ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 422} not enough stock to reserve
+   */
   @Operation(
       summary = "Hold stock for an order",
       description =
@@ -70,7 +81,17 @@ public class ReservationResource {
         .build();
   }
 
+  /**
+   * Lists reservations.
+   *
+   * <p>Filterable by store and status.
+   *
+   * @param store the store (query parameter)
+   * @param status the status (query parameter)
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(summary = "List reservations", description = "Filterable by store and status.")
+  @APIResponse(responseCode = "200", description = "List reservations")
   @GET
   public ApiResponse<List<ReservationResponse>> listReservations(
       @QueryParam("store") String store,
@@ -86,6 +107,12 @@ public class ReservationResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Gets a reservation by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such reservation
+   */
   @Operation(summary = "Get a reservation by id")
   @APIResponse(responseCode = "404", description = "No such reservation")
   @GET
@@ -94,6 +121,15 @@ public class ReservationResource {
     return ApiResponse.ok(Mappers.toReservation(service.getReservation(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Consumes a held reservation.
+   *
+   * <p>FIFO/expiry-ordered deduction of the reserved qty from the underlying batches once the order
+   * is confirmed.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 422} reservation is not in a HELD state
+   */
   @Operation(
       summary = "Consume a held reservation",
       description =
@@ -107,9 +143,17 @@ public class ReservationResource {
     return ApiResponse.ok("consumed");
   }
 
+  /**
+   * Releases a held reservation.
+   *
+   * <p>Returns the held qty to available stock; a no-op if already released/expired.
+   *
+   * @param id the id (path parameter)
+   */
   @Operation(
       summary = "Release a held reservation",
       description = "Returns the held qty to available stock; a no-op if already released/expired.")
+  @APIResponse(responseCode = "200", description = "Release a held reservation")
   @POST
   @Path("/{id}/release")
   public ApiResponse<String> release(@PathParam("id") UUID id) {
@@ -119,11 +163,20 @@ public class ReservationResource {
 
   // ── Gap #29: Bulk (batch) reservations ────────────────────────────────────
 
+  /**
+   * Reserves stock for multiple lines in one call.
+   *
+   * <p>Best-effort bulk reserve: each line is attempted independently and the succeeded/failed
+   * counts plus per-line results are returned.
+   *
+   * @param req the request body
+   */
   @Operation(
       summary = "Reserve stock for multiple lines in one call",
       description =
           "Best-effort bulk reserve: each line is attempted independently and the"
               + " succeeded/failed counts plus per-line results are returned.")
+  @APIResponse(responseCode = "200", description = "Reserve stock for multiple lines in one call")
   @POST
   @Path("/batch")
   public ApiResponse<BatchReserveResponse> bulkReserve(BatchReserveRequest req) {

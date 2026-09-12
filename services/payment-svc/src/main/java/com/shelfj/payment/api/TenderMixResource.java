@@ -41,6 +41,18 @@ public class TenderMixResource {
   @Inject TenderMixService service;
   @Inject TenantContext ctx;
 
+  /**
+   * How the tenant's take split across payment methods over a window.
+   *
+   * <p>Refunds are subtracted within their own method rather than netted globally, so the split
+   * reconciles against a merchant statement.
+   *
+   * @param from inclusive start as a full ISO-8601 instant, or {@code null} for no lower bound
+   * @param to exclusive end as a full ISO-8601 instant, or {@code null} for no upper bound
+   * @return one row per method, largest net first
+   * @throws com.shelfj.web.ApiException {@code 400} when a timestamp is unparseable or {@code from}
+   *     is not before {@code to}
+   */
   @Operation(
       summary = "How the take split across payment methods",
       description =

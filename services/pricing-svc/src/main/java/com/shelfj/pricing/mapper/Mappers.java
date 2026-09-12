@@ -35,6 +35,12 @@ public final class Mappers {
 
   private Mappers() {}
 
+  /**
+   * Converts a VAT rate to its wire form.
+   *
+   * @param r the VAT rate to convert
+   * @return its API representation
+   */
   public static VatRateResponse toDto(VatRate r) {
     return new VatRateResponse(
         r.id(),
@@ -49,6 +55,12 @@ public final class Mappers {
         r.createdAt() != null ? r.createdAt().toString() : null);
   }
 
+  /**
+   * Converts a variant's VAT assignment to its wire form.
+   *
+   * @param pvc the variant's VAT assignment to convert
+   * @return its API representation
+   */
   public static ProductVatCategoryResponse toDto(ProductVatCategory pvc) {
     return new ProductVatCategoryResponse(
         pvc.id(),
@@ -60,6 +72,12 @@ public final class Mappers {
         pvc.createdAt() != null ? pvc.createdAt().toString() : null);
   }
 
+  /**
+   * Converts a customer's VAT status to its wire form.
+   *
+   * @param cvs the customer's VAT status to convert
+   * @return its API representation
+   */
   public static CustomerVatStatusResponse toDto(CustomerVatStatus cvs) {
     return new CustomerVatStatusResponse(
         cvs.id(),
@@ -73,6 +91,12 @@ public final class Mappers {
         cvs.updatedAt() != null ? cvs.updatedAt().toString() : null);
   }
 
+  /**
+   * Converts a price list to its wire form.
+   *
+   * @param pl the price list to convert
+   * @return its API representation
+   */
   public static PriceListResponse toDto(PriceList pl) {
     return new PriceListResponse(
         pl.id(),
@@ -86,6 +110,12 @@ public final class Mappers {
         pl.createdAt() != null ? pl.createdAt().toString() : null);
   }
 
+  /**
+   * Converts one priced variant on a price list to its wire form.
+   *
+   * @param item one priced variant on a price list to convert
+   * @return its API representation
+   */
   public static PriceListItemResponse toDto(PriceListItem item) {
     return new PriceListItemResponse(
         item.id(),
@@ -98,6 +128,12 @@ public final class Mappers {
         item.updatedAt() != null ? item.updatedAt().toString() : null);
   }
 
+  /**
+   * Converts a resolved price to its wire form.
+   *
+   * @param rp the resolved price to convert
+   * @return its API representation
+   */
   public static ResolvedPriceResponse toDto(ResolvedPrice rp) {
     return new ResolvedPriceResponse(
         rp.variantId(),
@@ -111,6 +147,12 @@ public final class Mappers {
         rp.promotionApplied());
   }
 
+  /**
+   * Converts a promotion to its wire form.
+   *
+   * @param p the promotion to convert
+   * @return its API representation
+   */
   public static PromotionResponse toDto(Promotion p) {
     return new PromotionResponse(
         p.id(),
@@ -135,6 +177,12 @@ public final class Mappers {
         p.getDiscountPct());
   }
 
+  /**
+   * Converts a promotion's scope row to its wire form.
+   *
+   * @param pi the promotion's scope row to convert
+   * @return its API representation
+   */
   public static PromotionItemResponse toDto(PromotionItem pi) {
     return new PromotionItemResponse(
         pi.id(),
@@ -145,6 +193,12 @@ public final class Mappers {
         pi.createdAt() != null ? pi.createdAt().toString() : null);
   }
 
+  /**
+   * Converts one recorded tax line to its wire form.
+   *
+   * @param tt one recorded tax line to convert
+   * @return its API representation
+   */
   public static TaxTransactionResponse toDto(TaxTransaction tt) {
     return new TaxTransactionResponse(
         tt.id(),
@@ -164,6 +218,12 @@ public final class Mappers {
         tt.createdAt() != null ? tt.createdAt().toString() : null);
   }
 
+  /**
+   * Converts the nine VAT return boxes to its wire form.
+   *
+   * @param vr the nine VAT return boxes to convert
+   * @return its API representation
+   */
   public static VatReturnResponse toDto(VatReturn vr) {
     return new VatReturnResponse(
         vr.box1(),
@@ -179,6 +239,12 @@ public final class Mappers {
         vr.periodTo());
   }
 
+  /**
+   * Converts a manual price override to its wire form.
+   *
+   * @param p the manual price override to convert
+   * @return its API representation
+   */
   public static PriceOverrideResponse toDto(PriceOverride p) {
     return new PriceOverrideResponse(
         p.id() != null ? p.id().toString() : null,
@@ -192,6 +258,12 @@ public final class Mappers {
         p.createdAt() != null ? p.createdAt().toString() : null);
   }
 
+  /**
+   * Converts the tax summary report to its wire form.
+   *
+   * @param ts the tax summary report to convert
+   * @return its API representation
+   */
   public static TaxSummaryResponse toDto(TaxSummary ts) {
     return new TaxSummaryResponse(
         ts.rows().stream().map(Mappers::toDto).toList(),
@@ -205,11 +277,23 @@ public final class Mappers {
         ts.periodTo());
   }
 
+  /**
+   * Converts one tax summary group to its wire form.
+   *
+   * @param r one tax summary group to convert
+   * @return its API representation
+   */
   public static TaxSummaryRowResponse toDto(TaxSummaryRow r) {
     return new TaxSummaryRowResponse(
         r.groupKey(), r.exempt(), r.netAmount(), r.vatAmount(), r.grossAmount(), r.transactions());
   }
 
+  /**
+   * Converts one on/off status change to its wire form.
+   *
+   * @param c one on/off status change to convert
+   * @return its API representation
+   */
   public static Dtos.StatusChangeResponse toDto(Domain.StatusChange c) {
     return new Dtos.StatusChangeResponse(
         c.id(),

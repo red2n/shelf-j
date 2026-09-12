@@ -48,6 +48,14 @@ public class LotResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Links a parent and child batch for genealogy.
+   *
+   * <p>Records a lot-genealogy relation (e.g. split/merge/repack) between two batches.
+   *
+   * @param req the request body
+   * @return genealogy link created ({@code 201})
+   */
   @Operation(
       summary = "Link a parent and child batch for genealogy",
       description =
@@ -71,7 +79,13 @@ public class LotResource {
         .build();
   }
 
+  /**
+   * Gets a batch's ancestor genealogy links.
+   *
+   * @param batchId the batch id (path parameter)
+   */
   @Operation(summary = "Get a batch's ancestor genealogy links")
+  @APIResponse(responseCode = "200", description = "Get a batch's ancestor genealogy links")
   @GET
   @Path("/lot-genealogy/batch/{batchId}/ancestors")
   public ApiResponse<LotGenealogyTreeResponse> getAncestors(@PathParam("batchId") UUID batchId) {
@@ -83,7 +97,13 @@ public class LotResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Gets a batch's descendant genealogy links.
+   *
+   * @param batchId the batch id (path parameter)
+   */
   @Operation(summary = "Get a batch's descendant genealogy links")
+  @APIResponse(responseCode = "200", description = "Get a batch's descendant genealogy links")
   @GET
   @Path("/lot-genealogy/batch/{batchId}/descendants")
   public ApiResponse<LotGenealogyTreeResponse> getDescendants(@PathParam("batchId") UUID batchId) {
@@ -95,7 +115,15 @@ public class LotResource {
         ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Lists a batch's direct genealogy links (one hop, parent and child).
+   *
+   * @param batchId the batch id (path parameter)
+   */
   @Operation(summary = "List a batch's direct genealogy links (one hop, parent and child)")
+  @APIResponse(
+      responseCode = "200",
+      description = "List a batch's direct genealogy links (one hop, parent and child)")
   @GET
   @Path("/lot-genealogy/batch/{batchId}/links")
   public ApiResponse<List<LotGenealogyLinkResponse>> getDirectLinks(
@@ -106,6 +134,15 @@ public class LotResource {
     return ApiResponse.ok(links, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Splits a batch into a new child batch.
+   *
+   * <p>Moves qty out of the source batch into a newly created batch, linked via genealogy.
+   *
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} source batch not found; {@code 422} split qty
+   *     exceeds remaining qty on source batch
+   */
   @Operation(
       summary = "Split a batch into a new child batch",
       description =
@@ -126,6 +163,15 @@ public class LotResource {
     return ApiResponse.ok(Mappers.toLotAction(result.action()));
   }
 
+  /**
+   * Merges qty from a source batch into a target batch.
+   *
+   * <p>Moves qty from the source batch into the target batch, linked via genealogy.
+   *
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} source or target batch not found; {@code 422}
+   *     merge qty exceeds remaining qty on source batch
+   */
   @Operation(
       summary = "Merge qty from a source batch into a target batch",
       description = "Moves qty from the source batch into the target batch, linked via genealogy.")
@@ -149,7 +195,15 @@ public class LotResource {
     return ApiResponse.ok(Mappers.toLotAction(result.action()));
   }
 
+  /**
+   * Lists split/merge actions recorded against a batch.
+   *
+   * @param batchId the batch id (path parameter)
+   */
   @Operation(summary = "List split/merge actions recorded against a batch")
+  @APIResponse(
+      responseCode = "200",
+      description = "List split/merge actions recorded against a batch")
   @GET
   @Path("/lots/{batchId}/actions")
   public ApiResponse<List<LotActionResponse>> listLotActions(@PathParam("batchId") UUID batchId) {
@@ -158,6 +212,15 @@ public class LotResource {
         service.listLotActions(tenantId, batchId).stream().map(Mappers::toLotAction).toList());
   }
 
+  /**
+   * Lists batches nearing expiry.
+   *
+   * <p>Batches for a store expiring within the given number of days (default 30).
+   *
+   * @param store the store (query parameter)
+   * @param withinDays the within days (query parameter)
+   * @throws com.shelfj.web.ApiException {@code 400} withinDays must be 1-3650
+   */
   @Operation(
       summary = "List batches nearing expiry",
       description = "Batches for a store expiring within the given number of days (default 30).")
@@ -175,6 +238,14 @@ public class LotResource {
             .toList());
   }
 
+  /**
+   * Updates a batch's quality grade.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 400} grade must not be blank; {@code 404} no such
+   *     batch
+   */
   @Operation(summary = "Update a batch's quality grade")
   @APIResponse(responseCode = "400", description = "grade must not be blank")
   @APIResponse(responseCode = "404", description = "No such batch")

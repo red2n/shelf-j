@@ -59,6 +59,16 @@ public class AdminResource {
 
   // ── receive ──────────────────────────────────────────────────────────────
 
+  /**
+   * Receives stock manually into a new batch.
+   *
+   * <p>Creates a new batch/lot for a variant at a store and records the StockReceived event.
+   * Supports Idempotency-Key so a retried receipt does not double-count stock.
+   *
+   * @param idempotencyKey the idempotency key (header parameter)
+   * @param req the request body
+   * @return batch received ({@code 201})
+   */
   @Operation(
       summary = "Receive stock manually into a new batch",
       description =
@@ -94,11 +104,20 @@ public class AdminResource {
         .build();
   }
 
+  /**
+   * Receives multiple items in one call.
+   *
+   * <p>Best-effort bulk receive: each line is processed independently, and any per-line failure is
+   * collected in the result instead of aborting the whole batch.
+   *
+   * @param req the request body
+   */
   @Operation(
       summary = "Receive multiple items in one call",
       description =
           "Best-effort bulk receive: each line is processed independently, and any per-line"
               + " failure is collected in the result instead of aborting the whole batch.")
+  @APIResponse(responseCode = "200", description = "Receive multiple items in one call")
   @POST
   @Path("/receive/batch")
   public ApiResponse<BatchReceiveResult> receiveBatch(BatchReceiveRequest req) {
@@ -133,11 +152,21 @@ public class AdminResource {
 
   // ── adjust ───────────────────────────────────────────────────────────────
 
+  /**
+   * Adjusts stock by a signed delta.
+   *
+   * <p>Manual correction (e.g. stock-take variance, damage write-off) recorded as a StockAdjusted
+   * movement. Supports Idempotency-Key.
+   *
+   * @param idempotencyKey the idempotency key (header parameter)
+   * @param req the request body
+   */
   @Operation(
       summary = "Adjust stock by a signed delta",
       description =
           "Manual correction (e.g. stock-take variance, damage write-off) recorded as a"
               + " StockAdjusted movement. Supports Idempotency-Key.")
+  @APIResponse(responseCode = "200", description = "Adjust stock by a signed delta")
   @POST
   @Path("/adjust")
   public ApiResponse<String> adjust(
@@ -159,11 +188,22 @@ public class AdminResource {
 
   // ── levels ───────────────────────────────────────────────────────────────
 
+  /**
+   * Lists stock levels.
+   *
+   * <p>Cursor-paginated on-hand/reserved/available quantities per variant, optionally filtered by
+   * store.
+   *
+   * @param store the store (query parameter)
+   * @param after the after (query parameter)
+   * @param limit the limit (query parameter)
+   */
   @Operation(
       summary = "List stock levels",
       description =
           "Cursor-paginated on-hand/reserved/available quantities per variant, optionally"
               + " filtered by store.")
+  @APIResponse(responseCode = "200", description = "List stock levels")
   @GET
   @Path("/levels")
   public ApiResponse<List<LevelResponse>> levels(
@@ -182,6 +222,7 @@ public class AdminResource {
   @Operation(
       summary = "Get stock level KPI summary",
       description = "Aggregate SKU count and low-stock count without paging the full levels list.")
+  @APIResponse(responseCode = "200", description = "Get stock level KPI summary")
   @GET
   @Path("/levels/summary")
   public ApiResponse<LevelSummaryResponse> levelsSummary(@QueryParam("store") String store) {
@@ -194,9 +235,20 @@ public class AdminResource {
 
   // ── batches ──────────────────────────────────────────────────────────────
 
+  /**
+   * Lists batches.
+   *
+   * <p>Filterable by store, variant, and material status.
+   *
+   * @param store the store (query parameter)
+   * @param variant the variant (query parameter)
+   * @param materialStatus the material status (query parameter)
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(
       summary = "List batches",
       description = "Filterable by store, variant, and material status.")
+  @APIResponse(responseCode = "200", description = "List batches")
   @GET
   @Path("/batches")
   public ApiResponse<List<BatchResponse>> listBatches(
@@ -216,6 +268,12 @@ public class AdminResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Gets a batch by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such batch
+   */
   @Operation(summary = "Get a batch by id")
   @APIResponse(responseCode = "404", description = "No such batch")
   @GET
@@ -224,6 +282,15 @@ public class AdminResource {
     return ApiResponse.ok(Mappers.toBatch(service.getBatch(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Updates a batch's material status.
+   *
+   * <p>Sets a hold/release-style material status (e.g. QUARANTINE) with a reason.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} no such batch
+   */
   @Operation(
       summary = "Update a batch's material status",
       description = "Sets a hold/release-style material status (e.g. QUARANTINE) with a reason.")
@@ -240,9 +307,20 @@ public class AdminResource {
 
   // ── movements ────────────────────────────────────────────────────────────
 
+  /**
+   * Lists stock movements.
+   *
+   * <p>Append-only movement ledger, filterable by store, variant, and movement type.
+   *
+   * @param store the store (query parameter)
+   * @param variant the variant (query parameter)
+   * @param type the type (query parameter)
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(
       summary = "List stock movements",
       description = "Append-only movement ledger, filterable by store, variant, and movement type.")
+  @APIResponse(responseCode = "200", description = "List stock movements")
   @GET
   @Path("/movements")
   public ApiResponse<List<MovementResponse>> listMovements(
@@ -263,11 +341,20 @@ public class AdminResource {
 
   // ── purge movements (Gap #30) ───────────────────────────────────────────
 
+  /**
+   * Purges old stock movements.
+   *
+   * <p>Permanently deletes movement history older than the given instant (Gap #30 — used for data
+   * retention housekeeping, not exposed to regular admin users).
+   *
+   * @param req the request body
+   */
   @Operation(
       summary = "Purge old stock movements",
       description =
           "Permanently deletes movement history older than the given instant (Gap #30 — used for"
               + " data retention housekeeping, not exposed to regular admin users).")
+  @APIResponse(responseCode = "200", description = "Purge old stock movements")
   @POST
   @Path("/movements/purge")
   public ApiResponse<PurgeResult> purgeMovements(PurgeMovementsRequest req) {

@@ -38,16 +38,36 @@ public final class FoodSafety {
   /** Inclusive bounds; either may be absent. A reading on the limit passes. */
   public record Limits(BigDecimal min, BigDecimal max) {
 
+    /** Neither bound set: nothing to judge a reading against. */
     public static final Limits NONE = new Limits(null, null);
 
+    /**
+     * Whether this pair constrains anything at all.
+     *
+     * @return {@code true} when neither bound is set
+     */
     public boolean isEmpty() {
       return min == null && max == null;
     }
 
+    /**
+     * Whether the bounds are the right way round.
+     *
+     * @return {@code true} unless a minimum sits above its maximum; a half-open range is ordered by
+     *     definition
+     */
     public boolean isOrdered() {
       return min == null || max == null || min.compareTo(max) <= 0;
     }
 
+    /**
+     * Judges one reading against these bounds.
+     *
+     * <p>Bounds are inclusive: a reading exactly on the limit passes.
+     *
+     * @param value the reading to judge
+     * @return {@code FAIL} when the reading falls outside either bound, otherwise {@code PASS}
+     */
     public Result judge(BigDecimal value) {
       if (min != null && value.compareTo(min) < 0) return Result.FAIL;
       if (max != null && value.compareTo(max) > 0) return Result.FAIL;
@@ -63,6 +83,15 @@ public final class FoodSafety {
       return base.max == null || (max != null && max.compareTo(base.max) <= 0);
     }
 
+    /**
+     * Fills in whichever bounds this pair leaves unset from {@code base}.
+     *
+     * <p>Unlike {@link #tightestWith}, a bound set here wins even if it is looser — this is
+     * defaulting, not constraining.
+     *
+     * @param base the limits to inherit missing bounds from
+     * @return the combined limits
+     */
     public Limits withDefaultsFrom(Limits base) {
       return new Limits(min != null ? min : base.min, max != null ? max : base.max);
     }

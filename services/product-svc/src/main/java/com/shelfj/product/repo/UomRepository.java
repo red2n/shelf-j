@@ -21,6 +21,11 @@ import java.util.UUID;
 @ApplicationScoped
 public class UomRepository extends BaseJdbcRepository {
 
+  /**
+   * Lists the tenant's uom classes.
+   *
+   * @return the matching rows
+   */
   public List<UomClass> listUomClasses() {
     return query(
         "SELECT id, code, name FROM uom_classes ORDER BY name",
@@ -47,6 +52,12 @@ public class UomRepository extends BaseJdbcRepository {
         .isEmpty();
   }
 
+  /**
+   * Lists the tenant's uom definitions.
+   *
+   * @param classCode the UoM class to restrict to
+   * @return the matching rows
+   */
   public List<UomDefinition> listUomDefinitions(String classCode) {
     if (classCode != null) {
       return query(
@@ -62,6 +73,13 @@ public class UomRepository extends BaseJdbcRepository {
         "list all uom definitions");
   }
 
+  /**
+   * Looks a standard conversion factor up by id.
+   *
+   * @param fromUom the unit converting from
+   * @param toUom the unit converting to
+   * @return the standard conversion factor, or empty when it does not exist in this tenant
+   */
   public Optional<BigDecimal> findStandardConversionFactor(String fromUom, String toUom) {
     var list =
         query(
@@ -75,6 +93,12 @@ public class UomRepository extends BaseJdbcRepository {
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
   }
 
+  /**
+   * Creates or replaces an item conversion.
+   *
+   * @param c the item to persist
+   * @return the item conversion as stored
+   */
   public UomItemConversion upsertItemConversion(UomItemConversion c) {
     return inTx(
         conn -> {
@@ -101,6 +125,13 @@ public class UomRepository extends BaseJdbcRepository {
         "upsert item conversion");
   }
 
+  /**
+   * Lists the tenant's item conversions.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return the matching rows
+   */
   public List<UomItemConversion> listItemConversions(UUID tenantId, UUID variantId) {
     return query(
         "SELECT id, tenant_id, variant_id, from_uom, to_uom, factor"
@@ -114,6 +145,13 @@ public class UomRepository extends BaseJdbcRepository {
         "list item conversions");
   }
 
+  /**
+   * Deletes an item conversion.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the item conversion to act on
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deleteItemConversion(UUID tenantId, UUID id) {
     try (var c = dataSource.getConnection();
         var ps =
@@ -126,6 +164,15 @@ public class UomRepository extends BaseJdbcRepository {
     }
   }
 
+  /**
+   * Looks an item conversion factor up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @param fromUom the unit converting from
+   * @param toUom the unit converting to
+   * @return the item conversion factor, or empty when it does not exist in this tenant
+   */
   public Optional<BigDecimal> findItemConversionFactor(
       UUID tenantId, UUID variantId, String fromUom, String toUom) {
     var list =

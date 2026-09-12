@@ -25,6 +25,14 @@ import java.util.UUID;
 @ApplicationScoped
 public class CatalogGroupRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a catalog group.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param name the name to set
+   * @param description the free-text description
+   * @return the catalog group as stored
+   */
   public CatalogGroup createCatalogGroup(UUID tenantId, String name, String description) {
     Instant now = Instant.now();
     var g =
@@ -46,6 +54,13 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
     return g;
   }
 
+  /**
+   * Looks a catalog group up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the catalog group to act on
+   * @return the catalog group, or empty when it does not exist in this tenant
+   */
   public Optional<CatalogGroup> findCatalogGroup(UUID tenantId, UUID id) {
     return query(
             "SELECT id, tenant_id, name, description, status, created_at, updated_at"
@@ -60,6 +75,12 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Lists the tenant's catalog groups.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the matching rows
+   */
   public List<CatalogGroup> listCatalogGroups(UUID tenantId) {
     return query(
         "SELECT id, tenant_id, name, description, status, created_at, updated_at"
@@ -69,6 +90,13 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
         "list catalog groups");
   }
 
+  /**
+   * Soft-deletes a catalog group by marking it inactive.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the catalog group to act on
+   * @return the catalog group in its deactivated state
+   */
   public CatalogGroup deactivateCatalogGroup(UUID tenantId, UUID id) {
     exec(
         "UPDATE catalog_groups SET status = 'INACTIVE', updated_at = ?"
@@ -84,6 +112,12 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
             () -> ApiException.notFound("CATALOG_GROUP_NOT_FOUND", "Catalog group not found"));
   }
 
+  /**
+   * Inserts a catalog group element.
+   *
+   * @param e the catalog to persist
+   * @return the catalog group element as stored
+   */
   public CatalogGroupElement createCatalogGroupElement(CatalogGroupElement e) {
     exec(
         "INSERT INTO catalog_group_elements"
@@ -105,6 +139,13 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
     return e;
   }
 
+  /**
+   * Lists the tenant's catalog group elements.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param groupId the group id
+   * @return the matching rows
+   */
   public List<CatalogGroupElement> listCatalogGroupElements(UUID tenantId, UUID groupId) {
     return query(
         "SELECT id, tenant_id, group_id, element_name, data_type, required,"
@@ -120,6 +161,13 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
         "list catalog group elements");
   }
 
+  /**
+   * Deletes a catalog group element.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the catalog group element to act on
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deleteCatalogGroupElement(UUID tenantId, UUID id) {
     Instant[] found = {null};
     query(
@@ -136,6 +184,12 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
     return found[0] != null;
   }
 
+  /**
+   * Inserts a catalog assignment.
+   *
+   * @param a the catalog to persist
+   * @return the catalog assignment as stored
+   */
   public VariantCatalogAssignment createCatalogAssignment(VariantCatalogAssignment a) {
     Instant now = Instant.now();
     exec(
@@ -158,6 +212,13 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
                 ApiException.notFound("ASSIGNMENT_NOT_FOUND", "Assignment not found after insert"));
   }
 
+  /**
+   * Looks a catalog assignment up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return the catalog assignment, or empty when it does not exist in this tenant
+   */
   public Optional<VariantCatalogAssignment> findCatalogAssignment(UUID tenantId, UUID variantId) {
     return query(
             "SELECT id, tenant_id, variant_id, group_id, element_vals, created_at, updated_at"
@@ -172,6 +233,14 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
         .findFirst();
   }
 
+  /**
+   * Writes a catalog assignment back with its new values.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @param elementVals the element vals
+   * @return the catalog assignment as stored
+   */
   public VariantCatalogAssignment updateCatalogAssignment(
       UUID tenantId, UUID variantId, String elementVals) {
     exec(
@@ -191,6 +260,13 @@ public class CatalogGroupRepository extends BaseJdbcRepository {
                     "ASSIGNMENT_NOT_FOUND", "No catalog assignment for this variant"));
   }
 
+  /**
+   * Deletes a catalog assignment.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deleteCatalogAssignment(UUID tenantId, UUID variantId) {
     Instant[] found = {null};
     query(

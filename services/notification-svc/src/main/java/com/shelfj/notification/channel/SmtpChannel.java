@@ -24,6 +24,14 @@ public final class SmtpChannel implements NotificationChannel {
   private final String from;
   private final boolean startTls;
 
+  /**
+   * @param host SMTP server hostname
+   * @param port SMTP server port
+   * @param username account to authenticate as; blank or {@code null} disables SMTP auth entirely
+   * @param password password for {@code username}, from the secret store — never committed
+   * @param from the envelope sender address
+   * @param startTls whether to upgrade the connection with STARTTLS
+   */
   public SmtpChannel(
       String host, int port, String username, String password, String from, boolean startTls) {
     this.host = host;
@@ -34,11 +42,25 @@ public final class SmtpChannel implements NotificationChannel {
     this.startTls = startTls;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return always {@code SMTP}
+   */
   @Override
   public String name() {
     return "SMTP";
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>{@code tenantId} is unused here: the recipient is already a globally unique email address,
+   * so the message needs no further tenant scoping.
+   *
+   * @throws IllegalStateException when the message cannot be handed to the SMTP server, so the
+   *     consumer loop retries the delivery
+   */
   @Override
   public void send(UUID tenantId, String recipient, String subject, String body) {
     // The recipient is already a globally-unique email address, so email needs no tenant scoping.

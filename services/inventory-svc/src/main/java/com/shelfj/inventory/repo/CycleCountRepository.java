@@ -28,6 +28,13 @@ import java.util.UUID;
 @ApplicationScoped
 public class CycleCountRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a cycle count header.
+   *
+   * @param header the count header to persist
+   * @param lines the lines to store
+   * @return the cycle count header as stored
+   */
   public CycleCountHeader createCycleCountHeader(
       CycleCountHeader header, List<CycleCountLine> lines) {
     return inTx(
@@ -71,6 +78,15 @@ public class CycleCountRepository extends BaseJdbcRepository {
         "create cycle count");
   }
 
+  /**
+   * Lists the tenant's cycle count headers.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<CycleCountHeader> listCycleCountHeaders(
       UUID tenantId, UUID storeId, String status, int limit) {
     StringBuilder sb =
@@ -94,6 +110,13 @@ public class CycleCountRepository extends BaseJdbcRepository {
         "list cycle count headers");
   }
 
+  /**
+   * Looks a cycle count header up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param headerId the header id
+   * @return the cycle count header, or empty when it does not exist in this tenant
+   */
   public Optional<CycleCountHeader> findCycleCountHeader(UUID tenantId, UUID headerId) {
     List<CycleCountHeader> rows =
         query(
@@ -109,6 +132,12 @@ public class CycleCountRepository extends BaseJdbcRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Lists the tenant's cycle count lines.
+   *
+   * @param headerId the header id
+   * @return the matching rows
+   */
   public List<CycleCountLine> listCycleCountLines(UUID headerId) {
     return query(
         "SELECT id, tenant_id, header_id, store_id, variant_id, system_qty,"
@@ -119,6 +148,13 @@ public class CycleCountRepository extends BaseJdbcRepository {
         "list cycle count lines");
   }
 
+  /**
+   * Looks a cycle count line up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param lineId the line id
+   * @return the cycle count line, or empty when it does not exist in this tenant
+   */
   public Optional<CycleCountLine> findCycleCountLine(UUID tenantId, UUID lineId) {
     List<CycleCountLine> rows =
         query(

@@ -36,6 +36,17 @@ public class SendResource {
   @Inject Notifier notifier;
   @Inject TenantContext ctx;
 
+  /**
+   * Sends one notification through the configured channel.
+   *
+   * <p>Idempotent on {@code (eventId, type)}: supply a stable {@code eventId} and a retry will not
+   * deliver a second copy. Omitting it mints a fresh id, which makes the call effectively
+   * non-idempotent.
+   *
+   * @param req the recipient, subject, body and optional {@code eventId}/{@code type}
+   * @return {@code 202} whether the message was sent now or already delivered earlier
+   * @throws com.shelfj.web.ApiException {@code 403} when the caller holds no staff role
+   */
   @Operation(
       summary = "Send a notification",
       description =

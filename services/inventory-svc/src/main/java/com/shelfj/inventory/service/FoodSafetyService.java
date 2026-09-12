@@ -62,10 +62,29 @@ public class FoodSafetyService {
 
   // ── check types ────────────────────────────────────────────────────────────
 
+  /**
+   * Lists the tenant's check types.
+   *
+   * @param tenantId owning tenant
+   * @return the matching rows
+   */
   public List<CheckType> listCheckTypes(UUID tenantId) {
     return repo.listCheckTypes(tenantId);
   }
 
+  /**
+   * Creates a check type.
+   *
+   * @param tenantId owning tenant
+   * @param actorId the actor id
+   * @param code the code to match
+   * @param name the name to match
+   * @param kind the check kind
+   * @param limits the accepted bounds
+   * @param unit the unit of measure
+   * @param basis the basis it is judged on
+   * @return the created check type
+   */
   public CheckType createCheckType(
       UUID tenantId,
       UUID actorId,
@@ -94,6 +113,17 @@ public class FoodSafetyService {
     return type;
   }
 
+  /**
+   * Updates a check type.
+   *
+   * @param tenantId owning tenant
+   * @param id the check type to act on
+   * @param name the name to match
+   * @param limits the accepted bounds
+   * @param basis the basis it is judged on
+   * @param active whether the row should be active
+   * @return the updated check type
+   */
   public CheckType updateCheckType(
       UUID tenantId, UUID id, String name, Limits limits, String basis, boolean active) {
     CheckType existing = requireType(tenantId, id);
@@ -116,6 +146,19 @@ public class FoodSafetyService {
 
   // ── monitoring points ──────────────────────────────────────────────────────
 
+  /**
+   * Creates a point.
+   *
+   * @param tenantId owning tenant
+   * @param actorId the actor id
+   * @param storeId the store id
+   * @param zoneId the zone id
+   * @param name the name to match
+   * @param checkTypeId the check type id
+   * @param requested the bounds requested by the caller
+   * @param frequencyHours the frequency hours
+   * @return the created point
+   */
   public PointStatus createPoint(
       UUID tenantId,
       UUID actorId,
@@ -148,6 +191,17 @@ public class FoodSafetyService {
     return new PointStatus(point, type, null, null, null, 0);
   }
 
+  /**
+   * Updates a point.
+   *
+   * @param tenantId owning tenant
+   * @param id the point to act on
+   * @param zoneId the zone id
+   * @param name the name to match
+   * @param requested the bounds requested by the caller
+   * @param frequencyHours the frequency hours
+   * @return the updated point
+   */
   public PointStatus updatePoint(
       UUID tenantId, UUID id, UUID zoneId, String name, Limits requested, int frequencyHours) {
     MonitoringPoint point = requirePoint(tenantId, id);
@@ -157,6 +211,22 @@ public class FoodSafetyService {
     return requirePointStatus(tenantId, id);
   }
 
+  /**
+   * Switches a monitoring point on or off, recording who did it and why.
+   *
+   * <p>Already-in-that-state is a conflict rather than a silent success: two people switching the
+   * same point should not both be told they did it, and the trail must not gain a row for a change
+   * that did not happen.
+   *
+   * @param tenantId owning tenant
+   * @param id the monitoring point to switch
+   * @param active {@code true} to switch it on, {@code false} to switch it off
+   * @param reason why it was switched; recorded on the trail
+   * @param actorId the user making the change
+   * @return the point with its new state
+   * @throws ApiException a 404 when no such point exists in this tenant; {@code
+   *     FOOD_SAFETY_ALREADY_IN_STATE} (409) when it is already in that state
+   */
   public PointStatus setPointActive(
       UUID tenantId, UUID id, boolean active, String reason, UUID actorId) {
     requirePoint(tenantId, id);
@@ -168,6 +238,14 @@ public class FoodSafetyService {
     return requirePointStatus(tenantId, id);
   }
 
+  /**
+   * Lists the tenant's points.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param includeInactive the include inactive
+   * @return the matching rows
+   */
   public List<PointStatus> listPoints(UUID tenantId, UUID storeId, boolean includeInactive) {
     return repo.listPointStatuses(tenantId, storeId, includeInactive);
   }
@@ -232,11 +310,32 @@ public class FoodSafetyService {
     return new RecordedCheck(requireEntry(cmd.tenantId(), record.id()), false);
   }
 
+  /**
+   * Reads a record.
+   *
+   * @param tenantId owning tenant
+   * @param recordId the record id
+   * @return the record
+   */
   public RecordDetail getRecord(UUID tenantId, UUID recordId) {
     return new RecordDetail(
         requireEntry(tenantId, recordId), repo.listCorrectiveActions(tenantId, recordId));
   }
 
+  /**
+   * Lists the tenant's diaries.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param pointId the point id
+   * @param result the pass/fail outcome to filter on
+   * @param openOnly the open only
+   * @param from inclusive start of the period
+   * @param to the record to persist
+   * @param after cursor from the previous page, or {@code null} to start
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public Cursor.Page<DiaryEntry> listDiary(
       UUID tenantId,
       UUID storeId,
@@ -265,6 +364,17 @@ public class FoodSafetyService {
     return Cursor.page(rows, lim, e -> e.record().recordedAt() + "|" + e.record().id());
   }
 
+  /**
+   * Adds a corrective action.
+   *
+   * @param tenantId owning tenant
+   * @param actorId the actor id
+   * @param recordId the record id
+   * @param action the corrective action to record
+   * @param disposition what was done with the affected food
+   * @param requireStoreAccess the require store access
+   * @return the added corrective action
+   */
   public CorrectiveAction addCorrectiveAction(
       UUID tenantId,
       UUID actorId,
@@ -287,6 +397,17 @@ public class FoodSafetyService {
 
   // ── reviews ────────────────────────────────────────────────────────────────
 
+  /**
+   * Creates a review.
+   *
+   * @param tenantId owning tenant
+   * @param actorId the actor id
+   * @param storeId the store id
+   * @param from inclusive start of the period
+   * @param to the record to persist
+   * @param notes free-text notes
+   * @return the created review
+   */
   public Review createReview(
       UUID tenantId, UUID actorId, UUID storeId, Instant from, Instant to, String notes) {
     if (!from.isBefore(to)) {
@@ -307,6 +428,15 @@ public class FoodSafetyService {
     return review;
   }
 
+  /**
+   * Lists the tenant's reviews.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store id
+   * @param after cursor from the previous page, or {@code null} to start
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public Cursor.Page<Review> listReviews(UUID tenantId, UUID storeId, String after, Integer limit) {
     int lim = Cursor.clampLimit(limit);
     var rows = repo.listReviews(tenantId, storeId, Cursor.decodeCreatedAtId(after), lim + 1);

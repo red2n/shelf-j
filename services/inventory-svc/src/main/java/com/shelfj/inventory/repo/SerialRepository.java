@@ -62,6 +62,16 @@ public class SerialRepository extends BaseOutboxRepository {
         "register serials");
   }
 
+  /**
+   * Lists the tenant's serials.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId the store id
+   * @param variantId the product variant concerned
+   * @param status the status to set
+   * @param limit maximum rows
+   * @return the matching rows
+   */
   public List<SerialNumber> listSerials(
       UUID tenantId, UUID storeId, UUID variantId, String status, int limit) {
     StringBuilder sb =
@@ -86,6 +96,13 @@ public class SerialRepository extends BaseOutboxRepository {
         "list serials");
   }
 
+  /**
+   * Looks a serial up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param serialId the serial id
+   * @return the serial, or empty when it does not exist in this tenant
+   */
   public Optional<SerialNumber> findSerial(UUID tenantId, UUID serialId) {
     var list =
         query(
@@ -100,6 +117,13 @@ public class SerialRepository extends BaseOutboxRepository {
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
   }
 
+  /**
+   * Looks a serial by no up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param serialNo the serial no
+   * @return the serial by no, or empty when it does not exist in this tenant
+   */
   public Optional<SerialNumber> findSerialByNo(UUID tenantId, String serialNo) {
     var list =
         query(
@@ -167,6 +191,13 @@ public class SerialRepository extends BaseOutboxRepository {
         "update serial status");
   }
 
+  /**
+   * Lists the tenant's serial histories.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param serialId the serial id
+   * @return the matching rows
+   */
   public List<SerialMovement> listSerialHistory(UUID tenantId, UUID serialId) {
     return query(
         "SELECT id, tenant_id, serial_id, from_status, to_status, ref_type, ref_id, created_at"

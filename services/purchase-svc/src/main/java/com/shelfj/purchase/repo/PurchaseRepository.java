@@ -34,6 +34,12 @@ public class PurchaseRepository extends BaseOutboxRepository {
 
   // ── Suppliers ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Inserts a supplier.
+   *
+   * @param s the supplier to persist; its {@code id} must already be a UUIDv7
+   * @return the supplier as stored
+   */
   public Supplier createSupplier(Supplier s) {
     return inTx(
         c -> {
@@ -66,6 +72,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "create supplier");
   }
 
+  /**
+   * Lists a tenant's suppliers.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param limit maximum rows
+   * @return the suppliers
+   */
   public List<Supplier> findSuppliers(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,name,vat_number,vat_registered,country_code,currency,"
@@ -79,6 +92,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "find suppliers");
   }
 
+  /**
+   * Looks a supplier up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the supplier to fetch
+   * @return the supplier, or empty when it does not exist in this tenant
+   */
   public Optional<Supplier> findSupplier(UUID tenantId, UUID id) {
     var rows =
         query(
@@ -110,6 +130,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
 
   // ── Purchase Orders ───────────────────────────────────────────────────────────
 
+  /**
+   * Inserts a DRAFT purchase order and its outbox event in one transaction.
+   *
+   * @param po the purchase order to persist; its {@code id} must already be a UUIDv7
+   * @param event the outbox row to commit alongside the insert
+   * @return the purchase order as stored
+   */
   public PurchaseOrder createPurchaseOrder(PurchaseOrder po, OutboxRow event) {
     return inTx(
         c -> {
@@ -138,6 +165,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "create purchase order");
   }
 
+  /**
+   * Lists a tenant's purchase orders.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param limit maximum rows
+   * @return the purchase orders
+   */
   public List<PurchaseOrder> findPurchaseOrders(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,supplier_id,store_id,status,currency,"
@@ -152,6 +186,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "find purchase orders");
   }
 
+  /**
+   * Looks a purchase order up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the purchase order to fetch
+   * @return the purchase order, or empty when it does not exist in this tenant
+   */
   public Optional<PurchaseOrder> findPurchaseOrder(UUID tenantId, UUID id) {
     var rows =
         query(
@@ -297,6 +338,16 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "find purchase order approvals");
   }
 
+  /**
+   * Sets a purchase order's status unconditionally.
+   *
+   * <p>Applies no state-machine check of its own — callers that need one (submit, cancel, close)
+   * use the guarded methods that fold the check into the same statement.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the purchase order to update
+   * @param status the status to set
+   */
   public void updatePurchaseOrderStatus(UUID tenantId, UUID id, String status) {
     exec(
         "UPDATE purchase_orders SET status=?, updated_at=now() WHERE tenant_id=? AND id=?",
@@ -474,6 +525,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Lists a purchase order's lines.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param poId the purchase order whose lines to list
+   * @return the order's lines
+   */
   public List<PurchaseOrderLine> findPurchaseOrderLines(UUID tenantId, UUID poId) {
     return query(
         "SELECT id,tenant_id,po_id,variant_id,qty,unit_price,vat_code,created_at"
@@ -668,7 +726,16 @@ public class PurchaseRepository extends BaseOutboxRepository {
     return out;
   }
 
-  /** The same progress view, for a caller asking what is still outstanding on an order. */
+  /**
+   * The same progress view, for a caller asking what is still outstanding on an order.
+   *
+   * <p>Receipts are matched to order lines by variant rather than by line id, because a delivery
+   * note names products, not order rows.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param poId the purchase order to report on
+   * @return one row per ordered variant, with ordered, received and the balance due
+   */
   public List<PurchaseOrderLineProgress> findLineProgress(UUID tenantId, UUID poId) {
     return inTx(c -> lineProgressTx(c, tenantId, poId), "read purchase order progress");
   }
@@ -818,6 +885,14 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "read three-way match positions");
   }
 
+  /**
+   * Lists supplier invoices, newest first.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param poId restrict to one purchase order, or {@code null} for the whole tenant
+   * @param limit maximum rows
+   * @return the supplier invoices, newest first
+   */
   public List<Domain.SupplierInvoice> findSupplierInvoices(UUID tenantId, UUID poId, int limit) {
     String sql =
         "SELECT id,tenant_id,po_id,supplier_id,invoice_number,invoice_date,currency,"
@@ -837,6 +912,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "find supplier invoices");
   }
 
+  /**
+   * Looks a supplier invoice up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the invoice to fetch
+   * @return the invoice, or empty when it does not exist in this tenant
+   */
   public Optional<Domain.SupplierInvoice> findSupplierInvoice(UUID tenantId, UUID id) {
     var rows =
         query(
@@ -852,6 +934,16 @@ public class PurchaseRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Lists a supplier invoice's lines with their stored match variances.
+   *
+   * <p>The variances are read back as recorded at match time, not recomputed — re-matching on read
+   * would silently erase the disagreement the invoice was flagged for.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param invoiceId the invoice whose lines to list
+   * @return the invoice lines
+   */
   public List<Domain.SupplierInvoiceLine> findSupplierInvoiceLines(UUID tenantId, UUID invoiceId) {
     return query(
         "SELECT id,tenant_id,invoice_id,variant_id,qty_invoiced,unit_price,vat_code,variances,"
@@ -918,6 +1010,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
         rs.getString("idempotency_key"));
   }
 
+  /**
+   * Lists the deliveries booked against a purchase order.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param poId the purchase order whose receipts to list
+   * @return the goods receipts
+   */
   public List<GoodsReceipt> findGoodsReceiptsByPo(UUID tenantId, UUID poId) {
     return query(
         "SELECT id,tenant_id,po_id,store_id,received_at,created_at,idempotency_key"
@@ -930,6 +1029,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "find grns by po");
   }
 
+  /**
+   * Lists the lines of one goods receipt.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param grId the goods receipt whose lines to list
+   * @return the receipt's lines
+   */
   public List<GoodsReceiptLine> findGoodsReceiptLines(UUID tenantId, UUID grId) {
     return query(
         "SELECT id,tenant_id,gr_id,variant_id,qty_received,created_at"
@@ -951,6 +1057,16 @@ public class PurchaseRepository extends BaseOutboxRepository {
 
   // ── Intercompany Invoices ─────────────────────────────────────────────────────
 
+  /**
+   * Inserts a single intercompany invoice.
+   *
+   * <p>For one side only — a normal intercompany raise uses {@link #createIntercompanyInvoicePair},
+   * which keeps the AR and AP sides in step.
+   *
+   * @param inv the invoice to persist; its {@code id} must already be a UUIDv7
+   * @param entries the nominal-ledger entries to post alongside it
+   * @return the invoice as stored
+   */
   public IntercompanyInvoice createIntercompanyInvoice(
       IntercompanyInvoice inv, List<NominalLedgerEntry> ledgerEntries, OutboxRow event) {
     return inTx(
@@ -965,7 +1081,17 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "create intercompany invoice");
   }
 
-  /** Creates an AR invoice and its matching AP invoice atomically (double-entry integrity). */
+  /**
+   * Creates an AR invoice and its matching AP invoice atomically (double-entry integrity).
+   *
+   * <p>Both sides commit together or neither does: a half-written pair would leave the two books
+   * permanently disagreeing.
+   *
+   * @param ar the receivable side
+   * @param ap the payable side
+   * @param entries the nominal-ledger entries to post alongside both
+   * @return the two invoices as stored
+   */
   public List<IntercompanyInvoice> createIntercompanyInvoicePair(
       IntercompanyInvoice ar,
       List<NominalLedgerEntry> arEntries,
@@ -987,6 +1113,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "create intercompany invoice pair");
   }
 
+  /**
+   * Marks an intercompany invoice settled and posts its settlement entries in one transaction.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the invoice to settle
+   * @param entries the nominal-ledger entries the settlement posts
+   */
   public void settleIntercompanyInvoice(
       UUID tenantId, UUID id, List<NominalLedgerEntry> settlementEntries) {
     inTx(
@@ -1062,6 +1195,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Lists a tenant's intercompany invoices, both AR and AP sides.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param limit maximum rows
+   * @return the invoices
+   */
   public List<IntercompanyInvoice> findIntercompanyInvoices(UUID tenantId, int limit) {
     return query(
         "SELECT id,tenant_id,invoice_type,from_store_id,to_store_id,transfer_ref,"
@@ -1076,6 +1216,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
         "find intercompany invoices");
   }
 
+  /**
+   * Looks an intercompany invoice up by id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the invoice to fetch
+   * @return the invoice, or empty when it does not exist in this tenant
+   */
   public Optional<IntercompanyInvoice> findIntercompanyInvoice(UUID tenantId, UUID id) {
     var rows =
         query(

@@ -60,11 +60,23 @@ public final class Mappers {
 
   private Mappers() {}
 
+  /**
+   * Converts a brand to its wire form.
+   *
+   * @param b the brand to convert
+   * @return its API representation
+   */
   public static BrandResponse toBrand(Brand b) {
     return new BrandResponse(
         b.id().toString(), b.name(), b.status(), ts(b.createdAt()), ts(b.updatedAt()));
   }
 
+  /**
+   * Converts a category to its wire form.
+   *
+   * @param c the category to convert
+   * @return its API representation
+   */
   public static CategoryResponse toCategory(Category c) {
     return new CategoryResponse(
         c.id().toString(),
@@ -75,6 +87,12 @@ public final class Mappers {
         ts(c.updatedAt()));
   }
 
+  /**
+   * Converts a product to its wire form.
+   *
+   * @param p the product to convert
+   * @return its API representation
+   */
   public static ProductResponse toProduct(Product p) {
     return new ProductResponse(
         p.id().toString(),
@@ -89,6 +107,12 @@ public final class Mappers {
         ts(p.updatedAt()));
   }
 
+  /**
+   * Converts a variant to its wire form.
+   *
+   * @param v the variant to convert
+   * @return its API representation
+   */
   public static VariantResponse toVariant(Variant v) {
     return new VariantResponse(
         v.id().toString(),
@@ -103,14 +127,32 @@ public final class Mappers {
         ts(v.updatedAt()));
   }
 
+  /**
+   * Converts an allergen to its wire form.
+   *
+   * @param a the allergen to convert
+   * @return its API representation
+   */
   public static AllergenResponse toAllergen(Domain.Allergen a) {
     return new AllergenResponse(a.code(), a.name(), a.detail(), a.regulation());
   }
 
+  /**
+   * Converts an allergen entry to its wire form.
+   *
+   * @param a the allergen entry to convert
+   * @return its API representation
+   */
   public static AllergenEntry toAllergenEntry(Domain.VariantAllergen a) {
     return new AllergenEntry(a.allergenCode(), a.presence());
   }
 
+  /**
+   * Converts a compliance to its wire form.
+   *
+   * @param c the compliance to convert
+   * @return its API representation
+   */
   public static VariantComplianceResponse toCompliance(Domain.VariantCompliance c) {
     return new VariantComplianceResponse(
         c.variantId().toString(),
@@ -126,11 +168,24 @@ public final class Mappers {
         c.catchWeight());
   }
 
+  /**
+   * Converts an age rule to its wire form.
+   *
+   * @param r the age rule to convert
+   * @return its API representation
+   */
   public static AgeRestrictionRuleResponse toAgeRule(Domain.AgeRestrictionRule r) {
     return new AgeRestrictionRuleResponse(
         r.country(), r.category(), r.minimumAge(), r.note(), r.tenantId() != null);
   }
 
+  /**
+   * Converts a variant scan to its wire form.
+   *
+   * @param v the variant
+   * @param p the product
+   * @return its API representation
+   */
   public static VariantScanResponse toVariantScan(Variant v, Product p) {
     return new VariantScanResponse(
         v.id().toString(),
@@ -146,19 +201,43 @@ public final class Mappers {
         ts(v.updatedAt()));
   }
 
+  /**
+   * Converts an uom class to its wire form.
+   *
+   * @param c the uom class to convert
+   * @return its API representation
+   */
   public static UomClassResponse toUomClass(UomClass c) {
     return new UomClassResponse(c.code(), c.name());
   }
 
+  /**
+   * Converts an uom definition to its wire form.
+   *
+   * @param d the uom definition to convert
+   * @return its API representation
+   */
   public static UomDefinitionResponse toUomDefinition(UomDefinition d) {
     return new UomDefinitionResponse(d.code(), d.name(), d.classCode());
   }
 
+  /**
+   * Converts an uom item conversion to its wire form.
+   *
+   * @param c the uom item conversion to convert
+   * @return its API representation
+   */
   public static UomItemConversionResponse toUomItemConversion(UomItemConversion c) {
     return new UomItemConversionResponse(
         c.id().toString(), c.variantId().toString(), c.fromUom(), c.toUom(), c.factor());
   }
 
+  /**
+   * Converts a template to its wire form.
+   *
+   * @param t the template to convert
+   * @return its API representation
+   */
   public static ItemTemplateResponse toTemplate(ItemTemplate t) {
     return new ItemTemplateResponse(
         t.id().toString(),
@@ -169,11 +248,23 @@ public final class Mappers {
         ts(t.createdAt()));
   }
 
+  /**
+   * Converts a template application to its wire form.
+   *
+   * @param a the template application to convert
+   * @return its API representation
+   */
   public static ItemTemplateApplicationResponse toTemplateApplication(ItemTemplateApplication a) {
     return new ItemTemplateApplicationResponse(
         a.id().toString(), a.variantId().toString(), a.templateId().toString(), ts(a.appliedAt()));
   }
 
+  /**
+   * Converts a cross reference to its wire form.
+   *
+   * @param x the cross reference to convert
+   * @return its API representation
+   */
   public static ItemCrossReferenceResponse toCrossReference(ItemCrossReference x) {
     return new ItemCrossReferenceResponse(
         x.id().toString(),
@@ -185,6 +276,12 @@ public final class Mappers {
         ts(x.createdAt()));
   }
 
+  /**
+   * Converts a relationship to its wire form.
+   *
+   * @param r the relationship to convert
+   * @return its API representation
+   */
   public static ItemRelationshipResponse toRelationship(ItemRelationship r) {
     return new ItemRelationshipResponse(
         r.id().toString(),
@@ -194,6 +291,12 @@ public final class Mappers {
         ts(r.createdAt()));
   }
 
+  /**
+   * Converts a revision to its wire form.
+   *
+   * @param r the revision to convert
+   * @return its API representation
+   */
   public static ItemRevisionResponse toRevision(ItemRevision r) {
     return new ItemRevisionResponse(
         r.id().toString(),
@@ -207,6 +310,13 @@ public final class Mappers {
 
   // ── Catalog Groups (Gap #35) ─────────────────────────────────────────────
 
+  /**
+   * Converts a catalog group to its wire form.
+   *
+   * @param g the group
+   * @param elements its elements
+   * @return its API representation
+   */
   public static CatalogGroupResponse toCatalogGroup(
       CatalogGroup g, List<CatalogGroupElementResponse> elements) {
     return new CatalogGroupResponse(
@@ -219,6 +329,12 @@ public final class Mappers {
         elements);
   }
 
+  /**
+   * Converts a catalog group element to its wire form.
+   *
+   * @param e the catalog group element to convert
+   * @return its API representation
+   */
   public static CatalogGroupElementResponse toCatalogGroupElement(CatalogGroupElement e) {
     return new CatalogGroupElementResponse(
         e.id().toString(),
@@ -231,6 +347,12 @@ public final class Mappers {
         ts(e.createdAt()));
   }
 
+  /**
+   * Converts a catalog assignment to its wire form.
+   *
+   * @param a the catalog assignment to convert
+   * @return its API representation
+   */
   public static CatalogAssignmentResponse toCatalogAssignment(VariantCatalogAssignment a) {
     return new CatalogAssignmentResponse(
         a.id().toString(),
@@ -241,6 +363,12 @@ public final class Mappers {
         ts(a.updatedAt()));
   }
 
+  /**
+   * Converts a container type to its wire form.
+   *
+   * @param c the container type to convert
+   * @return its API representation
+   */
   public static ContainerTypeResponse toContainerType(ContainerType c) {
     return new ContainerTypeResponse(
         c.id().toString(),
@@ -258,6 +386,14 @@ public final class Mappers {
         ts(c.updatedAt()));
   }
 
+  /**
+   * Converts a variant container link to its wire form.
+   *
+   * @param l the link
+   * @param containerTypeCode the container type code
+   * @param containerTypeName the container type name
+   * @return its API representation
+   */
   public static VariantContainerLinkResponse toVariantContainerLink(
       VariantContainerLink l, String containerTypeCode, String containerTypeName) {
     return new VariantContainerLinkResponse(
@@ -271,16 +407,35 @@ public final class Mappers {
         ts(l.createdAt()));
   }
 
+  /**
+   * Converts an attribute group field to its wire form.
+   *
+   * @param f the attribute group field to convert
+   * @return its API representation
+   */
   public static ItemAttributeGroupFieldResponse toAttributeGroupField(ItemAttributeGroupField f) {
     return new ItemAttributeGroupFieldResponse(
         f.fieldCode(), f.label(), f.dataType(), f.required(), f.sortOrder());
   }
 
+  /**
+   * Converts an attribute group to its wire form.
+   *
+   * @param g the group
+   * @param fields its fields
+   * @return its API representation
+   */
   public static ItemAttributeGroupResponse toAttributeGroup(
       ItemAttributeGroup g, List<ItemAttributeGroupFieldResponse> fields) {
     return new ItemAttributeGroupResponse(g.groupCode(), g.name(), g.description(), fields);
   }
 
+  /**
+   * Converts a variant attribute group values to its wire form.
+   *
+   * @param v the variant
+   * @return its API representation
+   */
   public static VariantAttributeGroupValuesResponse toVariantAttributeGroupValues(
       VariantAttributeGroupValues v) {
     return new VariantAttributeGroupValuesResponse(
@@ -294,6 +449,12 @@ public final class Mappers {
 
   // ── Gap #39: Category sets ─────────────────────────────────────────────────
 
+  /**
+   * Converts a category set to its wire form.
+   *
+   * @param s the category set to convert
+   * @return its API representation
+   */
   public static CategorySetResponse toCategorySet(CategorySet s) {
     return new CategorySetResponse(
         s.id().toString(),
@@ -307,11 +468,23 @@ public final class Mappers {
         ts(s.updatedAt()));
   }
 
+  /**
+   * Converts a category set member to its wire form.
+   *
+   * @param m the category set member to convert
+   * @return its API representation
+   */
   public static CategorySetMemberResponse toCategorySetMember(CategorySetMember m) {
     return new CategorySetMemberResponse(
         m.id().toString(), m.setId().toString(), m.categoryId().toString(), ts(m.createdAt()));
   }
 
+  /**
+   * Converts a variant category set assignment to its wire form.
+   *
+   * @param a the variant category set assignment to convert
+   * @return its API representation
+   */
   public static VariantCategorySetAssignmentResponse toVariantCategorySetAssignment(
       VariantCategorySetAssignment a) {
     return new VariantCategorySetAssignmentResponse(

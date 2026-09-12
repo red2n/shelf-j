@@ -36,6 +36,17 @@ public class AbcAnalysisResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Runs an ABC classification compile.
+   *
+   * <p>Scores variants by value or velocity and assigns A/B/C classes based on cumulative
+   * percentage thresholds.
+   *
+   * @param req the request body
+   * @return compile run persisted with its assignments ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 400} invalid criteria (must be VALUE or VELOCITY) or
+   *     invalid thresholds
+   */
   @Operation(
       summary = "Run an ABC classification compile",
       description =
@@ -62,11 +73,21 @@ public class AbcAnalysisResource {
         .build();
   }
 
+  /**
+   * Lists ABC assignments.
+   *
+   * <p>Returns the latest ABC class assignment per variant, optionally filtered by store or class.
+   *
+   * @param store the store (query parameter)
+   * @param abcClass the abc class (query parameter)
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(
       summary = "List ABC assignments",
       description =
           "Returns the latest ABC class assignment per variant, optionally filtered by"
               + " store or class.")
+  @APIResponse(responseCode = "200", description = "List ABC assignments")
   @GET
   @Path("/abc/assignments")
   public ApiResponse<List<AbcAssignmentResponse>> listAbcAssignments(
@@ -83,6 +104,13 @@ public class AbcAnalysisResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Gets a variant's ABC assignment.
+   *
+   * @param storeId the store id (path parameter)
+   * @param variantId the variant id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no ABC assignment for this store/variant
+   */
   @Operation(summary = "Get a variant's ABC assignment")
   @APIResponse(responseCode = "404", description = "No ABC assignment for this store/variant")
   @GET

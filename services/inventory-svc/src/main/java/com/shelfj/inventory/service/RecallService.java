@@ -62,6 +62,19 @@ public class RecallService {
       boolean noticeDisplayed,
       String notes) {}
 
+  /**
+   * Opens a recall or withdrawal, quarantining every batch its scope reaches.
+   *
+   * <p>A batch whose lot or date cannot be ruled out is held rather than cleared: a pack nobody can
+   * rule out comes off sale. A RECALL additionally requires a customer notice, because that is the
+   * difference between the two kinds.
+   *
+   * @param cmd the kind, hazard, scope lines and customer notice
+   * @return the opened recall with its scope, held batches and actions
+   * @throws ApiException {@code RECALL_SCOPE_REQUIRED} (400) with no scope lines; {@code
+   *     RECALL_SCOPE_TOO_LARGE} (400) beyond the line cap; a 400 when a RECALL carries no customer
+   *     notice
+   */
   public Detail open(OpenRecall cmd) {
     if (cmd.scope().isEmpty()) {
       throw ApiException.badRequest("RECALL_SCOPE_REQUIRED", "A recall needs at least one item");
@@ -106,17 +119,40 @@ public class RecallService {
                 Events.recallOpened(header, stores)));
   }
 
+  /**
+   * Cursor-paginated recalls for the tenant, with the counts a manager scans for.
+   *
+   * @param tenantId owning tenant
+   * @param status restrict to one status, or {@code null} for all
+   * @param after cursor from the previous page, or {@code null} to start
+   * @param limit page size; clamped to the platform bounds
+   * @return the page of summaries and its next cursor
+   */
   public Cursor.Page<Summary> list(UUID tenantId, Status status, String after, Integer limit) {
     int lim = Cursor.clampLimit(limit);
     var rows = repo.list(tenantId, status, Cursor.decodeCreatedAtId(after), lim + 1);
     return Cursor.page(rows, lim, s -> s.header().openedAt() + "|" + s.header().id());
   }
 
+  /**
+   * One recall in full: header, scope, held batches and store actions.
+   *
+   * @param tenantId owning tenant
+   * @param recallId the recall to read
+   * @return the recall detail
+   * @throws ApiException {@code RECALL_NOT_FOUND} (404) when no such recall exists in this tenant
+   */
   public Detail get(UUID tenantId, UUID recallId) {
     return repo.find(tenantId, recallId)
         .orElseThrow(() -> ApiException.notFound("RECALL_NOT_FOUND", "No such recall"));
   }
 
+  /**
+   * Every variant currently under an open recall — what the till checks before selling.
+   *
+   * @param tenantId owning tenant
+   * @return the actively recalled items
+   */
   public List<ActiveItem> active(UUID tenantId) {
     return repo.listActive(tenantId);
   }
@@ -155,6 +191,23 @@ public class RecallService {
                 Events.stockAdjusted(cmd.tenantId(), cmd.storeId(), variantId, delta)));
   }
 
+  /**
+   * Releases one quarantined batch back to sale after it has been checked.
+   *
+   * <p>Only a batch the recall could not positively place in scope may be released — an {@code
+   * IN_SCOPE} batch stays held.
+   *
+   * @param tenantId owning tenant
+   * @param actorId the user releasing it, recorded against the release
+   * @param recallId the recall holding the batch
+   * @param batchId the batch to release
+   * @param reason why it was cleared; required
+   * @param requireStoreAccess refuses a caller not assigned to the batch's store; passed in so this
+   *     class stays free of the request context
+   * @return the recall as it now stands
+   * @throws ApiException {@code RECALL_NOT_FOUND} (404) when no such recall exists; a conflict when
+   *     the batch is in scope and therefore not releasable
+   */
   public Detail release(
       UUID tenantId,
       UUID actorId,
@@ -166,11 +219,36 @@ public class RecallService {
     return get(tenantId, recallId);
   }
 
+  /**
+   * Closes a recall once every affected store has accounted for its stock.
+   *
+   * @param tenantId owning tenant
+   * @param actorId the user closing it
+   * @param recallId the recall to close
+   * @param notes closing notes, or {@code null}
+   * @return the closed recall
+   * @throws ApiException {@code RECALL_NOT_FOUND} (404) when no such recall exists; a conflict when
+   *     stores are still outstanding
+   */
   public Detail close(UUID tenantId, UUID actorId, UUID recallId, String notes) {
     repo.close(tenantId, recallId, actorId, blankToNull(notes));
     return get(tenantId, recallId);
   }
 
+  /**
+   * Cancels a recall raised in error, releasing everything it held.
+   *
+   * <p>Distinct from closing it: cancelling says the recall should never have been raised, so the
+   * stock was never actually affected.
+   *
+   * @param tenantId owning tenant
+   * @param actorId the user cancelling it
+   * @param recallId the recall to cancel
+   * @param reason why it was raised in error; required
+   * @return the cancelled recall
+   * @throws ApiException {@code RECALL_NOT_FOUND} (404) when no such recall exists; a conflict when
+   *     stock has already been disposed of under it
+   */
   public Detail cancel(UUID tenantId, UUID actorId, UUID recallId, String reason) {
     repo.cancel(tenantId, recallId, actorId, reason.trim());
     return get(tenantId, recallId);

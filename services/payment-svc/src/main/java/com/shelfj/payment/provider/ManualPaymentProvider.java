@@ -23,11 +23,22 @@ import java.util.UUID;
 @ApplicationScoped
 public class ManualPaymentProvider implements PaymentProvider {
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return always {@code MANUAL}, which is what makes "no real money is moving" visible in a
+   *     tenant's payment settings
+   */
   @Override
   public String name() {
     return PaymentIntent.PROVIDER_MANUAL;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return always {@code X-Provider-Signature}; nothing signs webhooks for this provider
+   */
   @Override
   public String signatureHeaderName() {
     return "X-Provider-Signature";

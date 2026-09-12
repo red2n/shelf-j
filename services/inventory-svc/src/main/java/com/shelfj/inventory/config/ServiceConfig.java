@@ -28,21 +28,42 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.inventory.reservation-ttl-seconds", defaultValue = "900")
   long reservationTtlSeconds;
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the Consul registration name, {@code inventory-svc} unless overridden
+   */
   @Override
   public String serviceName() {
     return serviceName;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the HTTP listen port; the {@code 8004} default is a local-dev convenience only, as
+   *     every service listens on 8080 in production
+   */
   @Override
   public int servicePort() {
     return servicePort;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * @return the Postgres schema this service owns, {@code inventory} unless overridden
+   */
   @Override
   public String dbSchema() {
     return dbSchema;
   }
 
+  /**
+   * How long a stock hold lives when the caller names no lifetime of its own.
+   *
+   * @return the default reservation lifetime in seconds, 15 minutes unless overridden
+   */
   public long reservationTtlSeconds() {
     return reservationTtlSeconds;
   }

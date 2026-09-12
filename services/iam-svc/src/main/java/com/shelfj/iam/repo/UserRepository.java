@@ -70,6 +70,15 @@ public class UserRepository extends BaseOutboxRepository {
         "find users by email");
   }
 
+  /**
+   * Looks a user up by primary key.
+   *
+   * <p>Not tenant-scoped: the user id is globally unique and the row itself carries the tenant, so
+   * callers acting on behalf of a tenant must check {@link User#tenantId()} before trusting it.
+   *
+   * @param id the user to fetch
+   * @return the user, or empty when no such user exists
+   */
   public Optional<User> findById(UUID id) {
     return query(
             "SELECT " + SELECT_COLS + " FROM users WHERE id = ?",
@@ -80,6 +89,12 @@ public class UserRepository extends BaseOutboxRepository {
         .findFirst();
   }
 
+  /**
+   * The role names granted to a user, for the JWT {@code roles} claim.
+   *
+   * @param userId the user whose roles to load
+   * @return the distinct role names, empty when the user holds none
+   */
   public Set<String> rolesOf(UUID userId) {
     String sql =
         "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ?";
@@ -148,6 +163,12 @@ public class UserRepository extends BaseOutboxRepository {
         "create user");
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Maps a unique-constraint violation to a {@code 409} rather than a generic database error, so
+   * a duplicate email or phone reads as {@code USER_ALREADY_EXISTS} to the caller.
+   */
   @Override
   protected RuntimeException handleTxSqlException(String what, SQLException e) {
     if (UNIQUE_VIOLATION.equals(e.getSQLState()))
@@ -244,6 +265,18 @@ public class UserRepository extends BaseOutboxRepository {
 
   // --- audit ---
 
+  /**
+   * Appends a row to the append-only audit log, outside any caller transaction.
+   *
+   * <p>Deliberately swallows its own failures with a warning: losing an audit row must not break
+   * the flow being audited. Callers that need the audit row to be atomic with their write should
+   * use the in-transaction paths instead.
+   *
+   * @param tenantId owning tenant, or {@code null} for a platform-scoped action
+   * @param userId the user the action concerns
+   * @param action the machine-readable action code, e.g. {@code OWNER_BOUND}
+   * @param detail free-text context recorded alongside the action
+   */
   public void audit(UUID tenantId, UUID userId, String action, String detail) {
     try (var c = dataSource.getConnection()) {
       auditTx(c, tenantId, userId, action, detail);
@@ -316,6 +349,15 @@ public class UserRepository extends BaseOutboxRepository {
 
   // --- mapping / helpers ---
 
+  /**
+   * Replaces a user's password hash.
+   *
+   * <p>Does not revoke existing refresh tokens — a caller changing a password for security reasons
+   * must revoke them separately.
+   *
+   * @param userId the user whose password to change
+   * @param newHash the already-hashed new password; never a plaintext value
+   */
   public void updatePassword(UUID userId, String newHash) {
     try (var c = dataSource.getConnection();
         var ps =
@@ -390,6 +432,14 @@ public class UserRepository extends BaseOutboxRepository {
 
   // --- bootstrap ---
 
+  /**
+   * Whether any platform administrator account exists yet.
+   *
+   * <p>Gates the one-shot bootstrap endpoint: once this is true, bootstrap must refuse to mint
+   * another admin.
+   *
+   * @return {@code true} once at least one user holds {@code PLATFORM_ADMIN}
+   */
   public boolean platformAdminExists() {
     try (var c = dataSource.getConnection();
         var ps =
@@ -406,6 +456,15 @@ public class UserRepository extends BaseOutboxRepository {
     }
   }
 
+  /**
+   * Creates the first platform administrator, granting {@code PLATFORM_ADMIN} in the same
+   * transaction as the user row.
+   *
+   * <p>Callers must check {@link #platformAdminExists()} first — this does not enforce the
+   * one-admin bootstrap rule itself.
+   *
+   * @param user the tenant-less admin account to create
+   */
   public void createPlatformAdmin(User user) {
     inTx(
         c -> {

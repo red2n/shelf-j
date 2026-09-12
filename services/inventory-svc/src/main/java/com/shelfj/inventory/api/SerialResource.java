@@ -39,6 +39,15 @@ public class SerialResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Registers serial numbers for a batch.
+   *
+   * <p>Registers explicit serials or auto-generates up to 200 with an optional prefix.
+   *
+   * @param req the request body
+   * @return serials registered ({@code 201})
+   * @throws com.shelfj.web.ApiException {@code 400} autoQty exceeds 200
+   */
   @Operation(
       summary = "Register serial numbers for a batch",
       description =
@@ -66,9 +75,20 @@ public class SerialResource {
     return Response.status(Response.Status.CREATED).entity(ApiResponse.ok(items)).build();
   }
 
+  /**
+   * Lists serial numbers.
+   *
+   * <p>Filterable by store, variant, and status.
+   *
+   * @param store the store (query parameter)
+   * @param variant the variant (query parameter)
+   * @param status the status (query parameter)
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(
       summary = "List serial numbers",
       description = "Filterable by store, variant, and status.")
+  @APIResponse(responseCode = "200", description = "List serial numbers")
   @GET
   @Path("/serials")
   public ApiResponse<List<SerialNumberResponse>> listSerials(
@@ -88,6 +108,13 @@ public class SerialResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Looks up a serial number by its serial code.
+   *
+   * @param serialNo the serial no (query parameter)
+   * @throws com.shelfj.web.ApiException {@code 400} serial_no query param is required; {@code 404}
+   *     no such serial number
+   */
   @Operation(summary = "Look up a serial number by its serial code")
   @APIResponse(responseCode = "400", description = "serial_no query param is required")
   @APIResponse(responseCode = "404", description = "No such serial number")
@@ -101,6 +128,12 @@ public class SerialResource {
         Mappers.toSerial(service.lookupSerialByNo(ctx.requireTenantId(), serialNo)));
   }
 
+  /**
+   * Gets a serial number by id.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such serial number
+   */
   @Operation(summary = "Get a serial number by id")
   @APIResponse(responseCode = "404", description = "No such serial number")
   @GET
@@ -109,6 +142,12 @@ public class SerialResource {
     return ApiResponse.ok(Mappers.toSerial(service.getSerial(ctx.requireTenantId(), id)));
   }
 
+  /**
+   * Gets a serial number's status history.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such serial number
+   */
   @Operation(summary = "Get a serial number's status history")
   @APIResponse(responseCode = "404", description = "No such serial number")
   @GET
@@ -121,6 +160,15 @@ public class SerialResource {
     return ApiResponse.ok(items, ApiResponse.Meta.of(ctx.requestId()));
   }
 
+  /**
+   * Updates a serial number's status.
+   *
+   * <p>Records a status transition (e.g. IN_STOCK -> SOLD) in the serial's movement history.
+   *
+   * @param id the id (path parameter)
+   * @param req the request body
+   * @throws com.shelfj.web.ApiException {@code 404} no such serial number
+   */
   @Operation(
       summary = "Update a serial number's status",
       description =

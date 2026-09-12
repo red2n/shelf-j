@@ -4,6 +4,13 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * Internal domain records for reporting-svc — the shapes its projections are read back as.
+ *
+ * <p>These are read models folded from other services' events, not source-of-truth entities, and
+ * they never cross the HTTP boundary: {@link com.shelfj.reporting.mapper.Mappers} converts them to
+ * the DTOs in {@link com.shelfj.reporting.dto.Dtos} first.
+ */
 public final class Domain {
 
   private Domain() {}
@@ -38,6 +45,11 @@ public final class Domain {
 
   /** Sales totals for one currency over the queried window/filters. net = gross − refunded. */
   public record SalesSummary(String currency, long orders, BigDecimal gross, BigDecimal refunded) {
+    /**
+     * Net takings for the window.
+     *
+     * @return gross less refunded
+     */
     public BigDecimal net() {
       return gross.subtract(refunded);
     }
@@ -46,6 +58,11 @@ public final class Domain {
   /** Sales totals bucketed by day (and currency). net = gross − refunded. */
   public record SalesDayStat(
       String day, String currency, long orders, BigDecimal gross, BigDecimal refunded) {
+    /**
+     * Net takings for the day.
+     *
+     * @return gross less refunded
+     */
     public BigDecimal net() {
       return gross.subtract(refunded);
     }

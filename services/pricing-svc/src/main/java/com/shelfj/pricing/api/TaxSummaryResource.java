@@ -34,6 +34,22 @@ public class TaxSummaryResource {
   @Inject PricingService svc;
   @Inject TenantContext ctx;
 
+  /**
+   * The working behind the VAT return's single figures, grouped.
+   *
+   * <p>Totals are folded from the returned rows rather than queried separately, so the summary can
+   * never disagree with its own detail. That also exposes what the return hides: Box 1 counts only
+   * non-exempt supplies, so VAT sitting on a row marked exempt shows up here as {@code vatAmount}
+   * differing from {@code outputVat}.
+   *
+   * @param from inclusive ISO-8601 lower bound on the tax point
+   * @param to exclusive ISO-8601 upper bound
+   * @param storeId restrict to one store, or {@code null} for all
+   * @param groupBy {@code CODE}, {@code STORE} or {@code MONTH}; defaults to {@code CODE}
+   * @return the grouped rows with folded totals and the period they cover
+   * @throws com.shelfj.web.ApiException {@code 400} when the period is malformed or not strictly
+   *     increasing, or {@code groupBy} is not one of the three groupings
+   */
   @Operation(
       summary = "VAT collected over a period, grouped",
       description =

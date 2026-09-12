@@ -25,6 +25,12 @@ public final class Mappers {
 
   private Mappers() {}
 
+  /**
+   * Converts a supplier to its wire form.
+   *
+   * @param s the supplier to convert
+   * @return its API representation
+   */
   public static SupplierResponse toDto(Supplier s) {
     return new SupplierResponse(
         s.id(),
@@ -39,6 +45,12 @@ public final class Mappers {
         s.updatedAt());
   }
 
+  /**
+   * Converts a purchase order header to its wire form.
+   *
+   * @param po the purchase order header to convert
+   * @return its API representation, including the stored net/VAT/gross totals
+   */
   public static PurchaseOrderResponse toDto(PurchaseOrder po) {
     return new PurchaseOrderResponse(
         po.id(),
@@ -117,6 +129,12 @@ public final class Mappers {
         rows);
   }
 
+  /**
+   * Converts one approval-trail row to its wire form.
+   *
+   * @param a the trail entry to convert
+   * @return its API representation, carrying the figure and authority as they stood at the time
+   */
   public static Dtos.PurchaseOrderApprovalResponse toDto(Domain.PurchaseOrderApproval a) {
     return new Dtos.PurchaseOrderApprovalResponse(
         a.id(),
@@ -140,6 +158,12 @@ public final class Mappers {
         currency, a.ceiling(), a.unlimited(), a.role(), off, a.reason());
   }
 
+  /**
+   * Converts a purchase order line to its wire form.
+   *
+   * @param line the purchase order line to convert
+   * @return its API representation
+   */
   public static PurchaseOrderLineResponse toDto(PurchaseOrderLine line) {
     return new PurchaseOrderLineResponse(
         line.id(),
@@ -151,6 +175,13 @@ public final class Mappers {
         line.createdAt());
   }
 
+  /**
+   * Converts a goods receipt and its lines to the wire form.
+   *
+   * @param gr the receipt header
+   * @param lines the receipt's lines
+   * @return its API representation, header and lines together
+   */
   public static GoodsReceiptResponse toDto(GoodsReceipt gr, List<GoodsReceiptLine> lines) {
     return new GoodsReceiptResponse(
         gr.id(),
@@ -161,10 +192,22 @@ public final class Mappers {
         lines.stream().map(Mappers::toDto).toList());
   }
 
+  /**
+   * Converts one goods receipt line to its wire form.
+   *
+   * @param l the receipt line to convert
+   * @return its API representation
+   */
   public static GoodsReceiptLineResponse toDto(GoodsReceiptLine l) {
     return new GoodsReceiptLineResponse(l.id(), l.variantId(), l.qtyReceived(), l.createdAt());
   }
 
+  /**
+   * Converts an intercompany invoice to its wire form.
+   *
+   * @param inv the intercompany invoice to convert
+   * @return its API representation
+   */
   public static IntercompanyInvoiceResponse toDto(IntercompanyInvoice inv) {
     return new IntercompanyInvoiceResponse(
         inv.id(),
@@ -185,6 +228,12 @@ public final class Mappers {
         inv.createdAt());
   }
 
+  /**
+   * Converts one nominal-ledger entry to its wire form.
+   *
+   * @param e the ledger entry to convert
+   * @return its API representation
+   */
   public static NominalLedgerEntryResponse toDto(NominalLedgerEntry e) {
     return new NominalLedgerEntryResponse(
         e.id(),
@@ -199,6 +248,12 @@ public final class Mappers {
         e.createdAt());
   }
 
+  /**
+   * Converts one line-progress row to its wire form.
+   *
+   * @param p ordered against received for a single variant
+   * @return its API representation, including the balance still due
+   */
   public static PurchaseOrderLineProgressResponse toDto(Domain.PurchaseOrderLineProgress p) {
     return new PurchaseOrderLineProgressResponse(
         p.variantId(), p.qtyOrdered(), p.qtyReceived(), p.qtyOutstanding());

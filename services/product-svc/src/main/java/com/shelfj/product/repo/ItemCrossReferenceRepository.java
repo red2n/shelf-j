@@ -19,6 +19,12 @@ import java.util.UUID;
 @ApplicationScoped
 public class ItemCrossReferenceRepository extends BaseJdbcRepository {
 
+  /**
+   * Inserts a cross reference.
+   *
+   * @param x the cross to persist
+   * @return the cross reference as stored
+   */
   public ItemCrossReference createCrossReference(ItemCrossReference x) {
     exec(
         "INSERT INTO item_cross_references"
@@ -39,6 +45,14 @@ public class ItemCrossReferenceRepository extends BaseJdbcRepository {
     return x;
   }
 
+  /**
+   * Lists the tenant's cross references.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param variantId the product variant concerned
+   * @param partyType the party type
+   * @return the matching rows
+   */
   public List<ItemCrossReference> listCrossReferences(
       UUID tenantId, UUID variantId, String partyType) {
     if (partyType != null) {
@@ -69,6 +83,13 @@ public class ItemCrossReferenceRepository extends BaseJdbcRepository {
         "list cross references");
   }
 
+  /**
+   * Deletes a cross reference.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the cross reference to act on
+   * @return {@code true} when a row was removed, {@code false} when nothing matched
+   */
   public boolean deleteCrossReference(UUID tenantId, UUID id) {
     Instant[] found = {null};
     query(

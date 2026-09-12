@@ -36,6 +36,14 @@ public class TransferOrderResource {
   @Inject InventoryService service;
   @Inject TenantContext ctx;
 
+  /**
+   * Creates a transfer order.
+   *
+   * <p>Requests one or more variants be transferred between two stores.
+   *
+   * @param req the request body
+   * @return transfer order created ({@code 201})
+   */
   @Operation(
       summary = "Create a transfer order",
       description = "Requests one or more variants be transferred between two stores.")
@@ -68,7 +76,17 @@ public class TransferOrderResource {
         .build();
   }
 
+  /**
+   * Lists transfer orders.
+   *
+   * <p>Filterable by store and status.
+   *
+   * @param store the store (query parameter)
+   * @param status the status (query parameter)
+   * @param limitParam the limit param (query parameter)
+   */
   @Operation(summary = "List transfer orders", description = "Filterable by store and status.")
+  @APIResponse(responseCode = "200", description = "List transfer orders")
   @GET
   @Path("/transfers")
   public ApiResponse<List<TransferOrderResponse>> listTransfers(
@@ -85,6 +103,12 @@ public class TransferOrderResource {
             .toList());
   }
 
+  /**
+   * Gets a transfer order by id, with its lines.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such transfer order
+   */
   @Operation(summary = "Get a transfer order by id, with its lines")
   @APIResponse(responseCode = "404", description = "No such transfer order")
   @GET
@@ -94,6 +118,15 @@ public class TransferOrderResource {
     return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
   }
 
+  /**
+   * Ships a transfer order.
+   *
+   * <p>Marks the order shipped, deducting the shipped qty from the source store.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such transfer order; {@code 422} transfer
+   *     order is not in a shippable state
+   */
   @Operation(
       summary = "Ship a transfer order",
       description = "Marks the order shipped, deducting the shipped qty from the source store.")
@@ -106,6 +139,15 @@ public class TransferOrderResource {
     return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
   }
 
+  /**
+   * Receives a transfer order.
+   *
+   * <p>Marks the order received, adding the shipped qty into the destination store.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such transfer order; {@code 422} transfer
+   *     order is not in a receivable state
+   */
   @Operation(
       summary = "Receive a transfer order",
       description = "Marks the order received, adding the shipped qty into the destination store.")
@@ -118,6 +160,14 @@ public class TransferOrderResource {
     return ApiResponse.ok(Mappers.toTransferOrder(wl.order(), wl.lines()));
   }
 
+  /**
+   * Cancels a transfer order.
+   *
+   * <p>Only PENDING transfer orders can be cancelled.
+   *
+   * @param id the id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 422} only PENDING transfer orders can be cancelled
+   */
   @Operation(
       summary = "Cancel a transfer order",
       description = "Only PENDING transfer orders can be cancelled.")
