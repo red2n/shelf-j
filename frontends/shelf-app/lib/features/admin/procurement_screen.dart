@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/format.dart';
 import '../../core/network/api_client.dart';
@@ -90,6 +92,8 @@ class _SuppliersTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(suppliersProvider);
+    final auth = ref.watch(authNotifierProvider).value;
+    final isManager = auth is AuthAuthenticated && auth.isManager;
     final cs = Theme.of(context).colorScheme;
     return Column(
       children: [
@@ -136,6 +140,16 @@ class _SuppliersTab extends ConsumerWidget {
                         if (s.vatRegistered) 'VAT ${s.vatNumber ?? 'reg'}',
                         if (s.countryCode != null) s.countryCode,
                       ].whereType<String>().join(' · ')),
+                      trailing: isManager
+                          ? IconButton(
+                              tooltip: 'Edit supplier',
+                              icon: const Icon(Icons.edit_outlined),
+                              onPressed: () => showDialog<void>(
+                                context: context,
+                                builder: (_) => _SupplierDialog(existing: s),
+                              ),
+                            )
+                          : null,
                     ),
                   );
                 },
@@ -377,8 +391,13 @@ class _InvoiceStatusBadge extends StatelessWidget {
   }
 }
 
+/// Add a supplier, or — with [existing] — correct one. Terms, VAT number,
+/// country and currency were fixed at creation until SJ-D34; a supplier
+/// created in the wrong currency was wrong for every order ever raised
+/// against it, and the only fix was a second supplier.
 class _SupplierDialog extends ConsumerStatefulWidget {
-  const _SupplierDialog();
+  const _SupplierDialog({this.existing});
+  final Supplier? existing;
 
   @override
   ConsumerState<_SupplierDialog> createState() => _SupplierDialogState();
@@ -395,6 +414,39 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
   bool _loading = false;
   String? _error;
 
+  static const _countries = {'IN': 'India', 'US': 'USA', 'GB': 'UK', 'SG': 'Singapore', 'AE': 'UAE'};
+  static const _currencies = ['INR', 'USD', 'GBP', 'SGD', 'AED'];
+
+  bool get _editing => widget.existing != null;
+
+  /// The picker's choices, plus whatever the supplier already has — a JPY
+  /// supplier must open in JPY, not in the first currency on the list.
+  List<DropdownMenuItem<String>> _countryItems() => [
+        for (final e in _countries.entries) DropdownMenuItem(value: e.key, child: Text(e.value)),
+        if (!_countries.containsKey(_country))
+          DropdownMenuItem(value: _country, child: Text(_country)),
+      ];
+
+  List<DropdownMenuItem<String>> _currencyItems() => [
+        for (final c in _currencies) DropdownMenuItem(value: c, child: Text(c)),
+        if (!_currencies.contains(_currency))
+          DropdownMenuItem(value: _currency, child: Text(_currency)),
+      ];
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    if (e != null) {
+      _nameCtrl.text = e.name;
+      _vatCtrl.text = e.vatNumber ?? '';
+      _termsCtrl.text = e.paymentTermsDays.toString();
+      _country = e.countryCode ?? _country;
+      _currency = e.currency ?? _currency;
+      _vatRegistered = e.vatRegistered;
+    }
+  }
+
   @override
   void dispose() {
     _nameCtrl.dispose();
@@ -410,26 +462,30 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.purchase}/suppliers',
-        data: {
-          'name': _nameCtrl.text.trim(),
-          'vatNumber': _vatCtrl.text.trim().isEmpty ? null : _vatCtrl.text.trim(),
-          'vatRegistered': _vatRegistered,
-          'countryCode': _country,
-          'currency': _currency,
-          'paymentTermsDays': int.tryParse(_termsCtrl.text.trim()) ?? 30,
-        },
-      );
+      final dio = ref.read(apiClientProvider).dio;
+      final data = {
+        'name': _nameCtrl.text.trim(),
+        'vatNumber': _vatCtrl.text.trim().isEmpty ? null : _vatCtrl.text.trim(),
+        'vatRegistered': _vatRegistered,
+        'countryCode': _country,
+        'currency': _currency,
+        'paymentTermsDays': int.tryParse(_termsCtrl.text.trim()) ?? 30,
+      };
+      if (_editing) {
+        await dio.put('/${ApiConstants.purchase}/suppliers/${widget.existing!.id}', data: data);
+      } else {
+        await dio.post('/${ApiConstants.purchase}/suppliers', data: data);
+      }
       if (!mounted) return;
       ref.invalidate(suppliersProvider);
       Navigator.pop(context);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Supplier added.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_editing ? 'Supplier updated.' : 'Supplier added.')));
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = friendlyError(e, fallback: 'Could not add supplier.');
+        _error = friendlyError(e,
+            fallback: _editing ? 'Could not update supplier.' : 'Could not add supplier.');
       });
     }
   }
@@ -438,7 +494,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return AlertDialog(
-      title: const Text('Add supplier'),
+      title: Text(_editing ? 'Edit supplier' : 'Add supplier'),
       content: SizedBox(
         width: 400,
         child: Form(
@@ -476,13 +532,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                       child: DropdownButtonFormField<String>(
                         initialValue: _country,
                         decoration: const InputDecoration(labelText: 'Country'),
-                        items: const [
-                          DropdownMenuItem(value: 'IN', child: Text('India')),
-                          DropdownMenuItem(value: 'US', child: Text('USA')),
-                          DropdownMenuItem(value: 'GB', child: Text('UK')),
-                          DropdownMenuItem(value: 'SG', child: Text('Singapore')),
-                          DropdownMenuItem(value: 'AE', child: Text('UAE')),
-                        ],
+                        items: _countryItems(),
                         onChanged: (v) => setState(() => _country = v!),
                       ),
                     ),
@@ -491,13 +541,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                       child: DropdownButtonFormField<String>(
                         initialValue: _currency,
                         decoration: const InputDecoration(labelText: 'Currency'),
-                        items: const [
-                          DropdownMenuItem(value: 'INR', child: Text('INR')),
-                          DropdownMenuItem(value: 'USD', child: Text('USD')),
-                          DropdownMenuItem(value: 'GBP', child: Text('GBP')),
-                          DropdownMenuItem(value: 'SGD', child: Text('SGD')),
-                          DropdownMenuItem(value: 'AED', child: Text('AED')),
-                        ],
+                        items: _currencyItems(),
                         onChanged: (v) => setState(() => _currency = v!),
                       ),
                     ),
@@ -542,7 +586,7 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                   width: 18,
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
-              : const Text('Add'),
+              : Text(_editing ? 'Save' : 'Add'),
         ),
       ],
     );

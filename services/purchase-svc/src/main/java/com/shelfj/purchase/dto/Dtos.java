@@ -36,6 +36,22 @@ public final class Dtos {
       @Schema(description = "Payment terms in days. Defaults to 30 (BACS standard).") @Min(1)
           Integer paymentTermsDays) {}
 
+  @Schema(
+      name = "UpdateSupplierRequest",
+      description =
+          "Replace a supplier's master data. Terms, VAT number, country and currency can all be"
+              + " corrected after creation (SJ-D34); the currency only while no purchase order"
+              + " against the supplier is open, because every open order is denominated in it.")
+  public record UpdateSupplierRequest(
+      @NotBlank String name,
+      String vatNumber,
+      boolean vatRegistered,
+      @Schema(description = "ISO 3166-1 alpha-2 country code; unchanged when omitted.")
+          String countryCode,
+      @Schema(description = "ISO 4217 currency code; unchanged when omitted.") String currency,
+      @Schema(description = "Payment terms in days; unchanged when omitted.") @Min(1)
+          Integer paymentTermsDays) {}
+
   @Schema(name = "SupplierResponse")
   public record SupplierResponse(
       UUID id,

@@ -61,8 +61,15 @@ class _Server implements HttpClientAdapter {
       body = '{"data":[{"storeId":"s1","seriesCode":"MAIN","period":"2026","nextNumber":3,"prefix":"GB-A"}]}';
     } else if (o.path.endsWith('/fiscal-receipts/audit')) {
       body = intact
-          ? '{"data":{"firstNumber":1,"lastNumber":2,"issued":2,"expected":2,"intact":true,"gaps":[]}}'
-          : '{"data":{"firstNumber":1,"lastNumber":5,"issued":3,"expected":5,"intact":false,"gaps":[{"from":2,"to":3}]}}';
+          ? '{"data":{"firstNumber":1,"lastNumber":2,"issued":2,"expected":2,"intact":true,"gaps":[],"chainIntact":true,"chainFrom":1}}'
+          : '{"data":{"firstNumber":1,"lastNumber":5,"issued":3,"expected":5,"intact":false,"gaps":[{"from":2,"to":3}],"chainIntact":false,"chainFrom":1,"chainBrokenAt":4}}';
+    } else if (o.path.endsWith('/fiscal-receipts/export')) {
+      return ResponseBody.fromString(
+          'number,fullNumber,issuedAt,orderId,currency,grossTotal,taxTotal,voidedAt,voidReason,prevHash,hash\n'
+          '1,GB-A-2026-000001,2026-09-12T10:00:00Z,01a090ae-611e-701e-a773-cff68a489efe,GBP,12.5000,2.0800,,,GENESIS,ab12\n'
+          '2,GB-A-2026-000002,2026-09-12T10:05:00Z,01a090ae-611e-701e-a773-cff68a489eff,GBP,3.0000,0.5000,2026-09-12T10:06:00Z,wrong item,ab12,cd34\n',
+          200,
+          headers: {Headers.contentTypeHeader: ['text/csv']});
     } else if (o.path.endsWith('/fiscal-receipts')) {
       body = '{"data":['
           '{"fullNumber":"GB-A-2026-000001","number":1,"orderId":"01a090ae-611e-701e-a773-cff68a489efe","issuedAt":"2026-09-12T10:00:00Z","grossTotal":12.50,"currency":"GBP"},'
@@ -119,6 +126,28 @@ void main() {
     expect(find.text('Sequence has gaps'), findsOneWidget);
     expect(find.text('Missing 2–3'), findsOneWidget);
     expect(find.textContaining('issued 3 · expected 5'), findsOneWidget);
+    // The hash chain is a second, independent verdict: an altered document, not a missing one.
+    expect(find.textContaining('Hash chain broken at no. 4'), findsOneWidget);
+  });
+
+  testWidgets('an intact hash chain says so, from the first chained number', (tester) async {
+    await _pump(tester);
+    expect(find.textContaining('Hash chain intact from no. 1'), findsOneWidget);
+  });
+
+  testWidgets('the register exports as CSV with the hash chain, to copy', (tester) async {
+    final server = await _pump(tester);
+    await tester.tap(find.text('Export'));
+    await tester.pumpAndSettle();
+    expect(find.text('Export register'), findsOneWidget);
+    expect(find.textContaining('2 documents'), findsOneWidget);
+    final csv = tester.widget<SelectableText>(find.byKey(const Key('receipt-export-csv'))).data!;
+    expect(csv, contains('GB-A-2026-000002'));
+    expect(csv, contains('prevHash,hash'));
+    final export = server.requests.singleWhere((r) => r.path.endsWith('/fiscal-receipts/export'));
+    expect(export.queryParameters['format'], 'csv');
+    expect(export.queryParameters['storeId'], 's1');
+    expect(server.requests.where((r) => r.method != 'GET'), isEmpty);
   });
 
   testWidgets('a manager sets a prefix; the server refuses a bad one and the screen says so',

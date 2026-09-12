@@ -307,6 +307,10 @@ public class OrderResource {
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
 
+  /** Parses the optional fulfil body; a JAX-RS String entity keeps an absent body legal. */
+  private static final jakarta.json.bind.Jsonb FULFIL_JSON =
+      jakarta.json.bind.JsonbBuilder.create();
+
   /**
    * Moves a CONFIRMED order to FULFILLED and emits {@code OrderFulfilled} with its lines.
    *
@@ -318,15 +322,33 @@ public class OrderResource {
   @Operation(
       summary = "Fulfil an order",
       description =
-          "Transitions a CONFIRMED order to FULFILLED and emits OrderFulfilled with its line"
-              + " items.")
+          "Hands over the order, or with a body {lines:[{variantId, qty}]} part of it: the order"
+              + " is PARTIALLY_FULFILLED until every line is complete, then FULFILLED. Each call"
+              + " emits OrderFulfilled with only the quantities handed over now (SJ-D35).")
   @APIResponse(responseCode = "200", description = "Order fulfilled")
   @APIResponse(responseCode = "404", description = "Order not found")
   @APIResponse(responseCode = "409", description = "Order is not in CONFIRMED status")
   @POST
   @Path("/{id}/fulfil")
-  public Response fulfil(@PathParam("id") String id) {
-    var order = svc.fulfillOrder(ctx.tenantId(), Parsing.uuid(id, "id"), ctx.userId());
+  public Response fulfil(@PathParam("id") String id, String raw) {
+    // SJ-D35: with a body, only those lines and quantities are handed over now; without one —
+    // and a till or a script that has always posted nothing here sends nothing — everything still
+    // outstanding, which for an untouched order is the old whole fulfilment.
+    com.shelfj.order.dto.Dtos.FulfilRequest req = null;
+    if (raw != null && !raw.isBlank()) {
+      try {
+        req = FULFIL_JSON.fromJson(raw, com.shelfj.order.dto.Dtos.FulfilRequest.class);
+      } catch (jakarta.json.bind.JsonbException e) {
+        throw new ApiException(
+            400, "VALIDATION_FAILED", "fulfil body is not valid JSON", java.util.List.of(), e);
+      }
+    }
+    if (req != null && req.lines() != null) {
+      for (var line : req.lines()) {
+        com.shelfj.web.Validations.validate(line);
+      }
+    }
+    var order = svc.fulfilOrder(ctx.tenantId(), Parsing.uuid(id, "id"), req, ctx.userId(), ctx);
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }

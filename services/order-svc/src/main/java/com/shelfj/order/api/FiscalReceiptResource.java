@@ -207,6 +207,46 @@ public class FiscalReceiptResource {
     return Response.ok(ApiResponse.ok(result)).build();
   }
 
+  /**
+   * The register as a file (18.4).
+   *
+   * @param format {@code csv} (default) or {@code json}, the latter with the order lines
+   * @return CSV text or a JSON document
+   */
+  @Operation(
+      summary = "Export a series with its hash chain",
+      description =
+          "Every document in the series, in number order, with the hash it was issued with and"
+              + " the hash it chains to — as CSV rows, or as JSON with the order lines behind"
+              + " each document. The in-repo input to SAF-T, KassenSichV and corrispettivi"
+              + " exports; not itself a certified file. Management-only.")
+  @APIResponse(responseCode = "200", description = "The register")
+  @GET
+  @Path("/fiscal-receipts/export")
+  @Produces({"text/csv", MediaType.APPLICATION_JSON})
+  public Response export(
+      @QueryParam("storeId") String storeId,
+      @QueryParam("series") String series,
+      @QueryParam("period") String period,
+      @QueryParam("format") @DefaultValue("csv") String format) {
+    Object out =
+        svc.exportRegister(
+            ctx.requireTenantId(),
+            Parsing.uuid(storeId, "storeId"),
+            series,
+            requirePeriod(period),
+            format);
+    if (out instanceof String csv) {
+      return Response.ok(csv)
+          .type("text/csv")
+          .header(
+              "Content-Disposition",
+              "attachment; filename=\"receipts-" + requirePeriod(period) + ".csv\"")
+          .build();
+    }
+    return Response.ok(ApiResponse.ok(out)).type(MediaType.APPLICATION_JSON).build();
+  }
+
   private static String requirePeriod(String period) {
     if (period == null || period.isBlank()) {
       return String.valueOf(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC).getYear());

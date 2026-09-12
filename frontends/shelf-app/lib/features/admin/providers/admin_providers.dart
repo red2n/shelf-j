@@ -890,18 +890,25 @@ class OrderLine {
   final double unitPrice;
   final double lineTotal;
 
+  /// How much of [qty] has been handed over so far (SJ-D35).
+  final double fulfilledQty;
+
   const OrderLine({
     required this.variantId,
     required this.qty,
     required this.unitPrice,
     required this.lineTotal,
+    this.fulfilledQty = 0,
   });
+
+  double get remainingQty => qty - fulfilledQty;
 
   factory OrderLine.fromJson(Map<String, dynamic> j) => OrderLine(
         variantId: j['variantId'] as String? ?? '',
         qty: (j['qty'] as num?)?.toDouble() ?? 0,
         unitPrice: (j['unitPrice'] as num?)?.toDouble() ?? 0,
         lineTotal: (j['lineTotal'] as num?)?.toDouble() ?? 0,
+        fulfilledQty: (j['fulfilledQty'] as num?)?.toDouble() ?? 0,
       );
 }
 

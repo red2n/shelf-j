@@ -28,6 +28,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
     'ALL',
     'PENDING',
     'CONFIRMED',
+    'PARTIALLY_FULFILLED',
     'FULFILLED',
     'CANCELLED'
   ];
@@ -264,6 +265,20 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
         context: context,
         builder: (_) => _CollectPaymentDialog(
           order: o,
+          onDone: () {
+            ref.read(ordersPaginationProvider(_filter).notifier).refresh();
+            ref.invalidate(recentOrdersProvider);
+          },
+        ),
+      );
+      return;
+    }
+    if (action == 'fulfil') {
+      // SJ-D35: which lines, and how much of each, are handed over now.
+      await showDialog<void>(
+        context: context,
+        builder: (_) => FulfilDialog(
+          orderId: o.id,
           onDone: () {
             ref.read(ordersPaginationProvider(_filter).notifier).refresh();
             ref.invalidate(recentOrdersProvider);
@@ -727,7 +742,7 @@ class _OrderActionsMenu extends StatelessWidget {
             Text('Confirm'),
           ])));
     }
-    if (s == 'CONFIRMED') {
+    if (s == 'CONFIRMED' || s == 'PARTIALLY_FULFILLED') {
       items.add(const PopupMenuItem(
           value: 'fulfil',
           child: Row(children: [
@@ -739,7 +754,7 @@ class _OrderActionsMenu extends StatelessWidget {
     // COD / pay-at-pickup settlement: record the tender when the goods change hands. Shown for
     // any live order — the dialog itself computes what's still outstanding and refuses
     // double-collection.
-    if (s == 'PENDING' || s == 'CONFIRMED' || s == 'FULFILLED') {
+    if (s == 'PENDING' || s == 'CONFIRMED' || s == 'PARTIALLY_FULFILLED' || s == 'FULFILLED') {
       items.add(const PopupMenuItem(
           value: 'collect',
           child: Row(children: [
@@ -834,6 +849,7 @@ class _StatusBadge extends StatelessWidget {
         fg = cs.onSecondaryContainer;
         break;
       case 'FULFILLED':
+      case 'PARTIALLY_FULFILLED':
         bg = cs.tertiaryContainer;
         fg = cs.onTertiaryContainer;
         break;
@@ -1050,6 +1066,145 @@ class _CollectPaymentDialogState extends ConsumerState<_CollectPaymentDialog> {
             label: Text(
                 'Collect ${AppFormat.money(outstanding, currencyCode: o.currency)}'),
           ),
+      ],
+    );
+  }
+}
+
+/// Hand over some or all of an order (SJ-D35). Each line shows what is still
+/// outstanding and takes how much goes now; leaving everything at its
+/// outstanding quantity hands the whole order over, as *Mark fulfilled* always
+/// did. The server refuses more than is outstanding, and a part-fulfilled
+/// order cannot be cancelled afterwards — the goods are in the customer's hands.
+class FulfilDialog extends ConsumerStatefulWidget {
+  const FulfilDialog({super.key, required this.orderId, required this.onDone});
+  final String orderId;
+  final VoidCallback onDone;
+
+  @override
+  ConsumerState<FulfilDialog> createState() => _FulfilDialogState();
+}
+
+class _FulfilDialogState extends ConsumerState<FulfilDialog> {
+  final Map<String, TextEditingController> _qty = {};
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    for (final c in _qty.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  String _fmt(double v) => v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+
+  Future<void> _submit(List<OrderLine> lines) async {
+    final outstanding = lines.where((l) => l.remainingQty > 0).toList();
+    final chosen = <Map<String, dynamic>>[];
+    var everything = true;
+    for (final l in outstanding) {
+      final v = double.tryParse(_qty[l.variantId]?.text.trim() ?? '');
+      if (v == null || v < 0) {
+        setState(() => _error = 'Enter a quantity for every line (0 for none now).');
+        return;
+      }
+      if (v > l.remainingQty) {
+        setState(() => _error = 'Only ${_fmt(l.remainingQty)} outstanding on ${shortRef(l.variantId)}.');
+        return;
+      }
+      if (v != l.remainingQty) everything = false;
+      if (v > 0) chosen.add({'variantId': l.variantId, 'qty': v});
+    }
+    if (chosen.isEmpty) {
+      setState(() => _error = 'Nothing to hand over.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+            '/${ApiConstants.order}/orders/${widget.orderId}/fulfil',
+            // Everything outstanding: no body, the plain fulfilment. Part: the lines.
+            data: everything ? null : {'lines': chosen},
+          );
+      widget.onDone();
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(everything ? 'Order fulfilled.' : 'Part of the order handed over.')));
+    } catch (e) {
+      setState(() {
+        _saving = false;
+        _error = friendlyError(e, fallback: 'Could not hand over the order.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = ref.watch(orderDetailProvider(widget.orderId));
+    return AlertDialog(
+      title: const Text('Hand over'),
+      content: SizedBox(
+        width: 460,
+        child: detail.when(
+          loading: () => const LoadingView(label: 'Loading lines…'),
+          error: (e, _) => ErrorView(
+            message: friendlyError(e, fallback: 'Could not load the order.'),
+            onRetry: () => ref.invalidate(orderDetailProvider(widget.orderId)),
+          ),
+          data: (d) {
+            final outstanding = d.items.where((l) => l.remainingQty > 0).toList();
+            for (final l in outstanding) {
+              _qty.putIfAbsent(l.variantId, () => TextEditingController(text: _fmt(l.remainingQty)));
+            }
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('How much of each line goes to the customer now. '
+                    'Leave the outstanding quantities to hand over everything.'),
+                const SizedBox(height: 12),
+                if (outstanding.isEmpty) const Text('Every line has been handed over.'),
+                for (final l in outstanding)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(children: [
+                      Expanded(
+                        child: Text(
+                          '${shortRef(l.variantId)} · ${_fmt(l.remainingQty)} of ${_fmt(l.qty)} outstanding',
+                        ),
+                      ),
+                      SizedBox(
+                        width: 90,
+                        child: TextField(
+                          key: Key('fulfil-qty-${l.variantId}'),
+                          controller: _qty[l.variantId],
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(labelText: 'Now'),
+                        ),
+                      ),
+                    ]),
+                  ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: _saving || !detail.hasValue ? null : () => _submit(detail.value!.items),
+          child: const Text('Hand over'),
+        ),
       ],
     );
   }

@@ -77,7 +77,7 @@ export default function ({ tenant, rival, shopper, stranger }) {
   // A till sale is handed over the moment it is paid for.
   poll(30, () => statusOf(order.id) === 'FULFILLED');
   truthy('[+] paying for a till sale fulfils it', statusOf(order.id) === 'FULFILLED', statusOf(order.id));
-  expect(call('POST', `/api/order-svc/orders/${order.id}/fulfil`, { token: t }), '[-] fulfil twice', 404, 'ORDER_NOT_FOUND_OR_WRONG_STATUS');
+  expect(call('POST', `/api/order-svc/orders/${order.id}/fulfil`, { token: t }), '[-] fulfil twice', 409, 'ORDER_NOT_FULFILLABLE');
   expect(call('POST', `/api/order-svc/orders/${order.id}/cancel`, { token: t, body: { reason: 'Too late' } }), '[-] cancel a fulfilled order', 409);
   expect(call('POST', `/api/order-svc/orders/${order.id}/returns`, { token: t, body: { items: [{ variantId, qty: 1 }] } }), '[-] return: reason required', 400);
   expect(
@@ -95,11 +95,54 @@ export default function ({ tenant, rival, shopper, stranger }) {
   expect(history, '[+] order history', 200);
   truthy('[+] history ends FULFILLED', JSON.stringify(data(history)).includes('FULFILLED'), data(history));
 
+  // ── part-fulfilment (SJ-D35) ────────────────────────────────────────────────
+  const onHand = () => {
+    const rows = data(call('GET', `/api/inventory-svc/admin/inventory/levels?store=${storeId}&limit=100`, { token: t })) || [];
+    const row = rows.find((r) => r.variantId === variantId);
+    return row ? Number(row.onHand) : NaN;
+  };
+  // The till sale (-2) and the returned mug (+1) above reach inventory-svc asynchronously; wait for
+  // the level to settle so what follows measures the part-fulfilment and nothing else.
+  truthy('[+] inventory settled after the till sale and the return', poll(30, () => onHand() === 200 - 2 + 1) >= 0, onHand());
+  const before = onHand();
+  const partial = data(place({ storeId, channel: 'ONLINE', fulfilmentType: 'PICKUP', items: [{ variantId, qty: 4 }] }));
+  expect(call('POST', `/api/order-svc/orders/${partial.id}/confirm`, { token: t, body: {} }), '[+] confirm a four-mug pickup order', 200);
+  expect(
+    call('POST', `/api/order-svc/orders/${partial.id}/fulfil`, { token: t, body: { lines: [{ variantId, qty: 5 }] } }),
+    '[-] hand over more than was ordered',
+    409,
+    'ORDER_FULFIL_QTY_EXCEEDS_OUTSTANDING'
+  );
+  expect(
+    call('POST', `/api/order-svc/orders/${partial.id}/fulfil`, { token: t, body: { lines: [{ variantId: UNKNOWN, qty: 1 }] } }),
+    '[-] hand over a line that is not on the order',
+    400,
+    'ORDER_FULFIL_LINE_UNKNOWN'
+  );
+  const one = call('POST', `/api/order-svc/orders/${partial.id}/fulfil`, { token: t, body: { lines: [{ variantId, qty: 1 }] } });
+  expect(one, '[+] hand over one of four', 200);
+  truthy('[+] the order is PARTIALLY_FULFILLED with one handed over', data(one).status === 'PARTIALLY_FULFILLED' && Number(data(one).items[0].fulfilledQty) === 1, data(one));
+  expect(call('POST', `/api/order-svc/orders/${partial.id}/cancel`, { token: t, body: { reason: 'changed mind' } }), '[-] cancel once goods have gone out', 409, 'ORDER_PARTLY_FULFILLED');
+  expect(
+    call('POST', `/api/order-svc/orders/${partial.id}/returns`, { token: t, body: { reason: 'Too many', refundMethod: 'CASH', items: [{ variantId, qty: 2 }] } }),
+    '[-] return two when only one was handed over',
+    409,
+    'RETURN_QTY_EXCEEDS_PURCHASED'
+  );
+  truthy('[+] inventory deducted exactly the one that left', poll(30, () => onHand() === before - 1) >= 0, { before, now: onHand() });
+  const rest = call('POST', `/api/order-svc/orders/${partial.id}/fulfil`, { token: t });
+  expect(rest, '[+] hand over the rest with no body', 200);
+  truthy('[+] now FULFILLED, four of four', data(rest).status === 'FULFILLED' && Number(data(rest).items[0].fulfilledQty) === 4, data(rest));
+  truthy('[+] inventory deducted the other three, and nothing twice', poll(30, () => onHand() === before - 4) >= 0, { before, now: onHand() });
+  expect(call('POST', `/api/order-svc/orders/${partial.id}/fulfil`, { token: t }), '[-] nothing left to hand over', 409, 'ORDER_NOT_FULFILLABLE');
+  const partialHistory = JSON.stringify(data(call('GET', `/api/order-svc/orders/${partial.id}/history`, { token: t })));
+  truthy('[+] the history says how much went when', partialHistory.includes('part-fulfilled: 1 of 4'), partialHistory);
+
   // ── cancel and void ─────────────────────────────────────────────────────────
   const toCancel = data(place(sale()));
   expect(call('POST', `/api/order-svc/orders/${toCancel.id}/cancel`, { token: t, body: {} }), '[-] cancel: a body must give a reason', 400);
   expect(call('POST', `/api/order-svc/orders/${toCancel.id}/cancel`, { token: t, body: { reason: 'Customer walked out' } }), '[+] cancel a pending order', 200);
-  expect(call('POST', `/api/order-svc/orders/${toCancel.id}/fulfil`, { token: t }), '[-] fulfil a cancelled order', 404, 'ORDER_NOT_FOUND_OR_WRONG_STATUS');
+  expect(call('POST', `/api/order-svc/orders/${toCancel.id}/fulfil`, { token: t }), '[-] fulfil a cancelled order', 409, 'ORDER_NOT_FULFILLABLE');
   expect(
     call('POST', `/api/order-svc/orders/${toCancel.id}/returns`, { token: t, body: { reason: 'Never had it', items: [{ variantId, qty: 1 }] } }),
     '[-] return a cancelled order',

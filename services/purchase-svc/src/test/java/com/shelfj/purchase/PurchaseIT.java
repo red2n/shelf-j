@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -1130,5 +1131,131 @@ class PurchaseIT {
     int start = json.indexOf("\"id\":\"", fieldPos) + 6;
     int end = json.indexOf("\"", start);
     return json.substring(start, end);
+  }
+
+  // ── SJ-D34: a supplier can be corrected after it is created ─────────────────
+
+  private Response putAs(String path, String json, String tenant, String roles) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-Roles", roles)
+        .put(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
+  @Test
+  void supplierTermsVatCountryAndCurrencyCanBeCorrected() {
+    String id = supplier("Typo Trading " + Ids.newId(), "JPY");
+    Response r =
+        putAs(
+            "/suppliers/" + id,
+            "{\"name\":\"Typo Trading Ltd\",\"vatRegistered\":true,\"vatNumber\":\"GB999999973\","
+                + "\"countryCode\":\"gb\",\"currency\":\"eur\",\"paymentTermsDays\":45}",
+            T,
+            "OWNER");
+    assertThat(r.getStatus(), is(200));
+    String body = r.readEntity(String.class);
+    assertThat(body, containsString("\"name\":\"Typo Trading Ltd\""));
+    assertThat(body, containsString("\"vatNumber\":\"GB999999973\""));
+    assertThat(body, containsString("\"countryCode\":\"GB\""));
+    assertThat(body, containsString("\"currency\":\"EUR\""));
+    assertThat(body, containsString("\"paymentTermsDays\":45"));
+    // And a fresh read agrees — the correction is stored, not just echoed.
+    assertThat(
+        get("/suppliers/" + id, T).readEntity(String.class),
+        containsString("\"currency\":\"EUR\""));
+    // Omitted fields stay as they were: only the name is required.
+    Response partial =
+        putAs(
+            "/suppliers/" + id,
+            "{\"name\":\"Typo Trading Ltd\",\"vatRegistered\":true}",
+            T,
+            "OWNER");
+    assertThat(partial.getStatus(), is(200));
+    String kept = partial.readEntity(String.class);
+    assertThat(kept, containsString("\"currency\":\"EUR\""));
+    assertThat(kept, containsString("\"paymentTermsDays\":45"));
+    assertThat(kept, containsString("\"countryCode\":\"GB\""));
+  }
+
+  @Test
+  void currencyCannotChangeUnderAnOpenOrderAndOrdersKeepTheirs() {
+    // The wrong currency at creation was permanent once purchase orders inherited it (SJ-D24 made
+    // the field load-bearing, SJ-D34 found it uncorrectable). Now: fix it once nothing is open.
+    String id = supplier("Yen By Mistake " + Ids.newId(), "JPY");
+    String po = poFor(id);
+    assertThat(
+        get("/purchase-orders/" + po, T).readEntity(String.class),
+        containsString("\"currency\":\"JPY\""));
+    Response blocked =
+        putAs("/suppliers/" + id, "{\"name\":\"Yen By Mistake\",\"currency\":\"GBP\"}", T, "OWNER");
+    assertThat(blocked.getStatus(), is(409));
+    String why = blocked.readEntity(String.class);
+    assertThat(why, containsString("PURCHASE_SUPPLIER_CURRENCY_IN_USE"));
+    assertThat(why, containsString("1 open purchase order"));
+    // Anything but the currency can still change under an open order.
+    assertThat(
+        putAs(
+                "/suppliers/" + id,
+                "{\"name\":\"Yen By Mistake\",\"paymentTermsDays\":60}",
+                T,
+                "OWNER")
+            .getStatus(),
+        is(200));
+    assertThat(
+        post("/purchase-orders/" + po + "/cancel", "{\"reason\":\"wrong currency\"}", T)
+            .getStatus(),
+        is(200));
+    Response fixed =
+        putAs("/suppliers/" + id, "{\"name\":\"Yen By Mistake\",\"currency\":\"GBP\"}", T, "OWNER");
+    assertThat(fixed.getStatus(), is(200));
+    assertThat(fixed.readEntity(String.class), containsString("\"currency\":\"GBP\""));
+    // The cancelled order keeps the currency it was raised in; the next one inherits the fix.
+    assertThat(
+        get("/purchase-orders/" + po, T).readEntity(String.class),
+        containsString("\"currency\":\"JPY\""));
+    String next = poFor(id);
+    assertThat(
+        get("/purchase-orders/" + next, T).readEntity(String.class),
+        containsString("\"currency\":\"GBP\""));
+  }
+
+  @Test
+  void supplierCorrectionIsRefusedForADuplicateNameABadCurrencyOrBadTerms() {
+    String a = supplier("First Supplier " + Ids.newId(), "GBP");
+    String bName = "Second Supplier " + Ids.newId();
+    String b = supplier(bName, "GBP");
+    String aName =
+        get("/suppliers/" + a, T)
+            .readEntity(String.class)
+            .replaceAll(".*\"name\":\"([^\"]+)\".*", "$1");
+    Response dup = putAs("/suppliers/" + b, "{\"name\":\"" + aName + "\"}", T, "OWNER");
+    assertThat(dup.getStatus(), is(409));
+    assertThat(dup.readEntity(String.class), containsString("PURCHASE_SUPPLIER_DUPLICATE"));
+    assertThat(
+        putAs("/suppliers/" + b, "{\"name\":\"" + bName + "\",\"currency\":\"ZZZ\"}", T, "OWNER")
+            .getStatus(),
+        is(400));
+    assertThat(
+        putAs("/suppliers/" + b, "{\"name\":\"" + bName + "\",\"paymentTermsDays\":0}", T, "OWNER")
+            .getStatus(),
+        is(400));
+    assertThat(putAs("/suppliers/" + b, "{\"name\":\"  \"}", T, "OWNER").getStatus(), is(400));
+    // None of the refusals changed anything.
+    assertThat(
+        get("/suppliers/" + b, T).readEntity(String.class),
+        containsString("\"name\":\"" + bName + "\""));
+  }
+
+  @Test
+  void supplierCorrectionIsManagementOnlyAndTenantBound() {
+    String id = supplier("Guarded Supplier " + Ids.newId(), "GBP");
+    String body = "{\"name\":\"Guarded Supplier\",\"paymentTermsDays\":7}";
+    assertThat(putAs("/suppliers/" + id, body, T, "CASHIER").getStatus(), is(403));
+    assertThat(putAs("/suppliers/" + id, body, T, "STOREKEEPER").getStatus(), is(403));
+    assertThat(putAs("/suppliers/" + id, body, T2, "OWNER").getStatus(), is(404));
+    assertThat(putAs("/suppliers/" + Ids.newId(), body, T, "OWNER").getStatus(), is(404));
+    assertThat(putAs("/suppliers/" + id, body, T, "MANAGER").getStatus(), is(200));
   }
 }

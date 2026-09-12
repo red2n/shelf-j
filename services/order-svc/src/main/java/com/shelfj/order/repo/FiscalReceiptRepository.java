@@ -1,12 +1,16 @@
 package com.shelfj.order.repo;
 
+import com.shelfj.order.domain.Domain;
 import com.shelfj.order.domain.Domain.FiscalReceipt;
 import com.shelfj.order.domain.Domain.SequenceGap;
 import com.shelfj.service.BaseJdbcRepository;
 import jakarta.enterprise.context.ApplicationScoped;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -82,13 +86,55 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
                   + draft.period()
                   + "-"
                   + String.format("%06d", number);
-
+          // The chain (18.4): the previous document's hash, or GENESIS for the first — and for
+          // the first after a document issued before the chain existed. The counter row is still
+          // locked, so the previous document is committed and nothing can slip between.
+          String prevHash = Domain.FiscalReceipt.GENESIS;
+          try (var prev =
+              c.prepareStatement(
+                  "SELECT hash FROM fiscal_receipts WHERE tenant_id = ? AND store_id = ?"
+                      + " AND series_code = ? AND period = ? AND number = ?")) {
+            prev.setObject(1, draft.tenantId());
+            prev.setObject(2, draft.storeId());
+            prev.setString(3, draft.seriesCode());
+            prev.setString(4, draft.period());
+            prev.setLong(5, number - 1);
+            try (ResultSet rs = prev.executeQuery()) {
+              if (rs.next() && rs.getString(1) != null) {
+                prevHash = rs.getString(1);
+              }
+            }
+          }
+          // Issued-at is part of the hash, so it is chosen here rather than by the database, at
+          // the microsecond precision the column keeps.
+          Instant issuedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+          FiscalReceipt chained =
+              new FiscalReceipt(
+                  draft.id(),
+                  draft.tenantId(),
+                  draft.storeId(),
+                  draft.seriesCode(),
+                  draft.period(),
+                  number,
+                  full,
+                  draft.orderId(),
+                  issuedAt,
+                  draft.issuedBy(),
+                  draft.currency(),
+                  draft.grossTotal(),
+                  draft.taxTotal(),
+                  null,
+                  null,
+                  prevHash,
+                  null);
+          String hash = hashOf(chained);
           try (var ins =
               c.prepareStatement(
                   "INSERT INTO fiscal_receipts"
                       + " (id, tenant_id, store_id, series_code, period, number, full_number,"
-                      + "  order_id, issued_by, currency, gross_total, tax_total)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  order_id, issued_at, issued_by, currency, gross_total, tax_total,"
+                      + "  prev_hash, hash)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ins.setObject(1, draft.id());
             ins.setObject(2, draft.tenantId());
             ins.setObject(3, draft.storeId());
@@ -97,10 +143,13 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
             ins.setLong(6, number);
             ins.setString(7, full);
             ins.setObject(8, draft.orderId());
-            ins.setObject(9, draft.issuedBy());
-            ins.setString(10, draft.currency());
-            ins.setBigDecimal(11, draft.grossTotal());
-            ins.setBigDecimal(12, draft.taxTotal());
+            ins.setObject(9, issuedAt.atOffset(java.time.ZoneOffset.UTC));
+            ins.setObject(10, draft.issuedBy());
+            ins.setString(11, draft.currency());
+            ins.setBigDecimal(12, draft.grossTotal());
+            ins.setBigDecimal(13, draft.taxTotal());
+            ins.setString(14, prevHash);
+            ins.setString(15, hash);
             ins.executeUpdate();
           }
 
@@ -114,7 +163,8 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
     try (var st =
         c.prepareStatement(
             "SELECT id, tenant_id, store_id, series_code, period, number, full_number, order_id,"
-                + " issued_at, issued_by, currency, gross_total, tax_total, voided_at, void_reason"
+                + " issued_at, issued_by, currency, gross_total, tax_total, voided_at, void_reason,"
+                + " prev_hash, hash"
                 + " FROM fiscal_receipts WHERE tenant_id = ? AND order_id = ?")) {
       st.setObject(1, tenantId);
       st.setObject(2, orderId);
@@ -135,7 +185,8 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
     var rows =
         query(
             "SELECT id, tenant_id, store_id, series_code, period, number, full_number, order_id,"
-                + " issued_at, issued_by, currency, gross_total, tax_total, voided_at, void_reason"
+                + " issued_at, issued_by, currency, gross_total, tax_total, voided_at, void_reason,"
+                + " prev_hash, hash"
                 + " FROM fiscal_receipts WHERE tenant_id = ? AND order_id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -183,7 +234,8 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
       UUID tenantId, UUID storeId, String series, String period, int limit) {
     return query(
         "SELECT id, tenant_id, store_id, series_code, period, number, full_number, order_id,"
-            + " issued_at, issued_by, currency, gross_total, tax_total, voided_at, void_reason"
+            + " issued_at, issued_by, currency, gross_total, tax_total, voided_at, void_reason,"
+            + " prev_hash, hash"
             + " FROM fiscal_receipts"
             + " WHERE tenant_id = ? AND store_id = ? AND series_code = ? AND period = ?"
             + " ORDER BY number LIMIT ?",
@@ -325,6 +377,105 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
         rs.getBigDecimal(12),
         rs.getBigDecimal(13),
         voided == null ? null : voided.toInstant(),
-        rs.getString(15));
+        rs.getString(15),
+        rs.getString(16),
+        rs.getString(17));
+  }
+
+  /**
+   * The SHA-256 a document must carry: over the figures an inspector reads off it and the hash of
+   * the document before, so a changed figure or a re-inserted row no longer matches (18.4).
+   *
+   * @param r the document, with the previous hash it chains to
+   * @return 64 hex characters
+   */
+  public static String hashOf(FiscalReceipt r) {
+    String canonical =
+        String.join(
+            "|",
+            r.tenantId().toString(),
+            r.storeId().toString(),
+            r.seriesCode(),
+            r.period(),
+            Long.toString(r.number()),
+            r.fullNumber(),
+            r.orderId().toString(),
+            r.issuedAt().toString(),
+            r.currency(),
+            r.grossTotal().setScale(4, java.math.RoundingMode.HALF_UP).toPlainString(),
+            r.taxTotal().setScale(4, java.math.RoundingMode.HALF_UP).toPlainString(),
+            r.prevHash());
+    try {
+      var md = java.security.MessageDigest.getInstance("SHA-256");
+      return java.util.HexFormat.of()
+          .formatHex(md.digest(canonical.getBytes(StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 missing", e);
+    }
+  }
+
+  /** What the audit says about the chain: intact or not, from where, and where it breaks. */
+  public record ChainVerdict(Boolean intact, Long from, Long brokenAt) {}
+
+  /**
+   * Walks a series in number order and re-derives every hash (18.4). Documents from before the
+   * chain (null hash) are passed over; the first chained document is not held to a particular
+   * previous hash, every later one must name its predecessor's, and each must equal the hash of its
+   * own stored figures.
+   *
+   * @return intact null when nothing in the series is chained yet
+   */
+  public ChainVerdict verifyChain(UUID tenantId, UUID storeId, String series, String period) {
+    Long from = null;
+    String prev = null;
+    for (FiscalReceipt r : listSeries(tenantId, storeId, series, period, 1_000_000)) {
+      if (r.hash() == null) {
+        if (from != null) {
+          return new ChainVerdict(false, from, r.number());
+        }
+        continue;
+      }
+      boolean linked = prev == null || prev.equals(r.prevHash());
+      if (!linked || r.prevHash() == null || !hashOf(r).equals(r.hash())) {
+        return new ChainVerdict(false, from == null ? Long.valueOf(r.number()) : from, r.number());
+      }
+      if (from == null) {
+        from = r.number();
+      }
+      prev = r.hash();
+    }
+    return new ChainVerdict(from == null ? null : Boolean.TRUE, from, null);
+  }
+
+  /** One order line under the document it was sold on, for the register export. */
+  public record RegisterLine(
+      long number, UUID variantId, BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal) {}
+
+  /**
+   * Every order line behind every document in a series, in document order — the same service's
+   * tables, joined here rather than fetched per document.
+   */
+  public List<RegisterLine> linesInSeries(
+      UUID tenantId, UUID storeId, String series, String period) {
+    return query(
+        "SELECT fr.number, oi.variant_id, oi.qty, oi.unit_price, oi.line_total"
+            + " FROM fiscal_receipts fr"
+            + " JOIN order_items oi ON oi.tenant_id = fr.tenant_id AND oi.order_id = fr.order_id"
+            + " WHERE fr.tenant_id = ? AND fr.store_id = ? AND fr.series_code = ? AND fr.period = ?"
+            + " ORDER BY fr.number, oi.created_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setString(3, series);
+          ps.setString(4, period);
+        },
+        rs ->
+            new RegisterLine(
+                rs.getLong(1),
+                (UUID) rs.getObject(2),
+                rs.getBigDecimal(3),
+                rs.getBigDecimal(4),
+                rs.getBigDecimal(5)),
+        "register lines");
   }
 }

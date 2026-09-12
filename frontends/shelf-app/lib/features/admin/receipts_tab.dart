@@ -1,4 +1,6 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
@@ -48,6 +50,14 @@ class ReceiptAudit {
   final int expected;
   final bool intact;
   final List<(int, int)> gaps;
+
+  /// The tamper-evidence chain (18.4): each document carries a hash of its
+  /// own figures and of the document before it. Null when the server predates
+  /// the chain; [chainFrom] is the first number in the chain, [chainBrokenAt]
+  /// the first number whose stored figures no longer match their hash.
+  final bool? chainIntact;
+  final int? chainFrom;
+  final int? chainBrokenAt;
   const ReceiptAudit({
     required this.firstNumber,
     required this.lastNumber,
@@ -55,6 +65,9 @@ class ReceiptAudit {
     required this.expected,
     required this.intact,
     required this.gaps,
+    this.chainIntact,
+    this.chainFrom,
+    this.chainBrokenAt,
   });
   factory ReceiptAudit.fromJson(Map<String, dynamic> j) => ReceiptAudit(
         firstNumber: (j['firstNumber'] as num?)?.toInt() ?? 0,
@@ -66,6 +79,9 @@ class ReceiptAudit {
           for (final g in (j['gaps'] as List?) ?? const [])
             ((g['from'] as num).toInt(), (g['to'] as num).toInt()),
         ],
+        chainIntact: j['chainIntact'] as bool?,
+        chainFrom: (j['chainFrom'] as num?)?.toInt(),
+        chainBrokenAt: (j['chainBrokenAt'] as num?)?.toInt(),
       );
 }
 
@@ -226,7 +242,17 @@ class ReceiptsTab extends ConsumerWidget {
                 data: (a) => a == null ? const SizedBox.shrink() : _AuditCard(audit: a),
               ),
           const SizedBox(height: AppSpacing.lg),
-          Text('Receipts, in order', style: theme.textTheme.titleMedium),
+          Row(children: [
+            Expanded(child: Text('Receipts, in order', style: theme.textTheme.titleMedium)),
+            TextButton.icon(
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => ReceiptExportDialog(filter: filter.copyWith(storeId: storeId)),
+              ),
+              icon: const Icon(Icons.download_outlined, size: 18),
+              label: const Text('Export'),
+            ),
+          ]),
           const SizedBox(height: 8),
           ref.watch(receiptListProvider).when(
                 loading: () => const LoadingView(label: 'Loading receipts…'),
@@ -297,12 +323,100 @@ class _AuditCard extends StatelessWidget {
               const SizedBox(height: 6),
               const Text('A gap is not necessarily fraud; it is the thing that has to be explained.'),
             ],
+            if (audit.chainIntact != null) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                Icon(
+                  audit.chainIntact! ? Icons.link : Icons.link_off,
+                  size: 18,
+                  color: audit.chainIntact! ? cs.primary : cs.error,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    audit.chainIntact!
+                        ? 'Hash chain intact${audit.chainFrom != null ? ' from no. ${audit.chainFrom}' : ''}: '
+                            'no document has been altered since it was issued.'
+                        : 'Hash chain broken at no. ${audit.chainBrokenAt}: a document\'s stored figures '
+                            'no longer match the hash written when it was issued.',
+                    style: TextStyle(color: audit.chainIntact! ? null : cs.error),
+                  ),
+                ),
+              ]),
+            ],
           ],
         ),
       ),
     );
   }
 }
+
+/// The register as a file for the accountant or the inspector (18.4): one row
+/// per document with its hashes, fetched as CSV and shown here to copy —
+/// browsers in the till sandbox cannot save files.
+class ReceiptExportDialog extends ConsumerWidget {
+  const ReceiptExportDialog({super.key, required this.filter});
+  final ReceiptFilter filter;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final csv = ref.watch(receiptExportProvider(filter));
+    return AlertDialog(
+      title: const Text('Export register'),
+      content: SizedBox(
+        width: 640,
+        child: csv.when(
+          loading: () => const LoadingView(label: 'Exporting…'),
+          error: (e, _) => ErrorView(
+            message: friendlyError(e, fallback: 'Could not export the register.'),
+            onRetry: () => ref.invalidate(receiptExportProvider(filter)),
+          ),
+          data: (text) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('${text.split('\n').where((l) => l.trim().isNotEmpty).length - 1} documents, '
+                  'one row each, with the hash chain. Copy and save as .csv.'),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 320),
+                child: SingleChildScrollView(
+                  child: SelectableText(text,
+                      key: const Key('receipt-export-csv'),
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+        FilledButton.icon(
+          onPressed: csv.hasValue
+              ? () {
+                  Clipboard.setData(ClipboardData(text: csv.value!));
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(const SnackBar(content: Text('Register copied.')));
+                }
+              : null,
+          icon: const Icon(Icons.copy_outlined, size: 18),
+          label: const Text('Copy CSV'),
+        ),
+      ],
+    );
+  }
+}
+
+final receiptExportProvider =
+    FutureProvider.autoDispose.family<String, ReceiptFilter>((ref, f) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.order}/admin/fiscal-receipts/export',
+        queryParameters: {'storeId': f.storeId, 'series': f.series, 'period': f.period, 'format': 'csv'},
+        options: Options(responseType: ResponseType.plain),
+      );
+  return resp.data.toString();
+});
 
 class _SeriesCard extends ConsumerWidget {
   const _SeriesCard({required this.storeId, required this.isManager});

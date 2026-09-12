@@ -236,8 +236,33 @@ public final class Mappers {
         vr.box8(),
         vr.box9(),
         vr.periodFrom(),
-        vr.periodTo());
+        vr.periodTo(),
+        VAT_BOXES_COMPUTED,
+        VAT_BOXES_NOT_COMPUTED,
+        false,
+        VAT_RETURN_CAVEAT);
   }
+
+  /**
+   * Boxes 1, 3, 5 and 6 come from tax_transactions; 2, 8 and 9 model nothing; 4 and 7 are
+   * elsewhere.
+   */
+  static final java.util.List<Integer> VAT_BOXES_COMPUTED = java.util.List.of(1, 3, 5, 6);
+
+  static final java.util.List<Integer> VAT_BOXES_NOT_COMPUTED = java.util.List.of(2, 4, 7, 8, 9);
+
+  /**
+   * SJ-D39: the honest position, stated on the return itself rather than only in the guides. Box 4
+   * (input VAT reclaimed) and box 7 (net purchases) are captured by purchase-svc on every supplier
+   * invoice, and database-per-service means this service cannot read them; box 5 is therefore
+   * overstated by exactly the VAT the business may reclaim. That is an accounting decision — where
+   * the ledger seam lives — not more code here.
+   */
+  static final String VAT_RETURN_CAVEAT =
+      "Boxes 2, 4, 7, 8 and 9 are not computed. Box 4 (VAT reclaimed on purchases) and box 7 (net"
+          + " purchases) are recorded by purchasing on every supplier invoice and are not carried"
+          + " here, so box 5 (net VAT to pay) is overstated by the VAT you are entitled to reclaim."
+          + " Not fit to file.";
 
   /**
    * Converts a manual price override to its wire form.

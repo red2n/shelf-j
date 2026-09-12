@@ -475,7 +475,18 @@ public final class Dtos {
       @Schema(description = "Total net EC acquisitions; zero (no EC acquisitions modeled).")
           BigDecimal box9,
       String periodFrom,
-      String periodTo) {}
+      String periodTo,
+      @Schema(description = "The boxes computed from this tenant's tax transactions.")
+          List<Integer> computedBoxes,
+      @Schema(
+              description =
+                  "The boxes this service cannot compute: input VAT and purchases live in"
+                      + " purchase-svc and nothing carries them here (SJ-D39). Shown as 0 for"
+                      + " shape only.")
+          List<Integer> notComputedBoxes,
+      @Schema(description = "False until every box is real. Do not file from a return that is not.")
+          boolean fitToFile,
+      @Schema(description = "Why it is not fit to file, in words for the screen.") String caveat) {}
 
   // ── Gap #41: Price overrides ──────────────────────────────────────────────
 

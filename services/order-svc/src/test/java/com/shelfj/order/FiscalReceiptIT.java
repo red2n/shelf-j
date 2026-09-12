@@ -594,4 +594,126 @@ class FiscalReceiptIT {
     assertThat("held for " + ms + "ms", ms < 25_000L, is(true));
     assertThat("returned early at " + ms + "ms", ms >= 19_000L, is(true));
   }
+
+  // ── 18.4: the hash chain and the register export ───────────────────────────
+
+  private static String hashOfNumber(String store, long number) throws Exception {
+    try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var st =
+            c.prepareStatement(
+                "SELECT hash FROM \"order\".fiscal_receipts WHERE tenant_id = ? AND store_id = ?"
+                    + " AND number = ?")) {
+      st.setObject(1, UUID.fromString(T));
+      st.setObject(2, UUID.fromString(store));
+      st.setLong(3, number);
+      try (var rs = st.executeQuery()) {
+        return rs.next() ? rs.getString(1) : null;
+      }
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "Every document carries a hash that chains to the one before, and the audit re-derives them")
+  void theChainIsIntactAndVerifiable() throws Exception {
+    String store = Ids.newId().toString();
+    String first = sell(store, "1.00");
+    sell(store, "2.00");
+    sell(store, "3.00");
+    String one = get("/admin/orders/" + first + "/fiscal-receipt", T).readEntity(String.class);
+    assertThat(one, containsString("\"prevHash\":\"GENESIS\""));
+    assertThat(one.matches("(?s).*\"hash\":\"[0-9a-f]{64}\".*"), is(true));
+    assertThat(hashOfNumber(store, 1), is(not(hashOfNumber(store, 2))));
+    String audit = audit(store);
+    assertThat(audit, containsString("\"chainIntact\":true"));
+    assertThat(audit, containsString("\"chainFrom\":1"));
+    assertThat(audit, containsString("\"chainBrokenAt\":null"));
+  }
+
+  @Test
+  @DisplayName("A figure changed on a stored document breaks the chain at that document")
+  void tamperingBreaksTheChain() throws Exception {
+    String store = Ids.newId().toString();
+    sell(store, "1.00");
+    sell(store, "2.00");
+    sell(store, "3.00");
+    // Reach past the API and change the one thing the API will not: a document's figures.
+    try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var st =
+            c.prepareStatement(
+                "UPDATE \"order\".fiscal_receipts SET gross_total = gross_total + 100"
+                    + " WHERE tenant_id = ? AND store_id = ? AND number = 2")) {
+      st.setObject(1, UUID.fromString(T));
+      st.setObject(2, UUID.fromString(store));
+      assertThat(st.executeUpdate(), is(1));
+    }
+    String audit = audit(store);
+    // The sequence is still intact — no number is missing. The chain says which document lies.
+    assertThat(audit, containsString("\"intact\":true"));
+    assertThat(audit, containsString("\"chainIntact\":false"));
+    assertThat(audit, containsString("\"chainBrokenAt\":2"));
+  }
+
+  @Test
+  @DisplayName("Documents issued before the chain are passed over; the chain begins at the next")
+  void documentsBeforeTheChainAreSkipped() throws Exception {
+    String store = Ids.newId().toString();
+    sell(store, "1.00");
+    sell(store, "2.00");
+    sell(store, "3.00");
+    try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var st =
+            c.prepareStatement(
+                "UPDATE \"order\".fiscal_receipts SET hash = NULL, prev_hash = NULL"
+                    + " WHERE tenant_id = ? AND store_id = ? AND number = 1")) {
+      st.setObject(1, UUID.fromString(T));
+      st.setObject(2, UUID.fromString(store));
+      st.executeUpdate();
+    }
+    String audit = audit(store);
+    assertThat(audit, containsString("\"chainIntact\":true"));
+    assertThat(audit, containsString("\"chainFrom\":2"));
+  }
+
+  @Test
+  @DisplayName(
+      "The register exports with every hash, as CSV or as JSON with the lines; management only")
+  void theRegisterExports() {
+    String store = Ids.newId().toString();
+    String year = thisYear();
+    sell(store, "1.00");
+    String voided = sell(store, "2.00");
+    post("/orders/" + voided + "/void", "{\"reason\":\"wrong, item\"}", T);
+    Response csv = get("/admin/fiscal-receipts/export", T, "storeId", store, "period", year);
+    assertThat(csv.getStatus(), is(200));
+    assertThat(csv.getMediaType().toString(), containsString("text/csv"));
+    String text = csv.readEntity(String.class);
+    String[] rows = text.strip().split("\n");
+    assertThat(rows.length, is(3));
+    assertThat(
+        rows[0],
+        is(
+            "number,fullNumber,issuedAt,orderId,currency,grossTotal,taxTotal,voidedAt,voidReason,prevHash,hash"));
+    assertThat(rows[1], containsString(",GENESIS,"));
+    // A reason with a comma in it is quoted, so the file stays a file.
+    assertThat(rows[2], containsString("\"wrong, item\""));
+    assertThat(rows[2].matches(".*,[0-9a-f]{64},[0-9a-f]{64}$"), is(true));
+    Response json =
+        get("/admin/fiscal-receipts/export", T, "storeId", store, "period", year, "format", "json");
+    assertThat(json.getStatus(), is(200));
+    String body = json.readEntity(String.class);
+    assertThat(body, containsString("\"documents\":["));
+    assertThat(body, containsString("\"lines\":[{\"variantId\":\"" + V + "\""));
+    assertThat(body, containsString("\"qty\":1"));
+    assertThat(
+        target
+            .path("/admin/fiscal-receipts/export")
+            .queryParam("storeId", store)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CASHIER")
+            .get()
+            .getStatus(),
+        is(403));
+  }
 }

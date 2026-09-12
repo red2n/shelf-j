@@ -185,7 +185,17 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cashierA })
     const audit = call('GET', `/api/order-svc/admin/fiscal-receipts/audit?storeId=${storeA.id}&series=MAIN&period=${year}`, { token: owner });
     expect(audit, 'the audit answers', 200);
     truthy('intact, one issued', data(audit).intact === true && data(audit).issued === 1, data(audit));
+    truthy('the hash chain is intact from the first document', data(audit).chainIntact === true && data(audit).chainFrom === 1, data(audit));
     expect(call('GET', `/api/order-svc/admin/fiscal-receipts/audit?storeId=${storeA.id}&series=MAIN&period=${year}`, { token: cashierA.token }), 'a cashier does not audit', 403);
+    const csv = call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${storeA.id}&series=MAIN&period=${year}`, { token: owner });
+    expect(csv, 'the register exports as CSV', 200);
+    truthy('with the document and its hashes on the row', csv.body.includes('prevHash,hash') && csv.body.includes(data(numbered).fullNumber) && /,GENESIS,[0-9a-f]{64}\s*$/m.test(csv.body), csv.body.slice(0, 300));
+    const json = call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${storeA.id}&series=MAIN&period=${year}&format=json`, { token: owner });
+    expect(json, 'and as JSON with the lines behind each document', 200);
+    const docs = (data(json) && data(json).documents) || [];
+    truthy('one document, one line, a 64-hex hash', docs.length === 1 && (docs[0].lines || []).length === 1 && /^[0-9a-f]{64}$/.test(docs[0].hash), data(json));
+    expect(call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${storeA.id}`, { token: cashierA.token }), 'a cashier does not export the register', 403);
+    expect(call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${storeA.id}`, { token: rival.owner.token }), "a rival tenant's owner exports an empty register", 200);
     expect(call('GET', `/api/order-svc/orders/${orderId}/fiscal-receipt`, { token: shopper.token }), "a shopper cannot read a till sale's receipt", [401, 403, 404]);
   });
 }

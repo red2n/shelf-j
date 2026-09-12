@@ -980,7 +980,102 @@ public class OrderService {
     out.put("intact", gaps.isEmpty());
     out.put(
         "gaps", gaps.stream().map(g -> java.util.Map.of("from", g.from(), "to", g.to())).toList());
+    // 18.4: a second, independent verdict — not whether a number is missing, but whether any
+    // document's stored figures still match the hash written when it was issued.
+    var chain = receiptRepo.verifyChain(tenantId, storeId, s, period);
+    out.put("chainIntact", chain.intact());
+    out.put("chainFrom", chain.from());
+    out.put("chainBrokenAt", chain.brokenAt());
     return out;
+  }
+
+  /**
+   * The register as a file (18.4): every document in a series with its hashes, as CSV rows or as
+   * JSON with the order lines behind each document. Management-only at the resource.
+   *
+   * @param format {@code csv} or {@code json}
+   * @return the CSV text, or the JSON-shaped map
+   */
+  public Object exportRegister(
+      UUID tenantId, UUID storeId, String series, String period, String format) {
+    String s = seriesOrDefault(series);
+    var docs = receiptRepo.listSeries(tenantId, storeId, s, period, 1_000_000);
+    if ("json".equalsIgnoreCase(format)) {
+      var lines = new java.util.HashMap<Long, List<Map<String, Object>>>();
+      for (var l : receiptRepo.linesInSeries(tenantId, storeId, s, period)) {
+        var line = new LinkedHashMap<String, Object>();
+        line.put("variantId", l.variantId().toString());
+        line.put("qty", l.qty());
+        line.put("unitPrice", l.unitPrice());
+        line.put("lineTotal", l.lineTotal());
+        lines.computeIfAbsent(l.number(), k -> new java.util.ArrayList<>()).add(line);
+      }
+      var out = new LinkedHashMap<String, Object>();
+      out.put("storeId", storeId.toString());
+      out.put("seriesCode", s);
+      out.put("period", period);
+      out.put("generatedAt", java.time.Instant.now().toString());
+      out.put(
+          "documents",
+          docs.stream()
+              .map(
+                  d -> {
+                    var m = new LinkedHashMap<String, Object>();
+                    m.put("number", d.number());
+                    m.put("fullNumber", d.fullNumber());
+                    m.put("issuedAt", d.issuedAt().toString());
+                    m.put("orderId", d.orderId().toString());
+                    m.put("currency", d.currency());
+                    m.put("grossTotal", d.grossTotal());
+                    m.put("taxTotal", d.taxTotal());
+                    m.put("voidedAt", d.voidedAt() == null ? null : d.voidedAt().toString());
+                    m.put("voidReason", d.voidReason());
+                    m.put("prevHash", d.prevHash());
+                    m.put("hash", d.hash());
+                    m.put("lines", lines.getOrDefault(d.number(), List.of()));
+                    return m;
+                  })
+              .toList());
+      return out;
+    }
+    StringBuilder csv =
+        new StringBuilder(
+            "number,fullNumber,issuedAt,orderId,currency,grossTotal,taxTotal,voidedAt,voidReason,"
+                + "prevHash,hash\n");
+    for (var d : docs) {
+      csv.append(d.number())
+          .append(',')
+          .append(csvCell(d.fullNumber()))
+          .append(',')
+          .append(d.issuedAt())
+          .append(',')
+          .append(d.orderId())
+          .append(',')
+          .append(d.currency())
+          .append(',')
+          .append(d.grossTotal().toPlainString())
+          .append(',')
+          .append(d.taxTotal().toPlainString())
+          .append(',')
+          .append(d.voidedAt() == null ? "" : d.voidedAt().toString())
+          .append(',')
+          .append(csvCell(d.voidReason()))
+          .append(',')
+          .append(csvCell(d.prevHash()))
+          .append(',')
+          .append(csvCell(d.hash()))
+          .append('\n');
+    }
+    return csv.toString();
+  }
+
+  private static String csvCell(String v) {
+    if (v == null) {
+      return "";
+    }
+    return v.contains(",") || v.contains("\"") || v.contains("\n")
+        ? "\"" + v.replace("\"", "\"\"") + "\""
+        : v;
   }
 
   private static String seriesOrDefault(String series) {
@@ -1007,6 +1102,10 @@ public class OrderService {
     // PENDING covers pay-later online orders awaiting confirmation; both states must be
     // cancellable so their stock holds get released (inventory-svc reacts to OrderCancelled).
     Order order = getOrder(tenantId, orderId);
+    if (Order.STATUS_PARTIALLY_FULFILLED.equals(order.status()))
+      throw ApiException.conflict(
+          "ORDER_PARTLY_FULFILLED",
+          "some of the goods were handed over; take them back as a return or hand over the rest");
     if (!Order.STATUS_PENDING.equals(order.status())
         && !Order.STATUS_CONFIRMED.equals(order.status()))
       throw ApiException.conflict(
@@ -1035,16 +1134,69 @@ public class OrderService {
    *     the order is not CONFIRMED
    */
   public Order fulfillOrder(UUID tenantId, UUID orderId, UUID userId) {
+    return fulfilOrder(tenantId, orderId, null, userId, null);
+  }
+
+  /**
+   * Hands over some or all of an order (SJ-D35). With lines, only those quantities leave the store
+   * now and the order is PARTIALLY_FULFILLED until every line is complete; without, everything
+   * still outstanding is handed over, which for an untouched order is the old all-or-nothing
+   * fulfilment. Each call emits one OrderFulfilled carrying only this call's quantities.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order
+   * @param req the lines and quantities handed over now; null or empty for everything outstanding
+   * @param userId the staff member
+   * @param ctx caller context, checked for access to the order's store; null for internal callers
+   * @return the order as it now stands
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404); {@code ORDER_NOT_FULFILLABLE} (409) unless
+   *     CONFIRMED or PARTIALLY_FULFILLED; {@code ORDER_FULFIL_LINE_UNKNOWN} (400); {@code
+   *     ORDER_FULFIL_QTY_EXCEEDS_OUTSTANDING} (409); {@code ORDER_NOTHING_OUTSTANDING} (409)
+   */
+  public Order fulfilOrder(
+      UUID tenantId,
+      UUID orderId,
+      com.shelfj.order.dto.Dtos.FulfilRequest req,
+      UUID userId,
+      TenantContext ctx) {
     Order order = getOrder(tenantId, orderId);
-    List<OrderItem> items = repo.findOrderItems(tenantId, orderId);
-    return repo.transitionOrderStatus(
+    if (ctx != null) {
+      ctx.requireStoreAccess(order.storeId());
+    }
+    Map<UUID, BigDecimal> wanted = new LinkedHashMap<>();
+    if (req != null && req.lines() != null) {
+      for (var line : req.lines()) {
+        if (line.qty() == null || line.qty().signum() <= 0) {
+          throw ApiException.badRequest(
+              "ORDER_FULFIL_QTY_INVALID", "a handed-over quantity must be greater than zero");
+        }
+        wanted.merge(Parsing.uuid(line.variantId(), "variantId"), line.qty(), BigDecimal::add);
+      }
+    }
+    return repo.fulfilLines(
         tenantId,
         orderId,
-        Order.STATUS_CONFIRMED,
-        Order.STATUS_FULFILLED,
-        "fulfilled",
+        wanted,
         userId,
-        Events.orderFulfilled(tenantId, orderId, order.storeId(), items));
+        now ->
+            Events.orderFulfilled(
+                tenantId,
+                orderId,
+                order.storeId(),
+                now.stream()
+                    .map(
+                        l ->
+                            new OrderItem(
+                                null,
+                                tenantId,
+                                orderId,
+                                l.variantId(),
+                                l.qty(),
+                                BigDecimal.ZERO,
+                                BigDecimal.ZERO,
+                                null,
+                                null))
+                    .toList()));
   }
 
   // ── Returns ───────────────────────────────────────────────────────────────
@@ -1075,6 +1227,7 @@ public class OrderService {
     // never left the store — cancel it instead; returning it recorded a refund for goods, and
     // often money, that were never exchanged. A fully REFUNDED order has nothing left to refund.
     if (!Order.STATUS_FULFILLED.equals(order.status())
+        && !Order.STATUS_PARTIALLY_FULFILLED.equals(order.status())
         && !Order.STATUS_PARTIALLY_REFUNDED.equals(order.status()))
       throw ApiException.conflict(
           "ORDER_CANNOT_RETURN",

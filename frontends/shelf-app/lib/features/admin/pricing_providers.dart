@@ -227,6 +227,12 @@ class VatReturn {
   final String? periodFrom;
   final String? periodTo;
 
+  /// The boxes the server could not compute (SJ-D39) — shown as such, never
+  /// as a figure someone might file.
+  final List<int> notComputedBoxes;
+  final bool fitToFile;
+  final String? caveat;
+
   const VatReturn({
     required this.box1,
     required this.box2,
@@ -239,6 +245,9 @@ class VatReturn {
     required this.box9,
     this.periodFrom,
     this.periodTo,
+    this.notComputedBoxes = const [],
+    this.fitToFile = false,
+    this.caveat,
   });
 
   factory VatReturn.fromJson(Map<String, dynamic> j) => VatReturn(
@@ -253,6 +262,11 @@ class VatReturn {
         box9: (j['box9'] as num?)?.toDouble() ?? 0,
         periodFrom: j['periodFrom'] as String?,
         periodTo: j['periodTo'] as String?,
+        notComputedBoxes: [
+          for (final b in (j['notComputedBoxes'] as List?) ?? const []) (b as num).toInt(),
+        ],
+        fitToFile: j['fitToFile'] as bool? ?? false,
+        caveat: j['caveat'] as String?,
       );
 }
 

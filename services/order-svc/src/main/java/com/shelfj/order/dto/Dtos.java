@@ -98,7 +98,24 @@ public final class Dtos {
       BigDecimal lineTotal,
       String notes,
       @Schema(description = "The instrument a sold-by-weight line was weighed on; null otherwise.")
-          String weighingInstrumentId) {}
+          String weighingInstrumentId,
+      @Schema(description = "How much of qty has been handed over so far (SJ-D35).")
+          BigDecimal fulfilledQty) {}
+
+  @Schema(
+      name = "FulfilRequest",
+      description =
+          "Which lines, and how much of each, are being handed over now. Omit the body, or the"
+              + " lines, to hand over everything still outstanding.")
+  public record FulfilRequest(List<FulfilLine> lines) {}
+
+  @Schema(name = "FulfilLine")
+  public record FulfilLine(
+      @NotNull String variantId,
+      @Schema(description = "Units handed over now; at most what is still outstanding.")
+          @NotNull
+          @jakarta.validation.constraints.Positive
+          BigDecimal qty) {}
 
   @Schema(name = "OrderResponse")
   public record OrderResponse(

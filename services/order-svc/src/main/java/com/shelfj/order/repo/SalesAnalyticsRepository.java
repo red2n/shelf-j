@@ -31,7 +31,8 @@ public class SalesAnalyticsRepository extends BaseJdbcRepository {
    * Only these two statuses are revenue. A PENDING order has not been paid for, and a CANCELLED or
    * VOIDED one has been unmade; counting either would put a trading peak where none happened.
    */
-  private static final String REVENUE_STATUSES = " AND status IN ('CONFIRMED','FULFILLED')";
+  private static final String REVENUE_STATUSES =
+      " AND status IN ('CONFIRMED','PARTIALLY_FULFILLED','FULFILLED')";
 
   /**
    * Takings bucketed by hour of the trading day.

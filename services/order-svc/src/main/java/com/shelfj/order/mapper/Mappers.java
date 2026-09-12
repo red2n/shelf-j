@@ -59,7 +59,8 @@ public final class Mappers {
         i.unitPrice(),
         i.lineTotal(),
         i.notes(),
-        str(i.weighingInstrumentId()));
+        str(i.weighingInstrumentId()),
+        i.fulfilledQty());
   }
 
   /**

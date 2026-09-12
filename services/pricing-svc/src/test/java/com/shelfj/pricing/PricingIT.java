@@ -1189,4 +1189,18 @@ class PricingIT {
     int end = json.indexOf("\"", start);
     return json.substring(start, end);
   }
+
+  @Test
+  void vatReturnSaysOnItsFaceWhichBoxesAreRealAndThatItIsNotFitToFile() {
+    // SJ-D39: nine boxes in the shape of an MTD return, five of them real. The guides said so; the
+    // return must say so itself before anyone files from it.
+    Response vr =
+        getAs("/vat-return?from=2024-04-01T00:00:00Z&to=2024-07-01T00:00:00Z", T, "OWNER");
+    assertThat(vr.getStatus(), is(200));
+    String body = vr.readEntity(String.class);
+    assertThat(body, containsString("\"computedBoxes\":[1,3,5,6]"));
+    assertThat(body, containsString("\"notComputedBoxes\":[2,4,7,8,9]"));
+    assertThat(body, containsString("\"fitToFile\":false"));
+    assertThat(body, containsString("overstated by the VAT you are entitled to reclaim"));
+  }
 }

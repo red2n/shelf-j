@@ -31,6 +31,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -677,9 +678,197 @@ public class OrderRepository extends BaseOutboxRepository {
         return;
       }
     }
+    markAllLinesHandedOver(c, tenantId, orderId);
     appendStatusHistory(
         c, tenantId, orderId, Order.STATUS_CONFIRMED, Order.STATUS_FULFILLED, reason, changedBy);
     insertOutbox(c, event);
+  }
+
+  private static void markAllLinesHandedOver(Connection c, UUID tenantId, UUID orderId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE order_items SET fulfilled_qty = qty WHERE tenant_id=? AND order_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.executeUpdate();
+    }
+  }
+
+  /** One line's share of a fulfilment, for the event and the caller. */
+  public record FulfilledLine(UUID variantId, BigDecimal qty) {}
+
+  /**
+   * Hands over part or all of what is outstanding on an order (SJ-D35), in one transaction: the
+   * order row is locked, each requested quantity is checked against what its lines still owe and
+   * added to their cumulative {@code fulfilled_qty}, the order moves to PARTIALLY_FULFILLED or —
+   * once every line is complete — FULFILLED, the status history records how much, and the outbox
+   * carries an OrderFulfilled with only this fulfilment's quantities, so inventory-svc deducts what
+   * left the store now and nothing twice.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order
+   * @param wanted units per variant to hand over now; null or empty for everything outstanding
+   * @param changedBy the staff member
+   * @param eventFor builds the outbox row from the lines actually fulfilled now
+   * @return the order as it now stands
+   * @throws ApiException {@code ORDER_NOT_FULFILLABLE} (409) unless CONFIRMED or
+   *     PARTIALLY_FULFILLED; {@code ORDER_FULFIL_LINE_UNKNOWN} (400) for a variant not on the
+   *     order; {@code ORDER_FULFIL_QTY_EXCEEDS_OUTSTANDING} (409) for more than is still owed
+   */
+  public Order fulfilLines(
+      UUID tenantId,
+      UUID orderId,
+      Map<UUID, BigDecimal> wanted,
+      UUID changedBy,
+      java.util.function.Function<List<FulfilledLine>, OutboxRow> eventFor) {
+    return inTx(
+        c -> {
+          String status;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT status FROM orders WHERE tenant_id=? AND id=? FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              status = rs.next() ? rs.getString(1) : null;
+            }
+          }
+          if (status == null) {
+            throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
+          }
+          if (!Order.STATUS_CONFIRMED.equals(status)
+              && !Order.STATUS_PARTIALLY_FULFILLED.equals(status)) {
+            throw ApiException.conflict(
+                "ORDER_NOT_FULFILLABLE",
+                "only a CONFIRMED or PARTIALLY_FULFILLED order can be handed over; this one is "
+                    + status);
+          }
+          List<OrderItem> items = new java.util.ArrayList<>();
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total, notes,"
+                      + " weighing_instrument_id, fulfilled_qty FROM order_items"
+                      + " WHERE tenant_id=? AND order_id=? ORDER BY created_at FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              while (rs.next()) {
+                items.add(mapOrderItem(rs));
+              }
+            }
+          }
+          // What is asked for, or everything outstanding when nothing is.
+          Map<UUID, BigDecimal> ask = new java.util.LinkedHashMap<>();
+          if (wanted == null || wanted.isEmpty()) {
+            for (OrderItem i : items) {
+              if (i.remainingQty().signum() > 0) {
+                ask.merge(i.variantId(), i.remainingQty(), BigDecimal::add);
+              }
+            }
+          } else {
+            ask.putAll(wanted);
+          }
+          if (ask.isEmpty()) {
+            throw ApiException.conflict(
+                "ORDER_NOTHING_OUTSTANDING", "every line of this order has been handed over");
+          }
+          List<FulfilledLine> now = new java.util.ArrayList<>();
+          for (var e : ask.entrySet()) {
+            UUID variantId = e.getKey();
+            boolean onOrder = items.stream().anyMatch(i -> i.variantId().equals(variantId));
+            if (!onOrder) {
+              throw ApiException.badRequest(
+                  "ORDER_FULFIL_LINE_UNKNOWN", "variant " + variantId + " is not on this order");
+            }
+            BigDecimal outstanding =
+                items.stream()
+                    .filter(i -> i.variantId().equals(variantId))
+                    .map(OrderItem::remainingQty)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (e.getValue().compareTo(outstanding) > 0) {
+              throw ApiException.conflict(
+                  "ORDER_FULFIL_QTY_EXCEEDS_OUTSTANDING",
+                  "variant "
+                      + variantId
+                      + ": "
+                      + e.getValue().stripTrailingZeros().toPlainString()
+                      + " asked, "
+                      + outstanding.stripTrailingZeros().toPlainString()
+                      + " still outstanding");
+            }
+            // Spread the quantity over the lines of that variant, oldest first.
+            BigDecimal left = e.getValue();
+            for (OrderItem i : items) {
+              if (left.signum() <= 0) {
+                break;
+              }
+              if (!i.variantId().equals(variantId) || i.remainingQty().signum() <= 0) {
+                continue;
+              }
+              BigDecimal take = left.min(i.remainingQty());
+              try (PreparedStatement ps =
+                  c.prepareStatement(
+                      "UPDATE order_items SET fulfilled_qty = fulfilled_qty + ?"
+                          + " WHERE tenant_id=? AND id=? AND fulfilled_qty + ? <= qty")) {
+                ps.setBigDecimal(1, take);
+                ps.setObject(2, tenantId);
+                ps.setObject(3, i.id());
+                ps.setBigDecimal(4, take);
+                if (ps.executeUpdate() == 0) {
+                  throw ApiException.conflict(
+                      "ORDER_FULFIL_QTY_EXCEEDS_OUTSTANDING", "line changed under this request");
+                }
+              }
+              left = left.subtract(take);
+            }
+            now.add(new FulfilledLine(variantId, e.getValue()));
+          }
+          boolean complete = true;
+          BigDecimal handed = BigDecimal.ZERO;
+          BigDecimal ordered = BigDecimal.ZERO;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT SUM(qty) AS ordered, SUM(fulfilled_qty) AS handed,"
+                      + " BOOL_AND(fulfilled_qty >= qty) AS complete"
+                      + " FROM order_items WHERE tenant_id=? AND order_id=?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (rs.next()) {
+                ordered = rs.getBigDecimal("ordered");
+                handed = rs.getBigDecimal("handed");
+                complete = rs.getBoolean("complete");
+              }
+            }
+          }
+          String next = complete ? Order.STATUS_FULFILLED : Order.STATUS_PARTIALLY_FULFILLED;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET status=?, updated_at=now() WHERE tenant_id=? AND id=?")) {
+            ps.setString(1, next);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, orderId);
+            ps.executeUpdate();
+          }
+          appendStatusHistory(
+              c,
+              tenantId,
+              orderId,
+              status,
+              next,
+              complete
+                  ? "fulfilled"
+                  : "part-fulfilled: "
+                      + handed.stripTrailingZeros().toPlainString()
+                      + " of "
+                      + ordered.stripTrailingZeros().toPlainString()
+                      + " units handed over",
+              changedBy);
+          insertOutbox(c, eventFor.apply(now));
+          return findOrderInTx(c, tenantId, orderId);
+        },
+        "fulfil order " + orderId);
   }
 
   /**
@@ -783,7 +972,8 @@ public class OrderRepository extends BaseOutboxRepository {
   public List<OrderItem> findOrderItems(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total,"
-            + " notes, created_at, discount_amount, discount_reason, weighing_instrument_id"
+            + " notes, created_at, discount_amount, discount_reason, weighing_instrument_id,"
+            + " fulfilled_qty"
             + " FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
@@ -829,14 +1019,16 @@ public class OrderRepository extends BaseOutboxRepository {
           // Lock each purchased line and re-check the cumulative returned quantity inside this
           // transaction so two concurrent returns on the same order can't jointly over-refund.
           for (ReturnItem item : items) {
-            BigDecimal purchasedQty =
+            // What was handed over, not what was ordered: on a part-fulfilled order the rest never
+            // left the store, and a refund for it is a refund for goods the customer never had.
+            BigDecimal handedOverQty =
                 lockOrderItemQty(c, ret.tenantId(), ret.orderId(), item.variantId());
             BigDecimal alreadyReturned =
                 sumReturnedQty(c, ret.tenantId(), ret.orderId(), item.variantId());
-            if (item.qty().add(alreadyReturned).compareTo(purchasedQty) > 0)
+            if (item.qty().add(alreadyReturned).compareTo(handedOverQty) > 0)
               throw ApiException.conflict(
                   "RETURN_QTY_EXCEEDS_PURCHASED",
-                  "cannot return more than was purchased (and not yet returned) for variant "
+                  "cannot return more than was handed over (and not yet returned) for variant "
                       + item.variantId());
           }
           try (PreparedStatement ps =
@@ -1008,7 +1200,8 @@ public class OrderRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT EXISTS (SELECT 1 FROM order_status_history"
-                + " WHERE tenant_id=? AND order_id=? AND to_status='FULFILLED')")) {
+                + " WHERE tenant_id=? AND order_id=?"
+                + " AND to_status IN ('FULFILLED','PARTIALLY_FULFILLED'))")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
       try (ResultSet rs = ps.executeQuery()) {
@@ -1024,7 +1217,7 @@ public class OrderRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "WITH sold AS ("
-                + "  SELECT variant_id, SUM(qty) AS qty FROM order_items"
+                + "  SELECT variant_id, SUM(fulfilled_qty) AS qty FROM order_items"
                 + "   WHERE tenant_id=? AND order_id=? GROUP BY variant_id"
                 + "), returned AS ("
                 + "  SELECT ri.variant_id, SUM(ri.qty) AS qty"
@@ -1619,7 +1812,7 @@ public class OrderRepository extends BaseOutboxRepository {
       throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT qty FROM order_items"
+            "SELECT fulfilled_qty AS qty FROM order_items"
                 + " WHERE tenant_id=? AND order_id=? AND variant_id=? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
@@ -1745,7 +1938,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getBigDecimal("unit_price"),
         rs.getBigDecimal("line_total"),
         rs.getString("notes"),
-        rs.getObject("weighing_instrument_id", UUID.class));
+        rs.getObject("weighing_instrument_id", UUID.class),
+        rs.getBigDecimal("fulfilled_qty"));
   }
 
   private OrderStatusHistory mapHistory(ResultSet rs) throws SQLException {

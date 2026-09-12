@@ -24,6 +24,7 @@ import com.shelfj.purchase.dto.Dtos.CreatePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreateSupplierRequest;
 import com.shelfj.purchase.dto.Dtos.DecidePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.RaiseIntercompanyInvoiceRequest;
+import com.shelfj.purchase.dto.Dtos.UpdateSupplierRequest;
 import com.shelfj.purchase.repo.PurchaseRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.Parsing;
@@ -104,6 +105,55 @@ public class PurchaseService {
             Instant.now(),
             Instant.now());
     return repo.createSupplier(s);
+  }
+
+  /**
+   * Corrects a supplier's master data (SJ-D34). Every field is replaceable; the currency only while
+   * no purchase order against the supplier is open, because each open order is a commitment in that
+   * currency and the orders already raised keep theirs either way.
+   *
+   * @param ctx caller context; supplies the tenant
+   * @param id the supplier to correct
+   * @param req the master data as it should now read; currency, country and terms unchanged when
+   *     omitted
+   * @return the supplier as it now stands
+   * @throws ApiException {@code PURCHASE_SUPPLIER_NOT_FOUND} (404); {@code
+   *     PURCHASE_SUPPLIER_CURRENCY_IN_USE} (409) when the currency would change under an open
+   *     order; {@code PURCHASE_SUPPLIER_DUPLICATE} (409) when the name is taken
+   */
+  public Supplier updateSupplier(TenantContext ctx, UUID id, UpdateSupplierRequest req) {
+    Supplier existing = getSupplier(ctx, id);
+    String currency =
+        req.currency() != null ? Money.requireIso4217(req.currency()) : existing.currency();
+    if (!currency.equals(existing.currency())) {
+      int open = repo.countOpenPurchaseOrders(existing.tenantId(), id);
+      if (open > 0) {
+        throw ApiException.conflict(
+            "PURCHASE_SUPPLIER_CURRENCY_IN_USE",
+            open
+                + " open purchase order(s) are denominated in "
+                + existing.currency()
+                + "; receive, close or cancel them before changing the currency");
+      }
+    }
+    Supplier updated =
+        new Supplier(
+            existing.id(),
+            existing.tenantId(),
+            req.name().trim(),
+            req.vatNumber(),
+            req.vatRegistered(),
+            req.countryCode() != null
+                ? req.countryCode().toUpperCase(java.util.Locale.ROOT)
+                : existing.countryCode(),
+            currency,
+            req.paymentTermsDays() != null ? req.paymentTermsDays() : existing.paymentTermsDays(),
+            existing.createdAt(),
+            Instant.now());
+    if (!repo.updateSupplier(updated)) {
+      throw ApiException.notFound("PURCHASE_SUPPLIER_NOT_FOUND", "Supplier not found: " + id);
+    }
+    return getSupplier(ctx, id);
   }
 
   /**

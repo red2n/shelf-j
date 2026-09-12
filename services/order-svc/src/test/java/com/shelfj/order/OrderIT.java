@@ -17,6 +17,7 @@ import jakarta.ws.rs.core.Response;
 import java.math.BigDecimal;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -1593,5 +1594,177 @@ class OrderIT {
         tenantStatus.projectTenantCurrencyOnce(eventId, "order-svc/tenant-created", tenant, "EUR"),
         is(false));
     assertThat(tenantStatus.findCurrency(tenant).orElseThrow(), is("EUR"));
+  }
+
+  // ── SJ-D35: a customer order can be part-fulfilled ─────────────────────────
+
+  private UUID placeOnlinePickup(int qty) {
+    Response placed =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"ONLINE\",\"fulfilmentType\":\"PICKUP\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":"
+                + qty
+                + ",\"unitPrice\":10.00}],\"currency\":\"USD\"}",
+            T,
+            "it-partial-" + Ids.newId());
+    String body = placed.readEntity(String.class);
+    assertThat(body, placed.getStatus(), is(201));
+    return UUID.fromString(extractId(body));
+  }
+
+  private static String fulfilBody(String variantId, String qty) {
+    return "{\"lines\":[{\"variantId\":\"" + variantId + "\",\"qty\":" + qty + "}]}";
+  }
+
+  private static BigDecimal fulfilledQtyOf(String orderJson) {
+    var m = java.util.regex.Pattern.compile("\"fulfilledQty\":([0-9.]+)").matcher(orderJson);
+    assertThat(orderJson, m.find(), is(true));
+    return new BigDecimal(m.group(1));
+  }
+
+  private static java.util.List<String> outboxPayloads(UUID orderId, String eventType) {
+    var out = new java.util.ArrayList<String>();
+    try (var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT payload FROM \"order\".outbox WHERE aggregate_id = ? AND event_type = ?"
+                    + " ORDER BY created_at")) {
+      ps.setObject(1, orderId);
+      ps.setString(2, eventType);
+      try (var rs = ps.executeQuery()) {
+        while (rs.next()) {
+          out.add(rs.getString(1));
+        }
+      }
+    } catch (java.sql.SQLException e) {
+      throw new IllegalStateException(e);
+    }
+    return out;
+  }
+
+  @Test
+  @DisplayName("Four of five units are handed over, then the fifth — one event per handover")
+  void partOfAnOrderIsHandedOverThenTheRest() {
+    UUID order = placeOnlinePickup(5);
+    assertThat(post("/orders/" + order + "/confirm", "{}", T).getStatus(), is(200));
+
+    Response part = post("/orders/" + order + "/fulfil", fulfilBody(V, "4"), T);
+    assertThat(part.getStatus(), is(200));
+    String body = part.readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"PARTIALLY_FULFILLED\""));
+    assertThat(fulfilledQtyOf(body).compareTo(new BigDecimal("4")), is(0));
+    // inventory-svc deducts what left the store now: four, not five and not nine later.
+    var events = outboxPayloads(order, "OrderFulfilled");
+    assertThat(events.size(), is(1));
+    assertThat(events.get(0), containsString("\"qty\":4"));
+    assertThat(
+        get("/orders/" + order + "/history", T).readEntity(String.class),
+        containsString("part-fulfilled: 4 of 5 units handed over"));
+
+    // No body: the rest.
+    Response rest = post("/orders/" + order + "/fulfil", "{}", T);
+    assertThat(rest.getStatus(), is(200));
+    String done = rest.readEntity(String.class);
+    assertThat(done, containsString("\"status\":\"FULFILLED\""));
+    assertThat(fulfilledQtyOf(done).compareTo(new BigDecimal("5")), is(0));
+    events = outboxPayloads(order, "OrderFulfilled");
+    assertThat(events.size(), is(2));
+    assertThat(events.get(1), containsString("\"qty\":1"));
+    // Nothing left: a third handover is refused, not silently a no-op.
+    Response again = post("/orders/" + order + "/fulfil", "{}", T);
+    assertThat(again.getStatus(), is(409));
+    assertThat(again.readEntity(String.class), containsString("ORDER_NOT_FULFILLABLE"));
+  }
+
+  @Test
+  @DisplayName("More than is outstanding, a line not on the order, or nothing at all is refused")
+  void handoverIsCheckedAgainstWhatIsOutstanding() {
+    UUID order = placeOnlinePickup(3);
+    assertThat(post("/orders/" + order + "/confirm", "{}", T).getStatus(), is(200));
+    Response tooMany = post("/orders/" + order + "/fulfil", fulfilBody(V, "4"), T);
+    assertThat(tooMany.getStatus(), is(409));
+    assertThat(
+        tooMany.readEntity(String.class), containsString("ORDER_FULFIL_QTY_EXCEEDS_OUTSTANDING"));
+    Response unknown =
+        post("/orders/" + order + "/fulfil", fulfilBody(Ids.newId().toString(), "1"), T);
+    assertThat(unknown.getStatus(), is(400));
+    assertThat(unknown.readEntity(String.class), containsString("ORDER_FULFIL_LINE_UNKNOWN"));
+    assertThat(post("/orders/" + order + "/fulfil", fulfilBody(V, "0"), T).getStatus(), is(400));
+    assertThat(post("/orders/" + order + "/fulfil", fulfilBody(V, "-1"), T).getStatus(), is(400));
+    // None of that moved anything.
+    String still = get("/orders/" + order, T).readEntity(String.class);
+    assertThat(still, containsString("\"status\":\"CONFIRMED\""));
+    assertThat(fulfilledQtyOf(still).signum(), is(0));
+    assertThat(outboxCount(order, "OrderFulfilled"), is(0L));
+    // Two handovers of two: the second is one too many.
+    assertThat(post("/orders/" + order + "/fulfil", fulfilBody(V, "2"), T).getStatus(), is(200));
+    Response over = post("/orders/" + order + "/fulfil", fulfilBody(V, "2"), T);
+    assertThat(over.getStatus(), is(409));
+    assertThat(over.readEntity(String.class), containsString("1 still outstanding"));
+  }
+
+  @Test
+  @DisplayName(
+      "A part-fulfilled order cannot be cancelled, and returns are capped by what was handed over")
+  void partFulfilledOrderKeepsItsGoodsHonest() {
+    UUID order = placeOnlinePickup(5);
+    assertThat(post("/orders/" + order + "/confirm", "{}", T).getStatus(), is(200));
+    assertThat(post("/orders/" + order + "/fulfil", fulfilBody(V, "2"), T).getStatus(), is(200));
+    // Some goods went out: cancelling would release stock the customer is holding.
+    Response cancel = post("/orders/" + order + "/cancel", "{\"reason\":\"changed mind\"}", T);
+    assertThat(cancel.getStatus(), is(409));
+    assertThat(cancel.readEntity(String.class), containsString("ORDER_PARTLY_FULFILLED"));
+    // Three back when only two were handed over: a refund for goods the customer never had.
+    String three =
+        "{\"reason\":\"faulty\",\"refundMethod\":\"CASH\",\"items\":[{\"variantId\":\""
+            + V
+            + "\",\"qty\":3}]}";
+    Response tooMany = post("/orders/" + order + "/returns", three, T);
+    assertThat(tooMany.getStatus(), is(409));
+    assertThat(tooMany.readEntity(String.class), containsString("RETURN_QTY_EXCEEDS_PURCHASED"));
+    String two =
+        "{\"reason\":\"faulty\",\"refundMethod\":\"CASH\",\"items\":[{\"variantId\":\""
+            + V
+            + "\",\"qty\":2}]}";
+    assertThat(post("/orders/" + order + "/returns", two, T).getStatus(), is(201));
+  }
+
+  @Test
+  @DisplayName("A PENDING order, or one at another store, cannot be handed over")
+  void handoverNeedsAConfirmedOrderAtYourStore() {
+    UUID pending = placeOnlinePickup(1);
+    Response early = post("/orders/" + pending + "/fulfil", "{}", T);
+    assertThat(early.getStatus(), is(409));
+    assertThat(early.readEntity(String.class), containsString("ORDER_NOT_FULFILLABLE"));
+    assertThat(post("/orders/" + pending + "/confirm", "{}", T).getStatus(), is(200));
+    // A cashier scoped to a different store: the order is not theirs to hand over.
+    Response elsewhere =
+        target
+            .path("/orders/" + pending + "/fulfil")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CASHIER")
+            .header("X-Store-Ids", Ids.newId().toString())
+            .post(Entity.entity("{}", MediaType.APPLICATION_JSON));
+    assertThat(elsewhere.getStatus(), is(403));
+    assertThat(
+        get("/orders/" + pending, T).readEntity(String.class),
+        containsString("\"status\":\"CONFIRMED\""));
+  }
+
+  @Test
+  @DisplayName("A till sale is still handed over whole: every line marked, one event")
+  void tillSaleIsHandedOverWhole() {
+    UUID order = placeAt("POS", "INSTORE");
+    assertThat(post("/orders/" + order + "/confirm", "{}", T).getStatus(), is(200));
+    String body = get("/orders/" + order, T).readEntity(String.class);
+    assertThat(body, containsString("\"status\":\"FULFILLED\""));
+    assertThat(fulfilledQtyOf(body).compareTo(new BigDecimal("2")), is(0));
+    assertThat(outboxCount(order, "OrderFulfilled"), is(1L));
   }
 }
