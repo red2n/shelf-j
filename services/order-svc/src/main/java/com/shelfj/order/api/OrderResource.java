@@ -377,7 +377,16 @@ public class OrderResource {
       description = "No such order for this caller, or no receipt issued for it yet")
   @GET
   @Path("/{id}/fiscal-receipt")
-  public Response fiscalReceipt(@PathParam("id") String id) {
+  public Response fiscalReceipt(
+      @PathParam("id") String id, @QueryParam("wait") Integer waitSeconds) {
+    // ?wait=N holds the request up to N seconds (capped at 20) for the number to be issued, so a
+    // till prints with the number after one round trip instead of polling and giving up.
+    if (waitSeconds != null && waitSeconds > 0) {
+      return Response.ok(
+              ApiResponse.ok(
+                  svc.awaitReceipt(ctx.tenantId(), Parsing.uuid(id, "id"), ctx, waitSeconds)))
+          .build();
+    }
     return Response.ok(ApiResponse.ok(svc.receiptOf(ctx.tenantId(), Parsing.uuid(id, "id"), ctx)))
         .build();
   }

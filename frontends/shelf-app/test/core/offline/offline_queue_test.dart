@@ -7,6 +7,7 @@ import 'package:shelf_app/core/constants.dart';
 import 'package:shelf_app/core/network/api_client.dart';
 import 'package:shelf_app/core/offline/offline_queue.dart';
 import 'package:shelf_app/core/offline/offline_sale.dart';
+import 'package:shelf_app/core/offline/offline_synced.dart';
 import 'package:shelf_app/core/storage/app_storage.dart';
 
 // ---------------------------------------------------------------------------
@@ -137,6 +138,8 @@ OfflineSale _sale({
     apiClientProvider.overrideWithValue(_FakeApiClient(dio)),
     offlineQueueProvider.overrideWith(
         (ref) => OfflineQueueNotifier(ref, storage: storage, autoSync: false)),
+    offlineSyncedProvider
+        .overrideWith((ref) => SyncedSalesNotifier(ref, storage: storage)),
   ]);
   addTearDown(container.dispose);
   return (container: container, adapter: adapter, storage: storage);
@@ -174,6 +177,31 @@ void main() {
     expect(h.container.read(offlineQueueProvider), isEmpty,
         reason: 'a fully accepted sale leaves the queue');
     expect(h.storage.data[StorageKeys.posOfflineSales], '[]');
+  });
+
+  test('a sale that lands is remembered as synced, with the order the server gave it',
+      () async {
+    // The offline receipt was printed with no legal number. The number is
+    // issued when the replayed payment completes the sale, and the cashier
+    // has to be able to find it from the reference on that receipt.
+    final h = _harness();
+    final notifier = h.container.read(offlineQueueProvider.notifier);
+    await notifier.enqueue(_sale());
+    await notifier.sync();
+
+    final synced = h.container.read(offlineSyncedProvider);
+    expect(synced, hasLength(1));
+    expect(synced.single.id, 'pos-1700000123456');
+    expect(synced.single.orderId, 'order-1');
+    expect(synced.single.reference, '123456');
+    expect(synced.single.fiscalNumber, isNull,
+        reason: 'the number is looked up when someone asks, not during replay');
+    // Replay made no extra request for it: the queue owes the server writes,
+    // not questions, and a till syncing fifty sales must not wait on fifty.
+    expect(h.adapter.countOf('fiscal-receipt'), 0);
+    // And it is on disk, so a restarted till still knows.
+    final stored = jsonDecode(h.storage.data[StorageKeys.posOfflineSynced]!) as List;
+    expect((stored.single as Map)['orderId'], 'order-1');
   });
 
   test('a sale whose order already landed does not place it again', () async {

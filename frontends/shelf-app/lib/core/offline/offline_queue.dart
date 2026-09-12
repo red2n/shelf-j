@@ -10,6 +10,7 @@ import '../network/api_client.dart';
 import '../network/api_error.dart';
 import '../storage/app_storage.dart';
 import 'offline_sale.dart';
+import 'offline_synced.dart';
 
 /// Store-and-forward queue for POS sales taken while the server was unreachable.
 ///
@@ -221,7 +222,14 @@ class OfflineQueueNotifier extends StateNotifier<List<OfflineSale>> {
         await _replace(current);
       }
 
-      // Everything landed — the server now knows about this sale.
+      // Everything landed — the server now knows about this sale. Leave a
+      // record of it so the number the server issues can be found from the
+      // offline receipt, which was printed without one.
+      try {
+        await _ref.read(offlineSyncedProvider.notifier).record(current);
+      } catch (_) {
+        // The sale is on the server either way.
+      }
       await discard(current.id);
       _consecutiveFailures = 0;
       return _Outcome.done;

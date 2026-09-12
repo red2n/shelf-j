@@ -151,6 +151,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/age-checks',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.AgeChecksScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/stores',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,

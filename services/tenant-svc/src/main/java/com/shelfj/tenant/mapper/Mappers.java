@@ -151,4 +151,55 @@ public final class Mappers {
   private static String ts(Instant i) {
     return i == null ? null : i.toString();
   }
+
+  /**
+   * Converts one history entry to its wire form.
+   *
+   * @param v the entry
+   * @return its API representation
+   */
+  public static com.shelfj.tenant.dto.Dtos.InstrumentVerificationResponse toVerification(
+      com.shelfj.tenant.domain.Domain.InstrumentVerification v) {
+    return new com.shelfj.tenant.dto.Dtos.InstrumentVerificationResponse(
+        v.id().toString(),
+        v.kind(),
+        v.performedOn().toString(),
+        v.performedBy(),
+        v.certificateRef(),
+        v.passed(),
+        v.nextDue() == null ? null : v.nextDue().toString(),
+        v.notes(),
+        ts(v.recordedAt()));
+  }
+
+  /**
+   * Converts an instrument with its standing to its wire form.
+   *
+   * @param w the instrument and its derived standing
+   * @return its API representation
+   */
+  public static com.shelfj.tenant.dto.Dtos.WeighingInstrumentResponse toInstrument(
+      com.shelfj.tenant.domain.Domain.WeighingInstrumentWithStanding w) {
+    var i = w.instrument();
+    return new com.shelfj.tenant.dto.Dtos.WeighingInstrumentResponse(
+        i.id().toString(),
+        i.storeId().toString(),
+        i.identifier(),
+        i.serialNumber(),
+        i.make(),
+        i.model(),
+        i.kind(),
+        i.maxCapacity(),
+        i.capacityUom(),
+        i.scaleInterval(),
+        i.approvalRef(),
+        i.zoneId() == null ? null : i.zoneId().toString(),
+        i.labelScheme(),
+        i.status(),
+        w.certified(),
+        w.standing(),
+        w.latest() == null ? null : toVerification(w.latest()),
+        ts(i.createdAt()),
+        ts(i.updatedAt()));
+  }
 }

@@ -29,7 +29,14 @@ public final class Dtos {
                       + " real price regardless.")
           @PositiveOrZero
           BigDecimal unitPrice,
-      String notes) {}
+      String notes,
+      @Schema(
+              description =
+                  "For a line sold by weight: the weighing instrument the reading came from, from"
+                      + " tenant-svc's register (Weights and Measures Act 1985 s.11). The till"
+                      + " refuses to sell by weight from an instrument that is not certified, and"
+                      + " the line records which one it was.")
+          String weighingInstrumentId) {}
 
   @Schema(
       name = "PlaceOrderRequest",
@@ -89,7 +96,9 @@ public final class Dtos {
       BigDecimal qty,
       BigDecimal unitPrice,
       BigDecimal lineTotal,
-      String notes) {}
+      String notes,
+      @Schema(description = "The instrument a sold-by-weight line was weighed on; null otherwise.")
+          String weighingInstrumentId) {}
 
   @Schema(name = "OrderResponse")
   public record OrderResponse(
@@ -539,4 +548,84 @@ public final class Dtos {
                   "Discount as a percentage of what the sales would have fetched undiscounted."
                       + " Null when there is nothing to take a percentage of.")
           BigDecimal discountRate) {}
+
+  // ── Age verification: the due-diligence record ──────────────────────────────
+
+  @Schema(
+      name = "RecordAgeCheckRequest",
+      description =
+          "One age check as the till made it. The rule fields are copied from product-svc's answer"
+              + " at that moment, so the record says what the rule was rather than what it later"
+              + " became.")
+  public record RecordAgeCheckRequest(
+      @jakarta.validation.constraints.NotBlank String storeId,
+      @jakarta.validation.constraints.NotBlank String variantId,
+      @jakarta.validation.constraints.NotBlank
+          @Schema(description = "ALCOHOL, TOBACCO, KNIVES, … — product-svc's category.")
+          String category,
+      @jakarta.validation.constraints.NotNull
+          @jakarta.validation.constraints.Min(1)
+          @jakarta.validation.constraints.Max(99)
+          Integer minimumAge,
+      @jakarta.validation.constraints.NotBlank
+          @jakarta.validation.constraints.Pattern(regexp = "^[A-Za-z]{2}$")
+          @Schema(description = "ISO 3166-1 alpha-2 country whose rule applied.")
+          String country,
+      @Schema(description = "True when the age came from the shop's own stricter policy.")
+          Boolean storePolicy,
+      @jakarta.validation.constraints.NotBlank
+          @Schema(description = "PASSED — the sale went ahead; REFUSED — it did not.")
+          String outcome,
+      @Schema(
+              description =
+                  "Required on a refusal, absent on a pass: UNDER_AGE, NO_ID, ID_REJECTED,"
+                      + " PROXY_SALE (buying for someone under age) or OTHER.")
+          String reason,
+      @Schema(
+              description =
+                  "What was shown when the sale went ahead, if the shop records it: PASSPORT,"
+                      + " DRIVING_LICENCE, PASS_CARD, MILITARY_ID, NATIONAL_ID or OTHER.")
+          String idType,
+      @Schema(description = "The POS session the check was made in, when the till has one.")
+          String posSessionId,
+      @Schema(description = "The sale the check belonged to, once there is one.") String orderId) {}
+
+  @Schema(name = "AgeVerificationResponse", description = "One recorded age check.")
+  public record AgeVerificationResponse(
+      String id,
+      String storeId,
+      String cashierId,
+      String posSessionId,
+      String variantId,
+      String category,
+      int minimumAge,
+      String country,
+      boolean storePolicy,
+      String outcome,
+      String reason,
+      String idType,
+      String orderId,
+      String checkedAt) {}
+
+  @Schema(
+      name = "AgeVerificationSummaryResponse",
+      description = "Counts for one store and period, and the refusals broken down by reason.")
+  public record AgeVerificationSummaryResponse(
+      long total,
+      long passed,
+      long refused,
+      java.util.Map<String, Long> refusedByReason,
+      java.util.Map<String, Long> byCategory) {}
+
+  @Schema(
+      name = "SetReceiptSeriesRequest",
+      description = "Open a receipt series, or set what it prints in front of the number.")
+  public record SetReceiptSeriesRequest(
+      @jakarta.validation.constraints.NotBlank String storeId,
+      @Schema(description = "MAIN when omitted.") String seriesCode,
+      @jakarta.validation.constraints.NotBlank
+          @Schema(description = "The fiscal period, e.g. 2026.")
+          String period,
+      @Schema(description = "Letters, digits and hyphens, at most 16; blank for none.")
+          String prefix) {}
 }

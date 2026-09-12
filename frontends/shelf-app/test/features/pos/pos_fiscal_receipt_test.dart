@@ -59,6 +59,23 @@ void main() {
       expect(r.calls.single.path, '/order-svc/orders/o-1/fiscal-receipt');
     });
 
+    test('asks the server to wait on the first request, and plainly after', () async {
+      final r = _Replies([_notYet, _notYet, _issued]);
+      expect(await awaitFiscalNumber(_dio(r), 'o-1', waitSeconds: 7, interval: Duration.zero),
+          '2026-000042');
+      // One round trip that the server holds open beats sixteen that each miss.
+      expect(r.calls.first.queryParameters['wait'], 7);
+      expect(r.calls[1].queryParameters['wait'], isNull);
+      expect(r.calls[2].queryParameters['wait'], isNull);
+    });
+
+    test('with no server wait it polls the old way', () async {
+      final r = _Replies([_notYet, _issued]);
+      expect(await awaitFiscalNumber(_dio(r), 'o-1', waitSeconds: 0, interval: Duration.zero),
+          '2026-000042');
+      expect(r.calls.first.queryParameters['wait'], isNull);
+    });
+
     test('waits through "not issued yet" for a number that is on its way', () async {
       final r = _Replies([_notYet, _notYet, _issued]);
       expect(await awaitFiscalNumber(_dio(r), 'o-1', interval: Duration.zero),

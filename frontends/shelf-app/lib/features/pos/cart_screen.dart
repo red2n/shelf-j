@@ -13,6 +13,8 @@ import 'pos_age_check.dart';
 import 'pos_providers.dart';
 import 'pos_recall_check.dart';
 import 'pos_weighed_item.dart';
+import 'variable_measure_barcode.dart';
+import 'weighing_instruments.dart';
 import 'pos_session_providers.dart';
 
 /// The register screen. On a wide terminal it's a two-pane supermarket till —
@@ -43,7 +45,7 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     setState(() => _scanning = true);
     PosLine? line;
     try {
-      line = await scanBarcode(ref, code);
+      line = await _scanLabel(code) ?? await scanBarcode(ref, code);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -69,6 +71,35 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       _barcodeCtrl.clear();
     }
     _barcodeFocus.requestFocus();
+  }
+
+  /// A label from a certified labelling scale: the item code and a price or a
+  /// weight, read exactly. The line arrives already weighed, on that scale.
+  /// Null when the code is not one of this store's labels.
+  Future<PosLine?> _scanLabel(String code) async {
+    final storeId = ref.read(posStoreProvider);
+    if (storeId == null || code.length != 13) return null;
+    List<WeighingInstrument> certified;
+    try {
+      certified = await ref.read(certifiedInstrumentsProvider(storeId).future);
+    } catch (_) {
+      // The register cannot be read, so no label can be trusted: the code is
+      // looked up as an ordinary barcode, and the gate below refuses a sale by
+      // weight with the reason.
+      return null;
+    }
+    for (final scale in certified.where((i) => i.isLabelling && i.labelScheme != null)) {
+      final reading = readVariableMeasureBarcode(code, scale.labelScheme!);
+      if (reading == null) continue;
+      final line = await scanBarcode(ref, reading.itemCode);
+      final qty = reading.weight ?? quantityFromPrice(reading.price!, line.unitPrice);
+      if (qty == null || qty <= 0) {
+        throw StateError('The label prices an item that has no unit price.');
+      }
+      return line.copyWith(
+          qty: qty, soldBy: 'WEIGHT', unit: 'kg', weighingInstrumentId: scale.id);
+    }
+    return null;
   }
 
   String _friendly(Object e) {
@@ -121,6 +152,36 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       return null;
     }
     final measure = saleUnit as SoldByMeasure;
+    // Already weighed on a certified labelling scale: the reading is the label's.
+    if (line.weighingInstrumentId != null) return line;
+    // Selling by weight on an instrument not passed as fit for trade is an
+    // offence (W&M Act 1985 s.11), so the till asks which certified scale the
+    // reading comes from, and refuses when there is none — or when it cannot
+    // find out.
+    String? instrumentId;
+    if (measure.soldBy == 'WEIGHT') {
+      final storeId = ref.read(posStoreProvider);
+      List<WeighingInstrument> certified;
+      try {
+        certified = storeId == null
+            ? const []
+            : await ref.read(certifiedInstrumentsProvider(storeId).future);
+      } catch (e) {
+        if (!mounted) return null;
+        _snack(instrumentsUnavailableMessage(e), error: true);
+        return null;
+      }
+      if (!mounted) return null;
+      final counters = certified.where((i) => !i.isLabelling).toList();
+      if (counters.isEmpty) {
+        _snack(noCertifiedScaleMessage, error: true);
+        return null;
+      }
+      final picked = await pickInstrument(context, counters, itemName: line.name);
+      if (picked == null) return null;
+      instrumentId = picked.id;
+    }
+    if (!mounted) return null;
     final qty = await showDialog<double>(
       context: context,
       barrierDismissible: false,
@@ -132,7 +193,8 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       ),
     );
     if (qty == null) return null;
-    return line.copyWith(qty: qty, soldBy: measure.soldBy, unit: measure.unit);
+    return line.copyWith(
+        qty: qty, soldBy: measure.soldBy, unit: measure.unit, weighingInstrumentId: instrumentId);
   }
 
   /// The recall check, against the list the till keeps: blocked outright when
@@ -182,14 +244,34 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     final check = result as AgeCheckRestricted;
     final cart = ref.read(posCartProvider.notifier);
     if (cart.ageVerifiedUpTo >= check.minimumAge) return true;
-    final confirmed = await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => AgeVerificationDialog(itemName: line.name, check: check),
-        ) ??
-        false;
-    if (confirmed) cart.ageVerifiedUpTo = check.minimumAge;
-    return confirmed;
+    final decision = await showDialog<AgeDecision>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AgeVerificationDialog(itemName: line.name, check: check),
+    );
+    if (decision == null) return false;
+    final passed = decision is AgePassed;
+    if (passed) cart.ageVerifiedUpTo = check.minimumAge;
+    // The decision stands either way; the record is what makes it a defence.
+    final storeId = ref.read(posStoreProvider);
+    if (storeId != null) {
+      final recorded = await recordAgeCheck(
+        ref.read(apiClientProvider).dio,
+        storeId: storeId,
+        variantId: line.variantId,
+        check: check,
+        decision: decision,
+        posSessionId: ref.read(posSessionProvider)?.id,
+      );
+      if (!recorded && mounted) {
+        _snack(
+            passed
+                ? 'The age check could not be recorded. The sale continues; tell a manager.'
+                : 'The refusal could not be recorded. Tell a manager so it is written down.',
+            error: true);
+      }
+    }
+    return passed;
   }
 
   /// Narrow-screen catalog: open the same catalog pane as a full-height sheet.
@@ -220,7 +302,13 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
           'storeId': storeId,
           'items': [
             for (final l in items)
-              {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
+              {
+                'variantId': l.variantId,
+                'qty': l.qty,
+                'unitPrice': l.unitPrice,
+                if (l.weighingInstrumentId != null)
+                  'weighingInstrumentId': l.weighingInstrumentId,
+              },
           ],
         },
       );

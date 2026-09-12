@@ -380,4 +380,218 @@ class FiscalReceiptIT {
     assertThat(audit(store), containsString("\"intact\":true"));
     assertThat(audit(store), not(containsString("\"from\"")));
   }
+
+  // ── the series and the wait ────────────────────────────────────────────────
+
+  private Response putAs(String path, String json, String roles) {
+    return target
+        .path(path)
+        .request()
+        .header("X-Tenant-Id", T)
+        .header("X-Roles", roles)
+        .put(Entity.entity(json, MediaType.APPLICATION_JSON));
+  }
+
+  private static String seriesJson(String store, String period, String prefix) {
+    return "{\"storeId\":\""
+        + store
+        + "\",\"seriesCode\":\"MAIN\",\"period\":\""
+        + period
+        + "\",\"prefix\":\""
+        + prefix
+        + "\"}";
+  }
+
+  private static String thisYear() {
+    return String.valueOf(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC).getYear());
+  }
+
+  @Test
+  @DisplayName("A prefix set on a series prints in front of every number issued after it")
+  void prefixPrintsOnTheNextNumber() {
+    String store = Ids.newId().toString();
+    String year = thisYear();
+    Response set =
+        putAs("/admin/fiscal-receipts/series", seriesJson(store, year, "gb-ldn-01"), "OWNER");
+    assertThat(set.getStatus(), is(200));
+    String body = set.readEntity(String.class);
+    // Upper-cased, and the counter opened at one — setting a prefix hands out no number.
+    assertThat(body, containsString("\"prefix\":\"GB-LDN-01\""));
+    assertThat(body, containsString("\"nextNumber\":1"));
+    String order = sell(store, "3.00");
+    String receipt = get("/admin/orders/" + order + "/fiscal-receipt", T).readEntity(String.class);
+    assertThat(receipt, containsString("\"fullNumber\":\"GB-LDN-01-"));
+    assertThat(receipt, containsString("\"number\":1"));
+    // And the store's series lists it, with the counter moved on.
+    String listed =
+        get("/admin/fiscal-receipts/series", T, "storeId", store).readEntity(String.class);
+    assertThat(listed, containsString("\"seriesCode\":\"MAIN\""));
+    assertThat(listed, containsString("\"nextNumber\":2"));
+  }
+
+  @Test
+  @DisplayName("Changing the prefix renumbers nothing: documents already issued keep theirs")
+  void changingThePrefixLeavesIssuedDocumentsAlone() {
+    String store = Ids.newId().toString();
+    String year = thisYear();
+    assertThat(
+        putAs("/admin/fiscal-receipts/series", seriesJson(store, year, "OLD"), "OWNER").getStatus(),
+        is(200));
+    String first = sell(store, "1.00");
+    assertThat(
+        putAs("/admin/fiscal-receipts/series", seriesJson(store, year, "NEW"), "OWNER").getStatus(),
+        is(200));
+    String second = sell(store, "2.00");
+    String a = get("/admin/orders/" + first + "/fiscal-receipt", T).readEntity(String.class);
+    String b = get("/admin/orders/" + second + "/fiscal-receipt", T).readEntity(String.class);
+    assertThat(a, containsString("\"fullNumber\":\"OLD-"));
+    assertThat(b, containsString("\"fullNumber\":\"NEW-"));
+    // Same counter: 1 then 2. A prefix change that restarted the count would be a second series.
+    assertThat(numberOf(second), is(numberOf(first) + 1));
+  }
+
+  @Test
+  @DisplayName(
+      "A prefix is letters, digits and hyphens; a period is a year — anything else is refused")
+  void badPrefixOrPeriodIsRefused() {
+    String store = Ids.newId().toString();
+    Response spaces =
+        putAs(
+            "/admin/fiscal-receipts/series",
+            seriesJson(store, thisYear(), "not a prefix!"),
+            "OWNER");
+    assertThat(spaces.getStatus(), is(400));
+    assertThat(spaces.readEntity(String.class), containsString("RECEIPT_PREFIX_INVALID"));
+    Response tooLong =
+        putAs(
+            "/admin/fiscal-receipts/series",
+            seriesJson(store, thisYear(), "ABCDEFGHIJKLMNOPQ"),
+            "OWNER");
+    assertThat(tooLong.getStatus(), is(400));
+    Response period =
+        putAs("/admin/fiscal-receipts/series", seriesJson(store, "this year", "GB"), "OWNER");
+    assertThat(period.getStatus(), is(400));
+    assertThat(period.readEntity(String.class), containsString("RECEIPT_PERIOD_INVALID"));
+    // Nothing was opened by the refusals.
+    assertThat(
+        get("/admin/fiscal-receipts/series", T, "storeId", store).readEntity(String.class),
+        containsString("\"data\":[]"));
+  }
+
+  @Test
+  @DisplayName("A cashier can neither read the counters nor set a prefix; another tenant sees none")
+  void countersAreManagementOnly() {
+    String store = Ids.newId().toString();
+    assertThat(
+        putAs("/admin/fiscal-receipts/series", seriesJson(store, thisYear(), "GB"), "OWNER")
+            .getStatus(),
+        is(200));
+    assertThat(
+        putAs("/admin/fiscal-receipts/series", seriesJson(store, thisYear(), "X"), "CASHIER")
+            .getStatus(),
+        is(403));
+    assertThat(
+        target
+            .path("/admin/fiscal-receipts/series")
+            .queryParam("storeId", store)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CASHIER")
+            .get()
+            .getStatus(),
+        is(403));
+    // The refusal changed nothing.
+    assertThat(
+        get("/admin/fiscal-receipts/series", T, "storeId", store).readEntity(String.class),
+        containsString("\"prefix\":\"GB\""));
+    String other = Ids.newId().toString();
+    assertThat(
+        target
+            .path("/admin/fiscal-receipts/series")
+            .queryParam("storeId", store)
+            .request()
+            .header("X-Tenant-Id", other)
+            .header("X-Roles", "OWNER")
+            .get()
+            .readEntity(String.class),
+        containsString("\"data\":[]"));
+  }
+
+  @Test
+  @DisplayName("A till that asks with ?wait= gets the number in one request, once payment lands")
+  void theTillWaitsServerSideForTheNumber() throws Exception {
+    String store = Ids.newId().toString();
+    String orderId = placeOnly(store);
+    UUID tenant = UUID.fromString(T);
+    UUID order = UUID.fromString(orderId);
+    // Before anything lands, a bounded wait still ends in 404 — it does not hang and does not lie.
+    long started = System.nanoTime();
+    Response early =
+        target
+            .path("/orders/" + orderId + "/fiscal-receipt")
+            .queryParam("wait", "1")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CASHIER")
+            .get();
+    assertThat(early.getStatus(), is(404));
+    assertThat(early.readEntity(String.class), containsString("ORDER_RECEIPT_NOT_ISSUED"));
+    assertThat((System.nanoTime() - started) / 1_000_000L >= 900L, is(true));
+    // The payment that completes the sale lands while the till is waiting.
+    Thread payer =
+        new Thread(
+            () -> {
+              try {
+                Thread.sleep(600);
+              } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+              }
+              orderService.handlePaymentCaptured(
+                  tenant, order, Ids.newId(), new BigDecimal("5.00"));
+            });
+    payer.start();
+    Response numbered =
+        target
+            .path("/orders/" + orderId + "/fiscal-receipt")
+            .queryParam("wait", "10")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CASHIER")
+            .get();
+    payer.join();
+    assertThat(numbered.getStatus(), is(200));
+    assertThat(numbered.readEntity(String.class), containsString("\"number\":1"));
+    // A customer who did not buy it cannot wait on it either: the same 404, at once.
+    assertThat(
+        target
+            .path("/orders/" + orderId + "/fiscal-receipt")
+            .queryParam("wait", "10")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CUSTOMER")
+            .get()
+            .getStatus(),
+        is(404));
+  }
+
+  @Test
+  @DisplayName("The wait is capped: asking for an hour gets at most twenty seconds")
+  void theWaitIsCapped() {
+    String store = Ids.newId().toString();
+    String orderId = placeOnly(store);
+    long started = System.nanoTime();
+    Response r =
+        target
+            .path("/orders/" + orderId + "/fiscal-receipt")
+            .queryParam("wait", "3600")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CASHIER")
+            .get();
+    long ms = (System.nanoTime() - started) / 1_000_000L;
+    assertThat(r.getStatus(), is(404));
+    // Twenty seconds is the most a request may hold a worker; a till that wants longer asks again.
+    assertThat("held for " + ms + "ms", ms < 25_000L, is(true));
+    assertThat("returned early at " + ms + "ms", ms >= 19_000L, is(true));
+  }
 }

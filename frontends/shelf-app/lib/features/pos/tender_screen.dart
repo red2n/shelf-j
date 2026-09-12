@@ -168,7 +168,13 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         'contactPhone': customer != null ? '' : walkInPhone,
         'items': [
           for (final l in cart)
-            {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
+            {
+                'variantId': l.variantId,
+                'qty': l.qty,
+                'unitPrice': l.unitPrice,
+                if (l.weighingInstrumentId != null)
+                  'weighingInstrumentId': l.weighingInstrumentId,
+              },
         ],
       },
       // STORE_CREDIT redemption is done server-side by payment-svc (it redeems the
@@ -617,7 +623,13 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
         'contactPhone': customer != null ? '' : walkInPhone,
         'items': [
           for (final l in cart)
-            {'variantId': l.variantId, 'qty': l.qty, 'unitPrice': l.unitPrice},
+            {
+                'variantId': l.variantId,
+                'qty': l.qty,
+                'unitPrice': l.unitPrice,
+                if (l.weighingInstrumentId != null)
+                  'weighingInstrumentId': l.weighingInstrumentId,
+              },
         ],
       },
     );

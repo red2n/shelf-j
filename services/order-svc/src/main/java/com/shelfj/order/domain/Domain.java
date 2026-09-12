@@ -42,6 +42,44 @@ public final class Domain {
   /** A hole in a receipt series, inclusive at both ends. */
   public record SequenceGap(long from, long to) {}
 
+  /**
+   * One age check at the till, as it was made: the rule in force at the moment, who checked, and
+   * whether the sale went ahead or was refused, and why. Append-only — the due-diligence record.
+   */
+  public record AgeVerification(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID cashierId,
+      UUID posSessionId,
+      UUID variantId,
+      String category,
+      int minimumAge,
+      String country,
+      boolean storePolicy,
+      String outcome,
+      String reason,
+      String idType,
+      UUID orderId,
+      Instant checkedAt) {
+
+    public static final String OUTCOME_PASSED = "PASSED";
+    public static final String OUTCOME_REFUSED = "REFUSED";
+    public static final java.util.Set<String> REASONS =
+        java.util.Set.of("UNDER_AGE", "NO_ID", "ID_REJECTED", "PROXY_SALE", "OTHER");
+    public static final java.util.Set<String> ID_TYPES =
+        java.util.Set.of(
+            "PASSPORT", "DRIVING_LICENCE", "PASS_CARD", "MILITARY_ID", "NATIONAL_ID", "OTHER");
+  }
+
+  /** Counts for one store and period: the numbers a licensing officer asks for first. */
+  public record AgeVerificationSummary(
+      long total,
+      long passed,
+      long refused,
+      java.util.Map<String, Long> refusedByReason,
+      java.util.Map<String, Long> byCategory) {}
+
   public record Order(
       UUID id,
       UUID tenantId,
@@ -95,6 +133,11 @@ public final class Domain {
   /** A quantity of one variant to put back into stock — the lines a voided sale restocks. */
   public record RestockLine(UUID variantId, BigDecimal qty) {}
 
+  /**
+   * One line of an order. {@code weighingInstrumentId} names the instrument a sold-by-weight line
+   * was weighed on (Weights and Measures Act 1985 s.11), from tenant-svc's register; null for a
+   * line sold by the each.
+   */
   public record OrderItem(
       UUID id,
       UUID tenantId,
@@ -103,7 +146,8 @@ public final class Domain {
       BigDecimal qty,
       BigDecimal unitPrice,
       BigDecimal lineTotal,
-      String notes) {}
+      String notes,
+      UUID weighingInstrumentId) {}
 
   /**
    * Append-only record of a manual discount granted on an order (SJ-D6).

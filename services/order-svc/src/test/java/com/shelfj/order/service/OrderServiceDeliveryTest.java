@@ -79,7 +79,8 @@ class OrderServiceDeliveryTest {
         null,
         "ONLINE",
         fulfilmentType,
-        List.of(new OrderItemRequest(VARIANT.toString(), BigDecimal.ONE, BigDecimal.TEN, null)),
+        List.of(
+            new OrderItemRequest(VARIANT.toString(), BigDecimal.ONE, BigDecimal.TEN, null, null)),
         null,
         null,
         null,

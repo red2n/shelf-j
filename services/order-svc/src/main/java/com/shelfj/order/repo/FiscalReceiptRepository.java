@@ -206,6 +206,68 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
    * the highest number issued. An empty result is the proof that the sequence is intact; it is
    * deliberately not a boolean, because "there is a gap" is not a useful answer without "where".
    */
+  /** One counter row: the series a store runs, where it has got to, and what it prints in front. */
+  public record ReceiptSeries(
+      UUID storeId, String seriesCode, String period, long nextNumber, String prefix) {}
+
+  /**
+   * Every series a store has opened, oldest first.
+   *
+   * @param tenantId owning tenant; the first condition
+   * @param storeId the store
+   * @return the counters
+   */
+  public List<ReceiptSeries> listSeriesConfig(UUID tenantId, UUID storeId) {
+    return query(
+        "SELECT store_id, series_code, period, next_number, prefix FROM receipt_series"
+            + " WHERE tenant_id = ? AND store_id = ? ORDER BY period DESC, series_code",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+        },
+        rs ->
+            new ReceiptSeries(
+                rs.getObject(1, UUID.class),
+                rs.getString(2),
+                rs.getString(3),
+                rs.getLong(4),
+                rs.getString(5)),
+        "list receipt series config");
+  }
+
+  /**
+   * Opens a series if it does not exist and sets the prefix it prints. The counter is never touched
+   * here: a prefix change affects the documents issued after it, and every document already issued
+   * keeps the full number it was printed with.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store
+   * @param series the series code
+   * @param period the fiscal period
+   * @param prefix what is printed in front of the number, or {@code null} for nothing
+   * @return the counter as it now stands
+   */
+  public ReceiptSeries setSeriesPrefix(
+      UUID tenantId, UUID storeId, String series, String period, String prefix) {
+    exec(
+        "INSERT INTO receipt_series (tenant_id, store_id, series_code, period, next_number, prefix)"
+            + " VALUES (?,?,?,?,1,?)"
+            + " ON CONFLICT (tenant_id, store_id, series_code, period)"
+            + " DO UPDATE SET prefix = EXCLUDED.prefix",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setString(3, series);
+          ps.setString(4, period);
+          ps.setString(5, prefix);
+        },
+        "set receipt series prefix");
+    return listSeriesConfig(tenantId, storeId).stream()
+        .filter(r -> r.seriesCode().equals(series) && r.period().equals(period))
+        .findFirst()
+        .orElseThrow();
+  }
+
   public List<SequenceGap> findGaps(UUID tenantId, UUID storeId, String series, String period) {
     return query(
         "WITH s AS ("

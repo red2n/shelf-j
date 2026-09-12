@@ -10,6 +10,7 @@ import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
@@ -97,6 +98,44 @@ public class FiscalReceiptResource {
   @Path("/orders/{orderId}/fiscal-receipt")
   public Response get(@PathParam("orderId") UUID orderId) {
     return Response.ok(ApiResponse.ok(svc.receiptOf(ctx.requireTenantId(), orderId))).build();
+  }
+
+  @Operation(
+      summary = "The series a store runs",
+      description =
+          "Each counter: series code, fiscal period, the next number it will hand out, and the"
+              + " prefix it prints. Management-only.")
+  @APIResponse(responseCode = "200", description = "The counters, newest period first")
+  @GET
+  @Path("/fiscal-receipts/series")
+  public Response series(@QueryParam("storeId") String storeId) {
+    return Response.ok(
+            ApiResponse.ok(
+                svc.receiptSeriesConfig(ctx.requireTenantId(), Parsing.uuid(storeId, "storeId"))))
+        .build();
+  }
+
+  @Operation(
+      summary = "Set a series prefix",
+      description =
+          "What is printed in front of the number, e.g. GB-LDN-01. Opens the series if it is new."
+              + " The counter is never touched: documents already issued keep the full number they"
+              + " were printed with. Management-only.")
+  @APIResponse(responseCode = "200", description = "The counter as it now stands")
+  @APIResponse(responseCode = "400", description = "A prefix or period outside the allowed shape")
+  @PUT
+  @Path("/fiscal-receipts/series")
+  public Response setSeries(com.shelfj.order.dto.Dtos.SetReceiptSeriesRequest req) {
+    com.shelfj.web.Validations.validate(req);
+    return Response.ok(
+            ApiResponse.ok(
+                svc.setReceiptSeriesPrefix(
+                    ctx.requireTenantId(),
+                    Parsing.uuid(req.storeId(), "storeId"),
+                    req.seriesCode(),
+                    req.period(),
+                    req.prefix())))
+        .build();
   }
 
   /**

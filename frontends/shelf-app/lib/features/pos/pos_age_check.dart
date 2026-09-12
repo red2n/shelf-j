@@ -128,7 +128,76 @@ Future<String?> resolveSaleCountry(WidgetRef ref) async {
 ///
 /// Not dismissable by tapping outside it: the cashier either confirms they have
 /// checked, or refuses the sale.
-class AgeVerificationDialog extends StatelessWidget {
+/// What the cashier decided, and the detail the due-diligence record keeps.
+///
+/// A refusal must say why — that is the record a licensing officer asks for
+/// first. A pass may say what was shown; Challenge 25 shops want it, the law
+/// asks only for reasonable precautions.
+sealed class AgeDecision {
+  const AgeDecision();
+}
+
+class AgePassed extends AgeDecision {
+  final String? idType;
+  const AgePassed({this.idType});
+}
+
+class AgeRefused extends AgeDecision {
+  final String reason;
+  const AgeRefused(this.reason);
+}
+
+const ageRefusalReasons = <String, String>{
+  'UNDER_AGE': 'Under age',
+  'NO_ID': 'No ID shown',
+  'ID_REJECTED': 'ID not accepted',
+  'PROXY_SALE': 'Buying for someone under age',
+  'OTHER': 'Other',
+};
+
+const ageIdTypes = <String, String>{
+  'PASSPORT': 'Passport',
+  'DRIVING_LICENCE': 'Driving licence',
+  'PASS_CARD': 'PASS card',
+  'MILITARY_ID': 'Military ID',
+  'NATIONAL_ID': 'National ID',
+  'OTHER': 'Other',
+};
+
+/// Writes one check to the register. The decision stands whether or not the
+/// write succeeds — a refusal is never turned into a sale by a network fault —
+/// but the caller is told, because an unrecorded check is a precaution nobody
+/// can show was taken.
+Future<bool> recordAgeCheck(
+  Dio dio, {
+  required String storeId,
+  required String variantId,
+  required AgeCheckRestricted check,
+  required AgeDecision decision,
+  String? posSessionId,
+}) async {
+  try {
+    await dio.post('/${ApiConstants.order}/pos/age-checks', data: {
+      'storeId': storeId,
+      'variantId': variantId,
+      'category': check.category,
+      'minimumAge': check.minimumAge,
+      'country': check.country,
+      'storePolicy': check.storePolicy,
+      'outcome': decision is AgeRefused ? 'REFUSED' : 'PASSED',
+      if (decision is AgeRefused) 'reason': decision.reason,
+      if (decision is AgePassed && decision.idType != null)
+        'idType': decision.idType,
+      if (posSessionId != null && posSessionId.isNotEmpty)
+        'posSessionId': posSessionId,
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+class AgeVerificationDialog extends StatefulWidget {
   final String itemName;
   final AgeCheckRestricted check;
 
@@ -150,42 +219,112 @@ class AgeVerificationDialog extends StatelessWidget {
       };
 
   @override
+  State<AgeVerificationDialog> createState() => _AgeVerificationDialogState();
+}
+
+/// Returns an [AgeDecision], or null only if the dialog is somehow dismissed —
+/// which the caller treats as a refusal without a record, never as a pass.
+class _AgeVerificationDialogState extends State<AgeVerificationDialog> {
+  String? _idType;
+  bool _refusing = false;
+  String? _reason;
+
+  AgeCheckRestricted get check => widget.check;
+
+  @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     return AlertDialog(
       icon: Icon(Icons.badge_outlined, color: cs.error),
-      title: const Text('Age-restricted item'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(itemName, style: const TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 2),
-          Text(categoryLabel(check.category)),
-          const SizedBox(height: 16),
-          Text('The customer must be ${check.minimumAge} or over.',
-              style: text.titleMedium),
-          const SizedBox(height: 4),
-          Text(check.storePolicy
-              ? 'Store policy in ${check.country} — stricter than the legal minimum.'
-              : 'Legal minimum in ${check.country}.'),
-          const SizedBox(height: 12),
-          const Text(
-              "If you aren't sure, ask for photo ID. If they can't show it, "
-              'refuse the sale.'),
-        ],
+      title: Text(_refusing ? 'Refusing the sale' : 'Age-restricted item'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.itemName,
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 2),
+            Text(AgeVerificationDialog.categoryLabel(check.category)),
+            const SizedBox(height: 16),
+            Text('The customer must be ${check.minimumAge} or over.',
+                style: text.titleMedium),
+            const SizedBox(height: 4),
+            Text(check.storePolicy
+                ? 'Store policy in ${check.country} — stricter than the legal minimum.'
+                : 'Legal minimum in ${check.country}.'),
+            const SizedBox(height: 12),
+            if (!_refusing) ...[
+              const Text(
+                  "If you aren't sure, ask for photo ID. If they can't show it, "
+                  'refuse the sale.'),
+              const SizedBox(height: 12),
+              Text('What did they show? (optional)',
+                  style: text.labelLarge),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final e in ageIdTypes.entries)
+                    ChoiceChip(
+                      label: Text(e.value),
+                      selected: _idType == e.key,
+                      onSelected: (v) =>
+                          setState(() => _idType = v ? e.key : null),
+                    ),
+                ],
+              ),
+            ] else ...[
+              Text('Why is the sale refused?', style: text.labelLarge),
+              const SizedBox(height: 4),
+              const Text(
+                  'This is recorded. A refusal with its reason is the record '
+                  'that shows the till was checking.'),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final e in ageRefusalReasons.entries)
+                    ChoiceChip(
+                      label: Text(e.value),
+                      selected: _reason == e.key,
+                      onSelected: (v) =>
+                          setState(() => _reason = v ? e.key : null),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('Refuse sale'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: Text('Checked — ${check.minimumAge}+'),
-        ),
-      ],
+      actions: _refusing
+          ? [
+              TextButton(
+                onPressed: () => setState(() => _refusing = false),
+                child: const Text('Back'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: cs.error),
+                onPressed: _reason == null
+                    ? null
+                    : () => Navigator.pop(context, AgeRefused(_reason!)),
+                child: const Text('Record refusal'),
+              ),
+            ]
+          : [
+              TextButton(
+                onPressed: () => setState(() => _refusing = true),
+                child: const Text('Refuse sale'),
+              ),
+              FilledButton(
+                onPressed: () =>
+                    Navigator.pop(context, AgePassed(idType: _idType)),
+                child: Text('Checked — ${check.minimumAge}+'),
+              ),
+            ],
     );
   }
 }

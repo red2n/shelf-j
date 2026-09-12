@@ -1,6 +1,8 @@
 package com.shelfj.order.repo;
 
 import com.shelfj.ids.Ids;
+import com.shelfj.order.domain.Domain.AgeVerification;
+import com.shelfj.order.domain.Domain.AgeVerificationSummary;
 import com.shelfj.order.domain.Domain.GiftCard;
 import com.shelfj.order.domain.Domain.GiftCardTransaction;
 import com.shelfj.order.domain.Domain.Layaway;
@@ -781,7 +783,7 @@ public class OrderRepository extends BaseOutboxRepository {
   public List<OrderItem> findOrderItems(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total,"
-            + " notes, created_at, discount_amount, discount_reason"
+            + " notes, created_at, discount_amount, discount_reason, weighing_instrument_id"
             + " FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
@@ -1471,8 +1473,9 @@ public class OrderRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO order_items"
-                + " (id,tenant_id,order_id,variant_id,qty,unit_price,line_total,notes)"
-                + " VALUES (?,?,?,?,?,?,?,?)")) {
+                + " (id,tenant_id,order_id,variant_id,qty,unit_price,line_total,notes,"
+                + "  weighing_instrument_id)"
+                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, item.id());
       ps.setObject(2, item.tenantId());
       ps.setObject(3, item.orderId());
@@ -1481,6 +1484,7 @@ public class OrderRepository extends BaseOutboxRepository {
       ps.setBigDecimal(6, item.unitPrice());
       ps.setBigDecimal(7, item.lineTotal());
       ps.setString(8, item.notes());
+      ps.setObject(9, item.weighingInstrumentId());
       ps.executeUpdate();
     }
   }
@@ -1740,7 +1744,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getBigDecimal("qty"),
         rs.getBigDecimal("unit_price"),
         rs.getBigDecimal("line_total"),
-        rs.getString("notes"));
+        rs.getString("notes"),
+        rs.getObject("weighing_instrument_id", UUID.class));
   }
 
   private OrderStatusHistory mapHistory(ResultSet rs) throws SQLException {
@@ -2367,6 +2372,178 @@ public class OrderRepository extends BaseOutboxRepository {
         },
         this::mapPosLogEntry,
         "list pos log");
+  }
+
+  // ─────────────────────────────────────────── age verification (append-only)
+
+  /**
+   * Writes one age check. Never updated or deleted: a wrong record is answered by another record.
+   *
+   * @param v the check, with its id already minted
+   * @return the record as stored
+   */
+  public AgeVerification recordAgeVerification(AgeVerification v) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO age_verifications"
+                      + " (id, tenant_id, store_id, cashier_id, pos_session_id, variant_id,"
+                      + "  category, minimum_age, country, store_policy, outcome, reason,"
+                      + "  id_type, order_id, checked_at)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, v.id());
+            ps.setObject(2, v.tenantId());
+            ps.setObject(3, v.storeId());
+            ps.setObject(4, v.cashierId());
+            ps.setObject(5, v.posSessionId());
+            ps.setObject(6, v.variantId());
+            ps.setString(7, v.category());
+            ps.setInt(8, v.minimumAge());
+            ps.setString(9, v.country());
+            ps.setBoolean(10, v.storePolicy());
+            ps.setString(11, v.outcome());
+            ps.setString(12, v.reason());
+            ps.setString(13, v.idType());
+            ps.setObject(14, v.orderId());
+            ps.setObject(15, v.checkedAt().atOffset(java.time.ZoneOffset.UTC));
+            ps.executeUpdate();
+          }
+          return v;
+        },
+        "record age verification");
+  }
+
+  /**
+   * Keyset page of age checks, newest first.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId restrict to one store, or {@code null}
+   * @param outcome restrict to PASSED or REFUSED, or {@code null}
+   * @param from inclusive lower bound on the check time, or {@code null}
+   * @param to exclusive upper bound, or {@code null}
+   * @param afterCheckedAt cursor timestamp, or {@code null} for the first page
+   * @param afterId cursor id
+   * @param limit maximum rows; callers pass one more than the page size
+   * @return the page
+   */
+  public List<AgeVerification> listAgeVerifications(
+      UUID tenantId,
+      UUID storeId,
+      String outcome,
+      Instant from,
+      Instant to,
+      Instant afterCheckedAt,
+      UUID afterId,
+      int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, cashier_id, pos_session_id, variant_id, category,"
+                + " minimum_age, country, store_policy, outcome, reason, id_type, order_id,"
+                + " checked_at FROM age_verifications WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (outcome != null) sql.append(" AND outcome=?");
+    if (from != null) sql.append(" AND checked_at >= ?");
+    if (to != null) sql.append(" AND checked_at < ?");
+    if (afterCheckedAt != null && afterId != null) sql.append(" AND (checked_at, id) < (?, ?)");
+    sql.append(" ORDER BY checked_at DESC, id DESC LIMIT ?");
+    return query(
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (outcome != null) ps.setString(i++, outcome);
+          if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
+          if (to != null) ps.setObject(i++, to.atOffset(java.time.ZoneOffset.UTC));
+          if (afterCheckedAt != null && afterId != null) {
+            ps.setObject(i++, afterCheckedAt.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
+        },
+        OrderRepository::mapAgeVerification,
+        "list age verifications");
+  }
+
+  /**
+   * Counts for a store (or the tenant) over a period: total, passed, refused, refusals by reason
+   * and checks by category.
+   *
+   * @param tenantId owning tenant; the first condition of every query
+   * @param storeId one store, or {@code null} for all
+   * @param from inclusive lower bound, or {@code null}
+   * @param to exclusive upper bound, or {@code null}
+   * @return the counts
+   */
+  public AgeVerificationSummary summariseAgeVerifications(
+      UUID tenantId, UUID storeId, Instant from, Instant to) {
+    StringBuilder where = new StringBuilder(" WHERE tenant_id=?");
+    if (storeId != null) where.append(" AND store_id=?");
+    if (from != null) where.append(" AND checked_at >= ?");
+    if (to != null) where.append(" AND checked_at < ?");
+    java.util.function.Consumer<PreparedStatement> bind =
+        ps -> {
+          try {
+            int i = 1;
+            ps.setObject(i++, tenantId);
+            if (storeId != null) ps.setObject(i++, storeId);
+            if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
+            if (to != null) ps.setObject(i, to.atOffset(java.time.ZoneOffset.UTC));
+          } catch (SQLException e) {
+            throw new IllegalStateException(e);
+          }
+        };
+    List<Object[]> outcomes =
+        query(
+            "SELECT outcome, count(*) FROM age_verifications" + where + " GROUP BY outcome",
+            bind::accept,
+            rs -> new Object[] {rs.getString(1), rs.getLong(2)},
+            "summarise age verifications by outcome");
+    List<Object[]> reasons =
+        query(
+            "SELECT reason, count(*) FROM age_verifications"
+                + where
+                + " AND reason IS NOT NULL GROUP BY reason",
+            bind::accept,
+            rs -> new Object[] {rs.getString(1), rs.getLong(2)},
+            "summarise age verifications by reason");
+    List<Object[]> categories =
+        query(
+            "SELECT category, count(*) FROM age_verifications" + where + " GROUP BY category",
+            bind::accept,
+            rs -> new Object[] {rs.getString(1), rs.getLong(2)},
+            "summarise age verifications by category");
+    long passed = 0;
+    long refused = 0;
+    for (Object[] row : outcomes) {
+      if (AgeVerification.OUTCOME_PASSED.equals(row[0])) passed = (Long) row[1];
+      if (AgeVerification.OUTCOME_REFUSED.equals(row[0])) refused = (Long) row[1];
+    }
+    java.util.Map<String, Long> byReason = new java.util.TreeMap<>();
+    for (Object[] row : reasons) byReason.put((String) row[0], (Long) row[1]);
+    java.util.Map<String, Long> byCategory = new java.util.TreeMap<>();
+    for (Object[] row : categories) byCategory.put((String) row[0], (Long) row[1]);
+    return new AgeVerificationSummary(passed + refused, passed, refused, byReason, byCategory);
+  }
+
+  private static AgeVerification mapAgeVerification(ResultSet rs) throws SQLException {
+    return new AgeVerification(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("cashier_id", UUID.class),
+        rs.getObject("pos_session_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getString("category"),
+        rs.getInt("minimum_age"),
+        rs.getString("country"),
+        rs.getBoolean("store_policy"),
+        rs.getString("outcome"),
+        rs.getString("reason"),
+        rs.getString("id_type"),
+        rs.getObject("order_id", UUID.class),
+        toInstant(rs.getObject("checked_at", OffsetDateTime.class)));
   }
 
   private PosLogEntry mapPosLogEntry(ResultSet rs) throws SQLException {

@@ -537,6 +537,44 @@ class AuthIT {
   }
 
   @Test
+  @org.junit.jupiter.api.DisplayName(
+      "SJ-D48: a shopper promoted to cashier at one store is scoped to that store, not freed by"
+          + " their customer role")
+  void aCustomerPromotedToCashierKeepsTheStoreScope() throws Exception {
+    String email = "promoted@example.com";
+    String userId = registerAndGetUserId(email);
+    java.util.UUID tenant = com.shelfj.ids.Ids.newId();
+    java.util.UUID store = com.shelfj.ids.Ids.newId();
+    // What the StaffAssigned consumer writes: a CASHIER row at one store, beside the CUSTOMER
+    // row registration made with no store at all.
+    try (var c = iamConnection();
+        var ps =
+            c.prepareStatement(
+                "INSERT INTO user_roles (id, user_id, role_id, store_id)"
+                    + " SELECT ?, ?, id, ? FROM roles WHERE name = 'CASHIER'")) {
+      ps.setObject(1, com.shelfj.ids.Ids.newId());
+      ps.setObject(2, java.util.UUID.fromString(userId));
+      ps.setObject(3, store);
+      ps.executeUpdate();
+    }
+    try (var c = iamConnection();
+        var ps = c.prepareStatement("UPDATE users SET tenant_id = ? WHERE id = ?")) {
+      ps.setObject(1, tenant);
+      ps.setObject(2, java.util.UUID.fromString(userId));
+      ps.executeUpdate();
+    }
+    Response login =
+        post("/auth/login", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
+    assertThat(login.getStatus(), is(200));
+    String access = extract(login.readEntity(String.class), "accessToken");
+    String claims =
+        new String(
+            java.util.Base64.getUrlDecoder().decode(access.split("\\.")[1]),
+            java.nio.charset.StandardCharsets.UTF_8);
+    assertThat(claims.contains("\"storeIds\":[\"" + store + "\"]"), is(true));
+  }
+
+  @Test
   void deletingTwiceIsRefusedNotRepeated() {
     String userId = registerAndGetUserId("twice@example.com");
     assertThat(deleteAccount(userId, "strongpass1").getStatus(), is(200));

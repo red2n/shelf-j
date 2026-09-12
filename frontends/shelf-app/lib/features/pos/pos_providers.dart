@@ -25,6 +25,11 @@ class PosLine {
   /// The unit a measured quantity is in, lower case (kg, l, m). Null for EACH.
   final String? unit;
 
+  /// For a line sold by weight: the certified instrument the reading came
+  /// from (Weights and Measures Act 1985 s.11). Null for a line sold by the
+  /// each. Sent with the order so the line records which scale it was.
+  final String? weighingInstrumentId;
+
   const PosLine({
     required this.variantId,
     required this.sku,
@@ -34,6 +39,7 @@ class PosLine {
     required this.currency,
     this.soldBy = 'EACH',
     this.unit,
+    this.weighingInstrumentId,
   });
 
   bool get measured => soldBy != 'EACH';
@@ -49,7 +55,9 @@ class PosLine {
 
   double get lineTotal => qty * unitPrice;
 
-  PosLine copyWith({double? qty, String? soldBy, String? unit}) => PosLine(
+  PosLine copyWith(
+          {double? qty, String? soldBy, String? unit, String? weighingInstrumentId}) =>
+      PosLine(
         variantId: variantId,
         sku: sku,
         name: name,
@@ -58,6 +66,7 @@ class PosLine {
         currency: currency,
         soldBy: soldBy ?? this.soldBy,
         unit: unit ?? this.unit,
+        weighingInstrumentId: weighingInstrumentId ?? this.weighingInstrumentId,
       );
 }
 

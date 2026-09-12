@@ -39,6 +39,7 @@ class EventsTest {
             BigDecimal.ONE,
             BigDecimal.TEN,
             BigDecimal.TEN,
+            null,
             null);
     var row = Events.orderFulfilled(TENANT, ORDER, STORE, List.of(item));
 
@@ -57,6 +58,7 @@ class EventsTest {
             BigDecimal.ONE,
             BigDecimal.TEN,
             BigDecimal.TEN,
+            null,
             null);
     var first = Events.orderFulfilled(TENANT, ORDER, STORE, List.of(item));
     var second = Events.orderFulfilled(TENANT, ORDER, STORE, List.of(item));

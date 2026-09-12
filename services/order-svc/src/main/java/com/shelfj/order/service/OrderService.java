@@ -2,6 +2,8 @@ package com.shelfj.order.service;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.order.domain.Domain;
+import com.shelfj.order.domain.Domain.AgeVerification;
+import com.shelfj.order.domain.Domain.AgeVerificationSummary;
 import com.shelfj.order.domain.Domain.ExceptionGrouping;
 import com.shelfj.order.domain.Domain.ExceptionRow;
 import com.shelfj.order.domain.Domain.GiftCard;
@@ -29,6 +31,7 @@ import com.shelfj.order.dto.Dtos.CreateSpecialOrderRequest;
 import com.shelfj.order.dto.Dtos.GenerateReceiptRequest;
 import com.shelfj.order.dto.Dtos.IssueGiftCardRequest;
 import com.shelfj.order.dto.Dtos.PlaceOrderRequest;
+import com.shelfj.order.dto.Dtos.RecordAgeCheckRequest;
 import com.shelfj.order.dto.Dtos.RedeemGiftCardRequest;
 import com.shelfj.order.dto.Dtos.ReloadGiftCardRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
@@ -324,9 +327,21 @@ public class OrderService {
       }
       BigDecimal line = quotedLineNet != null ? quotedLineNet : unitPrice.multiply(ir.qty());
       subtotal = subtotal.add(line);
+      UUID instrumentId =
+          ir.weighingInstrumentId() == null || ir.weighingInstrumentId().isBlank()
+              ? null
+              : Parsing.uuid(ir.weighingInstrumentId(), "weighingInstrumentId");
       items.add(
           new OrderItem(
-              Ids.newId(), tenantId, orderId, variantId, ir.qty(), unitPrice, line, ir.notes()));
+              Ids.newId(),
+              tenantId,
+              orderId,
+              variantId,
+              ir.qty(),
+              unitPrice,
+              line,
+              ir.notes(),
+              instrumentId));
     }
 
     // Hold stock for ONLINE orders before persisting, so a short line rejects the checkout with
@@ -836,6 +851,82 @@ public class OrderService {
    * @throws ApiException {@code ORDER_NOT_FOUND} (404) when the caller may not read the sale;
    *     {@code ORDER_RECEIPT_NOT_ISSUED} (404) when no receipt has been issued
    */
+  /**
+   * The receipt for a sale, waiting a bounded time for it to be issued. The number is taken when
+   * the payment that completes a till sale lands, a Kafka hop after the tender, so the till used to
+   * poll sixteen times over eight seconds and print without a number when order-svc was slow. One
+   * request that waits here instead costs one round trip, and the wait is capped so a stuck
+   * consumer never holds a till.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the sale
+   * @param ctx caller identity, for the object-level check
+   * @param waitSeconds how long to wait, 0..20
+   * @return the receipt
+   * @throws ApiException {@code ORDER_RECEIPT_NOT_ISSUED} (404) when it is still not issued
+   */
+  public Domain.FiscalReceipt awaitReceipt(
+      UUID tenantId, UUID orderId, TenantContext ctx, int waitSeconds) {
+    requireReadAccess(getOrder(tenantId, orderId), ctx);
+    long deadline = System.nanoTime() + Math.min(Math.max(waitSeconds, 0), 20) * 1_000_000_000L;
+    do {
+      var found = receiptRepo.findByOrder(tenantId, orderId);
+      if (found.isPresent()) {
+        return found.get();
+      }
+    } while (System.nanoTime() < deadline && pauseBriefly());
+    throw ApiException.notFound(
+        "ORDER_RECEIPT_NOT_ISSUED", "No fiscal receipt has been issued for this sale");
+  }
+
+  /** One poll interval; false when the thread was interrupted, which ends the wait. */
+  private static boolean pauseBriefly() {
+    try {
+      Thread.sleep(250);
+      return true;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
+  }
+
+  /**
+   * The series a store runs: code, period, where the counter has got to, and the prefix.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store
+   * @return the counters, newest period first
+   */
+  public List<com.shelfj.order.repo.FiscalReceiptRepository.ReceiptSeries> receiptSeriesConfig(
+      UUID tenantId, UUID storeId) {
+    return receiptRepo.listSeriesConfig(tenantId, storeId);
+  }
+
+  /**
+   * Sets the prefix a series prints in front of its numbers, opening the series if it is new.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store
+   * @param series the series code; MAIN when blank
+   * @param period the fiscal period, e.g. 2026
+   * @param prefix letters, digits and hyphens, at most 16; blank for none
+   * @return the counter as it now stands
+   * @throws ApiException {@code RECEIPT_PREFIX_INVALID} (400)
+   */
+  public com.shelfj.order.repo.FiscalReceiptRepository.ReceiptSeries setReceiptSeriesPrefix(
+      UUID tenantId, UUID storeId, String series, String period, String prefix) {
+    String p = prefix == null || prefix.isBlank() ? null : prefix.trim().toUpperCase(Locale.ROOT);
+    if (p != null && !p.matches("^[A-Z0-9][A-Z0-9-]{0,15}$")) {
+      throw ApiException.badRequest(
+          "RECEIPT_PREFIX_INVALID", "a prefix is letters, digits and hyphens, at most 16");
+    }
+    if (period == null || !period.trim().matches("^[0-9]{4}(-[0-9]{2})?$")) {
+      throw ApiException.badRequest("RECEIPT_PERIOD_INVALID", "period is a year, e.g. 2026");
+    }
+    return receiptRepo.setSeriesPrefix(
+        tenantId, storeId, seriesOrDefault(series), period.trim(), p);
+  }
+
   public Domain.FiscalReceipt receiptOf(UUID tenantId, UUID orderId, TenantContext ctx) {
     requireReadAccess(getOrder(tenantId, orderId), ctx);
     return receiptOf(tenantId, orderId);
@@ -1465,6 +1556,167 @@ public class OrderService {
   public boolean handleCustomerErased(UUID tenantId, UUID customerId, UUID loginId, UUID eventId) {
     return repo.applyCustomerErasure(
         tenantId, customerId, loginId, eventId, "order-svc/customer-erased");
+  }
+
+  // ── age verification: the due-diligence record ──────────────────────────────
+
+  /**
+   * Records one age check as the till made it (Licensing Act 2003 s.139: the defence is that all
+   * reasonable precautions were taken — and a precaution nobody can show was taken is none).
+   *
+   * <p>The rule fields come from the request because they are product-svc's answer at the moment of
+   * the check, and the record must say what the rule was then. The cashier comes from the token,
+   * never the body. Store access is enforced: a cashier records checks at their own store.
+   *
+   * @param req the check
+   * @param ctx caller identity
+   * @return the record as stored
+   * @throws ApiException {@code AGE_CHECK_REASON_REQUIRED} (400) for a refusal with no reason,
+   *     {@code AGE_CHECK_REASON_ON_PASS} (400) for a pass carrying one, {@code
+   *     AGE_CHECK_OUTCOME_UNKNOWN} / {@code AGE_CHECK_REASON_UNKNOWN} / {@code
+   *     AGE_CHECK_ID_TYPE_UNKNOWN} (400) for values outside the vocabulary; {@code
+   *     STORE_ACCESS_DENIED} (403) for another store
+   */
+  public AgeVerification recordAgeCheck(RecordAgeCheckRequest req, TenantContext ctx) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = Parsing.uuid(req.storeId(), "storeId");
+    ctx.requireStoreAccess(storeId);
+    // The same projection placeOrder consults: a store another tenant owns is refused outright,
+    // whatever role the caller holds in their own — a record against someone else's store would
+    // be a record in the wrong shop's register.
+    if (!storeStatusRepo.isActive(tenantId, storeId))
+      throw ApiException.conflict(
+          "STORE_NOT_OPERATIONAL", "Store is closed, suspended or not this business's");
+    String outcome = req.outcome().trim().toUpperCase(Locale.ROOT);
+    if (!AgeVerification.OUTCOME_PASSED.equals(outcome)
+        && !AgeVerification.OUTCOME_REFUSED.equals(outcome)) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_OUTCOME_UNKNOWN", "outcome is PASSED or REFUSED, not " + req.outcome());
+    }
+    String reason = blankToNull(req.reason());
+    String idType = blankToNull(req.idType());
+    if (reason != null) {
+      reason = reason.toUpperCase(Locale.ROOT);
+      if (!AgeVerification.REASONS.contains(reason)) {
+        throw ApiException.badRequest("AGE_CHECK_REASON_UNKNOWN", "unknown reason: " + reason);
+      }
+    }
+    if (idType != null) {
+      idType = idType.toUpperCase(Locale.ROOT);
+      if (!AgeVerification.ID_TYPES.contains(idType)) {
+        throw ApiException.badRequest("AGE_CHECK_ID_TYPE_UNKNOWN", "unknown id type: " + idType);
+      }
+    }
+    boolean refused = AgeVerification.OUTCOME_REFUSED.equals(outcome);
+    if (refused && reason == null) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_REASON_REQUIRED", "a refusal records why: the reason is the record");
+    }
+    if (!refused && reason != null) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_REASON_ON_PASS", "a sale that went ahead has no refusal reason");
+    }
+    if (refused && idType != null) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_ID_TYPE_ON_REFUSAL", "an id type is recorded on a sale that went ahead");
+    }
+    var record =
+        new AgeVerification(
+            Ids.newId(),
+            tenantId,
+            storeId,
+            ctx.userId(),
+            req.posSessionId() == null ? null : Parsing.uuid(req.posSessionId(), "posSessionId"),
+            Parsing.uuid(req.variantId(), "variantId"),
+            req.category().trim().toUpperCase(Locale.ROOT),
+            req.minimumAge(),
+            req.country().trim().toUpperCase(Locale.ROOT),
+            Boolean.TRUE.equals(req.storePolicy()),
+            outcome,
+            reason,
+            idType,
+            req.orderId() == null ? null : Parsing.uuid(req.orderId(), "orderId"),
+            Instant.now());
+    return repo.recordAgeVerification(record);
+  }
+
+  private static String blankToNull(String s) {
+    return s == null || s.isBlank() ? null : s.trim();
+  }
+
+  /** A page of age checks and the cursor for the next one. */
+  public record AgeVerificationPage(List<AgeVerification> items, String nextCursor) {}
+
+  /**
+   * The age-check register, newest first, for a licensing officer or a manager.
+   *
+   * @param tenantId owning tenant
+   * @param storeIdStr one store, or {@code null}
+   * @param outcome PASSED, REFUSED, or {@code null}
+   * @param from inclusive lower bound, or {@code null}
+   * @param to exclusive upper bound, or {@code null}
+   * @param afterCursor cursor from the previous page, or {@code null}
+   * @param limit page size
+   * @return the page
+   * @throws ApiException {@code INVALID_CURSOR} (400) for a malformed cursor; {@code
+   *     AGE_CHECK_OUTCOME_UNKNOWN} (400) for an outcome outside the vocabulary
+   */
+  public AgeVerificationPage listAgeChecks(
+      UUID tenantId,
+      String storeIdStr,
+      String outcome,
+      Instant from,
+      Instant to,
+      String afterCursor,
+      int limit) {
+    UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "store") : null;
+    String outcomeFilter = null;
+    if (outcome != null && !outcome.isBlank()) {
+      outcomeFilter = outcome.trim().toUpperCase(Locale.ROOT);
+      if (!AgeVerification.OUTCOME_PASSED.equals(outcomeFilter)
+          && !AgeVerification.OUTCOME_REFUSED.equals(outcomeFilter)) {
+        throw ApiException.badRequest(
+            "AGE_CHECK_OUTCOME_UNKNOWN", "outcome is PASSED or REFUSED, not " + outcome);
+      }
+    }
+    Instant afterCheckedAt = null;
+    UUID afterId = null;
+    String rawKey = com.shelfj.web.Cursor.decode(afterCursor);
+    if (rawKey != null) {
+      int sep = rawKey.indexOf('|');
+      try {
+        if (sep < 0) throw new IllegalArgumentException("missing separator");
+        afterCheckedAt = Instant.parse(rawKey.substring(0, sep));
+        afterId = UUID.fromString(rawKey.substring(sep + 1));
+      } catch (RuntimeException e) {
+        throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
+      }
+    }
+    List<AgeVerification> rows =
+        repo.listAgeVerifications(
+            tenantId, storeId, outcomeFilter, from, to, afterCheckedAt, afterId, limit + 1);
+    if (rows.size() <= limit) {
+      return new AgeVerificationPage(rows, null);
+    }
+    List<AgeVerification> page = rows.subList(0, limit);
+    AgeVerification last = page.get(page.size() - 1);
+    return new AgeVerificationPage(
+        page, com.shelfj.web.Cursor.encode(last.checkedAt().toString() + "|" + last.id()));
+  }
+
+  /**
+   * The counts a licensing officer asks for first: how many checks, how many refusals, and why.
+   *
+   * @param tenantId owning tenant
+   * @param storeIdStr one store, or {@code null} for the tenant
+   * @param from inclusive lower bound, or {@code null}
+   * @param to exclusive upper bound, or {@code null}
+   * @return the summary
+   */
+  public AgeVerificationSummary summariseAgeChecks(
+      UUID tenantId, String storeIdStr, Instant from, Instant to) {
+    UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "store") : null;
+    return repo.summariseAgeVerifications(tenantId, storeId, from, to);
   }
 
   /** Redacts orders that have finished since their customer was erased. */
