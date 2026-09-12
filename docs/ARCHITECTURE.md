@@ -335,7 +335,7 @@ Payment capture/refund plus till sessions, cash drawer movements, and end-of-day
 ### purchase-svc — Procurement
 Suppliers, purchase orders, goods receipts, and finance-adjacent intercompany invoicing.
 - **API:** `/suppliers`; `/purchase-orders` create/submit/lines; `/goods-receipts`; `/intercompany-invoices` (+settle); `/nominal-ledger` (read-only double-entry view).
-- **Tables:** `suppliers`, `purchase_orders`, `purchase_order_lines`, `goods_receipts`, `intercompany_invoices`, `nominal_ledger_entries`.
+- **Tables:** `suppliers`, `purchase_orders`, `purchase_order_lines`, `purchase_order_approvals` (append-only), `goods_receipts`, `goods_receipt_lines`, `supplier_invoices`, `supplier_invoice_lines`, `vendor_returns`, `vendor_return_lines`, `debit_note_series` (07.8), `intercompany_invoices`, `nominal_ledger_entries`.
 - **Events:** publishes `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`, `SupplierInvoiceCaptured`.
 - **Notable:** FRS 102/UK GAAP-style double-entry nominal ledger; intercompany AR/AP invoicing for inter-org transfers.
 

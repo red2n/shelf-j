@@ -598,6 +598,9 @@ A restricted item in a country with **no** rule for it returns `400 PRODUCT_NO_A
 - `POST /purchase-orders/{id}/close` — short-close a `PARTIALLY_RECEIVED` order with a required reason: the balance is never arriving and we have stopped waiting. Refused on any other status — nothing delivered is a cancellation, everything delivered is already RECEIVED.
 - `POST /goods-receipts` — record goods received against a purchase order. Accepts partial deliveries.
 - `GET /goods-receipts?poId=` — list goods receipts for a PO.
+- `POST /vendor-returns` `{poId, reason, notes, lines:[{variantId, qty}]}` — **return to vendor and the debit note (07.8)**, the reverse SJ-D3 named. Goods go back against an order something was received on (`PARTIALLY_RECEIVED`, `RECEIVED` or `CLOSED`; otherwise `409 PURCHASE_RTV_NOTHING_RECEIVED`), from the order's store, at the order's own price for each variant with VAT at the order's VAT code — so the debit note and the invoice it offsets agree to the penny. No variant may go back in more than was received less what already went back (`422 PURCHASE_RTV_OVER_RETURN`, checked under the order's lock); a variant not on the order is `422 PURCHASE_RTV_NOT_ON_ORDER`; `reason` is one of `DAMAGED`, `WRONG_ITEM`, `OVER_DELIVERED`, `QUALITY`, `EXPIRED`, `RECALL`, `OTHER` (`400 PURCHASE_RTV_REASON_UNKNOWN`). The debit note takes the next number in the tenant's series (`DN-000012`, a counter row moved under its lock like a receipt number). `ReturnedToVendor` is written in the same transaction and inventory-svc deducts the stock FIFO from the store's available batches as `RTV` movements against the return; when inventory-svc can be reached, on-hand is checked first and a return of goods already sold is `422 PURCHASE_RTV_INSUFFICIENT_STOCK` here rather than a skipped line there. **The purchase order's status is untouched**: what was received was received, the three-way match still compares the invoice to it, and the debit note is the offset — which is how accounts payable expects it; `GET /purchase-orders/{id}/progress` now carries `qtyReturned` per line. `Idempotency-Key` makes a retried raise return the same document. Warehouse and management roles (`STOREKEEPER` and up), assigned to the order's store; a cashier is `403`.
+- `GET /vendor-returns?poId=`, `GET /vendor-returns/{id}` — the returns, newest first, each with its lines: the debit note as a document. Any staff role; another tenant's is `404`.
+- `POST /vendor-returns/{id}/credit` `{creditNoteNumber, creditNoteDate, amount?}` — record the supplier's credit note, closing the return (`RAISED` → `CREDITED`; `amount` defaults to the debit note's gross). Once only: a second is `409 PURCHASE_RTV_ALREADY_CREDITED` naming the first. Management-only — matching money received to money owed is a finance decision.
 
 ### Intercompany & Ledger
 - `POST /intercompany-invoices` — raise a matched AR/AP invoice pair for an inter-org inventory transfer.
@@ -615,7 +618,7 @@ A restricted item in a country with **no** rule for it returns `400 PRODUCT_NO_A
 
 **Events**
 - Consumes: none.
-- Publishes: `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`, `SupplierInvoiceCaptured` (SJ-D39: invoice id as event id, net/VAT/gross, invoice date as tax point — pricing-svc projects it into the VAT return's boxes 4 and 7).
+- Publishes: `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`, `SupplierInvoiceCaptured` (SJ-D39: invoice id as event id, net/VAT/gross, invoice date as tax point — pricing-svc projects it into the VAT return's boxes 4 and 7), `ReturnedToVendor` (07.8: return id as event id, the store and the lines going back — inventory-svc deducts them as `RTV` movements, once per line).
 
 ---
 

@@ -505,6 +505,44 @@ public class InventoryRepository extends BaseOutboxRepository {
    * {@link #deductSale} deduped on {@code dedupeId}: mark + FIFO deduction commit in ONE
    * transaction (see {@link #receiveOnce}). Returns false if already processed.
    */
+  /**
+   * Deducts goods going back to the supplier (07.8), once per event line: FIFO from the store's
+   * available batches, a movement of type RTV against the return, and the adjustment event that
+   * tells the tills.
+   *
+   * @return whether the line was applied now; false when it already was
+   */
+  public boolean deductReturnToVendorOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID returnId,
+      OutboxRow event) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
+            return false;
+          }
+          deductFifo(
+              c,
+              tenantId,
+              storeId,
+              variantId,
+              qty,
+              MoveType.RTV,
+              "RTV",
+              returnId,
+              MovementAttribution.system());
+          checkThresholdTx(c, tenantId, storeId, variantId);
+          insertOutbox(c, event);
+          return true;
+        },
+        "deduct return to vendor (deduped)");
+  }
+
   public boolean deductSaleOnce(
       UUID dedupeId,
       String consumerName,
