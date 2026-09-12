@@ -46,6 +46,21 @@ public class GatewayConfig {
   @ConfigProperty(name = "shelfj.gateway.trust-forwarded-headers", defaultValue = "false")
   boolean trustForwardedHeaders;
 
+  /**
+   * Refuse any request that carries a payment card number. This is what makes the PCI DSS scope
+   * (SAQ-A: no card detail reaches any Shelf-J service) a fact rather than a design intention — see
+   * {@code com.shelfj.web.CardData}. Off only for a stack that has to prove the guard is why a
+   * request was refused.
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.card-data-guard.enabled", defaultValue = "true")
+  boolean cardDataGuardEnabled;
+
+  /** Bodies larger than this are scanned only up to this many bytes; card numbers are short. */
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.card-data-guard.max-scan-bytes", defaultValue = "8388608")
+  int cardDataGuardMaxScanBytes;
+
   @Inject
   @ConfigProperty(name = "shelfj.gateway.brute-force.enabled", defaultValue = "true")
   boolean bruteForceEnabled;
@@ -210,6 +225,14 @@ public class GatewayConfig {
 
   public String redisPassword() {
     return redisPassword;
+  }
+
+  public boolean cardDataGuardEnabled() {
+    return cardDataGuardEnabled;
+  }
+
+  public int cardDataGuardMaxScanBytes() {
+    return cardDataGuardMaxScanBytes;
   }
 
   public boolean bruteForceEnabled() {

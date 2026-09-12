@@ -19,7 +19,7 @@ FUNCTIONAL=(
   flow-guard-comprehensive flow-guard-runtime
   iam-crud tenant-crud product-crud inventory-crud pricing-crud order-crud notification-crud reporting-crud
   privacy-flow compliance-flow
-  gateway-smoke-it gateway-login-protection gateway-unsubscribe-protection
+  gateway-smoke-it gateway-login-protection gateway-unsubscribe-protection gateway-card-data-guard
 )
 LOAD=(multi-tenant-retail full-stack-simulation gateway-rate-limit-stress)
 

@@ -43,7 +43,10 @@ public class OtelLoggingBridge {
       LOG.log(Level.DEBUG, "No OpenTelemetry bean available; OTLP log export disabled");
       return;
     }
-    LogManager.getLogManager().getLogger("").addHandler(new OtelHandler(openTelemetry.get()));
+    Handler handler = new OtelHandler(openTelemetry.get());
+    // Scrubbed like the console handler: a card number must not reach Loki either.
+    LogScrubber.install(handler);
+    LogManager.getLogManager().getLogger("").addHandler(handler);
   }
 
   private static final class OtelHandler extends Handler {
