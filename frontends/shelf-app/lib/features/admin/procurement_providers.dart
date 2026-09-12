@@ -24,14 +24,14 @@ class Supplier {
   });
 
   factory Supplier.fromJson(Map<String, dynamic> j) => Supplier(
-        id: j['id'] as String? ?? '',
-        name: j['name'] as String? ?? '-',
-        vatNumber: j['vatNumber'] as String?,
-        vatRegistered: j['vatRegistered'] as bool? ?? false,
-        countryCode: j['countryCode'] as String?,
-        currency: j['currency'] as String?,
-        paymentTermsDays: (j['paymentTermsDays'] as num?)?.toInt() ?? 0,
-      );
+    id: j['id'] as String? ?? '',
+    name: j['name'] as String? ?? '-',
+    vatNumber: j['vatNumber'] as String?,
+    vatRegistered: j['vatRegistered'] as bool? ?? false,
+    countryCode: j['countryCode'] as String?,
+    currency: j['currency'] as String?,
+    paymentTermsDays: (j['paymentTermsDays'] as num?)?.toInt() ?? 0,
+  );
 }
 
 class PurchaseOrder {
@@ -60,17 +60,17 @@ class PurchaseOrder {
   });
 
   factory PurchaseOrder.fromJson(Map<String, dynamic> j) => PurchaseOrder(
-        id: j['id'] as String? ?? '',
-        supplierId: j['supplierId'] as String? ?? '',
-        storeId: j['storeId'] as String? ?? '',
-        status: j['status'] as String? ?? '-',
-        currency: j['currency'] as String? ?? '',
-        totalNet: (j['totalNet'] as num?)?.toDouble() ?? 0,
-        totalVat: (j['totalVat'] as num?)?.toDouble() ?? 0,
-        totalGross: (j['totalGross'] as num?)?.toDouble() ?? 0,
-        expectedDelivery: j['expectedDelivery'] as String?,
-        createdAt: j['createdAt'] as String? ?? '',
-      );
+    id: j['id'] as String? ?? '',
+    supplierId: j['supplierId'] as String? ?? '',
+    storeId: j['storeId'] as String? ?? '',
+    status: j['status'] as String? ?? '-',
+    currency: j['currency'] as String? ?? '',
+    totalNet: (j['totalNet'] as num?)?.toDouble() ?? 0,
+    totalVat: (j['totalVat'] as num?)?.toDouble() ?? 0,
+    totalGross: (j['totalGross'] as num?)?.toDouble() ?? 0,
+    expectedDelivery: j['expectedDelivery'] as String?,
+    createdAt: j['createdAt'] as String? ?? '',
+  );
 }
 
 class PurchaseOrderLine {
@@ -88,7 +88,8 @@ class PurchaseOrderLine {
     this.vatCode,
   });
 
-  factory PurchaseOrderLine.fromJson(Map<String, dynamic> j) => PurchaseOrderLine(
+  factory PurchaseOrderLine.fromJson(Map<String, dynamic> j) =>
+      PurchaseOrderLine(
         id: j['id'] as String? ?? '',
         variantId: j['variantId'] as String? ?? '',
         qty: (j['qty'] as num?)?.toDouble() ?? 0,
@@ -99,7 +100,9 @@ class PurchaseOrderLine {
 
 // ── Providers ────────────────────────────────────────────────────────────────
 
-final suppliersProvider = FutureProvider.autoDispose<List<Supplier>>((ref) async {
+final suppliersProvider = FutureProvider.autoDispose<List<Supplier>>((
+  ref,
+) async {
   final resp = await ref
       .read(apiClientProvider)
       .dio
@@ -108,14 +111,17 @@ final suppliersProvider = FutureProvider.autoDispose<List<Supplier>>((ref) async
   return data.map((e) => Supplier.fromJson(e as Map<String, dynamic>)).toList();
 });
 
-final purchaseOrdersProvider =
-    FutureProvider.autoDispose<List<PurchaseOrder>>((ref) async {
+final purchaseOrdersProvider = FutureProvider.autoDispose<List<PurchaseOrder>>((
+  ref,
+) async {
   final resp = await ref
       .read(apiClientProvider)
       .dio
       .get('/${ApiConstants.purchase}/purchase-orders');
   final data = (resp.data['data'] as List?) ?? [];
-  return data.map((e) => PurchaseOrder.fromJson(e as Map<String, dynamic>)).toList();
+  return data
+      .map((e) => PurchaseOrder.fromJson(e as Map<String, dynamic>))
+      .toList();
 });
 
 /// How much of each ordered line has actually turned up.
@@ -130,12 +136,19 @@ class PurchaseOrderLineProgress {
   final double qtyReceived;
   final double qtyOutstanding;
 
+  /// What has gone back to the supplier out of what was received (07.8).
+  final double qtyReturned;
+
   const PurchaseOrderLineProgress({
     required this.variantId,
     required this.qtyOrdered,
     required this.qtyReceived,
     required this.qtyOutstanding,
+    this.qtyReturned = 0,
   });
+
+  /// What could still go back: received less already returned.
+  double get qtyReturnable => qtyReceived - qtyReturned;
 
   factory PurchaseOrderLineProgress.fromJson(Map<String, dynamic> j) =>
       PurchaseOrderLineProgress(
@@ -143,32 +156,142 @@ class PurchaseOrderLineProgress {
         qtyOrdered: (j['qtyOrdered'] as num?)?.toDouble() ?? 0,
         qtyReceived: (j['qtyReceived'] as num?)?.toDouble() ?? 0,
         qtyOutstanding: (j['qtyOutstanding'] as num?)?.toDouble() ?? 0,
+        qtyReturned: (j['qtyReturned'] as num?)?.toDouble() ?? 0,
       );
 }
 
+// ── Return to vendor and the debit note (07.8) ───────────────────────────────
+//
+// Goods going back against a received order, priced at the order's prices, with
+// the debit note raised for them and the supplier's credit note once it comes.
+
+class VendorReturnLine {
+  final String variantId;
+  final double qty;
+  final double unitPrice;
+  final double lineNet;
+  const VendorReturnLine({
+    required this.variantId,
+    required this.qty,
+    required this.unitPrice,
+    required this.lineNet,
+  });
+  factory VendorReturnLine.fromJson(Map<String, dynamic> j) => VendorReturnLine(
+    variantId: j['variantId'] as String? ?? '',
+    qty: (j['qty'] as num?)?.toDouble() ?? 0,
+    unitPrice: (j['unitPrice'] as num?)?.toDouble() ?? 0,
+    lineNet: (j['lineNet'] as num?)?.toDouble() ?? 0,
+  );
+}
+
+class VendorReturn {
+  final String id;
+  final String poId;
+  final String status;
+  final String reason;
+  final String? notes;
+  final String currency;
+  final double netAmount;
+  final double vatAmount;
+  final double grossAmount;
+  final String debitNoteNumber;
+  final String raisedAt;
+  final String? creditNoteNumber;
+  final String? creditNoteDate;
+  final double? creditAmount;
+  final List<VendorReturnLine> lines;
+  const VendorReturn({
+    required this.id,
+    required this.poId,
+    required this.status,
+    required this.reason,
+    this.notes,
+    required this.currency,
+    required this.netAmount,
+    required this.vatAmount,
+    required this.grossAmount,
+    required this.debitNoteNumber,
+    required this.raisedAt,
+    this.creditNoteNumber,
+    this.creditNoteDate,
+    this.creditAmount,
+    this.lines = const [],
+  });
+  bool get credited => status == 'CREDITED';
+  factory VendorReturn.fromJson(Map<String, dynamic> j) => VendorReturn(
+    id: j['id'] as String? ?? '',
+    poId: j['poId'] as String? ?? '',
+    status: j['status'] as String? ?? 'RAISED',
+    reason: j['reason'] as String? ?? '',
+    notes: j['notes'] as String?,
+    currency: j['currency'] as String? ?? '',
+    netAmount: (j['netAmount'] as num?)?.toDouble() ?? 0,
+    vatAmount: (j['vatAmount'] as num?)?.toDouble() ?? 0,
+    grossAmount: (j['grossAmount'] as num?)?.toDouble() ?? 0,
+    debitNoteNumber: j['debitNoteNumber'] as String? ?? '',
+    raisedAt: j['raisedAt'] as String? ?? '',
+    creditNoteNumber: j['creditNoteNumber'] as String?,
+    creditNoteDate: j['creditNoteDate'] as String?,
+    creditAmount: (j['creditAmount'] as num?)?.toDouble(),
+    lines: [
+      for (final l in (j['lines'] as List?) ?? const [])
+        VendorReturnLine.fromJson(l as Map<String, dynamic>),
+    ],
+  );
+}
+
+/// The reasons the server accepts, in the words a buyer uses.
+const vendorReturnReasons = <String, String>{
+  'DAMAGED': 'Damaged in transit',
+  'WRONG_ITEM': 'Wrong item delivered',
+  'OVER_DELIVERED': 'Over-delivered',
+  'QUALITY': 'Quality rejected',
+  'EXPIRED': 'Expired or short-dated',
+  'RECALL': 'Recalled by the supplier',
+  'OTHER': 'Other',
+};
+
+final vendorReturnsProvider = FutureProvider.autoDispose
+    .family<List<VendorReturn>, String>((ref, poId) async {
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get(
+            '/${ApiConstants.purchase}/vendor-returns',
+            queryParameters: {'poId': poId},
+          );
+      final data = (resp.data['data'] as List?) ?? [];
+      return data
+          .map((e) => VendorReturn.fromJson(e as Map<String, dynamic>))
+          .toList();
+    });
+
 final purchaseOrderProgressProvider = FutureProvider.autoDispose
     .family<List<PurchaseOrderLineProgress>, String>((ref, poId) async {
-  final resp = await ref
-      .read(apiClientProvider)
-      .dio
-      .get('/${ApiConstants.purchase}/purchase-orders/$poId/progress');
-  final data = (resp.data['data'] as List?) ?? [];
-  return data
-      .map((e) => PurchaseOrderLineProgress.fromJson(e as Map<String, dynamic>))
-      .toList();
-});
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get('/${ApiConstants.purchase}/purchase-orders/$poId/progress');
+      final data = (resp.data['data'] as List?) ?? [];
+      return data
+          .map(
+            (e) =>
+                PurchaseOrderLineProgress.fromJson(e as Map<String, dynamic>),
+          )
+          .toList();
+    });
 
 final purchaseOrderLinesProvider = FutureProvider.autoDispose
     .family<List<PurchaseOrderLine>, String>((ref, poId) async {
-  final resp = await ref
-      .read(apiClientProvider)
-      .dio
-      .get('/${ApiConstants.purchase}/purchase-orders/$poId/lines');
-  final data = (resp.data['data'] as List?) ?? [];
-  return data
-      .map((e) => PurchaseOrderLine.fromJson(e as Map<String, dynamic>))
-      .toList();
-});
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get('/${ApiConstants.purchase}/purchase-orders/$poId/lines');
+      final data = (resp.data['data'] as List?) ?? [];
+      return data
+          .map((e) => PurchaseOrderLine.fromJson(e as Map<String, dynamic>))
+          .toList();
+    });
 
 // ── Supplier invoices: the three-way match ───────────────────────────────────
 //
@@ -202,18 +325,19 @@ class InvoiceMatchLine {
   bool get matched => variances.isEmpty;
 
   factory InvoiceMatchLine.fromJson(Map<String, dynamic> j) => InvoiceMatchLine(
-        variantId: j['variantId'] as String? ?? '',
-        qtyOrdered: (j['qtyOrdered'] as num?)?.toDouble() ?? 0,
-        qtyReceived: (j['qtyReceived'] as num?)?.toDouble() ?? 0,
-        qtyInvoicedBefore: (j['qtyInvoicedBefore'] as num?)?.toDouble() ?? 0,
-        qtyInvoiced: (j['qtyInvoiced'] as num?)?.toDouble() ?? 0,
-        // Absent, not null: JSON-B omits a null field entirely, which is the
-        // shape SJ-D14 turned into a 503 on every guest order for months.
-        orderedUnitPrice: (j['orderedUnitPrice'] as num?)?.toDouble(),
-        invoicedUnitPrice: (j['invoicedUnitPrice'] as num?)?.toDouble() ?? 0,
-        variances:
-            ((j['variances'] as List?) ?? const []).map((e) => e.toString()).toList(),
-      );
+    variantId: j['variantId'] as String? ?? '',
+    qtyOrdered: (j['qtyOrdered'] as num?)?.toDouble() ?? 0,
+    qtyReceived: (j['qtyReceived'] as num?)?.toDouble() ?? 0,
+    qtyInvoicedBefore: (j['qtyInvoicedBefore'] as num?)?.toDouble() ?? 0,
+    qtyInvoiced: (j['qtyInvoiced'] as num?)?.toDouble() ?? 0,
+    // Absent, not null: JSON-B omits a null field entirely, which is the
+    // shape SJ-D14 turned into a 503 on every guest order for months.
+    orderedUnitPrice: (j['orderedUnitPrice'] as num?)?.toDouble(),
+    invoicedUnitPrice: (j['invoicedUnitPrice'] as num?)?.toDouble() ?? 0,
+    variances: ((j['variances'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+  );
 }
 
 class SupplierInvoice {
@@ -244,29 +368,29 @@ class SupplierInvoice {
   bool get flagged => status == 'FLAGGED';
 
   factory SupplierInvoice.fromJson(Map<String, dynamic> j) => SupplierInvoice(
-        id: j['id'] as String? ?? '',
-        poId: j['poId'] as String? ?? '',
-        invoiceNumber: j['invoiceNumber'] as String? ?? '-',
-        invoiceDate: j['invoiceDate'] as String?,
-        currency: j['currency'] as String? ?? '',
-        netAmount: (j['netAmount'] as num?)?.toDouble() ?? 0,
-        vatAmount: (j['vatAmount'] as num?)?.toDouble() ?? 0,
-        grossAmount: (j['grossAmount'] as num?)?.toDouble() ?? 0,
-        status: j['status'] as String? ?? '-',
-        lines: ((j['lines'] as List?) ?? const [])
-            .map((e) => InvoiceMatchLine.fromJson(e as Map<String, dynamic>))
-            .toList(),
-      );
+    id: j['id'] as String? ?? '',
+    poId: j['poId'] as String? ?? '',
+    invoiceNumber: j['invoiceNumber'] as String? ?? '-',
+    invoiceDate: j['invoiceDate'] as String?,
+    currency: j['currency'] as String? ?? '',
+    netAmount: (j['netAmount'] as num?)?.toDouble() ?? 0,
+    vatAmount: (j['vatAmount'] as num?)?.toDouble() ?? 0,
+    grossAmount: (j['grossAmount'] as num?)?.toDouble() ?? 0,
+    status: j['status'] as String? ?? '-',
+    lines: ((j['lines'] as List?) ?? const [])
+        .map((e) => InvoiceMatchLine.fromJson(e as Map<String, dynamic>))
+        .toList(),
+  );
 }
 
 final supplierInvoicesProvider =
     FutureProvider.autoDispose<List<SupplierInvoice>>((ref) async {
-  final resp = await ref
-      .read(apiClientProvider)
-      .dio
-      .get('/${ApiConstants.purchase}/supplier-invoices');
-  final data = (resp.data['data'] as List?) ?? [];
-  return data
-      .map((e) => SupplierInvoice.fromJson(e as Map<String, dynamic>))
-      .toList();
-});
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get('/${ApiConstants.purchase}/supplier-invoices');
+      final data = (resp.data['data'] as List?) ?? [];
+      return data
+          .map((e) => SupplierInvoice.fromJson(e as Map<String, dynamic>))
+          .toList();
+    });

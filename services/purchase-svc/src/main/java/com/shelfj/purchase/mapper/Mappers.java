@@ -256,6 +256,43 @@ public final class Mappers {
    */
   public static PurchaseOrderLineProgressResponse toDto(Domain.PurchaseOrderLineProgress p) {
     return new PurchaseOrderLineProgressResponse(
-        p.variantId(), p.qtyOrdered(), p.qtyReceived(), p.qtyOutstanding());
+        p.variantId(), p.qtyOrdered(), p.qtyReceived(), p.qtyOutstanding(), p.qtyReturned());
+  }
+
+  /**
+   * Converts a return to vendor and its lines to the wire form: the debit note as a document.
+   *
+   * @param r the return
+   * @param lines its lines
+   * @return its API representation
+   */
+  public static com.shelfj.purchase.dto.Dtos.VendorReturnResponse toDto(
+      Domain.VendorReturn r, java.util.List<Domain.VendorReturnLine> lines) {
+    return new com.shelfj.purchase.dto.Dtos.VendorReturnResponse(
+        r.id(),
+        r.poId(),
+        r.supplierId(),
+        r.storeId(),
+        r.status(),
+        r.reason(),
+        r.notes(),
+        r.currency(),
+        r.netAmount(),
+        r.vatAmount(),
+        r.grossAmount(),
+        r.debitNoteNumber(),
+        r.raisedAt(),
+        r.raisedBy(),
+        r.creditNoteNumber(),
+        r.creditNoteDate() == null ? null : r.creditNoteDate().toString(),
+        r.creditAmount(),
+        r.creditedAt(),
+        r.creditedBy(),
+        lines.stream()
+            .map(
+                l ->
+                    new com.shelfj.purchase.dto.Dtos.VendorReturnLineResponse(
+                        l.id(), l.variantId(), l.qty(), l.unitPrice(), l.vatCode(), l.lineNet()))
+            .toList());
   }
 }

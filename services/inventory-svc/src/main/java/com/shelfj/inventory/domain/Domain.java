@@ -505,6 +505,9 @@ public final class Domain {
     public static final String TRANSFER = "TRANSFER";
     public static final String RETURN = "RETURN";
 
+    /** Goods going back to the supplier (07.8): out, against the return that sent them. */
+    public static final String RTV = "RTV";
+
     public static final String RESERVE = "RESERVE";
     public static final String RELEASE = "RELEASE";
   }

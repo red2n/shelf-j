@@ -3,6 +3,7 @@ package com.shelfj.purchase.service;
 import com.shelfj.events.EventPayload;
 import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
+import com.shelfj.purchase.domain.Domain.VendorReturnLine;
 import com.shelfj.service.OutboxRow;
 import java.util.List;
 import java.util.UUID;
@@ -80,6 +81,49 @@ final class Events {
     sb.append("]}");
     return new OutboxRow(
         "GoodsReceived", "shelfj.purchase.goods-received", tenantId, grId, sb.toString());
+  }
+
+  /**
+   * Goods went back to the supplier (07.8): what inventory-svc deducts, line by line, from the
+   * store the order was delivered to. The event id is the return id; a consumer dedupes on it.
+   */
+  static OutboxRow returnedToVendor(
+      UUID tenantId,
+      UUID returnId,
+      UUID storeId,
+      UUID poId,
+      UUID supplierId,
+      List<VendorReturnLine> lines) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("{\"eventId\":\"")
+        .append(returnId)
+        .append("\",\"eventType\":\"ReturnedToVendor\",\"tenantId\":\"")
+        .append(tenantId)
+        .append("\",\"storeId\":\"")
+        .append(storeId)
+        .append("\",\"refId\":\"")
+        .append(returnId)
+        .append("\",\"poId\":\"")
+        .append(poId)
+        .append("\",\"supplierId\":\"")
+        .append(supplierId)
+        .append("\",\"lines\":[");
+    for (int i = 0; i < lines.size(); i++) {
+      if (i > 0) sb.append(",");
+      VendorReturnLine l = lines.get(i);
+      sb.append("{\"variantId\":\"")
+          .append(l.variantId())
+          .append("\",\"qty\":")
+          .append(l.qty().toPlainString())
+          .append("}");
+    }
+    sb.append("]}");
+    return new OutboxRow(
+        "ReturnedToVendor",
+        "shelfj.purchase.returned-to-vendor",
+        tenantId,
+        returnId,
+        sb.toString());
   }
 
   /**

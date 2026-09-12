@@ -335,6 +335,34 @@ public class InventoryService {
         dedupeId, consumerName, batch, refType, refId, stockReceivedEvent(batch));
   }
 
+  /**
+   * Sends goods back to the supplier (07.8): what a {@code ReturnedToVendor} line does to stock.
+   * Deduped on the line's id; publishes {@code StockAdjusted} with a negative delta so every
+   * projection of on-hand follows.
+   *
+   * @return whether the line was applied now
+   * @throws ApiException {@code INSUFFICIENT_STOCK} (422) when the store has less on hand than is
+   *     going back — the consumer skips that line and says so
+   */
+  public boolean returnToVendorOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID returnId) {
+    var event =
+        new OutboxRow(
+            "StockAdjusted",
+            "shelfj.inventory.stock-adjusted",
+            tenantId,
+            variantId,
+            Events.stockAdjusted(tenantId, storeId, variantId, qty.negate()));
+    return repo.deductReturnToVendorOnce(
+        dedupeId, consumerName, tenantId, storeId, variantId, qty, returnId, event);
+  }
+
   private static Batch returnBatch(
       UUID tenantId, UUID storeId, UUID variantId, BigDecimal qty, UUID orderId) {
     return new Batch(

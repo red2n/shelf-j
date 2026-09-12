@@ -5,6 +5,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -156,8 +157,9 @@ public final class Dtos {
                       + " to order lines by variant, not by line id — a delivery note names"
                       + " products, not order rows.")
           BigDecimal qtyReceived,
-      @Schema(description = "Ordered minus received, floored at zero.")
-          BigDecimal qtyOutstanding) {}
+      @Schema(description = "Ordered minus received, floored at zero.") BigDecimal qtyOutstanding,
+      @Schema(description = "What has gone back to the supplier out of what was received (07.8).")
+          BigDecimal qtyReturned) {}
 
   @Schema(name = "PurchaseOrderLineResponse")
   public record PurchaseOrderLineResponse(
@@ -194,6 +196,75 @@ public final class Dtos {
   @Schema(name = "GoodsReceiptLineResponse")
   public record GoodsReceiptLineResponse(
       UUID id, UUID variantId, BigDecimal qtyReceived, Instant createdAt) {}
+
+  // ── Return to vendor and debit note (07.8) ────────────────────────────────────
+
+  @Schema(
+      name = "RaiseVendorReturnRequest",
+      description =
+          "Send goods back to the supplier against a received purchase order and raise the debit"
+              + " note for their value at the order's prices. The store is the order's; the"
+              + " quantity per variant may not exceed what was received less what was already"
+              + " returned.")
+  public record RaiseVendorReturnRequest(
+      @NotNull UUID poId,
+      @Schema(
+              description =
+                  "DAMAGED, WRONG_ITEM, OVER_DELIVERED, QUALITY, EXPIRED, RECALL or OTHER.")
+          @NotBlank
+          String reason,
+      @Size(max = 500) String notes,
+      @NotNull @Valid List<VendorReturnLineRequest> lines) {}
+
+  @Schema(name = "VendorReturnLineRequest")
+  public record VendorReturnLineRequest(
+      @NotNull UUID variantId, @NotNull @DecimalMin("0.001") BigDecimal qty) {}
+
+  @Schema(
+      name = "RecordCreditNoteRequest",
+      description = "The supplier's credit note against a return, which closes it.")
+  public record RecordCreditNoteRequest(
+      @NotBlank @Size(max = 64) String creditNoteNumber,
+      @Schema(description = "ISO date, e.g. 2026-09-12.") @NotBlank String creditNoteDate,
+      @Schema(description = "What the supplier credited; the debit note's gross when omitted.")
+          @DecimalMin("0")
+          BigDecimal amount) {}
+
+  @Schema(
+      name = "VendorReturnResponse",
+      description = "A return to vendor and its debit note; the credit note once recorded.")
+  public record VendorReturnResponse(
+      UUID id,
+      UUID poId,
+      UUID supplierId,
+      UUID storeId,
+      @Schema(description = "RAISED or CREDITED.") String status,
+      String reason,
+      String notes,
+      String currency,
+      BigDecimal netAmount,
+      BigDecimal vatAmount,
+      BigDecimal grossAmount,
+      @Schema(description = "The debit note's number, sequential per business, e.g. DN-000012.")
+          String debitNoteNumber,
+      Instant raisedAt,
+      UUID raisedBy,
+      String creditNoteNumber,
+      String creditNoteDate,
+      BigDecimal creditAmount,
+      Instant creditedAt,
+      UUID creditedBy,
+      List<VendorReturnLineResponse> lines) {}
+
+  @Schema(name = "VendorReturnLineResponse")
+  public record VendorReturnLineResponse(
+      UUID id,
+      UUID variantId,
+      BigDecimal qty,
+      @Schema(description = "The order's price for the variant when the return was raised.")
+          BigDecimal unitPrice,
+      String vatCode,
+      BigDecimal lineNet) {}
 
   // ── Intercompany Invoice ──────────────────────────────────────────────────────
   @Schema(

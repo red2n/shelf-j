@@ -24,6 +24,8 @@ import com.shelfj.purchase.dto.Dtos.CreatePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreateSupplierRequest;
 import com.shelfj.purchase.dto.Dtos.DecidePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.RaiseIntercompanyInvoiceRequest;
+import com.shelfj.purchase.dto.Dtos.RaiseVendorReturnRequest;
+import com.shelfj.purchase.dto.Dtos.RecordCreditNoteRequest;
 import com.shelfj.purchase.dto.Dtos.UpdateSupplierRequest;
 import com.shelfj.purchase.repo.PurchaseRepository;
 import com.shelfj.web.ApiException;
@@ -50,6 +52,7 @@ public class PurchaseService {
   @Inject TenantClient tenants;
 
   @Inject PricingClient pricing;
+  @Inject com.shelfj.purchase.client.InventoryClient inventory;
 
   @Inject ServiceConfig config;
 
@@ -828,6 +831,223 @@ public class PurchaseService {
   public List<GoodsReceipt> listGoodsReceipts(TenantContext ctx, UUID poId) {
     getPurchaseOrder(ctx, poId);
     return repo.findGoodsReceiptsByPo(ctx.requireTenantId(), poId);
+  }
+
+  // ── Return to vendor and debit note (07.8) ────────────────────────────────────
+
+  /** The roles that may send goods back: warehouse and management, not the till. */
+  private static final String[] RETURN_ROLES = {
+    "PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER"
+  };
+
+  /**
+   * Sends goods back to the supplier against a received purchase order and raises the debit note
+   * for their value at the order's own prices (07.8) — the reverse SJ-D3 named.
+   *
+   * <p>The store is the order's, never the request's: goods go back from where they were delivered.
+   * Each line is priced from the order's line for that variant, with VAT at the order's VAT code
+   * the way the order's own totals are, so the debit note and the invoice it offsets agree to the
+   * penny. What can go back is what was received less what already went back — the repository
+   * enforces that under the order's lock. The purchase order's status is untouched: what was
+   * received was received, and the three-way match still compares the invoice to it; the debit note
+   * is the offset.
+   *
+   * <p>Stock leaves through {@code ReturnedToVendor}, which inventory-svc consumes; on-hand at the
+   * store is checked first when inventory-svc can be reached, so a return for goods already sold is
+   * refused here rather than half-applied there.
+   *
+   * @param req what is going back and why
+   * @param ctx the caller; a warehouse or management role, assigned to the order's store
+   * @param idempotencyKey the caller's replay guard
+   * @return the return, numbered
+   * @throws ApiException {@code PURCHASE_RTV_REASON_UNKNOWN} (400); {@code PURCHASE_RTV_EMPTY}
+   *     (400); {@code PURCHASE_PO_NOT_FOUND} (404); {@code PURCHASE_RTV_NOTHING_RECEIVED} (409);
+   *     {@code PURCHASE_RTV_NOT_ON_ORDER}, {@code PURCHASE_RTV_OVER_RETURN}, {@code
+   *     PURCHASE_RTV_INSUFFICIENT_STOCK} (422)
+   */
+  public Domain.VendorReturn raiseVendorReturn(
+      RaiseVendorReturnRequest req, TenantContext ctx, String idempotencyKey) {
+    ctx.requireAnyRole(RETURN_ROLES);
+    UUID tenantId = ctx.requireTenantId();
+    String reason =
+        req.reason() == null ? "" : req.reason().trim().toUpperCase(java.util.Locale.ROOT);
+    if (!Domain.RETURN_REASONS.contains(reason)) {
+      throw ApiException.badRequest(
+          "PURCHASE_RTV_REASON_UNKNOWN",
+          "reason must be one of "
+              + new java.util.TreeSet<>(Domain.RETURN_REASONS)
+              + " — got: "
+              + req.reason());
+    }
+    if (req.lines() == null || req.lines().isEmpty()) {
+      throw ApiException.badRequest(
+          "PURCHASE_RTV_EMPTY", "a return must send at least one line back");
+    }
+    PurchaseOrder po = getPurchaseOrder(ctx, req.poId());
+    ctx.requireStoreAccess(po.storeId());
+    if (!Domain.PO_PARTIALLY_RECEIVED.equals(po.status())
+        && !Domain.PO_RECEIVED.equals(po.status())
+        && !Domain.PO_CLOSED.equals(po.status())) {
+      throw ApiException.conflict(
+          "PURCHASE_RTV_NOTHING_RECEIVED",
+          "goods can only go back against an order something was received on — this one is "
+              + po.status());
+    }
+    // The order's price per variant: what the debit note charges back.
+    java.util.Map<UUID, PurchaseOrderLine> priced = new java.util.HashMap<>();
+    for (PurchaseOrderLine l : repo.findPurchaseOrderLines(tenantId, po.id())) {
+      priced.putIfAbsent(l.variantId(), l);
+    }
+    java.util.Map<String, BigDecimal> vatRates = pricing.findVatRates(tenantId);
+    UUID returnId = Ids.newId();
+    List<Domain.VendorReturnLine> lines = new ArrayList<>();
+    BigDecimal net = BigDecimal.ZERO;
+    BigDecimal vat = BigDecimal.ZERO;
+    for (var lr : req.lines()) {
+      PurchaseOrderLine ordered = priced.get(lr.variantId());
+      if (ordered == null) {
+        throw ApiException.unprocessable(
+            "PURCHASE_RTV_NOT_ON_ORDER",
+            "variant " + lr.variantId() + " is not on this purchase order");
+      }
+      BigDecimal lineNet = Money.round(ordered.unitPrice().multiply(lr.qty()), po.currency());
+      BigDecimal rate =
+          vatRates.getOrDefault(
+              ordered.vatCode().toUpperCase(java.util.Locale.ROOT), BigDecimal.ZERO);
+      vat = vat.add(Money.round(lineNet.multiply(rate), po.currency()));
+      net = net.add(lineNet);
+      lines.add(
+          new Domain.VendorReturnLine(
+              Ids.newId(),
+              tenantId,
+              returnId,
+              lr.variantId(),
+              lr.qty(),
+              ordered.unitPrice(),
+              ordered.vatCode(),
+              lineNet,
+              Instant.now()));
+    }
+    // The order's own ceiling first — received less already returned — so a return that is both
+    // more than the order allows and more than the shelf holds is refused for the reason that
+    // matters; the repository re-checks the same ceiling under the order's lock. The live run
+    // found the shelf answering first.
+    java.util.Map<UUID, BigDecimal> returnable = new java.util.HashMap<>();
+    for (Domain.PurchaseOrderLineProgress p : repo.findLineProgress(tenantId, po.id())) {
+      returnable.put(p.variantId(), p.qtyReceived().subtract(p.qtyReturned()));
+    }
+    for (Domain.VendorReturnLine l : lines) {
+      BigDecimal ceiling = returnable.getOrDefault(l.variantId(), BigDecimal.ZERO);
+      if (l.qty().compareTo(ceiling) > 0) {
+        throw ApiException.unprocessable(
+            "PURCHASE_RTV_OVER_RETURN",
+            "variant "
+                + l.variantId()
+                + ": "
+                + l.qty().toPlainString()
+                + " to return against "
+                + ceiling.toPlainString()
+                + " received and not yet returned");
+      }
+    }
+    // What is on the shelf, when inventory-svc can say: a return of goods already sold is refused
+    // here, where the buyer can see it, rather than skipped line by line in the consumer.
+    for (Domain.VendorReturnLine l : lines) {
+      inventory
+          .onHand(tenantId, po.storeId(), l.variantId())
+          .filter(onHand -> onHand.compareTo(l.qty()) < 0)
+          .ifPresent(
+              onHand -> {
+                throw ApiException.unprocessable(
+                    "PURCHASE_RTV_INSUFFICIENT_STOCK",
+                    "variant "
+                        + l.variantId()
+                        + ": "
+                        + l.qty().toPlainString()
+                        + " to return but "
+                        + onHand.toPlainString()
+                        + " on hand at the store");
+              });
+    }
+    Domain.VendorReturn draft =
+        new Domain.VendorReturn(
+            returnId,
+            tenantId,
+            po.id(),
+            po.supplierId(),
+            po.storeId(),
+            Domain.RETURN_RAISED,
+            reason,
+            trimmed(req.notes()),
+            po.currency(),
+            net,
+            vat,
+            net.add(vat),
+            null,
+            Instant.now(),
+            ctx.userId(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            idempotencyKey != null && !idempotencyKey.isBlank() ? idempotencyKey : null);
+    return repo.createVendorReturn(
+        draft,
+        lines,
+        Events.returnedToVendor(tenantId, returnId, po.storeId(), po.id(), po.supplierId(), lines));
+  }
+
+  /**
+   * @param ctx the caller
+   * @param poId an order, or null for every return in the tenant
+   * @return the returns, newest first
+   * @throws ApiException {@code PURCHASE_PO_NOT_FOUND} (404) when the order is not this tenant's
+   */
+  public List<Domain.VendorReturn> listVendorReturns(TenantContext ctx, UUID poId) {
+    if (poId != null) {
+      getPurchaseOrder(ctx, poId);
+    }
+    return repo.findVendorReturns(ctx.requireTenantId(), poId);
+  }
+
+  /**
+   * @throws ApiException {@code PURCHASE_RTV_NOT_FOUND} (404) when the return is not this tenant's
+   */
+  public Domain.VendorReturn getVendorReturn(TenantContext ctx, UUID id) {
+    return repo.findVendorReturn(ctx.requireTenantId(), id)
+        .orElseThrow(
+            () -> ApiException.notFound("PURCHASE_RTV_NOT_FOUND", "No such return to vendor"));
+  }
+
+  /** The lines of a return this tenant owns. */
+  public List<Domain.VendorReturnLine> vendorReturnLines(TenantContext ctx, UUID id) {
+    getVendorReturn(ctx, id);
+    return repo.findVendorReturnLines(ctx.requireTenantId(), id);
+  }
+
+  /**
+   * Records the supplier's credit note against a return, closing it. Management only: matching
+   * money received to money owed is a finance decision, not a warehouse one.
+   *
+   * @throws ApiException {@code PURCHASE_RTV_NOT_FOUND} (404); {@code
+   *     PURCHASE_RTV_ALREADY_CREDITED} (409); {@code PURCHASE_CREDIT_DATE_INVALID} (400)
+   */
+  public Domain.VendorReturn recordCreditNote(
+      TenantContext ctx, UUID id, RecordCreditNoteRequest req) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
+    Domain.VendorReturn ret = getVendorReturn(ctx, id);
+    LocalDate date = Parsing.date(req.creditNoteDate(), "creditNoteDate");
+    BigDecimal amount = req.amount() == null ? ret.grossAmount() : req.amount();
+    boolean credited =
+        repo.creditVendorReturn(
+            ctx.requireTenantId(), id, req.creditNoteNumber().trim(), date, amount, ctx.userId());
+    if (!credited) {
+      throw ApiException.conflict(
+          "PURCHASE_RTV_ALREADY_CREDITED",
+          "this return already carries credit note " + ret.creditNoteNumber());
+    }
+    return getVendorReturn(ctx, id);
   }
 
   // ── Intercompany Invoices (Gap #20) ───────────────────────────────────────────

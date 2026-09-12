@@ -763,13 +763,19 @@ public class PurchaseRepository extends BaseOutboxRepository {
                 + "                   JOIN goods_receipts gr ON gr.id = grl.gr_id"
                 + "                  WHERE gr.tenant_id = l.tenant_id AND gr.po_id = ?"
                 + "                    AND grl.variant_id = l.variant_id), 0)::numeric(14,3)"
-                + "         AS qty_received"
+                + "         AS qty_received,"
+                + "       COALESCE((SELECT SUM(vrl.qty) FROM vendor_return_lines vrl"
+                + "                   JOIN vendor_returns vr ON vr.id = vrl.return_id"
+                + "                  WHERE vr.tenant_id = l.tenant_id AND vr.po_id = ?"
+                + "                    AND vrl.variant_id = l.variant_id), 0)::numeric(14,3)"
+                + "         AS qty_returned"
                 + "  FROM purchase_order_lines l"
                 + " WHERE l.tenant_id = ? AND l.po_id = ?"
                 + " GROUP BY l.tenant_id, l.variant_id")) {
       ps.setObject(1, poId);
-      ps.setObject(2, tenantId);
-      ps.setObject(3, poId);
+      ps.setObject(2, poId);
+      ps.setObject(3, tenantId);
+      ps.setObject(4, poId);
       try (ResultSet rs = ps.executeQuery()) {
         while (rs.next()) {
           BigDecimal ordered = rs.getBigDecimal("qty_ordered");
@@ -779,7 +785,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
                   rs.getObject("variant_id", UUID.class),
                   ordered,
                   received,
-                  ordered.subtract(received).max(BigDecimal.ZERO)));
+                  ordered.subtract(received).max(BigDecimal.ZERO),
+                  rs.getBigDecimal("qty_returned")));
         }
       }
     }
@@ -1387,5 +1394,315 @@ public class PurchaseRepository extends BaseOutboxRepository {
 
   private static OffsetDateTime toOdt(Instant instant) {
     return instant == null ? null : instant.atOffset(ZoneOffset.UTC);
+  }
+
+  // ── Return to vendor and debit note (07.8) ────────────────────────────────────
+
+  private static final String VR_COLUMNS =
+      "id, tenant_id, po_id, supplier_id, store_id, status, reason, notes, currency, net_amount,"
+          + " vat_amount, gross_amount, debit_note_number, raised_at, raised_by,"
+          + " credit_note_number, credit_note_date, credit_amount, credited_at, credited_by,"
+          + " idempotency_key";
+
+  /**
+   * Raises a return to vendor: the goods going back, and the debit note for their value.
+   *
+   * <p>Inside one transaction, under the purchase order's row lock: the order must have had
+   * something received against it; no variant may go back in a greater quantity than was received
+   * less what has already gone back; the debit note takes the next number in the tenant's series
+   * ({@code UPDATE … RETURNING} under the series row's lock, like a receipt number, so a rollback
+   * gives the number back); and the event that moves the stock is written with it.
+   *
+   * <p>Idempotent on the caller's key: a retried raise returns the return already recorded rather
+   * than sending the goods back twice.
+   *
+   * @param ret the return, its amounts already computed; the debit note number is taken here
+   * @param lines its lines
+   * @param event {@code ReturnedToVendor}, written in the same transaction
+   * @return the return as stored, numbered
+   */
+  public Domain.VendorReturn createVendorReturn(
+      Domain.VendorReturn ret, List<Domain.VendorReturnLine> lines, OutboxRow event) {
+    return inTx(
+        c -> {
+          if (ret.idempotencyKey() != null) {
+            Domain.VendorReturn existing =
+                findVendorReturnByKeyTx(c, ret.tenantId(), ret.idempotencyKey());
+            if (existing != null) {
+              return existing;
+            }
+          }
+          String status = lockPurchaseOrderStatusTx(c, ret.tenantId(), ret.poId());
+          if (status == null) {
+            throw ApiException.notFound("PURCHASE_PO_NOT_FOUND", "No such purchase order");
+          }
+          if (!Domain.PO_PARTIALLY_RECEIVED.equals(status)
+              && !Domain.PO_RECEIVED.equals(status)
+              && !Domain.PO_CLOSED.equals(status)) {
+            throw ApiException.conflict(
+                "PURCHASE_RTV_NOTHING_RECEIVED",
+                "goods can only go back against an order something was received on — this one"
+                    + " is "
+                    + status);
+          }
+          // Received less already returned, per variant: the ceiling on what can go back.
+          java.util.Map<UUID, BigDecimal> returnable = new java.util.HashMap<>();
+          for (PurchaseOrderLineProgress p : lineProgressTx(c, ret.tenantId(), ret.poId())) {
+            returnable.put(p.variantId(), p.qtyReceived().subtract(p.qtyReturned()));
+          }
+          for (Domain.VendorReturnLine l : lines) {
+            BigDecimal ceiling = returnable.get(l.variantId());
+            if (ceiling == null) {
+              throw ApiException.unprocessable(
+                  "PURCHASE_RTV_NOT_ON_ORDER",
+                  "variant " + l.variantId() + " is not on this purchase order");
+            }
+            if (l.qty().compareTo(ceiling) > 0) {
+              throw ApiException.unprocessable(
+                  "PURCHASE_RTV_OVER_RETURN",
+                  "variant "
+                      + l.variantId()
+                      + ": "
+                      + l.qty().toPlainString()
+                      + " to return against "
+                      + ceiling.toPlainString()
+                      + " received and not yet returned");
+            }
+          }
+          String number = nextDebitNoteNumberTx(c, ret.tenantId());
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO vendor_returns (id, tenant_id, po_id, supplier_id, store_id,"
+                      + " status, reason, notes, currency, net_amount, vat_amount, gross_amount,"
+                      + " debit_note_number, raised_at, raised_by, idempotency_key)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, ret.id());
+            ps.setObject(2, ret.tenantId());
+            ps.setObject(3, ret.poId());
+            ps.setObject(4, ret.supplierId());
+            ps.setObject(5, ret.storeId());
+            ps.setString(6, Domain.RETURN_RAISED);
+            ps.setString(7, ret.reason());
+            ps.setString(8, ret.notes());
+            ps.setString(9, ret.currency());
+            ps.setBigDecimal(10, ret.netAmount());
+            ps.setBigDecimal(11, ret.vatAmount());
+            ps.setBigDecimal(12, ret.grossAmount());
+            ps.setString(13, number);
+            ps.setObject(14, toOdt(ret.raisedAt()));
+            ps.setObject(15, ret.raisedBy());
+            ps.setString(16, ret.idempotencyKey());
+            ps.executeUpdate();
+          }
+          for (Domain.VendorReturnLine l : lines) {
+            try (var ps =
+                c.prepareStatement(
+                    "INSERT INTO vendor_return_lines (id, tenant_id, return_id, variant_id, qty,"
+                        + " unit_price, vat_code, line_net) VALUES (?,?,?,?,?,?,?,?)")) {
+              ps.setObject(1, l.id());
+              ps.setObject(2, l.tenantId());
+              ps.setObject(3, l.returnId());
+              ps.setObject(4, l.variantId());
+              ps.setBigDecimal(5, l.qty());
+              ps.setBigDecimal(6, l.unitPrice());
+              ps.setString(7, l.vatCode());
+              ps.setBigDecimal(8, l.lineNet());
+              ps.executeUpdate();
+            }
+          }
+          insertOutbox(c, event);
+          Domain.VendorReturn stored = findVendorReturnTx(c, ret.tenantId(), ret.id());
+          if (stored == null) {
+            throw new SQLException("vendor return vanished after insert");
+          }
+          return stored;
+        },
+        "raise vendor return");
+  }
+
+  /** The next debit note number for the tenant, opening the series on first use. */
+  private static String nextDebitNoteNumberTx(java.sql.Connection c, UUID tenantId)
+      throws SQLException {
+    try (var open =
+        c.prepareStatement(
+            "INSERT INTO debit_note_series (tenant_id, next_number) VALUES (?, 1)"
+                + " ON CONFLICT DO NOTHING")) {
+      open.setObject(1, tenantId);
+      open.executeUpdate();
+    }
+    try (var take =
+        c.prepareStatement(
+            "UPDATE debit_note_series SET next_number = next_number + 1 WHERE tenant_id = ?"
+                + " RETURNING next_number - 1")) {
+      take.setObject(1, tenantId);
+      try (ResultSet rs = take.executeQuery()) {
+        if (!rs.next()) {
+          throw new SQLException("debit note series vanished between open and take");
+        }
+        return String.format("DN-%06d", rs.getLong(1));
+      }
+    }
+  }
+
+  private static Domain.VendorReturn findVendorReturnByKeyTx(
+      java.sql.Connection c, UUID tenantId, String key) throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "SELECT "
+                + VR_COLUMNS
+                + " FROM vendor_returns WHERE tenant_id = ? AND idempotency_key = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setString(2, key);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? mapVendorReturn(rs) : null;
+      }
+    }
+  }
+
+  private static Domain.VendorReturn findVendorReturnTx(
+      java.sql.Connection c, UUID tenantId, UUID id) throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "SELECT " + VR_COLUMNS + " FROM vendor_returns WHERE tenant_id = ? AND id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, id);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? mapVendorReturn(rs) : null;
+      }
+    }
+  }
+
+  /**
+   * @param tenantId owning tenant; the first condition of the query
+   * @param id the return
+   * @return the return, or empty when it is not this tenant's
+   */
+  public Optional<Domain.VendorReturn> findVendorReturn(UUID tenantId, UUID id) {
+    List<Domain.VendorReturn> rows =
+        query(
+            "SELECT " + VR_COLUMNS + " FROM vendor_returns WHERE tenant_id = ? AND id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            PurchaseRepository::mapVendorReturn,
+            "find vendor return");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /**
+   * @param tenantId owning tenant; the first condition
+   * @param poId the order, or null for every return in the tenant
+   * @return the returns, newest first
+   */
+  public List<Domain.VendorReturn> findVendorReturns(UUID tenantId, UUID poId) {
+    if (poId == null) {
+      return query(
+          "SELECT "
+              + VR_COLUMNS
+              + " FROM vendor_returns WHERE tenant_id = ?"
+              + " ORDER BY raised_at DESC LIMIT 200",
+          ps -> ps.setObject(1, tenantId),
+          PurchaseRepository::mapVendorReturn,
+          "list vendor returns");
+    }
+    return query(
+        "SELECT "
+            + VR_COLUMNS
+            + " FROM vendor_returns WHERE tenant_id = ? AND po_id = ?"
+            + " ORDER BY raised_at DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, poId);
+        },
+        PurchaseRepository::mapVendorReturn,
+        "list vendor returns by po");
+  }
+
+  /** The lines of one return, in the order they were raised. */
+  public List<Domain.VendorReturnLine> findVendorReturnLines(UUID tenantId, UUID returnId) {
+    return query(
+        "SELECT id, tenant_id, return_id, variant_id, qty, unit_price, vat_code, line_net,"
+            + " created_at FROM vendor_return_lines WHERE tenant_id = ? AND return_id = ?"
+            + " ORDER BY created_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, returnId);
+        },
+        rs ->
+            new Domain.VendorReturnLine(
+                rs.getObject("id", UUID.class),
+                rs.getObject("tenant_id", UUID.class),
+                rs.getObject("return_id", UUID.class),
+                rs.getObject("variant_id", UUID.class),
+                rs.getBigDecimal("qty"),
+                rs.getBigDecimal("unit_price"),
+                rs.getString("vat_code"),
+                rs.getBigDecimal("line_net"),
+                rs.getObject("created_at", OffsetDateTime.class).toInstant()),
+        "list vendor return lines");
+  }
+
+  /**
+   * Records the supplier's credit note against a return, closing it. The state guard is in the
+   * UPDATE's WHERE clause: a return credited twice keeps the first credit note, and the second
+   * caller is told so.
+   *
+   * @return whether the return was RAISED and is now CREDITED
+   */
+  public boolean creditVendorReturn(
+      UUID tenantId,
+      UUID id,
+      String creditNoteNumber,
+      LocalDate creditNoteDate,
+      BigDecimal amount,
+      UUID creditedBy) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE vendor_returns SET status = ?, credit_note_number = ?,"
+                      + " credit_note_date = ?, credit_amount = ?, credited_at = now(),"
+                      + " credited_by = ? WHERE tenant_id = ? AND id = ? AND status = ?")) {
+            ps.setString(1, Domain.RETURN_CREDITED);
+            ps.setString(2, creditNoteNumber);
+            ps.setObject(3, creditNoteDate);
+            ps.setBigDecimal(4, amount);
+            ps.setObject(5, creditedBy);
+            ps.setObject(6, tenantId);
+            ps.setObject(7, id);
+            ps.setString(8, Domain.RETURN_RAISED);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "credit vendor return");
+  }
+
+  private static Domain.VendorReturn mapVendorReturn(ResultSet rs) throws SQLException {
+    OffsetDateTime raised = rs.getObject("raised_at", OffsetDateTime.class);
+    OffsetDateTime credited = rs.getObject("credited_at", OffsetDateTime.class);
+    LocalDate creditDate = rs.getObject("credit_note_date", LocalDate.class);
+    return new Domain.VendorReturn(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("po_id", UUID.class),
+        rs.getObject("supplier_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getString("status"),
+        rs.getString("reason"),
+        rs.getString("notes"),
+        rs.getString("currency"),
+        rs.getBigDecimal("net_amount"),
+        rs.getBigDecimal("vat_amount"),
+        rs.getBigDecimal("gross_amount"),
+        rs.getString("debit_note_number"),
+        raised == null ? null : raised.toInstant(),
+        rs.getObject("raised_by", UUID.class),
+        rs.getString("credit_note_number"),
+        creditDate,
+        rs.getBigDecimal("credit_amount"),
+        credited == null ? null : credited.toInstant(),
+        rs.getObject("credited_by", UUID.class),
+        rs.getString("idempotency_key"));
   }
 }

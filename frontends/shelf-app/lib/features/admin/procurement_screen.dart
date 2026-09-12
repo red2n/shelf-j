@@ -31,8 +31,10 @@ class ProcurementScreen extends ConsumerWidget {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-                  child: Text('Procurement',
-                      style: Theme.of(context).textTheme.headlineMedium),
+                  child: Text(
+                    'Procurement',
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
                 ),
                 const TabBar(
                   isScrollable: true,
@@ -111,8 +113,11 @@ class _SuppliersTab extends ConsumerWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.local_shipping_outlined,
-                          size: 64, color: cs.outlineVariant),
+                      Icon(
+                        Icons.local_shipping_outlined,
+                        size: 64,
+                        color: cs.outlineVariant,
+                      ),
                       const SizedBox(height: 12),
                       const Text('No suppliers yet'),
                     ],
@@ -129,17 +134,23 @@ class _SuppliersTab extends ConsumerWidget {
                     child: ListTile(
                       leading: CircleAvatar(
                         backgroundColor: cs.primaryContainer,
-                        child: Icon(Icons.local_shipping_outlined,
-                            color: cs.onPrimaryContainer),
+                        child: Icon(
+                          Icons.local_shipping_outlined,
+                          color: cs.onPrimaryContainer,
+                        ),
                       ),
-                      title: Text(s.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text([
-                        if (s.currency != null) s.currency,
-                        '${s.paymentTermsDays}d terms',
-                        if (s.vatRegistered) 'VAT ${s.vatNumber ?? 'reg'}',
-                        if (s.countryCode != null) s.countryCode,
-                      ].whereType<String>().join(' · ')),
+                      title: Text(
+                        s.name,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Text(
+                        [
+                          if (s.currency != null) s.currency,
+                          '${s.paymentTermsDays}d terms',
+                          if (s.vatRegistered) 'VAT ${s.vatNumber ?? 'reg'}',
+                          if (s.countryCode != null) s.countryCode,
+                        ].whereType<String>().join(' · '),
+                      ),
                       trailing: isManager
                           ? IconButton(
                               tooltip: 'Edit supplier',
@@ -180,7 +191,10 @@ class _SupplierInvoicesTab extends ConsumerWidget {
     return async.when(
       loading: () => const LoadingView(label: 'Loading invoices…'),
       error: (e, _) => ErrorView(
-        message: friendlyError(e, fallback: 'Could not load supplier invoices.'),
+        message: friendlyError(
+          e,
+          fallback: 'Could not load supplier invoices.',
+        ),
         onRetry: () => ref.invalidate(supplierInvoicesProvider),
       ),
       data: (invoices) {
@@ -189,19 +203,26 @@ class _SupplierInvoicesTab extends ConsumerWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.receipt_long_outlined, size: 64, color: cs.outlineVariant),
+                Icon(
+                  Icons.receipt_long_outlined,
+                  size: 64,
+                  color: cs.outlineVariant,
+                ),
                 const SizedBox(height: 12),
                 const Text('No supplier invoices yet'),
                 const SizedBox(height: 4),
-                Text('Capture one from a purchase order to match it',
-                    style: TextStyle(color: cs.outline, fontSize: 12)),
+                Text(
+                  'Capture one from a purchase order to match it',
+                  style: TextStyle(color: cs.outline, fontSize: 12),
+                ),
               ],
             ),
           );
         }
         // Flagged first: the whole point of the control is the exceptions, and a
         // list ordered by date buries them behind the ones nobody needs to read.
-        final sorted = [...invoices]..sort((a, b) {
+        final sorted = [...invoices]
+          ..sort((a, b) {
             if (a.flagged == b.flagged) return 0;
             return a.flagged ? -1 : 1;
           });
@@ -234,17 +255,24 @@ class _InvoiceCard extends StatelessWidget {
         ),
         title: Row(
           children: [
-            Text(invoice.invoiceNumber,
-                style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(
+              invoice.invoiceNumber,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(width: 8),
             _InvoiceStatusBadge(invoice.status),
           ],
         ),
-        subtitle: Text([
-          AppFormat.money(invoice.grossAmount, currencyCode: invoice.currency),
-          if (invoice.invoiceDate != null) invoice.invoiceDate!,
-          'PO ${_short(invoice.poId, 8)}',
-        ].join(' · ')),
+        subtitle: Text(
+          [
+            AppFormat.money(
+              invoice.grossAmount,
+              currencyCode: invoice.currency,
+            ),
+            if (invoice.invoiceDate != null) invoice.invoiceDate!,
+            'PO ${_short(invoice.poId, 8)}',
+          ].join(' · '),
+        ),
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -272,10 +300,19 @@ class _MatchHeaderRow extends StatelessWidget {
     return const Row(
       children: [
         Expanded(flex: 3, child: Text('Variant', style: style)),
-        Expanded(child: Text('Ordered', style: style, textAlign: TextAlign.right)),
-        Expanded(child: Text('Received', style: style, textAlign: TextAlign.right)),
-        Expanded(child: Text('Invoiced', style: style, textAlign: TextAlign.right)),
-        Expanded(flex: 2, child: Text('Price', style: style, textAlign: TextAlign.right)),
+        Expanded(
+          child: Text('Ordered', style: style, textAlign: TextAlign.right),
+        ),
+        Expanded(
+          child: Text('Received', style: style, textAlign: TextAlign.right),
+        ),
+        Expanded(
+          child: Text('Invoiced', style: style, textAlign: TextAlign.right),
+        ),
+        Expanded(
+          flex: 2,
+          child: Text('Price', style: style, textAlign: TextAlign.right),
+        ),
       ],
     );
   }
@@ -291,10 +328,11 @@ class _MatchRow extends StatelessWidget {
     final bad = !line.matched;
     final warn = context.status.warning;
     final num = TextStyle(
-        fontSize: 12,
-        fontFamily: 'monospace',
-        color: bad ? warn : null,
-        fontWeight: bad ? FontWeight.bold : null);
+      fontSize: 12,
+      fontFamily: 'monospace',
+      color: bad ? warn : null,
+      fontWeight: bad ? FontWeight.bold : null,
+    );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
@@ -303,18 +341,33 @@ class _MatchRow extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                  flex: 3,
-                  child: Text(_short(line.variantId, 14),
-                      style: const TextStyle(fontSize: 12, fontFamily: 'monospace'))),
+                flex: 3,
+                child: Text(
+                  _short(line.variantId, 14),
+                  style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                ),
+              ),
               Expanded(
-                  child: Text(_trim(line.qtyOrdered),
-                      style: num, textAlign: TextAlign.right)),
+                child: Text(
+                  _trim(line.qtyOrdered),
+                  style: num,
+                  textAlign: TextAlign.right,
+                ),
+              ),
               Expanded(
-                  child: Text(_trim(line.qtyReceived),
-                      style: num, textAlign: TextAlign.right)),
+                child: Text(
+                  _trim(line.qtyReceived),
+                  style: num,
+                  textAlign: TextAlign.right,
+                ),
+              ),
               Expanded(
-                  child: Text(_trim(line.qtyInvoiced),
-                      style: num, textAlign: TextAlign.right)),
+                child: Text(
+                  _trim(line.qtyInvoiced),
+                  style: num,
+                  textAlign: TextAlign.right,
+                ),
+              ),
               Expanded(
                 flex: 2,
                 child: Text(
@@ -365,10 +418,17 @@ class _VarianceChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-          color: warn.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(10)),
-      child: Text(_labels[code] ?? code,
-          style: TextStyle(fontSize: 11, color: warn, fontWeight: FontWeight.w600)),
+        color: warn.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        _labels[code] ?? code,
+        style: TextStyle(
+          fontSize: 11,
+          color: warn,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 }
@@ -384,9 +444,13 @@ class _InvoiceStatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-          color: fg.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(12)),
-      child: Text(status,
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
+        color: fg.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        status,
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg),
+      ),
     );
   }
 }
@@ -414,7 +478,13 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
   bool _loading = false;
   String? _error;
 
-  static const _countries = {'IN': 'India', 'US': 'USA', 'GB': 'UK', 'SG': 'Singapore', 'AE': 'UAE'};
+  static const _countries = {
+    'IN': 'India',
+    'US': 'USA',
+    'GB': 'UK',
+    'SG': 'Singapore',
+    'AE': 'UAE',
+  };
   static const _currencies = ['INR', 'USD', 'GBP', 'SGD', 'AED'];
 
   bool get _editing => widget.existing != null;
@@ -422,16 +492,17 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
   /// The picker's choices, plus whatever the supplier already has — a JPY
   /// supplier must open in JPY, not in the first currency on the list.
   List<DropdownMenuItem<String>> _countryItems() => [
-        for (final e in _countries.entries) DropdownMenuItem(value: e.key, child: Text(e.value)),
-        if (!_countries.containsKey(_country))
-          DropdownMenuItem(value: _country, child: Text(_country)),
-      ];
+    for (final e in _countries.entries)
+      DropdownMenuItem(value: e.key, child: Text(e.value)),
+    if (!_countries.containsKey(_country))
+      DropdownMenuItem(value: _country, child: Text(_country)),
+  ];
 
   List<DropdownMenuItem<String>> _currencyItems() => [
-        for (final c in _currencies) DropdownMenuItem(value: c, child: Text(c)),
-        if (!_currencies.contains(_currency))
-          DropdownMenuItem(value: _currency, child: Text(_currency)),
-      ];
+    for (final c in _currencies) DropdownMenuItem(value: c, child: Text(c)),
+    if (!_currencies.contains(_currency))
+      DropdownMenuItem(value: _currency, child: Text(_currency)),
+  ];
 
   @override
   void initState() {
@@ -472,7 +543,10 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
         'paymentTermsDays': int.tryParse(_termsCtrl.text.trim()) ?? 30,
       };
       if (_editing) {
-        await dio.put('/${ApiConstants.purchase}/suppliers/${widget.existing!.id}', data: data);
+        await dio.put(
+          '/${ApiConstants.purchase}/suppliers/${widget.existing!.id}',
+          data: data,
+        );
       } else {
         await dio.post('/${ApiConstants.purchase}/suppliers', data: data);
       }
@@ -480,12 +554,19 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
       ref.invalidate(suppliersProvider);
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_editing ? 'Supplier updated.' : 'Supplier added.')));
+        SnackBar(
+          content: Text(_editing ? 'Supplier updated.' : 'Supplier added.'),
+        ),
+      );
     } catch (e) {
       setState(() {
         _loading = false;
-        _error = friendlyError(e,
-            fallback: _editing ? 'Could not update supplier.' : 'Could not add supplier.');
+        _error = friendlyError(
+          e,
+          fallback: _editing
+              ? 'Could not update supplier.'
+              : 'Could not add supplier.',
+        );
       });
     }
   }
@@ -511,8 +592,10 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                       color: cs.errorContainer,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text(_error!,
-                        style: TextStyle(color: cs.onErrorContainer)),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: cs.onErrorContainer),
+                    ),
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -540,7 +623,9 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                     Expanded(
                       child: DropdownButtonFormField<String>(
                         initialValue: _currency,
-                        decoration: const InputDecoration(labelText: 'Currency'),
+                        decoration: const InputDecoration(
+                          labelText: 'Currency',
+                        ),
                         items: _currencyItems(),
                         onChanged: (v) => setState(() => _currency = v!),
                       ),
@@ -581,11 +666,14 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ?  SizedBox(
+              ? SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
+                    strokeWidth: 2,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                )
               : Text(_editing ? 'Save' : 'Add'),
         ),
       ],
@@ -609,8 +697,10 @@ class _PurchaseOrdersTab extends ConsumerWidget {
           child: async.when(
             loading: () => const LoadingView(label: 'Loading purchase orders…'),
             error: (e, _) => ErrorView(
-              message:
-                  friendlyError(e, fallback: 'Could not load purchase orders.'),
+              message: friendlyError(
+                e,
+                fallback: 'Could not load purchase orders.',
+              ),
               onRetry: () => ref.invalidate(purchaseOrdersProvider),
             ),
             data: (pos) {
@@ -619,8 +709,11 @@ class _PurchaseOrdersTab extends ConsumerWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.receipt_long_outlined,
-                          size: 64, color: cs.outlineVariant),
+                      Icon(
+                        Icons.receipt_long_outlined,
+                        size: 64,
+                        color: cs.outlineVariant,
+                      ),
                       const SizedBox(height: 12),
                       const Text('No purchase orders yet'),
                     ],
@@ -641,23 +734,31 @@ class _PurchaseOrdersTab extends ConsumerWidget {
                       ),
                       leading: CircleAvatar(
                         backgroundColor: cs.secondaryContainer,
-                        child: Icon(Icons.receipt_long_outlined,
-                            color: cs.onSecondaryContainer),
+                        child: Icon(
+                          Icons.receipt_long_outlined,
+                          color: cs.onSecondaryContainer,
+                        ),
                       ),
                       title: Row(
                         children: [
-                          Text('#${_short(po.id)}',
-                              style: const TextStyle(fontFamily: 'monospace')),
+                          Text(
+                            '#${_short(po.id)}',
+                            style: const TextStyle(fontFamily: 'monospace'),
+                          ),
                           const SizedBox(width: 8),
                           _PoStatusBadge(po.status),
                         ],
                       ),
-                      subtitle: Text([
-                        AppFormat.money(po.totalGross,
-                            currencyCode: po.currency),
-                        if (po.expectedDelivery != null)
-                          'ETA ${po.expectedDelivery}',
-                      ].join(' · ')),
+                      subtitle: Text(
+                        [
+                          AppFormat.money(
+                            po.totalGross,
+                            currencyCode: po.currency,
+                          ),
+                          if (po.expectedDelivery != null)
+                            'ETA ${po.expectedDelivery}',
+                        ].join(' · '),
+                      ),
                       trailing: const Icon(Icons.chevron_right),
                     ),
                   );
@@ -696,17 +797,19 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
       _error = null;
     });
     try {
-      final resp = await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.purchase}/purchase-orders',
-        data: {
-          'supplierId': _supplierId,
-          'storeId': _storeId,
-          'currency': _currency,
-          if (_eta != null)
-            'expectedDelivery':
-                _eta!.toIso8601String().split('T').first,
-        },
-      );
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.purchase}/purchase-orders',
+            data: {
+              'supplierId': _supplierId,
+              'storeId': _storeId,
+              'currency': _currency,
+              if (_eta != null)
+                'expectedDelivery': _eta!.toIso8601String().split('T').first,
+            },
+          );
       final po = resp.data['data'] as Map<String, dynamic>;
       if (!mounted) return;
       ref.invalidate(purchaseOrdersProvider);
@@ -744,16 +847,19 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
                   color: cs.errorContainer,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child:
-                    Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: cs.onErrorContainer),
+                ),
               ),
               const SizedBox(height: 12),
             ],
             suppliersAsync.when(
               loading: () => const LinearProgressIndicator(),
               error: (e, _) => Text(
-                  friendlyError(e, fallback: 'Could not load suppliers.'),
-                  style: TextStyle(color: cs.error)),
+                friendlyError(e, fallback: 'Could not load suppliers.'),
+                style: TextStyle(color: cs.error),
+              ),
               data: (suppliers) => DropdownButtonFormField<String>(
                 initialValue: _supplierId,
                 isExpanded: true,
@@ -773,13 +879,15 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
             storesAsync.when(
               loading: () => const LinearProgressIndicator(),
               error: (e, _) => Text(
-                  friendlyError(e, fallback: 'Could not load stores.'),
-                  style: TextStyle(color: cs.error)),
+                friendlyError(e, fallback: 'Could not load stores.'),
+                style: TextStyle(color: cs.error),
+              ),
               data: (stores) => DropdownButtonFormField<String>(
                 initialValue: _storeId,
                 isExpanded: true,
-                decoration:
-                    const InputDecoration(labelText: 'Deliver to store *'),
+                decoration: const InputDecoration(
+                  labelText: 'Deliver to store *',
+                ),
                 items: [
                   for (final s in stores)
                     DropdownMenuItem(value: s.id, child: Text(s.name)),
@@ -804,9 +912,11 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.event_outlined),
-              title: Text(_eta == null
-                  ? 'Expected delivery (optional)'
-                  : 'ETA ${_eta!.toIso8601String().split('T').first}'),
+              title: Text(
+                _eta == null
+                    ? 'Expected delivery (optional)'
+                    : 'ETA ${_eta!.toIso8601String().split('T').first}',
+              ),
               trailing: const Icon(Icons.edit_calendar_outlined),
               onTap: () async {
                 final now = DateTime.now();
@@ -830,11 +940,14 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ?  SizedBox(
+              ? SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
+                    strokeWidth: 2,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                )
               : const Text('Create'),
         ),
       ],
@@ -867,11 +980,17 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
     final isDraft = status == 'DRAFT';
     // Receivable is now two states, not "anything that isn't a draft". The button used to offer
     // itself on a CANCELLED or already-RECEIVED order, which could only ever end in a 400.
-    final isReceivable = status == 'SUBMITTED' || status == 'PARTIALLY_RECEIVED';
+    final isReceivable =
+        status == 'SUBMITTED' || status == 'PARTIALLY_RECEIVED';
     final isPartial = status == 'PARTIALLY_RECEIVED';
     // Above the raiser's own spend authority: nobody entitled to commit this much has agreed yet,
     // and until they do the supplier has not been sent anything.
     final isPendingApproval = status == 'PENDING_APPROVAL';
+    // Goods can go back once something arrived: received, partly received, or short-closed.
+    final isReturnable =
+        status == 'RECEIVED' ||
+        status == 'PARTIALLY_RECEIVED' ||
+        status == 'CLOSED';
     final progressAsync = isDraft
         ? const AsyncValue<List<PurchaseOrderLineProgress>>.data([])
         : ref.watch(purchaseOrderProgressProvider(poId));
@@ -887,8 +1006,10 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
       content: SizedBox(
         width: 480,
         child: linesAsync.when(
-          loading: () =>
-              const SizedBox(height: 140, child: LoadingView(label: 'Loading…')),
+          loading: () => const SizedBox(
+            height: 140,
+            child: LoadingView(label: 'Loading…'),
+          ),
           error: (e, _) => SizedBox(
             height: 140,
             child: ErrorView(
@@ -903,8 +1024,10 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
               if (lines.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  child: Text('No lines yet.',
-                      style: TextStyle(color: cs.outline)),
+                  child: Text(
+                    'No lines yet.',
+                    style: TextStyle(color: cs.outline),
+                  ),
                 )
               else
                 ConstrainedBox(
@@ -913,39 +1036,55 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                     shrinkWrap: true,
                     children: [
                       for (final l in lines)
-                        Builder(builder: (context) {
-                          final p = progress
-                              .where((x) => x.variantId == l.variantId)
-                              .firstOrNull;
-                          final owed = p?.qtyOutstanding ?? 0;
-                          return ListTile(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(_short(l.variantId, 14),
+                        Builder(
+                          builder: (context) {
+                            final p = progress
+                                .where((x) => x.variantId == l.variantId)
+                                .firstOrNull;
+                            final owed = p?.qtyOutstanding ?? 0;
+                            return ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                _short(l.variantId, 14),
                                 style: const TextStyle(
-                                    fontFamily: 'monospace', fontSize: 12)),
-                            subtitle: Text([
-                              // The unit price is shown at its own precision, not the
-                              // currency's: a trade price of 0.0125 per screw is ordinary, and
-                              // rounding it to the penny here would misreport the line by 25%.
-                              '${l.qty.toStringAsFixed(0)} × ${_trim(l.unitPrice)}',
-                              if (l.vatCode != null) l.vatCode!,
-                              // What is still owed, which the status alone cannot say.
-                              if (p != null && owed > 0)
-                                '${owed.toStringAsFixed(0)} outstanding',
-                              if (p != null && owed == 0 && !isDraft) 'complete',
-                            ].join(' · '),
+                                  fontFamily: 'monospace',
+                                  fontSize: 12,
+                                ),
+                              ),
+                              subtitle: Text(
+                                [
+                                  // The unit price is shown at its own precision, not the
+                                  // currency's: a trade price of 0.0125 per screw is ordinary, and
+                                  // rounding it to the penny here would misreport the line by 25%.
+                                  '${l.qty.toStringAsFixed(0)} × ${_trim(l.unitPrice)}',
+                                  if (l.vatCode != null) l.vatCode!,
+                                  // What is still owed, which the status alone cannot say.
+                                  if (p != null && owed > 0)
+                                    '${owed.toStringAsFixed(0)} outstanding',
+                                  if (p != null && owed == 0 && !isDraft)
+                                    'complete',
+                                  if (p != null && p.qtyReturned > 0)
+                                    '${p.qtyReturned.toStringAsFixed(0)} returned',
+                                ].join(' · '),
                                 style: TextStyle(
-                                    color: owed > 0
-                                        ? context.status.warning
-                                        : null)),
-                            trailing: Text(
-                                AppFormat.money(l.qty * l.unitPrice,
-                                    currencyCode: po?.currency),
+                                  color: owed > 0
+                                      ? context.status.warning
+                                      : null,
+                                ),
+                              ),
+                              trailing: Text(
+                                AppFormat.money(
+                                  l.qty * l.unitPrice,
+                                  currencyCode: po?.currency,
+                                ),
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
-                          );
-                        }),
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                     ],
                   ),
                 ),
@@ -956,9 +1095,9 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                     const Text('Total (gross)'),
                     const Spacer(),
                     Text(
-                        AppFormat.money(po.totalGross,
-                            currencyCode: po.currency),
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                      AppFormat.money(po.totalGross, currencyCode: po.currency),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ],
                 ),
               const SizedBox(height: 8),
@@ -971,6 +1110,8 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                   icon: const Icon(Icons.add),
                   label: const Text('Add line'),
                 ),
+              if (isReturnable)
+                _VendorReturnsSection(poId: poId, currency: po?.currency),
             ],
           ),
         ),
@@ -1015,6 +1156,17 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
               icon: const Icon(Icons.do_not_disturb_on_outlined, size: 18),
               label: const Text('Close short'),
             ),
+          if (isReturnable)
+            TextButton.icon(
+              key: const Key('po-return-to-vendor'),
+              onPressed: () => showDialog(
+                context: context,
+                builder: (_) =>
+                    _ReturnToVendorDialog(poId: poId, currency: po?.currency),
+              ),
+              icon: const Icon(Icons.undo_outlined, size: 18),
+              label: const Text('Return to vendor'),
+            ),
           if (isReceivable)
             FilledButton.icon(
               onPressed: po == null
@@ -1023,8 +1175,10 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
                       Navigator.pop(context);
                       showDialog(
                         context: context,
-                        builder: (_) =>
-                            _ReceiveGoodsDialog(poId: poId, storeId: po.storeId),
+                        builder: (_) => _ReceiveGoodsDialog(
+                          poId: poId,
+                          storeId: po.storeId,
+                        ),
                       );
                     },
               icon: const Icon(Icons.inventory_outlined, size: 18),
@@ -1050,17 +1204,24 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
       // than assuming. Telling a buyer their order went to the supplier when it is actually
       // waiting for a manager is the one thing this screen must not do.
       final held = (resp.data['data'] as Map?)?['status'] == 'PENDING_APPROVAL';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(held
-              ? 'Above your spend authority — sent for approval.'
-              : 'Purchase order submitted.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            held
+                ? 'Above your spend authority — sent for approval.'
+                : 'Purchase order submitted.',
+          ),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(friendlyError(e, fallback: 'Could not submit PO.')),
-        backgroundColor: Theme.of(context).colorScheme.error,
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(friendlyError(e, fallback: 'Could not submit PO.')),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
     }
   }
 
@@ -1076,16 +1237,23 @@ class _PoDetailDialogState extends ConsumerState<_PoDetailDialog> {
       if (!context.mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Approved — the order is with the supplier.')));
+        const SnackBar(
+          content: Text('Approved — the order is with the supplier.'),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
       // The server's own message names both figures and the currency, which is the only useful
       // thing to show someone whose authority fell short — so it is surfaced rather than replaced.
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(friendlyError(e, fallback: 'Could not approve this order.')),
-        backgroundColor: Theme.of(context).colorScheme.error,
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyError(e, fallback: 'Could not approve this order.'),
+          ),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
     }
   }
 }
@@ -1125,15 +1293,21 @@ class _RejectPoDialogState extends ConsumerState<_RejectPoDialog> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.purchase}/purchase-orders/${widget.poId}/reject',
-        data: {'reason': reason},
-      );
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.purchase}/purchase-orders/${widget.poId}/reject',
+            data: {'reason': reason},
+          );
       if (!mounted) return;
       ref.invalidate(purchaseOrdersProvider);
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Rejected — the order is back with the buyer.')));
+        const SnackBar(
+          content: Text('Rejected — the order is back with the buyer.'),
+        ),
+      );
     } catch (e) {
       setState(() {
         _loading = false;
@@ -1153,8 +1327,9 @@ class _RejectPoDialogState extends ConsumerState<_RejectPoDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-                'The order goes back to DRAFT so it can be corrected and resubmitted. The '
-                'rejection stays in its approval history either way.'),
+              'The order goes back to DRAFT so it can be corrected and resubmitted. The '
+              'rejection stays in its approval history either way.',
+            ),
             const SizedBox(height: 12),
             TextField(
               controller: _reasonCtrl,
@@ -1168,18 +1343,23 @@ class _RejectPoDialogState extends ConsumerState<_RejectPoDialog> {
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text(_error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ],
           ],
         ),
       ),
       actions: [
         TextButton(
-            onPressed: _loading ? null : () => Navigator.pop(context),
-            child: const Text('Cancel')),
+          onPressed: _loading ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
-            onPressed: _loading ? null : _submit, child: const Text('Reject')),
+          onPressed: _loading ? null : _submit,
+          child: const Text('Reject'),
+        ),
       ],
     );
   }
@@ -1219,7 +1399,10 @@ class _CloseShortDialogState extends ConsumerState<_CloseShortDialog> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.post(
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
             '/${ApiConstants.purchase}/purchase-orders/${widget.poId}/close',
             data: {'reason': _reasonCtrl.text.trim()},
           );
@@ -1269,11 +1452,13 @@ class _CloseShortDialogState extends ConsumerState<_CloseShortDialog> {
       ),
       actions: [
         TextButton(
-            onPressed: _saving ? null : () => Navigator.pop(context),
-            child: const Text('Cancel')),
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
-            onPressed: _saving ? null : _submit,
-            child: Text(_saving ? 'Closing…' : 'Close short')),
+          onPressed: _saving ? null : _submit,
+          child: Text(_saving ? 'Closing…' : 'Close short'),
+        ),
       ],
     );
   }
@@ -1306,7 +1491,11 @@ class _AddPoLineDialogState extends ConsumerState<_AddPoLineDialog> {
   Future<void> _submit() async {
     final qty = double.tryParse(_qtyCtrl.text.trim());
     final price = double.tryParse(_priceCtrl.text.trim());
-    if (_variantId == null || qty == null || qty <= 0 || price == null || price <= 0) {
+    if (_variantId == null ||
+        qty == null ||
+        qty <= 0 ||
+        price == null ||
+        price <= 0) {
       setState(() => _error = 'Pick a variant and enter qty + unit price.');
       return;
     }
@@ -1315,15 +1504,18 @@ class _AddPoLineDialogState extends ConsumerState<_AddPoLineDialog> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.purchase}/purchase-orders/${widget.poId}/lines',
-        data: {
-          'variantId': _variantId,
-          'qty': qty,
-          'unitPrice': price,
-          'vatCode': _vatCode,
-        },
-      );
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.purchase}/purchase-orders/${widget.poId}/lines',
+            data: {
+              'variantId': _variantId,
+              'qty': qty,
+              'unitPrice': price,
+              'vatCode': _vatCode,
+            },
+          );
       if (!mounted) return;
       ref.invalidate(purchaseOrderLinesProvider(widget.poId));
       ref.invalidate(purchaseOrdersProvider);
@@ -1359,7 +1551,10 @@ class _AddPoLineDialogState extends ConsumerState<_AddPoLineDialog> {
                           height: 18,
                           width: 18,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: cs.onPrimary))
+                            strokeWidth: 2,
+                            color: cs.onPrimary,
+                          ),
+                        )
                       : const Text('Add line'),
                 ),
               ),
@@ -1372,69 +1567,513 @@ class _AddPoLineDialogState extends ConsumerState<_AddPoLineDialog> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 480),
               child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (_error != null) ...[
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: cs.errorContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child:
-                    Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
-              ),
-              const SizedBox(height: 12),
-            ],
-            VariantPicker(
-              productId: _productId,
-              variantId: _variantId,
-              onProduct: (p) => setState(() {
-                _productId = p;
-                _variantId = null;
-              }),
-              onVariant: (v) => setState(() => _variantId = v),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _qtyCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Qty'),
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_error != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: cs.errorContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        _error!,
+                        style: TextStyle(color: cs.onErrorContainer),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  VariantPicker(
+                    productId: _productId,
+                    variantId: _variantId,
+                    onProduct: (p) => setState(() {
+                      _productId = p;
+                      _variantId = null;
+                    }),
+                    onVariant: (v) => setState(() => _variantId = v),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _priceCtrl,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(labelText: 'Unit cost'),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _qtyCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Qty'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _priceCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Unit cost',
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _vatCode,
-              decoration: const InputDecoration(labelText: 'VAT code'),
-              items: const [
-                DropdownMenuItem(value: 'STANDARD', child: Text('Standard')),
-                DropdownMenuItem(value: 'REDUCED', child: Text('Reduced')),
-                DropdownMenuItem(value: 'ZERO', child: Text('Zero')),
-                DropdownMenuItem(value: 'EXEMPT', child: Text('Exempt')),
-              ],
-              onChanged: (v) => setState(() => _vatCode = v!),
-            ),
-          ],
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _vatCode,
+                    decoration: const InputDecoration(labelText: 'VAT code'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'STANDARD',
+                        child: Text('Standard'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'REDUCED',
+                        child: Text('Reduced'),
+                      ),
+                      DropdownMenuItem(value: 'ZERO', child: Text('Zero')),
+                      DropdownMenuItem(value: 'EXEMPT', child: Text('Exempt')),
+                    ],
+                    onChanged: (v) => setState(() => _vatCode = v!),
+                  ),
+                ],
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The returns raised against an order, each with its debit note and, once the
+/// supplier has answered, its credit note (07.8). A manager records the credit
+/// note here; nothing edits or deletes a return.
+class _VendorReturnsSection extends ConsumerWidget {
+  const _VendorReturnsSection({required this.poId, this.currency});
+  final String poId;
+  final String? currency;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final returns = ref.watch(vendorReturnsProvider(poId));
+    return returns.when(
+      loading: () => const SizedBox.shrink(),
+      error: (e, _) => Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(
+          friendlyError(e, fallback: 'Could not load returns.'),
+          style: TextStyle(color: cs.error, fontSize: 12),
+        ),
+      ),
+      data: (rows) => rows.isEmpty
+          ? const SizedBox.shrink()
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Divider(),
+                Text(
+                  'Returned to vendor',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                for (final r in rows)
+                  ListTile(
+                    key: Key('vendor-return-${r.id}'),
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      r.credited
+                          ? Icons.check_circle_outline
+                          : Icons.undo_outlined,
+                      color: r.credited ? cs.primary : cs.tertiary,
+                    ),
+                    title: Text(
+                      '${r.debitNoteNumber} · ${vendorReturnReasons[r.reason] ?? r.reason}',
+                    ),
+                    subtitle: Text(
+                      [
+                        for (final l in r.lines)
+                          '${_trim(l.qty)} × ${_trim(l.unitPrice)}',
+                        r.credited
+                            ? 'credit note ${r.creditNoteNumber} · ${r.creditNoteDate}'
+                            : "awaiting the supplier's credit note",
+                      ].join(' · '),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          AppFormat.money(
+                            r.grossAmount,
+                            currencyCode: currency,
+                          ),
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        if (!r.credited)
+                          TextButton(
+                            key: Key('vendor-return-credit-${r.id}'),
+                            onPressed: () => showDialog(
+                              context: context,
+                              builder: (_) => _RecordCreditNoteDialog(
+                                ret: r,
+                                currency: currency,
+                              ),
+                            ),
+                            child: const Text('Credit note'),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+    );
+  }
+}
+
+/// Sends goods back against a received order (07.8): what and how many, and
+/// why. The server prices the debit note at the order's own prices and refuses
+/// more than was received less what already went back.
+class _ReturnToVendorDialog extends ConsumerStatefulWidget {
+  final String poId;
+  final String? currency;
+  const _ReturnToVendorDialog({required this.poId, this.currency});
+
+  @override
+  ConsumerState<_ReturnToVendorDialog> createState() =>
+      _ReturnToVendorDialogState();
+}
+
+class _ReturnToVendorDialogState extends ConsumerState<_ReturnToVendorDialog> {
+  final Map<String, double> _qty = {};
+  String _reason = 'DAMAGED';
+  final _notes = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _notes.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final lines = [
+      for (final e in _qty.entries)
+        if (e.value > 0) {'variantId': e.key, 'qty': e.value},
+    ];
+    if (lines.isEmpty) {
+      setState(() => _error = 'Enter at least one quantity to send back.');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.purchase}/vendor-returns',
+            data: {
+              'poId': widget.poId,
+              'reason': _reason,
+              if (_notes.text.trim().isNotEmpty) 'notes': _notes.text.trim(),
+              'lines': lines,
+            },
+          );
+      if (!mounted) return;
+      ref.invalidate(vendorReturnsProvider(widget.poId));
+      ref.invalidate(purchaseOrderProgressProvider(widget.poId));
+      Navigator.pop(context);
+      final number = (resp.data['data'] as Map?)?['debitNoteNumber'];
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Goods returned — debit note $number raised.')),
+      );
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = friendlyError(e, fallback: 'Could not raise the return.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final progressAsync = ref.watch(purchaseOrderProgressProvider(widget.poId));
+    return AlertDialog(
+      title: const Text('Return to vendor'),
+      content: SizedBox(
+        width: 460,
+        child: progressAsync.when(
+          loading: () => const SizedBox(
+            height: 120,
+            child: LoadingView(label: 'Loading…'),
+          ),
+          error: (e, _) => SizedBox(
+            height: 120,
+            child: ErrorView(
+              message: friendlyError(
+                e,
+                fallback: 'Could not load what was received.',
+              ),
+              onRetry: () =>
+                  ref.invalidate(purchaseOrderProgressProvider(widget.poId)),
+            ),
+          ),
+          data: (progress) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_error != null) ...[
+                Container(
+                  key: const Key('rtv-error'),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: cs.errorContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: cs.onErrorContainer),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              DropdownButtonFormField<String>(
+                key: const Key('rtv-reason'),
+                initialValue: _reason,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Reason'),
+                items: [
+                  for (final e in vendorReturnReasons.entries)
+                    DropdownMenuItem(value: e.key, child: Text(e.value)),
+                ],
+                onChanged: (v) => setState(() => _reason = v ?? 'DAMAGED'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Quantity to send back',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              const SizedBox(height: 4),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 220),
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final p in progress)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _short(p.variantId, 14),
+                                    style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    'received ${_trim(p.qtyReceived)} · returned ${_trim(p.qtyReturned)} · '
+                                    'up to ${_trim(p.qtyReturnable)} can go back',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: cs.outline,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            SizedBox(
+                              width: 90,
+                              child: TextField(
+                                key: Key('rtv-qty-${p.variantId}'),
+                                enabled: p.qtyReturnable > 0,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  hintText: '0',
+                                ),
+                                onChanged: (v) =>
+                                    _qty[p.variantId] = double.tryParse(v) ?? 0,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              TextField(
+                key: const Key('rtv-notes'),
+                controller: _notes,
+                decoration: const InputDecoration(
+                  labelText: 'Notes',
+                  hintText: 'e.g. three cases crushed in transit',
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "The debit note is priced at the order's prices. Stock leaves the store when the return is raised; the purchase order itself is unchanged.",
+                style: TextStyle(fontSize: 12, color: cs.outline),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          key: const Key('rtv-submit'),
+          onPressed: _loading ? null : _submit,
+          icon: const Icon(Icons.undo_outlined, size: 18),
+          label: const Text('Send back'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Records the supplier's credit note against a return, closing it.
+class _RecordCreditNoteDialog extends ConsumerStatefulWidget {
+  final VendorReturn ret;
+  final String? currency;
+  const _RecordCreditNoteDialog({required this.ret, this.currency});
+
+  @override
+  ConsumerState<_RecordCreditNoteDialog> createState() =>
+      _RecordCreditNoteDialogState();
+}
+
+class _RecordCreditNoteDialogState
+    extends ConsumerState<_RecordCreditNoteDialog> {
+  final _number = TextEditingController();
+  final _date = TextEditingController(
+    text: DateTime.now().toIso8601String().split('T').first,
+  );
+  late final TextEditingController _amount = TextEditingController(
+    text: widget.ret.grossAmount.toStringAsFixed(2),
+  );
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _number.dispose();
+    _date.dispose();
+    _amount.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.purchase}/vendor-returns/${widget.ret.id}/credit',
+            data: {
+              'creditNoteNumber': _number.text.trim(),
+              'creditNoteDate': _date.text.trim(),
+              if (_amount.text.trim().isNotEmpty)
+                'amount': double.tryParse(_amount.text.trim()),
+            },
+          );
+      if (!mounted) return;
+      ref.invalidate(vendorReturnsProvider(widget.ret.poId));
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Credit note recorded against ${widget.ret.debitNoteNumber}.',
+          ),
+        ),
+      );
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = friendlyError(
+          e,
+          fallback: 'Could not record the credit note.',
+        );
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Credit note for ${widget.ret.debitNoteNumber}'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              key: const Key('credit-number'),
+              controller: _number,
+              decoration: const InputDecoration(
+                labelText: 'Credit note number',
+              ),
+            ),
+            TextField(
+              key: const Key('credit-date'),
+              controller: _date,
+              decoration: const InputDecoration(
+                labelText: 'Credit note date',
+                helperText: 'YYYY-MM-DD',
+              ),
+            ),
+            TextField(
+              key: const Key('credit-amount'),
+              controller: _amount,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: InputDecoration(
+                labelText: 'Amount credited',
+                helperText:
+                    'The debit note asked for ${AppFormat.money(widget.ret.grossAmount, currencyCode: widget.currency)}',
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                key: const Key('credit-error'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('credit-submit'),
+          onPressed: _loading ? null : _submit,
+          child: const Text('Record'),
+        ),
+      ],
     );
   }
 }
@@ -1472,14 +2111,17 @@ class _ReceiveGoodsDialogState extends ConsumerState<_ReceiveGoodsDialog> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.purchase}/goods-receipts',
-        data: {
-          'poId': widget.poId,
-          'storeId': widget.storeId,
-          'lines': received,
-        },
-      );
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.purchase}/goods-receipts',
+            data: {
+              'poId': widget.poId,
+              'storeId': widget.storeId,
+              'lines': received,
+            },
+          );
       if (!mounted) return;
       ref.invalidate(purchaseOrdersProvider);
       Navigator.pop(context);
@@ -1503,8 +2145,10 @@ class _ReceiveGoodsDialogState extends ConsumerState<_ReceiveGoodsDialog> {
       content: SizedBox(
         width: 440,
         child: linesAsync.when(
-          loading: () =>
-              const SizedBox(height: 120, child: LoadingView(label: 'Loading…')),
+          loading: () => const SizedBox(
+            height: 120,
+            child: LoadingView(label: 'Loading…'),
+          ),
           error: (e, _) => SizedBox(
             height: 120,
             child: ErrorView(
@@ -1524,13 +2168,17 @@ class _ReceiveGoodsDialogState extends ConsumerState<_ReceiveGoodsDialog> {
                     color: cs.errorContainer,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(_error!,
-                      style: TextStyle(color: cs.onErrorContainer)),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: cs.onErrorContainer),
+                  ),
                 ),
                 const SizedBox(height: 12),
               ],
-              Text('Confirm received quantities',
-                  style: Theme.of(context).textTheme.labelLarge),
+              Text(
+                'Confirm received quantities',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
               const SizedBox(height: 8),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 280),
@@ -1546,13 +2194,20 @@ class _ReceiveGoodsDialogState extends ConsumerState<_ReceiveGoodsDialog> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(_short(l.variantId, 14),
-                                      style: const TextStyle(
-                                          fontFamily: 'monospace',
-                                          fontSize: 12)),
-                                  Text('ordered ${l.qty.toStringAsFixed(0)}',
-                                      style: TextStyle(
-                                          fontSize: 11, color: cs.outline)),
+                                  Text(
+                                    _short(l.variantId, 14),
+                                    style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    'ordered ${l.qty.toStringAsFixed(0)}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: cs.outline,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -1562,7 +2217,9 @@ class _ReceiveGoodsDialogState extends ConsumerState<_ReceiveGoodsDialog> {
                                 initialValue: l.qty.toStringAsFixed(0),
                                 keyboardType: TextInputType.number,
                                 decoration: const InputDecoration(
-                                    labelText: 'Received', isDense: true),
+                                  labelText: 'Received',
+                                  isDense: true,
+                                ),
                                 onChanged: (v) => _received[l.variantId] =
                                     double.tryParse(v) ?? 0,
                               ),
@@ -1586,16 +2243,20 @@ class _ReceiveGoodsDialogState extends ConsumerState<_ReceiveGoodsDialog> {
           onPressed: _loading
               ? null
               : () {
-                  final lines =
-                      ref.read(purchaseOrderLinesProvider(widget.poId)).value;
+                  final lines = ref
+                      .read(purchaseOrderLinesProvider(widget.poId))
+                      .value;
                   if (lines != null) _submit(lines);
                 },
           child: _loading
-              ?  SizedBox(
+              ? SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
+                    strokeWidth: 2,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                )
               : const Text('Confirm receipt'),
         ),
       ],
@@ -1622,8 +2283,8 @@ class _PoStatusBadge extends StatelessWidget {
         fg = context.status.onInfo;
         break;
       case 'PENDING_APPROVAL':
-        // Amber for the same reason PARTIALLY_RECEIVED is: this is a state somebody has to act on,
-        // not one to observe. A grey badge would read as "in progress" when it means "stopped".
+      // Amber for the same reason PARTIALLY_RECEIVED is: this is a state somebody has to act on,
+      // not one to observe. A grey badge would read as "in progress" when it means "stopped".
       case 'PARTIALLY_RECEIVED':
         // Amber rather than the generic default: something is still owed, and that is a state a
         // buyer is meant to act on rather than merely observe.
@@ -1641,11 +2302,14 @@ class _PoStatusBadge extends StatelessWidget {
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration:
-          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-      child: Text(status,
-          style:
-              TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        status,
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg),
+      ),
     );
   }
 }

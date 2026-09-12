@@ -138,7 +138,19 @@ public final class Domain {
    * @param qtyOutstanding ordered minus received, floored at zero
    */
   public record PurchaseOrderLineProgress(
-      UUID variantId, BigDecimal qtyOrdered, BigDecimal qtyReceived, BigDecimal qtyOutstanding) {}
+      UUID variantId,
+      BigDecimal qtyOrdered,
+      BigDecimal qtyReceived,
+      BigDecimal qtyOutstanding,
+      /** What has gone back to the supplier out of what was received (07.8). */
+      BigDecimal qtyReturned) {
+
+    /** Progress before returns existed: nothing returned. */
+    public PurchaseOrderLineProgress(
+        UUID variantId, BigDecimal qtyOrdered, BigDecimal qtyReceived, BigDecimal qtyOutstanding) {
+      this(variantId, qtyOrdered, qtyReceived, qtyOutstanding, BigDecimal.ZERO);
+    }
+  }
 
   public record PurchaseOrderLine(
       UUID id,
@@ -217,6 +229,58 @@ public final class Domain {
       BigDecimal unitPrice,
       String vatCode,
       String variances,
+      Instant createdAt) {}
+
+  // ── Return to vendor and debit note (07.8) ────────────────────────────────────
+
+  /** The goods have gone back and the debit note is issued. */
+  public static final String RETURN_RAISED = "RAISED";
+
+  /** The supplier's credit note has been recorded against the return. */
+  public static final String RETURN_CREDITED = "CREDITED";
+
+  /** Why goods went back. The reason is what a supplier scorecard and a debit note both cite. */
+  public static final java.util.Set<String> RETURN_REASONS =
+      java.util.Set.of(
+          "DAMAGED", "WRONG_ITEM", "OVER_DELIVERED", "QUALITY", "EXPIRED", "RECALL", "OTHER");
+
+  /**
+   * A return to vendor: goods sent back against a purchase order, with the debit note raised for
+   * their value at the order's prices, and the supplier's credit note once it arrives.
+   */
+  public record VendorReturn(
+      UUID id,
+      UUID tenantId,
+      UUID poId,
+      UUID supplierId,
+      UUID storeId,
+      String status,
+      String reason,
+      String notes,
+      String currency,
+      BigDecimal netAmount,
+      BigDecimal vatAmount,
+      BigDecimal grossAmount,
+      String debitNoteNumber,
+      Instant raisedAt,
+      UUID raisedBy,
+      String creditNoteNumber,
+      LocalDate creditNoteDate,
+      BigDecimal creditAmount,
+      Instant creditedAt,
+      UUID creditedBy,
+      String idempotencyKey) {}
+
+  /** One variant going back, priced at the order's price when the return was raised. */
+  public record VendorReturnLine(
+      UUID id,
+      UUID tenantId,
+      UUID returnId,
+      UUID variantId,
+      BigDecimal qty,
+      BigDecimal unitPrice,
+      String vatCode,
+      BigDecimal lineNet,
       Instant createdAt) {}
 
   // ── Intercompany Invoice (Gap #20) ────────────────────────────────────────────

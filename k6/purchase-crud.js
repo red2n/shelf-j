@@ -7,7 +7,7 @@
 // the currency they were raised in.
 //
 //   k6/run.sh purchase-crud
-import { ALL_CHECKS_PASS, addStore, call, data, expect, must, onboardTenant, staffUser, truthy } from './lib/shelfj.js';
+import { ALL_CHECKS_PASS, addStore, call, data, expect, must, onboardTenant, poll, sellableVariant, staffUser, truthy } from './lib/shelfj.js';
 
 export const options = { vus: 1, iterations: 1, thresholds: ALL_CHECKS_PASS };
 
@@ -16,10 +16,18 @@ export function setup() {
   const rival = onboardTenant('purchase-rival', { country: 'GB', currency: 'GBP' });
   const store = tenant.stores[0];
   const cashier = staffUser(tenant, 'CASHIER', [store.id]);
-  return { tenant, rival, store, cashier };
+  const storekeeper = staffUser(tenant, 'STOREKEEPER', [store.id]);
+  const { variantId } = sellableVariant(tenant, 'Returnable Case');
+  return { tenant, rival, store, cashier, storekeeper, variantId };
 }
 
-export default function ({ tenant, rival, store, cashier }) {
+/** On-hand of a variant at a store, as inventory-svc's available batches sum to. */
+function onHand(token, storeId, variantId) {
+  const res = call('GET', `/api/inventory-svc/admin/inventory/batches?store=${storeId}&variant=${variantId}&material_status=AVAILABLE&limit=100`, { token });
+  return (data(res) || []).reduce((sum, b) => sum + Number(b.remainingQty || 0), 0);
+}
+
+export default function ({ tenant, rival, store, cashier, storekeeper, variantId }) {
   const owner = tenant.owner.token;
   const suppliers = '/api/purchase-svc/suppliers';
   const orders = '/api/purchase-svc/purchase-orders';
@@ -58,4 +66,49 @@ export default function ({ tenant, rival, store, cashier }) {
   expect(put({ paymentTermsDays: 7 }, { token: cashier.token }), 'a cashier cannot correct a supplier', 403);
   expect(put({ paymentTermsDays: 7 }, { token: rival.owner.token }), "a rival tenant's owner finds no such supplier", 404);
   truthy('none of the refusals changed anything', data(call('GET', `${suppliers}/${id}`, { token: owner })).paymentTermsDays === 45);
+
+  // ── return to vendor and the debit note (07.8) ───────────────────────────
+  const returns = '/api/purchase-svc/vendor-returns';
+  const rtvSupplier = must(call('POST', suppliers, { token: owner, body: { name: `Crushed Cases Ltd ${stamp}`, vatRegistered: true, currency: 'GBP' } }), 201, 'rtv supplier');
+  const rtvPo = must(call('POST', orders, { token: owner, body: { supplierId: rtvSupplier.id, storeId: store.id } }), 201, 'rtv order');
+  expect(call('POST', `${orders}/${rtvPo.id}/lines`, { token: owner, body: { variantId, qty: 10, unitPrice: '2.50' } }), 'ten cases at 2.50 are ordered', 201);
+  expect(call('POST', `${orders}/${rtvPo.id}/submit`, { token: owner, body: {} }), 'and the order submitted', 200);
+  const rtv = (body, opts) => call('POST', returns, Object.assign({ token: owner, idem: true, body }, opts || {}));
+  expect(rtv({ poId: rtvPo.id, reason: 'DAMAGED', lines: [{ variantId, qty: 1 }] }), 'nothing can go back before anything arrived', 409, 'PURCHASE_RTV_NOTHING_RECEIVED');
+
+  const before = onHand(owner, store.id, variantId);
+  expect(call('POST', '/api/purchase-svc/goods-receipts', { token: owner, idem: true, body: { poId: rtvPo.id, storeId: store.id, lines: [{ variantId, qtyReceived: 10 }] } }), 'ten cases are received', 201);
+  const arrived = poll(30, () => onHand(owner, store.id, variantId) >= before + 10);
+  truthy('and inventory-svc books them within 30 s', arrived >= 0, onHand(owner, store.id, variantId));
+
+  expect(rtv({ poId: rtvPo.id, reason: 'FELT_LIKE_IT', lines: [{ variantId, qty: 1 }] }), 'an invented reason is refused', 400, 'PURCHASE_RTV_REASON_UNKNOWN');
+  expect(rtv({ poId: rtvPo.id, reason: 'DAMAGED', lines: [] }), 'a return with nothing on it is refused', 400);
+  expect(rtv({ poId: rtvPo.id, reason: 'DAMAGED', lines: [{ variantId, qty: 11 }] }), 'more than was received is refused', 422, 'PURCHASE_RTV_OVER_RETURN');
+  expect(rtv({ poId: rtvPo.id, reason: 'DAMAGED', lines: [{ variantId, qty: 1 }] }, { token: cashier.token }), 'a cashier cannot send goods back', 403);
+  expect(rtv({ poId: rtvPo.id, reason: 'DAMAGED', lines: [{ variantId, qty: 1 }] }, { token: rival.owner.token }), "a rival tenant's owner finds no such order", 404);
+
+  const raised = rtv({ poId: rtvPo.id, reason: 'DAMAGED', notes: 'three cases crushed in transit', lines: [{ variantId, qty: 3 }] }, { token: storekeeper.token });
+  expect(raised, 'the storekeeper sends three cases back', 201);
+  const dn = data(raised);
+  truthy('with a debit note at the order\'s price: 3 × 2.50 net, VAT at the order\'s code', dn.status === 'RAISED' && /^DN-\d{6}$/.test(dn.debitNoteNumber) && Number(dn.netAmount) === 7.5 && Number(dn.grossAmount) >= 7.5 && dn.lines.length === 1 && Number(dn.lines[0].unitPrice) === 2.5, dn);
+  const left = poll(30, () => onHand(owner, store.id, variantId) <= before + 7);
+  truthy('and the three cases leave the shelf within 30 s', left >= 0, onHand(owner, store.id, variantId));
+  const progress = call('GET', `${orders}/${rtvPo.id}/progress`, { token: owner });
+  truthy('the order still reads received 10, and now returned 3', (data(progress) || []).some((p) => p.variantId === variantId && Number(p.qtyReceived) === 10 && Number(p.qtyReturned) === 3), data(progress));
+  truthy('and its status is untouched', data(call('GET', `${orders}/${rtvPo.id}`, { token: owner })).status === 'RECEIVED');
+  expect(rtv({ poId: rtvPo.id, reason: 'QUALITY', lines: [{ variantId, qty: 8 }] }), 'seven are left to return, so eight is refused', 422, 'PURCHASE_RTV_OVER_RETURN');
+
+  const listed = call('GET', `${returns}?poId=${rtvPo.id}`, { token: cashier.token });
+  expect(listed, 'the returns on an order are read by any staff member', 200);
+  truthy('one, with its lines', (data(listed) || []).length === 1 && data(listed)[0].debitNoteNumber === dn.debitNoteNumber, data(listed));
+  expect(call('GET', `${returns}/${dn.id}`, { token: rival.owner.token }), "a rival tenant's owner does not read it", 404);
+
+  const credit = { creditNoteNumber: `CN-${stamp}`, creditNoteDate: '2026-09-20' };
+  expect(call('POST', `${returns}/${dn.id}/credit`, { token: storekeeper.token, body: credit }), 'a storekeeper does not record the credit note', 403);
+  expect(call('POST', `${returns}/${dn.id}/credit`, { token: owner, body: { creditNoteNumber: 'CN-x', creditNoteDate: 'soon' } }), 'a date that is not a date is refused', 400);
+  const credited = call('POST', `${returns}/${dn.id}/credit`, { token: owner, body: credit });
+  expect(credited, 'the owner records the supplier\'s credit note', 200);
+  truthy('closing the return at the debit note\'s gross', data(credited).status === 'CREDITED' && data(credited).creditNoteNumber === credit.creditNoteNumber && Number(data(credited).creditAmount) === Number(dn.grossAmount), data(credited));
+  expect(call('POST', `${returns}/${dn.id}/credit`, { token: owner, body: { creditNoteNumber: 'CN-again', creditNoteDate: '2026-09-21' } }), 'a second credit note is refused, the first named', 409, 'PURCHASE_RTV_ALREADY_CREDITED');
+  expect(call('DELETE', `${returns}/${dn.id}`, { token: owner }), 'nothing deletes a return', [404, 405]);
 }
