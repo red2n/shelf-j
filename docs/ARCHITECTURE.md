@@ -308,7 +308,7 @@ Single source of truth for stock: levels, reservations, batches/lots, serials, a
 ### pricing-svc — Prices, Promotions, VAT
 Price resolution, promotions, and UK-style VAT computation/reporting.
 - **API:** `/prices/resolve` (+batch), `/price-lists` (+items), `/admin/price-overrides`, `/promotions`, `/vat-rates`, `/product-vat-categories`, `/customer-vat-status`, `/tax-transactions`, `/vat-return` (HMRC MTD boxes 1-9).
-- **Tables:** `price_lists`, `price_list_items`, `price_overrides`, `promotions`, `vat_rates`, `product_vat_categories`, `customer_vat_status`, `tax_transactions`.
+- **Tables:** `price_lists`, `price_list_items`, `price_overrides`, `promotions`, `vat_rates`, `product_vat_categories`, `customer_vat_status`, `tax_transactions`, `input_tax_transactions`, `vat_registrations`, `vat_return_submissions` (append-only — Making Tax Digital, 18.5).
 - **Events:** publishes `PriceChanged`, `PromotionActivated`.
 - **Notable:** VAT Notice 700 s.17-style return, customer VAT-exemption status, per-product VAT category, time-bounded PERCENT/FLAT promotions.
 
@@ -321,7 +321,7 @@ Server-side shopping cart for the online channel: session-scoped and customer ca
 ### order-svc — Orders & Checkout (saga coordinator)
 The transaction/sales-journal service for **both** channels: online orders/returns and POS parked sales, layaway, gift cards, special orders, receipts.
 - **API:** `/orders` create/confirm/cancel/fulfil/void/returns; `/layaways` create/deposit/complete/cancel; `/gift-cards` issue/reload/redeem/transactions; `/pos/parked-sales`, `/pos/no-sale`; `/admin/special-orders`; `/admin/pos-log`; `/admin/pos/stock-positions`; `/admin/orders/{id}/receipts` (e-journal, print/email).
-- **Tables:** `orders`, `order_items`, `order_status_history` (append-only), `returns`, `layaways`, `gift_cards`, `gift_card_transactions`, `parked_sales`, `special_orders`, `pos_log_entries`, `order_receipts`, `idempotency_keys`.
+- **Tables:** `orders`, `order_items`, `order_status_history` (append-only), `returns`, `layaways`, `gift_cards`, `gift_card_transactions`, `parked_sales`, `special_orders`, `pos_log_entries`, `order_receipts`, `idempotency_keys`, `receipt_series`, `fiscal_receipts` (append-only, hash-chained, stamped by the store's fiscal regime), `fiscal_store_settings`, `tse_devices`, `age_verifications` (append-only), `customer_erasures`.
 - **Events:** publishes `OrderPlaced`, `OrderConfirmed`, `OrderCancelled`, `OrderFulfilled`, `OrderReturned`, `OrderVoided`, `LayawayCreated/Completed/Cancelled`; consumes `StockReceived`/`StockDeducted`/`StockAdjusted` (POS stock-position projection), `PaymentCaptured`/`PaymentFailed`/`PaymentRefunded`, tenant/store status.
 - **Notable:** POS and online share the **same endpoints** — only `channel`/`fulfilment_type` differ. Idempotency-Key on checkout. See [§12 checkout saga](#12-key-workflows).
 

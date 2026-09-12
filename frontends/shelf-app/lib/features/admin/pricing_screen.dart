@@ -21,8 +21,10 @@ class PricingScreen extends ConsumerWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-            child:
-                Text('Pricing', style: Theme.of(context).textTheme.headlineMedium),
+            child: Text(
+              'Pricing',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
           ),
           const TabBar(
             isScrollable: true,
@@ -57,7 +59,10 @@ Widget _addBar(BuildContext context, String label, VoidCallback onPressed) {
       children: [
         const Spacer(),
         FilledButton.icon(
-            onPressed: onPressed, icon: const Icon(Icons.add), label: Text(label)),
+          onPressed: onPressed,
+          icon: const Icon(Icons.add),
+          label: Text(label),
+        ),
       ],
     ),
   );
@@ -74,19 +79,31 @@ class _PriceListsTab extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     return Column(
       children: [
-        _addBar(context, 'New price list',
-            () => showDialog(context: context, builder: (_) => const _PriceListDialog())),
+        _addBar(
+          context,
+          'New price list',
+          () => showDialog(
+            context: context,
+            builder: (_) => const _PriceListDialog(),
+          ),
+        ),
         Expanded(
           child: async.when(
             loading: () => const LoadingView(label: 'Loading price lists…'),
             error: (e, _) => ErrorView(
-              message:
-                  friendlyError(e, fallback: 'Could not load price lists.'),
+              message: friendlyError(
+                e,
+                fallback: 'Could not load price lists.',
+              ),
               onRetry: () => ref.invalidate(priceListsProvider),
             ),
             data: (lists) {
               if (lists.isEmpty) {
-                return _empty(cs, Icons.price_change_outlined, 'No price lists yet');
+                return _empty(
+                  cs,
+                  Icons.price_change_outlined,
+                  'No price lists yet',
+                );
               }
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
@@ -102,16 +119,23 @@ class _PriceListsTab extends ConsumerWidget {
                       ),
                       leading: CircleAvatar(
                         backgroundColor: cs.primaryContainer,
-                        child: Icon(Icons.sell_outlined,
-                            color: cs.onPrimaryContainer),
+                        child: Icon(
+                          Icons.sell_outlined,
+                          color: cs.onPrimaryContainer,
+                        ),
                       ),
-                      title: Text(l.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text([
-                        if (l.channel != null) l.channel,
-                        if (l.currency != null) l.currency,
-                        if (l.effectiveFrom != null) 'from ${l.effectiveFrom}',
-                      ].whereType<String>().join(' · ')),
+                      title: Text(
+                        l.name,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Text(
+                        [
+                          if (l.channel != null) l.channel,
+                          if (l.currency != null) l.currency,
+                          if (l.effectiveFrom != null)
+                            'from ${l.effectiveFrom}',
+                        ].whereType<String>().join(' · '),
+                      ),
                       // Same defect as promotions, on the thing that IS the
                       // price: the resolve engine filters on active and nothing
                       // could write it (SJ-D38).
@@ -121,13 +145,15 @@ class _PriceListsTab extends ConsumerWidget {
                           _activeBadge(context, l.active),
                           const SizedBox(width: 4),
                           IconButton(
-                            tooltip:
-                                l.active ? 'Stop this price list' : 'Start it again',
+                            tooltip: l.active
+                                ? 'Stop this price list'
+                                : 'Start it again',
                             icon: Icon(
-                                l.active
-                                    ? Icons.pause_circle_outline
-                                    : Icons.play_circle_outline,
-                                size: 22),
+                              l.active
+                                  ? Icons.pause_circle_outline
+                                  : Icons.play_circle_outline,
+                              size: 22,
+                            ),
                             onPressed: () => showDialog(
                               context: context,
                               builder: (_) => _SwitchDialog(
@@ -135,13 +161,14 @@ class _PriceListsTab extends ConsumerWidget {
                                 subjectId: l.id,
                                 name: l.name,
                                 activate: !l.active,
-                                onSwitched: () => ref.invalidate(priceListsProvider),
+                                onSwitched: () =>
+                                    ref.invalidate(priceListsProvider),
                                 effect: l.active
                                     ? 'Its prices stop being offered immediately. If nothing '
-                                        'else prices these items, they cannot be sold until you '
-                                        'start it again — which is the safe answer to a price '
-                                        'nobody agreed. Orders already placed keep what they '
-                                        'were charged.'
+                                          'else prices these items, they cannot be sold until you '
+                                          'start it again — which is the safe answer to a price '
+                                          'nobody agreed. Orders already placed keep what they '
+                                          'were charged.'
                                     : 'Its prices are offered again from the next basket.',
                               ),
                             ),
@@ -191,20 +218,25 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.pricing}/admin/price-lists',
-        data: {
-          'name': _nameCtrl.text.trim(),
-          'channel': _channel,
-          'currency': _currency,
-          // A bare '2026-01-01' is rejected with INVALID_DATE — the column is
-          // TIMESTAMPTZ. Sent as a UTC instant, which is also what golden rule
-          // 14 asks for: convert at the UI edge, store UTC.
-          'effectiveFrom': DateTime.utc(_from.year, _from.month, _from.day)
-              .toIso8601String()
-              .replaceFirst(RegExp(r'\.\d+Z$'), 'Z'),
-        },
-      );
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.pricing}/admin/price-lists',
+            data: {
+              'name': _nameCtrl.text.trim(),
+              'channel': _channel,
+              'currency': _currency,
+              // A bare '2026-01-01' is rejected with INVALID_DATE — the column is
+              // TIMESTAMPTZ. Sent as a UTC instant, which is also what golden rule
+              // 14 asks for: convert at the UI edge, store UTC.
+              'effectiveFrom': DateTime.utc(
+                _from.year,
+                _from.month,
+                _from.day,
+              ).toIso8601String().replaceFirst(RegExp(r'\.\d+Z$'), 'Z'),
+            },
+          );
       if (!mounted) return;
       ref.invalidate(priceListsProvider);
       Navigator.pop(context);
@@ -247,7 +279,12 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Expanded(child: _currencyDropdown(_currency, (v) => setState(() => _currency = v))),
+                Expanded(
+                  child: _currencyDropdown(
+                    _currency,
+                    (v) => setState(() => _currency = v),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -299,11 +336,19 @@ class _PriceListItemsDialog extends ConsumerWidget {
           data: (items) {
             if (items.isEmpty) {
               return Center(
-                  child: Text('No items yet.', style: TextStyle(color: cs.outline)));
+                child: Text(
+                  'No items yet.',
+                  style: TextStyle(color: cs.outline),
+                ),
+              );
             }
-            final labels = ref
-                    .watch(variantLabelsProvider(
-                        variantIdsKey(items.map((it) => it.variantId))))
+            final labels =
+                ref
+                    .watch(
+                      variantLabelsProvider(
+                        variantIdsKey(items.map((it) => it.variantId)),
+                      ),
+                    )
                     .value ??
                 const <String, VariantLabel>{};
             return ListView.separated(
@@ -315,14 +360,20 @@ class _PriceListItemsDialog extends ConsumerWidget {
                 return ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
-                  title: Text(variantDisplayName(it.variantId, labels),
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 13)),
+                  title: Text(
+                    variantDisplayName(it.variantId, labels),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
                   subtitle: Text(
-                      '${sku.isNotEmpty ? '$sku  ·  ' : ''}min qty ${it.minQty.toStringAsFixed(0)}'),
+                    '${sku.isNotEmpty ? '$sku  ·  ' : ''}min qty ${it.minQty.toStringAsFixed(0)}',
+                  ),
                   trailing: Text(
-                      '${priceList.currency ?? ''} ${it.price.toStringAsFixed(2)}',
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                    '${priceList.currency ?? ''} ${it.price.toStringAsFixed(2)}',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                 );
               },
             );
@@ -331,7 +382,9 @@ class _PriceListItemsDialog extends ConsumerWidget {
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context), child: const Text('Close')),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
       ],
     );
   }
@@ -373,10 +426,13 @@ class _PriceListItemDialogState extends ConsumerState<_PriceListItemDialog> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.pricing}/admin/price-lists/${widget.priceListId}/items',
-        data: {'variantId': _variantId, 'price': price, 'minQty': minQty},
-      );
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.pricing}/admin/price-lists/${widget.priceListId}/items',
+            data: {'variantId': _variantId, 'price': price, 'minQty': minQty},
+          );
       if (!mounted) return;
       ref.invalidate(priceListItemsProvider(widget.priceListId));
       Navigator.pop(context);
@@ -414,8 +470,9 @@ class _PriceListItemDialogState extends ConsumerState<_PriceListItemDialog> {
                 Expanded(
                   child: TextField(
                     controller: _priceCtrl,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(labelText: 'Price'),
                   ),
                 ),
@@ -441,15 +498,19 @@ class _PriceListItemDialogState extends ConsumerState<_PriceListItemDialog> {
 
 /// A small inline label, for the one or two promotion properties that change how
 /// every other promotion behaves and are therefore worth seeing in the list.
-Widget _chip(BuildContext context, String text, Color bg, Color fg) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration:
-          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(4)),
-      child: Text(text,
-          style: TextStyle(
-              color: fg, fontSize: 10.5, fontWeight: FontWeight.bold)),
-    );
-
+Widget _chip(
+  BuildContext context,
+  String text,
+  Color bg,
+  Color fg,
+) => Container(
+  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+  decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(4)),
+  child: Text(
+    text,
+    style: TextStyle(color: fg, fontSize: 10.5, fontWeight: FontWeight.bold),
+  ),
+);
 
 class _PromotionsTab extends ConsumerWidget {
   const _PromotionsTab();
@@ -460,8 +521,14 @@ class _PromotionsTab extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     return Column(
       children: [
-        _addBar(context, 'New promotion',
-            () => showDialog(context: context, builder: (_) => const _PromotionDialog())),
+        _addBar(
+          context,
+          'New promotion',
+          () => showDialog(
+            context: context,
+            builder: (_) => const _PromotionDialog(),
+          ),
+        ),
         Expanded(
           child: async.when(
             loading: () => const LoadingView(label: 'Loading promotions…'),
@@ -471,7 +538,11 @@ class _PromotionsTab extends ConsumerWidget {
             ),
             data: (promos) {
               if (promos.isEmpty) {
-                return _empty(cs, Icons.local_offer_outlined, 'No promotions yet');
+                return _empty(
+                  cs,
+                  Icons.local_offer_outlined,
+                  'No promotions yet',
+                );
               }
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
@@ -484,36 +555,51 @@ class _PromotionsTab extends ConsumerWidget {
                       leading: CircleAvatar(
                         backgroundColor: cs.tertiaryContainer,
                         child: Icon(
-                            p.couponCode != null
-                                ? Icons.confirmation_number_outlined
-                                : Icons.local_offer_outlined,
-                            color: cs.onTertiaryContainer),
-                      ),
-                      title: Row(children: [
-                        Flexible(
-                          child: Text(p.name,
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                              overflow: TextOverflow.ellipsis),
+                          p.couponCode != null
+                              ? Icons.confirmation_number_outlined
+                              : Icons.local_offer_outlined,
+                          color: cs.onTertiaryContainer,
                         ),
-                        // An exclusive promotion changes what every other one
-                        // does, so it is the one property worth seeing without
-                        // opening the row.
-                        if (p.exclusive) ...[
-                          const SizedBox(width: 8),
-                          _chip(context, 'Exclusive', cs.errorContainer,
-                              cs.onErrorContainer),
+                      ),
+                      title: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              p.name,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          // An exclusive promotion changes what every other one
+                          // does, so it is the one property worth seeing without
+                          // opening the row.
+                          if (p.exclusive) ...[
+                            const SizedBox(width: 8),
+                            _chip(
+                              context,
+                              'Exclusive',
+                              cs.errorContainer,
+                              cs.onErrorContainer,
+                            ),
+                          ],
                         ],
-                      ]),
-                      subtitle: Text([
-                        p.summary,
-                        if (p.couponCode != null) 'code ${p.couponCode}',
-                        if (p.channel != null && p.channel != 'ALL') p.channel,
-                        // Priority only earns space when it is not the default:
-                        // every promotion showing "priority 100" tells nobody
-                        // anything.
-                        if (p.priority != 100) 'priority ${p.priority}',
-                        if (p.maxRedemptions != null) 'max ${p.maxRedemptions}',
-                      ].whereType<String>().join(' · ')),
+                      ),
+                      subtitle: Text(
+                        [
+                          p.summary,
+                          if (p.couponCode != null) 'code ${p.couponCode}',
+                          if (p.channel != null && p.channel != 'ALL')
+                            p.channel,
+                          // Priority only earns space when it is not the default:
+                          // every promotion showing "priority 100" tells nobody
+                          // anything.
+                          if (p.priority != 100) 'priority ${p.priority}',
+                          if (p.maxRedemptions != null)
+                            'max ${p.maxRedemptions}',
+                        ].whereType<String>().join(' · '),
+                      ),
                       // The badge said whether it was running and offered no
                       // way to change that — because until SJ-D33 there was no
                       // endpoint behind it. A promotion nobody can switch off
@@ -524,12 +610,15 @@ class _PromotionsTab extends ConsumerWidget {
                           _activeBadge(context, p.active),
                           const SizedBox(width: 4),
                           IconButton(
-                            tooltip: p.active ? 'Stop this promotion' : 'Start it again',
+                            tooltip: p.active
+                                ? 'Stop this promotion'
+                                : 'Start it again',
                             icon: Icon(
-                                p.active
-                                    ? Icons.pause_circle_outline
-                                    : Icons.play_circle_outline,
-                                size: 22),
+                              p.active
+                                  ? Icons.pause_circle_outline
+                                  : Icons.play_circle_outline,
+                              size: 22,
+                            ),
                             onPressed: () => showDialog(
                               context: context,
                               builder: (_) => _SwitchDialog(
@@ -537,11 +626,12 @@ class _PromotionsTab extends ConsumerWidget {
                                 subjectId: p.id,
                                 name: p.name,
                                 activate: !p.active,
-                                onSwitched: () => ref.invalidate(promotionsProvider),
+                                onSwitched: () =>
+                                    ref.invalidate(promotionsProvider),
                                 effect: p.active
                                     ? 'It stops applying to baskets immediately. Orders already '
-                                        'placed are unaffected — the discount they received is '
-                                        'recorded on the order.'
+                                          'placed are unaffected — the discount they received is '
+                                          'recorded on the order.'
                                     : 'It will start applying to baskets immediately.',
                               ),
                             ),
@@ -619,22 +709,29 @@ class _SwitchDialogState extends ConsumerState<_SwitchDialog> {
     });
     try {
       final action = widget.activate ? 'activate' : 'deactivate';
-      await ref.read(apiClientProvider).dio.post(
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
             '/${ApiConstants.pricing}/admin/${widget.collection}/${widget.subjectId}/$action',
             data: {'reason': reason},
           );
       if (!mounted) return;
       widget.onSwitched();
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(widget.activate
-              ? 'Started — it is live again now.'
-              : 'Stopped, with immediate effect.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.activate
+                ? 'Started — it is live again now.'
+                : 'Stopped, with immediate effect.',
+          ),
+        ),
+      );
     } catch (e) {
       setState(() {
         _busy = false;
-        _error = friendlyError(e,
-            fallback: 'Could not change this.');
+        _error = friendlyError(e, fallback: 'Could not change this.');
       });
     }
   }
@@ -643,14 +740,18 @@ class _SwitchDialogState extends ConsumerState<_SwitchDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(
-          '${widget.activate ? 'Start' : 'Stop'} ${widget.collection == 'promotions' ? 'promotion' : 'price list'}'),
+        '${widget.activate ? 'Start' : 'Stop'} ${widget.collection == 'promotions' ? 'promotion' : 'price list'}',
+      ),
       content: SizedBox(
         width: 400,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(
+              widget.name,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             Text(widget.effect),
             const SizedBox(height: 12),
@@ -666,18 +767,23 @@ class _SwitchDialogState extends ConsumerState<_SwitchDialog> {
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ],
           ],
         ),
       ),
       actions: [
         TextButton(
-            onPressed: _busy ? null : () => Navigator.pop(context),
-            child: const Text('Cancel')),
+          onPressed: _busy ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
         FilledButton(
-            onPressed: _busy ? null : _submit,
-            child: Text(widget.activate ? 'Start' : 'Stop')),
+          onPressed: _busy ? null : _submit,
+          child: Text(widget.activate ? 'Start' : 'Stop'),
+        ),
       ],
     );
   }
@@ -741,18 +847,27 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
       final buy = double.tryParse(_buyQtyCtrl.text.trim());
       final get = double.tryParse(_getQtyCtrl.text.trim());
       final pct = double.tryParse(_getPctCtrl.text.trim());
-      if (buy == null || buy <= 0 || get == null || get <= 0 ||
-          pct == null || pct <= 0 || pct > 100) {
-        setState(() => _error =
-            'A buy-one-get-one needs a buy quantity, a get quantity, and a '
-            'discount between 1 and 100 percent.');
+      if (buy == null ||
+          buy <= 0 ||
+          get == null ||
+          get <= 0 ||
+          pct == null ||
+          pct <= 0 ||
+          pct > 100) {
+        setState(
+          () => _error =
+              'A buy-one-get-one needs a buy quantity, a get quantity, and a '
+              'discount between 1 and 100 percent.',
+        );
         return;
       }
     }
     if (_isThreshold && double.tryParse(_minCtrl.text.trim()) == null) {
-      setState(() => _error =
-          'A spend threshold needs a minimum order amount — without one it '
-          'would discount every basket.');
+      setState(
+        () => _error =
+            'A spend threshold needs a minimum order amount — without one it '
+            'would discount every basket.',
+      );
       return;
     }
     setState(() {
@@ -831,20 +946,29 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                       decoration: const InputDecoration(labelText: 'Type'),
                       items: const [
                         DropdownMenuItem(
-                            value: 'PERCENT', child: Text('% off each item')),
+                          value: 'PERCENT',
+                          child: Text('% off each item'),
+                        ),
                         DropdownMenuItem(
-                            value: 'FLAT', child: Text('Amount off each item')),
+                          value: 'FLAT',
+                          child: Text('Amount off each item'),
+                        ),
                         DropdownMenuItem(
-                            value: 'BASKET_PERCENT',
-                            child: Text('% off the basket')),
+                          value: 'BASKET_PERCENT',
+                          child: Text('% off the basket'),
+                        ),
                         DropdownMenuItem(
-                            value: 'BASKET_FLAT',
-                            child: Text('Amount off the basket')),
+                          value: 'BASKET_FLAT',
+                          child: Text('Amount off the basket'),
+                        ),
                         DropdownMenuItem(
-                            value: 'SPEND_THRESHOLD',
-                            child: Text('Spend and save')),
+                          value: 'SPEND_THRESHOLD',
+                          child: Text('Spend and save'),
+                        ),
                         DropdownMenuItem(
-                            value: 'BOGO', child: Text('Buy X get Y')),
+                          value: 'BOGO',
+                          child: Text('Buy X get Y'),
+                        ),
                       ],
                       onChanged: (v) => setState(() => _type = v!),
                     ),
@@ -859,46 +983,54 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                         : TextField(
                             controller: _valueCtrl,
                             keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
+                              decimal: true,
+                            ),
                             decoration: InputDecoration(
-                                labelText: _type.contains('PERCENT')
-                                    ? 'Percent'
-                                    : 'Amount'),
+                              labelText: _type.contains('PERCENT')
+                                  ? 'Percent'
+                                  : 'Amount',
+                            ),
                           ),
                   ),
                 ],
               ),
               if (_isBogo) ...[
                 const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _buyQtyCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true),
-                      decoration: const InputDecoration(labelText: 'Buy *'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _buyQtyCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(labelText: 'Buy *'),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _getQtyCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true),
-                      decoration: const InputDecoration(labelText: 'Get *'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _getQtyCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(labelText: 'Get *'),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _getPctCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true),
-                      decoration:
-                          const InputDecoration(labelText: '% off (100 = free)'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _getPctCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: '% off (100 = free)',
+                        ),
+                      ),
                     ),
-                  ),
-                ]),
+                  ],
+                ),
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
@@ -906,8 +1038,9 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                     'within one line — and the cheapest units are the ones '
                     'given away.',
                     style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.outline),
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
                   ),
                 ),
               ],
@@ -920,7 +1053,10 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                       decoration: const InputDecoration(labelText: 'Channel'),
                       items: const [
                         DropdownMenuItem(value: 'ALL', child: Text('All')),
-                        DropdownMenuItem(value: 'ONLINE', child: Text('Online')),
+                        DropdownMenuItem(
+                          value: 'ONLINE',
+                          child: Text('Online'),
+                        ),
                         DropdownMenuItem(value: 'POS', child: Text('POS')),
                       ],
                       onChanged: (v) => setState(() => _channel = v!),
@@ -930,62 +1066,69 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                   Expanded(
                     child: TextField(
                       controller: _minCtrl,
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
                       decoration: InputDecoration(
-                          labelText: _isThreshold
-                              ? 'Spend at least *'
-                              : 'Min order (opt)'),
+                        labelText: _isThreshold
+                            ? 'Spend at least *'
+                            : 'Min order (opt)',
+                      ),
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: _couponCtrl,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: const InputDecoration(
-                      labelText: 'Coupon code (opt)',
-                      helperText: 'Blank = applies on its own',
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _couponCtrl,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: const InputDecoration(
+                        labelText: 'Coupon code (opt)',
+                        helperText: 'Blank = applies on its own',
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _priorityCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Priority',
-                      helperText: 'Lower runs first',
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _priorityCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Priority',
+                        helperText: 'Lower runs first',
+                      ),
                     ),
                   ),
-                ),
-              ]),
+                ],
+              ),
               const SizedBox(height: 12),
-              Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: _maxRedemptionsCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration:
-                        const InputDecoration(labelText: 'Max uses (opt)'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _maxPerCustomerCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Max per customer (opt)',
-                      helperText: 'Guests are uncapped',
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _maxRedemptionsCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Max uses (opt)',
+                      ),
                     ),
                   ),
-                ),
-              ]),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _maxPerCustomerCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Max per customer (opt)',
+                        helperText: 'Guests are uncapped',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 4),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
@@ -993,13 +1136,22 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                 onChanged: (v) => setState(() => _exclusive = v),
                 title: const Text('Cannot be combined'),
                 subtitle: const Text(
-                    'Stops every promotion with a higher priority number'),
+                  'Stops every promotion with a higher priority number',
+                ),
               ),
               const SizedBox(height: 8),
-              _datePickerTile(context, 'Starts', _starts,
-                  (d) => setState(() => _starts = d)),
-              _datePickerTile(context, 'Ends (optional)', _ends,
-                  (d) => setState(() => _ends = d)),
+              _datePickerTile(
+                context,
+                'Starts',
+                _starts,
+                (d) => setState(() => _starts = d),
+              ),
+              _datePickerTile(
+                context,
+                'Ends (optional)',
+                _ends,
+                (d) => setState(() => _ends = d),
+              ),
             ],
           ),
         ),
@@ -1020,8 +1172,14 @@ class _VatRatesTab extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     return Column(
       children: [
-        _addBar(context, 'New VAT rate',
-            () => showDialog(context: context, builder: (_) => const _VatRateDialog())),
+        _addBar(
+          context,
+          'New VAT rate',
+          () => showDialog(
+            context: context,
+            builder: (_) => const _VatRateDialog(),
+          ),
+        ),
         Expanded(
           child: async.when(
             loading: () => const LoadingView(label: 'Loading VAT rates…'),
@@ -1047,14 +1205,18 @@ class _VatRatesTab extends ConsumerWidget {
                       ),
                       leading: CircleAvatar(
                         backgroundColor: cs.secondaryContainer,
-                        child: Icon(Icons.percent,
-                            color: cs.onSecondaryContainer),
+                        child: Icon(
+                          Icons.percent,
+                          color: cs.onSecondaryContainer,
+                        ),
                       ),
-                      title: Text('${r.code} · ${r.name}',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text(r.exempt
-                          ? 'Exempt'
-                          : '${r.rate.toStringAsFixed(2)}%'),
+                      title: Text(
+                        '${r.code} · ${r.name}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Text(
+                        r.exempt ? 'Exempt' : '${r.rate.toStringAsFixed(2)}%',
+                      ),
                       trailing: const Icon(Icons.edit_outlined, size: 18),
                     ),
                   );
@@ -1124,14 +1286,17 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
       'name': _nameCtrl.text.trim(),
       'rate': _exempt ? 0 : rate,
       'exempt': _exempt,
-      'description': _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+      'description': _descCtrl.text.trim().isEmpty
+          ? null
+          : _descCtrl.text.trim(),
       'effectiveFrom': _from.toIso8601String().split('T').first,
     };
     try {
       if (_isEdit) {
         await dio.put(
-            '/${ApiConstants.pricing}/vat-rates/${widget.existing!.code}',
-            data: body);
+          '/${ApiConstants.pricing}/vat-rates/${widget.existing!.code}',
+          data: body,
+        );
       } else {
         await dio.post('/${ApiConstants.pricing}/vat-rates', data: body);
       }
@@ -1162,7 +1327,9 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
               enabled: !_isEdit,
               textCapitalization: TextCapitalization.characters,
               decoration: const InputDecoration(
-                  labelText: 'Code *', hintText: 'STANDARD'),
+                labelText: 'Code *',
+                hintText: 'STANDARD',
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -1173,7 +1340,9 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
             TextField(
               controller: _rateCtrl,
               enabled: !_exempt,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(labelText: 'Rate %'),
             ),
             const SizedBox(height: 4),
@@ -1184,11 +1353,20 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
               title: const Text('Exempt'),
             ),
             _datePickerTile(
-                context, 'Effective from', _from, (d) => setState(() => _from = d)),
+              context,
+              'Effective from',
+              _from,
+              (d) => setState(() => _from = d),
+            ),
           ],
         ),
       ),
-      actions: _dialogActions(context, _loading, _submit, _isEdit ? 'Save' : 'Create'),
+      actions: _dialogActions(
+        context,
+        _loading,
+        _submit,
+        _isEdit ? 'Save' : 'Create',
+      ),
     );
   }
 }
@@ -1222,8 +1400,11 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
     if (picked == null) return;
     setState(() {
       _range = VatReturnRange(
-        from: DateTime.utc(picked.year, picked.month, picked.day)
-            .toIso8601String(),
+        from: DateTime.utc(
+          picked.year,
+          picked.month,
+          picked.day,
+        ).toIso8601String(),
         to: _range.to,
       );
     });
@@ -1239,8 +1420,11 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
     );
     if (picked == null) return;
     // Exclusive end of day → next midnight
-    final end = DateTime.utc(picked.year, picked.month, picked.day)
-        .add(const Duration(days: 1));
+    final end = DateTime.utc(
+      picked.year,
+      picked.month,
+      picked.day,
+    ).add(const Duration(days: 1));
     setState(() {
       _range = VatReturnRange(from: _range.from, to: end.toIso8601String());
     });
@@ -1297,11 +1481,14 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
               TextButton(
                 onPressed: () {
                   final now = DateTime.now().toUtc();
-                  final from =
-                      now.subtract(const Duration(days: 90)).toIso8601String();
+                  final from = now
+                      .subtract(const Duration(days: 90))
+                      .toIso8601String();
                   setState(() {
                     _range = VatReturnRange(
-                        from: from, to: now.toIso8601String());
+                      from: from,
+                      to: now.toIso8601String(),
+                    );
                   });
                 },
                 child: const Text('Last 90 days'),
@@ -1316,11 +1503,9 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
         ),
         Expanded(
           child: async.when(
-            loading: () =>
-                const LoadingView(label: 'Computing VAT return…'),
+            loading: () => const LoadingView(label: 'Computing VAT return…'),
             error: (e, _) => ErrorView(
-              message: friendlyError(e,
-                  fallback: 'Could not load VAT return.'),
+              message: friendlyError(e, fallback: 'Could not load VAT return.'),
               onRetry: () => ref.invalidate(vatReturnProvider(_range)),
             ),
             data: (vr) {
@@ -1340,10 +1525,9 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                 children: [
                   Text(
                     'HMRC Making Tax Digital VAT return (boxes 1–9)',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -1367,8 +1551,11 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                           Icon(Icons.info_outline, color: cs.onSurfaceVariant),
                           const SizedBox(width: 10),
                           Expanded(
-                              child: Text(vr.caveat!,
-                                  style: TextStyle(color: cs.onSurfaceVariant))),
+                            child: Text(
+                              vr.caveat!,
+                              style: TextStyle(color: cs.onSurfaceVariant),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -1385,7 +1572,10 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.report_problem_outlined, color: cs.onErrorContainer),
+                          Icon(
+                            Icons.report_problem_outlined,
+                            color: cs.onErrorContainer,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -1404,7 +1594,9 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                     final notComputed = vr.notComputedBoxes.contains(n);
                     final highlight = !notComputed && (n == 3 || n == 5);
                     return Card(
-                      color: highlight ? cs.primaryContainer.withAlpha(80) : null,
+                      color: highlight
+                          ? cs.primaryContainer.withAlpha(80)
+                          : null,
                       child: ListTile(
                         leading: CircleAvatar(
                           backgroundColor: highlight
@@ -1426,18 +1618,27 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                                 vr.fitToFile
                                     ? 'Not modelled — zero unless you have Northern Ireland protocol trade'
                                     : 'Not computed — recorded elsewhere, not carried here',
-                                style: TextStyle(color: vr.fitToFile ? cs.outline : cs.error))
+                                style: TextStyle(
+                                  color: vr.fitToFile ? cs.outline : cs.error,
+                                ),
+                              )
                             : null,
                         trailing: notComputed
-                            ? Text('—',
+                            ? Text(
+                                '—',
                                 key: Key('vat-box-$n-not-computed'),
                                 style: TextStyle(
-                                    color: cs.outline, fontFamily: 'monospace', fontSize: 15))
+                                  color: cs.outline,
+                                  fontFamily: 'monospace',
+                                  fontSize: 15,
+                                ),
+                              )
                             : Text(
                                 e.value.toStringAsFixed(2),
                                 style: TextStyle(
-                                  fontWeight:
-                                      highlight ? FontWeight.bold : FontWeight.w600,
+                                  fontWeight: highlight
+                                      ? FontWeight.bold
+                                      : FontWeight.w600,
                                   fontFamily: 'monospace',
                                   fontSize: 15,
                                 ),
@@ -1445,6 +1646,8 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                       ),
                     );
                   }),
+                  const SizedBox(height: 16),
+                  _MtdFilingSection(range: _range),
                 ],
               );
             },
@@ -1455,18 +1658,454 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
   }
 }
 
+// ── Making Tax Digital (18.5) ───────────────────────────────────────────────
+
+/// The digital link: the number the business files under, the periods HMRC
+/// expects, and the returns filed — each from the same figures shown above,
+/// with nobody re-keying them.
+class _MtdFilingSection extends ConsumerWidget {
+  const _MtdFilingSection({required this.range});
+  final VatReturnRange range;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final reg = ref.watch(vatRegistrationProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Filing with HMRC (Making Tax Digital)',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        reg.when(
+          loading: () => const LoadingView(label: 'Loading registration…'),
+          error: (e, _) => ErrorView(
+            message: friendlyError(
+              e,
+              fallback: 'Could not load the VAT registration.',
+            ),
+            onRetry: () => ref.invalidate(vatRegistrationProvider),
+          ),
+          data: (r) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Card(
+                child: ListTile(
+                  key: const Key('mtd-registration'),
+                  leading: Icon(
+                    r.registered
+                        ? Icons.verified_outlined
+                        : Icons.app_registration_outlined,
+                    color: r.registered ? cs.primary : cs.outline,
+                  ),
+                  title: Text(
+                    r.registered
+                        ? 'VAT number ${r.vrn} · files through ${r.provider == 'HMRC' ? 'HMRC' : 'the simulator'}'
+                        : 'No VAT number registered',
+                  ),
+                  subtitle: Text(
+                    r.registered
+                        ? (r.provider == 'HMRC'
+                              ? (r.connected
+                                    ? 'HMRC\'s grant held since ${r.connectedAt}'
+                                    : 'HMRC\'s grant not yet given')
+                              : 'The simulator accepts what HMRC\'s sandbox accepts; nothing reaches HMRC.')
+                        : (r.hmrcConfigured
+                              ? 'Register the number to file under, through HMRC or the simulator.'
+                              : 'Register the number to file under. HMRC is not configured on this deployment; the simulator is.'),
+                  ),
+                  trailing: TextButton(
+                    key: const Key('mtd-register'),
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (_) => _MtdRegisterDialog(current: r),
+                    ),
+                    child: Text(r.registered ? 'Change' : 'Register'),
+                  ),
+                ),
+              ),
+              if (r.registered) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Periods to file',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                ref
+                    .watch(vatObligationsProvider(range))
+                    .when(
+                      loading: () =>
+                          const LoadingView(label: 'Loading obligations…'),
+                      error: (e, _) => ErrorView(
+                        message: friendlyError(
+                          e,
+                          fallback: 'Could not load the obligations.',
+                        ),
+                        onRetry: () =>
+                            ref.invalidate(vatObligationsProvider(range)),
+                      ),
+                      data: (obligations) => obligations.isEmpty
+                          ? const Text('No obligations in this range.')
+                          : Card(
+                              child: Column(
+                                children: [
+                                  for (final o in obligations)
+                                    ListTile(
+                                      dense: true,
+                                      leading: Icon(
+                                        o.open
+                                            ? Icons.pending_outlined
+                                            : Icons.check_circle_outline,
+                                        color: o.open
+                                            ? cs.tertiary
+                                            : cs.primary,
+                                      ),
+                                      title: Text(
+                                        '${o.periodKey} · ${_day(o.start)} → ${_day(o.end)}',
+                                      ),
+                                      subtitle: Text(
+                                        o.open
+                                            ? 'Open · due ${_day(o.due)}'
+                                            : 'Filed',
+                                      ),
+                                      trailing: o.open
+                                          ? FilledButton.tonal(
+                                              key: Key(
+                                                'mtd-file-${o.periodKey}',
+                                              ),
+                                              onPressed: () => showDialog<void>(
+                                                context: context,
+                                                builder: (_) => _MtdFileDialog(
+                                                  obligation: o,
+                                                  range: range,
+                                                ),
+                                              ),
+                                              child: const Text(
+                                                'File this period',
+                                              ),
+                                            )
+                                          : null,
+                                    ),
+                                ],
+                              ),
+                            ),
+                    ),
+                const SizedBox(height: 8),
+                Text(
+                  'Returns filed',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                ref
+                    .watch(vatSubmissionsProvider)
+                    .when(
+                      loading: () =>
+                          const LoadingView(label: 'Loading filings…'),
+                      error: (e, _) => ErrorView(
+                        message: friendlyError(
+                          e,
+                          fallback: 'Could not load the filings.',
+                        ),
+                        onRetry: () => ref.invalidate(vatSubmissionsProvider),
+                      ),
+                      data: (subs) => subs.isEmpty
+                          ? const Text(
+                              'Nothing filed yet.',
+                              key: Key('mtd-no-filings'),
+                            )
+                          : Card(
+                              child: Column(
+                                children: [
+                                  for (final s in subs)
+                                    ListTile(
+                                      dense: true,
+                                      key: Key('mtd-filing-${s.id}'),
+                                      leading: Icon(
+                                        s.status == 'ACCEPTED'
+                                            ? Icons.receipt_long_outlined
+                                            : Icons.error_outline,
+                                        color: s.status == 'ACCEPTED'
+                                            ? cs.primary
+                                            : cs.error,
+                                      ),
+                                      title: Text(
+                                        '${s.periodKey} · ${s.status == 'ACCEPTED' ? 'accepted' : 'refused'} · ${_day(s.submittedAt)}',
+                                      ),
+                                      subtitle: Text(
+                                        s.status == 'ACCEPTED'
+                                            ? 'Box 1 ${s.box1.toStringAsFixed(2)} · box 5 ${s.box5.toStringAsFixed(2)} · box 6 ${s.box6.toStringAsFixed(0)} · form bundle ${s.formBundleNumber ?? '—'}'
+                                            : '${s.errorCode ?? ''} ${s.errorMessage ?? ''}',
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                    ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _day(String? iso) {
+    if (iso == null) return '—';
+    final d = DateTime.tryParse(iso);
+    return d == null ? iso : d.toIso8601String().split('T').first;
+  }
+}
+
+class _MtdRegisterDialog extends ConsumerStatefulWidget {
+  const _MtdRegisterDialog({required this.current});
+  final VatRegistration current;
+  @override
+  ConsumerState<_MtdRegisterDialog> createState() => _MtdRegisterDialogState();
+}
+
+class _MtdRegisterDialogState extends ConsumerState<_MtdRegisterDialog> {
+  late final TextEditingController _vrn;
+  late String _provider;
+  String? _error;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _vrn = TextEditingController(text: widget.current.vrn ?? '');
+    _provider =
+        widget.current.provider ??
+        (widget.current.providers.contains('HMRC') ? 'HMRC' : 'SIMULATED');
+  }
+
+  @override
+  void dispose() {
+    _vrn.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .put(
+            '/${ApiConstants.pricing}/vat-return/mtd/registration',
+            data: {'vrn': _vrn.text.trim(), 'provider': _provider},
+          );
+      ref.invalidate(vatRegistrationProvider);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      setState(() {
+        _saving = false;
+        _error = friendlyError(e, fallback: 'Could not register.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final providers = widget.current.providers.isEmpty
+        ? const ['SIMULATED']
+        : widget.current.providers;
+    return AlertDialog(
+      title: const Text('VAT registration'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              key: const Key('mtd-vrn'),
+              controller: _vrn,
+              decoration: const InputDecoration(
+                labelText: 'VAT registration number',
+                helperText: 'Nine digits, e.g. GB 123 4567 82',
+              ),
+            ),
+            DropdownButtonFormField<String>(
+              key: const Key('mtd-provider'),
+              isExpanded: true,
+              initialValue: providers.contains(_provider)
+                  ? _provider
+                  : providers.first,
+              decoration: const InputDecoration(labelText: 'File through'),
+              items: [
+                for (final p in providers)
+                  DropdownMenuItem(
+                    value: p,
+                    child: Text(
+                      p == 'HMRC'
+                          ? 'HMRC — the VAT (MTD) API'
+                          : 'Simulator — nothing reaches HMRC',
+                    ),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _provider = v ?? 'SIMULATED'),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                key: const Key('mtd-register-error'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('mtd-register-save'),
+          onPressed: _saving ? null : _save,
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+class _MtdFileDialog extends ConsumerStatefulWidget {
+  const _MtdFileDialog({required this.obligation, required this.range});
+  final VatObligation obligation;
+  final VatReturnRange range;
+  @override
+  ConsumerState<_MtdFileDialog> createState() => _MtdFileDialogState();
+}
+
+class _MtdFileDialogState extends ConsumerState<_MtdFileDialog> {
+  bool _finalised = false;
+  bool _saving = false;
+  String? _error;
+
+  Future<void> _file() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final o = widget.obligation;
+      // The period filed is the obligation's own, to the day after its end (exclusive).
+      final end =
+          DateTime.tryParse(
+            o.end,
+          )?.add(const Duration(days: 1)).toIso8601String() ??
+          widget.range.to;
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.pricing}/vat-return/mtd/submissions',
+            data: {
+              'periodKey': o.periodKey,
+              'from': o.start,
+              'to': end,
+              'finalised': _finalised,
+              'client': {
+                'timezone': _timezone(),
+                'screens':
+                    'width=${WidgetsBinding.instance.platformDispatcher.views.first.physicalSize.width.toInt()}&height=${WidgetsBinding.instance.platformDispatcher.views.first.physicalSize.height.toInt()}&scaling-factor=${WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio}&colour-depth=24',
+                'windowSize':
+                    'width=${MediaQuery.sizeOf(context).width.toInt()}&height=${MediaQuery.sizeOf(context).height.toInt()}',
+              },
+            },
+          );
+      ref.invalidate(vatSubmissionsProvider);
+      ref.invalidate(vatObligationsProvider(widget.range));
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      setState(() {
+        _saving = false;
+        _error = friendlyError(e, fallback: 'The return was not filed.');
+      });
+    }
+  }
+
+  static String _timezone() {
+    final offset = DateTime.now().timeZoneOffset;
+    final sign = offset.isNegative ? '-' : '+';
+    final h = offset.inHours.abs().toString().padLeft(2, '0');
+    final m = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+    return 'UTC$sign$h:$m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final o = widget.obligation;
+    return AlertDialog(
+      title: Text('File period ${o.periodKey}'),
+      content: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'The nine boxes are computed from this business\'s records for '
+              '${o.start.split('T').first} to ${o.end.split('T').first} and sent as they are; '
+              'boxes 6 to 9 in whole pounds. What HMRC answers is kept.',
+            ),
+            const SizedBox(height: 12),
+            CheckboxListTile(
+              key: const Key('mtd-finalised'),
+              value: _finalised,
+              onChanged: (v) => setState(() => _finalised = v ?? false),
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text(
+                'I declare the information is true and complete',
+              ),
+              subtitle: const Text(
+                'A false declaration can result in prosecution.',
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                key: const Key('mtd-file-error'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('mtd-file-submit'),
+          onPressed: _saving || !_finalised ? null : _file,
+          child: const Text('File with HMRC'),
+        ),
+      ],
+    );
+  }
+}
+
 // ── Shared bits ──────────────────────────────────────────────────────────────
 
 Widget _empty(ColorScheme cs, IconData icon, String text) => Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 64, color: cs.outlineVariant),
-          const SizedBox(height: 12),
-          Text(text),
-        ],
-      ),
-    );
+  child: Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(icon, size: 64, color: cs.outlineVariant),
+      const SizedBox(height: 12),
+      Text(text),
+    ],
+  ),
+);
 
 Widget _activeBadge(BuildContext context, bool active) {
   final cs = Theme.of(context).colorScheme;
@@ -1476,11 +2115,14 @@ Widget _activeBadge(BuildContext context, bool active) {
       color: active ? cs.secondaryContainer : cs.surfaceContainerHighest,
       borderRadius: BorderRadius.circular(12),
     ),
-    child: Text(active ? 'ACTIVE' : 'INACTIVE',
-        style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            color: active ? cs.onSecondaryContainer : cs.onSurfaceVariant)),
+    child: Text(
+      active ? 'ACTIVE' : 'INACTIVE',
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.bold,
+        color: active ? cs.onSecondaryContainer : cs.onSurfaceVariant,
+      ),
+    ),
   );
 }
 
@@ -1492,7 +2134,9 @@ Widget _errorBox(BuildContext context, String? error) {
     child: Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-          color: cs.errorContainer, borderRadius: BorderRadius.circular(8)),
+        color: cs.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Text(error, style: TextStyle(color: cs.onErrorContainer)),
     ),
   );
@@ -1512,14 +2156,20 @@ Widget _currencyDropdown(String value, ValueChanged<String> onChanged) =>
       onChanged: (v) => onChanged(v!),
     );
 
-Widget _datePickerTile(BuildContext context, String label, DateTime? value,
-    ValueChanged<DateTime> onPicked) {
+Widget _datePickerTile(
+  BuildContext context,
+  String label,
+  DateTime? value,
+  ValueChanged<DateTime> onPicked,
+) {
   return ListTile(
     contentPadding: EdgeInsets.zero,
     leading: const Icon(Icons.event_outlined),
-    title: Text(value == null
-        ? label
-        : '$label: ${value.toIso8601String().split('T').first}'),
+    title: Text(
+      value == null
+          ? label
+          : '$label: ${value.toIso8601String().split('T').first}',
+    ),
     trailing: const Icon(Icons.edit_calendar_outlined),
     onTap: () async {
       final now = DateTime.now();
@@ -1535,7 +2185,11 @@ Widget _datePickerTile(BuildContext context, String label, DateTime? value,
 }
 
 List<Widget> _dialogActions(
-    BuildContext context, bool loading, VoidCallback onSubmit, String label) {
+  BuildContext context,
+  bool loading,
+  VoidCallback onSubmit,
+  String label,
+) {
   return [
     TextButton(
       onPressed: loading ? null : () => Navigator.pop(context),
@@ -1544,11 +2198,14 @@ List<Widget> _dialogActions(
     FilledButton(
       onPressed: loading ? null : onSubmit,
       child: loading
-          ?  SizedBox(
+          ? SizedBox(
               height: 18,
               width: 18,
-              child:
-                  CircularProgressIndicator(strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Theme.of(context).colorScheme.onPrimary,
+              ),
+            )
           : Text(label),
     ),
   ];

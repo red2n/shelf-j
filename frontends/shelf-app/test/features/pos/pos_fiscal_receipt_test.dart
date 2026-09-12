@@ -100,6 +100,100 @@ void main() {
     });
   });
 
+  group('the regime\'s stamp (18.5)', () {
+    const stamped = (200, '{"data":{"fullNumber":"DE-B-2026-000007","number":7,"regime":"DE_KASSENSICHV",'
+        '"tse":{"serialNumber":"abc123","clientId":"till-1","transactionNumber":7,"signatureCounter":9,'
+        '"signature":"SIG==","algorithm":"ecdsa-plain-SHA256","startedAt":"2026-09-12T10:00:00Z",'
+        '"finishedAt":"2026-09-12T10:00:05Z","processType":"Kassenbeleg-V1",'
+        '"processData":"Beleg^11.90_0.00_0.00_0.00_0.00^11.90:Bar","qr":"V0;till-1;Kassenbeleg-V1;x;7;9;a;b;c;d;SIG==;PUB"}}}');
+
+    test('the till reads the whole stamp, not just the number', () async {
+      final r = _Replies([stamped]);
+      final stamp = await awaitFiscalReceipt(_dio(r), 'o-1');
+      expect(stamp!.fullNumber, 'DE-B-2026-000007');
+      expect(stamp.regime, 'DE_KASSENSICHV');
+      expect(stamp.hasTse, isTrue);
+      expect(stamp.tseSerial, 'abc123');
+      expect(stamp.tseSignatureCounter, 9);
+      expect(stamp.tseTransactionNumber, 7);
+      expect(stamp.tseQr, startsWith('V0;till-1;'));
+      expect(stamp.hasPt, isFalse);
+      // The number-only reader still works, from the same call.
+      expect(await awaitFiscalNumber(_dio(_Replies([stamped])), 'o-1'), 'DE-B-2026-000007');
+    });
+
+    test('a German receipt prints what KassenSichV §6 lists', () {
+      final html = _receipt(number: 'DE-B-2026-000007')
+          .withFiscalStamp(const FiscalStamp(
+            fullNumber: 'DE-B-2026-000007',
+            regime: 'DE_KASSENSICHV',
+            tseSerial: 'abc123',
+            tseTransactionNumber: 7,
+            tseSignatureCounter: 9,
+            tseSignature: 'SIG==',
+            tseStartedAt: '2026-09-12T10:00:00Z',
+            tseFinishedAt: '2026-09-12T10:00:05Z',
+            tseQr: 'V0;till-1;Kassenbeleg-V1;x;7;9;a;b;c;d;SIG==;PUB',
+          ))
+          .toHtml();
+      expect(html, contains('data-fiscal="tse"'));
+      expect(html, contains('TSE-Seriennr.:'));
+      expect(html, contains('abc123'));
+      expect(html, contains('Transaktionsnr.:</span><span>7'));
+      expect(html, contains('Signaturzähler:</span><span>9'));
+      expect(html, contains('2026-09-12T10:00:00Z'));
+      expect(html, contains('2026-09-12T10:00:05Z'));
+      expect(html, contains('SIG=='));
+      expect(html, contains('QR: <span class="mono">V0;till-1;'));
+      expect(html, contains('Receipt no.:'));
+    });
+
+    test('when the module was down the receipt says so, and the sale still prints', () {
+      final html = _receipt(number: 'DE-B-2026-000008')
+          .withFiscalStamp(const FiscalStamp(
+            fullNumber: 'DE-B-2026-000008',
+            regime: 'DE_KASSENSICHV',
+            tseError: 'cloud TSE unreachable',
+          ))
+          .toHtml();
+      expect(html, contains('data-fiscal="tse-error"'));
+      expect(html, contains('Sicherheitseinrichtung ausgefallen: cloud TSE unreachable'));
+      expect(html, contains('Receipt no.:'));
+    });
+
+    test('a Portuguese receipt prints the four characters and the certificate number', () {
+      final html = _receipt(number: '2026-000003')
+          .withFiscalStamp(const FiscalStamp(
+            fullNumber: '2026-000003',
+            regime: 'PT_SAFT',
+            ptExcerpt: 'AbCd',
+            ptCertificateNumber: '1234',
+            ptAtcud: 'XYZ1-3',
+          ))
+          .toHtml();
+      expect(html, contains('data-fiscal="pt"'));
+      expect(html, contains('AbCd'));
+      expect(html, contains('Processado por programa certificado n.º 1234/AT'));
+      expect(html, contains('ATCUD:</span><span>XYZ1-3'));
+      expect(html, isNot(contains('data-fiscal="tse"')));
+    });
+
+    test('under NONE nothing is stamped', () {
+      final html = _receipt(number: '2026-000001')
+          .withFiscalStamp(const FiscalStamp(fullNumber: '2026-000001'))
+          .toHtml();
+      expect(html, isNot(contains('data-fiscal=')));
+    });
+
+    test('a stamp escapes what it prints', () {
+      final html = _receipt(number: 'x')
+          .withFiscalStamp(const FiscalStamp(fullNumber: 'x', regime: 'DE_KASSENSICHV', tseError: '<b>bad</b>'))
+          .toHtml();
+      expect(html, contains('&lt;b&gt;bad&lt;/b&gt;'));
+      expect(html, isNot(contains('<b>bad</b>')));
+    });
+  });
+
   group('the printed receipt', () {
     test('prints the legal number as the receipt number, with the order beside it', () {
       final html = _receipt(number: '2026-000042').toHtml();

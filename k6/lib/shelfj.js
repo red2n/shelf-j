@@ -184,6 +184,8 @@ const STORE_DEFAULTS = {
   GB: { city: 'London', pincode: 'EC1A 1BB', timezone: 'Europe/London' },
   IN: { city: 'Mumbai', pincode: '400001', timezone: 'Asia/Kolkata' },
   US: { city: 'Austin', pincode: '73301', timezone: 'America/Chicago' },
+  DE: { city: 'Berlin', pincode: '10117', timezone: 'Europe/Berlin' },
+  PT: { city: 'Lisboa', pincode: '1100-148', timezone: 'Europe/Lisbon' },
 };
 
 /**

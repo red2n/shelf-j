@@ -1,5 +1,6 @@
 package com.shelfj.order.mapper;
 
+import com.shelfj.order.domain.Domain;
 import com.shelfj.order.domain.Domain.ExceptionRow;
 import com.shelfj.order.domain.Domain.GiftCard;
 import com.shelfj.order.domain.Domain.GiftCardTransaction;
@@ -18,6 +19,7 @@ import com.shelfj.order.domain.Domain.SalesByHourRow;
 import com.shelfj.order.domain.Domain.SalesByStaffRow;
 import com.shelfj.order.domain.Domain.SpecialOrder;
 import com.shelfj.order.domain.Domain.SpecialOrderItem;
+import com.shelfj.order.dto.Dtos;
 import com.shelfj.order.dto.Dtos.ExceptionRowResponse;
 import com.shelfj.order.dto.Dtos.GiftCardResponse;
 import com.shelfj.order.dto.Dtos.GiftCardTransactionResponse;
@@ -60,7 +62,110 @@ public final class Mappers {
         i.lineTotal(),
         i.notes(),
         str(i.weighingInstrumentId()),
-        i.fulfilledQty());
+        i.fulfilledQty(),
+        i.vatAmount());
+  }
+
+  /**
+   * Converts a legal receipt to its wire form, with the regime's stamp when it carries one (18.5).
+   *
+   * @param r the document
+   * @return its API representation
+   */
+  public static Dtos.FiscalReceiptResponse toDto(Domain.FiscalReceipt r) {
+    Dtos.TseStampResponse tse = null;
+    if (r.tse() != null) {
+      var t = r.tse();
+      tse =
+          new Dtos.TseStampResponse(
+              t.serialNumber(),
+              t.clientId(),
+              t.transactionNumber(),
+              t.signatureCounter(),
+              t.signature(),
+              t.algorithm(),
+              t.publicKey(),
+              t.timeFormat(),
+              t.startedAt() == null ? null : t.startedAt().toString(),
+              t.finishedAt() == null ? null : t.finishedAt().toString(),
+              t.processType(),
+              t.processData(),
+              t.qr(),
+              t.error());
+    }
+    Dtos.PtStampResponse pt = null;
+    if (r.pt() != null) {
+      var p = r.pt();
+      pt =
+          new Dtos.PtStampResponse(
+              p.invoiceNo(),
+              p.hash(),
+              p.hashControl(),
+              p.atcud(),
+              p.certificateNumber(),
+              p.printedExcerpt());
+    }
+    return new Dtos.FiscalReceiptResponse(
+        str(r.id()),
+        str(r.storeId()),
+        r.seriesCode(),
+        r.period(),
+        r.number(),
+        r.fullNumber(),
+        str(r.orderId()),
+        r.issuedAt() == null ? null : r.issuedAt().toString(),
+        str(r.issuedBy()),
+        r.currency(),
+        r.grossTotal(),
+        r.taxTotal(),
+        r.voidedAt() == null ? null : r.voidedAt().toString(),
+        r.voidReason(),
+        r.prevHash(),
+        r.hash(),
+        r.regime(),
+        tse,
+        pt);
+  }
+
+  /**
+   * Converts a store's fiscal settings, and what the deployment offers beside them, to wire form.
+   *
+   * @param v the settings view
+   * @return its API representation
+   */
+  public static Dtos.FiscalSettingsResponse toDto(
+      com.shelfj.order.service.FiscalService.SettingsView v) {
+    var s = v.settings();
+    Dtos.TseDeviceResponse device = null;
+    if (v.device() != null) {
+      var d = v.device();
+      device =
+          new Dtos.TseDeviceResponse(
+              str(d.id()),
+              d.provider(),
+              d.clientId(),
+              d.serialNumber(),
+              d.publicKey(),
+              d.signatureAlgorithm(),
+              d.timeFormat(),
+              d.externalTssId(),
+              d.signatureCounter(),
+              d.transactionCounter(),
+              d.registeredAt() == null ? null : d.registeredAt().toString());
+    }
+    return new Dtos.FiscalSettingsResponse(
+        str(s.storeId()),
+        s.regime(),
+        s.taxRegistrationNumber(),
+        s.certificateNumber(),
+        s.seriesValidationCode(),
+        s.updatedAt() == null ? null : s.updatedAt().toString(),
+        str(s.updatedBy()),
+        device,
+        v.regimes(),
+        v.tseProviders(),
+        v.ptKeyConfigured(),
+        v.ptPublicKey());
   }
 
   /**

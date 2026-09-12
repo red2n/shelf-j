@@ -33,6 +33,7 @@ class PaymentEventHandler {
     UUID paymentId;
     UUID eventId;
     BigDecimal amount;
+    String method;
     try {
       JsonObject obj = Json.createReader(new StringReader(payload)).readObject();
       eventType = stringOrNull(obj, "eventType");
@@ -49,6 +50,9 @@ class PaymentEventHandler {
           obj.containsKey("amount") && !obj.isNull("amount")
               ? obj.getJsonNumber("amount").bigDecimalValue()
               : null;
+      // How the tender was paid (18.5): the German fiscal file lists every payment as cash or
+      // not, and the security module signs that split. Absent from events older than this field.
+      method = stringOrNull(obj, "method");
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed payment event skipped: " + e.getMessage());
       return;
@@ -56,7 +60,7 @@ class PaymentEventHandler {
 
     try {
       if ("PaymentCaptured".equals(eventType)) {
-        svc.handlePaymentCaptured(tenantId, orderId, paymentId, amount);
+        svc.handlePaymentCaptured(tenantId, orderId, paymentId, amount, method);
       } else if ("PaymentFailed".equals(eventType)) {
         svc.handlePaymentFailed(tenantId, orderId);
       } else if ("PaymentRefunded".equals(eventType)) {

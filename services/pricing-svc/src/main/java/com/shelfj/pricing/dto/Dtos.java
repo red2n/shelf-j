@@ -557,4 +557,91 @@ public final class Dtos {
       TaxSummaryTotalsResponse totals,
       String periodFrom,
       String periodTo) {}
+
+  // ── Making Tax Digital (18.5) ─────────────────────────────────────────────
+
+  @Schema(
+      name = "VatRegistrationResponse",
+      description =
+          "The VAT number this business files under, the path it files through, whether HMRC's"
+              + " grant is held, and what the deployment offers.")
+  public record VatRegistrationResponse(
+      @Schema(description = "False until a number is registered; the offer is still named.")
+          boolean registered,
+      String vrn,
+      @Schema(description = "SIMULATED or HMRC.") String provider,
+      boolean connected,
+      String connectedAt,
+      String updatedAt,
+      @Schema(description = "The providers available here.") List<String> providers,
+      boolean hmrcConfigured) {}
+
+  @Schema(name = "RegisterVatRequest")
+  public record RegisterVatRequest(
+      @Schema(description = "Nine digits; a GB prefix and spaces are allowed.")
+          @NotBlank
+          @Size(max = 16)
+          String vrn,
+      @Schema(description = "SIMULATED or HMRC.") @NotBlank String provider) {}
+
+  @Schema(name = "HmrcConnectRequest")
+  public record HmrcConnectRequest(
+      @NotBlank String code,
+      @Schema(description = "The redirect URI the code was issued against.") @NotBlank
+          String redirectUri) {}
+
+  @Schema(name = "VatObligationResponse", description = "One of HMRC's VAT obligations.")
+  public record VatObligationResponse(
+      String periodKey,
+      String start,
+      String end,
+      String due,
+      @Schema(description = "O open, F fulfilled.") String status,
+      String received) {}
+
+  @Schema(
+      name = "SubmitVatReturnRequest",
+      description =
+          "File the return for an obligation. The boxes are computed from the period; the caller"
+              + " declares them final. client carries what the browser collected for HMRC's"
+              + " fraud-prevention headers: timezone, screens, windowSize, userAgent, deviceId,"
+              + " doNotTrack, publicIp.")
+  public record SubmitVatReturnRequest(
+      @NotBlank @Size(max = 4) String periodKey,
+      @NotBlank String from,
+      @NotBlank String to,
+      @NotNull Boolean finalised,
+      Map<String, String> client) {}
+
+  @Schema(
+      name = "VatReturnSubmissionResponse",
+      description = "A return as filed, and what HMRC answered.")
+  public record VatReturnSubmissionResponse(
+      String id,
+      String vrn,
+      String periodKey,
+      String periodFrom,
+      String periodTo,
+      BigDecimal box1,
+      BigDecimal box2,
+      BigDecimal box3,
+      BigDecimal box4,
+      BigDecimal box5,
+      BigDecimal box6,
+      BigDecimal box7,
+      BigDecimal box8,
+      BigDecimal box9,
+      boolean finalised,
+      String provider,
+      @Schema(description = "ACCEPTED or REJECTED.") String status,
+      String submittedAt,
+      String submittedBy,
+      String processingDate,
+      String formBundleNumber,
+      String paymentIndicator,
+      String chargeRefNumber,
+      String receiptId,
+      String receiptTimestamp,
+      String errorCode,
+      String errorMessage) {}
 }

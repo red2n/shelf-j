@@ -253,10 +253,10 @@ class FiscalReceiptIT {
     UUID order = UUID.fromString(orderId);
 
     // A split tender: nothing is numbered until the sale is complete.
-    orderService.handlePaymentCaptured(tenant, order, Ids.newId(), new BigDecimal("2.00"));
+    orderService.handlePaymentCaptured(tenant, order, Ids.newId(), new BigDecimal("2.00"), "CASH");
     assertThat(get("/admin/orders/" + orderId + "/fiscal-receipt", T).getStatus(), is(404));
 
-    orderService.handlePaymentCaptured(tenant, order, Ids.newId(), new BigDecimal("3.00"));
+    orderService.handlePaymentCaptured(tenant, order, Ids.newId(), new BigDecimal("3.00"), "CARD");
     assertThat(numberOf(orderId), is(1L));
   }
 

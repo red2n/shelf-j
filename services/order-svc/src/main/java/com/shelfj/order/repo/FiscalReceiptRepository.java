@@ -2,16 +2,20 @@ package com.shelfj.order.repo;
 
 import com.shelfj.order.domain.Domain;
 import com.shelfj.order.domain.Domain.FiscalReceipt;
+import com.shelfj.order.domain.Domain.PtStamp;
 import com.shelfj.order.domain.Domain.SequenceGap;
+import com.shelfj.order.domain.Domain.TseStamp;
 import com.shelfj.service.BaseJdbcRepository;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,6 +29,34 @@ import java.util.UUID;
 @ApplicationScoped
 public class FiscalReceiptRepository extends BaseJdbcRepository {
 
+  private static final String COLUMNS =
+      "id, tenant_id, store_id, series_code, period, number, full_number, order_id, issued_at,"
+          + " issued_by, currency, gross_total, tax_total, voided_at, void_reason, prev_hash, hash,"
+          + " regime, tse_serial, tse_client_id, tse_transaction_number, tse_signature_counter,"
+          + " tse_signature, tse_algorithm, tse_public_key, tse_time_format, tse_started_at,"
+          + " tse_finished_at, tse_process_type, tse_process_data, tse_qr, tse_error,"
+          + " pt_invoice_no, pt_hash, pt_hash_control, pt_atcud, pt_certificate_number";
+
+  /**
+   * Signs a document inside its allocation, once its number is known and the previous document is
+   * fixed (18.5). The Portuguese signature chains on the previous document's signature, which is
+   * why it cannot be computed before the counter row is locked.
+   */
+  @FunctionalInterface
+  public interface DocumentSigner {
+    /**
+     * @param numbered the document with its number, full number, issue time and previous hash
+     * @param previous the document before it in the series, or null for the first
+     * @return the stamp to store, or null for none
+     */
+    PtStamp sign(FiscalReceipt numbered, FiscalReceipt previous);
+  }
+
+  /** Issues with no document signer — a store under NONE or DE_KASSENSICHV. */
+  public FiscalReceipt issue(FiscalReceipt draft, String defaultPrefix) {
+    return issue(draft, defaultPrefix, null);
+  }
+
   /**
    * Issues the receipt for an order, allocating the next number in its series.
    *
@@ -36,8 +68,13 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
    * RETURNING} inside this transaction, so the row lock serialises concurrent tills and a rollback
    * puts the number back. A {@code SEQUENCE} would be faster and would gap on the first aborted
    * transaction — and the gap is exactly what an inspector asks about.
+   *
+   * @param draft the document before its number: the device's stamp, if the regime has one, is
+   *     already on it
+   * @param defaultPrefix what a newly opened series prints in front of its numbers
+   * @param signer the regime's document signer, or null
    */
-  public FiscalReceipt issue(FiscalReceipt draft, String defaultPrefix) {
+  public FiscalReceipt issue(FiscalReceipt draft, String defaultPrefix, DocumentSigner signer) {
     return inTx(
         c -> {
           var existing = findByOrderTx(c, draft.tenantId(), draft.orderId());
@@ -89,26 +126,23 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
           // The chain (18.4): the previous document's hash, or GENESIS for the first — and for
           // the first after a document issued before the chain existed. The counter row is still
           // locked, so the previous document is committed and nothing can slip between.
-          String prevHash = Domain.FiscalReceipt.GENESIS;
-          try (var prev =
-              c.prepareStatement(
-                  "SELECT hash FROM fiscal_receipts WHERE tenant_id = ? AND store_id = ?"
-                      + " AND series_code = ? AND period = ? AND number = ?")) {
-            prev.setObject(1, draft.tenantId());
-            prev.setObject(2, draft.storeId());
-            prev.setString(3, draft.seriesCode());
-            prev.setString(4, draft.period());
-            prev.setLong(5, number - 1);
-            try (ResultSet rs = prev.executeQuery()) {
-              if (rs.next() && rs.getString(1) != null) {
-                prevHash = rs.getString(1);
-              }
-            }
-          }
+          FiscalReceipt previous =
+              findByNumberTx(
+                      c,
+                      draft.tenantId(),
+                      draft.storeId(),
+                      draft.seriesCode(),
+                      draft.period(),
+                      number - 1)
+                  .orElse(null);
+          String prevHash =
+              previous == null || previous.hash() == null
+                  ? Domain.FiscalReceipt.GENESIS
+                  : previous.hash();
           // Issued-at is part of the hash, so it is chosen here rather than by the database, at
           // the microsecond precision the column keeps.
           Instant issuedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
-          FiscalReceipt chained =
+          FiscalReceipt numbered =
               new FiscalReceipt(
                   draft.id(),
                   draft.tenantId(),
@@ -126,48 +160,102 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
                   null,
                   null,
                   prevHash,
+                  null,
+                  draft.regime(),
+                  draft.tse(),
                   null);
+          // The document signer runs here (18.5), with the number and the previous document both
+          // fixed under the same lock, so the Portuguese chain is as gapless as the numbers.
+          PtStamp pt = signer == null ? null : signer.sign(numbered, previous);
+          FiscalReceipt chained = numbered.withStamps(draft.regime(), draft.tse(), pt);
           String hash = hashOf(chained);
-          try (var ins =
-              c.prepareStatement(
-                  "INSERT INTO fiscal_receipts"
-                      + " (id, tenant_id, store_id, series_code, period, number, full_number,"
-                      + "  order_id, issued_at, issued_by, currency, gross_total, tax_total,"
-                      + "  prev_hash, hash)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
-            ins.setObject(1, draft.id());
-            ins.setObject(2, draft.tenantId());
-            ins.setObject(3, draft.storeId());
-            ins.setString(4, draft.seriesCode());
-            ins.setString(5, draft.period());
-            ins.setLong(6, number);
-            ins.setString(7, full);
-            ins.setObject(8, draft.orderId());
-            ins.setObject(9, issuedAt.atOffset(java.time.ZoneOffset.UTC));
-            ins.setObject(10, draft.issuedBy());
-            ins.setString(11, draft.currency());
-            ins.setBigDecimal(12, draft.grossTotal());
-            ins.setBigDecimal(13, draft.taxTotal());
-            ins.setString(14, prevHash);
-            ins.setString(15, hash);
-            ins.executeUpdate();
-          }
-
+          insertTx(c, chained, hash);
           return findByOrderTx(c, draft.tenantId(), draft.orderId()).orElseThrow();
         },
         "issue fiscal receipt");
+  }
+
+  private static void insertTx(Connection c, FiscalReceipt r, String hash) throws SQLException {
+    TseStamp t = r.tse();
+    PtStamp p = r.pt();
+    try (PreparedStatement ins =
+        c.prepareStatement(
+            "INSERT INTO fiscal_receipts ("
+                + COLUMNS
+                + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
+                + "?,?,?)")) {
+      int i = 1;
+      ins.setObject(i++, r.id());
+      ins.setObject(i++, r.tenantId());
+      ins.setObject(i++, r.storeId());
+      ins.setString(i++, r.seriesCode());
+      ins.setString(i++, r.period());
+      ins.setLong(i++, r.number());
+      ins.setString(i++, r.fullNumber());
+      ins.setObject(i++, r.orderId());
+      ins.setObject(i++, r.issuedAt().atOffset(ZoneOffset.UTC));
+      ins.setObject(i++, r.issuedBy());
+      ins.setString(i++, r.currency());
+      ins.setBigDecimal(i++, r.grossTotal());
+      ins.setBigDecimal(i++, r.taxTotal());
+      ins.setObject(i++, null);
+      ins.setString(i++, null);
+      ins.setString(i++, r.prevHash());
+      ins.setString(i++, hash);
+      ins.setString(i++, r.regime());
+      ins.setString(i++, t == null ? null : t.serialNumber());
+      ins.setString(i++, t == null ? null : t.clientId());
+      ins.setObject(i++, t == null ? null : t.transactionNumber());
+      ins.setObject(i++, t == null ? null : t.signatureCounter());
+      ins.setString(i++, t == null ? null : t.signature());
+      ins.setString(i++, t == null ? null : t.algorithm());
+      ins.setString(i++, t == null ? null : t.publicKey());
+      ins.setString(i++, t == null ? null : t.timeFormat());
+      ins.setObject(
+          i++, t == null || t.startedAt() == null ? null : t.startedAt().atOffset(ZoneOffset.UTC));
+      ins.setObject(
+          i++,
+          t == null || t.finishedAt() == null ? null : t.finishedAt().atOffset(ZoneOffset.UTC));
+      ins.setString(i++, t == null ? null : t.processType());
+      ins.setString(i++, t == null ? null : t.processData());
+      ins.setString(i++, t == null ? null : t.qr());
+      ins.setString(i++, t == null ? null : t.error());
+      ins.setString(i++, p == null ? null : p.invoiceNo());
+      ins.setString(i++, p == null ? null : p.hash());
+      ins.setString(i++, p == null ? null : p.hashControl());
+      ins.setString(i++, p == null ? null : p.atcud());
+      ins.setString(i, p == null ? null : p.certificateNumber());
+      ins.executeUpdate();
+    }
   }
 
   private static Optional<FiscalReceipt> findByOrderTx(Connection c, UUID tenantId, UUID orderId)
       throws SQLException {
     try (var st =
         c.prepareStatement(
-            "SELECT id, tenant_id, store_id, series_code, period, number, full_number, order_id,"
-                + " issued_at, issued_by, currency, gross_total, tax_total, voided_at, void_reason,"
-                + " prev_hash, hash"
-                + " FROM fiscal_receipts WHERE tenant_id = ? AND order_id = ?")) {
+            "SELECT " + COLUMNS + " FROM fiscal_receipts WHERE tenant_id = ? AND order_id = ?")) {
       st.setObject(1, tenantId);
       st.setObject(2, orderId);
+      try (ResultSet rs = st.executeQuery()) {
+        return rs.next() ? Optional.of(map(rs)) : Optional.empty();
+      }
+    }
+  }
+
+  private static Optional<FiscalReceipt> findByNumberTx(
+      Connection c, UUID tenantId, UUID storeId, String series, String period, long number)
+      throws SQLException {
+    try (var st =
+        c.prepareStatement(
+            "SELECT "
+                + COLUMNS
+                + " FROM fiscal_receipts WHERE tenant_id = ? AND store_id = ?"
+                + " AND series_code = ? AND period = ? AND number = ?")) {
+      st.setObject(1, tenantId);
+      st.setObject(2, storeId);
+      st.setString(3, series);
+      st.setString(4, period);
+      st.setLong(5, number);
       try (ResultSet rs = st.executeQuery()) {
         return rs.next() ? Optional.of(map(rs)) : Optional.empty();
       }
@@ -184,10 +272,7 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
   public Optional<FiscalReceipt> findByOrder(UUID tenantId, UUID orderId) {
     var rows =
         query(
-            "SELECT id, tenant_id, store_id, series_code, period, number, full_number, order_id,"
-                + " issued_at, issued_by, currency, gross_total, tax_total, voided_at, void_reason,"
-                + " prev_hash, hash"
-                + " FROM fiscal_receipts WHERE tenant_id = ? AND order_id = ?",
+            "SELECT " + COLUMNS + " FROM fiscal_receipts WHERE tenant_id = ? AND order_id = ?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, orderId);
@@ -233,9 +318,8 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
   public List<FiscalReceipt> listSeries(
       UUID tenantId, UUID storeId, String series, String period, int limit) {
     return query(
-        "SELECT id, tenant_id, store_id, series_code, period, number, full_number, order_id,"
-            + " issued_at, issued_by, currency, gross_total, tax_total, voided_at, void_reason,"
-            + " prev_hash, hash"
+        "SELECT "
+            + COLUMNS
             + " FROM fiscal_receipts"
             + " WHERE tenant_id = ? AND store_id = ? AND series_code = ? AND period = ?"
             + " ORDER BY number LIMIT ?",
@@ -250,14 +334,6 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
         "list receipt series");
   }
 
-  /**
-   * Every hole in a series — the inspector's question, answered by the database rather than by
-   * assertion.
-   *
-   * <p>A row is returned for each number that has an issued receipt before it and none at it, up to
-   * the highest number issued. An empty result is the proof that the sequence is intact; it is
-   * deliberately not a boolean, because "there is a gap" is not a useful answer without "where".
-   */
   /** One counter row: the series a store runs, where it has got to, and what it prints in front. */
   public record ReceiptSeries(
       UUID storeId, String seriesCode, String period, long nextNumber, String prefix) {}
@@ -320,6 +396,14 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
         .orElseThrow();
   }
 
+  /**
+   * Every hole in a series — the inspector's question, answered by the database rather than by
+   * assertion.
+   *
+   * <p>A row is returned for each number that has an issued receipt before it and none at it, up to
+   * the highest number issued. An empty result is the proof that the sequence is intact; it is
+   * deliberately not a boolean, because "there is a gap" is not a useful answer without "where".
+   */
   public List<SequenceGap> findGaps(UUID tenantId, UUID storeId, String series, String period) {
     return query(
         "WITH s AS ("
@@ -360,8 +444,49 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
     return rows.isEmpty() ? new long[] {0, 0, 0} : rows.get(0);
   }
 
+  private static Instant instant(ResultSet rs, int col) throws SQLException {
+    OffsetDateTime v = rs.getObject(col, OffsetDateTime.class);
+    return v == null ? null : v.toInstant();
+  }
+
+  private static Long longOrNull(ResultSet rs, int col) throws SQLException {
+    long v = rs.getLong(col);
+    return rs.wasNull() ? null : v;
+  }
+
   private static FiscalReceipt map(ResultSet rs) throws SQLException {
-    OffsetDateTime voided = rs.getObject(14, OffsetDateTime.class);
+    TseStamp tse = null;
+    // A stamp exists when the device signed, or when it failed and the failure is the record.
+    if (rs.getString(23) != null || rs.getString(32) != null) {
+      tse =
+          new TseStamp(
+              rs.getString(19),
+              rs.getString(20),
+              longOrNull(rs, 21),
+              longOrNull(rs, 22),
+              rs.getString(23),
+              rs.getString(24),
+              rs.getString(25),
+              rs.getString(26),
+              instant(rs, 27),
+              instant(rs, 28),
+              rs.getString(29),
+              rs.getString(30),
+              rs.getString(31),
+              rs.getString(32));
+    }
+    PtStamp pt = null;
+    if (rs.getString(34) != null) {
+      String hash = rs.getString(34);
+      pt =
+          new PtStamp(
+              rs.getString(33),
+              hash,
+              rs.getString(35),
+              rs.getString(36),
+              rs.getString(37),
+              com.shelfj.order.fiscal.PtSignature.excerpt(hash));
+    }
     return new FiscalReceipt(
         (UUID) rs.getObject(1),
         (UUID) rs.getObject(2),
@@ -376,39 +501,51 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
         rs.getString(11),
         rs.getBigDecimal(12),
         rs.getBigDecimal(13),
-        voided == null ? null : voided.toInstant(),
+        instant(rs, 14),
         rs.getString(15),
         rs.getString(16),
-        rs.getString(17));
+        rs.getString(17),
+        rs.getString(18),
+        tse,
+        pt);
   }
 
   /**
    * The SHA-256 a document must carry: over the figures an inspector reads off it and the hash of
-   * the document before, so a changed figure or a re-inserted row no longer matches (18.4).
+   * the document before, so a changed figure or a re-inserted row no longer matches (18.4). Since
+   * 18.5 the regime's stamp is part of it when there is one, so a swapped device signature breaks
+   * the chain too; a document with no stamp hashes exactly as it did before.
    *
    * @param r the document, with the previous hash it chains to
    * @return 64 hex characters
    */
   public static String hashOf(FiscalReceipt r) {
-    String canonical =
-        String.join(
-            "|",
-            r.tenantId().toString(),
-            r.storeId().toString(),
-            r.seriesCode(),
-            r.period(),
-            Long.toString(r.number()),
-            r.fullNumber(),
-            r.orderId().toString(),
-            r.issuedAt().toString(),
-            r.currency(),
-            r.grossTotal().setScale(4, java.math.RoundingMode.HALF_UP).toPlainString(),
-            r.taxTotal().setScale(4, java.math.RoundingMode.HALF_UP).toPlainString(),
-            r.prevHash());
+    StringBuilder canonical =
+        new StringBuilder(
+            String.join(
+                "|",
+                r.tenantId().toString(),
+                r.storeId().toString(),
+                r.seriesCode(),
+                r.period(),
+                Long.toString(r.number()),
+                r.fullNumber(),
+                r.orderId().toString(),
+                r.issuedAt().toString(),
+                r.currency(),
+                r.grossTotal().setScale(4, java.math.RoundingMode.HALF_UP).toPlainString(),
+                r.taxTotal().setScale(4, java.math.RoundingMode.HALF_UP).toPlainString(),
+                r.prevHash()));
+    if (r.tse() != null && r.tse().signature() != null) {
+      canonical.append("|tse:").append(r.tse().signature());
+    }
+    if (r.pt() != null && r.pt().hash() != null) {
+      canonical.append("|pt:").append(r.pt().hash());
+    }
     try {
       var md = java.security.MessageDigest.getInstance("SHA-256");
       return java.util.HexFormat.of()
-          .formatHex(md.digest(canonical.getBytes(StandardCharsets.UTF_8)));
+          .formatHex(md.digest(canonical.toString().getBytes(StandardCharsets.UTF_8)));
     } catch (java.security.NoSuchAlgorithmException e) {
       throw new IllegalStateException("SHA-256 missing", e);
     }
@@ -447,9 +584,15 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
     return new ChainVerdict(from == null ? null : Boolean.TRUE, from, null);
   }
 
-  /** One order line under the document it was sold on, for the register export. */
+  /** One order line under the document it was sold on, for the register exports. */
   public record RegisterLine(
-      long number, UUID variantId, BigDecimal qty, BigDecimal unitPrice, BigDecimal lineTotal) {}
+      long number,
+      UUID variantId,
+      BigDecimal qty,
+      BigDecimal unitPrice,
+      BigDecimal lineTotal,
+      /** As the quote priced it; null for a line placed with pricing enforcement off. */
+      BigDecimal vatAmount) {}
 
   /**
    * Every order line behind every document in a series, in document order — the same service's
@@ -458,7 +601,7 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
   public List<RegisterLine> linesInSeries(
       UUID tenantId, UUID storeId, String series, String period) {
     return query(
-        "SELECT fr.number, oi.variant_id, oi.qty, oi.unit_price, oi.line_total"
+        "SELECT fr.number, oi.variant_id, oi.qty, oi.unit_price, oi.line_total, oi.vat_amount"
             + " FROM fiscal_receipts fr"
             + " JOIN order_items oi ON oi.tenant_id = fr.tenant_id AND oi.order_id = fr.order_id"
             + " WHERE fr.tenant_id = ? AND fr.store_id = ? AND fr.series_code = ? AND fr.period = ?"
@@ -475,7 +618,88 @@ public class FiscalReceiptRepository extends BaseJdbcRepository {
                 (UUID) rs.getObject(2),
                 rs.getBigDecimal(3),
                 rs.getBigDecimal(4),
-                rs.getBigDecimal(5)),
+                rs.getBigDecimal(5),
+                rs.getBigDecimal(6)),
         "register lines");
+  }
+
+  /** One tender behind a document: how the sale was paid, for the fiscal files (18.5). */
+  public record RegisterTender(long number, String method, BigDecimal amount) {}
+
+  /**
+   * Every captured tender behind every document in a series, from the payment ledger the
+   * PaymentCaptured events built.
+   */
+  public List<RegisterTender> tendersInSeries(
+      UUID tenantId, UUID storeId, String series, String period) {
+    return query(
+        "SELECT fr.number, pe.method, pe.amount"
+            + " FROM fiscal_receipts fr"
+            + " JOIN order_payment_events pe"
+            + "   ON pe.tenant_id = fr.tenant_id AND pe.order_id = fr.order_id"
+            + " WHERE fr.tenant_id = ? AND fr.store_id = ? AND fr.series_code = ? AND fr.period = ?"
+            + " ORDER BY fr.number, pe.applied_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setString(3, series);
+          ps.setString(4, period);
+        },
+        rs -> new RegisterTender(rs.getLong(1), rs.getString(2), rs.getBigDecimal(3)),
+        "register tenders");
+  }
+
+  /**
+   * The captured tenders behind one sale, from the payment ledger — what a German security module
+   * signs as the payment split.
+   */
+  public List<RegisterTender> tendersOfOrder(UUID tenantId, UUID orderId) {
+    return query(
+        "SELECT 0, method, amount FROM order_payment_events"
+            + " WHERE tenant_id = ? AND order_id = ? ORDER BY applied_at",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, orderId);
+        },
+        rs -> new RegisterTender(rs.getLong(1), rs.getString(2), rs.getBigDecimal(3)),
+        "tenders of order");
+  }
+
+  /** The order header behind a document: what the fiscal files need beyond the document itself. */
+  public record RegisterOrder(
+      long number,
+      String channel,
+      String paymentMethod,
+      BigDecimal subtotal,
+      BigDecimal taxAmount,
+      BigDecimal total,
+      UUID customerId) {}
+
+  /** The order header behind every document in a series, in document order. */
+  public List<RegisterOrder> ordersInSeries(
+      UUID tenantId, UUID storeId, String series, String period) {
+    return query(
+        "SELECT fr.number, o.channel, o.payment_method, o.subtotal, o.tax_amount, o.total,"
+            + " o.customer_id"
+            + " FROM fiscal_receipts fr"
+            + " JOIN orders o ON o.tenant_id = fr.tenant_id AND o.id = fr.order_id"
+            + " WHERE fr.tenant_id = ? AND fr.store_id = ? AND fr.series_code = ? AND fr.period = ?"
+            + " ORDER BY fr.number",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setString(3, series);
+          ps.setString(4, period);
+        },
+        rs ->
+            new RegisterOrder(
+                rs.getLong(1),
+                rs.getString(2),
+                rs.getString(3),
+                rs.getBigDecimal(4),
+                rs.getBigDecimal(5),
+                rs.getBigDecimal(6),
+                (UUID) rs.getObject(7)),
+        "register orders");
   }
 }

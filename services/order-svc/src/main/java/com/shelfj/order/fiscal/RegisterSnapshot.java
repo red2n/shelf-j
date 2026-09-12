@@ -1,0 +1,119 @@
+package com.shelfj.order.fiscal;
+
+import com.shelfj.order.domain.Domain.FiscalReceipt;
+import com.shelfj.order.domain.Domain.FiscalStoreSettings;
+import com.shelfj.order.domain.Domain.TseDevice;
+import com.shelfj.order.repo.FiscalReceiptRepository.RegisterLine;
+import com.shelfj.order.repo.FiscalReceiptRepository.RegisterOrder;
+import com.shelfj.order.repo.FiscalReceiptRepository.RegisterTender;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Everything a fiscal file is written from (18.5): the register for one store, series and period,
+ * with the lines, tenders and order headers behind each document, the store's identity as
+ * tenant-svc holds it, and the product names as product-svc holds them. Assembled once by the
+ * service; the export writers are pure functions over it.
+ *
+ * @param settings the store's fiscal settings
+ * @param device the store's security module, or null
+ * @param business the trading entity the file names
+ * @param store the store the register belongs to
+ * @param seriesCode the series
+ * @param period the fiscal year
+ * @param currency ISO-4217 of the documents
+ * @param generatedAt when the file was produced
+ * @param documents the register, in number order
+ * @param lines every line, in document order
+ * @param tenders every tender, in document order
+ * @param orders the order header behind each document, by number
+ * @param productNames variant id to a printable name, for the lines
+ */
+public record RegisterSnapshot(
+    FiscalStoreSettings settings,
+    TseDevice device,
+    Business business,
+    Store store,
+    String seriesCode,
+    String period,
+    String currency,
+    Instant generatedAt,
+    List<FiscalReceipt> documents,
+    List<RegisterLine> lines,
+    List<RegisterTender> tenders,
+    Map<Long, RegisterOrder> orders,
+    Map<UUID, ProductName> productNames) {
+
+  /** Defensive copies: a snapshot handed to a writer is not changed under it. */
+  public RegisterSnapshot {
+    documents = List.copyOf(documents);
+    lines = List.copyOf(lines);
+    tenders = List.copyOf(tenders);
+    orders = Map.copyOf(orders);
+    productNames = Map.copyOf(productNames);
+  }
+
+  /** The legal entity: what the file's header names. */
+  public record Business(String legalName, String taxRegistrationNumber, String country) {}
+
+  /** The store: its code and postal address, as tenant-svc holds them. */
+  public record Store(
+      UUID id,
+      String name,
+      String code,
+      String line1,
+      String line2,
+      String city,
+      String state,
+      String country,
+      String postalCode) {}
+
+  /** A printable product: what a line's description reads. */
+  public record ProductName(String name, String sku, String unit) {}
+
+  /** The lines behind one document. */
+  public List<RegisterLine> linesOf(long number) {
+    return lines.stream().filter(l -> l.number() == number).toList();
+  }
+
+  /** The tenders behind one document. */
+  public List<RegisterTender> tendersOf(long number) {
+    return tenders.stream().filter(t -> t.number() == number).toList();
+  }
+
+  /**
+   * The VAT on a line: as the quote priced it, or the order's tax apportioned by the line's share
+   * of its subtotal when the line was placed with pricing enforcement off.
+   */
+  public BigDecimal vatOf(RegisterLine line, FiscalReceipt doc) {
+    if (line.vatAmount() != null) {
+      return line.vatAmount();
+    }
+    RegisterOrder o = orders.get(doc.number());
+    if (o == null || o.subtotal() == null || o.subtotal().signum() == 0 || o.taxAmount() == null) {
+      return BigDecimal.ZERO;
+    }
+    return o.taxAmount().multiply(line.lineTotal()).divide(o.subtotal(), 4, RoundingMode.HALF_UP);
+  }
+
+  /** The rate a line was taxed at, as a percentage with two decimals. */
+  public BigDecimal ratePercentOf(RegisterLine line, FiscalReceipt doc) {
+    BigDecimal vat = vatOf(line, doc);
+    if (line.lineTotal() == null || line.lineTotal().signum() == 0) {
+      return BigDecimal.ZERO.setScale(2);
+    }
+    return vat.multiply(BigDecimal.valueOf(100)).divide(line.lineTotal(), 2, RoundingMode.HALF_UP);
+  }
+
+  /** The name a line prints, falling back to the variant id when product-svc knows no name. */
+  public String nameOf(RegisterLine line) {
+    ProductName p = productNames.get(line.variantId());
+    return p == null || p.name() == null || p.name().isBlank()
+        ? line.variantId().toString()
+        : p.name();
+  }
+}

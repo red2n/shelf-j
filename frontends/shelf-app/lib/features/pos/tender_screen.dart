@@ -247,15 +247,18 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       // A completed sale is the strongest activity signal — keep the session alive.
       ref.read(posSessionProvider.notifier).touch();
 
-      // The legal receipt number is issued when the payment reaches order-svc,
-      // a few seconds after the last tender. Wait a bounded time for it rather
-      // than print a receipt without one.
-      final fiscalNumber = await awaitFiscalNumber(dio, orderId);
+      // The legal receipt number — and the regime's stamp on the sale — is
+      // issued when the payment reaches order-svc, a few seconds after the
+      // last tender. Wait a bounded time for it rather than print a receipt
+      // without one.
+      final fiscalStamp = await awaitFiscalReceipt(dio, orderId);
+      final fiscalNumber = fiscalStamp?.fullNumber;
 
       // Capture everything needed for the receipt before clearing state.
       final receiptData = _buildReceiptData(
         orderId: orderId,
         fiscalNumber: fiscalNumber,
+        fiscalStamp: fiscalStamp,
         fiscalNumberNote: fiscalNumber == null
             ? 'Receipt number not issued yet. Reprint once it is.'
             : null,
@@ -405,6 +408,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     String? customerName,
     String? fiscalNumber,
     String? fiscalNumberNote,
+    FiscalStamp? fiscalStamp,
   }) {
     final subtotal = cartSnapshot.fold<double>(0, (s, l) => s + l.lineTotal);
     final storeId = ref.read(posStoreProvider);
@@ -435,6 +439,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       customerName: customerName,
       fiscalNumber: fiscalNumber,
       fiscalNumberNote: fiscalNumberNote,
+      fiscalStamp: fiscalStamp,
     );
   }
 
@@ -491,10 +496,10 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
                     // is usually there by now.
                     var data = receiptData;
                     if (data.fiscalNumber == null) {
-                      final n = await awaitFiscalNumber(
+                      final stamp = await awaitFiscalReceipt(
                           ref.read(apiClientProvider).dio, orderId,
                           attempts: 1);
-                      if (n != null) data = data.withFiscalNumber(n);
+                      if (stamp != null) data = data.withFiscalStamp(stamp);
                     }
                     openReceiptPrint(data);
                     _recordReceipt(orderId, 'PRINT', null);

@@ -14,8 +14,18 @@ final class Events {
 
   private Events() {}
 
+  /**
+   * A tender captured against an order. {@code method} is how it was paid (CASH, CARD, UPI, WALLET,
+   * STORE_CREDIT, or the online provider's name): order-svc records it per tender because a German
+   * fiscal file lists every payment as cash or not, and the security module signs that split
+   * (18.5). Null is written as an absent field, which older consumers never read.
+   */
   static OutboxRow paymentCaptured(
-      UUID tenantId, UUID paymentId, UUID orderId, java.math.BigDecimal amount) {
+      UUID tenantId, UUID paymentId, UUID orderId, java.math.BigDecimal amount, String method) {
+    String methodField =
+        method == null || method.isBlank()
+            ? ""
+            : ",\"method\":\"" + method.replace("\\", "").replace("\"", "") + "\"";
     return new OutboxRow(
         "PaymentCaptured",
         "shelfj.payment.payment-captured",
@@ -23,8 +33,8 @@ final class Events {
         paymentId,
         String.format(
             "{\"eventType\":\"PaymentCaptured\",\"tenantId\":\"%s\",\"paymentId\":\"%s\","
-                + "\"orderId\":\"%s\",\"amount\":%s}",
-            tenantId, paymentId, orderId, amount.toPlainString()));
+                + "\"orderId\":\"%s\",\"amount\":%s%s}",
+            tenantId, paymentId, orderId, amount.toPlainString(), methodField));
   }
 
   static OutboxRow paymentFailed(UUID tenantId, UUID paymentId, UUID orderId) {

@@ -52,7 +52,24 @@ class PaymentEventHandlerTest {
 
     handler.handle(payload);
 
-    verify(svc).handlePaymentCaptured(TENANT, ORDER, PAYMENT, new BigDecimal("42.50"));
+    verify(svc).handlePaymentCaptured(TENANT, ORDER, PAYMENT, new BigDecimal("42.50"), null);
+  }
+
+  /** The tender's method rides on the event (18.5) so the fiscal file can list cash apart. */
+  @Test
+  void paymentCapturedCarriesTheTenderMethodWhenPresent() {
+    String payload =
+        "{\"eventType\":\"PaymentCaptured\",\"orderId\":\""
+            + ORDER
+            + "\",\"tenantId\":\""
+            + TENANT
+            + "\",\"paymentId\":\""
+            + PAYMENT
+            + "\",\"amount\":42.50,\"method\":\"CASH\"}";
+
+    handler.handle(payload);
+
+    verify(svc).handlePaymentCaptured(TENANT, ORDER, PAYMENT, new BigDecimal("42.50"), "CASH");
   }
 
   @Test
@@ -84,7 +101,7 @@ class PaymentEventHandlerTest {
 
     handler.handle(payload);
 
-    verify(svc).handlePaymentCaptured(TENANT, ORDER, PAYMENT, BigDecimal.TEN);
+    verify(svc).handlePaymentCaptured(TENANT, ORDER, PAYMENT, BigDecimal.TEN, null);
   }
 
   @Test
@@ -106,14 +123,14 @@ class PaymentEventHandlerTest {
 
     handler.handle(payload);
 
-    verify(svc).handlePaymentCaptured(TENANT, ORDER, PAYMENT, BigDecimal.valueOf(5));
+    verify(svc).handlePaymentCaptured(TENANT, ORDER, PAYMENT, BigDecimal.valueOf(5), null);
   }
 
   @Test
   void malformedJsonIsSkippedWithoutThrowing() {
     handler.handle("not json at all");
 
-    verify(svc, never()).handlePaymentCaptured(any(), any(), any(), any());
+    verify(svc, never()).handlePaymentCaptured(any(), any(), any(), any(), any());
     verify(svc, never()).handlePaymentFailed(any(), any());
   }
 
@@ -123,7 +140,7 @@ class PaymentEventHandlerTest {
 
     handler.handle(payload);
 
-    verify(svc, never()).handlePaymentCaptured(any(), any(), any(), any());
+    verify(svc, never()).handlePaymentCaptured(any(), any(), any(), any(), any());
   }
 
   @Test
@@ -138,7 +155,7 @@ class PaymentEventHandlerTest {
             + "\",\"amount\":1}";
     doThrow(new ApiException(500, "DB_ERROR", "boom", List.of()))
         .when(svc)
-        .handlePaymentCaptured(any(), any(), any(), any());
+        .handlePaymentCaptured(any(), any(), any(), any(), any());
 
     org.junit.jupiter.api.Assertions.assertThrows(
         ApiException.class, () -> handler.handle(payload));
@@ -156,7 +173,7 @@ class PaymentEventHandlerTest {
             + "\",\"amount\":1}";
     doThrow(ApiException.conflict("ORDER_ALREADY_TRANSITIONED", "already confirmed"))
         .when(svc)
-        .handlePaymentCaptured(any(), any(), any(), any());
+        .handlePaymentCaptured(any(), any(), any(), any(), any());
 
     org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> handler.handle(payload));
   }

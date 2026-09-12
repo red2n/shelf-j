@@ -120,7 +120,12 @@ public final class Dtos {
       @Schema(description = "The instrument a sold-by-weight line was weighed on; null otherwise.")
           String weighingInstrumentId,
       @Schema(description = "How much of qty has been handed over so far (SJ-D35).")
-          BigDecimal fulfilledQty) {}
+          BigDecimal fulfilledQty,
+      @Schema(
+              description =
+                  "The VAT on this line as the quote priced it (18.5); null when the line was"
+                      + " placed with server-side pricing off.")
+          BigDecimal vatAmount) {}
 
   @Schema(
       name = "FulfilRequest",
@@ -653,6 +658,129 @@ public final class Dtos {
       long refused,
       java.util.Map<String, Long> refusedByReason,
       java.util.Map<String, Long> byCategory) {}
+
+  // ── Fiscal regime (18.5) ──────────────────────────────────────────────────
+
+  @Schema(
+      name = "TseStampResponse",
+      description =
+          "What the German security module wrote against the sale (KassenSichV §6): what the"
+              + " receipt prints. error is set, and the rest null, when the module could not be"
+              + " reached — the sale went ahead and the outage is the record.")
+  public record TseStampResponse(
+      String serialNumber,
+      String clientId,
+      Long transactionNumber,
+      Long signatureCounter,
+      String signature,
+      String algorithm,
+      String publicKey,
+      String timeFormat,
+      String startedAt,
+      String finishedAt,
+      String processType,
+      String processData,
+      @Schema(description = "The QR payload the receipt prints, DSFinV-K Anlage I.") String qr,
+      String error) {}
+
+  @Schema(
+      name = "PtStampResponse",
+      description =
+          "The Portuguese document signature: the SAF-T invoice number, the RSA-SHA1 hash, the key"
+              + " version, the ATCUD, the software certificate number and the four characters the"
+              + " receipt prints.")
+  public record PtStampResponse(
+      String invoiceNo,
+      String hash,
+      String hashControl,
+      String atcud,
+      String certificateNumber,
+      String printedExcerpt) {}
+
+  @Schema(
+      name = "FiscalReceiptResponse",
+      description =
+          "A numbered legal receipt with its hash chain and, when the store is under a regime that"
+              + " stamps documents, the regime's stamp.")
+  public record FiscalReceiptResponse(
+      String id,
+      String storeId,
+      String seriesCode,
+      String period,
+      long number,
+      String fullNumber,
+      String orderId,
+      String issuedAt,
+      String issuedBy,
+      String currency,
+      BigDecimal grossTotal,
+      BigDecimal taxTotal,
+      String voidedAt,
+      String voidReason,
+      String prevHash,
+      String hash,
+      @Schema(description = "NONE, DE_KASSENSICHV or PT_SAFT — the store's regime when issued.")
+          String regime,
+      TseStampResponse tse,
+      PtStampResponse pt) {}
+
+  @Schema(name = "TseDeviceResponse", description = "The security module a store signs with.")
+  public record TseDeviceResponse(
+      String id,
+      @Schema(description = "SIMULATED or CLOUD.") String provider,
+      String clientId,
+      String serialNumber,
+      String publicKey,
+      String signatureAlgorithm,
+      String timeFormat,
+      String externalTssId,
+      long signatureCounter,
+      long transactionCounter,
+      String registeredAt) {}
+
+  @Schema(
+      name = "FiscalSettingsResponse",
+      description =
+          "The fiscal regime a store trades under, its registered device, and what this"
+              + " deployment can offer: the regimes and device providers available, and whether a"
+              + " Portuguese signing key is installed.")
+  public record FiscalSettingsResponse(
+      String storeId,
+      String regime,
+      String taxRegistrationNumber,
+      String certificateNumber,
+      String seriesValidationCode,
+      String updatedAt,
+      String updatedBy,
+      TseDeviceResponse tse,
+      List<String> regimes,
+      List<String> tseProviders,
+      boolean ptKeyConfigured,
+      String ptPublicKey) {}
+
+  @Schema(
+      name = "SetFiscalSettingsRequest",
+      description =
+          "Place a store under a fiscal regime. DE_KASSENSICHV needs a tax number and a device"
+              + " (tseProvider SIMULATED, or CLOUD with tseTssId); PT_SAFT needs a valid NIF and a"
+              + " signing key on the server. Documents already issued keep their stamps.")
+  public record SetFiscalSettingsRequest(
+      @NotBlank String storeId,
+      @Schema(description = "NONE, DE_KASSENSICHV or PT_SAFT.") @NotBlank String regime,
+      @Schema(description = "Steuernummer / USt-IdNr (DE) or NIF (PT).")
+          @jakarta.validation.constraints.Size(max = 32)
+          String taxRegistrationNumber,
+      @Schema(description = "PT: the AT software certificate number printed on every document.")
+          @jakarta.validation.constraints.Size(max = 16)
+          String certificateNumber,
+      @Schema(description = "PT: the AT series validation code; ATCUD is <code>-<number>.")
+          @jakarta.validation.constraints.Size(max = 16)
+          String seriesValidationCode,
+      @Schema(description = "DE: SIMULATED or CLOUD. Registers or replaces the store's device.")
+          String tseProvider,
+      @Schema(description = "DE, CLOUD: the provider's id for the device.") String tseTssId,
+      @Schema(description = "DE: what the device knows this register by; the store id when blank.")
+          String tseClientId) {}
 
   @Schema(
       name = "SetReceiptSeriesRequest",
