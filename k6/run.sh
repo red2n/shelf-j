@@ -18,7 +18,8 @@ export PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD:-$(env_value PLATFORM_
 FUNCTIONAL=(
   flow-guard-comprehensive flow-guard-runtime
   iam-crud tenant-crud product-crud inventory-crud pricing-crud order-crud notification-crud reporting-crud
-  gateway-smoke-it gateway-login-protection
+  privacy-flow compliance-flow purchase-crud vat-return-flow
+  gateway-smoke-it gateway-login-protection gateway-unsubscribe-protection gateway-card-data-guard
 )
 LOAD=(multi-tenant-retail full-stack-simulation gateway-rate-limit-stress)
 

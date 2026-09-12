@@ -34,19 +34,102 @@ public final class Domain {
       BigDecimal grossTotal,
       BigDecimal taxTotal,
       Instant voidedAt,
-      String voidReason) {
+      String voidReason,
+      /** Hash of the document before this one in its series; GENESIS for the first (18.4). */
+      String prevHash,
+      /** SHA-256 over this document's figures and {@code prevHash}; null before the chain. */
+      String hash) {
     /** The series a store uses when the jurisdiction does not require one per till. */
     public static final String DEFAULT_SERIES = "MAIN";
+
+    /** The previous-hash of the first document in a chain. */
+    public static final String GENESIS = "GENESIS";
+
+    /** A draft, before the number and the hashes are taken. */
+    public FiscalReceipt(
+        UUID id,
+        UUID tenantId,
+        UUID storeId,
+        String seriesCode,
+        String period,
+        long number,
+        String fullNumber,
+        UUID orderId,
+        Instant issuedAt,
+        UUID issuedBy,
+        String currency,
+        BigDecimal grossTotal,
+        BigDecimal taxTotal,
+        Instant voidedAt,
+        String voidReason) {
+      this(
+          id,
+          tenantId,
+          storeId,
+          seriesCode,
+          period,
+          number,
+          fullNumber,
+          orderId,
+          issuedAt,
+          issuedBy,
+          currency,
+          grossTotal,
+          taxTotal,
+          voidedAt,
+          voidReason,
+          null,
+          null);
+    }
   }
 
   /** A hole in a receipt series, inclusive at both ends. */
   public record SequenceGap(long from, long to) {}
+
+  /**
+   * One age check at the till, as it was made: the rule in force at the moment, who checked, and
+   * whether the sale went ahead or was refused, and why. Append-only — the due-diligence record.
+   */
+  public record AgeVerification(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID cashierId,
+      UUID posSessionId,
+      UUID variantId,
+      String category,
+      int minimumAge,
+      String country,
+      boolean storePolicy,
+      String outcome,
+      String reason,
+      String idType,
+      UUID orderId,
+      Instant checkedAt) {
+
+    public static final String OUTCOME_PASSED = "PASSED";
+    public static final String OUTCOME_REFUSED = "REFUSED";
+    public static final java.util.Set<String> REASONS =
+        java.util.Set.of("UNDER_AGE", "NO_ID", "ID_REJECTED", "PROXY_SALE", "OTHER");
+    public static final java.util.Set<String> ID_TYPES =
+        java.util.Set.of(
+            "PASSPORT", "DRIVING_LICENCE", "PASS_CARD", "MILITARY_ID", "NATIONAL_ID", "OTHER");
+  }
+
+  /** Counts for one store and period: the numbers a licensing officer asks for first. */
+  public record AgeVerificationSummary(
+      long total,
+      long passed,
+      long refused,
+      java.util.Map<String, Long> refusedByReason,
+      java.util.Map<String, Long> byCategory) {}
 
   public record Order(
       UUID id,
       UUID tenantId,
       UUID storeId,
       UUID customerId,
+      UUID loginId,
       String channel,
       String fulfilmentType,
       String status,
@@ -82,8 +165,20 @@ public final class Domain {
     public static final String FULFILMENT_DELIVERY = "DELIVERY";
     public static final String FULFILMENT_INSTORE = "INSTORE";
     public static final String STATUS_PENDING = "PENDING";
+
+    /**
+     * A catalog-mode till order: placed with the goods but no prices, waiting for a manager to
+     * price it (SJ-D41). Not PENDING, so the stranded-order sweeper never cancels it; priced, it
+     * becomes PENDING and takes payment like any other order.
+     */
+    public static final String STATUS_AWAITING_PRICE = "AWAITING_PRICE";
+
     public static final String STATUS_CONFIRMED = "CONFIRMED";
     public static final String STATUS_FULFILLED = "FULFILLED";
+
+    /** Some, not all, of the goods have been handed over (SJ-D35). */
+    public static final String STATUS_PARTIALLY_FULFILLED = "PARTIALLY_FULFILLED";
+
     public static final String STATUS_CANCELLED = "CANCELLED";
     public static final String STATUS_VOIDED = "VOIDED";
     // Set when payment-svc reports a refund (PaymentRefunded) against a sold order.
@@ -94,6 +189,11 @@ public final class Domain {
   /** A quantity of one variant to put back into stock — the lines a voided sale restocks. */
   public record RestockLine(UUID variantId, BigDecimal qty) {}
 
+  /**
+   * One line of an order. {@code weighingInstrumentId} names the instrument a sold-by-weight line
+   * was weighed on (Weights and Measures Act 1985 s.11), from tenant-svc's register; null for a
+   * line sold by the each.
+   */
   public record OrderItem(
       UUID id,
       UUID tenantId,
@@ -102,7 +202,40 @@ public final class Domain {
       BigDecimal qty,
       BigDecimal unitPrice,
       BigDecimal lineTotal,
-      String notes) {}
+      String notes,
+      UUID weighingInstrumentId,
+      /** How much of {@code qty} has been handed over so far (SJ-D35); never above it. */
+      BigDecimal fulfilledQty) {
+
+    /** A line as placed: nothing handed over yet. */
+    public OrderItem(
+        UUID id,
+        UUID tenantId,
+        UUID orderId,
+        UUID variantId,
+        BigDecimal qty,
+        BigDecimal unitPrice,
+        BigDecimal lineTotal,
+        String notes,
+        UUID weighingInstrumentId) {
+      this(
+          id,
+          tenantId,
+          orderId,
+          variantId,
+          qty,
+          unitPrice,
+          lineTotal,
+          notes,
+          weighingInstrumentId,
+          BigDecimal.ZERO);
+    }
+
+    /** What is still to be handed over. */
+    public BigDecimal remainingQty() {
+      return qty.subtract(fulfilledQty == null ? BigDecimal.ZERO : fulfilledQty);
+    }
+  }
 
   /**
    * Append-only record of a manual discount granted on an order (SJ-D6).

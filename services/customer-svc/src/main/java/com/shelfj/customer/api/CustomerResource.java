@@ -8,6 +8,7 @@ import com.shelfj.customer.dto.Dtos.IssueStoreCreditRequest;
 import com.shelfj.customer.dto.Dtos.RedeemPointsRequest;
 import com.shelfj.customer.dto.Dtos.RedeemStoreCreditRequest;
 import com.shelfj.customer.dto.Dtos.RegisterCustomerRequest;
+import com.shelfj.customer.dto.Dtos.SetMarketingPreferencesRequest;
 import com.shelfj.customer.dto.Dtos.UpdateCustomerRequest;
 import com.shelfj.customer.mapper.Mappers;
 import com.shelfj.customer.service.CustomerService;
@@ -45,6 +46,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 public class CustomerResource {
 
   @Inject CustomerService service;
+  @Inject com.shelfj.customer.service.MarketingConsentService marketing;
   @Inject TenantContext ctx;
 
   // ── profile ───────────────────────────────────────────────────────────────
@@ -94,6 +96,258 @@ public class CustomerResource {
     var items = page.stream().limit(cap).map(Mappers::toCustomer).collect(Collectors.toList());
     return ApiResponse.ok(
         new CustomerListResponse(items, nextCursor), ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  /**
+   * The signed-in shopper's own customer record in this tenant, created on first use.
+   *
+   * @return {@code 200} with the caller's customer record
+   * @throws com.shelfj.web.ApiException {@code 401} when the request carries no authenticated
+   *     login; {@code 400} when the token carries no email
+   */
+  @Operation(
+      summary = "Claim the caller's customer record",
+      description =
+          "Returns the customer record this shop holds for the signed-in shopper, creating it the"
+              + " first time. The login and email come from the verified token, so a caller can"
+              + " reach no record but their own. order-svc calls this at checkout so an online"
+              + " order carries a customer id the shop can resolve (SJ-D44).")
+  @APIResponse(responseCode = "200", description = "The caller's customer record")
+  @APIResponse(responseCode = "400", description = "The token carries no email")
+  @APIResponse(responseCode = "401", description = "No authenticated login")
+  @Tag(name = "Customers")
+  @POST
+  @Path("/me")
+  public ApiResponse<?> claimMine() {
+    var customer = service.linkLogin(ctx.requireTenantId(), ctx.requireUserId(), ctx.email());
+    return ApiResponse.ok(Mappers.toCustomer(customer), ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  /**
+   * Reads the signed-in shopper's own customer record without creating one.
+   *
+   * @return {@code 200} with the caller's customer record
+   * @throws com.shelfj.web.ApiException {@code 404} when this shop holds no record for the caller
+   */
+  @Operation(
+      summary = "Get the caller's customer record",
+      description =
+          "The read-only counterpart of POST /customers/me: it never creates a record, so a shopper"
+              + " who has not yet bought here gets 404.")
+  @APIResponse(responseCode = "200", description = "The caller's customer record")
+  @APIResponse(responseCode = "404", description = "This shop holds no record for the caller")
+  @Tag(name = "Customers")
+  @GET
+  @Path("/me")
+  public ApiResponse<?> getMine() {
+    var customer = service.getByLogin(ctx.requireTenantId(), ctx.requireUserId());
+    return ApiResponse.ok(Mappers.toCustomer(customer), ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  /**
+   * Everything this shop holds about the signed-in shopper, in one machine-readable document.
+   *
+   * @return {@code 200} with the export
+   * @throws com.shelfj.web.ApiException {@code 401} when the request carries no authenticated
+   *     login; {@code 503} when order-svc could not be reached, rather than a partial export
+   */
+  @Operation(
+      summary = "Export the caller's own data",
+      description =
+          "UK GDPR art.20: the personal data this shop holds about the signed-in shopper, in a"
+              + " structured, commonly used, machine-readable form — profile, addresses, loyalty"
+              + " and its ledger, store credit and its ledger, and every order they placed here."
+              + " A shopper who has bought but has no customer record still gets their orders.")
+  @APIResponse(responseCode = "200", description = "The caller's data")
+  @APIResponse(responseCode = "401", description = "No authenticated login")
+  @APIResponse(
+      responseCode = "503",
+      description = "order-svc unreachable — no export rather than an incomplete one")
+  @Tag(name = "Customers")
+  @GET
+  @Path("/me/export")
+  public ApiResponse<?> exportMine() {
+    UUID tenantId = ctx.requireTenantId();
+    UUID loginId = ctx.requireUserId();
+    var customer = service.findByLogin(tenantId, loginId).orElse(null);
+    return ApiResponse.ok(
+        service.export(tenantId, customer, loginId, ctx.email()),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  /**
+   * The same export, produced by staff for a data request the shop received some other way.
+   *
+   * @param id the customer to export
+   * @return {@code 200} with the export
+   * @throws com.shelfj.web.ApiException {@code 404} when no such customer exists in the tenant
+   */
+  @Operation(
+      summary = "Export one customer's data",
+      description =
+          "The staff-side counterpart of GET /customers/me/export, for a subject access or"
+              + " portability request that arrived by phone, letter or email.")
+  @APIResponse(responseCode = "200", description = "The customer's data")
+  @APIResponse(responseCode = "404", description = "Customer not found")
+  @APIResponse(
+      responseCode = "503",
+      description = "order-svc unreachable — no export rather than an incomplete one")
+  @Tag(name = "Customers")
+  @GET
+  @Path("/{id}/export")
+  public ApiResponse<?> exportCustomer(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    var customer = service.get(tenantId, id);
+    return ApiResponse.ok(
+        service.export(tenantId, customer, customer.loginId(), null),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  // ── marketing consent ─────────────────────────────────────────────────────
+
+  /**
+   * What this shop may currently send the signed-in shopper.
+   *
+   * @return {@code 200} with one entry per channel ever decided
+   */
+  @Operation(
+      summary = "The caller's marketing preferences",
+      description =
+          "One entry per channel the shopper has decided. A channel with no entry has no consent —"
+              + " silence is not consent, so nothing may be sent on it.")
+  @APIResponse(responseCode = "200", description = "The caller's preferences")
+  @APIResponse(responseCode = "404", description = "This shop holds no record for the caller")
+  @Tag(name = "Marketing")
+  @GET
+  @Path("/me/marketing")
+  public ApiResponse<?> myMarketingPreferences() {
+    UUID tenantId = ctx.requireTenantId();
+    var customer = service.getByLogin(tenantId, ctx.requireUserId());
+    return ApiResponse.ok(
+        marketing.preferences(tenantId, customer.id()).stream()
+            .map(Mappers::toMarketingPreference)
+            .toList(),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  /**
+   * The shopper setting their own marketing preferences.
+   *
+   * @param req the channels being changed and the wording they were shown
+   * @return {@code 200} with the preferences as they now stand
+   */
+  @Operation(
+      summary = "Set the caller's marketing preferences",
+      description =
+          "The preference centre. Channels left out are not touched. Every change is recorded with"
+              + " what the shopper was shown, because UK GDPR art.7(1) requires the shop to be able"
+              + " to demonstrate consent later.")
+  @APIResponse(responseCode = "200", description = "The preferences as they now stand")
+  @APIResponse(responseCode = "400", description = "An unknown channel or basis")
+  @Tag(name = "Marketing")
+  @PUT
+  @Path("/me/marketing")
+  public ApiResponse<?> setMyMarketingPreferences(SetMarketingPreferencesRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    UUID loginId = ctx.requireUserId();
+    // Created on first use, like the checkout link: a shopper may set preferences before buying.
+    var customer = service.linkLogin(tenantId, loginId, ctx.email());
+    return ApiResponse.ok(
+        marketing
+            .setPreferences(
+                tenantId,
+                customer,
+                req,
+                com.shelfj.customer.domain.Domain.MarketingConsentEntry.SOURCE_PREFERENCE_CENTRE,
+                null)
+            .stream()
+            .map(Mappers::toMarketingPreference)
+            .toList(),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  /**
+   * One customer's marketing preferences, for staff.
+   *
+   * @param id the customer to read
+   * @return {@code 200} with their preferences
+   */
+  @Operation(
+      summary = "A customer's marketing preferences",
+      description = "The staff-side view of what the shop may send this person.")
+  @APIResponse(responseCode = "200", description = "The customer's preferences")
+  @APIResponse(responseCode = "404", description = "Customer not found")
+  @Tag(name = "Marketing")
+  @GET
+  @Path("/{id}/marketing")
+  public ApiResponse<?> marketingPreferences(@PathParam("id") UUID id) {
+    UUID tenantId = ctx.requireTenantId();
+    service.get(tenantId, id);
+    return ApiResponse.ok(
+        marketing.preferences(tenantId, id).stream().map(Mappers::toMarketingPreference).toList(),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  /**
+   * Staff recording what a customer agreed to — over the counter or on the phone.
+   *
+   * @param id the customer whose preferences these are
+   * @param req the channels being changed and the wording the customer was given
+   * @return {@code 200} with the preferences as they now stand
+   */
+  @Operation(
+      summary = "Record a customer's marketing preferences",
+      description =
+          "For consent given to a member of staff rather than through the preference centre. The"
+              + " acting staff member is recorded alongside it, because who took the consent is"
+              + " part of the evidence.")
+  @APIResponse(responseCode = "200", description = "The preferences as they now stand")
+  @APIResponse(responseCode = "404", description = "Customer not found")
+  @Tag(name = "Marketing")
+  @PUT
+  @Path("/{id}/marketing")
+  public ApiResponse<?> setMarketingPreferences(
+      @PathParam("id") UUID id, SetMarketingPreferencesRequest req) {
+    Validations.validate(req);
+    UUID tenantId = ctx.requireTenantId();
+    var customer = service.get(tenantId, id);
+    return ApiResponse.ok(
+        marketing
+            .setPreferences(
+                tenantId,
+                customer,
+                req,
+                com.shelfj.customer.domain.Domain.MarketingConsentEntry.SOURCE_STAFF,
+                ctx.userId())
+            .stream()
+            .map(Mappers::toMarketingPreference)
+            .toList(),
+        ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  /**
+   * Whether one marketing message may be sent, and the opt-out link it must carry.
+   *
+   * @param id the customer to be contacted
+   * @param channel the channel the message would go out on
+   * @return {@code 200} with the decision — never a 403, because "no" is an answer here
+   */
+  @Operation(
+      summary = "May this person be sent marketing?",
+      description =
+          "Asked by notification-svc before every marketing send. Answers no for an unknown"
+              + " channel, a missing preference, an opt-out or an erased record, and returns the"
+              + " unsubscribe token the message must carry when the answer is yes (PECR reg.23).")
+  @APIResponse(responseCode = "200", description = "The decision")
+  @Tag(name = "Marketing")
+  @GET
+  @Path("/{id}/marketing/allowance")
+  public ApiResponse<?> marketingAllowance(
+      @PathParam("id") UUID id, @QueryParam("channel") String channel) {
+    return ApiResponse.ok(
+        marketing.allowance(ctx.requireTenantId(), id, channel),
+        ApiResponse.Meta.of(ctx.requestId()));
   }
 
   /**

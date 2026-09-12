@@ -230,4 +230,66 @@ class NotificationIT {
                         + "\"customerId\":\"not-a-uuid\"}"));
     assertThat(r.getStatus(), is(400));
   }
+
+  /**
+   * PECR reg.22: a marketing send is refused unless consent can be shown. customer-svc is not
+   * running here, so the consent check cannot be answered — and the send is refused for exactly
+   * that reason, which is the behaviour that matters. A client that degraded to "send anyway" when
+   * it could not check would be the offence.
+   */
+  @org.junit.jupiter.api.Test
+  @org.junit.jupiter.api.DisplayName("Marketing is not sent when consent cannot be shown")
+  void marketingWithoutProvableConsentIsRefused() {
+    Response r =
+        target
+            .path("/notifications/send")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "MANAGER")
+            .post(
+                jakarta.ws.rs.client.Entity.entity(
+                    "{\"recipient\":\"someone@example.com\",\"subject\":\"Half price week\","
+                        + "\"body\":\"Offers inside\",\"category\":\"MARKETING\","
+                        + "\"customerId\":\""
+                        + Ids.newId()
+                        + "\"}",
+                    jakarta.ws.rs.core.MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(409));
+    assertThat(r.readEntity(String.class).contains("MARKETING_CONSENT_MISSING"), is(true));
+  }
+
+  @org.junit.jupiter.api.Test
+  @org.junit.jupiter.api.DisplayName("A marketing send that names nobody cannot be lawful")
+  void marketingWithoutACustomerIsRefused() {
+    Response r =
+        target
+            .path("/notifications/send")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "MANAGER")
+            .post(
+                jakarta.ws.rs.client.Entity.entity(
+                    "{\"recipient\":\"someone@example.com\",\"subject\":\"Half price week\","
+                        + "\"body\":\"Offers inside\",\"category\":\"MARKETING\"}",
+                    jakarta.ws.rs.core.MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(409));
+    assertThat(r.readEntity(String.class).contains("MARKETING_CONSENT_MISSING"), is(true));
+  }
+
+  @org.junit.jupiter.api.Test
+  @org.junit.jupiter.api.DisplayName("A transactional message is unaffected by the marketing gate")
+  void transactionalSendsStillGoOut() {
+    Response r =
+        target
+            .path("/notifications/send")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "MANAGER")
+            .post(
+                jakarta.ws.rs.client.Entity.entity(
+                    "{\"recipient\":\"someone@example.com\",\"subject\":\"Your order\","
+                        + "\"body\":\"On its way\",\"type\":\"ORDER_CONFIRMATION\"}",
+                    jakarta.ws.rs.core.MediaType.APPLICATION_JSON));
+    assertThat(r.getStatus(), is(202));
+  }
 }

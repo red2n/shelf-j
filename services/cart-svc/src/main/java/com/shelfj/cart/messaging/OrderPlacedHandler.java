@@ -31,7 +31,14 @@ class OrderPlacedHandler {
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       tenantId = UUID.fromString(obj.getString("tenantId"));
-      customerId = obj.isNull("customerId") ? null : UUID.fromString(obj.getString("customerId"));
+      // A cart is held under the login the shopper signed in with, which is not the shop's
+      // customer id (SJ-D44) — before that was unpicked, one value stood in both places. loginId
+      // is what matches a cart; customerId is the fallback for events published before the split.
+      String basketOwner =
+          obj.containsKey("loginId") && !obj.isNull("loginId")
+              ? obj.getString("loginId")
+              : (obj.isNull("customerId") ? null : obj.getString("customerId"));
+      customerId = basketOwner == null ? null : UUID.fromString(basketOwner);
       String storeIdStr = obj.getString("storeId", null);
       storeId = storeIdStr != null ? UUID.fromString(storeIdStr) : null;
     } catch (RuntimeException e) {

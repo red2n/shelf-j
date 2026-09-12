@@ -236,8 +236,30 @@ public final class Mappers {
         vr.box8(),
         vr.box9(),
         vr.periodFrom(),
-        vr.periodTo());
+        vr.periodTo(),
+        VAT_BOXES_COMPUTED,
+        VAT_BOXES_NOT_COMPUTED,
+        true,
+        VAT_RETURN_CAVEAT);
   }
+
+  /**
+   * Boxes 1, 3, 5, 6 from tax_transactions; 4, 7 from input_tax_transactions; 2, 8, 9 not modelled.
+   */
+  static final java.util.List<Integer> VAT_BOXES_COMPUTED = java.util.List.of(1, 3, 4, 5, 6, 7);
+
+  static final java.util.List<Integer> VAT_BOXES_NOT_COMPUTED = java.util.List.of(2, 8, 9);
+
+  /**
+   * SJ-D39 closed: box 4 (input VAT reclaimed) and box 7 (net purchases) are projected from the
+   * supplier invoices purchase-svc captures, by invoice date. Boxes 2, 8 and 9 concern Northern
+   * Ireland protocol acquisitions and supplies, which nothing here models; for a business without
+   * them they are genuinely zero, and the caveat says so rather than leaving a reader to guess.
+   */
+  static final String VAT_RETURN_CAVEAT =
+      "Boxes 4 and 7 come from the supplier invoices purchasing captured in the period, by invoice"
+          + " date. Boxes 2, 8 and 9 are zero because no Northern Ireland protocol acquisitions or"
+          + " supplies are modelled — check that applies to you before filing.";
 
   /**
    * Converts a manual price override to its wire form.

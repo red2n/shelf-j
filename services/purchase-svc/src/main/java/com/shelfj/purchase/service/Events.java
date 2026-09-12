@@ -1,6 +1,7 @@
 package com.shelfj.purchase.service;
 
 import com.shelfj.events.EventPayload;
+import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
 import com.shelfj.service.OutboxRow;
 import java.util.List;
@@ -79,6 +80,47 @@ final class Events {
     sb.append("]}");
     return new OutboxRow(
         "GoodsReceived", "shelfj.purchase.goods-received", tenantId, grId, sb.toString());
+  }
+
+  /**
+   * A supplier invoice was captured (SJ-D39): the figures a VAT return's box 4 (input VAT
+   * reclaimed) and box 7 (net purchases) are made of, by invoice date — the tax point. pricing-svc
+   * projects it; nothing else needs to. eventId is the invoice id, so a redelivery is the same
+   * event and is recorded once.
+   */
+  static OutboxRow supplierInvoiceCaptured(UUID tenantId, Domain.SupplierInvoice inv) {
+    String json =
+        "{\"eventId\":\""
+            + inv.id()
+            + "\",\"eventType\":\"SupplierInvoiceCaptured\",\"tenantId\":\""
+            + tenantId
+            + "\",\"invoiceId\":\""
+            + inv.id()
+            + "\",\"poId\":\""
+            + inv.poId()
+            + "\",\"supplierId\":\""
+            + inv.supplierId()
+            + "\",\"invoiceNumber\":\""
+            + inv.invoiceNumber().replace("\\", "\\\\").replace("\"", "\\\"")
+            + "\",\"invoiceDate\":\""
+            + inv.invoiceDate()
+            + "\",\"currency\":\""
+            + inv.currency()
+            + "\",\"netAmount\":"
+            + inv.netAmount().toPlainString()
+            + ",\"vatAmount\":"
+            + inv.vatAmount().toPlainString()
+            + ",\"grossAmount\":"
+            + inv.grossAmount().toPlainString()
+            + ",\"status\":\""
+            + inv.status()
+            + "\"}";
+    return new OutboxRow(
+        "SupplierInvoiceCaptured",
+        "shelfj.purchase.supplier-invoice-captured",
+        tenantId,
+        inv.id(),
+        json);
   }
 
   static OutboxRow intercompanyInvoiceRaised(UUID tenantId, UUID invoiceId) {

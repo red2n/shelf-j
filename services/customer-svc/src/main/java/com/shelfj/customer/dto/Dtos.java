@@ -1,5 +1,6 @@
 package com.shelfj.customer.dto;
 
+import jakarta.json.JsonArray;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -152,6 +153,141 @@ public final class Dtos {
       String customerId,
       @Schema(description = "Current redeemable store-credit balance.") BigDecimal balance,
       @Schema(description = "ISO currency code.") String currency) {}
+
+  @Schema(
+      name = "StoreCreditLedgerEntryResponse",
+      description = "One append-only entry in a customer's store-credit ledger.")
+  public record StoreCreditLedgerEntryResponse(
+      String id,
+      @Schema(description = "ISSUE, REDEEM, EXPIRE, or ADJUST.") String type,
+      @Schema(description = "Signed amount for this entry; positive issued, negative redeemed.")
+          BigDecimal amount,
+      @Schema(description = "Balance immediately after this entry.") BigDecimal balanceAfter,
+      String currency,
+      String orderId,
+      String reason,
+      String createdAt) {}
+
+  @Schema(
+      name = "DataExportResponse",
+      description =
+          "Everything this shop holds about one person, in one machine-readable document (UK GDPR"
+              + " art.20). Assembled rather than stored: the profile, addresses, loyalty and"
+              + " store credit come from customer-svc, and the orders from order-svc, which owns"
+              + " them.")
+  public record DataExportResponse(
+      @Schema(description = "When this export was produced, ISO-8601 UTC.") String exportedAt,
+      @Schema(description = "The shop the data belongs to.") String tenantId,
+      @Schema(
+              description =
+                  "Who the export is about. A person has up to two ids here: the shop's own"
+                      + " customer record, and the login they sign in with. Either may be absent —"
+                      + " a walk-in has no login, and a shopper who has only ever browsed has no"
+                      + " customer record.")
+          ExportSubject subject,
+      @Schema(description = "The shop's customer record, or null if it holds none.")
+          CustomerResponse profile,
+      List<AddressResponse> addresses,
+      @Schema(description = "The loyalty account, or null if the person has none.")
+          LoyaltyAccountResponse loyalty,
+      List<LoyaltyLedgerEntryResponse> loyaltyLedger,
+      List<StoreCreditAccountResponse> storeCredit,
+      List<StoreCreditLedgerEntryResponse> storeCreditLedger,
+      @Schema(description = "What the shop may currently send them, channel by channel.")
+          List<MarketingPreferenceResponse> marketingPreferences,
+      @Schema(
+              description =
+                  "Every recorded change to those preferences, newest first — the evidence UK"
+                      + " GDPR art.7(1) requires the shop to hold, and therefore part of what it"
+                      + " holds about the person.")
+          List<MarketingConsentEntryResponse> marketingConsentLog,
+      @Schema(
+              description =
+                  "Every order the person placed at this shop, newest first, exactly as order-svc"
+                      + " serves it — including the lines, the delivery address and the totals.")
+          JsonArray orders) {}
+
+  @Schema(
+      name = "MarketingConsentEntryResponse",
+      description = "One recorded change to a person's marketing preferences.")
+  public record MarketingConsentEntryResponse(
+      String id,
+      String channel,
+      boolean granted,
+      String basis,
+      @Schema(
+              description =
+                  "SIGNUP, CHECKOUT, PREFERENCE_CENTRE, STAFF, UNSUBSCRIBE_LINK or IMPORT.")
+          String source,
+      @Schema(description = "The wording the person was shown when they agreed.") String notice,
+      @Schema(description = "The staff member who acted, when it was not the customer themselves.")
+          String actorId,
+      String recordedAt) {}
+
+  @Schema(name = "ExportSubject", description = "The two ids a person may be known by here.")
+  public record ExportSubject(String customerId, String loginId, String email) {}
+
+  @Schema(
+      name = "MarketingPreferenceResponse",
+      description = "What this shop may currently send one person on one channel.")
+  public record MarketingPreferenceResponse(
+      @Schema(description = "EMAIL, SMS, PHONE or POST.") String channel,
+      boolean granted,
+      @Schema(
+              description =
+                  "CONSENT, SOFT_OPT_IN (PECR's existing-customer exception) or NONE for an"
+                      + " opt-out.")
+          String basis,
+      String updatedAt) {}
+
+  @Schema(
+      name = "SetMarketingPreferencesRequest",
+      description =
+          "Set what a person may be sent. Channels left out are not touched, so a preference"
+              + " centre can save one switch without restating the rest.")
+  public record SetMarketingPreferencesRequest(
+      @NotNull @Schema(description = "One entry per channel being changed.")
+          List<MarketingChannelChoice> channels,
+      @Schema(
+              description =
+                  "The wording the person was shown when they agreed, recorded as the evidence"
+                      + " UK GDPR art.7(1) requires. Ignored for an opt-out.")
+          String notice) {}
+
+  @Schema(name = "MarketingChannelChoice", description = "One channel's answer.")
+  public record MarketingChannelChoice(
+      @NotBlank @Schema(description = "EMAIL, SMS, PHONE or POST.") String channel,
+      @NotNull Boolean granted,
+      @Schema(description = "CONSENT (default) or SOFT_OPT_IN. Ignored for an opt-out.")
+          String basis) {}
+
+  @Schema(
+      name = "MarketingAllowanceResponse",
+      description =
+          "Whether one marketing message may lawfully be sent, and the opt-out link it must carry"
+              + " if it is (PECR reg.23).")
+  public record MarketingAllowanceResponse(
+      boolean allowed,
+      @Schema(description = "CONSENT, SOFT_OPT_IN, or NONE when nothing permits the send.")
+          String basis,
+      @Schema(description = "Why a send was refused, for the log; null when allowed.")
+          String reason,
+      @Schema(
+              description =
+                  "A single-customer opt-out token for the unsubscribe link. Minted per send, and"
+                      + " null when the send is refused.")
+          String unsubscribeToken) {}
+
+  @Schema(
+      name = "UnsubscribeRequest",
+      description = "The one-click opt-out behind the link in a marketing message.")
+  public record UnsubscribeRequest(
+      @NotBlank String token,
+      @Schema(
+              description =
+                  "One channel to stop, or null to stop every channel — which is what an"
+                      + " unsubscribe link means and what art.21(3) requires of an objection.")
+          String channel) {}
 
   @Schema(name = "CustomerListResponse", description = "Cursor-paginated page of customers.")
   public record CustomerListResponse(

@@ -46,6 +46,21 @@ public class GatewayConfig {
   @ConfigProperty(name = "shelfj.gateway.trust-forwarded-headers", defaultValue = "false")
   boolean trustForwardedHeaders;
 
+  /**
+   * Refuse any request that carries a payment card number. This is what makes the PCI DSS scope
+   * (SAQ-A: no card detail reaches any Shelf-J service) a fact rather than a design intention — see
+   * {@code com.shelfj.web.CardData}. Off only for a stack that has to prove the guard is why a
+   * request was refused.
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.card-data-guard.enabled", defaultValue = "true")
+  boolean cardDataGuardEnabled;
+
+  /** Bodies larger than this are scanned only up to this many bytes; card numbers are short. */
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.card-data-guard.max-scan-bytes", defaultValue = "8388608")
+  int cardDataGuardMaxScanBytes;
+
   @Inject
   @ConfigProperty(name = "shelfj.gateway.brute-force.enabled", defaultValue = "true")
   boolean bruteForceEnabled;
@@ -62,6 +77,19 @@ public class GatewayConfig {
   @Inject
   @ConfigProperty(name = "shelfj.gateway.brute-force.login-path", defaultValue = "/auth/login")
   String bruteForceLoginPath;
+
+  /**
+   * Unauthenticated endpoints that accept a secret in the body and answer 404 when it is wrong,
+   * comma-separated and suffix-matched like the login path. A wrong secret counts as a failure
+   * against the client IP under the same lockout as a wrong password: the opt-out link in a
+   * marketing message is a bearer token, and while 256 random bits cannot be guessed, an endpoint
+   * that would let someone try forever is the kind of thing an auditor asks about.
+   */
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.gateway.brute-force.token-paths",
+      defaultValue = "/marketing/unsubscribe")
+  String bruteForceTokenPaths;
 
   /**
    * Browser origins allowed to call the API (CORS). Absent/empty (the default) means no CORS
@@ -199,8 +227,23 @@ public class GatewayConfig {
     return redisPassword;
   }
 
+  public boolean cardDataGuardEnabled() {
+    return cardDataGuardEnabled;
+  }
+
+  public int cardDataGuardMaxScanBytes() {
+    return cardDataGuardMaxScanBytes;
+  }
+
   public boolean bruteForceEnabled() {
     return bruteForceEnabled;
+  }
+
+  /**
+   * @return the token-bearing public paths guarded against guessing, as configured
+   */
+  public String bruteForceTokenPaths() {
+    return bruteForceTokenPaths;
   }
 
   public int bruteForceMaxFailures() {

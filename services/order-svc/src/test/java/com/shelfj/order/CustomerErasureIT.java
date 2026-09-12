@@ -1,7 +1,9 @@
 package com.shelfj.order;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
@@ -129,7 +131,8 @@ class CustomerErasureIT {
     pay(order); // a till sale: FULFILLED
     assertThat(column("orders", order, "contact_phone"), is("07700900999"));
 
-    orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(customer), Ids.newId());
+    orderService.handleCustomerErased(
+        UUID.fromString(T), UUID.fromString(customer), null, Ids.newId());
 
     assertThat(column("orders", order, "contact_phone"), nullValue());
     // The tax record stays.
@@ -144,7 +147,8 @@ class CustomerErasureIT {
     UUID order = place(customer, "ONLINE", "DELIVERY", DELIVERY);
     pay(order); // online: CONFIRMED, not yet delivered
 
-    orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(customer), Ids.newId());
+    orderService.handleCustomerErased(
+        UUID.fromString(T), UUID.fromString(customer), null, Ids.newId());
     // Still needed to deliver it.
     assertThat(column("orders", order, "delivery_line1"), is("12 High Street"));
     assertThat(column("orders", order, "delivery_recipient_phone"), is("07700900123"));
@@ -164,10 +168,12 @@ class CustomerErasureIT {
     String customer = Ids.newId().toString();
     UUID event = Ids.newId();
     assertThat(
-        orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(customer), event),
+        orderService.handleCustomerErased(
+            UUID.fromString(T), UUID.fromString(customer), null, event),
         is(true));
     assertThat(
-        orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(customer), event),
+        orderService.handleCustomerErased(
+            UUID.fromString(T), UUID.fromString(customer), null, event),
         is(false));
   }
 
@@ -179,10 +185,196 @@ class CustomerErasureIT {
     UUID theirs = place(kept, "POS", "INSTORE", "\"contactPhone\":\"07700900555\",");
     pay(theirs);
 
-    orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(erased), Ids.newId());
+    orderService.handleCustomerErased(
+        UUID.fromString(T), UUID.fromString(erased), null, Ids.newId());
     orderService.sweepErasures();
 
     assertThat(column("orders", theirs, "contact_phone"), is("07700900555"));
+  }
+
+  /**
+   * A signed-in shopper's own checkout: the order carries their login. customer-svc is not running
+   * here, so the link fails and customer_id stays null — which is the fail-open path in
+   * CustomerLinkClient, and exactly the state an erasure has to cope with.
+   */
+  private UUID placeAsShopper(UUID login, String fulfilment, String extra) {
+    Response r =
+        target
+            .path("/orders")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CUSTOMER")
+            .header("X-User-Id", login.toString())
+            .header("X-User-Email", "chris@example.com")
+            .header("Idempotency-Key", Ids.newId().toString())
+            .post(
+                Entity.entity(
+                    "{\"storeId\":\""
+                        + S
+                        + "\",\"channel\":\"ONLINE\",\"fulfilmentType\":\""
+                        + fulfilment
+                        + "\","
+                        + extra
+                        + "\"items\":[{\"variantId\":\""
+                        + V
+                        + "\",\"qty\":1,\"unitPrice\":10.00}]}",
+                    MediaType.APPLICATION_JSON));
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(201));
+    return UUID.fromString(id(body));
+  }
+
+  @Test
+  @DisplayName("The shopper's online order is filed under their login, not a customer id")
+  void anOnlineOrderRecordsTheLogin() {
+    UUID login = Ids.newId();
+    UUID order = placeAsShopper(login, "DELIVERY", DELIVERY);
+
+    assertThat(column("orders", order, "login_id"), is(login.toString()));
+    // The link could not be made (customer-svc is not running), and the sale still stands.
+    assertThat(column("orders", order, "customer_id"), nullValue());
+  }
+
+  @Test
+  @DisplayName("Erasing the customer reaches the online orders filed under their login (SJ-D44)")
+  void erasureReachesOrdersFiledUnderTheLogin() {
+    UUID login = Ids.newId();
+    UUID customer = Ids.newId();
+    UUID order = placeAsShopper(login, "DELIVERY", DELIVERY);
+    pay(order);
+    assertThat(post("/orders/" + order + "/fulfil", "{}").getStatus(), is(200));
+
+    // The shop erases the customer record. Before SJ-D44 this named the customer id alone, and the
+    // delivery address on this order — which carries no customer id at all — survived it.
+    orderService.handleCustomerErased(UUID.fromString(T), customer, login, Ids.newId());
+
+    assertThat(column("orders", order, "delivery_line1"), nullValue());
+    assertThat(column("orders", order, "delivery_recipient_name"), nullValue());
+    assertThat(column("orders", order, "delivery_recipient_phone"), nullValue());
+    // The sale itself is a tax record and stays.
+    assertThat(column("orders", order, "total"), notNullValue());
+  }
+
+  @Test
+  @DisplayName("An open order filed under a login is swept once it finishes")
+  void openLoginOrderIsSweptWhenItFinishes() {
+    UUID login = Ids.newId();
+    UUID order = placeAsShopper(login, "DELIVERY", DELIVERY);
+    pay(order);
+
+    orderService.handleCustomerErased(UUID.fromString(T), Ids.newId(), login, Ids.newId());
+    assertThat(column("orders", order, "delivery_line1"), is("12 High Street"));
+
+    assertThat(post("/orders/" + order + "/fulfil", "{}").getStatus(), is(200));
+    orderService.sweepErasures();
+
+    assertThat(column("orders", order, "delivery_line1"), nullValue());
+  }
+
+  @Test
+  @DisplayName("The export route is staff-only, needs a subject, and matches by either id")
+  void theExportRouteIsGuarded() {
+    UUID login = Ids.newId();
+    UUID order = placeAsShopper(login, "DELIVERY", DELIVERY);
+
+    // A shopper token gets 403 from the read guard: the route names a subject, so it is not a
+    // self-read and must not be open to customers.
+    Response asShopper =
+        target
+            .path("/orders/export")
+            .queryParam("login", login.toString())
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CUSTOMER")
+            .header("X-User-Id", login.toString())
+            .get();
+    assertThat(asShopper.getStatus(), is(403));
+
+    // Staff with neither id: a 400, not the whole order book.
+    Response nobody =
+        target
+            .path("/orders/export")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(nobody.getStatus(), is(400));
+    assertThat(nobody.readEntity(String.class), containsString("ORDER_EXPORT_NO_SUBJECT"));
+
+    // A malformed id is a 400, not a 500.
+    Response malformed =
+        target
+            .path("/orders/export")
+            .queryParam("customer", "not-a-uuid")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(malformed.getStatus(), is(400));
+
+    // By login finds the shopper's order; by an unrelated customer id finds nothing.
+    Response byLogin =
+        target
+            .path("/orders/export")
+            .queryParam("login", login.toString())
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(byLogin.getStatus(), is(200));
+    assertThat(byLogin.readEntity(String.class), containsString(order.toString()));
+    Response byStranger =
+        target
+            .path("/orders/export")
+            .queryParam("customer", Ids.newId().toString())
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(byStranger.readEntity(String.class), not(containsString(order.toString())));
+
+    // Another tenant's staff cannot see it either: the tenant is the first condition.
+    Response otherTenant =
+        target
+            .path("/orders/export")
+            .queryParam("login", login.toString())
+            .request()
+            .header("X-Tenant-Id", Ids.newId().toString())
+            .header("X-Roles", "OWNER")
+            .get();
+    assertThat(otherTenant.readEntity(String.class), not(containsString(order.toString())));
+  }
+
+  @Test
+  @DisplayName("A shopper reads only the orders their own login placed, on every self-read")
+  void aShopperReadsOnlyTheirOwn() {
+    UUID mine = Ids.newId();
+    UUID theirs = Ids.newId();
+    UUID myOrder = placeAsShopper(mine, "PICKUP", "");
+    UUID theirOrder = placeAsShopper(theirs, "PICKUP", "");
+
+    Response history =
+        target
+            .path("/orders/mine")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CUSTOMER")
+            .header("X-User-Id", mine.toString())
+            .get();
+    String body = history.readEntity(String.class);
+    assertThat(history.getStatus(), is(200));
+    assertThat(body, containsString(myOrder.toString()));
+    assertThat(body, not(containsString(theirOrder.toString())));
+
+    Response theirsById =
+        target
+            .path("/orders/" + theirOrder)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "CUSTOMER")
+            .header("X-User-Id", mine.toString())
+            .get();
+    assertThat("a 404, so ids cannot be probed", theirsById.getStatus(), is(404));
   }
 
   @Test
@@ -221,7 +413,8 @@ class CustomerErasureIT {
     assertThat(parked.getStatus(), is(201));
     UUID parkedId = UUID.fromString(id(parked.readEntity(String.class)));
 
-    orderService.handleCustomerErased(UUID.fromString(T), UUID.fromString(customer), Ids.newId());
+    orderService.handleCustomerErased(
+        UUID.fromString(T), UUID.fromString(customer), null, Ids.newId());
 
     assertThat(column("order_receipts", receiptId, "emailed_to"), nullValue());
     assertThat(column("parked_sales", parkedId, "customer_name"), nullValue());

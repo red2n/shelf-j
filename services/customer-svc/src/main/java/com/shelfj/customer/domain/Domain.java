@@ -10,9 +10,16 @@ public final class Domain {
 
   private Domain() {}
 
+  /**
+   * A shop's own record of a person. {@code loginId} is the iam-svc login it belongs to, or {@code
+   * null} for a walk-in the till created — a login is global and a customer record is not, so one
+   * login has at most one of these per tenant (SJ-D44). {@code firstName}/{@code lastName} are null
+   * until someone gives them: a linked login starts with an email and nothing else.
+   */
   public record Customer(
       UUID id,
       UUID tenantId,
+      UUID loginId,
       String email,
       String phone,
       String firstName,
@@ -28,6 +35,58 @@ public final class Domain {
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_SUSPENDED = "SUSPENDED";
     public static final String STATUS_ANONYMIZED = "ANONYMIZED";
+  }
+
+  /**
+   * What a shop may lawfully send one person on one channel, as it stands now. The evidence for it
+   * is {@link MarketingConsentEntry}; this is the fast read.
+   */
+  public record MarketingPreference(
+      UUID tenantId,
+      UUID customerId,
+      String channel,
+      boolean granted,
+      String basis,
+      Instant updatedAt) {
+
+    public static final String CHANNEL_EMAIL = "EMAIL";
+    public static final String CHANNEL_SMS = "SMS";
+    public static final String CHANNEL_PHONE = "PHONE";
+    public static final String CHANNEL_POST = "POST";
+
+    /** Freely given agreement — PECR reg.22's default route. */
+    public static final String BASIS_CONSENT = "CONSENT";
+
+    /** PECR's existing-customer exception: narrower than consent, and worth telling apart. */
+    public static final String BASIS_SOFT_OPT_IN = "SOFT_OPT_IN";
+
+    /** No lawful basis: an opt-out is the absence of one, not a kind of one. */
+    public static final String BASIS_NONE = "NONE";
+  }
+
+  /**
+   * One append-only record of consent being given or withdrawn. UK GDPR art.7(1) requires the
+   * controller to be able to demonstrate that the person consented, which a current-state row
+   * cannot do — so every change writes one of these, with what the person was shown and who acted.
+   */
+  public record MarketingConsentEntry(
+      UUID id,
+      UUID tenantId,
+      UUID customerId,
+      String channel,
+      boolean granted,
+      String basis,
+      String source,
+      String notice,
+      UUID actorId,
+      Instant recordedAt) {
+
+    public static final String SOURCE_SIGNUP = "SIGNUP";
+    public static final String SOURCE_CHECKOUT = "CHECKOUT";
+    public static final String SOURCE_PREFERENCE_CENTRE = "PREFERENCE_CENTRE";
+    public static final String SOURCE_STAFF = "STAFF";
+    public static final String SOURCE_UNSUBSCRIBE_LINK = "UNSUBSCRIBE_LINK";
+    public static final String SOURCE_IMPORT = "IMPORT";
   }
 
   public record CustomerAddress(

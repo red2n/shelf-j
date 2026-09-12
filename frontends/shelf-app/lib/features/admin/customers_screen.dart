@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
@@ -438,6 +441,10 @@ class _CustomerDetailDialog extends ConsumerWidget {
           style: TextButton.styleFrom(foregroundColor: cs.error),
           child: const Text('Anonymize'),
         ),
+        TextButton(
+          onPressed: () => _export(context, ref),
+          child: const Text('Export data'),
+        ),
         const Spacer(),
         TextButton(
             onPressed: () => Navigator.pop(context), child: const Text('Close')),
@@ -450,6 +457,72 @@ class _CustomerDetailDialog extends ConsumerWidget {
     ref.invalidate(customerLoyaltyProvider(customer.id));
     ref.invalidate(customerLoyaltyLedgerProvider(customer.id));
     ref.invalidate(customerStoreCreditProvider(customer.id));
+  }
+
+  /// A subject access or portability request (UK GDPR art.15/art.20) that
+  /// reached the shop by phone, letter or email rather than through the
+  /// storefront's own "Download my data".
+  ///
+  /// The file is assembled across services and can fail — order-svc holds the
+  /// purchases — and when it does, nothing is handed over: a partial answer to
+  /// "everything you hold about me" is a wrong answer, not a short one.
+  Future<void> _export(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Gathering this customer\'s data…')),
+    );
+    try {
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get('/${ApiConstants.customer}/customers/${customer.id}/export');
+      final pretty =
+          const JsonEncoder.withIndent('  ').convert(resp.data['data']);
+      await Clipboard.setData(ClipboardData(text: pretty));
+      if (!context.mounted) return;
+      messenger.hideCurrentSnackBar();
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Customer data export'),
+          content: SizedBox(
+            width: 620,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                    'Copied to the clipboard. Machine-readable JSON, which is '
+                    'what art.20 asks for.'),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: SelectableText(pretty,
+                        style: const TextStyle(
+                            fontFamily: 'monospace', fontSize: 12)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Close')),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(friendlyError(e,
+              fallback: 'The export could not be assembled. Nothing partial '
+                  'has been produced — try again shortly.')),
+        ),
+      );
+    }
   }
 
   /// GDPR erase (DELETE /customers/{id}) — irreversible, so confirm first.

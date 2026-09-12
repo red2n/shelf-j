@@ -112,14 +112,18 @@ void main() {
     const check = AgeCheckRestricted(
         category: 'ALCOHOL', minimumAge: 18, country: 'GB', storePolicy: false);
 
-    Future<bool?> openAndChoose(WidgetTester tester, String button,
+    // Shared with the tests: a refusal completes after the helper returns,
+    // once a reason is chosen, and the test reads what the dialog decided.
+    AgeDecision? result;
+
+    Future<AgeDecision?> openAndChoose(WidgetTester tester, String button,
         {AgeCheckRestricted c = check}) async {
-      bool? result;
+      result = null;
       await tester.pumpWidget(MaterialApp(
         home: Builder(
           builder: (context) => TextButton(
             onPressed: () async {
-              result = await showDialog<bool>(
+              result = await showDialog<AgeDecision>(
                 context: context,
                 barrierDismissible: false,
                 builder: (_) =>
@@ -162,12 +166,20 @@ void main() {
       expect(find.text('Checked — 25+'), findsOneWidget);
     });
 
-    testWidgets('refusing keeps the item out of the sale', (tester) async {
-      expect(await openAndChoose(tester, 'Refuse sale'), isFalse);
+    testWidgets('refusing asks why, and the answer is the record', (tester) async {
+      // 'Refuse sale' alone decides nothing: the dialog stays open for a reason.
+      expect(await openAndChoose(tester, 'Refuse sale'), isNull);
+      expect(find.text('Why is the sale refused?'), findsOneWidget);
+      await tester.tap(find.text('Under age'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Record refusal'));
+      await tester.pumpAndSettle();
+      expect(result, isA<AgeRefused>());
+      expect((result as AgeRefused).reason, 'UNDER_AGE');
     });
 
     testWidgets('confirming the check lets it in', (tester) async {
-      expect(await openAndChoose(tester, 'Checked — 18+'), isTrue);
+      expect(await openAndChoose(tester, 'Checked — 18+'), isA<AgePassed>());
     });
   });
 

@@ -69,6 +69,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Age checks',
+      icon: Icons.badge_outlined,
+      selectedIcon: Icons.report,
+    ),
+    route: '/admin/age-checks',
+    storekeeperVisible: true,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Stores',
       icon: Icons.store_outlined,
       selectedIcon: Icons.store,

@@ -1,6 +1,7 @@
 package com.shelfj.tenant.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
@@ -255,4 +256,100 @@ public final class Dtos {
                   "Tenants announced. Zero means no tenant in scope has a currency recorded, not"
                       + " that the replay failed.")
           int tenantsAnnounced) {}
+
+  // ── weighing instruments (Weights and Measures Act 1985) ────────────────────
+
+  @Schema(name = "CreateWeighingInstrumentRequest")
+  public record CreateWeighingInstrumentRequest(
+      @NotBlank @Schema(description = "The shop's own name for it, unique within the store.")
+          String identifier,
+      @NotBlank @Schema(description = "As on the plate; unique within the tenant.")
+          String serialNumber,
+      String make,
+      String model,
+      @Schema(description = "COUNTER (default), LABELLING, PLATFORM or HANGING.") String kind,
+      @Schema(description = "Max capacity as marked on the plate.") BigDecimal maxCapacity,
+      @Schema(description = "UOM for maxCapacity, e.g. KG.") String capacityUom,
+      @Schema(description = "The verification scale interval e, as marked.")
+          BigDecimal scaleInterval,
+      @Schema(description = "Type-approval / conformity certificate reference.") String approvalRef,
+      @Schema(description = "The zone it stands in, if any.") String zoneId,
+      @Schema(
+              description =
+                  "LABELLING only: JSON {prefixes:[\"20\",…], itemDigits:4|5, valueKind:"
+                      + " \"PRICE\"|\"WEIGHT\", valueDecimals:n, priceCheckDigit:bool} describing"
+                      + " the barcode the scale prints.")
+          String labelScheme) {}
+
+  @Schema(name = "UpdateWeighingInstrumentRequest")
+  public record UpdateWeighingInstrumentRequest(
+      @NotBlank String identifier,
+      @NotBlank String serialNumber,
+      String make,
+      String model,
+      String kind,
+      BigDecimal maxCapacity,
+      String capacityUom,
+      BigDecimal scaleInterval,
+      String approvalRef,
+      String zoneId,
+      String labelScheme) {}
+
+  @Schema(
+      name = "RecordVerificationRequest",
+      description = "One entry in the instrument's history. Append-only.")
+  public record RecordVerificationRequest(
+      @NotBlank @Schema(description = "INITIAL, RE_VERIFICATION, INSPECTION or REPAIR.")
+          String kind,
+      @NotBlank @Schema(description = "ISO date the work was done.") String performedOn,
+      @NotBlank @Schema(description = "The verifier or inspector, by name and organisation.")
+          String performedBy,
+      String certificateRef,
+      @NotNull @Schema(description = "Whether the instrument was passed. A REPAIR is never a pass.")
+          Boolean passed,
+      @Schema(description = "ISO date it is due again; null when verified until repaired.")
+          String nextDue,
+      String notes) {}
+
+  @Schema(name = "InstrumentVerificationResponse")
+  public record InstrumentVerificationResponse(
+      String id,
+      String kind,
+      String performedOn,
+      String performedBy,
+      String certificateRef,
+      boolean passed,
+      String nextDue,
+      String notes,
+      String recordedAt) {}
+
+  @Schema(
+      name = "WeighingInstrumentResponse",
+      description =
+          "An instrument and its standing for trade. certified is derived from the history on"
+              + " every read: in service, latest entry a pass, and not yet due again.")
+  public record WeighingInstrumentResponse(
+      String id,
+      String storeId,
+      String identifier,
+      String serialNumber,
+      String make,
+      String model,
+      String kind,
+      BigDecimal maxCapacity,
+      String capacityUom,
+      BigDecimal scaleInterval,
+      String approvalRef,
+      String zoneId,
+      String labelScheme,
+      @Schema(description = "IN_SERVICE, OUT_OF_SERVICE or RETIRED.") String status,
+      @Schema(description = "May be used for trade today.") boolean certified,
+      @Schema(
+              description =
+                  "Why, in a word: CERTIFIED, NEVER_VERIFIED, FAILED, REPAIRED_SINCE, OVERDUE,"
+                      + " OUT_OF_SERVICE, RETIRED.")
+          String standing,
+      InstrumentVerificationResponse latestVerification,
+      String createdAt,
+      String updatedAt) {}
 }

@@ -130,10 +130,12 @@ class AdminAuthorizationFilterTest {
           "/storefront/active",
           "/inventory/availability",
           "/orders/mine",
-          "/orders/abc",
-          "/orders/abc/history",
-          "/orders/abc/returns",
-          "/orders/abc/fiscal-receipt",
+          // An id-shaped segment: every order id is a UUID, and the self-read shape now insists
+          // on one so that a literal child such as /orders/export cannot pass as an order.
+          "/orders/01a09509-72ec-72e9-9f08-94a93df26a36",
+          "/orders/01a09509-72ec-72e9-9f08-94a93df26a36/history",
+          "/orders/01a09509-72ec-72e9-9f08-94a93df26a36/returns",
+          "/orders/01a09509-72ec-72e9-9f08-94a93df26a36/fiscal-receipt",
           "/promotions",
           "/auth/me",
           "/cart",
@@ -390,5 +392,21 @@ class AdminAuthorizationFilterTest {
                   throw new UnsupportedOperationException(m.getName());
               }
             });
+  }
+
+  @Test
+  void ordersExportIsNotASelfRead() throws Exception {
+    // A literal child of /orders must not be mistaken for an order id: /orders/export names a
+    // subject and is staff-only. A negative test found a customer token reading it before it
+    // shipped, because the self-read shape matched "export" as if it were an id.
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/orders/export"), 403);
+    // /orders/mine and an id-addressed order stay open to the shopper, as before.
+    assertNotAborted(invoke("GET", "/orders/mine"));
+    assertNotAborted(invoke("GET", "/orders/01a09509-72ec-72e9-9f08-94a93df26a36"));
+    assertNotAborted(invoke("GET", "/orders/01a09509-72ec-72e9-9f08-94a93df26a36/history"));
+    // A staff role reads the export.
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertNotAborted(invoke("GET", "/orders/export"));
   }
 }

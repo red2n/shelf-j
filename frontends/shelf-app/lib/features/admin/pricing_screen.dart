@@ -1351,9 +1351,58 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                     style: TextStyle(color: cs.outline),
                   ),
                   const SizedBox(height: 16),
+                  // SJ-D39: the return says on its face which boxes are real — and, once
+                  // it is fit to file, what the zero boxes assume.
+                  if (vr.fitToFile && vr.caveat != null) ...[
+                    Container(
+                      key: const Key('vat-return-note'),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.info_outline, color: cs.onSurfaceVariant),
+                          const SizedBox(width: 10),
+                          Expanded(
+                              child: Text(vr.caveat!,
+                                  style: TextStyle(color: cs.onSurfaceVariant))),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (!vr.fitToFile) ...[
+                    Container(
+                      key: const Key('vat-return-caveat'),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: cs.errorContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.report_problem_outlined, color: cs.onErrorContainer),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              vr.caveat ??
+                                  'Not every box is computed. Do not file from this return.',
+                              style: TextStyle(color: cs.onErrorContainer),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   ...boxes.entries.map((e) {
                     final n = e.key;
-                    final highlight = n == 3 || n == 5;
+                    final notComputed = vr.notComputedBoxes.contains(n);
+                    final highlight = !notComputed && (n == 3 || n == 5);
                     return Card(
                       color: highlight ? cs.primaryContainer.withAlpha(80) : null,
                       child: ListTile(
@@ -1372,15 +1421,27 @@ class _VatReturnTabState extends ConsumerState<_VatReturnTab> {
                           ),
                         ),
                         title: Text(_boxLabels[n] ?? 'Box $n'),
-                        trailing: Text(
-                          e.value.toStringAsFixed(2),
-                          style: TextStyle(
-                            fontWeight:
-                                highlight ? FontWeight.bold : FontWeight.w600,
-                            fontFamily: 'monospace',
-                            fontSize: 15,
-                          ),
-                        ),
+                        subtitle: notComputed
+                            ? Text(
+                                vr.fitToFile
+                                    ? 'Not modelled — zero unless you have Northern Ireland protocol trade'
+                                    : 'Not computed — recorded elsewhere, not carried here',
+                                style: TextStyle(color: vr.fitToFile ? cs.outline : cs.error))
+                            : null,
+                        trailing: notComputed
+                            ? Text('—',
+                                key: Key('vat-box-$n-not-computed'),
+                                style: TextStyle(
+                                    color: cs.outline, fontFamily: 'monospace', fontSize: 15))
+                            : Text(
+                                e.value.toStringAsFixed(2),
+                                style: TextStyle(
+                                  fontWeight:
+                                      highlight ? FontWeight.bold : FontWeight.w600,
+                                  fontFamily: 'monospace',
+                                  fontSize: 15,
+                                ),
+                              ),
                       ),
                     );
                   }),

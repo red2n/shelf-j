@@ -1,6 +1,7 @@
 package com.shelfj.order.api;
 
 import com.shelfj.order.dto.Dtos.CreateReturnRequest;
+import com.shelfj.order.dto.Dtos.OrderResponse;
 import com.shelfj.order.dto.Dtos.OrderSummaryResponse;
 import com.shelfj.order.dto.Dtos.PlaceOrderRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
@@ -79,10 +80,53 @@ public class OrderResource {
     Instant toInst = parseInstant(to, "to");
     int clamped = Cursor.clampLimit(limit);
     var page =
-        svc.listOrders(tenantId, storeId, null, channel, status, fromInst, toInst, after, clamped);
+        svc.listOrders(
+            tenantId, storeId, null, null, channel, status, fromInst, toInst, after, clamped);
     return ApiResponse.ok(
         page.orders().stream().map(Mappers::toSummary).toList(),
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
+  }
+
+  /**
+   * Every order one person placed here, for a data-portability request (UK GDPR art.20).
+   *
+   * <p>Staff-only, and read service-to-service by customer-svc, which assembles the whole export.
+   * Both ids are accepted because a person has both: an online sale is filed under their login and
+   * a till sale under the shop's customer record (SJ-D44). The shopper's own route is {@code GET
+   * /customers/me/export}; this one is how it gets the orders.
+   *
+   * @param customer the shop's customer record for the person, or {@code null}
+   * @param login the login they sign in with, or {@code null}
+   * @return that person's orders, newest first, each with its lines
+   */
+  @Operation(
+      summary = "Export one person's orders",
+      description =
+          "The sales half of a GDPR art.20 data export. Matches on the customer id, the login id,"
+              + " or both — an online order is filed under the login and a till sale under the"
+              + " customer record, and an export that knew only one would be incomplete.")
+  @APIResponse(responseCode = "200", description = "The person's orders, newest first")
+  @APIResponse(responseCode = "400", description = "Neither a customer nor a login was named")
+  @GET
+  @Path("/export")
+  public ApiResponse<List<OrderResponse>> export(
+      @QueryParam("customer") String customer, @QueryParam("login") String login) {
+    // Belt and braces with the read filter: this route names a subject, so it is never a
+    // self-read, whatever shape the path happens to match upstream.
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
+    UUID tenantId = ctx.requireTenantId();
+    UUID customerId =
+        customer != null && !customer.isBlank() ? Parsing.uuid(customer, "customer") : null;
+    UUID loginId = login != null && !login.isBlank() ? Parsing.uuid(login, "login") : null;
+    if (customerId == null && loginId == null) {
+      throw com.shelfj.web.ApiException.badRequest(
+          "ORDER_EXPORT_NO_SUBJECT", "name a customer, a login, or both");
+    }
+    var orders =
+        svc.exportOrdersFor(tenantId, customerId, loginId).stream()
+            .map(o -> Mappers.toDto(o.order(), o.items()))
+            .toList();
+    return ApiResponse.ok(orders, ApiResponse.Meta.of(ctx.requestId()));
   }
 
   /**
@@ -109,13 +153,16 @@ public class OrderResource {
   public ApiResponse<List<OrderSummaryResponse>> mine(
       @QueryParam("after") String after, @QueryParam("limit") Integer limit) {
     UUID tenantId = ctx.requireTenantId();
-    UUID customerId = ctx.userId();
-    if (customerId == null) {
+    UUID loginId = ctx.userId();
+    if (loginId == null) {
       throw com.shelfj.web.ApiException.unauthorized(
           "NO_CUSTOMER", "a customer token is required for order history");
     }
     int clamped = Cursor.clampLimit(limit);
-    var page = svc.listOrders(tenantId, null, customerId, null, null, null, null, after, clamped);
+    // Filtered on the login, not the customer id: the shopper's own history is the orders their
+    // login placed, including any placed before the customer record existed (SJ-D44).
+    var page =
+        svc.listOrders(tenantId, null, null, loginId, null, null, null, null, after, clamped);
     return ApiResponse.ok(
         page.orders().stream().map(Mappers::toSummary).toList(),
         new ApiResponse.Meta(ctx.requestId(), page.nextCursor()));
@@ -261,6 +308,37 @@ public class OrderResource {
   }
 
   /**
+   * Prices a catalog-mode till order (SJ-D41). Management-only.
+   *
+   * @param id the AWAITING_PRICE order
+   * @param req a unit price per variant, and the VAT
+   * @return the order, now PENDING with its totals
+   */
+  @Operation(
+      summary = "Price an order that was placed without prices",
+      description =
+          "A catalog-mode till places the goods and leaves the prices to a manager. Every line on"
+              + " the order gets its unit price here; the totals are recomputed and the order"
+              + " becomes PENDING, payable like any other. Management-only (SJ-D41).")
+  @APIResponse(responseCode = "200", description = "Order priced, now PENDING")
+  @APIResponse(responseCode = "400", description = "A line unpriced, unknown, or priced below zero")
+  @APIResponse(responseCode = "409", description = "Order is not AWAITING_PRICE")
+  @POST
+  @Path("/{id}/price")
+  public Response price(
+      @PathParam("id") String id, com.shelfj.order.dto.Dtos.PriceOrderRequest req) {
+    ctx.requireAnyRole("OWNER", "MANAGER", "PLATFORM_ADMIN");
+    com.shelfj.web.Validations.validate(req);
+    var order = svc.priceOrder(ctx.tenantId(), Parsing.uuid(id, "id"), req, ctx.userId(), ctx);
+    var items = svc.getOrderItems(ctx.tenantId(), order.id());
+    return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
+  }
+
+  /** Parses the optional fulfil body; a JAX-RS String entity keeps an absent body legal. */
+  private static final jakarta.json.bind.Jsonb FULFIL_JSON =
+      jakarta.json.bind.JsonbBuilder.create();
+
+  /**
    * Moves a CONFIRMED order to FULFILLED and emits {@code OrderFulfilled} with its lines.
    *
    * @param id the order to fulfil
@@ -271,15 +349,33 @@ public class OrderResource {
   @Operation(
       summary = "Fulfil an order",
       description =
-          "Transitions a CONFIRMED order to FULFILLED and emits OrderFulfilled with its line"
-              + " items.")
+          "Hands over the order, or with a body {lines:[{variantId, qty}]} part of it: the order"
+              + " is PARTIALLY_FULFILLED until every line is complete, then FULFILLED. Each call"
+              + " emits OrderFulfilled with only the quantities handed over now (SJ-D35).")
   @APIResponse(responseCode = "200", description = "Order fulfilled")
   @APIResponse(responseCode = "404", description = "Order not found")
   @APIResponse(responseCode = "409", description = "Order is not in CONFIRMED status")
   @POST
   @Path("/{id}/fulfil")
-  public Response fulfil(@PathParam("id") String id) {
-    var order = svc.fulfillOrder(ctx.tenantId(), Parsing.uuid(id, "id"), ctx.userId());
+  public Response fulfil(@PathParam("id") String id, String raw) {
+    // SJ-D35: with a body, only those lines and quantities are handed over now; without one —
+    // and a till or a script that has always posted nothing here sends nothing — everything still
+    // outstanding, which for an untouched order is the old whole fulfilment.
+    com.shelfj.order.dto.Dtos.FulfilRequest req = null;
+    if (raw != null && !raw.isBlank()) {
+      try {
+        req = FULFIL_JSON.fromJson(raw, com.shelfj.order.dto.Dtos.FulfilRequest.class);
+      } catch (jakarta.json.bind.JsonbException e) {
+        throw new ApiException(
+            400, "VALIDATION_FAILED", "fulfil body is not valid JSON", java.util.List.of(), e);
+      }
+    }
+    if (req != null && req.lines() != null) {
+      for (var line : req.lines()) {
+        com.shelfj.web.Validations.validate(line);
+      }
+    }
+    var order = svc.fulfilOrder(ctx.tenantId(), Parsing.uuid(id, "id"), req, ctx.userId(), ctx);
     var items = svc.getOrderItems(ctx.tenantId(), order.id());
     return Response.ok(ApiResponse.ok(Mappers.toDto(order, items))).build();
   }
@@ -330,7 +426,16 @@ public class OrderResource {
       description = "No such order for this caller, or no receipt issued for it yet")
   @GET
   @Path("/{id}/fiscal-receipt")
-  public Response fiscalReceipt(@PathParam("id") String id) {
+  public Response fiscalReceipt(
+      @PathParam("id") String id, @QueryParam("wait") Integer waitSeconds) {
+    // ?wait=N holds the request up to N seconds (capped at 20) for the number to be issued, so a
+    // till prints with the number after one round trip instead of polling and giving up.
+    if (waitSeconds != null && waitSeconds > 0) {
+      return Response.ok(
+              ApiResponse.ok(
+                  svc.awaitReceipt(ctx.tenantId(), Parsing.uuid(id, "id"), ctx, waitSeconds)))
+          .build();
+    }
     return Response.ok(ApiResponse.ok(svc.receiptOf(ctx.tenantId(), Parsing.uuid(id, "id"), ctx)))
         .build();
   }

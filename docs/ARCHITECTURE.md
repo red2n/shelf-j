@@ -243,7 +243,7 @@ Single `ProxyResource` (`/api/{service}/{path}`) in front of a Consul-resolved a
 1. **CorsFilter** — answers preflight; only emits CORS headers if an allowed-origins list is configured.
 2. **RateLimitFilter** — Redis-backed fixed-window counter (default 100 req/min), shared across gateway replicas so round-robin can't bypass it.
 3. **BruteForceFilter** — login-path-specific Redis counter (default 5 failures / 15 min block).
-4. **JwtAuthFilter** — strips any client-supplied `X-Tenant-Id`/`X-User-Id`/`X-Roles`, validates the Bearer JWT, and **re-stamps** identity headers only from verified claims. Whitelists genuinely public paths (register/login/refresh, storefront catalog reads).
+4. **JwtAuthFilter** — strips any client-supplied `X-Tenant-Id`/`X-User-Id`/`X-User-Email`/`X-Roles`/`X-Store-Ids`, validates the Bearer JWT, and **re-stamps** identity headers only from verified claims. What actually reaches a service is `ProxyResource.FORWARDED_HEADERS` — a stamped header not on that list is dropped (SJ-D46), and a test holds the two together. Whitelists genuinely public paths (register/login/refresh, storefront catalog reads).
 5. **TenantStatusGate** — rejects with `403` if the resolved tenant isn't `ACTIVE`.
 6. **ProxyResource** — forwards `Idempotency-Key`, generates `X-Request-Id`, per-upstream circuit breaker, faithfully forwards `Content-Type` and raw bytes (so binary bodies like product images round-trip intact).
 
@@ -336,7 +336,7 @@ Payment capture/refund plus till sessions, cash drawer movements, and end-of-day
 Suppliers, purchase orders, goods receipts, and finance-adjacent intercompany invoicing.
 - **API:** `/suppliers`; `/purchase-orders` create/submit/lines; `/goods-receipts`; `/intercompany-invoices` (+settle); `/nominal-ledger` (read-only double-entry view).
 - **Tables:** `suppliers`, `purchase_orders`, `purchase_order_lines`, `goods_receipts`, `intercompany_invoices`, `nominal_ledger_entries`.
-- **Events:** publishes `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`.
+- **Events:** publishes `PurchaseOrderCreated`, `GoodsReceived`, `IntercompanyInvoiceRaised`, `SupplierInvoiceCaptured`.
 - **Notable:** FRS 102/UK GAAP-style double-entry nominal ledger; intercompany AR/AP invoicing for inter-org transfers.
 
 ### customer-svc — Customers, Loyalty, Store Credit
@@ -383,6 +383,7 @@ tenant-svc   ──REST──►  iam-svc         (verify user on staff assignme
 | `TenantCreated` / `TenantStatusChanged` | tenant-svc | iam-svc, cart-svc, order-svc (status projections) |
 | `StoreCreated` / `StoreStatusChanged` | tenant-svc | iam-svc, cart-svc, order-svc |
 | `GoodsReceived` | purchase-svc | inventory-svc, reporting-svc |
+| `SupplierInvoiceCaptured` | purchase-svc | pricing-svc (input VAT → VAT return boxes 4 and 7) |
 | `StockReceived` / `StockDeducted` / `StockAdjusted` | inventory-svc | reporting-svc, order-svc (POS stock-position projection) |
 | `StockBelowThreshold` | inventory-svc | notification-svc |
 | `OrderPlaced` / `OrderConfirmed` | order-svc | inventory-svc, customer-svc, cart-svc, reporting-svc, notification-svc |

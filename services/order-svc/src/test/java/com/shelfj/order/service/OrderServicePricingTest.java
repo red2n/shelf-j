@@ -86,13 +86,15 @@ class OrderServicePricingTest {
         null,
         "POS",
         "INSTORE",
-        List.of(new OrderItemRequest(VARIANT.toString(), BigDecimal.ONE, clientUnitPrice, null)),
+        List.of(
+            new OrderItemRequest(VARIANT.toString(), BigDecimal.ONE, clientUnitPrice, null, null)),
         null,
         discount,
         discountReason,
         "USD",
         null,
         null, // couponCodes
+        null,
         null,
         null,
         null,

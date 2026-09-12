@@ -56,7 +56,7 @@ class PricingIT {
     try (var conn = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
         var st = conn.createStatement()) {
       st.execute(
-          "TRUNCATE TABLE pricing.promotion_redemptions, pricing.promotion_items,"
+          "TRUNCATE TABLE pricing.input_tax_transactions, pricing.promotion_redemptions, pricing.promotion_items,"
               + " pricing.promotions,"
               + " pricing.promotion_status_changes, pricing.tax_transactions, pricing.price_list_items, pricing.price_lists,"
               + " pricing.product_vat_categories, pricing.customer_vat_status,"
@@ -1188,5 +1188,83 @@ class PricingIT {
     int start = json.indexOf("\"id\":\"") + 6;
     int end = json.indexOf("\"", start);
     return json.substring(start, end);
+  }
+
+  @Test
+  void vatReturnSaysOnItsFaceWhichBoxesAreRealAndThatItIsNotFitToFile() {
+    // SJ-D39: nine boxes in the shape of an MTD return, five of them real. The guides said so; the
+    // return must say so itself before anyone files from it.
+    Response vr =
+        getAs("/vat-return?from=2024-04-01T00:00:00Z&to=2024-07-01T00:00:00Z", T, "OWNER");
+    assertThat(vr.getStatus(), is(200));
+    String body = vr.readEntity(String.class);
+    assertThat(body, containsString("\"computedBoxes\":[1,3,4,5,6,7]"));
+    assertThat(body, containsString("\"notComputedBoxes\":[2,8,9]"));
+    assertThat(body, containsString("\"fitToFile\":true"));
+    assertThat(body, containsString("Northern Ireland"));
+  }
+
+  @Inject com.shelfj.pricing.messaging.SupplierInvoiceEventHandler invoiceEvents;
+
+  private static String invoiceEvent(
+      String eventId, String tenant, String vat, String net, String date) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\"SupplierInvoiceCaptured\",\"tenantId\":\""
+        + tenant
+        + "\",\"invoiceId\":\""
+        + eventId
+        + "\",\"poId\":\""
+        + com.shelfj.ids.Ids.newId()
+        + "\",\"supplierId\":\""
+        + com.shelfj.ids.Ids.newId()
+        + "\",\"invoiceNumber\":\"INV-1\",\"invoiceDate\":\""
+        + date
+        + "\",\"currency\":\"GBP\",\"netAmount\":"
+        + net
+        + ",\"vatAmount\":"
+        + vat
+        + ",\"grossAmount\":"
+        + new java.math.BigDecimal(net).add(new java.math.BigDecimal(vat)).toPlainString()
+        + ",\"status\":\"MATCHED\"}";
+  }
+
+  @Test
+  void boxFourComesFromSupplierInvoicesOnceEach() {
+    // SJ-D39 closed: a captured supplier invoice reaches the return as input VAT, by invoice date.
+    String e1 = com.shelfj.ids.Ids.newId().toString();
+    assertThat(
+        invoiceEvents.handle(invoiceEvent(e1, T, "30.00", "150.00", "2024-05-10")), is(true));
+    // Redelivered: the same event id records nothing twice.
+    assertThat(
+        invoiceEvents.handle(invoiceEvent(e1, T, "30.00", "150.00", "2024-05-10")), is(false));
+    // Another tenant's invoice is another tenant's box 4.
+    String other = com.shelfj.ids.Ids.newId().toString();
+    assertThat(
+        invoiceEvents.handle(
+            invoiceEvent(
+                com.shelfj.ids.Ids.newId().toString(), other, "99.00", "495.00", "2024-05-11")),
+        is(true));
+    // Outside the period: a Q2 return does not include a July invoice.
+    assertThat(
+        invoiceEvents.handle(
+            invoiceEvent(com.shelfj.ids.Ids.newId().toString(), T, "7.00", "35.00", "2024-07-02")),
+        is(true));
+    // Malformed, or not this event: skipped, not thrown, not recorded.
+    assertThat(
+        invoiceEvents.handle(
+            "{\"eventType\":\"SupplierInvoiceCaptured\",\"tenantId\":\"" + T + "\"}"),
+        is(false));
+    assertThat(invoiceEvents.handle("{\"eventType\":\"SomethingElse\"}"), is(false));
+
+    Response vr =
+        getAs("/vat-return?from=2024-04-01T00:00:00Z&to=2024-07-01T00:00:00Z", T, "OWNER");
+    assertThat(vr.getStatus(), is(200));
+    String body = vr.readEntity(String.class);
+    assertThat(body, containsString("\"box4\":30.00"));
+    assertThat(body, containsString("\"box7\":150.00"));
+    // No output VAT was recorded in this test, so box 5 is |0 - 30| = 30.00: a reclaim.
+    assertThat(body, containsString("\"box5\":30.00"));
+    assertThat(body, containsString("\"fitToFile\":true"));
   }
 }

@@ -53,7 +53,14 @@ public final class Mappers {
    */
   public static OrderItemResponse toDto(OrderItem i) {
     return new OrderItemResponse(
-        str(i.id()), str(i.variantId()), i.qty(), i.unitPrice(), i.lineTotal(), i.notes());
+        str(i.id()),
+        str(i.variantId()),
+        i.qty(),
+        i.unitPrice(),
+        i.lineTotal(),
+        i.notes(),
+        str(i.weighingInstrumentId()),
+        i.fulfilledQty());
   }
 
   /**
@@ -68,6 +75,7 @@ public final class Mappers {
         str(o.id()),
         str(o.storeId()),
         str(o.customerId()),
+        str(o.loginId()),
         o.channel(),
         o.fulfilmentType(),
         o.status(),
@@ -389,5 +397,42 @@ public final class Mappers {
         r.discountAmount(),
         r.averageBasket(),
         r.discountRate());
+  }
+
+  /**
+   * Converts one recorded age check to its wire form.
+   *
+   * @param v the record
+   * @return its API representation
+   */
+  public static com.shelfj.order.dto.Dtos.AgeVerificationResponse toDto(
+      com.shelfj.order.domain.Domain.AgeVerification v) {
+    return new com.shelfj.order.dto.Dtos.AgeVerificationResponse(
+        str(v.id()),
+        str(v.storeId()),
+        str(v.cashierId()),
+        str(v.posSessionId()),
+        str(v.variantId()),
+        v.category(),
+        v.minimumAge(),
+        v.country(),
+        v.storePolicy(),
+        v.outcome(),
+        v.reason(),
+        v.idType(),
+        str(v.orderId()),
+        ts(v.checkedAt()));
+  }
+
+  /**
+   * Converts the period summary to its wire form.
+   *
+   * @param s the counts
+   * @return its API representation
+   */
+  public static com.shelfj.order.dto.Dtos.AgeVerificationSummaryResponse toDto(
+      com.shelfj.order.domain.Domain.AgeVerificationSummary s) {
+    return new com.shelfj.order.dto.Dtos.AgeVerificationSummaryResponse(
+        s.total(), s.passed(), s.refused(), s.refusedByReason(), s.byCategory());
   }
 }

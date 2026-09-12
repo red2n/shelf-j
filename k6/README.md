@@ -35,11 +35,17 @@ non-zero if any suite fails. `BASE_URL` points it at another gateway (default
 | `product-crud` | Brands, categories, products, variants, UOM, item templates, revisions, containers, attribute groups, category sets, bulk import | 91 |
 | `inventory-crud` | Receive, adjust, ABC, safety stock, cycle counts, lots, serials, transfers and the rest of inventory | 125 |
 | `pricing-crud` | VAT rates, price lists and their lifecycle, resolution, promotions and quotes, overrides, VAT return | 67 |
-| `order-crud` | Order lifecycle (pay, fulfil, return, cancel, void), receipts, POS log, fiscal receipts, special orders, parked sales, gift cards, layaways, the online shopper | 99 |
+| `order-crud` | Order lifecycle (pay, fulfil, return, cancel, void), receipts, POS log, fiscal receipts, special orders, parked sales, gift cards, layaways, the online shopper, a catalog-mode order priced by a manager (SJ-D41), the online shopper | 123 |
 | `notification-crud` | Shortage alerts raised by real stock movements, send with event dedupe, notification log | 21 |
 | `reporting-crud` | On-hand, supply/demand, movement stats and sales reports fed by a real receipt and a paid sale | 26 |
 | `gateway-smoke-it` | Health, a public contract, sign-up, login and an authenticated call through the gateway | 7 |
+| `privacy-flow` | The login-to-customer link, loyalty and the confirmation email on a web order, marketing consent and the opt-out link, the data export and erasure — each step with the wrong caller (guest, another shopper, a rival tenant's owner) and the wrong input beside the right one | 75 |
+| `compliance-flow` | The shop-floor legal records: age checks written by a cashier (refusal with reason, pass with what was shown), refused for the wrong shape, the wrong store, a shopper or a guest, and the register and its counts read by management only; the weighing-instrument register — registered, verified, repaired and out of trade, re-verified, out of service, retired — with every write refused to a cashier and every read to another store's cashier or a rival tenant; the legal receipt series — a prefix set by the owner and refused to a cashier or for a bad shape, a till sale numbered under it, the till reading the number in one held request (`?wait=`) and getting 404 before payment, the audit intact and management-only; the hash chain intact from the first document, the register exported as CSV with both hashes and as JSON with the lines, refused to a cashier | 92 |
 | `gateway-login-protection` | Five failed logins lock the account and the IP (429 `LOGIN_LOCKED`, `Retry-After`) | 13 |
+| `gateway-unsubscribe-protection` | Five guessed opt-out tokens lock the IP out of the public unsubscribe endpoint (429 `TOKEN_LOCKED`); a malformed body is not a guess; the customer stays subscribed; the rest of the API is unaffected | 11 |
+| `gateway-card-data-guard` | The PCI scope as a control: a card number in a description, a barcode field, a nested PUT, a query string, an order note or an unauthenticated login is refused at the gateway (400 `CARD_DATA_NOT_ACCEPTED`) and never echoed; UK and German EAN-13s, a GTIN-14, an IMEI, a phone number, an all-digit id and a Luhn-failing sixteen digits pass; a till sale is placed and paid with the guard in place; twenty-five in a row lock nothing | 22 |
+| `purchase-crud` | A supplier corrected after creation (SJ-D34): terms and VAT number under an open order, the currency only once the order is cancelled, the cancelled order keeping its currency and the next inheriting the fix; a duplicate name, a bad currency, zero-day terms and a blank name refused; a cashier and a rival tenant refused | 21 |
+| `vat-return-flow` | SJ-D39 closed: a supplier invoice captured in purchase-svc reaches the VAT return as box 4 (input VAT) and box 7 (net purchases) within seconds, box 5 is what is owed, a rival tenant's return is untouched, a cashier is refused, a backwards period is refused | 12 |
 | `full-stack-simulation` *(load)* | One business browsing, reserving, selling at the till and restocking concurrently | ~1100 |
 | `multi-tenant-retail` *(load)* | Two tenants (IN/INR, UK/GBP) across 28 concurrent scenarios; gates on zero isolation and security violations and a low error count | ~24000 |
 | `gateway-rate-limit-stress` *(load)* | Exactly the configured per-IP budget is admitted in a 60 s window, then 429 `RATE_LIMITED`, never 5xx | ~30600 |
@@ -48,7 +54,7 @@ Every functional suite requires **all** checks to pass (`thresholds: { checks: [
 
 Things to know:
 
-- **Gateway suites lock this host out.** `gateway-login-protection` blocks logins from the k6
+- **Gateway suites lock this host out.** `gateway-login-protection` blocks logins and `gateway-unsubscribe-protection` blocks the opt-out endpoint from the k6
   machine for 15 minutes and `gateway-rate-limit-stress` spends its whole rate budget. `run.sh`
   clears those counters in the local `shelfj-redis` afterwards; run them directly with `k6 run`, or
   against a remote stack, and logins from this host stay blocked.

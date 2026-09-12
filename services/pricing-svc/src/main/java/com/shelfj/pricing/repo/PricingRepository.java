@@ -971,6 +971,72 @@ public class PricingRepository extends BaseOutboxRepository {
   // ── VAT Return (MTD boxes 1–9) ────────────────────────────────────────────
 
   /**
+   * Records one supplier invoice's VAT (SJ-D39), once: the event id is unique, so a redelivered
+   * event inserts nothing and the caller learns it was already there.
+   *
+   * @param t the projection of the event
+   * @return true when inserted; false when that event was already recorded
+   */
+  public boolean recordInputTaxOnce(com.shelfj.pricing.domain.Domain.InputTaxTransaction t) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO input_tax_transactions (id, tenant_id, event_id, invoice_id, po_id,"
+                      + " supplier_id, invoice_number, currency, net_amount, vat_amount,"
+                      + " gross_amount, tax_point_date)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (event_id) DO NOTHING")) {
+            ps.setObject(1, t.id());
+            ps.setObject(2, t.tenantId());
+            ps.setObject(3, t.eventId());
+            ps.setObject(4, t.invoiceId());
+            ps.setObject(5, t.poId());
+            ps.setObject(6, t.supplierId());
+            ps.setString(7, t.invoiceNumber());
+            ps.setString(8, t.currency());
+            ps.setBigDecimal(9, t.netAmount());
+            ps.setBigDecimal(10, t.vatAmount());
+            ps.setBigDecimal(11, t.grossAmount());
+            ps.setObject(12, toOdt(t.taxPointDate()));
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "record input tax");
+  }
+
+  /** Box 4: VAT reclaimed on purchases in the period, by invoice date (SJ-D39). */
+  public BigDecimal sumInputVat(UUID tenantId, Instant from, Instant to) {
+    var rows =
+        query(
+            "SELECT COALESCE(SUM(vat_amount), 0) AS total FROM input_tax_transactions"
+                + " WHERE tenant_id=? AND tax_point_date >= ? AND tax_point_date < ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, toOdt(from));
+              ps.setObject(3, toOdt(to));
+            },
+            rs -> rs.getBigDecimal("total"),
+            "sum input vat");
+    return rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
+  }
+
+  /** Box 7: net value of purchases in the period, by invoice date (SJ-D39). */
+  public BigDecimal sumNetPurchases(UUID tenantId, Instant from, Instant to) {
+    var rows =
+        query(
+            "SELECT COALESCE(SUM(net_amount), 0) AS total FROM input_tax_transactions"
+                + " WHERE tenant_id=? AND tax_point_date >= ? AND tax_point_date < ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, toOdt(from));
+              ps.setObject(3, toOdt(to));
+            },
+            rs -> rs.getBigDecimal("total"),
+            "sum net purchases");
+    return rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
+  }
+
+  /**
    * Aggregate output VAT and net sales for MTD boxes. Box 1 = output VAT on taxable supplies. Box 6
    * = total net sales (all supplies). Both exclude nothing — even exempt supplies count for Box 6.
    * Per HMRC VAT Notice 700 s.17.

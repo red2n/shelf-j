@@ -36,6 +36,7 @@ class _FakeApiClient implements ApiClient {
 class _Till implements HttpClientAdapter {
   final Map<String, (int, String)> ageCheck = {};
   final List<RequestOptions> requests = [];
+  bool failRecord = false;
 
   @override
   void close({bool force = false}) {}
@@ -54,6 +55,11 @@ class _Till implements HttpClientAdapter {
       // Every item here is sold by the each; the till now asks how an item is
       // sold, and refuses to guess when the answer is unreadable.
       body = '{"data":{"soldBy":"EACH","catchWeight":false}}';
+    } else if (o.path.endsWith('/pos/age-checks')) {
+      if (failRecord) status = 503;
+      body = failRecord
+          ? '{"error":{"code":"SERVICE_UNAVAILABLE","message":"down"}}'
+          : '{"data":{"id":"chk-1","outcome":"REFUSED"}}';
     } else if (o.path.endsWith('/age-check')) {
       final variant = o.path.split('/')[o.path.split('/').length - 2];
       final answer = ageCheck[variant] ?? (200, '{"data":{"restricted":false}}');
@@ -195,5 +201,105 @@ void main() {
     expect(find.text('Age-restricted item'), findsNothing);
     expect(_basket(tester), isEmpty);
     expect(find.textContaining("Couldn't check the age restriction"), findsOneWidget);
+  });
+
+  // ── the due-diligence record ───────────────────────────────────────────────
+
+  RequestOptions? recorded(_Till till) {
+    final hits = till.requests.where((r) => r.path.endsWith('/pos/age-checks'));
+    return hits.isEmpty ? null : hits.last;
+  }
+
+  testWidgets('a refusal must say why, and is then written down with its reason',
+      (tester) async {
+    final till = await _pump(tester);
+    till.ageCheck['v-WINE'] = _alcohol18;
+    await _scan(tester, 'WINE');
+
+    await tester.tap(find.text('Refuse sale'));
+    await tester.pumpAndSettle();
+    // No reason chosen: the refusal cannot be recorded yet, and nothing was sent.
+    final record = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Record refusal'));
+    expect(record.onPressed, isNull);
+    expect(recorded(till), isNull);
+    expect(_basket(tester), isEmpty);
+
+    await tester.tap(find.text('No ID shown'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Record refusal'));
+    await tester.pumpAndSettle();
+
+    expect(_basket(tester), isEmpty);
+    final sent = recorded(till)!;
+    final body = sent.data as Map<String, dynamic>;
+    expect(body['outcome'], 'REFUSED');
+    expect(body['reason'], 'NO_ID');
+    expect(body['category'], 'ALCOHOL');
+    expect(body['minimumAge'], 18);
+    expect(body['country'], 'GB');
+    expect(body['storeId'], 'store-1');
+    expect(body.containsKey('idType'), isFalse);
+  });
+
+  testWidgets('a pass is written down, with what was shown when the cashier notes it',
+      (tester) async {
+    final till = await _pump(tester);
+    till.ageCheck['v-WINE'] = _alcohol18;
+    await _scan(tester, 'WINE');
+
+    await tester.tap(find.text('Driving licence'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Checked — 18+'));
+    await tester.pumpAndSettle();
+
+    expect(_basket(tester), hasLength(1));
+    final body = recorded(till)!.data as Map<String, dynamic>;
+    expect(body['outcome'], 'PASSED');
+    expect(body['idType'], 'DRIVING_LICENCE');
+    expect(body.containsKey('reason'), isFalse);
+  });
+
+  testWidgets('a pass with nothing noted is still written down', (tester) async {
+    final till = await _pump(tester);
+    till.ageCheck['v-WINE'] = _alcohol18;
+    await _scan(tester, 'WINE');
+    await tester.tap(find.text('Checked — 18+'));
+    await tester.pumpAndSettle();
+
+    final body = recorded(till)!.data as Map<String, dynamic>;
+    expect(body['outcome'], 'PASSED');
+    expect(body.containsKey('idType'), isFalse);
+  });
+
+  testWidgets('a refusal stands even when the record cannot be written',
+      (tester) async {
+    final till = await _pump(tester);
+    till.ageCheck['v-WINE'] = _alcohol18;
+    till.failRecord = true;
+    await _scan(tester, 'WINE');
+
+    await tester.tap(find.text('Refuse sale'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Under age'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Record refusal'));
+    await tester.pumpAndSettle();
+
+    expect(_basket(tester), isEmpty);
+    expect(find.textContaining('could not be recorded'), findsOneWidget);
+  });
+
+  testWidgets('one check still covers the sale: the second bottle writes no second record',
+      (tester) async {
+    final till = await _pump(tester);
+    till.ageCheck['v-WINE'] = _alcohol18;
+    till.ageCheck['v-BEER'] = _alcohol18;
+    await _scan(tester, 'WINE');
+    await tester.tap(find.text('Checked — 18+'));
+    await tester.pumpAndSettle();
+    await _scan(tester, 'BEER');
+
+    expect(till.requests.where((r) => r.path.endsWith('/pos/age-checks')).length, 1);
   });
 }

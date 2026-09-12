@@ -112,4 +112,69 @@ public final class Domain {
   /** Pincode → store fulfilment mapping (one row per store coverage). */
   public record DeliveryArea(
       UUID id, UUID tenantId, UUID storeId, String pincode, int priority, Instant createdAt) {}
+
+  /**
+   * A weighing instrument a store uses for trade (Weights and Measures Act 1985 s.11), and what the
+   * register knows about it. Whether it may be used for trade today is {@link
+   * WeighingInstrumentWithStanding#certified()}, derived from its verification history.
+   */
+  public record WeighingInstrument(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      String identifier,
+      String serialNumber,
+      String make,
+      String model,
+      String kind,
+      java.math.BigDecimal maxCapacity,
+      String capacityUom,
+      java.math.BigDecimal scaleInterval,
+      String approvalRef,
+      UUID zoneId,
+      String labelScheme,
+      String status,
+      Instant createdAt,
+      Instant updatedAt) {
+    public static final String STATUS_IN_SERVICE = "IN_SERVICE";
+    public static final String STATUS_OUT_OF_SERVICE = "OUT_OF_SERVICE";
+    public static final String STATUS_RETIRED = "RETIRED";
+    public static final java.util.Set<String> KINDS =
+        java.util.Set.of("COUNTER", "LABELLING", "PLATFORM", "HANGING");
+    public static final java.util.Set<String> STATUSES =
+        java.util.Set.of(STATUS_IN_SERVICE, STATUS_OUT_OF_SERVICE, STATUS_RETIRED);
+  }
+
+  /**
+   * One append-only entry in an instrument's history: a verification that passed or failed, an
+   * inspection, or a repair that broke the stamp.
+   */
+  public record InstrumentVerification(
+      UUID id,
+      UUID tenantId,
+      UUID instrumentId,
+      String kind,
+      java.time.LocalDate performedOn,
+      String performedBy,
+      String certificateRef,
+      boolean passed,
+      java.time.LocalDate nextDue,
+      String notes,
+      UUID recordedBy,
+      Instant recordedAt) {
+    public static final String KIND_REPAIR = "REPAIR";
+    public static final java.util.Set<String> KINDS =
+        java.util.Set.of("INITIAL", "RE_VERIFICATION", "INSPECTION", KIND_REPAIR);
+  }
+
+  /**
+   * An instrument with its standing for trade, derived rather than stored: in service, its latest
+   * history entry a pass, and that pass not yet due again. A repair is never a pass, so an
+   * instrument repaired since its last verification is not certified until verified again.
+   */
+  public record WeighingInstrumentWithStanding(
+      WeighingInstrument instrument,
+      InstrumentVerification latest,
+      boolean certified,
+      String standing) {}
 }

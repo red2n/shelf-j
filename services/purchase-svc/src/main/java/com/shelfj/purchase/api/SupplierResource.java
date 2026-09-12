@@ -1,6 +1,7 @@
 package com.shelfj.purchase.api;
 
 import com.shelfj.purchase.dto.Dtos.CreateSupplierRequest;
+import com.shelfj.purchase.dto.Dtos.UpdateSupplierRequest;
 import com.shelfj.purchase.mapper.Mappers;
 import com.shelfj.purchase.service.PurchaseService;
 import com.shelfj.web.ApiResponse;
@@ -11,6 +12,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
@@ -41,6 +43,32 @@ public class SupplierResource {
    * @param req the supplier's name, VAT details, country, currency and payment terms
    * @return {@code 201} with the created supplier
    */
+  /**
+   * Corrects a supplier's master data after creation (SJ-D34).
+   *
+   * @param id the supplier
+   * @param req the master data as it should now read
+   * @return the supplier as it now stands
+   */
+  @Operation(
+      summary = "Correct a supplier",
+      description =
+          "Replaces name, VAT details, country, currency and payment terms. The currency can"
+              + " change only while no purchase order against the supplier is open; orders"
+              + " already raised keep the currency they were raised in. Management-only.")
+  @APIResponse(responseCode = "200", description = "Supplier as it now stands")
+  @APIResponse(responseCode = "404", description = "No such supplier in this tenant")
+  @APIResponse(
+      responseCode = "409",
+      description = "Name already taken, or a currency change under an open purchase order")
+  @PUT
+  @Path("/{id}")
+  public Response update(@PathParam("id") UUID id, UpdateSupplierRequest req) {
+    ctx.requireAnyRole("OWNER", "MANAGER", "PLATFORM_ADMIN");
+    Validations.validate(req);
+    return Response.ok(ApiResponse.ok(Mappers.toDto(svc.updateSupplier(ctx, id, req)))).build();
+  }
+
   @Operation(
       summary = "Create a supplier",
       description = "Creates a supplier master record for the caller's tenant.")

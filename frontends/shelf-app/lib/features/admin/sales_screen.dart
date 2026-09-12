@@ -8,6 +8,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import 'receipts_tab.dart';
 import 'sales_providers.dart';
 import 'widgets/variant_picker.dart';
 import '../../shared/util/short_ref.dart';
@@ -18,7 +19,7 @@ class SalesScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -34,6 +35,7 @@ class SalesScreen extends ConsumerWidget {
               Tab(text: 'Gift Cards'),
               Tab(text: 'Layaways'),
               Tab(text: 'Special Orders'),
+              Tab(text: 'Receipts'),
             ],
           ),
           const Expanded(
@@ -42,6 +44,7 @@ class SalesScreen extends ConsumerWidget {
                 _GiftCardsTab(),
                 _LayawaysTab(),
                 _SpecialOrdersTab(),
+                ReceiptsTab(),
               ],
             ),
           ),

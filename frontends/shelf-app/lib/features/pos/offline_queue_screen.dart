@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/offline/offline_queue.dart';
 import '../../core/offline/offline_sale.dart';
+import '../../core/offline/offline_synced.dart';
 
 /// Sales the till took but the server has not accepted yet.
 ///
@@ -16,23 +17,31 @@ class OfflineQueueScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sales = ref.watch(offlineQueueProvider);
+    final synced = ref.watch(offlineSyncedProvider);
     final cs = Theme.of(context).colorScheme;
 
     if (sales.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.cloud_done_outlined, size: 48, color: cs.outline),
-            const SizedBox(height: 12),
-            Text('Everything is synced',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 4),
-            Text('Sales taken while offline appear here until the server has them.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: cs.outline)),
-          ],
-        ),
+      return Column(
+        children: [
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.cloud_done_outlined, size: 48, color: cs.outline),
+                  const SizedBox(height: 12),
+                  Text('Everything is synced',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text('Sales taken while offline appear here until the server has them.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: cs.outline)),
+                ],
+              ),
+            ),
+          ),
+          if (synced.isNotEmpty) _SyncedSection(synced: synced),
+        ],
       );
     }
 
@@ -68,7 +77,91 @@ class OfflineQueueScreen extends ConsumerWidget {
             itemBuilder: (_, i) => _SaleTile(sale: sales[i]),
           ),
         ),
+        if (synced.isNotEmpty) _SyncedSection(synced: synced),
       ],
+    );
+  }
+}
+
+/// Sales that reached the server, with the legal receipt number each was given
+/// on replay. The offline receipt in the customer's hand has no number on it;
+/// this is where the cashier finds it, to reprint or to write on the copy.
+class _SyncedSection extends StatelessWidget {
+  const _SyncedSection({required this.synced});
+  final List<SyncedSale> synced;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 220),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Material(
+            color: cs.surfaceContainerHigh,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+              child: Row(
+                children: [
+                  Icon(Icons.receipt_long_outlined, size: 18, color: cs.outline),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Synced · receipt numbers issued on replay',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: synced.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (_, i) => _SyncedTile(sale: synced[i]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SyncedTile extends ConsumerWidget {
+  const _SyncedTile({required this.sale});
+  final SyncedSale sale;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final number = ref.watch(syncedFiscalNumberProvider(sale.id));
+    return ListTile(
+      dense: true,
+      leading: Icon(Icons.cloud_done_outlined, color: cs.outline),
+      title: Text('Sale #${sale.reference}  ·  '
+          '${sale.currency} ${sale.total.toStringAsFixed(2)}'),
+      subtitle: number.when(
+        loading: () => const Text('Looking up the receipt number…'),
+        error: (_, _) => Text('Receipt number not available yet — check again.',
+            style: TextStyle(color: cs.outline)),
+        data: (n) => n == null
+            ? Text('Receipt number not issued yet — check again shortly.',
+                style: TextStyle(color: cs.outline))
+            : Text('Receipt no. $n',
+                style: TextStyle(
+                    color: cs.primary, fontWeight: FontWeight.w600)),
+      ),
+      trailing: number.hasValue && number.value == null
+          ? IconButton(
+              tooltip: 'Check again',
+              icon: const Icon(Icons.refresh),
+              onPressed: () =>
+                  ref.invalidate(syncedFiscalNumberProvider(sale.id)),
+            )
+          : null,
     );
   }
 }

@@ -10,6 +10,7 @@ import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
@@ -99,6 +100,44 @@ public class FiscalReceiptResource {
     return Response.ok(ApiResponse.ok(svc.receiptOf(ctx.requireTenantId(), orderId))).build();
   }
 
+  @Operation(
+      summary = "The series a store runs",
+      description =
+          "Each counter: series code, fiscal period, the next number it will hand out, and the"
+              + " prefix it prints. Management-only.")
+  @APIResponse(responseCode = "200", description = "The counters, newest period first")
+  @GET
+  @Path("/fiscal-receipts/series")
+  public Response series(@QueryParam("storeId") String storeId) {
+    return Response.ok(
+            ApiResponse.ok(
+                svc.receiptSeriesConfig(ctx.requireTenantId(), Parsing.uuid(storeId, "storeId"))))
+        .build();
+  }
+
+  @Operation(
+      summary = "Set a series prefix",
+      description =
+          "What is printed in front of the number, e.g. GB-LDN-01. Opens the series if it is new."
+              + " The counter is never touched: documents already issued keep the full number they"
+              + " were printed with. Management-only.")
+  @APIResponse(responseCode = "200", description = "The counter as it now stands")
+  @APIResponse(responseCode = "400", description = "A prefix or period outside the allowed shape")
+  @PUT
+  @Path("/fiscal-receipts/series")
+  public Response setSeries(com.shelfj.order.dto.Dtos.SetReceiptSeriesRequest req) {
+    com.shelfj.web.Validations.validate(req);
+    return Response.ok(
+            ApiResponse.ok(
+                svc.setReceiptSeriesPrefix(
+                    ctx.requireTenantId(),
+                    Parsing.uuid(req.storeId(), "storeId"),
+                    req.seriesCode(),
+                    req.period(),
+                    req.prefix())))
+        .build();
+  }
+
   /**
    * The register a store keeps: every receipt in a series, by number.
    *
@@ -166,6 +205,46 @@ public class FiscalReceiptResource {
         svc.receiptAudit(
             ctx.requireTenantId(), Parsing.uuid(storeId, "storeId"), series, requirePeriod(period));
     return Response.ok(ApiResponse.ok(result)).build();
+  }
+
+  /**
+   * The register as a file (18.4).
+   *
+   * @param format {@code csv} (default) or {@code json}, the latter with the order lines
+   * @return CSV text or a JSON document
+   */
+  @Operation(
+      summary = "Export a series with its hash chain",
+      description =
+          "Every document in the series, in number order, with the hash it was issued with and"
+              + " the hash it chains to — as CSV rows, or as JSON with the order lines behind"
+              + " each document. The in-repo input to SAF-T, KassenSichV and corrispettivi"
+              + " exports; not itself a certified file. Management-only.")
+  @APIResponse(responseCode = "200", description = "The register")
+  @GET
+  @Path("/fiscal-receipts/export")
+  @Produces({"text/csv", MediaType.APPLICATION_JSON})
+  public Response export(
+      @QueryParam("storeId") String storeId,
+      @QueryParam("series") String series,
+      @QueryParam("period") String period,
+      @QueryParam("format") @DefaultValue("csv") String format) {
+    Object out =
+        svc.exportRegister(
+            ctx.requireTenantId(),
+            Parsing.uuid(storeId, "storeId"),
+            series,
+            requirePeriod(period),
+            format);
+    if (out instanceof String csv) {
+      return Response.ok(csv)
+          .type("text/csv")
+          .header(
+              "Content-Disposition",
+              "attachment; filename=\"receipts-" + requirePeriod(period) + ".csv\"")
+          .build();
+    }
+    return Response.ok(ApiResponse.ok(out)).type(MediaType.APPLICATION_JSON).build();
   }
 
   private static String requirePeriod(String period) {

@@ -62,6 +62,11 @@ class StorageKeys {
   /// more item. The unparseable payload is moved here first, and this key is
   /// never written by the normal path.
   static const String posOfflineSalesCorrupt = 'pos_offline_sales_corrupt';
+
+  /// Sales that were taken offline and have since reached the server, kept so a
+  /// cashier holding an offline receipt — printed without its legal number —
+  /// can find the number the server issued on replay. Device-local, capped.
+  static const String posOfflineSynced = 'pos_offline_synced';
 }
 
 /// Backend role codes (iam-svc seed). Do not invent client-only roles.

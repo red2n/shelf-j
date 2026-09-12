@@ -19,9 +19,13 @@ final class Events {
   private Events() {}
 
   static OutboxRow orderPlaced(
-      UUID tenantId, UUID orderId, String channel, UUID customerId, UUID storeId) {
+      UUID tenantId, UUID orderId, String channel, UUID customerId, UUID loginId, UUID storeId) {
     String customerPart =
         customerId != null ? ",\"customerId\":\"" + customerId + "\"" : ",\"customerId\":null";
+    // Both ids, because consumers key on different ones: loyalty wants the shop's customer record,
+    // while cart-svc holds a shopper's basket under the login their token carries. Until SJ-D44
+    // these were the same value in this payload, and the confusion was invisible.
+    String loginPart = loginId != null ? ",\"loginId\":\"" + loginId + "\"" : ",\"loginId\":null";
     return new OutboxRow(
         "OrderPlaced",
         "shelfj.order.order-placed",
@@ -37,6 +41,7 @@ final class Events {
             + storeId
             + "\""
             + customerPart
+            + loginPart
             + "}");
   }
 

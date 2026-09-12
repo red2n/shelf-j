@@ -103,6 +103,13 @@
             <artifactId>helidon-microprofile-bean-validation</artifactId>
         </dependency>
 
+        <!-- MicroProfile Fault Tolerance: @Retry + @CircuitBreaker on OrderClient, so a slow
+             order-svc costs one data export a timeout rather than blocking every request. -->
+        <dependency>
+            <groupId>io.helidon.microprofile</groupId>
+            <artifactId>helidon-microprofile-fault-tolerance</artifactId>
+        </dependency>
+
         <!-- Kafka (outbox publisher) -->
         <dependency>
             <groupId>org.apache.kafka</groupId>

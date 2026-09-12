@@ -114,6 +114,66 @@ public class PurchaseRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
 
+  /**
+   * Replaces a supplier's master data in place. The id, tenant and creation time never change.
+   *
+   * @param s the supplier as it should now read
+   * @return true when a row was updated; false when no such supplier exists in the tenant
+   * @throws ApiException {@code PURCHASE_SUPPLIER_DUPLICATE} (409) when the new name is taken
+   */
+  public boolean updateSupplier(Supplier s) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE suppliers SET name=?, vat_number=?, vat_registered=?, country_code=?,"
+                      + " currency=?, payment_terms_days=?, updated_at=now()"
+                      + " WHERE tenant_id=? AND id=?")) {
+            ps.setString(1, s.name());
+            ps.setString(2, s.vatNumber());
+            ps.setBoolean(3, s.vatRegistered());
+            ps.setString(4, s.countryCode());
+            ps.setString(5, s.currency());
+            ps.setInt(6, s.paymentTermsDays());
+            ps.setObject(7, s.tenantId());
+            ps.setObject(8, s.id());
+            return ps.executeUpdate() > 0;
+          } catch (java.sql.SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
+              throw new ApiException(
+                  409,
+                  "PURCHASE_SUPPLIER_DUPLICATE",
+                  "Supplier with that name already exists for this tenant",
+                  List.of(),
+                  sqle);
+            throw sqle;
+          }
+        },
+        "update supplier");
+  }
+
+  /**
+   * How many purchase orders against a supplier are still open — drafted, awaiting approval,
+   * submitted or part-received. Each of them is denominated in the supplier's currency.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param supplierId the supplier
+   * @return the count of open orders
+   */
+  public int countOpenPurchaseOrders(UUID tenantId, UUID supplierId) {
+    var rows =
+        query(
+            "SELECT COUNT(*) AS n FROM purchase_orders WHERE tenant_id=? AND supplier_id=?"
+                + " AND status IN ('DRAFT','PENDING_APPROVAL','SUBMITTED','PARTIALLY_RECEIVED')",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, supplierId);
+            },
+            rs -> rs.getInt("n"),
+            "count open purchase orders");
+    return rows.isEmpty() ? 0 : rows.get(0);
+  }
+
   private Supplier mapSupplier(ResultSet rs) throws SQLException {
     return new Supplier(
         rs.getObject("id", UUID.class),
@@ -780,7 +840,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
    * @throws ApiException 409 if this supplier's invoice number has already been captured
    */
   public Domain.SupplierInvoice captureSupplierInvoice(
-      Domain.SupplierInvoice invoice, List<Domain.SupplierInvoiceLine> lines) {
+      Domain.SupplierInvoice invoice, List<Domain.SupplierInvoiceLine> lines, OutboxRow event) {
     return inTx(
         c -> {
           try (var ps =
@@ -833,6 +893,8 @@ public class PurchaseRepository extends BaseOutboxRepository {
             }
             ps.executeBatch();
           }
+          // The event commits with the invoice (golden rule 6): pricing-svc reads box 4 from it.
+          insertOutbox(c, event);
           return invoice;
         },
         "capture supplier invoice");

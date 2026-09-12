@@ -119,7 +119,14 @@ public class UserRepository extends BaseOutboxRepository {
    * store_id} values the user is bound to, and callers must treat that as an allow-list.
    */
   public Set<UUID> storeScopeOf(UUID userId) {
-    String sql = "SELECT store_id FROM user_roles WHERE user_id = ?";
+    // Only staff roles carry a store scope. CUSTOMER is global and its row has no store — and
+    // read as "a role with no store", it made every shopper-turned-cashier unrestricted across
+    // the tenant, because one null store meant "unrestricted" (SJ-D48). PLATFORM_ADMIN has no
+    // tenant, let alone a store. Both are skipped; among the staff roles that remain, a null
+    // store is a tenant-wide role (OWNER, MANAGER) and means unrestricted, as before.
+    String sql =
+        "SELECT ur.store_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id"
+            + " WHERE ur.user_id = ? AND r.name NOT IN ('CUSTOMER', 'PLATFORM_ADMIN')";
     Set<UUID> storeIds = new java.util.HashSet<>();
     try (var c = dataSource.getConnection();
         var ps = c.prepareStatement(sql)) {
@@ -340,6 +347,20 @@ public class UserRepository extends BaseOutboxRepository {
               ps.setString(1, target);
               ps.executeUpdate();
             }
+          }
+          // SJ-D45: the audit trail recorded the email on every registration and every sign-in,
+          // successful or not, so a deleted account's address stayed legible in audit_log after
+          // the users row had been scrubbed — which is the address the erasure existed to remove.
+          //
+          // audit_log is append-only (golden rule #8) and stays append-only: no row is deleted and
+          // no action or timestamp is rewritten. Only the one field that names the person is
+          // cleared, exactly as a settled order keeps its lines and loses its delivery address. The
+          // history of who did what, and when, is intact; what is gone is the identifier.
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE audit_log SET detail = NULL WHERE user_id = ? AND detail IS NOT NULL")) {
+            ps.setObject(1, user.id());
+            ps.executeUpdate();
           }
           insertOutbox(c, event);
           return null;

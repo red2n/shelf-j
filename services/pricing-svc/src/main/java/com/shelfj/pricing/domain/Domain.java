@@ -326,6 +326,24 @@ public final class Domain {
   public record TaxSummary(
       List<TaxSummaryRow> rows, TaxSummaryTotals totals, String periodFrom, String periodTo) {}
 
+  /**
+   * Input VAT projected from one supplier invoice (SJ-D39): what box 4 and box 7 are made of. The
+   * event id is the invoice id; one row per event, by the unique index.
+   */
+  public record InputTaxTransaction(
+      UUID id,
+      UUID tenantId,
+      UUID eventId,
+      UUID invoiceId,
+      UUID poId,
+      UUID supplierId,
+      String invoiceNumber,
+      String currency,
+      BigDecimal netAmount,
+      BigDecimal vatAmount,
+      BigDecimal grossAmount,
+      Instant taxPointDate) {}
+
   public record VatReturn(
       BigDecimal box1,
       BigDecimal box2,

@@ -1,6 +1,8 @@
 package com.shelfj.order.repo;
 
 import com.shelfj.ids.Ids;
+import com.shelfj.order.domain.Domain.AgeVerification;
+import com.shelfj.order.domain.Domain.AgeVerificationSummary;
 import com.shelfj.order.domain.Domain.GiftCard;
 import com.shelfj.order.domain.Domain.GiftCardTransaction;
 import com.shelfj.order.domain.Domain.Layaway;
@@ -29,6 +31,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -66,38 +69,40 @@ public class OrderRepository extends BaseOutboxRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO orders"
-                      + " (id,tenant_id,store_id,customer_id,channel,fulfilment_type,status,"
+                      + " (id,tenant_id,store_id,customer_id,login_id,channel,fulfilment_type,"
+                      + "  status,"
                       + "  subtotal,tax_amount,discount_amount,total,currency,notes,idempotency_key,"
                       + "  tax_exempt,exempt_reason,delivery_line1,delivery_line2,delivery_city,"
                       + "  delivery_postal_code,delivery_recipient_name,delivery_recipient_phone,contact_phone,"
                       + "  payment_method,promotion_discount)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, order.id());
             ps.setObject(2, order.tenantId());
             ps.setObject(3, order.storeId());
             ps.setObject(4, order.customerId());
-            ps.setString(5, order.channel());
-            ps.setString(6, order.fulfilmentType());
-            ps.setString(7, order.status());
-            ps.setBigDecimal(8, order.subtotal());
-            ps.setBigDecimal(9, order.taxAmount());
-            ps.setBigDecimal(10, order.discountAmount());
-            ps.setBigDecimal(11, order.total());
-            ps.setString(12, order.currency());
-            ps.setString(13, order.notes());
-            ps.setString(14, order.idempotencyKey());
-            ps.setBoolean(15, order.taxExempt());
-            ps.setString(16, order.exemptReason());
-            ps.setString(17, order.deliveryLine1());
-            ps.setString(18, order.deliveryLine2());
-            ps.setString(19, order.deliveryCity());
-            ps.setString(20, order.deliveryPostalCode());
-            ps.setString(21, order.deliveryRecipientName());
-            ps.setString(22, order.deliveryRecipientPhone());
-            ps.setString(23, order.contactPhone());
-            ps.setString(24, order.paymentMethod());
+            ps.setObject(5, order.loginId());
+            ps.setString(6, order.channel());
+            ps.setString(7, order.fulfilmentType());
+            ps.setString(8, order.status());
+            ps.setBigDecimal(9, order.subtotal());
+            ps.setBigDecimal(10, order.taxAmount());
+            ps.setBigDecimal(11, order.discountAmount());
+            ps.setBigDecimal(12, order.total());
+            ps.setString(13, order.currency());
+            ps.setString(14, order.notes());
+            ps.setString(15, order.idempotencyKey());
+            ps.setBoolean(16, order.taxExempt());
+            ps.setString(17, order.exemptReason());
+            ps.setString(18, order.deliveryLine1());
+            ps.setString(19, order.deliveryLine2());
+            ps.setString(20, order.deliveryCity());
+            ps.setString(21, order.deliveryPostalCode());
+            ps.setString(22, order.deliveryRecipientName());
+            ps.setString(23, order.deliveryRecipientPhone());
+            ps.setString(24, order.contactPhone());
+            ps.setString(25, order.paymentMethod());
             ps.setBigDecimal(
-                25,
+                26,
                 order.promotionDiscount() == null
                     ? java.math.BigDecimal.ZERO
                     : order.promotionDiscount());
@@ -149,7 +154,7 @@ public class OrderRepository extends BaseOutboxRepository {
   /** Look up an order by its idempotency key — used to replay a retried checkout. */
   public Optional<Order> findOrderByIdempotencyKey(UUID tenantId, String idempotencyKey) {
     return query(
-            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+            "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
@@ -171,6 +176,9 @@ public class OrderRepository extends BaseOutboxRepository {
    * @param tenantId owning tenant; the first condition of the query
    * @param storeId restrict to one store, or {@code null}
    * @param customerId restrict to one customer, or {@code null}
+   * @param loginId restrict to the orders one login placed, or {@code null}. Separate from {@code
+   *     customerId} because they are different ids: this is what a shopper's own order history
+   *     filters on, and it matches orders placed before the customer link existed (SJ-D44)
    * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null}
    * @param status restrict to one status, or {@code null}
    * @param from inclusive lower bound on creation time, or {@code null}
@@ -184,6 +192,7 @@ public class OrderRepository extends BaseOutboxRepository {
       UUID tenantId,
       UUID storeId,
       UUID customerId,
+      UUID loginId,
       String channel,
       String status,
       Instant from,
@@ -193,7 +202,7 @@ public class OrderRepository extends BaseOutboxRepository {
       int limit) {
     StringBuilder sql =
         new StringBuilder(
-            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+            "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
@@ -201,6 +210,7 @@ public class OrderRepository extends BaseOutboxRepository {
                 + " FROM orders WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (customerId != null) sql.append(" AND customer_id=?");
+    if (loginId != null) sql.append(" AND login_id=?");
     if (channel != null) sql.append(" AND channel=?");
     if (status != null) sql.append(" AND status=?");
     if (from != null) sql.append(" AND created_at >= ?");
@@ -215,6 +225,7 @@ public class OrderRepository extends BaseOutboxRepository {
           ps.setObject(i++, tenantId);
           if (storeId != null) ps.setObject(i++, storeId);
           if (customerId != null) ps.setObject(i++, customerId);
+          if (loginId != null) ps.setObject(i++, loginId);
           if (channel != null) ps.setString(i++, channel.toUpperCase(java.util.Locale.ROOT));
           if (status != null) ps.setString(i++, status.toUpperCase(java.util.Locale.ROOT));
           if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
@@ -239,7 +250,7 @@ public class OrderRepository extends BaseOutboxRepository {
   public Optional<Order> findOrder(UUID tenantId, UUID orderId) {
     var list =
         query(
-            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+            "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
@@ -344,7 +355,7 @@ public class OrderRepository extends BaseOutboxRepository {
    * @return false for a redelivered event, which changes nothing
    */
   public boolean applyCustomerErasure(
-      UUID tenantId, UUID customerId, UUID eventId, String consumer) {
+      UUID tenantId, UUID customerId, UUID loginId, UUID eventId, String consumer) {
     return inTx(
         c -> {
           if (!markProcessedIfNewTx(c, eventId, consumer)) {
@@ -352,32 +363,51 @@ public class OrderRepository extends BaseOutboxRepository {
           }
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "INSERT INTO customer_erasures (tenant_id, customer_id, event_id)"
-                      + " VALUES (?,?,?) ON CONFLICT DO NOTHING")) {
+                  "INSERT INTO customer_erasures (tenant_id, customer_id, login_id, event_id)"
+                      + " VALUES (?,?,?,?)"
+                      + " ON CONFLICT (tenant_id, customer_id) DO UPDATE SET login_id ="
+                      + " COALESCE(customer_erasures.login_id, EXCLUDED.login_id)")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, customerId);
-            ps.setObject(3, eventId);
+            ps.setObject(3, loginId);
+            ps.setObject(4, eventId);
             ps.executeUpdate();
           }
-          redactCustomerInTx(c, tenantId, customerId);
+          redactCustomerInTx(c, tenantId, customerId, loginId);
           return true;
         },
         "apply customer erasure");
   }
 
-  private static void redactCustomerInTx(Connection c, UUID tenantId, UUID customerId)
+  /**
+   * Both ids, everywhere an order is matched: the shop's customer id, and the login the same person
+   * signed in with. An online order is filed under the login and a till sale under the customer, so
+   * a redaction that knew only one of them left the other kind of sale identifying the person it
+   * was erasing (SJ-D44). {@code o.login_id = ?} with a null parameter matches nothing, which is
+   * exactly right for a walk-in that has no login.
+   */
+  private static final String ORDER_IS_THEIRS = " (o.customer_id = ? OR o.login_id = ?)";
+
+  /** The same match, joined through the erasure row, for the cross-tenant sweep. */
+  private static final String SWEPT_ORDER_IS_THEIRS =
+      " (o.customer_id = e.customer_id OR o.login_id = e.login_id)";
+
+  private static void redactCustomerInTx(Connection c, UUID tenantId, UUID customerId, UUID loginId)
       throws SQLException {
     // Settled orders only: an open delivery still needs its address to arrive.
     try (PreparedStatement ps =
         c.prepareStatement(
             "UPDATE orders o"
                 + REDACT_ORDER
-                + " WHERE o.tenant_id = ? AND o.customer_id = ? AND o.status IN "
+                + " WHERE o.tenant_id = ? AND"
+                + ORDER_IS_THEIRS
+                + " AND o.status IN "
                 + SETTLED_ORDER
                 + " AND"
                 + ORDER_STILL_IDENTIFIES)) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
+      ps.setObject(3, loginId);
       ps.executeUpdate();
     }
     try (PreparedStatement ps =
@@ -403,9 +433,12 @@ public class OrderRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "UPDATE order_receipts r SET emailed_to = NULL FROM orders o"
                 + " WHERE r.tenant_id = ? AND o.tenant_id = r.tenant_id AND o.id = r.order_id"
-                + " AND o.customer_id = ? AND r.emailed_to IS NOT NULL")) {
+                + " AND"
+                + ORDER_IS_THEIRS
+                + " AND r.emailed_to IS NOT NULL")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
+      ps.setObject(3, loginId);
       ps.executeUpdate();
     }
     try (PreparedStatement ps =
@@ -439,7 +472,8 @@ public class OrderRepository extends BaseOutboxRepository {
                   "UPDATE orders o"
                       + REDACT_ORDER
                       + " FROM customer_erasures e"
-                      + " WHERE o.tenant_id = e.tenant_id AND o.customer_id = e.customer_id"
+                      + " WHERE o.tenant_id = e.tenant_id AND"
+                      + SWEPT_ORDER_IS_THEIRS
                       + " AND o.status IN "
                       + SETTLED_ORDER
                       + " AND"
@@ -466,7 +500,8 @@ public class OrderRepository extends BaseOutboxRepository {
               c.prepareStatement(
                   "UPDATE order_receipts r SET emailed_to = NULL FROM orders o, customer_erasures e"
                       + " WHERE o.tenant_id = r.tenant_id AND o.id = r.order_id"
-                      + " AND e.tenant_id = o.tenant_id AND e.customer_id = o.customer_id"
+                      + " AND e.tenant_id = o.tenant_id AND"
+                      + SWEPT_ORDER_IS_THEIRS
                       + " AND r.emailed_to IS NOT NULL")) {
             ps.executeUpdate();
           }
@@ -485,7 +520,7 @@ public class OrderRepository extends BaseOutboxRepository {
   public List<PendingOrderRef> findExpiredPendingOrders(int ttlHours, int limit) {
     return query(
         "SELECT tenant_id, id FROM orders"
-            + " WHERE status = 'PENDING' AND created_at < now() - make_interval(hours => ?)"
+            + " WHERE status = 'PENDING' AND updated_at < now() - make_interval(hours => ?)"
             + " ORDER BY created_at ASC LIMIT ?",
         ps -> {
           ps.setInt(1, ttlHours);
@@ -643,9 +678,297 @@ public class OrderRepository extends BaseOutboxRepository {
         return;
       }
     }
+    markAllLinesHandedOver(c, tenantId, orderId);
     appendStatusHistory(
         c, tenantId, orderId, Order.STATUS_CONFIRMED, Order.STATUS_FULFILLED, reason, changedBy);
     insertOutbox(c, event);
+  }
+
+  private static void markAllLinesHandedOver(Connection c, UUID tenantId, UUID orderId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "UPDATE order_items SET fulfilled_qty = qty WHERE tenant_id=? AND order_id=?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.executeUpdate();
+    }
+  }
+
+  /**
+   * Prices an AWAITING_PRICE order (SJ-D41) in one transaction: every line gets its unit price and
+   * line total, the order its subtotal, tax and total, and it moves to PENDING — from where it is
+   * paid for like any other order. The sweeper counts its time-to-live from this moment, not from
+   * the day it was placed.
+   *
+   * @param prices unit price per variant; every variant on the order must be present
+   * @throws ApiException {@code ORDER_NOT_AWAITING_PRICE} (409); {@code ORDER_PRICE_LINE_MISSING}
+   *     (400) when a line on the order was not priced; {@code ORDER_PRICE_LINE_UNKNOWN} (400)
+   */
+  public Order priceOrder(
+      UUID tenantId, UUID orderId, Map<UUID, BigDecimal> prices, BigDecimal tax, UUID changedBy) {
+    return inTx(
+        c -> {
+          String status;
+          BigDecimal discount;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT status, discount_amount FROM orders WHERE tenant_id=? AND id=? FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next()) {
+                throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
+              }
+              status = rs.getString(1);
+              discount = rs.getBigDecimal(2) == null ? BigDecimal.ZERO : rs.getBigDecimal(2);
+            }
+          }
+          if (!Order.STATUS_AWAITING_PRICE.equals(status)) {
+            throw ApiException.conflict(
+                "ORDER_NOT_AWAITING_PRICE",
+                "only an order awaiting a price can be priced; this one is " + status);
+          }
+          List<OrderItem> items = new java.util.ArrayList<>();
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total, notes,"
+                      + " weighing_instrument_id, fulfilled_qty FROM order_items"
+                      + " WHERE tenant_id=? AND order_id=? ORDER BY created_at FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              while (rs.next()) {
+                items.add(mapOrderItem(rs));
+              }
+            }
+          }
+          for (UUID v : prices.keySet()) {
+            if (items.stream().noneMatch(i -> i.variantId().equals(v))) {
+              throw ApiException.badRequest(
+                  "ORDER_PRICE_LINE_UNKNOWN", "variant " + v + " is not on this order");
+            }
+          }
+          BigDecimal subtotal = BigDecimal.ZERO;
+          for (OrderItem i : items) {
+            BigDecimal price = prices.get(i.variantId());
+            if (price == null) {
+              throw ApiException.badRequest(
+                  "ORDER_PRICE_LINE_MISSING", "no price given for variant " + i.variantId());
+            }
+            BigDecimal lineTotal =
+                price.multiply(i.qty()).setScale(2, java.math.RoundingMode.HALF_UP);
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE order_items SET unit_price=?, line_total=? WHERE tenant_id=? AND id=?")) {
+              ps.setBigDecimal(1, price);
+              ps.setBigDecimal(2, lineTotal);
+              ps.setObject(3, tenantId);
+              ps.setObject(4, i.id());
+              ps.executeUpdate();
+            }
+            subtotal = subtotal.add(lineTotal);
+          }
+          BigDecimal total = subtotal.add(tax).subtract(discount).max(BigDecimal.ZERO);
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET subtotal=?, tax_amount=?, total=?, status=?, updated_at=now()"
+                      + " WHERE tenant_id=? AND id=?")) {
+            ps.setBigDecimal(1, subtotal);
+            ps.setBigDecimal(2, tax);
+            ps.setBigDecimal(3, total);
+            ps.setString(4, Order.STATUS_PENDING);
+            ps.setObject(5, tenantId);
+            ps.setObject(6, orderId);
+            ps.executeUpdate();
+          }
+          appendStatusHistory(
+              c,
+              tenantId,
+              orderId,
+              Order.STATUS_AWAITING_PRICE,
+              Order.STATUS_PENDING,
+              "priced: total " + total.toPlainString(),
+              changedBy);
+          return findOrderInTx(c, tenantId, orderId);
+        },
+        "price order " + orderId);
+  }
+
+  /** One line's share of a fulfilment, for the event and the caller. */
+  public record FulfilledLine(UUID variantId, BigDecimal qty) {}
+
+  /**
+   * Hands over part or all of what is outstanding on an order (SJ-D35), in one transaction: the
+   * order row is locked, each requested quantity is checked against what its lines still owe and
+   * added to their cumulative {@code fulfilled_qty}, the order moves to PARTIALLY_FULFILLED or —
+   * once every line is complete — FULFILLED, the status history records how much, and the outbox
+   * carries an OrderFulfilled with only this fulfilment's quantities, so inventory-svc deducts what
+   * left the store now and nothing twice.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order
+   * @param wanted units per variant to hand over now; null or empty for everything outstanding
+   * @param changedBy the staff member
+   * @param eventFor builds the outbox row from the lines actually fulfilled now
+   * @return the order as it now stands
+   * @throws ApiException {@code ORDER_NOT_FULFILLABLE} (409) unless CONFIRMED or
+   *     PARTIALLY_FULFILLED; {@code ORDER_FULFIL_LINE_UNKNOWN} (400) for a variant not on the
+   *     order; {@code ORDER_FULFIL_QTY_EXCEEDS_OUTSTANDING} (409) for more than is still owed
+   */
+  public Order fulfilLines(
+      UUID tenantId,
+      UUID orderId,
+      Map<UUID, BigDecimal> wanted,
+      UUID changedBy,
+      java.util.function.Function<List<FulfilledLine>, OutboxRow> eventFor) {
+    return inTx(
+        c -> {
+          String status;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT status FROM orders WHERE tenant_id=? AND id=? FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              status = rs.next() ? rs.getString(1) : null;
+            }
+          }
+          if (status == null) {
+            throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
+          }
+          if (!Order.STATUS_CONFIRMED.equals(status)
+              && !Order.STATUS_PARTIALLY_FULFILLED.equals(status)) {
+            throw ApiException.conflict(
+                "ORDER_NOT_FULFILLABLE",
+                "only a CONFIRMED or PARTIALLY_FULFILLED order can be handed over; this one is "
+                    + status);
+          }
+          List<OrderItem> items = new java.util.ArrayList<>();
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total, notes,"
+                      + " weighing_instrument_id, fulfilled_qty FROM order_items"
+                      + " WHERE tenant_id=? AND order_id=? ORDER BY created_at FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              while (rs.next()) {
+                items.add(mapOrderItem(rs));
+              }
+            }
+          }
+          // What is asked for, or everything outstanding when nothing is.
+          Map<UUID, BigDecimal> ask = new java.util.LinkedHashMap<>();
+          if (wanted == null || wanted.isEmpty()) {
+            for (OrderItem i : items) {
+              if (i.remainingQty().signum() > 0) {
+                ask.merge(i.variantId(), i.remainingQty(), BigDecimal::add);
+              }
+            }
+          } else {
+            ask.putAll(wanted);
+          }
+          if (ask.isEmpty()) {
+            throw ApiException.conflict(
+                "ORDER_NOTHING_OUTSTANDING", "every line of this order has been handed over");
+          }
+          List<FulfilledLine> now = new java.util.ArrayList<>();
+          for (var e : ask.entrySet()) {
+            UUID variantId = e.getKey();
+            boolean onOrder = items.stream().anyMatch(i -> i.variantId().equals(variantId));
+            if (!onOrder) {
+              throw ApiException.badRequest(
+                  "ORDER_FULFIL_LINE_UNKNOWN", "variant " + variantId + " is not on this order");
+            }
+            BigDecimal outstanding =
+                items.stream()
+                    .filter(i -> i.variantId().equals(variantId))
+                    .map(OrderItem::remainingQty)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (e.getValue().compareTo(outstanding) > 0) {
+              throw ApiException.conflict(
+                  "ORDER_FULFIL_QTY_EXCEEDS_OUTSTANDING",
+                  "variant "
+                      + variantId
+                      + ": "
+                      + e.getValue().stripTrailingZeros().toPlainString()
+                      + " asked, "
+                      + outstanding.stripTrailingZeros().toPlainString()
+                      + " still outstanding");
+            }
+            // Spread the quantity over the lines of that variant, oldest first.
+            BigDecimal left = e.getValue();
+            for (OrderItem i : items) {
+              if (left.signum() <= 0) {
+                break;
+              }
+              if (!i.variantId().equals(variantId) || i.remainingQty().signum() <= 0) {
+                continue;
+              }
+              BigDecimal take = left.min(i.remainingQty());
+              try (PreparedStatement ps =
+                  c.prepareStatement(
+                      "UPDATE order_items SET fulfilled_qty = fulfilled_qty + ?"
+                          + " WHERE tenant_id=? AND id=? AND fulfilled_qty + ? <= qty")) {
+                ps.setBigDecimal(1, take);
+                ps.setObject(2, tenantId);
+                ps.setObject(3, i.id());
+                ps.setBigDecimal(4, take);
+                if (ps.executeUpdate() == 0) {
+                  throw ApiException.conflict(
+                      "ORDER_FULFIL_QTY_EXCEEDS_OUTSTANDING", "line changed under this request");
+                }
+              }
+              left = left.subtract(take);
+            }
+            now.add(new FulfilledLine(variantId, e.getValue()));
+          }
+          boolean complete = true;
+          BigDecimal handed = BigDecimal.ZERO;
+          BigDecimal ordered = BigDecimal.ZERO;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT SUM(qty) AS ordered, SUM(fulfilled_qty) AS handed,"
+                      + " BOOL_AND(fulfilled_qty >= qty) AS complete"
+                      + " FROM order_items WHERE tenant_id=? AND order_id=?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (rs.next()) {
+                ordered = rs.getBigDecimal("ordered");
+                handed = rs.getBigDecimal("handed");
+                complete = rs.getBoolean("complete");
+              }
+            }
+          }
+          String next = complete ? Order.STATUS_FULFILLED : Order.STATUS_PARTIALLY_FULFILLED;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE orders SET status=?, updated_at=now() WHERE tenant_id=? AND id=?")) {
+            ps.setString(1, next);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, orderId);
+            ps.executeUpdate();
+          }
+          appendStatusHistory(
+              c,
+              tenantId,
+              orderId,
+              status,
+              next,
+              complete
+                  ? "fulfilled"
+                  : "part-fulfilled: "
+                      + handed.stripTrailingZeros().toPlainString()
+                      + " of "
+                      + ordered.stripTrailingZeros().toPlainString()
+                      + " units handed over",
+              changedBy);
+          insertOutbox(c, eventFor.apply(now));
+          return findOrderInTx(c, tenantId, orderId);
+        },
+        "fulfil order " + orderId);
   }
 
   /**
@@ -706,6 +1029,40 @@ public class OrderRepository extends BaseOutboxRepository {
   }
 
   /**
+   * Every order one person placed at this shop, newest first, for a data export (UK GDPR art.20).
+   *
+   * <p>Matched on both ids for the reason SJ-D44 records: an online sale is filed under the
+   * shopper's login and a till sale under the shop's customer record, so a export that knew only
+   * one of them would hand the person half their history and call it complete. A null parameter
+   * matches nothing, which is what a walk-in with no login, or a login with no customer record,
+   * should contribute.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the shop's record of the person, or {@code null}
+   * @param loginId the login they sign in with, or {@code null}
+   * @param limit hard cap on rows, so one export cannot read an unbounded table into memory
+   * @return the person's orders, newest first
+   */
+  public List<Order> listOrdersForSubject(UUID tenantId, UUID customerId, UUID loginId, int limit) {
+    return query(
+        "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
+            + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
+            + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
+            + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
+            + " delivery_recipient_name, delivery_recipient_phone, contact_phone, payment_method"
+            + " FROM orders WHERE tenant_id=? AND (customer_id=? OR login_id=?)"
+            + " ORDER BY created_at DESC, id DESC LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, customerId);
+          ps.setObject(3, loginId);
+          ps.setInt(4, limit);
+        },
+        rs -> mapOrder(rs),
+        "list orders for subject");
+  }
+
+  /**
    * The lines on one order.
    *
    * @param tenantId owning tenant; the first condition of the query
@@ -715,7 +1072,8 @@ public class OrderRepository extends BaseOutboxRepository {
   public List<OrderItem> findOrderItems(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total,"
-            + " notes, created_at, discount_amount, discount_reason"
+            + " notes, created_at, discount_amount, discount_reason, weighing_instrument_id,"
+            + " fulfilled_qty"
             + " FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
@@ -761,14 +1119,16 @@ public class OrderRepository extends BaseOutboxRepository {
           // Lock each purchased line and re-check the cumulative returned quantity inside this
           // transaction so two concurrent returns on the same order can't jointly over-refund.
           for (ReturnItem item : items) {
-            BigDecimal purchasedQty =
+            // What was handed over, not what was ordered: on a part-fulfilled order the rest never
+            // left the store, and a refund for it is a refund for goods the customer never had.
+            BigDecimal handedOverQty =
                 lockOrderItemQty(c, ret.tenantId(), ret.orderId(), item.variantId());
             BigDecimal alreadyReturned =
                 sumReturnedQty(c, ret.tenantId(), ret.orderId(), item.variantId());
-            if (item.qty().add(alreadyReturned).compareTo(purchasedQty) > 0)
+            if (item.qty().add(alreadyReturned).compareTo(handedOverQty) > 0)
               throw ApiException.conflict(
                   "RETURN_QTY_EXCEEDS_PURCHASED",
-                  "cannot return more than was purchased (and not yet returned) for variant "
+                  "cannot return more than was handed over (and not yet returned) for variant "
                       + item.variantId());
           }
           try (PreparedStatement ps =
@@ -940,7 +1300,8 @@ public class OrderRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT EXISTS (SELECT 1 FROM order_status_history"
-                + " WHERE tenant_id=? AND order_id=? AND to_status='FULFILLED')")) {
+                + " WHERE tenant_id=? AND order_id=?"
+                + " AND to_status IN ('FULFILLED','PARTIALLY_FULFILLED'))")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
       try (ResultSet rs = ps.executeQuery()) {
@@ -956,7 +1317,7 @@ public class OrderRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "WITH sold AS ("
-                + "  SELECT variant_id, SUM(qty) AS qty FROM order_items"
+                + "  SELECT variant_id, SUM(fulfilled_qty) AS qty FROM order_items"
                 + "   WHERE tenant_id=? AND order_id=? GROUP BY variant_id"
                 + "), returned AS ("
                 + "  SELECT ri.variant_id, SUM(ri.qty) AS qty"
@@ -1405,8 +1766,9 @@ public class OrderRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO order_items"
-                + " (id,tenant_id,order_id,variant_id,qty,unit_price,line_total,notes)"
-                + " VALUES (?,?,?,?,?,?,?,?)")) {
+                + " (id,tenant_id,order_id,variant_id,qty,unit_price,line_total,notes,"
+                + "  weighing_instrument_id)"
+                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, item.id());
       ps.setObject(2, item.tenantId());
       ps.setObject(3, item.orderId());
@@ -1415,6 +1777,7 @@ public class OrderRepository extends BaseOutboxRepository {
       ps.setBigDecimal(6, item.unitPrice());
       ps.setBigDecimal(7, item.lineTotal());
       ps.setString(8, item.notes());
+      ps.setObject(9, item.weighingInstrumentId());
       ps.executeUpdate();
     }
   }
@@ -1447,7 +1810,7 @@ public class OrderRepository extends BaseOutboxRepository {
   private Order findOrderInTx(Connection c, UUID tenantId, UUID orderId) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT id, tenant_id, store_id, customer_id, channel, fulfilment_type, status,"
+            "SELECT id, tenant_id, store_id, customer_id, login_id, channel, fulfilment_type, status,"
                 + " subtotal, tax_amount, discount_amount, promotion_discount, total, currency, notes,"
                 + " idempotency_key, created_at, updated_at, tax_exempt, exempt_reason,"
                 + " delivery_line1, delivery_line2, delivery_city, delivery_postal_code,"
@@ -1549,7 +1912,7 @@ public class OrderRepository extends BaseOutboxRepository {
       throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "SELECT qty FROM order_items"
+            "SELECT fulfilled_qty AS qty FROM order_items"
                 + " WHERE tenant_id=? AND order_id=? AND variant_id=? FOR UPDATE")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, orderId);
@@ -1588,6 +1951,7 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getObject("tenant_id", UUID.class),
         rs.getObject("store_id", UUID.class),
         rs.getObject("customer_id", UUID.class),
+        rs.getObject("login_id", UUID.class),
         rs.getString("channel"),
         rs.getString("fulfilment_type"),
         rs.getString("status"),
@@ -1673,7 +2037,9 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getBigDecimal("qty"),
         rs.getBigDecimal("unit_price"),
         rs.getBigDecimal("line_total"),
-        rs.getString("notes"));
+        rs.getString("notes"),
+        rs.getObject("weighing_instrument_id", UUID.class),
+        rs.getBigDecimal("fulfilled_qty"));
   }
 
   private OrderStatusHistory mapHistory(ResultSet rs) throws SQLException {
@@ -2300,6 +2666,178 @@ public class OrderRepository extends BaseOutboxRepository {
         },
         this::mapPosLogEntry,
         "list pos log");
+  }
+
+  // ─────────────────────────────────────────── age verification (append-only)
+
+  /**
+   * Writes one age check. Never updated or deleted: a wrong record is answered by another record.
+   *
+   * @param v the check, with its id already minted
+   * @return the record as stored
+   */
+  public AgeVerification recordAgeVerification(AgeVerification v) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO age_verifications"
+                      + " (id, tenant_id, store_id, cashier_id, pos_session_id, variant_id,"
+                      + "  category, minimum_age, country, store_policy, outcome, reason,"
+                      + "  id_type, order_id, checked_at)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, v.id());
+            ps.setObject(2, v.tenantId());
+            ps.setObject(3, v.storeId());
+            ps.setObject(4, v.cashierId());
+            ps.setObject(5, v.posSessionId());
+            ps.setObject(6, v.variantId());
+            ps.setString(7, v.category());
+            ps.setInt(8, v.minimumAge());
+            ps.setString(9, v.country());
+            ps.setBoolean(10, v.storePolicy());
+            ps.setString(11, v.outcome());
+            ps.setString(12, v.reason());
+            ps.setString(13, v.idType());
+            ps.setObject(14, v.orderId());
+            ps.setObject(15, v.checkedAt().atOffset(java.time.ZoneOffset.UTC));
+            ps.executeUpdate();
+          }
+          return v;
+        },
+        "record age verification");
+  }
+
+  /**
+   * Keyset page of age checks, newest first.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param storeId restrict to one store, or {@code null}
+   * @param outcome restrict to PASSED or REFUSED, or {@code null}
+   * @param from inclusive lower bound on the check time, or {@code null}
+   * @param to exclusive upper bound, or {@code null}
+   * @param afterCheckedAt cursor timestamp, or {@code null} for the first page
+   * @param afterId cursor id
+   * @param limit maximum rows; callers pass one more than the page size
+   * @return the page
+   */
+  public List<AgeVerification> listAgeVerifications(
+      UUID tenantId,
+      UUID storeId,
+      String outcome,
+      Instant from,
+      Instant to,
+      Instant afterCheckedAt,
+      UUID afterId,
+      int limit) {
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT id, tenant_id, store_id, cashier_id, pos_session_id, variant_id, category,"
+                + " minimum_age, country, store_policy, outcome, reason, id_type, order_id,"
+                + " checked_at FROM age_verifications WHERE tenant_id=?");
+    if (storeId != null) sql.append(" AND store_id=?");
+    if (outcome != null) sql.append(" AND outcome=?");
+    if (from != null) sql.append(" AND checked_at >= ?");
+    if (to != null) sql.append(" AND checked_at < ?");
+    if (afterCheckedAt != null && afterId != null) sql.append(" AND (checked_at, id) < (?, ?)");
+    sql.append(" ORDER BY checked_at DESC, id DESC LIMIT ?");
+    return query(
+        sql.toString(),
+        ps -> {
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (storeId != null) ps.setObject(i++, storeId);
+          if (outcome != null) ps.setString(i++, outcome);
+          if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
+          if (to != null) ps.setObject(i++, to.atOffset(java.time.ZoneOffset.UTC));
+          if (afterCheckedAt != null && afterId != null) {
+            ps.setObject(i++, afterCheckedAt.atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(i++, afterId);
+          }
+          ps.setInt(i, limit);
+        },
+        OrderRepository::mapAgeVerification,
+        "list age verifications");
+  }
+
+  /**
+   * Counts for a store (or the tenant) over a period: total, passed, refused, refusals by reason
+   * and checks by category.
+   *
+   * @param tenantId owning tenant; the first condition of every query
+   * @param storeId one store, or {@code null} for all
+   * @param from inclusive lower bound, or {@code null}
+   * @param to exclusive upper bound, or {@code null}
+   * @return the counts
+   */
+  public AgeVerificationSummary summariseAgeVerifications(
+      UUID tenantId, UUID storeId, Instant from, Instant to) {
+    StringBuilder where = new StringBuilder(" WHERE tenant_id=?");
+    if (storeId != null) where.append(" AND store_id=?");
+    if (from != null) where.append(" AND checked_at >= ?");
+    if (to != null) where.append(" AND checked_at < ?");
+    java.util.function.Consumer<PreparedStatement> bind =
+        ps -> {
+          try {
+            int i = 1;
+            ps.setObject(i++, tenantId);
+            if (storeId != null) ps.setObject(i++, storeId);
+            if (from != null) ps.setObject(i++, from.atOffset(java.time.ZoneOffset.UTC));
+            if (to != null) ps.setObject(i, to.atOffset(java.time.ZoneOffset.UTC));
+          } catch (SQLException e) {
+            throw new IllegalStateException(e);
+          }
+        };
+    List<Object[]> outcomes =
+        query(
+            "SELECT outcome, count(*) FROM age_verifications" + where + " GROUP BY outcome",
+            bind::accept,
+            rs -> new Object[] {rs.getString(1), rs.getLong(2)},
+            "summarise age verifications by outcome");
+    List<Object[]> reasons =
+        query(
+            "SELECT reason, count(*) FROM age_verifications"
+                + where
+                + " AND reason IS NOT NULL GROUP BY reason",
+            bind::accept,
+            rs -> new Object[] {rs.getString(1), rs.getLong(2)},
+            "summarise age verifications by reason");
+    List<Object[]> categories =
+        query(
+            "SELECT category, count(*) FROM age_verifications" + where + " GROUP BY category",
+            bind::accept,
+            rs -> new Object[] {rs.getString(1), rs.getLong(2)},
+            "summarise age verifications by category");
+    long passed = 0;
+    long refused = 0;
+    for (Object[] row : outcomes) {
+      if (AgeVerification.OUTCOME_PASSED.equals(row[0])) passed = (Long) row[1];
+      if (AgeVerification.OUTCOME_REFUSED.equals(row[0])) refused = (Long) row[1];
+    }
+    java.util.Map<String, Long> byReason = new java.util.TreeMap<>();
+    for (Object[] row : reasons) byReason.put((String) row[0], (Long) row[1]);
+    java.util.Map<String, Long> byCategory = new java.util.TreeMap<>();
+    for (Object[] row : categories) byCategory.put((String) row[0], (Long) row[1]);
+    return new AgeVerificationSummary(passed + refused, passed, refused, byReason, byCategory);
+  }
+
+  private static AgeVerification mapAgeVerification(ResultSet rs) throws SQLException {
+    return new AgeVerification(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("cashier_id", UUID.class),
+        rs.getObject("pos_session_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getString("category"),
+        rs.getInt("minimum_age"),
+        rs.getString("country"),
+        rs.getBoolean("store_policy"),
+        rs.getString("outcome"),
+        rs.getString("reason"),
+        rs.getString("id_type"),
+        rs.getObject("order_id", UUID.class),
+        toInstant(rs.getObject("checked_at", OffsetDateTime.class)));
   }
 
   private PosLogEntry mapPosLogEntry(ResultSet rs) throws SQLException {

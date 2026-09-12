@@ -26,8 +26,10 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
   static const _channels = ['ALL', 'ONLINE', 'POS'];
   static const _statuses = [
     'ALL',
+    'AWAITING_PRICE',
     'PENDING',
     'CONFIRMED',
+    'PARTIALLY_FULFILLED',
     'FULFILLED',
     'CANCELLED'
   ];
@@ -264,6 +266,35 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
         context: context,
         builder: (_) => _CollectPaymentDialog(
           order: o,
+          onDone: () {
+            ref.read(ordersPaginationProvider(_filter).notifier).refresh();
+            ref.invalidate(recentOrdersProvider);
+          },
+        ),
+      );
+      return;
+    }
+    if (action == 'price') {
+      // SJ-D41: a catalog-mode till order gets its prices from a manager here.
+      await showDialog<void>(
+        context: context,
+        builder: (_) => PriceOrderDialog(
+          orderId: o.id,
+          currency: o.currency,
+          onDone: () {
+            ref.read(ordersPaginationProvider(_filter).notifier).refresh();
+            ref.invalidate(recentOrdersProvider);
+          },
+        ),
+      );
+      return;
+    }
+    if (action == 'fulfil') {
+      // SJ-D35: which lines, and how much of each, are handed over now.
+      await showDialog<void>(
+        context: context,
+        builder: (_) => FulfilDialog(
+          orderId: o.id,
           onDone: () {
             ref.read(ordersPaginationProvider(_filter).notifier).refresh();
             ref.invalidate(recentOrdersProvider);
@@ -718,6 +749,15 @@ class _OrderActionsMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = status.toUpperCase();
     final items = <PopupMenuEntry<String>>[];
+    if (s == 'AWAITING_PRICE') {
+      items.add(const PopupMenuItem(
+          value: 'price',
+          child: Row(children: [
+            Icon(Icons.sell_outlined, size: 18),
+            SizedBox(width: 8),
+            Text('Price order'),
+          ])));
+    }
     if (s == 'PENDING') {
       items.add(const PopupMenuItem(
           value: 'confirm',
@@ -727,7 +767,7 @@ class _OrderActionsMenu extends StatelessWidget {
             Text('Confirm'),
           ])));
     }
-    if (s == 'CONFIRMED') {
+    if (s == 'CONFIRMED' || s == 'PARTIALLY_FULFILLED') {
       items.add(const PopupMenuItem(
           value: 'fulfil',
           child: Row(children: [
@@ -739,7 +779,7 @@ class _OrderActionsMenu extends StatelessWidget {
     // COD / pay-at-pickup settlement: record the tender when the goods change hands. Shown for
     // any live order — the dialog itself computes what's still outstanding and refuses
     // double-collection.
-    if (s == 'PENDING' || s == 'CONFIRMED' || s == 'FULFILLED') {
+    if (s == 'PENDING' || s == 'CONFIRMED' || s == 'PARTIALLY_FULFILLED' || s == 'FULFILLED') {
       items.add(const PopupMenuItem(
           value: 'collect',
           child: Row(children: [
@@ -826,6 +866,7 @@ class _StatusBadge extends StatelessWidget {
     Color fg;
     switch (status.toUpperCase()) {
       case 'PLACED':
+      case 'AWAITING_PRICE':
         bg = context.status.info;
         fg = context.status.onInfo;
         break;
@@ -834,6 +875,7 @@ class _StatusBadge extends StatelessWidget {
         fg = cs.onSecondaryContainer;
         break;
       case 'FULFILLED':
+      case 'PARTIALLY_FULFILLED':
         bg = cs.tertiaryContainer;
         fg = cs.onTertiaryContainer;
         break;
@@ -1050,6 +1092,280 @@ class _CollectPaymentDialogState extends ConsumerState<_CollectPaymentDialog> {
             label: Text(
                 'Collect ${AppFormat.money(outstanding, currencyCode: o.currency)}'),
           ),
+      ],
+    );
+  }
+}
+
+/// Hand over some or all of an order (SJ-D35). Each line shows what is still
+/// outstanding and takes how much goes now; leaving everything at its
+/// outstanding quantity hands the whole order over, as *Mark fulfilled* always
+/// did. The server refuses more than is outstanding, and a part-fulfilled
+/// order cannot be cancelled afterwards — the goods are in the customer's hands.
+class FulfilDialog extends ConsumerStatefulWidget {
+  const FulfilDialog({super.key, required this.orderId, required this.onDone});
+  final String orderId;
+  final VoidCallback onDone;
+
+  @override
+  ConsumerState<FulfilDialog> createState() => _FulfilDialogState();
+}
+
+class _FulfilDialogState extends ConsumerState<FulfilDialog> {
+  final Map<String, TextEditingController> _qty = {};
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    for (final c in _qty.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  String _fmt(double v) => v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+
+  Future<void> _submit(List<OrderLine> lines) async {
+    final outstanding = lines.where((l) => l.remainingQty > 0).toList();
+    final chosen = <Map<String, dynamic>>[];
+    var everything = true;
+    for (final l in outstanding) {
+      final v = double.tryParse(_qty[l.variantId]?.text.trim() ?? '');
+      if (v == null || v < 0) {
+        setState(() => _error = 'Enter a quantity for every line (0 for none now).');
+        return;
+      }
+      if (v > l.remainingQty) {
+        setState(() => _error = 'Only ${_fmt(l.remainingQty)} outstanding on ${shortRef(l.variantId)}.');
+        return;
+      }
+      if (v != l.remainingQty) everything = false;
+      if (v > 0) chosen.add({'variantId': l.variantId, 'qty': v});
+    }
+    if (chosen.isEmpty) {
+      setState(() => _error = 'Nothing to hand over.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+            '/${ApiConstants.order}/orders/${widget.orderId}/fulfil',
+            // Everything outstanding: no body, the plain fulfilment. Part: the lines.
+            data: everything ? null : {'lines': chosen},
+          );
+      widget.onDone();
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(everything ? 'Order fulfilled.' : 'Part of the order handed over.')));
+    } catch (e) {
+      setState(() {
+        _saving = false;
+        _error = friendlyError(e, fallback: 'Could not hand over the order.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = ref.watch(orderDetailProvider(widget.orderId));
+    return AlertDialog(
+      title: const Text('Hand over'),
+      content: SizedBox(
+        width: 460,
+        child: detail.when(
+          loading: () => const LoadingView(label: 'Loading lines…'),
+          error: (e, _) => ErrorView(
+            message: friendlyError(e, fallback: 'Could not load the order.'),
+            onRetry: () => ref.invalidate(orderDetailProvider(widget.orderId)),
+          ),
+          data: (d) {
+            final outstanding = d.items.where((l) => l.remainingQty > 0).toList();
+            for (final l in outstanding) {
+              _qty.putIfAbsent(l.variantId, () => TextEditingController(text: _fmt(l.remainingQty)));
+            }
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('How much of each line goes to the customer now. '
+                    'Leave the outstanding quantities to hand over everything.'),
+                const SizedBox(height: 12),
+                if (outstanding.isEmpty) const Text('Every line has been handed over.'),
+                for (final l in outstanding)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(children: [
+                      Expanded(
+                        child: Text(
+                          '${shortRef(l.variantId)} · ${_fmt(l.remainingQty)} of ${_fmt(l.qty)} outstanding',
+                        ),
+                      ),
+                      SizedBox(
+                        width: 90,
+                        child: TextField(
+                          key: Key('fulfil-qty-${l.variantId}'),
+                          controller: _qty[l.variantId],
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(labelText: 'Now'),
+                        ),
+                      ),
+                    ]),
+                  ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: _saving || !detail.hasValue ? null : () => _submit(detail.value!.items),
+          child: const Text('Hand over'),
+        ),
+      ],
+    );
+  }
+}
+
+/// A manager prices a catalog-mode till order (SJ-D41): every line on it, a
+/// unit price each, the VAT for the whole order. The server recomputes the
+/// totals and the order becomes PENDING, payable like any other. The catalog
+/// till never showed a price, so nothing here is prefilled.
+class PriceOrderDialog extends ConsumerStatefulWidget {
+  const PriceOrderDialog(
+      {super.key, required this.orderId, required this.currency, required this.onDone});
+  final String orderId;
+  final String currency;
+  final VoidCallback onDone;
+
+  @override
+  ConsumerState<PriceOrderDialog> createState() => _PriceOrderDialogState();
+}
+
+class _PriceOrderDialogState extends ConsumerState<PriceOrderDialog> {
+  final Map<String, TextEditingController> _price = {};
+  final _tax = TextEditingController(text: '0');
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    for (final c in _price.values) {
+      c.dispose();
+    }
+    _tax.dispose();
+    super.dispose();
+  }
+
+  String _fmt(double v) => v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+
+  Future<void> _submit(List<OrderLine> lines) async {
+    final priced = <Map<String, dynamic>>[];
+    for (final l in lines) {
+      final v = double.tryParse(_price[l.variantId]?.text.trim() ?? '');
+      if (v == null || v < 0) {
+        setState(() => _error = 'Give every line a price of at least 0.');
+        return;
+      }
+      priced.add({'variantId': l.variantId, 'unitPrice': v});
+    }
+    final tax = double.tryParse(_tax.text.trim());
+    if (tax == null || tax < 0) {
+      setState(() => _error = 'VAT must be a number of at least 0.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+            '/${ApiConstants.order}/orders/${widget.orderId}/price',
+            data: {'lines': priced, 'taxAmount': tax},
+          );
+      widget.onDone();
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Order priced — it can be paid for now.')));
+    } catch (e) {
+      setState(() {
+        _saving = false;
+        _error = friendlyError(e, fallback: 'Could not price the order.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = ref.watch(orderDetailProvider(widget.orderId));
+    return AlertDialog(
+      title: const Text('Price order'),
+      content: SizedBox(
+        width: 460,
+        child: detail.when(
+          loading: () => const LoadingView(label: 'Loading lines…'),
+          error: (e, _) => ErrorView(
+            message: friendlyError(e, fallback: 'Could not load the order.'),
+            onRetry: () => ref.invalidate(orderDetailProvider(widget.orderId)),
+          ),
+          data: (d) {
+            for (final l in d.items) {
+              _price.putIfAbsent(l.variantId, () => TextEditingController());
+            }
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Placed at the till without prices. Give each line its unit price in '
+                    '${widget.currency}; the totals follow.'),
+                const SizedBox(height: 12),
+                for (final l in d.items)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(children: [
+                      Expanded(child: Text('${shortRef(l.variantId)} × ${_fmt(l.qty)}')),
+                      SizedBox(
+                        width: 110,
+                        child: TextField(
+                          key: Key('price-${l.variantId}'),
+                          controller: _price[l.variantId],
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(labelText: 'Unit price'),
+                        ),
+                      ),
+                    ]),
+                  ),
+                TextField(
+                  key: const Key('price-tax'),
+                  controller: _tax,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'VAT on the order'),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: _saving || !detail.hasValue ? null : () => _submit(detail.value!.items),
+          child: const Text('Price and release'),
+        ),
       ],
     );
   }

@@ -1,8 +1,11 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shelf_app/core/offline/offline_queue.dart';
+import 'package:shelf_app/core/network/api_client.dart';
 import 'package:shelf_app/core/offline/offline_sale.dart';
+import 'package:shelf_app/core/offline/offline_synced.dart';
 import 'package:shelf_app/core/storage/app_storage.dart';
 import 'package:shelf_app/features/pos/offline_queue_screen.dart';
 
@@ -53,15 +56,63 @@ OfflineSale _sale({
       lastError: lastError,
     );
 
-Future<OfflineQueueNotifier> _pump(
-    WidgetTester tester, List<OfflineSale> sales) async {
+class _FakeApiClient implements ApiClient {
+  @override
+  Dio dio;
+  _FakeApiClient(this.dio);
+}
+
+/// Answers the receipt-number lookup: issued, or not yet.
+class _ReceiptServer implements HttpClientAdapter {
+  final List<RequestOptions> requests = [];
+  String? number;
+  _ReceiptServer({this.number});
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions o, Stream<List<int>>? s, Future<void>? c) async {
+    requests.add(o);
+    if (number == null) {
+      return ResponseBody.fromString(
+          '{"error":{"code":"ORDER_RECEIPT_NOT_ISSUED","details":[]}}', 404,
+          headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
+    }
+    return ResponseBody.fromString(
+        '{"data":{"fullNumber":"$number","number":7}}', 200,
+        headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
+  }
+}
+
+SyncedSale _synced({String id = 'pos-1700000999999'}) => SyncedSale(
+      id: id,
+      orderId: '01a090ae-611e-701e-a773-cff68a489efe',
+      capturedAt: DateTime.utc(2026, 9, 8, 11, 30),
+      syncedAt: DateTime.utc(2026, 9, 8, 11, 45),
+      total: 8.75,
+      currency: 'GBP',
+    );
+
+Future<OfflineQueueNotifier> _pump(WidgetTester tester, List<OfflineSale> sales,
+    {List<SyncedSale> synced = const [], _ReceiptServer? server}) async {
   late OfflineQueueNotifier notifier;
+  final dio = Dio(BaseOptions(baseUrl: 'http://test'))
+    ..httpClientAdapter = server ?? _ReceiptServer();
+  final storage = _MemStorage();
   await tester.pumpWidget(ProviderScope(
     overrides: [
+      apiClientProvider.overrideWithValue(_FakeApiClient(dio)),
       offlineQueueProvider.overrideWith((ref) {
-        notifier = OfflineQueueNotifier(ref,
-            storage: _MemStorage(), autoSync: false);
+        notifier = OfflineQueueNotifier(ref, storage: storage, autoSync: false);
         return notifier;
+      }),
+      offlineSyncedProvider.overrideWith((ref) {
+        final n = SyncedSalesNotifier(ref, storage: storage);
+        for (final s in synced) {
+          n.state = [...n.state, s];
+        }
+        return n;
       }),
     ],
     child: const MaterialApp(home: Scaffold(body: OfflineQueueScreen())),
@@ -78,6 +129,42 @@ void main() {
       (tester) async {
     await _pump(tester, const []);
     expect(find.text('Everything is synced'), findsOneWidget);
+  });
+
+  testWidgets('a synced sale shows the legal receipt number the server issued on replay',
+      (tester) async {
+    // The offline receipt in the customer's hand says "number not issued yet".
+    // This is where the cashier finds it — by the same reference that receipt
+    // was printed with.
+    final server = _ReceiptServer(number: 'GB-A-2026-000007');
+    await _pump(tester, const [], synced: [_synced()], server: server);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Everything is synced'), findsOneWidget);
+    expect(find.text('Sale #999999  ·  GBP 8.75'), findsOneWidget);
+    expect(find.text('Receipt no. GB-A-2026-000007'), findsOneWidget);
+    // One bounded server-side wait, on the till-readable path.
+    expect(server.requests.single.path, endsWith('/fiscal-receipt'));
+    expect(server.requests.single.queryParameters['wait'], 5);
+    expect(server.requests.single.path, isNot(contains('/admin/')));
+    expect(find.byTooltip('Check again'), findsNothing);
+  });
+
+  testWidgets('a synced sale whose number is not issued yet says so, and can be asked again',
+      (tester) async {
+    final server = _ReceiptServer();
+    await _pump(tester, const [], synced: [_synced()], server: server);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Receipt number not issued yet'), findsOneWidget);
+    expect(find.textContaining('Receipt no. '), findsNothing,
+        reason: 'nothing on this screen may pass an order id off as a receipt number');
+    // The number arrives; asking again finds it and remembers it.
+    server.number = 'GB-A-2026-000008';
+    await tester.tap(find.byTooltip('Check again'));
+    await tester.pumpAndSettle();
+    expect(find.text('Receipt no. GB-A-2026-000008'), findsOneWidget);
+    expect(server.requests, hasLength(2));
   });
 
   testWidgets('a waiting sale shows its reference, total and item count',

@@ -29,7 +29,14 @@ public final class Dtos {
                       + " real price regardless.")
           @PositiveOrZero
           BigDecimal unitPrice,
-      String notes) {}
+      String notes,
+      @Schema(
+              description =
+                  "For a line sold by weight: the weighing instrument the reading came from, from"
+                      + " tenant-svc's register (Weights and Measures Act 1985 s.11). The till"
+                      + " refuses to sell by weight from an instrument that is not certified, and"
+                      + " the line records which one it was.")
+          String weighingInstrumentId) {}
 
   @Schema(
       name = "PlaceOrderRequest",
@@ -80,7 +87,27 @@ public final class Dtos {
               description =
                   "How the customer intends to pay: CASH, CARD, UPI, or WALLET. CASH + DELIVERY is"
                       + " cash-on-delivery; settlement itself is recorded by payment-svc.")
-          String paymentMethod) {}
+          String paymentMethod,
+      @Schema(
+              description =
+                  "A catalog-mode till order (SJ-D41): the goods are known, the prices are not."
+                      + " Placed as AWAITING_PRICE for a manager to price; never swept as"
+                      + " stranded. POS channel only.")
+          Boolean awaitingPrice) {}
+
+  @Schema(
+      name = "PriceOrderRequest",
+      description = "A manager's prices for an AWAITING_PRICE order, one per variant on it.")
+  public record PriceOrderRequest(
+      @NotNull @Valid List<PriceLine> lines,
+      @Schema(description = "VAT on the priced order; zero when omitted.") @PositiveOrZero
+          BigDecimal taxAmount) {}
+
+  @Schema(name = "PriceLine")
+  public record PriceLine(
+      @NotNull String variantId,
+      @Schema(description = "Unit price, in the order's currency.") @NotNull @PositiveOrZero
+          BigDecimal unitPrice) {}
 
   @Schema(name = "OrderItemResponse")
   public record OrderItemResponse(
@@ -89,13 +116,39 @@ public final class Dtos {
       BigDecimal qty,
       BigDecimal unitPrice,
       BigDecimal lineTotal,
-      String notes) {}
+      String notes,
+      @Schema(description = "The instrument a sold-by-weight line was weighed on; null otherwise.")
+          String weighingInstrumentId,
+      @Schema(description = "How much of qty has been handed over so far (SJ-D35).")
+          BigDecimal fulfilledQty) {}
+
+  @Schema(
+      name = "FulfilRequest",
+      description =
+          "Which lines, and how much of each, are being handed over now. Omit the body, or the"
+              + " lines, to hand over everything still outstanding.")
+  public record FulfilRequest(List<FulfilLine> lines) {}
+
+  @Schema(name = "FulfilLine")
+  public record FulfilLine(
+      @NotNull String variantId,
+      @Schema(description = "Units handed over now; at most what is still outstanding.")
+          @NotNull
+          @jakarta.validation.constraints.Positive
+          BigDecimal qty) {}
 
   @Schema(name = "OrderResponse")
   public record OrderResponse(
       String id,
       String storeId,
       String customerId,
+      @Schema(
+              description =
+                  "The login that placed the order, for an online sale by a signed-in shopper."
+                      + " Distinct from customerId, which is the shop's own record of that person:"
+                      + " a login is global and a customer record is per-tenant (SJ-D44). Null for"
+                      + " a guest checkout and for a till sale.")
+          String loginId,
       @Schema(description = "ONLINE or POS.") String channel,
       String fulfilmentType,
       @Schema(description = "PENDING, CONFIRMED, FULFILLED, CANCELLED, or VOIDED.") String status,
@@ -532,4 +585,84 @@ public final class Dtos {
                   "Discount as a percentage of what the sales would have fetched undiscounted."
                       + " Null when there is nothing to take a percentage of.")
           BigDecimal discountRate) {}
+
+  // ── Age verification: the due-diligence record ──────────────────────────────
+
+  @Schema(
+      name = "RecordAgeCheckRequest",
+      description =
+          "One age check as the till made it. The rule fields are copied from product-svc's answer"
+              + " at that moment, so the record says what the rule was rather than what it later"
+              + " became.")
+  public record RecordAgeCheckRequest(
+      @jakarta.validation.constraints.NotBlank String storeId,
+      @jakarta.validation.constraints.NotBlank String variantId,
+      @jakarta.validation.constraints.NotBlank
+          @Schema(description = "ALCOHOL, TOBACCO, KNIVES, … — product-svc's category.")
+          String category,
+      @jakarta.validation.constraints.NotNull
+          @jakarta.validation.constraints.Min(1)
+          @jakarta.validation.constraints.Max(99)
+          Integer minimumAge,
+      @jakarta.validation.constraints.NotBlank
+          @jakarta.validation.constraints.Pattern(regexp = "^[A-Za-z]{2}$")
+          @Schema(description = "ISO 3166-1 alpha-2 country whose rule applied.")
+          String country,
+      @Schema(description = "True when the age came from the shop's own stricter policy.")
+          Boolean storePolicy,
+      @jakarta.validation.constraints.NotBlank
+          @Schema(description = "PASSED — the sale went ahead; REFUSED — it did not.")
+          String outcome,
+      @Schema(
+              description =
+                  "Required on a refusal, absent on a pass: UNDER_AGE, NO_ID, ID_REJECTED,"
+                      + " PROXY_SALE (buying for someone under age) or OTHER.")
+          String reason,
+      @Schema(
+              description =
+                  "What was shown when the sale went ahead, if the shop records it: PASSPORT,"
+                      + " DRIVING_LICENCE, PASS_CARD, MILITARY_ID, NATIONAL_ID or OTHER.")
+          String idType,
+      @Schema(description = "The POS session the check was made in, when the till has one.")
+          String posSessionId,
+      @Schema(description = "The sale the check belonged to, once there is one.") String orderId) {}
+
+  @Schema(name = "AgeVerificationResponse", description = "One recorded age check.")
+  public record AgeVerificationResponse(
+      String id,
+      String storeId,
+      String cashierId,
+      String posSessionId,
+      String variantId,
+      String category,
+      int minimumAge,
+      String country,
+      boolean storePolicy,
+      String outcome,
+      String reason,
+      String idType,
+      String orderId,
+      String checkedAt) {}
+
+  @Schema(
+      name = "AgeVerificationSummaryResponse",
+      description = "Counts for one store and period, and the refusals broken down by reason.")
+  public record AgeVerificationSummaryResponse(
+      long total,
+      long passed,
+      long refused,
+      java.util.Map<String, Long> refusedByReason,
+      java.util.Map<String, Long> byCategory) {}
+
+  @Schema(
+      name = "SetReceiptSeriesRequest",
+      description = "Open a receipt series, or set what it prints in front of the number.")
+  public record SetReceiptSeriesRequest(
+      @jakarta.validation.constraints.NotBlank String storeId,
+      @Schema(description = "MAIN when omitted.") String seriesCode,
+      @jakarta.validation.constraints.NotBlank
+          @Schema(description = "The fiscal period, e.g. 2026.")
+          String period,
+      @Schema(description = "Letters, digits and hyphens, at most 16; blank for none.")
+          String prefix) {}
 }

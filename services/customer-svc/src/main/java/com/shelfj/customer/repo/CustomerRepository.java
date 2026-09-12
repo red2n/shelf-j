@@ -4,6 +4,8 @@ import com.shelfj.customer.domain.Domain.Customer;
 import com.shelfj.customer.domain.Domain.CustomerAddress;
 import com.shelfj.customer.domain.Domain.LoyaltyAccount;
 import com.shelfj.customer.domain.Domain.LoyaltyLedgerEntry;
+import com.shelfj.customer.domain.Domain.MarketingConsentEntry;
+import com.shelfj.customer.domain.Domain.MarketingPreference;
 import com.shelfj.customer.domain.Domain.StoreCreditAccount;
 import com.shelfj.customer.domain.Domain.StoreCreditLedgerEntry;
 import com.shelfj.ids.Ids;
@@ -60,8 +62,8 @@ public class CustomerRepository extends BaseOutboxRepository {
    */
   public Optional<Customer> findById(UUID tenantId, UUID customerId) {
     return query(
-            "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
-                + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+            "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
                 + " FROM customers WHERE tenant_id = ? AND id = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -78,8 +80,8 @@ public class CustomerRepository extends BaseOutboxRepository {
       throws SQLException {
     try (PreparedStatement ps =
         conn.prepareStatement(
-            "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
-                + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+            "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
                 + " FROM customers WHERE tenant_id = ? AND id = ?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, customerId);
@@ -98,8 +100,8 @@ public class CustomerRepository extends BaseOutboxRepository {
    */
   public Optional<Customer> findByEmail(UUID tenantId, String email) {
     return query(
-            "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
-                + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+            "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
                 + " FROM customers WHERE tenant_id = ? AND email = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -112,6 +114,428 @@ public class CustomerRepository extends BaseOutboxRepository {
   }
 
   /**
+   * Looks a customer up by the login it belongs to.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param loginId the iam-svc login id
+   * @return the customer linked to that login in this tenant, or empty when none is
+   */
+  public Optional<Customer> findByLogin(UUID tenantId, UUID loginId) {
+    return query(
+            "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " FROM customers WHERE tenant_id = ? AND login_id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, loginId);
+            },
+            CustomerRepository::mapCustomer,
+            "find customer by login")
+        .stream()
+        .findFirst();
+  }
+
+  /**
+   * Finds the customer record a login owns in this tenant, creating or adopting one if it has none
+   * — the join SJ-D44 was missing, made in one transaction so two concurrent checkouts cannot
+   * produce two records for one person.
+   *
+   * <p>Three cases, in order: the login is already linked and that record is returned untouched; a
+   * record exists with the same email and no login of its own, which is the same person the shop
+   * typed in at the till, so the link is added to it; or neither, and a new record is created from
+   * the email alone. An anonymized record is never adopted or re-linked — erasure is final, and a
+   * later order starts a fresh record rather than resurrecting an erased one.
+   *
+   * @param tenantId owning tenant; the first condition of every query here
+   * @param loginId the iam-svc login to link
+   * @param email the login's own email, as the gateway read it from the verified JWT
+   * @param newId the id to give a record this call creates, minted by the caller so it can build
+   *     the event that announces it
+   * @param event the outbox row to commit alongside a newly created record; ignored when an
+   *     existing record is returned or adopted, because neither creates anything to announce
+   * @return the customer record for that login
+   */
+  public Customer linkLogin(
+      UUID tenantId, UUID loginId, String email, UUID newId, OutboxRow event) {
+    try {
+      return linkLoginTx(tenantId, loginId, email, newId, event);
+    } catch (ApiException e) {
+      if (!"CUSTOMER_ALREADY_EXISTS".equals(e.code())) {
+        throw e;
+      }
+      // Two checkouts for one login at the same instant: both found no record, both tried to
+      // insert, and the unique index let one through. The loser is not a duplicate — it is the
+      // same person, and the winner's row is what it should return. A race of eight claims in the
+      // tests lost one this way before this branch existed. If the email is instead held by a
+      // record linked to a different login, that is a real conflict and is reported as one.
+      return findByLogin(tenantId, loginId)
+          .orElseThrow(
+              () ->
+                  ApiException.conflict(
+                      "CUSTOMER_EMAIL_LINKED_ELSEWHERE",
+                      "this email is already linked to a different login in this shop"));
+    }
+  }
+
+  private Customer linkLoginTx(
+      UUID tenantId, UUID loginId, String email, UUID newId, OutboxRow event) {
+    return inTx(
+        conn -> {
+          Customer linked = findByLoginInTx(conn, tenantId, loginId);
+          if (linked != null) {
+            return linked;
+          }
+          Customer adopted = adoptByEmailInTx(conn, tenantId, loginId, email);
+          if (adopted != null) {
+            return adopted;
+          }
+          Instant now = Instant.now();
+          var created =
+              new Customer(
+                  newId,
+                  tenantId,
+                  loginId,
+                  email,
+                  null,
+                  null,
+                  null,
+                  null,
+                  null,
+                  Customer.STATUS_ACTIVE,
+                  null,
+                  null,
+                  now,
+                  now);
+          insertCustomer(conn, created);
+          insertOutbox(conn, event);
+          return created;
+        },
+        "link login to customer");
+  }
+
+  /** Connection-scoped read within an existing transaction; null (not Optional) if not found. */
+  private static Customer findByLoginInTx(Connection conn, UUID tenantId, UUID loginId)
+      throws SQLException {
+    try (PreparedStatement ps =
+        conn.prepareStatement(
+            "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
+                + " FROM customers WHERE tenant_id = ? AND login_id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, loginId);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? mapCustomer(rs) : null;
+      }
+    }
+  }
+
+  /**
+   * Attaches the login to an existing unlinked record with the same email, and returns it; null
+   * when there is no such record. The UPDATE carries the whole condition so the adoption is atomic
+   * with the check: two concurrent links race on the unique index, and the loser sees a row count
+   * of zero rather than overwriting the winner's link.
+   */
+  private static Customer adoptByEmailInTx(
+      Connection conn, UUID tenantId, UUID loginId, String email) throws SQLException {
+    try (PreparedStatement ps =
+        conn.prepareStatement(
+            "UPDATE customers SET login_id = ?, updated_at = now()"
+                + " WHERE tenant_id = ? AND email = ? AND login_id IS NULL"
+                + " AND status != 'ANONYMIZED'")) {
+      ps.setObject(1, loginId);
+      ps.setObject(2, tenantId);
+      ps.setString(3, email);
+      if (ps.executeUpdate() == 0) {
+        return null;
+      }
+    }
+    return findByLoginInTx(conn, tenantId, loginId);
+  }
+
+  /**
+   * A customer's store-credit history, newest first. Written on every issue and redemption and
+   * never read back until now: a person's own money held by the shop is their data, so a data
+   * export (UK GDPR art.20) has to include it.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer whose ledger to read
+   * @param limit hard cap on rows
+   * @return the entries, newest first
+   */
+  public List<StoreCreditLedgerEntry> listStoreCreditLedger(
+      UUID tenantId, UUID customerId, int limit) {
+    return query(
+        "SELECT id, tenant_id, customer_id, type, amount, balance_after, currency, order_id,"
+            + " reason, created_at"
+            + " FROM store_credit_ledger WHERE tenant_id = ? AND customer_id = ?"
+            + " ORDER BY created_at DESC LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, customerId);
+          ps.setInt(3, limit);
+        },
+        CustomerRepository::mapStoreCreditEntry,
+        "list store credit ledger");
+  }
+
+  private static StoreCreditLedgerEntry mapStoreCreditEntry(ResultSet rs) throws SQLException {
+    UUID orderId = rs.getObject("order_id", UUID.class);
+    return new StoreCreditLedgerEntry(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("customer_id", UUID.class),
+        rs.getString("type"),
+        rs.getBigDecimal("amount"),
+        rs.getBigDecimal("balance_after"),
+        rs.getString("currency"),
+        orderId,
+        rs.getString("reason"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  /**
+   * Every store-credit account a customer holds, one per currency.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer whose accounts to read
+   * @return the accounts, empty when the customer holds no credit
+   */
+  public List<StoreCreditAccount> listStoreCreditAccounts(UUID tenantId, UUID customerId) {
+    return query(
+        "SELECT id, tenant_id, customer_id, balance, currency, created_at, updated_at"
+            + " FROM store_credit_accounts WHERE tenant_id = ? AND customer_id = ?"
+            + " ORDER BY currency",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, customerId);
+        },
+        CustomerRepository::mapStoreCreditAccount,
+        "list store credit accounts");
+  }
+
+  // ─────────────────────────────────────────── marketing consent
+
+  /**
+   * What this shop may currently send one person, channel by channel.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer whose preferences to read
+   * @return one row per channel that has ever been decided; a channel with no row has no consent
+   */
+  public List<MarketingPreference> listPreferences(UUID tenantId, UUID customerId) {
+    return query(
+        "SELECT tenant_id, customer_id, channel, granted, basis, updated_at"
+            + " FROM marketing_preferences WHERE tenant_id = ? AND customer_id = ?"
+            + " ORDER BY channel",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, customerId);
+        },
+        CustomerRepository::mapPreference,
+        "list marketing preferences");
+  }
+
+  /**
+   * Reads one channel's preference.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer to check
+   * @param channel the channel to check
+   * @return the preference, or empty when nothing has ever been decided for that channel
+   */
+  public Optional<MarketingPreference> findPreference(
+      UUID tenantId, UUID customerId, String channel) {
+    return query(
+            "SELECT tenant_id, customer_id, channel, granted, basis, updated_at"
+                + " FROM marketing_preferences"
+                + " WHERE tenant_id = ? AND customer_id = ? AND channel = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, customerId);
+              ps.setString(3, channel);
+            },
+            CustomerRepository::mapPreference,
+            "find marketing preference")
+        .stream()
+        .findFirst();
+  }
+
+  /**
+   * Records one or more consent decisions: the current state and the evidence for it, together.
+   *
+   * <p>One transaction, because a preference without its log entry is a claim the shop cannot
+   * demonstrate (UK GDPR art.7(1)), and a log entry without the preference is a promise it does not
+   * keep.
+   *
+   * @param entries the decisions, each already carrying its own id, source and notice
+   * @return how many channels were written
+   */
+  public int recordConsent(List<MarketingConsentEntry> entries) {
+    if (entries.isEmpty()) {
+      return 0;
+    }
+    return inTx(
+        c -> {
+          for (MarketingConsentEntry e : entries) {
+            upsertPreferenceInTx(c, e);
+            insertConsentLogInTx(c, e);
+          }
+          return entries.size();
+        },
+        "record marketing consent");
+  }
+
+  private static void upsertPreferenceInTx(Connection c, MarketingConsentEntry e)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO marketing_preferences"
+                + " (tenant_id, customer_id, channel, granted, basis, updated_at)"
+                + " VALUES (?,?,?,?,?, now())"
+                + " ON CONFLICT (tenant_id, customer_id, channel) DO UPDATE"
+                + " SET granted = EXCLUDED.granted, basis = EXCLUDED.basis, updated_at = now()")) {
+      ps.setObject(1, e.tenantId());
+      ps.setObject(2, e.customerId());
+      ps.setString(3, e.channel());
+      ps.setBoolean(4, e.granted());
+      ps.setString(5, e.basis());
+      ps.executeUpdate();
+    }
+  }
+
+  private static void insertConsentLogInTx(Connection c, MarketingConsentEntry e)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO marketing_consent_log"
+                + " (id, tenant_id, customer_id, channel, granted, basis, source, notice,"
+                + "  actor_id, recorded_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, e.id());
+      ps.setObject(2, e.tenantId());
+      ps.setObject(3, e.customerId());
+      ps.setString(4, e.channel());
+      ps.setBoolean(5, e.granted());
+      ps.setString(6, e.basis());
+      ps.setString(7, e.source());
+      ps.setString(8, e.notice());
+      ps.setObject(9, e.actorId());
+      ps.setObject(10, e.recordedAt().atOffset(ZoneOffset.UTC));
+      ps.executeUpdate();
+    }
+  }
+
+  /**
+   * The evidence trail behind one person's marketing preferences.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param customerId the customer whose trail to read
+   * @param limit hard cap on rows
+   * @return the entries, newest first
+   */
+  public List<MarketingConsentEntry> listConsentLog(UUID tenantId, UUID customerId, int limit) {
+    return query(
+        "SELECT id, tenant_id, customer_id, channel, granted, basis, source, notice, actor_id,"
+            + " recorded_at FROM marketing_consent_log WHERE tenant_id = ? AND customer_id = ?"
+            + " ORDER BY recorded_at DESC LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, customerId);
+          ps.setInt(3, limit);
+        },
+        CustomerRepository::mapConsentEntry,
+        "list marketing consent log");
+  }
+
+  /**
+   * Stores the hash of a fresh unsubscribe token.
+   *
+   * @param tenantId owning tenant
+   * @param customerId the customer the token opts out
+   * @param tokenHash the hash of the token; the token itself is never stored
+   */
+  public void storeUnsubscribeToken(UUID tenantId, UUID customerId, String tokenHash) {
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO marketing_unsubscribe_tokens (token_hash, tenant_id, customer_id)"
+                      + " VALUES (?,?,?) ON CONFLICT (token_hash) DO NOTHING")) {
+            ps.setString(1, tokenHash);
+            ps.setObject(2, tenantId);
+            ps.setObject(3, customerId);
+            ps.executeUpdate();
+          }
+          return null;
+        },
+        "store unsubscribe token");
+  }
+
+  /**
+   * Who an unsubscribe token belongs to, without spending it.
+   *
+   * <p>A used token still resolves: an objection to marketing is absolute and does not expire, so
+   * clicking the same link twice must opt the person out twice rather than fail the second time.
+   *
+   * @param tokenHash the hash of the presented token
+   * @return the tenant and customer it opts out, or empty when the token is unknown
+   */
+  public Optional<UnsubscribeSubject> findUnsubscribeSubject(String tokenHash) {
+    return query(
+            "SELECT tenant_id, customer_id FROM marketing_unsubscribe_tokens WHERE token_hash = ?",
+            ps -> ps.setString(1, tokenHash),
+            rs ->
+                new UnsubscribeSubject(
+                    rs.getObject("tenant_id", UUID.class), rs.getObject("customer_id", UUID.class)),
+            "find unsubscribe token")
+        .stream()
+        .findFirst();
+  }
+
+  /** Marks a token as having been used, for the audit trail rather than to block a second use. */
+  public void markUnsubscribeTokenUsed(String tokenHash) {
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE marketing_unsubscribe_tokens SET used_at = now()"
+                      + " WHERE token_hash = ? AND used_at IS NULL")) {
+            ps.setString(1, tokenHash);
+            ps.executeUpdate();
+          }
+          return null;
+        },
+        "mark unsubscribe token used");
+  }
+
+  /** Who an unsubscribe link belongs to. */
+  public record UnsubscribeSubject(UUID tenantId, UUID customerId) {}
+
+  private static MarketingPreference mapPreference(ResultSet rs) throws SQLException {
+    return new MarketingPreference(
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("customer_id", UUID.class),
+        rs.getString("channel"),
+        rs.getBoolean("granted"),
+        rs.getString("basis"),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static MarketingConsentEntry mapConsentEntry(ResultSet rs) throws SQLException {
+    return new MarketingConsentEntry(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("customer_id", UUID.class),
+        rs.getString("channel"),
+        rs.getBoolean("granted"),
+        rs.getString("basis"),
+        rs.getString("source"),
+        rs.getString("notice"),
+        rs.getObject("actor_id", UUID.class),
+        rs.getObject("recorded_at", OffsetDateTime.class).toInstant());
+  }
+
+  /**
    * Looks a customer up by phone within a tenant.
    *
    * @param tenantId owning tenant; the first condition of the query
@@ -120,8 +544,8 @@ public class CustomerRepository extends BaseOutboxRepository {
    */
   public Optional<Customer> findByPhone(UUID tenantId, String phone) {
     return query(
-            "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
-                + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+            "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
+                + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
                 + " FROM customers WHERE tenant_id = ? AND phone = ?",
             ps -> {
               ps.setObject(1, tenantId);
@@ -147,8 +571,8 @@ public class CustomerRepository extends BaseOutboxRepository {
   public List<Customer> listCustomers(UUID tenantId, String afterId, int limit) {
     if (afterId == null) {
       return query(
-          "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
-              + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+          "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
+              + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
               + " FROM customers WHERE tenant_id = ? AND status != 'ANONYMIZED'"
               + " ORDER BY created_at DESC, id LIMIT ?",
           ps -> {
@@ -159,8 +583,8 @@ public class CustomerRepository extends BaseOutboxRepository {
           "list customers");
     }
     return query(
-        "SELECT id, tenant_id, email, phone, first_name, last_name, dob, gender, status,"
-            + " gdpr_consent_at, anonymized_at, created_at, updated_at"
+        "SELECT id, tenant_id, login_id, email, phone, first_name, last_name, dob, gender,"
+            + " status, gdpr_consent_at, anonymized_at, created_at, updated_at"
             + " FROM customers WHERE tenant_id = ? AND status != 'ANONYMIZED'"
             + " AND id < ? ORDER BY created_at DESC, id LIMIT ?",
         ps -> {
@@ -800,25 +1224,26 @@ public class CustomerRepository extends BaseOutboxRepository {
   private void insertCustomer(Connection c, Customer customer) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "INSERT INTO customers (id, tenant_id, email, phone, first_name, last_name,"
+            "INSERT INTO customers (id, tenant_id, login_id, email, phone, first_name, last_name,"
                 + " dob, gender, status, gdpr_consent_at, created_at, updated_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, customer.id());
       ps.setObject(2, customer.tenantId());
-      ps.setString(3, customer.email());
-      ps.setString(4, customer.phone());
-      ps.setString(5, customer.firstName());
-      ps.setString(6, customer.lastName());
-      ps.setObject(7, customer.dob() == null ? null : java.sql.Date.valueOf(customer.dob()));
-      ps.setString(8, customer.gender());
-      ps.setString(9, customer.status());
+      ps.setObject(3, customer.loginId());
+      ps.setString(4, customer.email());
+      ps.setString(5, customer.phone());
+      ps.setString(6, customer.firstName());
+      ps.setString(7, customer.lastName());
+      ps.setObject(8, customer.dob() == null ? null : java.sql.Date.valueOf(customer.dob()));
+      ps.setString(9, customer.gender());
+      ps.setString(10, customer.status());
       ps.setObject(
-          10,
+          11,
           customer.gdprConsentAt() == null
               ? null
               : customer.gdprConsentAt().atOffset(ZoneOffset.UTC));
-      ps.setObject(11, customer.createdAt().atOffset(ZoneOffset.UTC));
       ps.setObject(12, customer.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setObject(13, customer.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -1073,6 +1498,7 @@ public class CustomerRepository extends BaseOutboxRepository {
     return new Customer(
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
+        rs.getObject("login_id", UUID.class),
         rs.getString("email"),
         rs.getString("phone"),
         rs.getString("first_name"),

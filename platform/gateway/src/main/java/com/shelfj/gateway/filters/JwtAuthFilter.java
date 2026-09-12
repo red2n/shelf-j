@@ -43,7 +43,12 @@ public class JwtAuthFilter implements ContainerRequestFilter {
           "api/iam-svc/auth/login",
           "api/iam-svc/auth/platform-login",
           "api/iam-svc/auth/refresh",
-          "api/iam-svc/bootstrap/admin");
+          "api/iam-svc/bootstrap/admin",
+          // The opt-out link in a marketing message (PECR reg.23). Necessarily public: the person
+          // clicking it may be on a device that was never signed in, may have no password at all,
+          // and must not be made to prove who they are in order to be left alone. The token in the
+          // link is the whole capability, and it can only ever withdraw permission.
+          "api/customer-svc/marketing/unsubscribe");
 
   /**
    * Public storefront access (guest shopping). These tenant-scoped paths expose only public data
@@ -89,6 +94,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
 
     ctx.getHeaders().remove(HttpHeaders.TENANT_ID);
     ctx.getHeaders().remove(HttpHeaders.USER_ID);
+    ctx.getHeaders().remove(HttpHeaders.USER_EMAIL);
     ctx.getHeaders().remove(HttpHeaders.ROLES);
     ctx.getHeaders().remove(HttpHeaders.STORE_IDS);
 
@@ -157,12 +163,19 @@ public class JwtAuthFilter implements ContainerRequestFilter {
 
     // Stamp verified claims as trusted headers for downstream services.
     String userId = jwt.getSubject();
+    String email = jwt.getClaim("email").asString();
     String tenantId = jwt.getClaim("tenant").asString();
     List<String> roles = jwt.getClaim("roles").asList(String.class);
     List<String> storeIds = jwt.getClaim("storeIds").asList(String.class);
 
     if (userId != null) {
       ctx.getHeaders().putSingle(HttpHeaders.USER_ID, userId);
+    }
+    // The caller's own verified email. A shopper's login is global and their orders are placed at
+    // a shop that holds no record of them, so without this the shop cannot email, credit or erase
+    // the person who bought (SJ-D44); customer-svc matches the login to its customer record on it.
+    if (email != null && !email.isBlank()) {
+      ctx.getHeaders().putSingle(HttpHeaders.USER_EMAIL, email.trim());
     }
     if (tenantId != null) {
       ctx.getHeaders().putSingle(HttpHeaders.TENANT_ID, tenantId);
@@ -234,10 +247,42 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     if ("GET".equals(method) && "api/order-svc/orders/mine".equals(path)) {
       return true;
     }
+    // The shopper opening one of their own orders: the id-addressed reads the downstream filter
+    // already treats as self-reads, with order-svc's object-level check behind them (the owning
+    // login gets the order, anyone else a 404). Until this, a customer token could list its orders
+    // through /orders/mine and could not open any of them, because no tenant was derived for the
+    // read by id — a gap the privacy-flow k6 suite hit the first time it drove the real door.
+    if ("GET".equals(method) && isOrderSelfRead(path)) {
+      return true;
+    }
     if ("POST".equals(method) && "api/payment-svc/payments/online".equals(path)) {
       return true;
     }
+    // The shopper's own account with one shop: the customer record their login owns there, the
+    // marketing they have agreed to, and the data export art.20 entitles them to. Same shape as
+    // /orders/mine — a global customer token plus the storefront's tenant header — and, like it,
+    // every one of these resolves the caller from the token and can reach no other person's data.
+    if (isStorefrontCustomerAccount(path, method)) {
+      return true;
+    }
     return false;
+  }
+
+  /**
+   * The {@code customer-svc} self-service shapes a signed-in shopper reaches from a storefront.
+   *
+   * @param path the normalized request path
+   * @param method the HTTP method
+   * @return {@code true} for the caller's own customer record, preference centre and export
+   */
+  private static boolean isStorefrontCustomerAccount(String path, String method) {
+    boolean get = "GET".equals(method);
+    return switch (path) {
+      case "api/customer-svc/customers/me" -> get || "POST".equals(method);
+      case "api/customer-svc/customers/me/marketing" -> get || "PUT".equals(method);
+      case "api/customer-svc/customers/me/export" -> get;
+      default -> false;
+    };
   }
 
   /**
@@ -301,6 +346,39 @@ public class JwtAuthFilter implements ContainerRequestFilter {
    * @param path the normalized request path
    * @return {@code true} for exactly that shape
    */
+  /**
+   * {@code GET api/order-svc/orders/{uuid}} and its {@code history}, {@code returns} and {@code
+   * fiscal-receipt} children — and only an id-shaped segment, so a literal such as {@code export}
+   * (staff-only) can never pass as an order.
+   *
+   * @param path the normalized request path
+   * @return whether it is a shopper's id-addressed read of one order
+   */
+  private static boolean isOrderSelfRead(String path) {
+    String prefix = "api/order-svc/orders/";
+    if (!path.startsWith(prefix)) {
+      return false;
+    }
+    String rest = path.substring(prefix.length());
+    int slash = rest.indexOf('/');
+    String id = slash < 0 ? rest : rest.substring(0, slash);
+    if (id.length() != 36
+        || !id.chars()
+            .allMatch(
+                c ->
+                    c == '-'
+                        || (c >= '0' && c <= '9')
+                        || (c >= 'a' && c <= 'f')
+                        || (c >= 'A' && c <= 'F'))) {
+      return false;
+    }
+    if (slash < 0) {
+      return true;
+    }
+    String child = rest.substring(slash + 1);
+    return "history".equals(child) || "returns".equals(child) || "fiscal-receipt".equals(child);
+  }
+
   private static boolean isPaymentIntentRead(String path) {
     String prefix = "api/payment-svc/payments/intents/";
     if (!path.startsWith(prefix)) {

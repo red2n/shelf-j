@@ -37,6 +37,7 @@ public class BruteForceFilter implements ContainerRequestFilter, ContainerRespon
 
   private static final String PROP_USER_KEY = "login.userKey";
   private static final String PROP_IP_KEY = "login.ipKey";
+  private static final String PROP_TOKEN_PATH = "login.tokenPath";
 
   /** One shared (thread-safe) instance — building a Jsonb per login request is expensive. */
   private static final Jsonb JSONB = JsonbBuilder.create();
@@ -68,16 +69,21 @@ public class BruteForceFilter implements ContainerRequestFilter, ContainerRespon
     }
 
     String path = requestContext.getUriInfo().getPath();
-    if (!isLoginPath(path) || !"POST".equalsIgnoreCase(requestContext.getMethod())) {
+    boolean login = isLoginPath(path);
+    boolean tokenPath = !login && isTokenPath(path);
+    if ((!login && !tokenPath) || !"POST".equalsIgnoreCase(requestContext.getMethod())) {
       return;
     }
 
     String ipKey = ClientIp.resolve(requestContext, serverRequest, config.trustForwardedHeaders());
-    String userKey = extractUserKey(requestContext);
     requestContext.setProperty(PROP_IP_KEY, ipKey);
+    // A token path has no account to key on: the secret is the whole request, and reading it out
+    // to count per token would only help an attacker learn which ones exist. The IP is the key.
+    String userKey = tokenPath ? null : extractUserKey(requestContext);
     if (userKey != null) {
       requestContext.setProperty(PROP_USER_KEY, userKey);
     }
+    requestContext.setProperty(PROP_TOKEN_PATH, tokenPath);
 
     if (protection.isBlocked(ipKey) || protection.isBlocked(userKey)) {
       requestContext.abortWith(
@@ -87,7 +93,10 @@ public class BruteForceFilter implements ContainerRequestFilter, ContainerRespon
               .entity(
                   com.shelfj.web.ApiResponse.error(
                       com.shelfj.web.ErrorBody.of(
-                          "LOGIN_LOCKED", "Too many failed login attempts - try later")))
+                          tokenPath ? "TOKEN_LOCKED" : "LOGIN_LOCKED",
+                          tokenPath
+                              ? "Too many invalid tokens from this address - try later"
+                              : "Too many failed login attempts - try later")))
               .build());
     }
   }
@@ -101,21 +110,48 @@ public class BruteForceFilter implements ContainerRequestFilter, ContainerRespon
     }
 
     String path = requestContext.getUriInfo().getPath();
-    if (!isLoginPath(path) || !"POST".equalsIgnoreCase(requestContext.getMethod())) {
+    if ((!isLoginPath(path) && !isTokenPath(path))
+        || !"POST".equalsIgnoreCase(requestContext.getMethod())) {
       return;
     }
 
     String userKey = (String) requestContext.getProperty(PROP_USER_KEY);
     String ipKey = (String) requestContext.getProperty(PROP_IP_KEY);
+    boolean tokenPath = Boolean.TRUE.equals(requestContext.getProperty(PROP_TOKEN_PATH));
 
     int status = responseContext.getStatus();
-    if (status == 401 || status == 403) {
+    // A wrong password is a 401; a wrong token is a 404, because the service answers "not one we
+    // issued" rather than "forbidden". Both are a guess that missed. A 400 is a malformed body,
+    // not a guess, and is not counted.
+    boolean missed = tokenPath ? status == 404 : (status == 401 || status == 403);
+    if (missed) {
       protection.recordFailure(userKey);
       protection.recordFailure(ipKey);
     } else if (status >= 200 && status < 300) {
       protection.recordSuccess(userKey);
       protection.recordSuccess(ipKey);
     }
+  }
+
+  /**
+   * @param path the request path
+   * @return whether it is one of the configured token-bearing public paths
+   */
+  private boolean isTokenPath(String path) {
+    if (path == null || config.bruteForceTokenPaths() == null) {
+      return false;
+    }
+    String normalizedPath = path.toLowerCase(Locale.ROOT);
+    while (normalizedPath.endsWith("/")) {
+      normalizedPath = normalizedPath.substring(0, normalizedPath.length() - 1);
+    }
+    for (String configured : config.bruteForceTokenPaths().split(",")) {
+      String suffix = configured.trim().toLowerCase(Locale.ROOT);
+      if (!suffix.isEmpty() && normalizedPath.endsWith(suffix)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

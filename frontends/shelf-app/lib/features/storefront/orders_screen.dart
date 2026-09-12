@@ -155,7 +155,7 @@ class _StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final (Color bg, Color fg) = switch (status.toUpperCase()) {
-      'FULFILLED' => (cs.tertiaryContainer, cs.onTertiaryContainer),
+      'FULFILLED' || 'PARTIALLY_FULFILLED' => (cs.tertiaryContainer, cs.onTertiaryContainer),
       'CONFIRMED' => (cs.primaryContainer, cs.onPrimaryContainer),
       'CANCELLED' || 'VOIDED' => (cs.errorContainer, cs.onErrorContainer),
       _ => (cs.surfaceContainerHighest, cs.onSurfaceVariant),

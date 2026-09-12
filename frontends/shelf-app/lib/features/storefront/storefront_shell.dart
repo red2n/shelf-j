@@ -207,6 +207,8 @@ class _AccountAction extends ConsumerWidget {
           context.go('/store/orders');
         } else if (v == 'preferences') {
           showPreferencesSheet(context);
+        } else if (v == 'privacy') {
+          context.go('/store/privacy');
         } else if (v == 'feedback') {
           showFeedbackSheet(context);
         } else if (v == 'logout') {
@@ -223,6 +225,8 @@ class _AccountAction extends ConsumerWidget {
         ),
         const PopupMenuItem(value: 'orders', child: Text('My orders')),
         const PopupMenuItem(value: 'preferences', child: Text('My preferences')),
+        const PopupMenuItem(
+            value: 'privacy', child: Text('Privacy & marketing')),
         const PopupMenuItem(value: 'feedback', child: Text('Send feedback')),
         const PopupMenuItem(value: 'logout', child: Text('Sign out')),
         const PopupMenuDivider(),

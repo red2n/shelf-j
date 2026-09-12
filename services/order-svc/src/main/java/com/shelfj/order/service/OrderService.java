@@ -2,6 +2,8 @@ package com.shelfj.order.service;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.order.domain.Domain;
+import com.shelfj.order.domain.Domain.AgeVerification;
+import com.shelfj.order.domain.Domain.AgeVerificationSummary;
 import com.shelfj.order.domain.Domain.ExceptionGrouping;
 import com.shelfj.order.domain.Domain.ExceptionRow;
 import com.shelfj.order.domain.Domain.GiftCard;
@@ -29,6 +31,7 @@ import com.shelfj.order.dto.Dtos.CreateSpecialOrderRequest;
 import com.shelfj.order.dto.Dtos.GenerateReceiptRequest;
 import com.shelfj.order.dto.Dtos.IssueGiftCardRequest;
 import com.shelfj.order.dto.Dtos.PlaceOrderRequest;
+import com.shelfj.order.dto.Dtos.RecordAgeCheckRequest;
 import com.shelfj.order.dto.Dtos.RedeemGiftCardRequest;
 import com.shelfj.order.dto.Dtos.ReloadGiftCardRequest;
 import com.shelfj.order.dto.Dtos.VoidRequest;
@@ -67,6 +70,7 @@ public class OrderService {
   @Inject StoreStatusRepository storeStatusRepo;
   @Inject com.shelfj.order.config.ServiceConfig config;
   @Inject com.shelfj.order.client.PricingClient pricing;
+  @Inject com.shelfj.order.client.CustomerLinkClient customerLink;
   @Inject com.shelfj.order.client.InventoryClient inventory;
   @Inject com.shelfj.order.client.NotificationClient notifications;
   @Inject com.shelfj.order.client.TenantClient tenants;
@@ -214,11 +218,19 @@ public class OrderService {
           "Tenant is suspended or blocked — orders cannot be placed at this time");
     // A signed-in storefront customer is bound to their own order from the authenticated identity —
     // never from the (untrusted) request body. Staff placing a POS order may still attach a
-    // customer
-    // explicitly via the body.
+    // customer explicitly via the body.
+    //
+    // SJ-D44: the two ids are not the same id. A login is global; the shop's customer record is
+    // per-tenant. Stamping the login into customer_id made every customer-keyed path — loyalty,
+    // the confirmation email, erasure — miss every online order. The login is recorded as a login,
+    // and the shop's record of that person is resolved from customer-svc, which creates one the
+    // first time. If that call fails the order still stands with its login id: a sale is never
+    // lost over a link, and the next order makes it.
+    UUID loginId = null;
     UUID customerId;
     if (ctx.hasRole("CUSTOMER") && ctx.userId() != null) {
-      customerId = ctx.userId();
+      loginId = ctx.userId();
+      customerId = customerLink.customerIdFor(tenantId, loginId, ctx.email()).orElse(null);
     } else {
       customerId = req.customerId() != null ? Parsing.uuid(req.customerId(), "customerId") : null;
     }
@@ -315,9 +327,21 @@ public class OrderService {
       }
       BigDecimal line = quotedLineNet != null ? quotedLineNet : unitPrice.multiply(ir.qty());
       subtotal = subtotal.add(line);
+      UUID instrumentId =
+          ir.weighingInstrumentId() == null || ir.weighingInstrumentId().isBlank()
+              ? null
+              : Parsing.uuid(ir.weighingInstrumentId(), "weighingInstrumentId");
       items.add(
           new OrderItem(
-              Ids.newId(), tenantId, orderId, variantId, ir.qty(), unitPrice, line, ir.notes()));
+              Ids.newId(),
+              tenantId,
+              orderId,
+              variantId,
+              ir.qty(),
+              unitPrice,
+              line,
+              ir.notes(),
+              instrumentId));
     }
 
     // Hold stock for ONLINE orders before persisting, so a short line rejects the checkout with
@@ -375,15 +399,23 @@ public class OrderService {
     BigDecimal total = subtotal.add(tax).subtract(disc).subtract(promoDiscount);
 
     boolean taxExempt = req.taxExempt() != null && req.taxExempt();
+    // SJ-D41: a catalog-mode till order is placed without prices and waits for a manager; it is
+    // not PENDING, so the stranded-order sweeper leaves it alone.
+    boolean awaitingPrice = Boolean.TRUE.equals(req.awaitingPrice());
+    if (awaitingPrice && !"POS".equalsIgnoreCase(req.channel())) {
+      throw ApiException.badRequest(
+          "ORDER_AWAITING_PRICE_POS_ONLY", "only a till order can be placed awaiting a price");
+    }
     Order order =
         new Order(
             orderId,
             tenantId,
             storeId,
             customerId,
+            loginId,
             req.channel(),
             fulfilment,
-            Order.STATUS_PENDING,
+            awaitingPrice ? Order.STATUS_AWAITING_PRICE : Order.STATUS_PENDING,
             subtotal,
             tax,
             disc,
@@ -410,7 +442,7 @@ public class OrderService {
           repo.createOrder(
               order,
               items,
-              Events.orderPlaced(tenantId, orderId, req.channel(), customerId, storeId),
+              Events.orderPlaced(tenantId, orderId, req.channel(), customerId, loginId, storeId),
               discountAudit,
               quoted == null ? List.of() : quoted.applied());
       // Spending the coupon is deliberately the last thing, and deliberately outside the order's
@@ -455,6 +487,8 @@ public class OrderService {
    * @param tenantId owning tenant
    * @param storeId restrict to one store, or {@code null}
    * @param customerId restrict to one customer, or {@code null}
+   * @param loginId restrict to the orders one login placed, or {@code null} — a shopper's own
+   *     history filters on this, not on the customer id (SJ-D44)
    * @param channel restrict to {@code ONLINE} or {@code POS}, or {@code null}
    * @param status restrict to one order status, or {@code null}
    * @param from inclusive lower bound on creation time, or {@code null}
@@ -468,6 +502,7 @@ public class OrderService {
       UUID tenantId,
       UUID storeId,
       UUID customerId,
+      UUID loginId,
       String channel,
       String status,
       Instant from,
@@ -494,6 +529,7 @@ public class OrderService {
             tenantId,
             storeId,
             customerId,
+            loginId,
             channel,
             status,
             from,
@@ -509,6 +545,30 @@ public class OrderService {
     return new OrderPage(
         page, com.shelfj.web.Cursor.encode(last.createdAt().toString() + "|" + last.id()));
   }
+
+  /** Hard cap on one export, so a data request cannot read an unbounded table into memory. */
+  private static final int EXPORT_MAX_ORDERS = 2000;
+
+  /**
+   * Every order one person placed at this shop, with their lines — the sales half of a data export
+   * (UK GDPR art.20), assembled by customer-svc.
+   *
+   * @param tenantId owning tenant
+   * @param customerId the shop's record of the person, or {@code null}
+   * @param loginId the login they sign in with, or {@code null}
+   * @return the orders newest first, each with its lines; empty when both ids are null
+   */
+  public List<OrderWithItems> exportOrdersFor(UUID tenantId, UUID customerId, UUID loginId) {
+    if (customerId == null && loginId == null) {
+      return List.of();
+    }
+    return repo.listOrdersForSubject(tenantId, customerId, loginId, EXPORT_MAX_ORDERS).stream()
+        .map(o -> new OrderWithItems(o, repo.findOrderItems(tenantId, o.id())))
+        .toList();
+  }
+
+  /** An order and its lines, as the export needs them together. */
+  public record OrderWithItems(Order order, List<com.shelfj.order.domain.Domain.OrderItem> items) {}
 
   /**
    * Reads an order with tenant scoping but <strong>no</strong> object-level authorization.
@@ -560,7 +620,10 @@ public class OrderService {
     // request carries a tenant and no principal too, so the shape was reachable from outside and
     // any id could be read by anyone who had one. The internal callers now stamp a staff role
     // (payment-svc OrderClient, notification-svc CustomerClient), so nothing needs the exemption.
-    if (order.customerId() == null || !order.customerId().equals(ctx.userId()))
+    // Matched on the login the order was placed with, not the customer id: they are different ids
+    // (SJ-D44), and the login is the one the token carries. An order with no login was not placed
+    // by a shopper, so no shopper may read it.
+    if (order.loginId() == null || !order.loginId().equals(ctx.userId()))
       throw ApiException.notFound("ORDER_NOT_FOUND", "order not found");
   }
 
@@ -795,6 +858,82 @@ public class OrderService {
    * @throws ApiException {@code ORDER_NOT_FOUND} (404) when the caller may not read the sale;
    *     {@code ORDER_RECEIPT_NOT_ISSUED} (404) when no receipt has been issued
    */
+  /**
+   * The receipt for a sale, waiting a bounded time for it to be issued. The number is taken when
+   * the payment that completes a till sale lands, a Kafka hop after the tender, so the till used to
+   * poll sixteen times over eight seconds and print without a number when order-svc was slow. One
+   * request that waits here instead costs one round trip, and the wait is capped so a stuck
+   * consumer never holds a till.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the sale
+   * @param ctx caller identity, for the object-level check
+   * @param waitSeconds how long to wait, 0..20
+   * @return the receipt
+   * @throws ApiException {@code ORDER_RECEIPT_NOT_ISSUED} (404) when it is still not issued
+   */
+  public Domain.FiscalReceipt awaitReceipt(
+      UUID tenantId, UUID orderId, TenantContext ctx, int waitSeconds) {
+    requireReadAccess(getOrder(tenantId, orderId), ctx);
+    long deadline = System.nanoTime() + Math.min(Math.max(waitSeconds, 0), 20) * 1_000_000_000L;
+    do {
+      var found = receiptRepo.findByOrder(tenantId, orderId);
+      if (found.isPresent()) {
+        return found.get();
+      }
+    } while (System.nanoTime() < deadline && pauseBriefly());
+    throw ApiException.notFound(
+        "ORDER_RECEIPT_NOT_ISSUED", "No fiscal receipt has been issued for this sale");
+  }
+
+  /** One poll interval; false when the thread was interrupted, which ends the wait. */
+  private static boolean pauseBriefly() {
+    try {
+      Thread.sleep(250);
+      return true;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
+  }
+
+  /**
+   * The series a store runs: code, period, where the counter has got to, and the prefix.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store
+   * @return the counters, newest period first
+   */
+  public List<com.shelfj.order.repo.FiscalReceiptRepository.ReceiptSeries> receiptSeriesConfig(
+      UUID tenantId, UUID storeId) {
+    return receiptRepo.listSeriesConfig(tenantId, storeId);
+  }
+
+  /**
+   * Sets the prefix a series prints in front of its numbers, opening the series if it is new.
+   *
+   * @param tenantId owning tenant
+   * @param storeId the store
+   * @param series the series code; MAIN when blank
+   * @param period the fiscal period, e.g. 2026
+   * @param prefix letters, digits and hyphens, at most 16; blank for none
+   * @return the counter as it now stands
+   * @throws ApiException {@code RECEIPT_PREFIX_INVALID} (400)
+   */
+  public com.shelfj.order.repo.FiscalReceiptRepository.ReceiptSeries setReceiptSeriesPrefix(
+      UUID tenantId, UUID storeId, String series, String period, String prefix) {
+    String p = prefix == null || prefix.isBlank() ? null : prefix.trim().toUpperCase(Locale.ROOT);
+    if (p != null && !p.matches("^[A-Z0-9][A-Z0-9-]{0,15}$")) {
+      throw ApiException.badRequest(
+          "RECEIPT_PREFIX_INVALID", "a prefix is letters, digits and hyphens, at most 16");
+    }
+    if (period == null || !period.trim().matches("^[0-9]{4}(-[0-9]{2})?$")) {
+      throw ApiException.badRequest("RECEIPT_PERIOD_INVALID", "period is a year, e.g. 2026");
+    }
+    return receiptRepo.setSeriesPrefix(
+        tenantId, storeId, seriesOrDefault(series), period.trim(), p);
+  }
+
   public Domain.FiscalReceipt receiptOf(UUID tenantId, UUID orderId, TenantContext ctx) {
     requireReadAccess(getOrder(tenantId, orderId), ctx);
     return receiptOf(tenantId, orderId);
@@ -848,7 +987,102 @@ public class OrderService {
     out.put("intact", gaps.isEmpty());
     out.put(
         "gaps", gaps.stream().map(g -> java.util.Map.of("from", g.from(), "to", g.to())).toList());
+    // 18.4: a second, independent verdict — not whether a number is missing, but whether any
+    // document's stored figures still match the hash written when it was issued.
+    var chain = receiptRepo.verifyChain(tenantId, storeId, s, period);
+    out.put("chainIntact", chain.intact());
+    out.put("chainFrom", chain.from());
+    out.put("chainBrokenAt", chain.brokenAt());
     return out;
+  }
+
+  /**
+   * The register as a file (18.4): every document in a series with its hashes, as CSV rows or as
+   * JSON with the order lines behind each document. Management-only at the resource.
+   *
+   * @param format {@code csv} or {@code json}
+   * @return the CSV text, or the JSON-shaped map
+   */
+  public Object exportRegister(
+      UUID tenantId, UUID storeId, String series, String period, String format) {
+    String s = seriesOrDefault(series);
+    var docs = receiptRepo.listSeries(tenantId, storeId, s, period, 1_000_000);
+    if ("json".equalsIgnoreCase(format)) {
+      var lines = new java.util.HashMap<Long, List<Map<String, Object>>>();
+      for (var l : receiptRepo.linesInSeries(tenantId, storeId, s, period)) {
+        var line = new LinkedHashMap<String, Object>();
+        line.put("variantId", l.variantId().toString());
+        line.put("qty", l.qty());
+        line.put("unitPrice", l.unitPrice());
+        line.put("lineTotal", l.lineTotal());
+        lines.computeIfAbsent(l.number(), k -> new java.util.ArrayList<>()).add(line);
+      }
+      var out = new LinkedHashMap<String, Object>();
+      out.put("storeId", storeId.toString());
+      out.put("seriesCode", s);
+      out.put("period", period);
+      out.put("generatedAt", java.time.Instant.now().toString());
+      out.put(
+          "documents",
+          docs.stream()
+              .map(
+                  d -> {
+                    var m = new LinkedHashMap<String, Object>();
+                    m.put("number", d.number());
+                    m.put("fullNumber", d.fullNumber());
+                    m.put("issuedAt", d.issuedAt().toString());
+                    m.put("orderId", d.orderId().toString());
+                    m.put("currency", d.currency());
+                    m.put("grossTotal", d.grossTotal());
+                    m.put("taxTotal", d.taxTotal());
+                    m.put("voidedAt", d.voidedAt() == null ? null : d.voidedAt().toString());
+                    m.put("voidReason", d.voidReason());
+                    m.put("prevHash", d.prevHash());
+                    m.put("hash", d.hash());
+                    m.put("lines", lines.getOrDefault(d.number(), List.of()));
+                    return m;
+                  })
+              .toList());
+      return out;
+    }
+    StringBuilder csv =
+        new StringBuilder(
+            "number,fullNumber,issuedAt,orderId,currency,grossTotal,taxTotal,voidedAt,voidReason,"
+                + "prevHash,hash\n");
+    for (var d : docs) {
+      csv.append(d.number())
+          .append(',')
+          .append(csvCell(d.fullNumber()))
+          .append(',')
+          .append(d.issuedAt())
+          .append(',')
+          .append(d.orderId())
+          .append(',')
+          .append(d.currency())
+          .append(',')
+          .append(d.grossTotal().toPlainString())
+          .append(',')
+          .append(d.taxTotal().toPlainString())
+          .append(',')
+          .append(d.voidedAt() == null ? "" : d.voidedAt().toString())
+          .append(',')
+          .append(csvCell(d.voidReason()))
+          .append(',')
+          .append(csvCell(d.prevHash()))
+          .append(',')
+          .append(csvCell(d.hash()))
+          .append('\n');
+    }
+    return csv.toString();
+  }
+
+  private static String csvCell(String v) {
+    if (v == null) {
+      return "";
+    }
+    return v.contains(",") || v.contains("\"") || v.contains("\n")
+        ? "\"" + v.replace("\"", "\"\"") + "\""
+        : v;
   }
 
   private static String seriesOrDefault(String series) {
@@ -875,10 +1109,16 @@ public class OrderService {
     // PENDING covers pay-later online orders awaiting confirmation; both states must be
     // cancellable so their stock holds get released (inventory-svc reacts to OrderCancelled).
     Order order = getOrder(tenantId, orderId);
+    if (Order.STATUS_PARTIALLY_FULFILLED.equals(order.status()))
+      throw ApiException.conflict(
+          "ORDER_PARTLY_FULFILLED",
+          "some of the goods were handed over; take them back as a return or hand over the rest");
     if (!Order.STATUS_PENDING.equals(order.status())
+        && !Order.STATUS_AWAITING_PRICE.equals(order.status())
         && !Order.STATUS_CONFIRMED.equals(order.status()))
       throw ApiException.conflict(
-          "ORDER_CANNOT_CANCEL", "only PENDING or CONFIRMED orders can be cancelled");
+          "ORDER_CANNOT_CANCEL",
+          "only PENDING, AWAITING_PRICE or CONFIRMED orders can be cancelled");
     return repo.transitionOrderStatus(
         tenantId,
         orderId,
@@ -903,16 +1143,99 @@ public class OrderService {
    *     the order is not CONFIRMED
    */
   public Order fulfillOrder(UUID tenantId, UUID orderId, UUID userId) {
+    return fulfilOrder(tenantId, orderId, null, userId, null);
+  }
+
+  /**
+   * Prices a catalog-mode till order (SJ-D41): a manager gives every line its unit price, the
+   * totals are recomputed, and the order becomes PENDING — payable at the till or in Admin → Orders
+   * → Collect payment, and swept as stranded only if it then sits unpaid.
+   *
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404); {@code ORDER_NOT_AWAITING_PRICE} (409);
+   *     {@code ORDER_PRICE_LINE_MISSING} / {@code ORDER_PRICE_LINE_UNKNOWN} (400)
+   */
+  public Order priceOrder(
+      UUID tenantId,
+      UUID orderId,
+      com.shelfj.order.dto.Dtos.PriceOrderRequest req,
+      UUID userId,
+      TenantContext ctx) {
     Order order = getOrder(tenantId, orderId);
-    List<OrderItem> items = repo.findOrderItems(tenantId, orderId);
-    return repo.transitionOrderStatus(
+    ctx.requireStoreAccess(order.storeId());
+    Map<UUID, BigDecimal> prices = new LinkedHashMap<>();
+    for (var line : req.lines()) {
+      if (line.unitPrice() == null || line.unitPrice().signum() < 0) {
+        throw ApiException.badRequest("ORDER_PRICE_INVALID", "a unit price cannot be negative");
+      }
+      prices.put(Parsing.uuid(line.variantId(), "variantId"), line.unitPrice());
+    }
+    if (prices.isEmpty()) {
+      throw ApiException.badRequest("ORDER_PRICE_LINE_MISSING", "no prices given");
+    }
+    BigDecimal tax = req.taxAmount() == null ? BigDecimal.ZERO : req.taxAmount();
+    return repo.priceOrder(tenantId, orderId, prices, tax, userId);
+  }
+
+  /**
+   * Hands over some or all of an order (SJ-D35). With lines, only those quantities leave the store
+   * now and the order is PARTIALLY_FULFILLED until every line is complete; without, everything
+   * still outstanding is handed over, which for an untouched order is the old all-or-nothing
+   * fulfilment. Each call emits one OrderFulfilled carrying only this call's quantities.
+   *
+   * @param tenantId owning tenant
+   * @param orderId the order
+   * @param req the lines and quantities handed over now; null or empty for everything outstanding
+   * @param userId the staff member
+   * @param ctx caller context, checked for access to the order's store; null for internal callers
+   * @return the order as it now stands
+   * @throws ApiException {@code ORDER_NOT_FOUND} (404); {@code ORDER_NOT_FULFILLABLE} (409) unless
+   *     CONFIRMED or PARTIALLY_FULFILLED; {@code ORDER_FULFIL_LINE_UNKNOWN} (400); {@code
+   *     ORDER_FULFIL_QTY_EXCEEDS_OUTSTANDING} (409); {@code ORDER_NOTHING_OUTSTANDING} (409)
+   */
+  public Order fulfilOrder(
+      UUID tenantId,
+      UUID orderId,
+      com.shelfj.order.dto.Dtos.FulfilRequest req,
+      UUID userId,
+      TenantContext ctx) {
+    Order order = getOrder(tenantId, orderId);
+    if (ctx != null) {
+      ctx.requireStoreAccess(order.storeId());
+    }
+    Map<UUID, BigDecimal> wanted = new LinkedHashMap<>();
+    if (req != null && req.lines() != null) {
+      for (var line : req.lines()) {
+        if (line.qty() == null || line.qty().signum() <= 0) {
+          throw ApiException.badRequest(
+              "ORDER_FULFIL_QTY_INVALID", "a handed-over quantity must be greater than zero");
+        }
+        wanted.merge(Parsing.uuid(line.variantId(), "variantId"), line.qty(), BigDecimal::add);
+      }
+    }
+    return repo.fulfilLines(
         tenantId,
         orderId,
-        Order.STATUS_CONFIRMED,
-        Order.STATUS_FULFILLED,
-        "fulfilled",
+        wanted,
         userId,
-        Events.orderFulfilled(tenantId, orderId, order.storeId(), items));
+        now ->
+            Events.orderFulfilled(
+                tenantId,
+                orderId,
+                order.storeId(),
+                now.stream()
+                    .map(
+                        l ->
+                            new OrderItem(
+                                null,
+                                tenantId,
+                                orderId,
+                                l.variantId(),
+                                l.qty(),
+                                BigDecimal.ZERO,
+                                BigDecimal.ZERO,
+                                null,
+                                null))
+                    .toList()));
   }
 
   // ── Returns ───────────────────────────────────────────────────────────────
@@ -943,6 +1266,7 @@ public class OrderService {
     // never left the store — cancel it instead; returning it recorded a refund for goods, and
     // often money, that were never exchanged. A fully REFUNDED order has nothing left to refund.
     if (!Order.STATUS_FULFILLED.equals(order.status())
+        && !Order.STATUS_PARTIALLY_FULFILLED.equals(order.status())
         && !Order.STATUS_PARTIALLY_REFUNDED.equals(order.status()))
       throw ApiException.conflict(
           "ORDER_CANNOT_RETURN",
@@ -1414,10 +1738,177 @@ public class OrderService {
    * open ones keep their delivery details until they finish, then {@link #sweepErasures} takes
    * them.
    *
+   * @param tenantId the shop that erased the customer
+   * @param customerId the erased customer record
+   * @param loginId the login that record was linked to, or {@code null} for a walk-in — the orders
+   *     that shopper placed online are filed under it (SJ-D44)
+   * @param eventId the event's id, which makes this idempotent
    * @return false when the event had already been applied
    */
-  public boolean handleCustomerErased(UUID tenantId, UUID customerId, UUID eventId) {
-    return repo.applyCustomerErasure(tenantId, customerId, eventId, "order-svc/customer-erased");
+  public boolean handleCustomerErased(UUID tenantId, UUID customerId, UUID loginId, UUID eventId) {
+    return repo.applyCustomerErasure(
+        tenantId, customerId, loginId, eventId, "order-svc/customer-erased");
+  }
+
+  // ── age verification: the due-diligence record ──────────────────────────────
+
+  /**
+   * Records one age check as the till made it (Licensing Act 2003 s.139: the defence is that all
+   * reasonable precautions were taken — and a precaution nobody can show was taken is none).
+   *
+   * <p>The rule fields come from the request because they are product-svc's answer at the moment of
+   * the check, and the record must say what the rule was then. The cashier comes from the token,
+   * never the body. Store access is enforced: a cashier records checks at their own store.
+   *
+   * @param req the check
+   * @param ctx caller identity
+   * @return the record as stored
+   * @throws ApiException {@code AGE_CHECK_REASON_REQUIRED} (400) for a refusal with no reason,
+   *     {@code AGE_CHECK_REASON_ON_PASS} (400) for a pass carrying one, {@code
+   *     AGE_CHECK_OUTCOME_UNKNOWN} / {@code AGE_CHECK_REASON_UNKNOWN} / {@code
+   *     AGE_CHECK_ID_TYPE_UNKNOWN} (400) for values outside the vocabulary; {@code
+   *     STORE_ACCESS_DENIED} (403) for another store
+   */
+  public AgeVerification recordAgeCheck(RecordAgeCheckRequest req, TenantContext ctx) {
+    UUID tenantId = ctx.requireTenantId();
+    UUID storeId = Parsing.uuid(req.storeId(), "storeId");
+    ctx.requireStoreAccess(storeId);
+    // The same projection placeOrder consults: a store another tenant owns is refused outright,
+    // whatever role the caller holds in their own — a record against someone else's store would
+    // be a record in the wrong shop's register.
+    if (!storeStatusRepo.isActive(tenantId, storeId))
+      throw ApiException.conflict(
+          "STORE_NOT_OPERATIONAL", "Store is closed, suspended or not this business's");
+    String outcome = req.outcome().trim().toUpperCase(Locale.ROOT);
+    if (!AgeVerification.OUTCOME_PASSED.equals(outcome)
+        && !AgeVerification.OUTCOME_REFUSED.equals(outcome)) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_OUTCOME_UNKNOWN", "outcome is PASSED or REFUSED, not " + req.outcome());
+    }
+    String reason = blankToNull(req.reason());
+    String idType = blankToNull(req.idType());
+    if (reason != null) {
+      reason = reason.toUpperCase(Locale.ROOT);
+      if (!AgeVerification.REASONS.contains(reason)) {
+        throw ApiException.badRequest("AGE_CHECK_REASON_UNKNOWN", "unknown reason: " + reason);
+      }
+    }
+    if (idType != null) {
+      idType = idType.toUpperCase(Locale.ROOT);
+      if (!AgeVerification.ID_TYPES.contains(idType)) {
+        throw ApiException.badRequest("AGE_CHECK_ID_TYPE_UNKNOWN", "unknown id type: " + idType);
+      }
+    }
+    boolean refused = AgeVerification.OUTCOME_REFUSED.equals(outcome);
+    if (refused && reason == null) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_REASON_REQUIRED", "a refusal records why: the reason is the record");
+    }
+    if (!refused && reason != null) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_REASON_ON_PASS", "a sale that went ahead has no refusal reason");
+    }
+    if (refused && idType != null) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_ID_TYPE_ON_REFUSAL", "an id type is recorded on a sale that went ahead");
+    }
+    var record =
+        new AgeVerification(
+            Ids.newId(),
+            tenantId,
+            storeId,
+            ctx.userId(),
+            req.posSessionId() == null ? null : Parsing.uuid(req.posSessionId(), "posSessionId"),
+            Parsing.uuid(req.variantId(), "variantId"),
+            req.category().trim().toUpperCase(Locale.ROOT),
+            req.minimumAge(),
+            req.country().trim().toUpperCase(Locale.ROOT),
+            Boolean.TRUE.equals(req.storePolicy()),
+            outcome,
+            reason,
+            idType,
+            req.orderId() == null ? null : Parsing.uuid(req.orderId(), "orderId"),
+            Instant.now());
+    return repo.recordAgeVerification(record);
+  }
+
+  private static String blankToNull(String s) {
+    return s == null || s.isBlank() ? null : s.trim();
+  }
+
+  /** A page of age checks and the cursor for the next one. */
+  public record AgeVerificationPage(List<AgeVerification> items, String nextCursor) {}
+
+  /**
+   * The age-check register, newest first, for a licensing officer or a manager.
+   *
+   * @param tenantId owning tenant
+   * @param storeIdStr one store, or {@code null}
+   * @param outcome PASSED, REFUSED, or {@code null}
+   * @param from inclusive lower bound, or {@code null}
+   * @param to exclusive upper bound, or {@code null}
+   * @param afterCursor cursor from the previous page, or {@code null}
+   * @param limit page size
+   * @return the page
+   * @throws ApiException {@code INVALID_CURSOR} (400) for a malformed cursor; {@code
+   *     AGE_CHECK_OUTCOME_UNKNOWN} (400) for an outcome outside the vocabulary
+   */
+  public AgeVerificationPage listAgeChecks(
+      UUID tenantId,
+      String storeIdStr,
+      String outcome,
+      Instant from,
+      Instant to,
+      String afterCursor,
+      int limit) {
+    UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "store") : null;
+    String outcomeFilter = null;
+    if (outcome != null && !outcome.isBlank()) {
+      outcomeFilter = outcome.trim().toUpperCase(Locale.ROOT);
+      if (!AgeVerification.OUTCOME_PASSED.equals(outcomeFilter)
+          && !AgeVerification.OUTCOME_REFUSED.equals(outcomeFilter)) {
+        throw ApiException.badRequest(
+            "AGE_CHECK_OUTCOME_UNKNOWN", "outcome is PASSED or REFUSED, not " + outcome);
+      }
+    }
+    Instant afterCheckedAt = null;
+    UUID afterId = null;
+    String rawKey = com.shelfj.web.Cursor.decode(afterCursor);
+    if (rawKey != null) {
+      int sep = rawKey.indexOf('|');
+      try {
+        if (sep < 0) throw new IllegalArgumentException("missing separator");
+        afterCheckedAt = Instant.parse(rawKey.substring(0, sep));
+        afterId = UUID.fromString(rawKey.substring(sep + 1));
+      } catch (RuntimeException e) {
+        throw new ApiException(400, "INVALID_CURSOR", "Malformed pagination cursor", List.of(), e);
+      }
+    }
+    List<AgeVerification> rows =
+        repo.listAgeVerifications(
+            tenantId, storeId, outcomeFilter, from, to, afterCheckedAt, afterId, limit + 1);
+    if (rows.size() <= limit) {
+      return new AgeVerificationPage(rows, null);
+    }
+    List<AgeVerification> page = rows.subList(0, limit);
+    AgeVerification last = page.get(page.size() - 1);
+    return new AgeVerificationPage(
+        page, com.shelfj.web.Cursor.encode(last.checkedAt().toString() + "|" + last.id()));
+  }
+
+  /**
+   * The counts a licensing officer asks for first: how many checks, how many refusals, and why.
+   *
+   * @param tenantId owning tenant
+   * @param storeIdStr one store, or {@code null} for the tenant
+   * @param from inclusive lower bound, or {@code null}
+   * @param to exclusive upper bound, or {@code null}
+   * @return the summary
+   */
+  public AgeVerificationSummary summariseAgeChecks(
+      UUID tenantId, String storeIdStr, Instant from, Instant to) {
+    UUID storeId = storeIdStr != null ? Parsing.uuid(storeIdStr, "store") : null;
+    return repo.summariseAgeVerifications(tenantId, storeId, from, to);
   }
 
   /** Redacts orders that have finished since their customer was erased. */

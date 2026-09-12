@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
@@ -8,6 +10,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import 'store_instruments_dialog.dart';
 
 class StoresScreen extends ConsumerWidget {
   const StoresScreen({super.key});
@@ -15,6 +18,8 @@ class StoresScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final storesAsync = ref.watch(storesProvider);
+    final auth = ref.watch(authNotifierProvider).value;
+    final isManager = auth is AuthAuthenticated && auth.isManager;
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -109,6 +114,15 @@ class StoresScreen extends ConsumerWidget {
                             onPressed: () => _showZonesDialog(context, ref, s),
                             icon: const Icon(Icons.grid_view_outlined, size: 18),
                             label: const Text('Zones'),
+                          ),
+                          TextButton.icon(
+                            onPressed: () => showDialog<void>(
+                              context: context,
+                              builder: (_) => StoreInstrumentsDialog(
+                                  store: s, isManager: isManager),
+                            ),
+                            icon: const Icon(Icons.scale_outlined, size: 18),
+                            label: const Text('Instruments'),
                           ),
                           TextButton.icon(
                             onPressed: () =>

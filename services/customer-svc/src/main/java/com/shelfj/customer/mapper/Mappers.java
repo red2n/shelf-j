@@ -88,6 +88,25 @@ public final class Mappers {
   }
 
   /**
+   * Converts one store-credit ledger entry to its wire form.
+   *
+   * @param e the entry to convert
+   * @return its API representation
+   */
+  public static com.shelfj.customer.dto.Dtos.StoreCreditLedgerEntryResponse toStoreCreditEntry(
+      com.shelfj.customer.domain.Domain.StoreCreditLedgerEntry e) {
+    return new com.shelfj.customer.dto.Dtos.StoreCreditLedgerEntryResponse(
+        e.id().toString(),
+        e.type(),
+        e.amount(),
+        e.balanceAfter(),
+        e.currency(),
+        e.orderId() == null ? null : e.orderId().toString(),
+        e.reason(),
+        ts(e.createdAt()));
+  }
+
+  /**
    * Converts a store-credit account to its wire form.
    *
    * @param sc the account to convert
@@ -95,6 +114,37 @@ public final class Mappers {
    */
   public static StoreCreditAccountResponse toStoreCredit(StoreCreditAccount sc) {
     return new StoreCreditAccountResponse(sc.customerId().toString(), sc.balance(), sc.currency());
+  }
+
+  /**
+   * Converts one channel's marketing preference to its wire form.
+   *
+   * @param p the preference to convert
+   * @return its API representation
+   */
+  public static com.shelfj.customer.dto.Dtos.MarketingPreferenceResponse toMarketingPreference(
+      com.shelfj.customer.domain.Domain.MarketingPreference p) {
+    return new com.shelfj.customer.dto.Dtos.MarketingPreferenceResponse(
+        p.channel(), p.granted(), p.basis(), ts(p.updatedAt()));
+  }
+
+  /**
+   * Converts one recorded consent change to its wire form.
+   *
+   * @param e the entry to convert
+   * @return its API representation
+   */
+  public static com.shelfj.customer.dto.Dtos.MarketingConsentEntryResponse toMarketingConsentEntry(
+      com.shelfj.customer.domain.Domain.MarketingConsentEntry e) {
+    return new com.shelfj.customer.dto.Dtos.MarketingConsentEntryResponse(
+        e.id().toString(),
+        e.channel(),
+        e.granted(),
+        e.basis(),
+        e.source(),
+        e.notice(),
+        e.actorId() == null ? null : e.actorId().toString(),
+        ts(e.recordedAt()));
   }
 
   private static String ts(Instant i) {
