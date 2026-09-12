@@ -75,6 +75,10 @@
             <version>${shelfj.version}</version>
         </dependency>
         <dependency>
+            <groupId>io.helidon.microprofile</groupId>
+            <artifactId>helidon-microprofile-fault-tolerance</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.shelfj</groupId>
             <artifactId>common-service</artifactId>
         </dependency>

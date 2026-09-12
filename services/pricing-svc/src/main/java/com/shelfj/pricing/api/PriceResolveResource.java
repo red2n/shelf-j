@@ -1,5 +1,6 @@
 package com.shelfj.pricing.api;
 
+import com.shelfj.pricing.dto.Dtos;
 import com.shelfj.pricing.dto.Dtos.QuoteBasketRequest;
 import com.shelfj.pricing.dto.Dtos.RecordRedemptionsRequest;
 import com.shelfj.pricing.dto.Dtos.RecordRedemptionsResponse;
@@ -9,13 +10,16 @@ import com.shelfj.pricing.dto.Dtos.ResolvePriceRequest;
 import com.shelfj.pricing.mapper.Mappers;
 import com.shelfj.pricing.service.PricingService;
 import com.shelfj.web.ApiResponse;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
 import com.shelfj.web.Validations;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -32,6 +36,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 public class PriceResolveResource {
 
   @Inject PricingService svc;
+  @Inject com.shelfj.pricing.service.MarkdownService markdowns;
   @Inject TenantContext ctx;
 
   /**
@@ -124,6 +129,59 @@ public class PriceResolveResource {
     return Response.ok(
             ApiResponse.ok(svc.quoteBasket(req, ctx), ApiResponse.Meta.of(ctx.requestId())))
         .build();
+  }
+
+  /**
+   * What a scanned reduced-price sticker means at the till (05.4).
+   *
+   * @param code the sticker's thirteen digits
+   * @return the live markdown behind it
+   */
+  @Operation(
+      summary = "What a reduced-price sticker means",
+      description =
+          "The live markdown behind a scanned sticker: the product, the reduced price, the date"
+              + " and how many packs are left at that price. 404 for a code no live sticker"
+              + " carries; 409 when the batch is past its date or every stickered pack has sold."
+              + " Any staff role — this is what the till calls.")
+  @APIResponse(responseCode = "200", description = "The markdown behind the sticker")
+  @APIResponse(responseCode = "404", description = "No live sticker carries this code")
+  @APIResponse(responseCode = "409", description = "Expired, or sold out at this price")
+  @GET
+  @Path("/markdown-labels/{code}")
+  public Response markdownLabel(@PathParam("code") String code) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
+    return Response.ok(
+            ApiResponse.ok(Mappers.toLabelDto(markdowns.lookupLabel(ctx.requireTenantId(), code))))
+        .build();
+  }
+
+  /**
+   * Records what an order sold at reduced prices (05.4), called by order-svc after checkout.
+   *
+   * @param req the order and its markdown lines
+   * @return how many were recorded now
+   */
+  @Operation(
+      summary = "Record what an order sold at reduced prices",
+      description =
+          "Called by order-svc once an order is placed, so a markdown can run out and a report can"
+              + " say what reducing to clear cost. Once per markdown and order.")
+  @APIResponse(responseCode = "200", description = "Recorded")
+  @POST
+  @Path("/markdown-redemptions")
+  public Response recordMarkdownRedemptions(Dtos.RecordMarkdownRedemptionsRequest req) {
+    com.shelfj.web.Validations.validate(req);
+    java.util.Map<java.util.UUID, java.math.BigDecimal> byMarkdown =
+        new java.util.LinkedHashMap<>();
+    for (var l : req.lines()) {
+      byMarkdown.merge(
+          Parsing.uuid(l.markdownId(), "markdownId"), l.qty(), java.math.BigDecimal::add);
+    }
+    int written =
+        markdowns.recordRedemptions(
+            ctx.requireTenantId(), Parsing.uuid(req.orderId(), "orderId"), byMarkdown);
+    return Response.ok(ApiResponse.ok(java.util.Map.of("recorded", written))).build();
   }
 
   /**

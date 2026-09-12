@@ -6,6 +6,7 @@ import com.shelfj.order.dto.Dtos.ParkedSaleItemResponse;
 import com.shelfj.order.dto.Dtos.ParkedSaleResponse;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.web.ApiException;
+import com.shelfj.web.Parsing;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -210,7 +211,8 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO parked_sale_items (id, tenant_id, sale_id, variant_id, qty,"
-                + " unit_price, line_total, discount_amount, notes) VALUES (?,?,?,?,?,?,?,?,?)")) {
+                + " unit_price, line_total, discount_amount, notes, markdown_id)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, Ids.newId());
       ps.setObject(2, tenantId);
       ps.setObject(3, saleId);
@@ -220,6 +222,8 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
       ps.setBigDecimal(7, item.lineTotal());
       ps.setBigDecimal(8, item.discountAmount() == null ? BigDecimal.ZERO : item.discountAmount());
       ps.setString(9, item.notes());
+      ps.setObject(
+          10, item.markdownId() == null ? null : Parsing.uuid(item.markdownId(), "markdownId"));
       ps.executeUpdate();
     }
   }
@@ -262,7 +266,7 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "SELECT id, tenant_id, sale_id, variant_id, qty, unit_price, line_total,"
-                + " discount_amount, notes"
+                + " discount_amount, notes, markdown_id"
                 + " FROM parked_sale_items WHERE tenant_id=? AND sale_id=?")) {
       ps.setObject(1, tenantId);
       ps.setObject(2, saleId);
@@ -276,7 +280,10 @@ public class ParkedSaleRepository extends BaseOutboxRepository {
                   rs.getBigDecimal("unit_price"),
                   rs.getBigDecimal("discount_amount"),
                   rs.getBigDecimal("line_total"),
-                  rs.getString("notes")));
+                  rs.getString("notes"),
+                  rs.getObject("markdown_id", UUID.class) == null
+                      ? null
+                      : rs.getObject("markdown_id", UUID.class).toString()));
         }
       }
       return list;

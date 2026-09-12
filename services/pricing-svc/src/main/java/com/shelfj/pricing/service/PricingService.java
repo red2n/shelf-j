@@ -56,6 +56,7 @@ public class PricingService {
 
   @Inject PricingRepository repo;
   @Inject PromotionEngine engine;
+  @Inject MarkdownService markdowns;
   @Inject TaxReportRepository taxReportRepo;
 
   // ── VAT Rates ─────────────────────────────────────────────────────────────
@@ -596,7 +597,14 @@ public class PricingService {
             : Parsing.uuid(req.customerId(), "customerId");
 
     // 1. Base prices, one resolution per line.
+    //
+    // A line a reduced-price sticker was scanned for (05.4) is priced at the sticker, not the
+    // list: the markdown is checked as the till would check it — live, in date, this variant, this
+    // store, packs left — and the line then stands outside the promotion engine altogether. A
+    // sticker is already the reduction; a promotion on top would sell short-dated stock below
+    // what the ladder decided.
     List<BasketLine> basket = new java.util.ArrayList<>();
+    List<UUID> lineMarkdowns = new java.util.ArrayList<>();
     List<String> vatCodes = new java.util.ArrayList<>();
     String currency = null;
     for (var l : req.lines()) {
@@ -605,32 +613,48 @@ public class PricingService {
       if (qty.signum() <= 0)
         throw ApiException.badRequest(
             "PRICING_INVALID_QTY", "qty must be greater than zero for variant " + l.variantId());
-      var baseItem =
-          repo.resolveBasePrice(tenantId, variantId, channel, qty)
-              .orElseThrow(
-                  () ->
-                      ApiException.notFound(
-                          "PRICING_PRICE_NOT_FOUND",
-                          "no active price configured for variant " + l.variantId()));
-      basket.add(new BasketLine(variantId, qty, baseItem.price()));
+      UUID markdownId = Parsing.optionalUuid(l.markdownId(), "markdownId");
+      if (markdownId != null) {
+        var md = markdowns.forQuoteLine(tenantId, markdownId, variantId, storeId, qty);
+        basket.add(new BasketLine(variantId, qty, md.markdownPrice()));
+        if (currency == null) currency = md.currency();
+      } else {
+        var baseItem =
+            repo.resolveBasePrice(tenantId, variantId, channel, qty)
+                .orElseThrow(
+                    () ->
+                        ApiException.notFound(
+                            "PRICING_PRICE_NOT_FOUND",
+                            "no active price configured for variant " + l.variantId()));
+        basket.add(new BasketLine(variantId, qty, baseItem.price()));
+        if (currency == null)
+          currency =
+              repo.findPriceList(tenantId, baseItem.priceListId())
+                  .map(PriceList::currency)
+                  .orElse(null);
+      }
+      lineMarkdowns.add(markdownId);
       vatCodes.add(
           repo.findProductVatCategory(tenantId, variantId)
               .map(ProductVatCategory::vatCode)
               .orElse(VatRate.T1));
-      if (currency == null)
-        currency =
-            repo.findPriceList(tenantId, baseItem.priceListId())
-                .map(PriceList::currency)
-                .orElse(null);
     }
 
-    // 2. Promotions, over the whole basket.
+    // 2. Promotions, over the lines a sticker did not already price.
+    List<BasketLine> promotable = new java.util.ArrayList<>();
+    int lastPromotable = -1;
+    for (int i = 0; i < basket.size(); i++) {
+      if (lineMarkdowns.get(i) == null) {
+        promotable.add(basket.get(i));
+        lastPromotable = i;
+      }
+    }
     List<Promotion> candidates =
         repo.findCandidatePromotions(tenantId, storeId, channel, Instant.now());
     var scopes =
         repo.findPromotionVariantScopes(tenantId, candidates.stream().map(Promotion::id).toList());
     var exhausted = repo.findExhaustedPromotions(tenantId, candidates, customerId);
-    var outcome = engine.apply(basket, candidates, scopes, req.couponCodes(), exhausted);
+    var outcome = engine.apply(promotable, candidates, scopes, req.couponCodes(), exhausted);
 
     // 3. Fold the line discounts back onto their lines.
     //
@@ -651,6 +675,7 @@ public class PricingService {
     Map<UUID, BigDecimal> variantLineValue = new java.util.LinkedHashMap<>();
     Map<UUID, Integer> lastLineOfVariant = new java.util.LinkedHashMap<>();
     for (int i = 0; i < basket.size(); i++) {
+      if (lineMarkdowns.get(i) != null) continue;
       BasketLine b = basket.get(i);
       variantLineValue.merge(
           b.variantId(),
@@ -669,8 +694,13 @@ public class PricingService {
         outcome.basketDiscounts().stream()
             .map(com.shelfj.pricing.domain.Domain.LineDiscount::amount)
             .reduce(BigDecimal.ZERO, BigDecimal::add);
+    BigDecimal promotableSubtotal =
+        promotable.stream()
+            .map(b -> b.unitPrice().multiply(b.qty()))
+            .reduce(BigDecimal.ZERO, BigDecimal::add)
+            .setScale(2, RoundingMode.HALF_UP);
     BigDecimal afterLine =
-        subtotal.subtract(
+        promotableSubtotal.subtract(
             perLineDiscount.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add));
 
     // 4. Per-line VAT, on each line's share of what is left.
@@ -680,24 +710,27 @@ public class PricingService {
     for (int i = 0; i < basket.size(); i++) {
       BasketLine b = basket.get(i);
       BigDecimal lineTotal = b.unitPrice().multiply(b.qty()).setScale(2, RoundingMode.HALF_UP);
+      boolean stickered = lineMarkdowns.get(i) != null;
       BigDecimal lineDisc =
-          shareOfVariantDiscount(
-                  b.variantId(),
-                  i,
-                  lineTotal,
-                  perLineDiscount,
-                  variantLineValue,
-                  lastLineOfVariant,
-                  variantDiscountTaken)
-              .min(lineTotal);
+          stickered
+              ? BigDecimal.ZERO
+              : shareOfVariantDiscount(
+                      b.variantId(),
+                      i,
+                      lineTotal,
+                      perLineDiscount,
+                      variantLineValue,
+                      lastLineOfVariant,
+                      variantDiscountTaken)
+                  .min(lineTotal);
       BigDecimal net = lineTotal.subtract(lineDisc);
 
       // The basket discount is shared by value. The last line takes the rounding remainder, so
       // the apportioned parts always sum to exactly the discount rather than a penny either side.
       BigDecimal share;
-      if (basketDiscount.signum() == 0 || afterLine.signum() <= 0) {
+      if (stickered || basketDiscount.signum() == 0 || afterLine.signum() <= 0) {
         share = BigDecimal.ZERO;
-      } else if (i == basket.size() - 1) {
+      } else if (i == lastPromotable) {
         share = basketDiscount.subtract(apportioned);
       } else {
         share = basketDiscount.multiply(net).divide(afterLine, 2, RoundingMode.HALF_UP);
@@ -721,7 +754,8 @@ public class PricingService {
               lineDisc,
               net,
               vat,
-              vatCodes.get(i)));
+              vatCodes.get(i),
+              lineMarkdowns.get(i)));
     }
 
     BigDecimal totalDiscount = outcome.totalDiscount();

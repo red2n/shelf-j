@@ -63,7 +63,8 @@ public final class Mappers {
         i.notes(),
         str(i.weighingInstrumentId()),
         i.fulfilledQty(),
-        i.vatAmount());
+        i.vatAmount(),
+        str(i.markdownId()));
   }
 
   /**

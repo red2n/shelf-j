@@ -45,7 +45,12 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     setState(() => _scanning = true);
     PosLine? line;
     try {
-      line = await _scanLabel(code) ?? await scanBarcode(ref, code);
+      // A reduced-price sticker first (05.4): the code names the markdown and
+      // its price. Then a labelling scale's label, then the catalogue.
+      line =
+          await scanMarkdownLabel(ref, code) ??
+          await _scanLabel(code) ??
+          await scanBarcode(ref, code);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -88,21 +93,36 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       // weight with the reason.
       return null;
     }
-    for (final scale in certified.where((i) => i.isLabelling && i.labelScheme != null)) {
+    for (final scale in certified.where(
+      (i) => i.isLabelling && i.labelScheme != null,
+    )) {
       final reading = readVariableMeasureBarcode(code, scale.labelScheme!);
       if (reading == null) continue;
       final line = await scanBarcode(ref, reading.itemCode);
-      final qty = reading.weight ?? quantityFromPrice(reading.price!, line.unitPrice);
+      final qty =
+          reading.weight ?? quantityFromPrice(reading.price!, line.unitPrice);
       if (qty == null || qty <= 0) {
         throw StateError('The label prices an item that has no unit price.');
       }
       return line.copyWith(
-          qty: qty, soldBy: 'WEIGHT', unit: 'kg', weighingInstrumentId: scale.id);
+        qty: qty,
+        soldBy: 'WEIGHT',
+        unit: 'kg',
+        weighingInstrumentId: scale.id,
+      );
     }
     return null;
   }
 
   String _friendly(Object e) {
+    // A sticker pricing-svc refused says why in its own words: past its date,
+    // every pack sold, taken off.
+    if ((apiErrorCode(e) ?? '').startsWith('PRICING_MARKDOWN')) {
+      return friendlyError(
+        e,
+        fallback: 'This reduced-price sticker cannot be sold.',
+      );
+    }
     // Prefer the backend's structured error; PRODUCT_NOT_FOUND (or a bare 404)
     // means the scanned barcode matched nothing.
     if (apiErrorCode(e) == 'PRODUCT_NOT_FOUND' ||
@@ -128,8 +148,9 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     ref.read(posCartProvider.notifier).addOrIncrement(line);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-          content: Text('Added ${offer.name}'),
-          duration: const Duration(milliseconds: 600)),
+        content: Text('Added ${offer.name}'),
+        duration: const Duration(milliseconds: 600),
+      ),
     );
   }
 
@@ -139,7 +160,13 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     // an item that cannot be sold to anyone.
     if (!await _passesRecallCheck(line)) return null;
     if (!await _passesAgeCheck(line)) return null;
-    final saleUnit = await fetchSaleUnit(ref.read(apiClientProvider).dio, line.variantId);
+    // A sticker prices the pack it is on, however the product is usually
+    // sold: nothing to weigh.
+    if (line.reduced) return line;
+    final saleUnit = await fetchSaleUnit(
+      ref.read(apiClientProvider).dio,
+      line.variantId,
+    );
     if (!mounted) return null;
     if (saleUnit is SoldEach) return line;
     if (saleUnit is SaleUnitUnknown) {
@@ -177,7 +204,11 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
         _snack(noCertifiedScaleMessage, error: true);
         return null;
       }
-      final picked = await pickInstrument(context, counters, itemName: line.name);
+      final picked = await pickInstrument(
+        context,
+        counters,
+        itemName: line.name,
+      );
       if (picked == null) return null;
       instrumentId = picked.id;
     }
@@ -194,21 +225,28 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     );
     if (qty == null) return null;
     return line.copyWith(
-        qty: qty, soldBy: measure.soldBy, unit: measure.unit, weighingInstrumentId: instrumentId);
+      qty: qty,
+      soldBy: measure.soldBy,
+      unit: measure.unit,
+      weighingInstrumentId: instrumentId,
+    );
   }
 
   /// The recall check, against the list the till keeps: blocked outright when
   /// every pack is recalled, a pack check when only some lots or dates are.
   Future<bool> _passesRecallCheck(PosLine line) async {
-    final result =
-        checkRecall(line.variantId, ref.read(activeRecallsProvider).items);
+    final result = checkRecall(
+      line.variantId,
+      ref.read(activeRecallsProvider).items,
+    );
     if (result is RecallClear) return true;
     if (!mounted) return false;
     if (result is RecallBlocked) {
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (_) => RecallStopSaleDialog(itemName: line.name, item: result.item),
+        builder: (_) =>
+            RecallStopSaleDialog(itemName: line.name, item: result.item),
       );
       return false;
     }
@@ -216,7 +254,9 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
           context: context,
           barrierDismissible: false,
           builder: (_) => RecallCheckPackDialog(
-              itemName: line.name, items: (result as RecallCheckPack).items),
+            itemName: line.name,
+            items: (result as RecallCheckPack).items,
+          ),
         ) ??
         false;
   }
@@ -229,7 +269,10 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
   Future<bool> _passesAgeCheck(PosLine line) async {
     final country = await resolveSaleCountry(ref);
     final result = await checkAgeRestriction(
-        ref.read(apiClientProvider).dio, line.variantId, country);
+      ref.read(apiClientProvider).dio,
+      line.variantId,
+      country,
+    );
     if (result is AgeCheckNotRestricted) return true;
     if (!mounted) return false;
     if (result is AgeCheckBlocked) {
@@ -265,10 +308,11 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       );
       if (!recorded && mounted) {
         _snack(
-            passed
-                ? 'The age check could not be recorded. The sale continues; tell a manager.'
-                : 'The refusal could not be recorded. Tell a manager so it is written down.',
-            error: true);
+          passed
+              ? 'The age check could not be recorded. The sale continues; tell a manager.'
+              : 'The refusal could not be recorded. Tell a manager so it is written down.',
+          error: true,
+        );
       }
     }
     return passed;
@@ -282,10 +326,12 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
       showDragHandle: true,
       builder: (_) => SizedBox(
         height: MediaQuery.of(context).size.height * 0.85,
-        child: _CatalogPane(onPick: (offer) {
-          _addOffer(offer);
-          Navigator.pop(context);
-        }),
+        child: _CatalogPane(
+          onPick: (offer) {
+            _addOffer(offer);
+            Navigator.pop(context);
+          },
+        ),
       ),
     );
     _barcodeFocus.requestFocus();
@@ -296,22 +342,26 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     final storeId = ref.read(posStoreProvider);
     if (items.isEmpty || storeId == null) return;
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.order}/pos/parked-sales',
-        data: {
-          'storeId': storeId,
-          'items': [
-            for (final l in items)
-              {
-                'variantId': l.variantId,
-                'qty': l.qty,
-                'unitPrice': l.unitPrice,
-                if (l.weighingInstrumentId != null)
-                  'weighingInstrumentId': l.weighingInstrumentId,
-              },
-          ],
-        },
-      );
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.order}/pos/parked-sales',
+            data: {
+              'storeId': storeId,
+              'items': [
+                for (final l in items)
+                  {
+                    'variantId': l.variantId,
+                    'qty': l.qty,
+                    'unitPrice': l.unitPrice,
+                    if (l.weighingInstrumentId != null)
+                      'weighingInstrumentId': l.weighingInstrumentId,
+                    if (l.markdownId != null) 'markdownId': l.markdownId,
+                  },
+              ],
+            },
+          );
       ref.read(posCartProvider.notifier).clear();
       ref.read(posDiscountProvider.notifier).state = 0;
       ref.read(posDiscountReasonProvider.notifier).state = '';
@@ -325,40 +375,47 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
   Future<void> _resume() async {
     final selected = await showDialog<ParkedSale>(
       context: context,
-      builder: (ctx) => Consumer(builder: (ctx, ref, _) {
-        final async = ref.watch(parkedSalesProvider);
-        return AlertDialog(
-          title: const Text('Resume held sale'),
-          content: SizedBox(
-            width: 380,
-            child: async.when(
-              loading: () => const SizedBox(
+      builder: (ctx) => Consumer(
+        builder: (ctx, ref, _) {
+          final async = ref.watch(parkedSalesProvider);
+          return AlertDialog(
+            title: const Text('Resume held sale'),
+            content: SizedBox(
+              width: 380,
+              child: async.when(
+                loading: () => const SizedBox(
                   height: 80,
-                  child: Center(child: CircularProgressIndicator())),
-              error: (e, _) => Text(
-                  friendlyError(e, fallback: 'Could not load held sales.')),
-              data: (sales) => sales.isEmpty
-                  ? const Text('No held sales.')
-                  : Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (final s in sales)
-                          ListTile(
-                            title: Text(s.customerName ?? 'Held sale'),
-                            subtitle: Text(
-                                '${s.lines.length} items · ${s.subtotal.toStringAsFixed(2)}'),
-                            onTap: () => Navigator.pop(ctx, s),
-                          ),
-                      ],
-                    ),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (e, _) => Text(
+                  friendlyError(e, fallback: 'Could not load held sales.'),
+                ),
+                data: (sales) => sales.isEmpty
+                    ? const Text('No held sales.')
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final s in sales)
+                            ListTile(
+                              title: Text(s.customerName ?? 'Held sale'),
+                              subtitle: Text(
+                                '${s.lines.length} items · ${s.subtotal.toStringAsFixed(2)}',
+                              ),
+                              onTap: () => Navigator.pop(ctx, s),
+                            ),
+                        ],
+                      ),
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
-          ],
-        );
-      }),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      ),
     );
     if (selected == null || !mounted) return;
 
@@ -369,16 +426,19 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
         builder: (ctx) => AlertDialog(
           title: const Text('Discard current sale?'),
           content: Text(
-              'The current sale has ${current.length} item'
-              '${current.length == 1 ? '' : 's'} that haven\'t been held or '
-              'charged. Resuming the held sale will discard them.'),
+            'The current sale has ${current.length} item'
+            '${current.length == 1 ? '' : 's'} that haven\'t been held or '
+            'charged. Resuming the held sale will discard them.',
+          ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel')),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
             FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Discard & resume')),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Discard & resume'),
+            ),
           ],
         ),
       );
@@ -400,10 +460,13 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
   Future<void> _noSale() async {
     final storeId = ref.read(posStoreProvider);
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.order}/pos/no-sale',
-        data: {'storeId': storeId, 'reason': 'No sale'},
-      );
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.order}/pos/no-sale',
+            data: {'storeId': storeId, 'reason': 'No sale'},
+          );
       _snack('Drawer opened (no sale logged).');
     } catch (e) {
       _snack(friendlyError(e, fallback: 'Could not log no-sale.'), error: true);
@@ -412,10 +475,12 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
 
   void _snack(String msg, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+      ),
+    );
   }
 
   @override
@@ -463,9 +528,10 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
                         ? const Padding(
                             padding: EdgeInsets.all(12),
                             child: SizedBox(
-                                height: 18,
-                                width: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2)),
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
                           )
                         : IconButton(
                             icon: const Icon(Icons.add_circle_outline),
@@ -489,8 +555,11 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
                   icon: const Icon(Icons.grid_view, size: 18),
                   label: const Text('Browse'),
                   style: OutlinedButton.styleFrom(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 14, vertical: 14)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 14,
+                    ),
+                  ),
                 ),
               ],
             ],
@@ -526,13 +595,18 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.shopping_cart_outlined,
-                          size: 48,
-                          color: Theme.of(context).colorScheme.outlineVariant),
+                      Icon(
+                        Icons.shopping_cart_outlined,
+                        size: 48,
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
                       const SizedBox(height: 12),
-                      Text('Scan or tap a product to start',
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.outline)),
+                      Text(
+                        'Scan or tap a product to start',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
                     ],
                   ),
                 )
@@ -556,7 +630,11 @@ class _SaleLine extends ConsumerWidget {
   const _SaleLine({required this.line});
 
   /// A measured line changes by reading the scale again, never by one.
-  Future<void> _remeasure(BuildContext context, WidgetRef ref, PosLine line) async {
+  Future<void> _remeasure(
+    BuildContext context,
+    WidgetRef ref,
+    PosLine line,
+  ) async {
     final qty = await showDialog<double>(
       context: context,
       barrierDismissible: false,
@@ -573,7 +651,11 @@ class _SaleLine extends ConsumerWidget {
         confirmLabel: 'Update',
       ),
     );
-    if (qty != null) ref.read(posCartProvider.notifier).setQty(line.variantId, qty);
+    if (qty != null) {
+      ref
+          .read(posCartProvider.notifier)
+          .setQty(line.variantId, qty, markdownId: line.markdownId);
+    }
   }
 
   @override
@@ -587,48 +669,105 @@ class _SaleLine extends ConsumerWidget {
         color: Theme.of(context).colorScheme.errorContainer,
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
-        child: Icon(Icons.delete_outline,
-            color: Theme.of(context).colorScheme.onErrorContainer),
+        child: Icon(
+          Icons.delete_outline,
+          color: Theme.of(context).colorScheme.onErrorContainer,
+        ),
       ),
-      onDismissed: (_) => notifier.setQty(line.variantId, 0),
+      onDismissed: (_) =>
+          notifier.setQty(line.variantId, 0, markdownId: line.markdownId),
       child: ListTile(
         dense: true,
         title: Text(line.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(showPrices
-            ? '${line.currency} ${line.unitPrice.toStringAsFixed(2)} · ${line.sku}'
-            : line.sku),
+        subtitle: line.reduced
+            ? Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                children: [
+                  Container(
+                    key: Key('reduced-${line.markdownId}'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.tertiaryContainer,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      'REDUCED',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onTertiaryContainer,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  if (showPrices)
+                    Text(
+                      '${line.currency} ${line.unitPrice.toStringAsFixed(2)}',
+                    ),
+                  if (showPrices && line.originalPrice != null)
+                    Text(
+                      'was ${line.originalPrice!.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        decoration: TextDecoration.lineThrough,
+                      ),
+                    ),
+                  Text('· ${line.sku}'),
+                ],
+              )
+            : Text(
+                showPrices
+                    ? '${line.currency} ${line.unitPrice.toStringAsFixed(2)} · ${line.sku}'
+                    : line.sku,
+              ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (line.measured)
               TextButton(
                 onPressed: () => _remeasure(context, ref, line),
-                child: Text(line.qtyLabel,
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                child: Text(
+                  line.qtyLabel,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
               )
             else ...[
               IconButton(
                 visualDensity: VisualDensity.compact,
                 icon: const Icon(Icons.remove_circle_outline),
                 tooltip: 'Decrease quantity',
-                onPressed: () => notifier.setQty(line.variantId, line.qty - 1),
+                onPressed: () => notifier.setQty(
+                  line.variantId,
+                  line.qty - 1,
+                  markdownId: line.markdownId,
+                ),
               ),
-              Text(line.qtyLabel,
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text(
+                line.qtyLabel,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
               IconButton(
                 visualDensity: VisualDensity.compact,
                 icon: const Icon(Icons.add_circle_outline),
                 tooltip: 'Increase quantity',
-                onPressed: () => notifier.setQty(line.variantId, line.qty + 1),
+                onPressed: () => notifier.setQty(
+                  line.variantId,
+                  line.qty + 1,
+                  markdownId: line.markdownId,
+                ),
               ),
             ],
             if (showPrices)
               SizedBox(
                 width: 72,
                 child: Text(
-                    '${line.currency} ${line.lineTotal.toStringAsFixed(2)}',
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                  '${line.currency} ${line.lineTotal.toStringAsFixed(2)}',
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
           ],
         ),
@@ -664,8 +803,9 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
     final selectedCat = ref.watch(posSelectedCategoryProvider);
     final query = ref.watch(posSearchProvider);
     final inStockOnly = ref.watch(posInStockOnlyProvider);
-    final productsAsync =
-        ref.watch(posCatalogProvider((categoryId: selectedCat, query: query)));
+    final productsAsync = ref.watch(
+      posCatalogProvider((categoryId: selectedCat, query: query)),
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -730,7 +870,8 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
                     label: const Text('All'),
                     selected: selectedCat == null,
                     onSelected: (_) =>
-                        ref.read(posSelectedCategoryProvider.notifier).state = null,
+                        ref.read(posSelectedCategoryProvider.notifier).state =
+                            null,
                   ),
                 ),
                 for (final c in cats)
@@ -739,9 +880,9 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
                     child: ChoiceChip(
                       label: Text(c.name),
                       selected: selectedCat == c.id,
-                      onSelected: (_) => ref
-                          .read(posSelectedCategoryProvider.notifier)
-                          .state = c.id,
+                      onSelected: (_) =>
+                          ref.read(posSelectedCategoryProvider.notifier).state =
+                              c.id,
                     ),
                   ),
               ],
@@ -753,19 +894,21 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
           child: productsAsync.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => Center(
-                child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                        friendlyError(e, fallback: 'Could not load products.'),
-                        textAlign: TextAlign.center))),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  friendlyError(e, fallback: 'Could not load products.'),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
             data: (products) {
               // Apply in-stock filter using lazy-resolved offer data.
               // Products whose offer hasn't loaded yet are kept (show while loading).
               List<ProductInfo> displayProducts = products;
               if (inStockOnly) {
                 displayProducts = products.where((p) {
-                  final offer =
-                      ref.watch(posProductOfferProvider(p)).value;
+                  final offer = ref.watch(posProductOfferProvider(p)).value;
                   return offer == null || offer.inStock;
                 }).toList();
               }
@@ -782,8 +925,10 @@ class _CatalogPaneState extends ConsumerState<_CatalogPane> {
                   mainAxisSpacing: 10,
                 ),
                 itemCount: displayProducts.length,
-                itemBuilder: (_, i) =>
-                    _OfferTile(product: displayProducts[i], onPick: widget.onPick),
+                itemBuilder: (_, i) => _OfferTile(
+                  product: displayProducts[i],
+                  onPick: widget.onPick,
+                ),
               );
             },
           ),
@@ -821,32 +966,38 @@ class _OfferTile extends ConsumerWidget {
                   product.name,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
-                  style:
-                      const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                 ),
               ),
               const SizedBox(height: 6),
               offerAsync.when(
                 loading: () => Text('…', style: TextStyle(color: cs.outline)),
-                error: (_, _) =>
-                    Text('—', style: TextStyle(color: cs.outline)),
+                error: (_, _) => Text('—', style: TextStyle(color: cs.outline)),
                 data: (o) {
                   if (o == null) {
-                    return Text('No variant',
-                        style: TextStyle(color: cs.error, fontSize: 11));
+                    return Text(
+                      'No variant',
+                      style: TextStyle(color: cs.error, fontSize: 11),
+                    );
                   }
                   // Catalog mode: no price anywhere — show stock status instead.
                   if (!showPrices) {
                     return Row(
                       children: [
                         Expanded(
-                          child: Text(o.inStock ? 'In stock' : 'Out of stock',
-                              style: TextStyle(
-                                  color: o.inStock
-                                      ? context.status.success
-                                      : cs.error,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12)),
+                          child: Text(
+                            o.inStock ? 'In stock' : 'Out of stock',
+                            style: TextStyle(
+                              color: o.inStock
+                                  ? context.status.success
+                                  : cs.error,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                            ),
+                          ),
                         ),
                         _StockDot(inStock: o.inStock),
                       ],
@@ -855,10 +1006,13 @@ class _OfferTile extends ConsumerWidget {
                   return Row(
                     children: [
                       Expanded(
-                        child: Text('${o.currency} ${o.unitPrice.toStringAsFixed(2)}',
-                            style: TextStyle(
-                                color: context.channelAccent.color,
-                                fontWeight: FontWeight.bold)),
+                        child: Text(
+                          '${o.currency} ${o.unitPrice.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            color: context.channelAccent.color,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                       _StockDot(inStock: o.inStock),
                     ],
@@ -882,8 +1036,11 @@ class _StockDot extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Tooltip(
       message: inStock ? 'In stock' : 'Out of stock',
-      child: Icon(Icons.circle,
-          size: 10, color: inStock ? context.status.success : cs.error),
+      child: Icon(
+        Icons.circle,
+        size: 10,
+        color: inStock ? context.status.success : cs.error,
+      ),
     );
   }
 }
@@ -927,8 +1084,10 @@ class _StoreSelector extends ConsumerWidget {
           if (session != null) ...[
             Icon(Icons.schedule, size: 14, color: cs.outline),
             const SizedBox(width: 4),
-            Text(_elapsed(session.startedAt),
-                style: TextStyle(color: cs.outline, fontSize: 12)),
+            Text(
+              _elapsed(session.startedAt),
+              style: TextStyle(color: cs.outline, fontSize: 12),
+            ),
           ],
         ],
       ),
@@ -959,8 +1118,7 @@ class _CustomerBarState extends ConsumerState<_CustomerBar> {
   @override
   void initState() {
     super.initState();
-    _phoneCtrl =
-        TextEditingController(text: ref.read(posWalkInPhoneProvider));
+    _phoneCtrl = TextEditingController(text: ref.read(posWalkInPhoneProvider));
   }
 
   @override
@@ -975,8 +1133,7 @@ class _CustomerBarState extends ConsumerState<_CustomerBar> {
     final cs = Theme.of(context).colorScheme;
 
     // When a customer is attached, clear the walk-in phone so it doesn't linger.
-    if (customer != null &&
-        ref.read(posWalkInPhoneProvider).isNotEmpty) {
+    if (customer != null && ref.read(posWalkInPhoneProvider).isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           ref.read(posWalkInPhoneProvider.notifier).state = '';
@@ -999,8 +1156,8 @@ class _CustomerBarState extends ConsumerState<_CustomerBar> {
                   customer == null
                       ? 'Walk-in customer'
                       : (customer.fullName.isEmpty
-                          ? customer.email
-                          : customer.fullName),
+                            ? customer.email
+                            : customer.fullName),
                   style: TextStyle(
                     color: customer == null ? cs.outline : cs.onSurface,
                     fontWeight: customer == null
@@ -1018,8 +1175,9 @@ class _CustomerBarState extends ConsumerState<_CustomerBar> {
                 ),
               TextButton.icon(
                 icon: Icon(
-                    customer == null ? Icons.person_add_alt : Icons.swap_horiz,
-                    size: 18),
+                  customer == null ? Icons.person_add_alt : Icons.swap_horiz,
+                  size: 18,
+                ),
                 label: Text(customer == null ? 'Add' : 'Change'),
                 onPressed: () async {
                   final picked = await showDialog<Customer?>(
@@ -1048,10 +1206,16 @@ class _CustomerBarState extends ConsumerState<_CustomerBar> {
                 hintText: 'Required for all orders',
                 prefixIcon: const Icon(Icons.phone_outlined, size: 18),
                 suffixIcon: ref.watch(posWalkInPhoneProvider).isEmpty
-                    ? Icon(Icons.warning_amber_outlined,
-                        size: 18, color: context.status.warning)
-                    : Icon(Icons.check_circle_outline,
-                        size: 18, color: context.status.success),
+                    ? Icon(
+                        Icons.warning_amber_outlined,
+                        size: 18,
+                        color: context.status.warning,
+                      )
+                    : Icon(
+                        Icons.check_circle_outline,
+                        size: 18,
+                        color: context.status.success,
+                      ),
               ),
               onChanged: (v) =>
                   ref.read(posWalkInPhoneProvider.notifier).state = v.trim(),
@@ -1065,13 +1229,19 @@ class _CustomerBarState extends ConsumerState<_CustomerBar> {
 /// Subtotal, optional order discount, net total, plus Clear / Tender actions.
 class _TotalsBar extends ConsumerWidget {
   Future<void> _editDiscount(
-      BuildContext context, WidgetRef ref, String currency, double subtotal) async {
+    BuildContext context,
+    WidgetRef ref,
+    String currency,
+    double subtotal,
+  ) async {
     final ctrl = TextEditingController(
-        text: ref.read(posDiscountProvider) > 0
-            ? ref.read(posDiscountProvider).toStringAsFixed(2)
-            : '');
-    final reasonCtrl =
-        TextEditingController(text: ref.read(posDiscountReasonProvider));
+      text: ref.read(posDiscountProvider) > 0
+          ? ref.read(posDiscountProvider).toStringAsFixed(2)
+          : '',
+    );
+    final reasonCtrl = TextEditingController(
+      text: ref.read(posDiscountReasonProvider),
+    );
     // The server refuses a discount with no reason and records the one given against the cashier,
     // so Apply stays disabled until both fields are filled rather than failing at tender time.
     final result = await showDialog<(double, String)>(
@@ -1089,10 +1259,13 @@ class _TotalsBar extends ConsumerWidget {
                 TextField(
                   controller: ctrl,
                   autofocus: true,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: InputDecoration(
-                      labelText: 'Discount amount', prefixText: '$currency '),
+                    labelText: 'Discount amount',
+                    prefixText: '$currency ',
+                  ),
                   onChanged: (_) => setDialogState(() {}),
                 ),
                 const SizedBox(height: 12),
@@ -1108,11 +1281,13 @@ class _TotalsBar extends ConsumerWidget {
             ),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(ctx, (0.0, '')),
-                  child: const Text('Clear')),
+                onPressed: () => Navigator.pop(ctx, (0.0, '')),
+                child: const Text('Clear'),
+              ),
               FilledButton(
-                onPressed:
-                    canApply ? () => Navigator.pop(ctx, (amount, reason)) : null,
+                onPressed: canApply
+                    ? () => Navigator.pop(ctx, (amount, reason))
+                    : null,
                 child: const Text('Apply'),
               ),
             ],
@@ -1121,8 +1296,9 @@ class _TotalsBar extends ConsumerWidget {
       ),
     );
     if (result == null) return;
-    ref.read(posDiscountProvider.notifier).state =
-        result.$1.clamp(0, subtotal).toDouble();
+    ref.read(posDiscountProvider.notifier).state = result.$1
+        .clamp(0, subtotal)
+        .toDouble();
     ref.read(posDiscountReasonProvider.notifier).state = result.$2;
   }
 
@@ -1132,7 +1308,10 @@ class _TotalsBar extends ConsumerWidget {
     final showPrices = ref.watch(posShowPricesProvider);
     final subtotal = ref.watch(posCartProvider.notifier).total;
     final currency = items.isNotEmpty ? items.first.currency : '';
-    final discount = ref.watch(posDiscountProvider).clamp(0, subtotal).toDouble();
+    final discount = ref
+        .watch(posDiscountProvider)
+        .clamp(0, subtotal)
+        .toDouble();
     final net = subtotal - discount;
     final tt = Theme.of(context).textTheme;
     final qty = items.fold<int>(0, (s, l) => s + l.itemCount);
@@ -1161,15 +1340,18 @@ class _TotalsBar extends ConsumerWidget {
               flex: 2,
               child: FilledButton.icon(
                 style: FilledButton.styleFrom(
-                    backgroundColor: context.channelAccent.color,
-                    foregroundColor: context.channelAccent.onColor,
-                    padding: const EdgeInsets.symmetric(vertical: 16)),
-                onPressed:
-                    items.isEmpty ? null : () => context.go('/pos/tender'),
+                  backgroundColor: context.channelAccent.color,
+                  foregroundColor: context.channelAccent.onColor,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                onPressed: items.isEmpty
+                    ? null
+                    : () => context.go('/pos/tender'),
                 icon: const Icon(Icons.receipt_long),
                 label: Text(
-                    'Place order${qty > 0 ? '  ($qty)' : ''}',
-                    style: const TextStyle(fontSize: 16)),
+                  'Place order${qty > 0 ? '  ($qty)' : ''}',
+                  style: const TextStyle(fontSize: 16),
+                ),
               ),
             ),
           ],
@@ -1186,36 +1368,48 @@ class _TotalsBar extends ConsumerWidget {
             children: [
               Text('Subtotal', style: tt.bodyMedium),
               const Spacer(),
-              Text('$currency ${subtotal.toStringAsFixed(2)}',
-                  style: tt.bodyMedium),
+              Text(
+                '$currency ${subtotal.toStringAsFixed(2)}',
+                style: tt.bodyMedium,
+              ),
             ],
           ),
           const SizedBox(height: 2),
           Row(
             children: [
               TextButton.icon(
-                onPressed:
-                    items.isEmpty ? null : () => _editDiscount(context, ref, currency, subtotal),
+                onPressed: items.isEmpty
+                    ? null
+                    : () => _editDiscount(context, ref, currency, subtotal),
                 icon: const Icon(Icons.percent, size: 16),
                 label: Text(discount > 0 ? 'Discount' : 'Add discount'),
                 style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero, minimumSize: const Size(0, 30)),
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(0, 30),
+                ),
               ),
               const Spacer(),
               if (discount > 0)
-                Text('− $currency ${discount.toStringAsFixed(2)}',
-                    style: tt.bodyMedium
-                        ?.copyWith(color: Theme.of(context).colorScheme.error)),
+                Text(
+                  '− $currency ${discount.toStringAsFixed(2)}',
+                  style: tt.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
             ],
           ),
           const Divider(),
           Row(
             children: [
-              Text('Total',
-                  style: tt.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+              Text(
+                'Total',
+                style: tt.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
               const Spacer(),
-              Text('$currency ${net.toStringAsFixed(2)}',
-                  style: tt.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+              Text(
+                '$currency ${net.toStringAsFixed(2)}',
+                style: tt.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -1227,13 +1421,17 @@ class _TotalsBar extends ConsumerWidget {
                 flex: 2,
                 child: FilledButton(
                   style: FilledButton.styleFrom(
-                      backgroundColor: context.channelAccent.color,
-                      foregroundColor: context.channelAccent.onColor,
-                      padding: const EdgeInsets.symmetric(vertical: 16)),
-                  onPressed:
-                      items.isEmpty ? null : () => context.go('/pos/tender'),
-                  child: Text('Charge $currency ${net.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 16)),
+                    backgroundColor: context.channelAccent.color,
+                    foregroundColor: context.channelAccent.onColor,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  onPressed: items.isEmpty
+                      ? null
+                      : () => context.go('/pos/tender'),
+                  child: Text(
+                    'Charge $currency ${net.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 16),
+                  ),
                 ),
               ),
             ],
@@ -1290,22 +1488,26 @@ class _CustomerPickerDialogState extends ConsumerState<_CustomerPickerDialog> {
               leading: const Icon(Icons.person_off_outlined),
               title: const Text('Walk-in customer (no account)'),
               onTap: () => Navigator.pop(
-                  context,
-                  const Customer(
-                      id: '',
-                      email: '',
-                      firstName: '',
-                      lastName: '',
-                      status: '')),
+                context,
+                const Customer(
+                  id: '',
+                  email: '',
+                  firstName: '',
+                  lastName: '',
+                  status: '',
+                ),
+              ),
             ),
             const Divider(height: 1),
             Expanded(
               child: async.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (e, _) => Center(
-                    child: Text(
-                        friendlyError(e, fallback: 'Could not load customers.'),
-                        textAlign: TextAlign.center)),
+                  child: Text(
+                    friendlyError(e, fallback: 'Could not load customers.'),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
                 data: (all) {
                   final list = _query.isEmpty
                       ? all
@@ -1325,11 +1527,13 @@ class _CustomerPickerDialogState extends ConsumerState<_CustomerPickerDialog> {
                       final c = list[i];
                       return ListTile(
                         leading: const Icon(Icons.person_outline),
-                        title:
-                            Text(c.fullName.isEmpty ? c.email : c.fullName),
-                        subtitle: Text([c.email, c.phone]
-                            .where((e) => e != null && e.isNotEmpty)
-                            .join(' · ')),
+                        title: Text(c.fullName.isEmpty ? c.email : c.fullName),
+                        subtitle: Text(
+                          [
+                            c.email,
+                            c.phone,
+                          ].where((e) => e != null && e.isNotEmpty).join(' · '),
+                        ),
                         onTap: () => Navigator.pop(context, c),
                       );
                     },

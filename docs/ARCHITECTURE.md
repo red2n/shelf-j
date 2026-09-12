@@ -307,10 +307,10 @@ Single source of truth for stock: levels, reservations, batches/lots, serials, a
 
 ### pricing-svc — Prices, Promotions, VAT
 Price resolution, promotions, and UK-style VAT computation/reporting.
-- **API:** `/prices/resolve` (+batch), `/price-lists` (+items), `/admin/price-overrides`, `/promotions`, `/vat-rates`, `/product-vat-categories`, `/customer-vat-status`, `/tax-transactions`, `/vat-return` (HMRC MTD boxes 1-9).
-- **Tables:** `price_lists`, `price_list_items`, `price_overrides`, `promotions`, `vat_rates`, `product_vat_categories`, `customer_vat_status`, `tax_transactions`, `input_tax_transactions`, `vat_registrations`, `vat_return_submissions` (append-only — Making Tax Digital, 18.5).
+- **API:** `/prices/resolve` (+batch), `/prices/quote`, `/price-lists` (+items), `/admin/price-overrides`, `/promotions`, `/vat-rates`, `/product-vat-categories`, `/customer-vat-status`, `/tax-transactions`, `/vat-return` (HMRC MTD boxes 1-9), `/markdowns` (ladder, plan, sticker, cancel), `/prices/markdown-labels/{code}`, `/prices/markdown-redemptions` (date-code markdown, 05.4 / 03.9).
+- **Tables:** `price_lists`, `price_list_items`, `price_overrides`, `promotions`, `vat_rates`, `product_vat_categories`, `customer_vat_status`, `tax_transactions`, `input_tax_transactions`, `vat_registrations`, `vat_return_submissions` (append-only — Making Tax Digital, 18.5), `markdown_ladders`, `markdown_label_series`, `markdowns`, `markdown_redemptions` (append-only, one per markdown and order).
 - **Events:** publishes `PriceChanged`, `PromotionActivated`.
-- **Notable:** VAT Notice 700 s.17-style return, customer VAT-exemption status, per-product VAT category, time-bounded PERCENT/FLAT promotions.
+- **Notable:** VAT Notice 700 s.17-style return, customer VAT-exemption status, per-product VAT category, time-bounded PERCENT/FLAT promotions. Reduce to clear: a batch stickered at a lower price gets an EAN-13 in the shop's own range (prefix 21, item number from a series under its lock, the price in the code); the till scans it, `/prices/markdown-labels` says what it means, and a `/prices/quote` line naming the markdown is priced at the sticker outside the promotion engine. The plan reads inventory-svc's expiring batches synchronously (retry + breaker, the caller's identity forwarded) and says when it could not.
 
 ### cart-svc — Storefront Cart
 Server-side shopping cart for the online channel: session-scoped and customer carts, with merge-on-login. Every call requires a verified token (cart paths are **not** on the gateway's public storefront whitelist); the current Flutter storefront keeps its pre-checkout cart on-device and does not call this service.
@@ -371,6 +371,7 @@ Pure projection service built by consuming inventory and sales events.
 ```
 order-svc    ──REST──►  pricing-svc, inventory-svc, payment-svc
 cart-svc     ──REST──►  pricing-svc, inventory-svc, product-svc
+pricing-svc  ──REST──►  inventory-svc (expiring batches, for the markdown plan)
 product-svc  ──REST──►  inventory-svc   (stock flag on product page)
 purchase-svc ──REST──►  product-svc     (validate variant)
 tenant-svc   ──REST──►  iam-svc         (verify user on staff assignment)

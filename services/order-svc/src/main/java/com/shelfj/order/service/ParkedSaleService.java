@@ -51,13 +51,19 @@ public class ParkedSaleService {
                   BigDecimal discount =
                       item.discountAmount() == null ? BigDecimal.ZERO : item.discountAmount();
                   BigDecimal lineTotal = item.unitPrice().multiply(item.qty()).subtract(discount);
+                  if (item.markdownId() != null && !item.markdownId().isBlank()) {
+                    Parsing.uuid(item.markdownId(), "markdownId");
+                  }
                   return new ParkedSaleItemResponse(
                       item.variantId(),
                       item.qty(),
                       item.unitPrice(),
                       discount,
                       lineTotal,
-                      item.notes());
+                      item.notes(),
+                      item.markdownId() == null || item.markdownId().isBlank()
+                          ? null
+                          : item.markdownId());
                 })
             .collect(Collectors.toList());
 

@@ -36,7 +36,13 @@ public final class Dtos {
                       + " tenant-svc's register (Weights and Measures Act 1985 s.11). The till"
                       + " refuses to sell by weight from an instrument that is not certified, and"
                       + " the line records which one it was.")
-          String weighingInstrumentId) {}
+          String weighingInstrumentId,
+      @Schema(
+              description =
+                  "The reduce-to-clear markdown a scanned sticker named (05.4): the line is priced"
+                      + " at the sticker and stands outside every promotion. pricing-svc checks it"
+                      + " is live, in date, for this product at this store, with packs left.")
+          String markdownId) {}
 
   @Schema(
       name = "PlaceOrderRequest",
@@ -125,7 +131,9 @@ public final class Dtos {
               description =
                   "The VAT on this line as the quote priced it (18.5); null when the line was"
                       + " placed with server-side pricing off.")
-          BigDecimal vatAmount) {}
+          BigDecimal vatAmount,
+      @Schema(description = "The markdown a scanned sticker priced this line at (05.4), if any.")
+          String markdownId) {}
 
   @Schema(
       name = "FulfilRequest",
@@ -466,7 +474,9 @@ public final class Dtos {
       @NotNull @Positive BigDecimal qty,
       @NotNull @PositiveOrZero BigDecimal unitPrice,
       @PositiveOrZero BigDecimal discountAmount,
-      String notes) {}
+      String notes,
+      @Schema(description = "The reduce-to-clear markdown a scanned sticker named (05.4), if any.")
+          String markdownId) {}
 
   @Schema(name = "ParkSaleRequest")
   public record ParkSaleRequest(
@@ -487,7 +497,9 @@ public final class Dtos {
       BigDecimal unitPrice,
       BigDecimal discountAmount,
       BigDecimal lineTotal,
-      String notes) {}
+      String notes,
+      @Schema(description = "The markdown the line was stickered at (05.4), if any.")
+          String markdownId) {}
 
   @Schema(name = "ParkedSaleResponse")
   public record ParkedSaleResponse(

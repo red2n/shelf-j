@@ -338,7 +338,12 @@ public final class Dtos {
   @Schema(name = "QuoteLineRequest")
   public record QuoteLineRequest(
       @Schema(description = "UUID of the product variant.") @NotBlank String variantId,
-      @Schema(description = "Quantity being bought. Defaults to 1.") BigDecimal qty) {}
+      @Schema(description = "Quantity being bought. Defaults to 1.") BigDecimal qty,
+      @Schema(
+              description =
+                  "The reduce-to-clear markdown a scanned sticker named (05.4). The line is priced"
+                      + " at the sticker's price and no promotion touches it.")
+          String markdownId) {}
 
   @Schema(name = "QuoteLineResponse", description = "One priced basket line.")
   public record QuoteLineResponse(
@@ -350,7 +355,9 @@ public final class Dtos {
           BigDecimal discount,
       @Schema(description = "lineTotal minus discount.") BigDecimal netTotal,
       @Schema(description = "VAT on netTotal, at this variant's rate.") BigDecimal vatAmount,
-      @Schema(description = "The VAT code applied.") String vatCode) {}
+      @Schema(description = "The VAT code applied.") String vatCode,
+      @Schema(description = "The markdown the line was priced at, when a sticker was scanned.")
+          UUID markdownId) {}
 
   @Schema(name = "AppliedPromotionResponse", description = "One promotion that took money off.")
   public record AppliedPromotionResponse(
@@ -557,6 +564,126 @@ public final class Dtos {
       TaxSummaryTotalsResponse totals,
       String periodFrom,
       String periodTo) {}
+
+  // ── Date-code markdown (05.4, 03.9) ──────────────────────────────────────
+
+  @Schema(name = "MarkdownStepRequest")
+  public record MarkdownStepRequest(
+      @NotNull @jakarta.validation.constraints.Min(0) Integer daysToExpiry,
+      @NotNull @Positive @DecimalMax("100") BigDecimal percentOff) {}
+
+  @Schema(
+      name = "SetMarkdownLadderRequest",
+      description =
+          "How much off at how many days to expiry. storeId scopes it to one store; omitted, it"
+              + " is the business's default. Replaces the ladder wholesale.")
+  public record SetMarkdownLadderRequest(
+      String storeId, @NotEmpty @Valid List<MarkdownStepRequest> steps) {}
+
+  @Schema(name = "MarkdownLadderResponse")
+  public record MarkdownLadderResponse(
+      String storeId,
+      @Schema(description = "STORE, TENANT or DEFAULT — where the steps came from.") String source,
+      List<MarkdownStepRequest> steps) {}
+
+  @Schema(
+      name = "CreateMarkdownRequest",
+      description =
+          "Sticker a batch at a lower price. Give percentOff or markdownPrice, not both; the"
+              + " other is derived from the current POS price. The sticker's barcode comes back.")
+  public record CreateMarkdownRequest(
+      @NotBlank String storeId,
+      @NotBlank String variantId,
+      String batchId,
+      @Size(max = 64) String batchNo,
+      @Schema(description = "ISO date the batch expires.") @NotBlank String expiryDate,
+      @NotNull @Positive BigDecimal qty,
+      @Positive @DecimalMax("100") BigDecimal percentOff,
+      @PositiveOrZero BigDecimal markdownPrice,
+      @Schema(description = "SHORT_DATED, CLEARANCE, DAMAGED_PACK or OVERSTOCK.") @NotBlank
+          String reason) {}
+
+  @Schema(name = "CancelMarkdownRequest")
+  public record CancelMarkdownRequest(@NotBlank @Size(max = 200) String reason) {}
+
+  @Schema(name = "MarkdownResponse", description = "A batch stickered at a lower price.")
+  public record MarkdownResponse(
+      UUID id,
+      UUID storeId,
+      UUID variantId,
+      UUID batchId,
+      String batchNo,
+      String expiryDate,
+      BigDecimal qty,
+      BigDecimal redeemedQty,
+      BigDecimal remainingQty,
+      String currency,
+      BigDecimal originalPrice,
+      BigDecimal markdownPrice,
+      BigDecimal percentOff,
+      String reason,
+      @Schema(description = "The sticker's EAN-13: what the till scans.") String labelCode,
+      @Schema(description = "ACTIVE, EXPIRED (active but past its date) or CANCELLED.")
+          String status,
+      UUID appliedBy,
+      Instant createdAt,
+      Instant cancelledAt,
+      String cancelReason) {}
+
+  @Schema(name = "MarkdownSuggestionResponse", description = "One line of the morning's plan.")
+  public record MarkdownSuggestionResponse(
+      UUID batchId,
+      UUID variantId,
+      String batchNo,
+      String expiryDate,
+      long daysToExpiry,
+      BigDecimal remainingQty,
+      @Schema(description = "The current POS price; null when the variant has none.")
+          BigDecimal currentPrice,
+      String currency,
+      @Schema(description = "The ladder step that applies, in days; null when none does.")
+          Integer stepDays,
+      BigDecimal percentOff,
+      BigDecimal suggestedPrice,
+      @Schema(description = "The live markdown already on this batch, if any.")
+          MarkdownResponse existing) {}
+
+  @Schema(
+      name = "MarkdownPlanResponse",
+      description =
+          "What to sticker this morning: every batch expiring within the horizon, its price, and"
+              + " what the ladder says to do. inventoryReachable is false when inventory-svc"
+              + " could not be read, in which case the list is empty rather than wrong.")
+  public record MarkdownPlanResponse(
+      UUID storeId,
+      int withinDays,
+      String ladderSource,
+      boolean inventoryReachable,
+      List<MarkdownSuggestionResponse> suggestions) {}
+
+  @Schema(
+      name = "MarkdownLabelResponse",
+      description = "What a scanned reduced-price sticker means at the till.")
+  public record MarkdownLabelResponse(
+      UUID markdownId,
+      UUID variantId,
+      UUID storeId,
+      String labelCode,
+      BigDecimal markdownPrice,
+      BigDecimal originalPrice,
+      String currency,
+      String expiryDate,
+      BigDecimal remainingQty) {}
+
+  @Schema(name = "MarkdownRedemptionLineRequest")
+  public record MarkdownRedemptionLineRequest(
+      @NotBlank String markdownId, @NotNull @Positive BigDecimal qty) {}
+
+  @Schema(
+      name = "RecordMarkdownRedemptionsRequest",
+      description = "What an order sold at reduced prices; recorded once per markdown and order.")
+  public record RecordMarkdownRedemptionsRequest(
+      @NotBlank String orderId, @NotEmpty @Valid List<MarkdownRedemptionLineRequest> lines) {}
 
   // ── Making Tax Digital (18.5) ─────────────────────────────────────────────
 

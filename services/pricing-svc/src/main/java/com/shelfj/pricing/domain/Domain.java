@@ -2,6 +2,7 @@ package com.shelfj.pricing.domain;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -356,6 +357,111 @@ public final class Domain {
       BigDecimal box9,
       String periodFrom,
       String periodTo) {}
+
+  // ── Date-code markdown (05.4, 03.9) ──────────────────────────────────────
+
+  /** How much off at how many days to expiry. */
+  public record MarkdownStep(int daysToExpiry, BigDecimal percentOff) {}
+
+  /** A store's ladder, or the tenant's, or the default the service names. */
+  public record MarkdownLadder(UUID storeId, List<MarkdownStep> steps, String source) {
+    public MarkdownLadder {
+      steps = List.copyOf(steps);
+    }
+
+    public static final String SOURCE_STORE = "STORE";
+    public static final String SOURCE_TENANT = "TENANT";
+    public static final String SOURCE_DEFAULT = "DEFAULT";
+
+    /**
+     * What a tenant with no ladder gets: three days 25 % off, one day 50 %, the day itself 75 %.
+     */
+    public static final List<MarkdownStep> DEFAULT_STEPS =
+        List.of(
+            new MarkdownStep(3, new BigDecimal("25.00")),
+            new MarkdownStep(1, new BigDecimal("50.00")),
+            new MarkdownStep(0, new BigDecimal("75.00")));
+
+    /**
+     * The step that applies at a number of days to expiry: the tightest step whose threshold is at
+     * or above it — two days out takes the three-day step, not the one-day one.
+     */
+    public MarkdownStep stepFor(long daysToExpiry) {
+      MarkdownStep best = null;
+      for (MarkdownStep s : steps) {
+        if (s.daysToExpiry() >= daysToExpiry
+            && (best == null || s.daysToExpiry() < best.daysToExpiry())) {
+          best = s;
+        }
+      }
+      return best;
+    }
+  }
+
+  /**
+   * A batch stickered at a lower price to sell before its date: the decision, the sticker's barcode
+   * and the price the till charges when it reads it.
+   */
+  public record Markdown(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      UUID batchId,
+      String batchNo,
+      LocalDate expiryDate,
+      BigDecimal qty,
+      String currency,
+      BigDecimal originalPrice,
+      BigDecimal markdownPrice,
+      BigDecimal percentOff,
+      String reason,
+      String labelCode,
+      String status,
+      UUID appliedBy,
+      Instant createdAt,
+      Instant cancelledAt,
+      UUID cancelledBy,
+      String cancelReason,
+      /** What has sold at this price so far, across every order. */
+      BigDecimal redeemedQty) {
+
+    public static final String STATUS_ACTIVE = "ACTIVE";
+    public static final String STATUS_CANCELLED = "CANCELLED";
+
+    /** Shown, never stored: an active markdown past its date. */
+    public static final String STATUS_EXPIRED = "EXPIRED";
+
+    public static final java.util.Set<String> REASONS =
+        java.util.Set.of("SHORT_DATED", "CLEARANCE", "DAMAGED_PACK", "OVERSTOCK");
+
+    /** ACTIVE, CANCELLED, or EXPIRED when active and past its date on {@code today}. */
+    public String effectiveStatus(LocalDate today) {
+      if (STATUS_ACTIVE.equals(status) && expiryDate.isBefore(today)) {
+        return STATUS_EXPIRED;
+      }
+      return status;
+    }
+
+    /** Packs still to sell at this price. */
+    public BigDecimal remainingQty() {
+      return qty.subtract(redeemedQty == null ? BigDecimal.ZERO : redeemedQty);
+    }
+  }
+
+  /** One line of the morning's plan: an expiring batch and what the ladder says to do with it. */
+  public record MarkdownSuggestion(
+      UUID batchId,
+      UUID variantId,
+      String batchNo,
+      LocalDate expiryDate,
+      long daysToExpiry,
+      BigDecimal remainingQty,
+      BigDecimal currentPrice,
+      String currency,
+      MarkdownStep step,
+      BigDecimal suggestedPrice,
+      Markdown existing) {}
 
   // ── Making Tax Digital (18.5) ─────────────────────────────────────────────
 
