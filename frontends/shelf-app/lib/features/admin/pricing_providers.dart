@@ -25,14 +25,14 @@ class PriceList {
   });
 
   factory PriceList.fromJson(Map<String, dynamic> j) => PriceList(
-        id: j['id'] as String? ?? '',
-        name: j['name'] as String? ?? '-',
-        channel: j['channel'] as String?,
-        currency: j['currency'] as String?,
-        effectiveFrom: j['effectiveFrom'] as String?,
-        effectiveTo: j['effectiveTo'] as String?,
-        active: j['active'] as bool? ?? false,
-      );
+    id: j['id'] as String? ?? '',
+    name: j['name'] as String? ?? '-',
+    channel: j['channel'] as String?,
+    currency: j['currency'] as String?,
+    effectiveFrom: j['effectiveFrom'] as String?,
+    effectiveTo: j['effectiveTo'] as String?,
+    active: j['active'] as bool? ?? false,
+  );
 }
 
 class PriceListItem {
@@ -49,11 +49,11 @@ class PriceListItem {
   });
 
   factory PriceListItem.fromJson(Map<String, dynamic> j) => PriceListItem(
-        id: j['id'] as String? ?? '',
-        variantId: j['variantId'] as String? ?? '',
-        price: (j['price'] as num?)?.toDouble() ?? 0,
-        minQty: (j['minQty'] as num?)?.toDouble() ?? 1,
-      );
+    id: j['id'] as String? ?? '',
+    variantId: j['variantId'] as String? ?? '',
+    price: (j['price'] as num?)?.toDouble() ?? 0,
+    minQty: (j['minQty'] as num?)?.toDouble() ?? 1,
+  );
 }
 
 class Promotion {
@@ -130,24 +130,24 @@ class Promotion {
   }
 
   factory Promotion.fromJson(Map<String, dynamic> j) => Promotion(
-        id: j['id'] as String? ?? '',
-        name: j['name'] as String? ?? '-',
-        type: j['type'] as String? ?? 'PERCENT',
-        value: (j['value'] as num?)?.toDouble() ?? 0,
-        minOrderAmount: (j['minOrderAmount'] as num?)?.toDouble(),
-        channel: j['channel'] as String?,
-        active: j['active'] as bool? ?? false,
-        priority: (j['priority'] as num?)?.toInt() ?? 100,
-        exclusive: j['exclusive'] as bool? ?? false,
-        couponCode: j['couponCode'] as String?,
-        maxRedemptions: (j['maxRedemptions'] as num?)?.toInt(),
-        maxPerCustomer: (j['maxPerCustomer'] as num?)?.toInt(),
-        buyQty: (j['buyQty'] as num?)?.toDouble(),
-        getQty: (j['getQty'] as num?)?.toDouble(),
-        getDiscountPct: (j['getDiscountPct'] as num?)?.toDouble(),
-        startsAt: j['startsAt'] as String?,
-        endsAt: j['endsAt'] as String?,
-      );
+    id: j['id'] as String? ?? '',
+    name: j['name'] as String? ?? '-',
+    type: j['type'] as String? ?? 'PERCENT',
+    value: (j['value'] as num?)?.toDouble() ?? 0,
+    minOrderAmount: (j['minOrderAmount'] as num?)?.toDouble(),
+    channel: j['channel'] as String?,
+    active: j['active'] as bool? ?? false,
+    priority: (j['priority'] as num?)?.toInt() ?? 100,
+    exclusive: j['exclusive'] as bool? ?? false,
+    couponCode: j['couponCode'] as String?,
+    maxRedemptions: (j['maxRedemptions'] as num?)?.toInt(),
+    maxPerCustomer: (j['maxPerCustomer'] as num?)?.toInt(),
+    buyQty: (j['buyQty'] as num?)?.toDouble(),
+    getQty: (j['getQty'] as num?)?.toDouble(),
+    getDiscountPct: (j['getDiscountPct'] as num?)?.toDouble(),
+    startsAt: j['startsAt'] as String?,
+    endsAt: j['endsAt'] as String?,
+  );
 }
 
 class VatRate {
@@ -168,40 +168,52 @@ class VatRate {
   });
 
   factory VatRate.fromJson(Map<String, dynamic> j) => VatRate(
-        code: j['code'] as String? ?? '',
-        name: j['name'] as String? ?? '-',
-        rate: (j['rate'] as num?)?.toDouble() ?? 0,
-        exempt: j['exempt'] as bool? ?? false,
-        description: j['description'] as String?,
-        effectiveFrom: j['effectiveFrom'] as String?,
-      );
+    code: j['code'] as String? ?? '',
+    name: j['name'] as String? ?? '-',
+    rate: (j['rate'] as num?)?.toDouble() ?? 0,
+    exempt: j['exempt'] as bool? ?? false,
+    description: j['description'] as String?,
+    effectiveFrom: j['effectiveFrom'] as String?,
+  );
 }
 
 // ── Providers ────────────────────────────────────────────────────────────────
 
-final priceListsProvider = FutureProvider.autoDispose<List<PriceList>>((ref) async {
+final priceListsProvider = FutureProvider.autoDispose<List<PriceList>>((
+  ref,
+) async {
   final data = await fetchAllPages(
-      ref.read(apiClientProvider).dio, '/${ApiConstants.pricing}/price-lists');
-  return data.map((e) => PriceList.fromJson(e as Map<String, dynamic>)).toList();
+    ref.read(apiClientProvider).dio,
+    '/${ApiConstants.pricing}/price-lists',
+  );
+  return data
+      .map((e) => PriceList.fromJson(e as Map<String, dynamic>))
+      .toList();
 });
 
 final priceListItemsProvider = FutureProvider.autoDispose
     .family<List<PriceListItem>, String>((ref, priceListId) async {
-  final resp = await ref
-      .read(apiClientProvider)
-      .dio
-      .get('/${ApiConstants.pricing}/price-lists/$priceListId/items');
-  final data = (resp.data['data'] as List?) ?? [];
-  return data.map((e) => PriceListItem.fromJson(e as Map<String, dynamic>)).toList();
-});
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get('/${ApiConstants.pricing}/price-lists/$priceListId/items');
+      final data = (resp.data['data'] as List?) ?? [];
+      return data
+          .map((e) => PriceListItem.fromJson(e as Map<String, dynamic>))
+          .toList();
+    });
 
-final promotionsProvider = FutureProvider.autoDispose<List<Promotion>>((ref) async {
+final promotionsProvider = FutureProvider.autoDispose<List<Promotion>>((
+  ref,
+) async {
   final resp = await ref
       .read(apiClientProvider)
       .dio
       .get('/${ApiConstants.pricing}/promotions');
   final data = (resp.data['data'] as List?) ?? [];
-  return data.map((e) => Promotion.fromJson(e as Map<String, dynamic>)).toList();
+  return data
+      .map((e) => Promotion.fromJson(e as Map<String, dynamic>))
+      .toList();
 });
 
 final vatRatesProvider = FutureProvider.autoDispose<List<VatRate>>((ref) async {
@@ -251,23 +263,24 @@ class VatReturn {
   });
 
   factory VatReturn.fromJson(Map<String, dynamic> j) => VatReturn(
-        box1: (j['box1'] as num?)?.toDouble() ?? 0,
-        box2: (j['box2'] as num?)?.toDouble() ?? 0,
-        box3: (j['box3'] as num?)?.toDouble() ?? 0,
-        box4: (j['box4'] as num?)?.toDouble() ?? 0,
-        box5: (j['box5'] as num?)?.toDouble() ?? 0,
-        box6: (j['box6'] as num?)?.toDouble() ?? 0,
-        box7: (j['box7'] as num?)?.toDouble() ?? 0,
-        box8: (j['box8'] as num?)?.toDouble() ?? 0,
-        box9: (j['box9'] as num?)?.toDouble() ?? 0,
-        periodFrom: j['periodFrom'] as String?,
-        periodTo: j['periodTo'] as String?,
-        notComputedBoxes: [
-          for (final b in (j['notComputedBoxes'] as List?) ?? const []) (b as num).toInt(),
-        ],
-        fitToFile: j['fitToFile'] as bool? ?? false,
-        caveat: j['caveat'] as String?,
-      );
+    box1: (j['box1'] as num?)?.toDouble() ?? 0,
+    box2: (j['box2'] as num?)?.toDouble() ?? 0,
+    box3: (j['box3'] as num?)?.toDouble() ?? 0,
+    box4: (j['box4'] as num?)?.toDouble() ?? 0,
+    box5: (j['box5'] as num?)?.toDouble() ?? 0,
+    box6: (j['box6'] as num?)?.toDouble() ?? 0,
+    box7: (j['box7'] as num?)?.toDouble() ?? 0,
+    box8: (j['box8'] as num?)?.toDouble() ?? 0,
+    box9: (j['box9'] as num?)?.toDouble() ?? 0,
+    periodFrom: j['periodFrom'] as String?,
+    periodTo: j['periodTo'] as String?,
+    notComputedBoxes: [
+      for (final b in (j['notComputedBoxes'] as List?) ?? const [])
+        (b as num).toInt(),
+    ],
+    fitToFile: j['fitToFile'] as bool? ?? false,
+    caveat: j['caveat'] as String?,
+  );
 }
 
 /// ISO timestamp range for the VAT return query.
@@ -290,18 +303,155 @@ VatReturnRange defaultVatReturnRange() {
   final qMonth = ((now.month - 1) ~/ 3) * 3 + 1;
   final from = DateTime.utc(now.year, qMonth, 1);
   final to = DateTime.utc(
-      qMonth == 10 ? now.year + 1 : now.year, qMonth == 10 ? 1 : qMonth + 3, 1);
-  return VatReturnRange(
-    from: from.toIso8601String(),
-    to: to.toIso8601String(),
+    qMonth == 10 ? now.year + 1 : now.year,
+    qMonth == 10 ? 1 : qMonth + 3,
+    1,
+  );
+  return VatReturnRange(from: from.toIso8601String(), to: to.toIso8601String());
+}
+
+final vatReturnProvider = FutureProvider.autoDispose
+    .family<VatReturn, VatReturnRange>((ref, range) async {
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get(
+            '/${ApiConstants.pricing}/vat-return',
+            queryParameters: {'from': range.from, 'to': range.to},
+          );
+      return VatReturn.fromJson(resp.data['data'] as Map<String, dynamic>);
+    });
+
+// ── Making Tax Digital (18.5) ────────────────────────────────────────────────
+
+/// The VAT number the business files under, how, and what the deployment offers.
+class VatRegistration {
+  final bool registered;
+  final String? vrn;
+  final String? provider;
+  final bool connected;
+  final String? connectedAt;
+  final List<String> providers;
+  final bool hmrcConfigured;
+  const VatRegistration({
+    required this.registered,
+    this.vrn,
+    this.provider,
+    this.connected = false,
+    this.connectedAt,
+    this.providers = const [],
+    this.hmrcConfigured = false,
+  });
+  factory VatRegistration.fromJson(Map<String, dynamic> j) => VatRegistration(
+    registered: j['registered'] as bool? ?? false,
+    vrn: j['vrn'] as String?,
+    provider: j['provider'] as String?,
+    connected: j['connected'] as bool? ?? false,
+    connectedAt: j['connectedAt'] as String?,
+    providers: [
+      for (final p in (j['providers'] as List?) ?? const []) p as String,
+    ],
+    hmrcConfigured: j['hmrcConfigured'] as bool? ?? false,
   );
 }
 
-final vatReturnProvider =
-    FutureProvider.autoDispose.family<VatReturn, VatReturnRange>((ref, range) async {
-  final resp = await ref.read(apiClientProvider).dio.get(
-    '/${ApiConstants.pricing}/vat-return',
-    queryParameters: {'from': range.from, 'to': range.to},
+/// One of HMRC's obligations: a period to file for, open or fulfilled.
+class VatObligation {
+  final String periodKey;
+  final String start;
+  final String end;
+  final String? due;
+  final String status;
+  const VatObligation({
+    required this.periodKey,
+    required this.start,
+    required this.end,
+    this.due,
+    required this.status,
+  });
+  bool get open => status == 'O';
+  factory VatObligation.fromJson(Map<String, dynamic> j) => VatObligation(
+    periodKey: j['periodKey'] as String? ?? '',
+    start: j['start'] as String? ?? '',
+    end: j['end'] as String? ?? '',
+    due: j['due'] as String?,
+    status: j['status'] as String? ?? 'O',
   );
-  return VatReturn.fromJson(resp.data['data'] as Map<String, dynamic>);
+}
+
+/// A return as filed, and what HMRC answered.
+class VatSubmission {
+  final String id;
+  final String periodKey;
+  final String status;
+  final String submittedAt;
+  final double box1;
+  final double box5;
+  final double box6;
+  final String? formBundleNumber;
+  final String? chargeRefNumber;
+  final String? errorCode;
+  final String? errorMessage;
+  const VatSubmission({
+    required this.id,
+    required this.periodKey,
+    required this.status,
+    required this.submittedAt,
+    required this.box1,
+    required this.box5,
+    required this.box6,
+    this.formBundleNumber,
+    this.chargeRefNumber,
+    this.errorCode,
+    this.errorMessage,
+  });
+  factory VatSubmission.fromJson(Map<String, dynamic> j) => VatSubmission(
+    id: j['id'] as String? ?? '',
+    periodKey: j['periodKey'] as String? ?? '',
+    status: j['status'] as String? ?? '',
+    submittedAt: j['submittedAt'] as String? ?? '',
+    box1: (j['box1'] as num?)?.toDouble() ?? 0,
+    box5: (j['box5'] as num?)?.toDouble() ?? 0,
+    box6: (j['box6'] as num?)?.toDouble() ?? 0,
+    formBundleNumber: j['formBundleNumber'] as String?,
+    chargeRefNumber: j['chargeRefNumber'] as String?,
+    errorCode: j['errorCode'] as String?,
+    errorMessage: j['errorMessage'] as String?,
+  );
+}
+
+final vatRegistrationProvider = FutureProvider.autoDispose<VatRegistration>((
+  ref,
+) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.pricing}/vat-return/mtd/registration');
+  return VatRegistration.fromJson(resp.data['data'] as Map<String, dynamic>);
+});
+
+final vatObligationsProvider = FutureProvider.autoDispose
+    .family<List<VatObligation>, VatReturnRange>((ref, range) async {
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get(
+            '/${ApiConstants.pricing}/vat-return/mtd/obligations',
+            queryParameters: {'from': range.from, 'to': range.to},
+          );
+      return ((resp.data['data'] as List?) ?? const [])
+          .map((e) => VatObligation.fromJson(e as Map<String, dynamic>))
+          .toList();
+    });
+
+final vatSubmissionsProvider = FutureProvider.autoDispose<List<VatSubmission>>((
+  ref,
+) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.pricing}/vat-return/mtd/submissions');
+  return ((resp.data['data'] as List?) ?? const [])
+      .map((e) => VatSubmission.fromJson(e as Map<String, dynamic>))
+      .toList();
 });

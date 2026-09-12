@@ -43,6 +43,8 @@ class _Server implements HttpClientAdapter {
   bool intact = true;
   int putStatus = 200;
   String putError = 'RECEIPT_PREFIX_INVALID';
+  String regime = 'NONE';
+  int settingsPutStatus = 200;
 
   @override
   void close({bool force = false}) {}
@@ -57,12 +59,29 @@ class _Server implements HttpClientAdapter {
       body = status == 200
           ? '{"data":{"storeId":"s1","seriesCode":"MAIN","period":"2026","nextNumber":3,"prefix":"GB-A"}}'
           : '{"error":{"code":"$putError","message":"a prefix is letters, digits and hyphens, at most 16"}}';
+    } else if (o.path.endsWith('/fiscal-receipts/settings') && o.method == 'PUT') {
+      status = settingsPutStatus;
+      body = status == 200
+          ? '{"data":{"storeId":"s1","regime":"DE_KASSENSICHV","taxRegistrationNumber":"DE123456789","tse":{"provider":"SIMULATED","clientId":"till-1","serialNumber":"0123456789abcdef0123456789abcdef","signatureCounter":0},"regimes":["NONE","DE_KASSENSICHV","PT_SAFT"],"tseProviders":["SIMULATED"],"ptKeyConfigured":false}}'
+          : '{"error":{"code":"FISCAL_TAX_NUMBER_REQUIRED","message":"A German store needs its Steuernummer or USt-IdNr on the register"}}';
+    } else if (o.path.endsWith('/fiscal-receipts/settings')) {
+      body = regime == 'NONE'
+          ? '{"data":{"storeId":"s1","regime":"NONE","regimes":["NONE","DE_KASSENSICHV","PT_SAFT"],"tseProviders":["SIMULATED"],"ptKeyConfigured":false}}'
+          : '{"data":{"storeId":"s1","regime":"DE_KASSENSICHV","taxRegistrationNumber":"DE123456789","tse":{"provider":"SIMULATED","clientId":"till-1","serialNumber":"0123456789abcdef0123456789abcdef","signatureCounter":2},"regimes":["NONE","DE_KASSENSICHV","PT_SAFT"],"tseProviders":["SIMULATED"],"ptKeyConfigured":false}}';
     } else if (o.path.endsWith('/fiscal-receipts/series')) {
       body = '{"data":[{"storeId":"s1","seriesCode":"MAIN","period":"2026","nextNumber":3,"prefix":"GB-A"}]}';
     } else if (o.path.endsWith('/fiscal-receipts/audit')) {
       body = intact
           ? '{"data":{"firstNumber":1,"lastNumber":2,"issued":2,"expected":2,"intact":true,"gaps":[],"chainIntact":true,"chainFrom":1}}'
           : '{"data":{"firstNumber":1,"lastNumber":5,"issued":3,"expected":5,"intact":false,"gaps":[{"from":2,"to":3}],"chainIntact":false,"chainFrom":1,"chainBrokenAt":4}}';
+    } else if (o.path.endsWith('/fiscal-receipts/export') && o.queryParameters['format'] == 'saft-pt') {
+      return ResponseBody.fromString(
+          '<?xml version="1.0" encoding="UTF-8"?><AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:PT_1.04_01"><Header><AuditFileVersion>1.04_01</AuditFileVersion></Header></AuditFile>',
+          200,
+          headers: {Headers.contentTypeHeader: ['application/xml']});
+    } else if (o.path.endsWith('/fiscal-receipts/export') && o.queryParameters['format'] == 'dsfinvk') {
+      return ResponseBody.fromBytes(
+          [0x50, 0x4b, 0x03, 0x04], 200, headers: {Headers.contentTypeHeader: ['application/zip']});
     } else if (o.path.endsWith('/fiscal-receipts/export')) {
       return ResponseBody.fromString(
           'number,fullNumber,issuedAt,orderId,currency,grossTotal,taxTotal,voidedAt,voidReason,prevHash,hash\n'
@@ -70,11 +89,19 @@ class _Server implements HttpClientAdapter {
           '2,GB-A-2026-000002,2026-09-12T10:05:00Z,01a090ae-611e-701e-a773-cff68a489eff,GBP,3.0000,0.5000,2026-09-12T10:06:00Z,wrong item,ab12,cd34\n',
           200,
           headers: {Headers.contentTypeHeader: ['text/csv']});
+    } else if (o.path.endsWith('/fiscal-receipts/export')) {
+      // (text formats are handled above; the zip below)
+      body = '{"data":[]}';
     } else if (o.path.endsWith('/fiscal-receipts')) {
-      body = '{"data":['
-          '{"fullNumber":"GB-A-2026-000001","number":1,"orderId":"01a090ae-611e-701e-a773-cff68a489efe","issuedAt":"2026-09-12T10:00:00Z","grossTotal":12.50,"currency":"GBP"},'
-          '{"fullNumber":"GB-A-2026-000002","number":2,"orderId":"01a090ae-611e-701e-a773-cff68a489eff","issuedAt":"2026-09-12T10:05:00Z","grossTotal":3.00,"currency":"GBP","voidedAt":"2026-09-12T10:06:00Z"}'
-          ']}';
+      body = regime == 'NONE'
+          ? '{"data":['
+              '{"fullNumber":"GB-A-2026-000001","number":1,"orderId":"01a090ae-611e-701e-a773-cff68a489efe","issuedAt":"2026-09-12T10:00:00Z","grossTotal":12.50,"currency":"GBP"},'
+              '{"fullNumber":"GB-A-2026-000002","number":2,"orderId":"01a090ae-611e-701e-a773-cff68a489eff","issuedAt":"2026-09-12T10:05:00Z","grossTotal":3.00,"currency":"GBP","voidedAt":"2026-09-12T10:06:00Z"}'
+              ']}'
+          : '{"data":['
+              '{"fullNumber":"DE-B-2026-000001","number":1,"orderId":"01a090ae-611e-701e-a773-cff68a489efe","issuedAt":"2026-09-12T10:00:00Z","grossTotal":11.90,"currency":"EUR","regime":"DE_KASSENSICHV","tse":{"signatureCounter":1,"signature":"SIG"}},'
+              '{"fullNumber":"DE-B-2026-000002","number":2,"orderId":"01a090ae-611e-701e-a773-cff68a489eff","issuedAt":"2026-09-12T10:05:00Z","grossTotal":3.00,"currency":"EUR","regime":"DE_KASSENSICHV","tse":{"error":"cloud TSE unreachable"}}'
+              ']}';
     } else {
       body = '{"data":[]}';
     }
@@ -84,11 +111,14 @@ class _Server implements HttpClientAdapter {
   }
 }
 
-Future<_Server> _pump(WidgetTester tester, {String role = 'MANAGER', bool intact = true}) async {
-  tester.view.physicalSize = const Size(1100, 1600);
+Future<_Server> _pump(WidgetTester tester,
+    {String role = 'MANAGER', bool intact = true, String regime = 'NONE'}) async {
+  tester.view.physicalSize = const Size(1100, 2000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
-  final server = _Server()..intact = intact;
+  final server = _Server()
+    ..intact = intact
+    ..regime = regime;
   final dio = Dio(BaseOptions(baseUrl: 'http://test'))..httpClientAdapter = server;
   await tester.pumpWidget(ProviderScope(
     overrides: <Override>[
@@ -177,5 +207,92 @@ void main() {
     // The screen renders read-only for the role that cannot set a prefix — the
     // server refuses it anyway; this keeps the button from being offered.
     expect(find.text('Set prefix'), findsNothing);
+    expect(find.byKey(const Key('regime-change')), findsNothing);
+  });
+
+  // ── the fiscal regime (18.5) ─────────────────────────────────────────────
+
+  testWidgets('a store under NONE says so, and its rows carry no stamp', (tester) async {
+    await _pump(tester);
+    expect(find.byKey(const Key('regime-label')), findsOneWidget);
+    expect(find.text('None — the register alone'), findsOneWidget);
+    expect(find.textContaining('TSE #'), findsNothing);
+  });
+
+  testWidgets('a German store shows its module, and each receipt its signature counter or the outage',
+      (tester) async {
+    await _pump(tester, regime: 'DE_KASSENSICHV');
+    expect(find.text('Germany — KassenSichV (TSE, DSFinV-K)'), findsOneWidget);
+    expect(find.textContaining('Security module SIMULATED'), findsOneWidget);
+    expect(find.textContaining('signatures so far 2'), findsOneWidget);
+    expect(find.text('TSE #1'), findsOneWidget);
+    expect(find.text('TSE ausgefallen'), findsOneWidget);
+  });
+
+  testWidgets('a manager places a store under Germany; the server refuses without a tax number and the screen says so',
+      (tester) async {
+    final server = await _pump(tester)..settingsPutStatus = 400;
+    await tester.tap(find.byKey(const Key('regime-change')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('regime-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Germany — KassenSichV (TSE, DSFinV-K)').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('regime-tse-provider')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('regime-save')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Steuernummer or USt-IdNr'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsOneWidget, reason: 'the dialog stays open to fix it');
+
+    server.settingsPutStatus = 200;
+    await tester.enterText(find.byKey(const Key('regime-tax-number')), 'DE123456789');
+    await tester.tap(find.byKey(const Key('regime-save')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    final put = server.requests.lastWhere((r) => r.method == 'PUT');
+    expect(put.path, endsWith('/admin/fiscal-receipts/settings'));
+    final body = put.data is String ? jsonDecode(put.data as String) : put.data;
+    expect(body['storeId'], 's1');
+    expect(body['regime'], 'DE_KASSENSICHV');
+    expect(body['taxRegistrationNumber'], 'DE123456789');
+    expect(body['tseProvider'], 'SIMULATED', reason: 'a store with no device registers one');
+  });
+
+  testWidgets('Portugal without a key on the server is said plainly in the dialog', (tester) async {
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('regime-change')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('regime-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Portugal — certified software (SAF-T)').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('regime-pt-no-key')), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'NIF'), findsOneWidget);
+  });
+
+  testWidgets('the export offers the inspector\'s file for the regime: SAF-T as text to copy',
+      (tester) async {
+    final server = await _pump(tester);
+    await tester.tap(find.text('Export'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('receipt-export-format')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SAF-T (PT) — Portugal').last);
+    await tester.pumpAndSettle();
+    final xml = tester.widget<SelectableText>(find.byKey(const Key('receipt-export-csv'))).data!;
+    expect(xml, contains('AuditFileVersion'));
+    expect(find.text('Copy XML'), findsOneWidget);
+    final export = server.requests.lastWhere((r) => r.path.endsWith('/fiscal-receipts/export'));
+    expect(export.queryParameters['format'], 'saft-pt');
+  });
+
+  testWidgets('a German store\'s export defaults to DSFinV-K, fetched as a zip to save', (tester) async {
+    final server = await _pump(tester, regime: 'DE_KASSENSICHV');
+    await tester.tap(find.text('Export'));
+    await tester.pumpAndSettle();
+    expect(find.text('Save zip'), findsOneWidget);
+    expect(find.textContaining('index.xml'), findsOneWidget);
+    // Nothing is fetched until the manager asks for the file.
+    expect(server.requests.where((r) => r.path.endsWith('/fiscal-receipts/export')), isEmpty);
   });
 }

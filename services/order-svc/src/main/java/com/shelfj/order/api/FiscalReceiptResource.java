@@ -1,5 +1,7 @@
 package com.shelfj.order.api;
 
+import com.shelfj.order.mapper.Mappers;
+import com.shelfj.order.service.FiscalService;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.Parsing;
@@ -42,6 +44,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 public class FiscalReceiptResource {
 
   @Inject OrderService svc;
+  @Inject FiscalService fiscal;
   @Inject TenantContext ctx;
 
   /**
@@ -77,7 +80,9 @@ public class FiscalReceiptResource {
   @Path("/orders/{orderId}/fiscal-receipt")
   public Response issue(@PathParam("orderId") UUID orderId, @QueryParam("series") String series) {
     return Response.ok(
-            ApiResponse.ok(svc.issueReceipt(ctx.requireTenantId(), orderId, series, ctx.userId())))
+            ApiResponse.ok(
+                Mappers.toDto(
+                    svc.issueReceipt(ctx.requireTenantId(), orderId, series, ctx.userId()))))
         .build();
   }
 
@@ -97,7 +102,78 @@ public class FiscalReceiptResource {
   @GET
   @Path("/orders/{orderId}/fiscal-receipt")
   public Response get(@PathParam("orderId") UUID orderId) {
-    return Response.ok(ApiResponse.ok(svc.receiptOf(ctx.requireTenantId(), orderId))).build();
+    return Response.ok(ApiResponse.ok(Mappers.toDto(svc.receiptOf(ctx.requireTenantId(), orderId))))
+        .build();
+  }
+
+  /**
+   * The fiscal regime a store trades under (18.5), its registered device, and what this deployment
+   * offers beside them.
+   *
+   * @param storeId the store
+   * @return the settings; NONE when none were ever set
+   */
+  @Operation(
+      summary = "The fiscal regime a store trades under",
+      description =
+          "NONE (the register alone), DE_KASSENSICHV (every sale signed by a security module,"
+              + " DSFinV-K export) or PT_SAFT (every document RSA-signed, SAF-T (PT) export); the"
+              + " store's device when it has one; and what the deployment offers: the regimes and"
+              + " device providers available, and whether a Portuguese signing key is installed."
+              + " Management-only.")
+  @APIResponse(responseCode = "200", description = "The settings")
+  @GET
+  @Path("/fiscal-receipts/settings")
+  public Response settings(@QueryParam("storeId") String storeId) {
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(
+                    fiscal.settings(ctx.requireTenantId(), Parsing.uuid(storeId, "storeId")))))
+        .build();
+  }
+
+  /**
+   * Places a store under a fiscal regime (18.5).
+   *
+   * @param req the regime and what it needs
+   * @return the settings as they now stand
+   */
+  @Operation(
+      summary = "Place a store under a fiscal regime",
+      description =
+          "DE_KASSENSICHV needs the store's tax number and a security module — tseProvider"
+              + " SIMULATED registers one in software, CLOUD names one at the configured provider"
+              + " by tseTssId. PT_SAFT needs a valid NIF and a signing key installed on the"
+              + " server. Documents already issued keep the stamps they were issued with; the"
+              + " change applies from the next sale. Management-only.")
+  @APIResponse(responseCode = "200", description = "The settings as they now stand")
+  @APIResponse(
+      responseCode = "400",
+      description = "An unknown regime, or a regime missing what it needs")
+  @APIResponse(
+      responseCode = "409",
+      description =
+          "The store is not this tenant's, or the server lacks the key or credentials the regime needs")
+  @PUT
+  @Path("/fiscal-receipts/settings")
+  public Response setSettings(com.shelfj.order.dto.Dtos.SetFiscalSettingsRequest req) {
+    com.shelfj.web.Validations.validate(req);
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(
+                    fiscal.setSettings(
+                        ctx.requireTenantId(),
+                        Parsing.uuid(req.storeId(), "storeId"),
+                        new FiscalService.SettingsChange(
+                            req.regime(),
+                            req.taxRegistrationNumber(),
+                            req.certificateNumber(),
+                            req.seriesValidationCode(),
+                            req.tseProvider(),
+                            req.tseTssId(),
+                            req.tseClientId()),
+                        ctx.userId()))))
+        .build();
   }
 
   @Operation(
@@ -162,12 +238,16 @@ public class FiscalReceiptResource {
       @QueryParam("limit") @DefaultValue("100") int limit) {
     return Response.ok(
             ApiResponse.ok(
-                svc.receiptSeries(
-                    ctx.requireTenantId(),
-                    Parsing.uuid(storeId, "storeId"),
-                    series,
-                    requirePeriod(period),
-                    limit)))
+                svc
+                    .receiptSeries(
+                        ctx.requireTenantId(),
+                        Parsing.uuid(storeId, "storeId"),
+                        series,
+                        requirePeriod(period),
+                        limit)
+                    .stream()
+                    .map(Mappers::toDto)
+                    .toList()))
         .build();
   }
 
@@ -214,21 +294,47 @@ public class FiscalReceiptResource {
    * @return CSV text or a JSON document
    */
   @Operation(
-      summary = "Export a series with its hash chain",
+      summary = "Export a series: the register, or the inspector's file",
       description =
           "Every document in the series, in number order, with the hash it was issued with and"
               + " the hash it chains to — as CSV rows, or as JSON with the order lines behind"
-              + " each document. The in-repo input to SAF-T, KassenSichV and corrispettivi"
-              + " exports; not itself a certified file. Management-only.")
-  @APIResponse(responseCode = "200", description = "The register")
+              + " each document. Since 18.5 also as the file a regime's inspector asks for:"
+              + " format=dsfinvk is the German DSFinV-K 2.3 zip (cash-point closings, the"
+              + " transactions with their TSE stamps, lines, VAT and payments, with index.xml);"
+              + " format=saft-pt is the Portuguese SAF-T (PT) 1.04_01 sales-invoice file with"
+              + " every document's signature and ATCUD. Both name the business and the store as"
+              + " tenant-svc holds them and the products as product-svc names them, and refuse"
+              + " with 503 rather than write a file that names nobody. Management-only.")
+  @APIResponse(responseCode = "200", description = "The register or the file")
+  @APIResponse(responseCode = "400", description = "An unknown format")
+  @APIResponse(responseCode = "503", description = "The store's identity could not be read")
   @GET
   @Path("/fiscal-receipts/export")
-  @Produces({"text/csv", MediaType.APPLICATION_JSON})
+  @Produces({"text/csv", MediaType.APPLICATION_JSON, "application/zip", MediaType.APPLICATION_XML})
   public Response export(
       @QueryParam("storeId") String storeId,
       @QueryParam("series") String series,
       @QueryParam("period") String period,
       @QueryParam("format") @DefaultValue("csv") String format) {
+    String f = format == null ? "csv" : format.trim().toLowerCase(java.util.Locale.ROOT);
+    if ("dsfinvk".equals(f) || "saft-pt".equals(f)) {
+      FiscalService.Export file =
+          fiscal.export(
+              ctx.requireTenantId(),
+              Parsing.uuid(storeId, "storeId"),
+              series,
+              requirePeriod(period),
+              f,
+              ctx);
+      return Response.ok(file.bytes())
+          .type(file.contentType())
+          .header("Content-Disposition", "attachment; filename=\"" + file.fileName() + "\"")
+          .build();
+    }
+    if (!"csv".equals(f) && !"json".equals(f)) {
+      throw com.shelfj.web.ApiException.badRequest(
+          "FISCAL_EXPORT_FORMAT_UNKNOWN", "format must be csv, json, dsfinvk or saft-pt");
+    }
     Object out =
         svc.exportRegister(
             ctx.requireTenantId(),

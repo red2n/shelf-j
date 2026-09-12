@@ -134,7 +134,7 @@ public class PaymentService {
             storeId);
 
     return repo.createTender(
-        tender, Events.paymentCaptured(tenantId, tenderId, orderId, req.amount()));
+        tender, Events.paymentCaptured(tenantId, tenderId, orderId, req.amount(), method));
   }
 
   /**
@@ -179,7 +179,9 @@ public class PaymentService {
             storeId);
 
     return repo.createTender(
-        tender, Events.paymentCaptured(tenantId, tenderId, orderId, req.amount()));
+        tender,
+        Events.paymentCaptured(
+            tenantId, tenderId, orderId, req.amount(), PaymentTender.METHOD_STORE_CREDIT));
   }
 
   /**

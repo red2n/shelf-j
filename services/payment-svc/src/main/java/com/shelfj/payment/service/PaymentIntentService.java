@@ -342,7 +342,8 @@ public class PaymentIntentService {
         intent.tenantId(),
         intent.id(),
         tender,
-        Events.paymentCaptured(intent.tenantId(), tenderId, intent.orderId(), amount));
+        Events.paymentCaptured(
+            intent.tenantId(), tenderId, intent.orderId(), amount, PaymentTender.METHOD_CARD));
   }
 
   /**

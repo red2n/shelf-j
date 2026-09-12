@@ -433,10 +433,13 @@ public class OrderResource {
     if (waitSeconds != null && waitSeconds > 0) {
       return Response.ok(
               ApiResponse.ok(
-                  svc.awaitReceipt(ctx.tenantId(), Parsing.uuid(id, "id"), ctx, waitSeconds)))
+                  Mappers.toDto(
+                      svc.awaitReceipt(ctx.tenantId(), Parsing.uuid(id, "id"), ctx, waitSeconds))))
           .build();
     }
-    return Response.ok(ApiResponse.ok(svc.receiptOf(ctx.tenantId(), Parsing.uuid(id, "id"), ctx)))
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toDto(svc.receiptOf(ctx.tenantId(), Parsing.uuid(id, "id"), ctx))))
         .build();
   }
 

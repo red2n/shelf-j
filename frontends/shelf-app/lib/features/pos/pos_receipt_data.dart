@@ -6,6 +6,7 @@
 /// lives behind the conditional export in `pos_receipt.dart`.
 library;
 
+import 'pos_fiscal_receipt.dart';
 import 'pos_providers.dart';
 import '../../shared/util/short_ref.dart';
 
@@ -32,6 +33,10 @@ class PosReceiptData {
   /// passes an order id off as a receipt number.
   final String? fiscalNumberNote;
 
+  /// What the store's fiscal regime stamped on the sale (18.5): printed under
+  /// the totals, as the regime requires. Null under NONE or before issue.
+  final FiscalStamp? fiscalStamp;
+
   const PosReceiptData({
     required this.orderId,
     required this.storeName,
@@ -48,28 +53,34 @@ class PosReceiptData {
     this.customerName,
     this.fiscalNumber,
     this.fiscalNumberNote,
+    this.fiscalStamp,
   });
 
   /// The same receipt, now carrying the number that was not issued in time.
-  PosReceiptData withFiscalNumber(String number) => PosReceiptData(
-        orderId: orderId,
-        storeName: storeName,
-        storeAddress: storeAddress,
-        dateTime: dateTime,
-        cashierEmail: cashierEmail,
-        items: items,
-        subtotal: subtotal,
-        discount: discount,
-        total: total,
-        currency: currency,
-        tenders: tenders,
-        change: change,
-        customerName: customerName,
-        fiscalNumber: number,
-      );
+  PosReceiptData withFiscalNumber(String number) => withFiscalStamp(
+    FiscalStamp(fullNumber: number, regime: fiscalStamp?.regime ?? 'NONE'),
+  );
 
-  String get shortId =>
-      shortRef(orderId).toUpperCase();
+  /// The same receipt, now carrying the number and the regime's stamp.
+  PosReceiptData withFiscalStamp(FiscalStamp stamp) => PosReceiptData(
+    orderId: orderId,
+    storeName: storeName,
+    storeAddress: storeAddress,
+    dateTime: dateTime,
+    cashierEmail: cashierEmail,
+    items: items,
+    subtotal: subtotal,
+    discount: discount,
+    total: total,
+    currency: currency,
+    tenders: tenders,
+    change: change,
+    customerName: customerName,
+    fiscalNumber: stamp.fullNumber,
+    fiscalStamp: stamp,
+  );
+
+  String get shortId => shortRef(orderId).toUpperCase();
 
   String _fmt(double v) => '$currency ${v.toStringAsFixed(2)}';
 
@@ -120,17 +131,58 @@ class PosReceiptData {
         ? '<div class="info-row"><span>Customer:</span><span>${_esc(customerName!)}</span></div>'
         : '';
 
-    final addressLine =
-        storeAddress != null && storeAddress!.isNotEmpty ? '<div>${_esc(storeAddress!)}</div>' : '';
+    final addressLine = storeAddress != null && storeAddress!.isNotEmpty
+        ? '<div>${_esc(storeAddress!)}</div>'
+        : '';
 
     // The receipt number is the legal one or nothing. This row used to read
     // "Receipt #" over the first eight characters of the order's UUID, which is
     // an order reference wearing a receipt number's label.
     final numberRows = fiscalNumber != null
         ? '<div class="info-row receipt-no"><span>Receipt no.:</span><span>${_esc(fiscalNumber!)}</span></div>\n'
-            '  <div class="info-row"><span>Order ref:</span><span>$shortId</span></div>'
+              '  <div class="info-row"><span>Order ref:</span><span>$shortId</span></div>'
         : '<div class="info-row"><span>Order ref:</span><span>$shortId</span></div>'
-            '${fiscalNumberNote != null ? '\n  <div class="info-row">${_esc(fiscalNumberNote!)}</div>' : ''}';
+              '${fiscalNumberNote != null ? '\n  <div class="info-row">${_esc(fiscalNumberNote!)}</div>' : ''}';
+
+    // The regime's stamp (18.5). Germany: KassenSichV §6 requires the serial
+    // of the security module, the transaction number, the signature counter,
+    // the start and end of the transaction and the signature (or the QR code
+    // that carries them all). Portugal: four characters of the document's
+    // signature and the certificate number, on every document.
+    final stamp = fiscalStamp;
+    String fiscalBlock = '';
+    if (stamp != null && stamp.hasTse) {
+      if (stamp.tseError != null) {
+        fiscalBlock =
+            '''
+  <hr class="divider">
+  <div class="fiscal" data-fiscal="tse-error">
+    <div class="info-row"><span>TSE:</span><span>ausgefallen</span></div>
+    <div class="fiscal-note">Sicherheitseinrichtung ausgefallen: ${_esc(stamp.tseError!)}</div>
+  </div>''';
+      } else {
+        fiscalBlock =
+            '''
+  <hr class="divider">
+  <div class="fiscal" data-fiscal="tse">
+    <div class="info-row"><span>TSE-Seriennr.:</span><span class="mono">${_esc(stamp.tseSerial ?? '')}</span></div>
+    <div class="info-row"><span>Transaktionsnr.:</span><span>${stamp.tseTransactionNumber ?? ''}</span></div>
+    <div class="info-row"><span>Signaturzähler:</span><span>${stamp.tseSignatureCounter ?? ''}</span></div>
+    <div class="info-row"><span>Vorgangsbeginn:</span><span>${_esc(stamp.tseStartedAt ?? '')}</span></div>
+    <div class="info-row"><span>Vorgangsende:</span><span>${_esc(stamp.tseFinishedAt ?? '')}</span></div>
+    <div class="fiscal-note">Signatur: <span class="mono">${_esc(stamp.tseSignature ?? '')}</span></div>
+    ${stamp.tseQr != null ? '<div class="fiscal-note">QR: <span class="mono">${_esc(stamp.tseQr!)}</span></div>' : ''}
+  </div>''';
+      }
+    } else if (stamp != null && stamp.hasPt) {
+      fiscalBlock =
+          '''
+  <hr class="divider">
+  <div class="fiscal" data-fiscal="pt">
+    ${stamp.ptAtcud != null ? '<div class="info-row"><span>ATCUD:</span><span>${_esc(stamp.ptAtcud!)}</span></div>' : ''}
+    <div class="fiscal-note"><span class="mono">${_esc(stamp.ptExcerpt!)}</span> — Processado por programa certificado n.º ${_esc(stamp.ptCertificateNumber ?? '—')}/AT</div>
+  </div>''';
+    }
 
     return '''<!DOCTYPE html>
 <html lang="en">
@@ -167,6 +219,9 @@ class PosReceiptData {
     .change-row td { font-size: 14px; color: #006600; padding-top: 4px; }
     .footer { text-align: center; font-size: 11px; color: #444; margin-top: 12px; line-height: 1.6; }
     .receipt-no { font-size: 12px; letter-spacing: 1px; }
+    .fiscal { font-size: 10px; line-height: 1.5; }
+    .fiscal-note { font-size: 9px; word-break: break-all; margin-top: 2px; }
+    .mono { font-family: 'Courier New', Courier, monospace; }
     @media print {
       body { width: 100%; padding: 0; margin: 0; }
       button, .no-print { display: none !important; }
@@ -216,6 +271,7 @@ class PosReceiptData {
     $tenderRows
     $changeRow
   </table>
+  $fiscalBlock
 
   <hr class="divider-solid">
 

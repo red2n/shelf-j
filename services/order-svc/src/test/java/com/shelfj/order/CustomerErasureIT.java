@@ -101,7 +101,7 @@ class CustomerErasureIT {
 
   private void pay(UUID order) {
     orderService.handlePaymentCaptured(
-        UUID.fromString(T), order, Ids.newId(), new BigDecimal("10.00"));
+        UUID.fromString(T), order, Ids.newId(), new BigDecimal("10.00"), "CARD");
   }
 
   private static String column(String table, UUID id, String column) {

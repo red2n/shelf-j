@@ -74,6 +74,7 @@ public class OrderService {
   @Inject com.shelfj.order.client.InventoryClient inventory;
   @Inject com.shelfj.order.client.NotificationClient notifications;
   @Inject com.shelfj.order.client.TenantClient tenants;
+  @Inject FiscalService fiscal;
 
   // ── Orders ────────────────────────────────────────────────────────────────
 
@@ -307,9 +308,13 @@ public class OrderService {
       UUID variantId = variantIds.get(i);
       BigDecimal unitPrice;
       BigDecimal quotedLineNet = null;
+      BigDecimal quotedLineVat = null;
       if (enforcePricing) {
         var resolved = resolvedLines.get(i);
         unitPrice = resolved.unitPrice();
+        // Kept on the line (18.5): a fiscal file lists the sale by VAT rate, and the order's one
+        // tax total cannot be split back into a 19% line and a 7% line.
+        quotedLineVat = resolved.lineVat();
         // A quote returns the whole line's VAT, already multiplied out. The per-unit form this
         // used to multiply belongs to /prices/resolve-batch; multiplying a line total by the
         // quantity again put £144 of VAT on an £80 basket (SJ-D20).
@@ -341,7 +346,9 @@ public class OrderService {
               unitPrice,
               line,
               ir.notes(),
-              instrumentId));
+              instrumentId,
+              BigDecimal.ZERO,
+              quotedLineVat));
     }
 
     // Hold stock for ONLINE orders before persisting, so a short line rejects the checkout with
@@ -786,28 +793,9 @@ public class OrderService {
         seriesCode == null || seriesCode.isBlank()
             ? Domain.FiscalReceipt.DEFAULT_SERIES
             : seriesCode.trim().toUpperCase(java.util.Locale.ROOT);
-    // Fiscal year, which most jurisdictions restart numbering on. UTC because that is what the
-    // rest of the platform stores; a tenant whose fiscal year is not the calendar year needs a
-    // period they choose, and that is a configuration change rather than a schema one.
-    String period = String.valueOf(order.createdAt().atZone(java.time.ZoneOffset.UTC).getYear());
-    return receiptRepo.issue(
-        new Domain.FiscalReceipt(
-            Ids.newId(),
-            order.tenantId(),
-            order.storeId(),
-            series,
-            period,
-            0L,
-            null,
-            order.id(),
-            null,
-            userId,
-            order.currency(),
-            order.total(),
-            order.taxAmount(),
-            null,
-            null),
-        null);
+    // The store's fiscal regime stamps the document as it is numbered (18.5): the fiscal year the
+    // numbering restarts on is taken there, in UTC like the rest of the platform.
+    return fiscal.issue(order, series, userId);
   }
 
   /**
@@ -1677,11 +1665,21 @@ public class OrderService {
    * cover it. Split tenders (e.g. POS cash+card, each individually below the order total) each call
    * this once and accumulate, instead of the order only confirming on a single full-amount tender.
    */
+  /** A capture whose event carried no tender method (older producers). */
   public void handlePaymentCaptured(
       java.util.UUID tenantId,
       java.util.UUID orderId,
       java.util.UUID paymentId,
       java.math.BigDecimal amount) {
+    handlePaymentCaptured(tenantId, orderId, paymentId, amount, null);
+  }
+
+  public void handlePaymentCaptured(
+      java.util.UUID tenantId,
+      java.util.UUID orderId,
+      java.util.UUID paymentId,
+      java.math.BigDecimal amount,
+      String method) {
     if (amount == null || paymentId == null) {
       LOG.log(
           java.lang.System.Logger.Level.WARNING,
@@ -1714,6 +1712,7 @@ public class OrderService {
             orderId,
             paymentId,
             amount,
+            method,
             Events.orderConfirmed(
                 tenantId,
                 orderId,

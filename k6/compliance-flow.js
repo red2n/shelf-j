@@ -21,6 +21,8 @@ import {
 
 export const options = {
   scenarios: { flow: { executor: 'per-vu-iterations', vus: 1, iterations: 1, maxDuration: '10m' } },
+  // Four businesses are onboarded in setup, each waiting on its owner's grant to arrive over Kafka.
+  setupTimeout: '5m',
   thresholds: ALL_CHECKS_PASS,
 };
 
@@ -34,10 +36,33 @@ export function setup() {
   priceVariants(tenant, [variantId], '12.00');
   must(receive(tenant, storeA.id, variantId, 20), [200, 201], 'receive stock');
   const cashierA = staffUser(tenant, 'CASHIER', [storeA.id]);
-  return { tenant, rival, storeA, storeB, variantId, cashierA };
+
+  // Groups 5 and 6: a German and a Portuguese business, each with a store that sells one line at
+  // its own standard rate, so the regime's stamp has real figures to sign (18.5).
+  const de = onboardTenant('compliance-de', { country: 'DE', currency: 'EUR' });
+  must(call('POST', '/api/pricing-svc/vat-rates', { token: de.owner.token, body: { code: 'T1', name: 'Allgemeiner Steuersatz', rate: 0.19, exempt: false, description: '19%', effectiveFrom: '2020-01-01T00:00:00Z' } }), 201, 'DE standard rate');
+  const deVariant = sellableVariant(de, 'Riesling').variantId;
+  priceVariants(de, [deVariant], '10.00');
+  must(receive(de, de.stores[0].id, deVariant, 50), [200, 201], 'DE stock');
+  const deCashier = staffUser(de, 'CASHIER', [de.stores[0].id]);
+  const pt = onboardTenant('compliance-pt', { country: 'PT', currency: 'EUR' });
+  must(call('POST', '/api/pricing-svc/vat-rates', { token: pt.owner.token, body: { code: 'T1', name: 'Taxa normal', rate: 0.23, exempt: false, description: '23%', effectiveFrom: '2020-01-01T00:00:00Z' } }), 201, 'PT standard rate');
+  const ptVariant = sellableVariant(pt, 'Vinho Verde').variantId;
+  priceVariants(pt, [ptVariant], '10.00');
+  must(receive(pt, pt.stores[0].id, ptVariant, 50), [200, 201], 'PT stock');
+  return { tenant, rival, storeA, storeB, variantId, cashierA, de, deVariant, deCashier, pt, ptVariant };
 }
 
-export default function ({ tenant, rival, storeA, storeB, variantId, cashierA }) {
+/** A till sale of one unit, paid in cash at the till, and its receipt as the till reads it. */
+function sellAndRead(biz, cashierToken, storeId, variantId, method) {
+  const sale = call('POST', '/api/order-svc/orders', { token: cashierToken, idem: true, body: { storeId, channel: 'POS', fulfilmentType: 'INSTORE', currency: biz.currency, items: [{ variantId, qty: 1 }] } });
+  must(sale, 201, 'till sale');
+  must(call('POST', '/api/payment-svc/payments', { token: cashierToken, idem: true, body: { orderId: data(sale).id, amount: data(sale).total, method, storeId, currency: biz.currency } }), [200, 201], 'tender');
+  const receipt = call('GET', `/api/order-svc/orders/${data(sale).id}/fiscal-receipt?wait=15`, { token: cashierToken });
+  return { orderId: data(sale).id, total: data(sale).total, receipt };
+}
+
+export default function ({ tenant, rival, storeA, storeB, variantId, cashierA, de, deVariant, deCashier, pt, ptVariant }) {
   const owner = tenant.owner.token;
   const shopper = register('compliance-shopper');
   const check = (extra = {}) => ({
@@ -197,5 +222,89 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cashierA })
     expect(call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${storeA.id}`, { token: cashierA.token }), 'a cashier does not export the register', 403);
     expect(call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${storeA.id}`, { token: rival.owner.token }), "a rival tenant's owner exports an empty register", 200);
     expect(call('GET', `/api/order-svc/orders/${orderId}/fiscal-receipt`, { token: shopper.token }), "a shopper cannot read a till sale's receipt", [401, 403, 404]);
+  });
+
+  group('5 fiscal regime: a German store signs every sale with a security module', () => {
+    const settings = '/api/order-svc/admin/fiscal-receipts/settings';
+    const store = de.stores[0];
+    const year = new Date().getUTCFullYear().toString();
+    const owner = de.owner.token;
+
+    const before = call('GET', `${settings}?storeId=${store.id}`, { token: owner });
+    expect(before, 'a store starts under NONE', 200);
+    truthy('with Germany and Portugal on offer and a simulated module available', data(before).regime === 'NONE' && data(before).regimes.includes('DE_KASSENSICHV') && data(before).regimes.includes('PT_SAFT') && data(before).tseProviders.includes('SIMULATED'), data(before));
+
+    expect(call('PUT', settings, { token: deCashier.token, body: { storeId: store.id, regime: 'DE_KASSENSICHV', taxRegistrationNumber: 'DE123456789', tseProvider: 'SIMULATED' } }), 'a cashier cannot place a store under a regime', 403);
+    expect(call('GET', `${settings}?storeId=${store.id}`, { token: deCashier.token }), 'nor read the settings', 403);
+    expect(call('PUT', settings, { token: owner, body: { storeId: store.id, regime: 'FR_NF525' } }), 'an unknown regime is refused', 400, 'FISCAL_REGIME_UNKNOWN');
+    expect(call('PUT', settings, { token: owner, body: { storeId: store.id, regime: 'DE_KASSENSICHV', tseProvider: 'SIMULATED' } }), 'Germany without a tax number is refused', 400, 'FISCAL_TAX_NUMBER_REQUIRED');
+    expect(call('PUT', settings, { token: owner, body: { storeId: store.id, regime: 'DE_KASSENSICHV', taxRegistrationNumber: 'DE123456789' } }), 'and without a module', 400, 'FISCAL_TSE_REQUIRED');
+    expect(call('PUT', settings, { token: owner, body: { storeId: store.id, regime: 'DE_KASSENSICHV', taxRegistrationNumber: 'DE123456789', tseProvider: 'USB' } }), 'an unknown module provider is refused', 400, 'FISCAL_TSE_PROVIDER_UNKNOWN');
+    const cloud = call('PUT', settings, { token: owner, body: { storeId: store.id, regime: 'DE_KASSENSICHV', taxRegistrationNumber: 'DE123456789', tseProvider: 'CLOUD', tseTssId: 'tss-1' } });
+    truthy('a cloud module is refused unless the provider is configured', cloud.status === 409 || cloud.status === 502 || cloud.status === 200, cloud.body);
+    expect(call('PUT', settings, { token: rival.owner.token, body: { storeId: store.id, regime: 'DE_KASSENSICHV', taxRegistrationNumber: 'DE1', tseProvider: 'SIMULATED' } }), "a rival tenant's owner cannot place our store under anything", 409, 'STORE_NOT_OPERATIONAL');
+
+    const placed = call('PUT', settings, { token: owner, body: { storeId: store.id, regime: 'DE_KASSENSICHV', taxRegistrationNumber: 'DE123456789', tseProvider: 'SIMULATED', tseClientId: 'till-1' } });
+    expect(placed, 'the owner places the store under KassenSichV with a simulated module', 200);
+    const device = data(placed).tse || {};
+    truthy('the module has a serial, a public key and a client id', device.provider === 'SIMULATED' && /^[0-9a-f]{64}$/.test(device.serialNumber || '') && !!device.publicKey && device.clientId === 'till-1', data(placed));
+
+    const cash = sellAndRead(de, deCashier.token, store.id, deVariant, 'CASH');
+    expect(cash.receipt, 'a cash sale is numbered and the till reads its receipt', 200);
+    const stamp = (data(cash.receipt) || {}).tse || {};
+    truthy('the receipt carries the module\'s stamp: serial, counters, signature', data(cash.receipt).regime === 'DE_KASSENSICHV' && stamp.serialNumber === device.serialNumber && stamp.transactionNumber === 1 && stamp.signatureCounter === 1 && typeof stamp.signature === 'string' && stamp.signature.length > 40 && !stamp.error, data(cash.receipt));
+    truthy('the process data is a Kassenbeleg at 19% paid in cash: 10.00 net is 11.90 gross', stamp.processType === 'Kassenbeleg-V1' && stamp.processData === 'Beleg^11.90_0.00_0.00_0.00_0.00^11.90:Bar', stamp);
+    truthy('and the QR has the twelve fields the receipt prints', typeof stamp.qr === 'string' && stamp.qr.split(';').length === 12 && stamp.qr.startsWith('V0;till-1;Kassenbeleg-V1;'), stamp.qr);
+
+    const card = sellAndRead(de, deCashier.token, store.id, deVariant, 'CARD');
+    const stamp2 = (data(card.receipt) || {}).tse || {};
+    truthy('the next sale, by card, moves both counters by one and is non-cash', stamp2.transactionNumber === 2 && stamp2.signatureCounter === 2 && stamp2.processData === 'Beleg^11.90_0.00_0.00_0.00_0.00^11.90:Unbar', stamp2);
+
+    const audit = call('GET', `/api/order-svc/admin/fiscal-receipts/audit?storeId=${store.id}&series=MAIN&period=${year}`, { token: owner });
+    expect(audit, 'the audit answers', 200);
+    truthy('two issued, sequence and chain intact', data(audit).issued === 2 && data(audit).intact === true && data(audit).chainIntact === true, data(audit));
+
+    const zip = call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${store.id}&series=MAIN&period=${year}&format=dsfinvk`, { token: owner });
+    expect(zip, 'the inspector\'s DSFinV-K file is produced', 200);
+    truthy('as a zip', (zip.headers['Content-Type'] || '').includes('application/zip') && zip.body.length > 200 && zip.body.slice(0, 2) === 'PK', { type: zip.headers['Content-Type'], len: zip.body.length });
+    expect(call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${store.id}&series=MAIN&period=${year}&format=dsfinvk`, { token: deCashier.token }), 'a cashier does not get the file', 403);
+    expect(call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${store.id}&series=MAIN&period=${year}&format=pdf`, { token: owner }), 'an unknown format is refused', 400, 'FISCAL_EXPORT_FORMAT_UNKNOWN');
+    const theirs = call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${store.id}&series=MAIN&period=${year}&format=dsfinvk`, { token: rival.owner.token });
+    truthy("a rival tenant's owner gets no file for our store", theirs.status === 503 || theirs.status === 404, theirs.status);
+
+    expect(call('POST', `/api/order-svc/orders/${cash.orderId}/void`, { token: owner, body: { reason: 'wrong item' } }), 'a stamped sale can be voided', 200);
+    const voided = call('GET', `/api/order-svc/admin/orders/${cash.orderId}/fiscal-receipt`, { token: owner });
+    truthy('and keeps its number and its stamp', !!data(voided).voidedAt && data(voided).tse && data(voided).tse.signature === stamp.signature, data(voided));
+  });
+
+  group('6 fiscal regime: a Portuguese store signs every document, when the software has its key', () => {
+    const settings = '/api/order-svc/admin/fiscal-receipts/settings';
+    const store = pt.stores[0];
+    const year = new Date().getUTCFullYear().toString();
+    const owner = pt.owner.token;
+
+    const offer = call('GET', `${settings}?storeId=${store.id}`, { token: owner });
+    expect(offer, 'the offer says whether a signing key is installed', 200);
+    expect(call('PUT', settings, { token: owner, body: { storeId: store.id, regime: 'PT_SAFT', taxRegistrationNumber: '123456780' } }), 'a NIF with a wrong check digit is refused', 400, 'FISCAL_NIF_INVALID');
+
+    const placed = call('PUT', settings, { token: owner, body: { storeId: store.id, regime: 'PT_SAFT', taxRegistrationNumber: '500000000', certificateNumber: '1234', seriesValidationCode: 'ABCD1234' } });
+    if (!data(offer).ptKeyConfigured) {
+      expect(placed, 'without a key on the server, Portugal is refused by name', 409, 'FISCAL_PT_KEY_NOT_CONFIGURED');
+      truthy('and the store stays under NONE', data(call('GET', `${settings}?storeId=${store.id}`, { token: owner })).regime === 'NONE');
+      return;
+    }
+    expect(placed, 'with a key installed, the owner places the store under certified-software rules', 200);
+    const one = sellAndRead(pt, owner, store.id, ptVariant, 'CASH');
+    const two = sellAndRead(pt, owner, store.id, ptVariant, 'CARD');
+    expect(one.receipt, 'the first document is issued', 200);
+    const p1 = (data(one.receipt) || {}).pt || {};
+    const p2 = (data(two.receipt) || {}).pt || {};
+    truthy('signed, with the SAF-T number, the ATCUD and the four characters the receipt prints', data(one.receipt).regime === 'PT_SAFT' && /^FS .+\/1$/.test(p1.invoiceNo || '') && p1.atcud === 'ABCD1234-1' && typeof p1.hash === 'string' && p1.hash.length > 100 && (p1.printedExcerpt || '').length === 4 && p1.certificateNumber === '1234', p1);
+    truthy('the second chains on the first', p2.atcud === 'ABCD1234-2' && p2.hash !== p1.hash, p2);
+    const audit = call('GET', `/api/order-svc/admin/fiscal-receipts/audit?storeId=${store.id}&series=MAIN&period=${year}`, { token: owner });
+    truthy('the chain is intact', data(audit).chainIntact === true && data(audit).issued === 2, data(audit));
+    const saft = call('GET', `/api/order-svc/admin/fiscal-receipts/export?storeId=${store.id}&series=MAIN&period=${year}&format=saft-pt`, { token: owner });
+    expect(saft, 'the SAF-T (PT) file is produced', 200);
+    truthy('as an AuditFile with both documents, their hashes and the certificate', saft.body.includes('urn:OECD:StandardAuditFile-Tax:PT_1.04_01') && saft.body.includes('<NumberOfEntries>2</NumberOfEntries>') && saft.body.includes('<Hash>' + p1.hash + '</Hash>') && saft.body.includes('<SoftwareCertificateNumber>1234</SoftwareCertificateNumber>') && saft.body.includes('<TaxRegistrationNumber>500000000</TaxRegistrationNumber>'), saft.body.slice(0, 600));
   });
 }

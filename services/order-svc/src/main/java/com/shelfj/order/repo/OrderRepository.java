@@ -545,6 +545,7 @@ public class OrderRepository extends BaseOutboxRepository {
       UUID orderId,
       UUID paymentId,
       BigDecimal amount,
+      String method,
       OutboxRow confirmEvent,
       OutboxRow fulfilEvent) {
     // Returns true only when THIS capture completed the sale, so the caller numbers the receipt
@@ -554,12 +555,14 @@ public class OrderRepository extends BaseOutboxRepository {
         c -> {
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "INSERT INTO order_payment_events (tenant_id, payment_id, order_id, amount)"
-                      + " VALUES (?,?,?,?)")) {
+                  "INSERT INTO order_payment_events"
+                      + " (tenant_id, payment_id, order_id, amount, method)"
+                      + " VALUES (?,?,?,?,?)")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, paymentId);
             ps.setObject(3, orderId);
             ps.setBigDecimal(4, amount);
+            ps.setString(5, method);
             ps.executeUpdate();
           } catch (SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState())) {
@@ -733,7 +736,7 @@ public class OrderRepository extends BaseOutboxRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total, notes,"
-                      + " weighing_instrument_id, fulfilled_qty FROM order_items"
+                      + " weighing_instrument_id, fulfilled_qty, vat_amount FROM order_items"
                       + " WHERE tenant_id=? AND order_id=? ORDER BY created_at FOR UPDATE")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, orderId);
@@ -848,7 +851,7 @@ public class OrderRepository extends BaseOutboxRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total, notes,"
-                      + " weighing_instrument_id, fulfilled_qty FROM order_items"
+                      + " weighing_instrument_id, fulfilled_qty, vat_amount FROM order_items"
                       + " WHERE tenant_id=? AND order_id=? ORDER BY created_at FOR UPDATE")) {
             ps.setObject(1, tenantId);
             ps.setObject(2, orderId);
@@ -1073,7 +1076,7 @@ public class OrderRepository extends BaseOutboxRepository {
     return query(
         "SELECT id, tenant_id, order_id, variant_id, qty, unit_price, line_total,"
             + " notes, created_at, discount_amount, discount_reason, weighing_instrument_id,"
-            + " fulfilled_qty"
+            + " fulfilled_qty, vat_amount"
             + " FROM order_items WHERE tenant_id=? AND order_id=? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
@@ -1767,8 +1770,8 @@ public class OrderRepository extends BaseOutboxRepository {
         c.prepareStatement(
             "INSERT INTO order_items"
                 + " (id,tenant_id,order_id,variant_id,qty,unit_price,line_total,notes,"
-                + "  weighing_instrument_id)"
-                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+                + "  weighing_instrument_id, vat_amount)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, item.id());
       ps.setObject(2, item.tenantId());
       ps.setObject(3, item.orderId());
@@ -1778,6 +1781,7 @@ public class OrderRepository extends BaseOutboxRepository {
       ps.setBigDecimal(7, item.lineTotal());
       ps.setString(8, item.notes());
       ps.setObject(9, item.weighingInstrumentId());
+      ps.setBigDecimal(10, item.vatAmount());
       ps.executeUpdate();
     }
   }
@@ -2039,7 +2043,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getBigDecimal("line_total"),
         rs.getString("notes"),
         rs.getObject("weighing_instrument_id", UUID.class),
-        rs.getBigDecimal("fulfilled_qty"));
+        rs.getBigDecimal("fulfilled_qty"),
+        rs.getBigDecimal("vat_amount"));
   }
 
   private OrderStatusHistory mapHistory(ResultSet rs) throws SQLException {

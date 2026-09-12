@@ -356,4 +356,64 @@ public final class Domain {
       BigDecimal box9,
       String periodFrom,
       String periodTo) {}
+
+  // ── Making Tax Digital (18.5) ─────────────────────────────────────────────
+
+  /**
+   * The VAT number a tenant files under and the path the return takes to HMRC. Tokens are stored
+   * encrypted and never leave this service.
+   */
+  public record VatRegistration(
+      UUID tenantId,
+      String vrn,
+      String provider,
+      String accessTokenCipher,
+      String refreshTokenCipher,
+      Instant tokenExpiresAt,
+      Instant connectedAt,
+      Instant updatedAt,
+      UUID updatedBy) {
+
+    public static final String PROVIDER_SIMULATED = "SIMULATED";
+    public static final String PROVIDER_HMRC = "HMRC";
+    public static final List<String> PROVIDERS = List.of(PROVIDER_SIMULATED, PROVIDER_HMRC);
+
+    /** Whether HMRC's grant is held, so a return can be filed there. */
+    public boolean connected() {
+      return accessTokenCipher != null;
+    }
+  }
+
+  /** One of HMRC's VAT obligations: a period the taxpayer must file for, open or fulfilled. */
+  public record VatObligation(
+      String periodKey, Instant start, Instant end, Instant due, String status, Instant received) {
+    public static final String STATUS_OPEN = "O";
+    public static final String STATUS_FULFILLED = "F";
+  }
+
+  /** A return as filed, and what came back. Append-only. */
+  public record VatReturnSubmission(
+      UUID id,
+      UUID tenantId,
+      String vrn,
+      String periodKey,
+      Instant periodFrom,
+      Instant periodTo,
+      VatReturn boxes,
+      boolean finalised,
+      String provider,
+      String status,
+      Instant submittedAt,
+      UUID submittedBy,
+      Instant processingDate,
+      String formBundleNumber,
+      String paymentIndicator,
+      String chargeRefNumber,
+      String receiptId,
+      Instant receiptTimestamp,
+      String errorCode,
+      String errorMessage) {
+    public static final String STATUS_ACCEPTED = "ACCEPTED";
+    public static final String STATUS_REJECTED = "REJECTED";
+  }
 }

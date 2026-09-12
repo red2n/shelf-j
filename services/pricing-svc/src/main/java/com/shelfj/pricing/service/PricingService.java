@@ -1209,9 +1209,24 @@ public class PricingService {
    *     strictly increasing
    */
   public VatReturn computeVatReturn(TenantContext ctx, String fromStr, String toStr) {
-    UUID tenantId = ctx.tenantId();
-    Instant from = Parsing.instant(fromStr, "from");
-    Instant to = Parsing.instant(toStr, "to");
+    return computeVatReturn(
+        ctx.tenantId(), Parsing.instant(fromStr, "from"), Parsing.instant(toStr, "to"));
+  }
+
+  /**
+   * The same nine boxes for a tenant and a period already parsed — what a filing (18.5) sends,
+   * computed by the one method so the figures on the screen and the figures on the wire are the
+   * same figures.
+   *
+   * @param tenantId owning tenant
+   * @param from inclusive lower bound on the tax point
+   * @param to exclusive upper bound
+   * @return the nine box figures with the period they cover
+   * @throws ApiException {@code PRICING_INVALID_PERIOD} (400) when from is not before to
+   */
+  public VatReturn computeVatReturn(UUID tenantId, Instant from, Instant to) {
+    String fromStr = from.toString();
+    String toStr = to.toString();
     if (!from.isBefore(to))
       throw ApiException.badRequest("PRICING_INVALID_PERIOD", "from must be before to");
 

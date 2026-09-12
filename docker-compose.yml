@@ -705,6 +705,13 @@ services:
       # Checkout stock holds for ONLINE orders. Defaults to false in this dev rig (mirrors
       # pricing.enforce): with no seeded inventory every online checkout would 409 on stock.
       shelfj.order.inventory.reserve-enforce: ${SHELFJ_ORDER_RESERVE_ENFORCE:-false}
+      # 18.5 fiscal regimes: the Portuguese signing key and the cloud TSE credentials are secrets
+      # passed through from the environment. Empty means PT_SAFT cannot be set and CLOUD is not
+      # offered; SIMULATED needs nothing.
+      shelfj.fiscal.pt.private-key: ${SHELFJ_FISCAL_PT_PRIVATE_KEY:-}
+      shelfj.fiscal.pt.producer-tax-id: ${SHELFJ_FISCAL_PT_PRODUCER_TAX_ID:-}
+      shelfj.fiscal.tse.cloud.api-key: ${SHELFJ_FISCAL_TSE_CLOUD_API_KEY:-}
+      shelfj.fiscal.tse.cloud.api-secret: ${SHELFJ_FISCAL_TSE_CLOUD_API_SECRET:-}
     mem_limit: ${ORDER_MEM_LIMIT:-700m}
     networks: [shelfj_network]
     depends_on: *svc-depends
@@ -771,6 +778,12 @@ services:
       <<: *svc-env
       shelfj.db.user: pricing_svc
       shelfj.db.password: ${PRICING_DB_PASSWORD:-pricing_dev_change_me}
+      # 18.5 Making Tax Digital: HMRC's application credentials and the key the taxpayer's tokens
+      # are held under. Empty means HMRC is not offered; SIMULATED needs nothing.
+      shelfj.mtd.hmrc.base-url: ${SHELFJ_MTD_HMRC_BASE_URL:-https://test-api.service.hmrc.gov.uk}
+      shelfj.mtd.hmrc.client-id: ${SHELFJ_MTD_HMRC_CLIENT_ID:-}
+      shelfj.mtd.hmrc.client-secret: ${SHELFJ_MTD_HMRC_CLIENT_SECRET:-}
+      shelfj.mtd.token-key: ${SHELFJ_MTD_TOKEN_KEY:-}
       JAVA_TOOL_OPTIONS: "${PRICING_JAVA_OPTS:--Xms128m -Xmx384m -XX:+UseG1GC}"
       SHELFJ_ADVERTISE_HOST: pricing-svc
     mem_limit: ${PRICING_MEM_LIMIT:-512m}

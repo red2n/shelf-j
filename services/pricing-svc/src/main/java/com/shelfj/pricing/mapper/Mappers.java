@@ -326,4 +326,78 @@ public final class Mappers {
         c.changedBy(),
         c.changedAt());
   }
+
+  // ── Making Tax Digital (18.5) ─────────────────────────────────────────────
+
+  private static String iso(java.time.Instant i) {
+    return i == null ? null : i.toString();
+  }
+
+  /**
+   * @param v a registration and what the deployment offers
+   * @return its API representation; the tokens never cross the boundary
+   */
+  public static Dtos.VatRegistrationResponse toDto(
+      com.shelfj.pricing.service.MtdService.RegistrationView v) {
+    var r = v.registration();
+    if (r == null) {
+      return new Dtos.VatRegistrationResponse(
+          false, null, null, false, null, null, v.providers(), v.hmrcConfigured());
+    }
+    return new Dtos.VatRegistrationResponse(
+        true,
+        r.vrn(),
+        r.provider(),
+        r.connected(),
+        iso(r.connectedAt()),
+        iso(r.updatedAt()),
+        v.providers(),
+        v.hmrcConfigured());
+  }
+
+  /**
+   * @param o an obligation
+   * @return its API representation
+   */
+  public static Dtos.VatObligationResponse toDto(com.shelfj.pricing.domain.Domain.VatObligation o) {
+    return new Dtos.VatObligationResponse(
+        o.periodKey(), iso(o.start()), iso(o.end()), iso(o.due()), o.status(), iso(o.received()));
+  }
+
+  /**
+   * @param s a filing
+   * @return its API representation
+   */
+  public static Dtos.VatReturnSubmissionResponse toDto(
+      com.shelfj.pricing.domain.Domain.VatReturnSubmission s) {
+    var b = s.boxes();
+    return new Dtos.VatReturnSubmissionResponse(
+        s.id().toString(),
+        s.vrn(),
+        s.periodKey(),
+        iso(s.periodFrom()),
+        iso(s.periodTo()),
+        b.box1(),
+        b.box2(),
+        b.box3(),
+        b.box4(),
+        b.box5(),
+        b.box6(),
+        b.box7(),
+        b.box8(),
+        b.box9(),
+        s.finalised(),
+        s.provider(),
+        s.status(),
+        iso(s.submittedAt()),
+        s.submittedBy() == null ? null : s.submittedBy().toString(),
+        iso(s.processingDate()),
+        s.formBundleNumber(),
+        s.paymentIndicator(),
+        s.chargeRefNumber(),
+        s.receiptId(),
+        iso(s.receiptTimestamp()),
+        s.errorCode(),
+        s.errorMessage());
+  }
 }

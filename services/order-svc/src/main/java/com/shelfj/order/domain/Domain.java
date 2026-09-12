@@ -38,7 +38,13 @@ public final class Domain {
       /** Hash of the document before this one in its series; GENESIS for the first (18.4). */
       String prevHash,
       /** SHA-256 over this document's figures and {@code prevHash}; null before the chain. */
-      String hash) {
+      String hash,
+      /** The regime the store was under when this was issued (18.5); NONE before it existed. */
+      String regime,
+      /** The security module's stamp, when the regime has one; null otherwise. */
+      TseStamp tse,
+      /** The Portuguese document signature, when the regime has one; null otherwise. */
+      PtStamp pt) {
     /** The series a store uses when the jurisdiction does not require one per till. */
     public static final String DEFAULT_SERIES = "MAIN";
 
@@ -79,8 +85,137 @@ public final class Domain {
           voidedAt,
           voidReason,
           null,
+          null,
+          FiscalStoreSettings.REGIME_NONE,
+          null,
           null);
     }
+
+    /** The same document with a different stamp — used while it is being assembled. */
+    public FiscalReceipt withStamps(String regime, TseStamp tse, PtStamp pt) {
+      return new FiscalReceipt(
+          id,
+          tenantId,
+          storeId,
+          seriesCode,
+          period,
+          number,
+          fullNumber,
+          orderId,
+          issuedAt,
+          issuedBy,
+          currency,
+          grossTotal,
+          taxTotal,
+          voidedAt,
+          voidReason,
+          prevHash,
+          hash,
+          regime,
+          tse,
+          pt);
+    }
+  }
+
+  /**
+   * What a German security module (TSE) wrote against one transaction (KassenSichV §2, §6; BSI
+   * TR-03153). Everything a receipt must print and DSFinV-K's transactions_tse table lists. {@code
+   * error} is set, and the rest null, when the device could not be reached: the sale goes ahead and
+   * the outage is the record.
+   */
+  public record TseStamp(
+      String serialNumber,
+      String clientId,
+      Long transactionNumber,
+      Long signatureCounter,
+      String signature,
+      String algorithm,
+      String publicKey,
+      String timeFormat,
+      Instant startedAt,
+      Instant finishedAt,
+      String processType,
+      String processData,
+      String qr,
+      String error) {
+
+    /** The process type a sale is signed under (DSFinV-K Anlage I). */
+    public static final String PROCESS_TYPE_RECEIPT = "Kassenbeleg-V1";
+
+    /** A stamp that records only that the device failed. */
+    public static TseStamp failed(String clientId, String error) {
+      return new TseStamp(
+          null, clientId, null, null, null, null, null, null, null, null, null, null, null, error);
+    }
+  }
+
+  /**
+   * The Portuguese document signature (Despacho 8632/2014): an RSA-SHA1 over the document's date,
+   * entry time, number, gross total and the previous document's signature, base64. {@code
+   * invoiceNo} is the number in the form the SAF-T file requires; {@code atcud} is the AT's series
+   * validation code joined to the number.
+   */
+  public record PtStamp(
+      String invoiceNo,
+      String hash,
+      String hashControl,
+      String atcud,
+      String certificateNumber,
+      /** The four characters of {@code hash} a receipt prints: positions 1, 11, 21 and 31. */
+      String printedExcerpt) {}
+
+  /**
+   * The fiscal regime a store trades under and the identity its file names the business by (18.5).
+   * One row per store; a store with no row is under NONE.
+   */
+  public record FiscalStoreSettings(
+      UUID tenantId,
+      UUID storeId,
+      String regime,
+      String taxRegistrationNumber,
+      String certificateNumber,
+      String seriesValidationCode,
+      Instant updatedAt,
+      UUID updatedBy) {
+
+    public static final String REGIME_NONE = "NONE";
+    public static final String REGIME_DE_KASSENSICHV = "DE_KASSENSICHV";
+    public static final String REGIME_PT_SAFT = "PT_SAFT";
+    public static final java.util.List<String> REGIMES =
+        java.util.List.of(REGIME_NONE, REGIME_DE_KASSENSICHV, REGIME_PT_SAFT);
+
+    /** What a store with no settings row is under. */
+    public static FiscalStoreSettings none(UUID tenantId, UUID storeId) {
+      return new FiscalStoreSettings(tenantId, storeId, REGIME_NONE, null, null, null, null, null);
+    }
+  }
+
+  /**
+   * The security module a German store signs with — the registration a DSFinV-K tse table lists and
+   * every receipt names. The SIMULATED provider keeps its key here, which is exactly why it is not
+   * a certified device.
+   */
+  public record TseDevice(
+      UUID id,
+      UUID tenantId,
+      UUID storeId,
+      String provider,
+      String clientId,
+      String serialNumber,
+      String publicKey,
+      String signatureAlgorithm,
+      String timeFormat,
+      String privateKey,
+      String externalTssId,
+      long signatureCounter,
+      long transactionCounter,
+      Instant registeredAt,
+      UUID registeredBy) {
+
+    public static final String PROVIDER_SIMULATED = "SIMULATED";
+    public static final String PROVIDER_CLOUD = "CLOUD";
+    public static final java.util.List<String> PROVIDERS =
+        java.util.List.of(PROVIDER_SIMULATED, PROVIDER_CLOUD);
   }
 
   /** A hole in a receipt series, inclusive at both ends. */
@@ -205,9 +340,14 @@ public final class Domain {
       String notes,
       UUID weighingInstrumentId,
       /** How much of {@code qty} has been handed over so far (SJ-D35); never above it. */
-      BigDecimal fulfilledQty) {
+      BigDecimal fulfilledQty,
+      /**
+       * The VAT on this line as the quote priced it (18.5), so a fiscal file can list the sale by
+       * rate. Null for a line placed with server-side pricing off.
+       */
+      BigDecimal vatAmount) {
 
-    /** A line as placed: nothing handed over yet. */
+    /** A line as placed: nothing handed over yet, VAT unknown. */
     public OrderItem(
         UUID id,
         UUID tenantId,
@@ -228,7 +368,8 @@ public final class Domain {
           lineTotal,
           notes,
           weighingInstrumentId,
-          BigDecimal.ZERO);
+          BigDecimal.ZERO,
+          null);
     }
 
     /** What is still to be handed over. */
