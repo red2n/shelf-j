@@ -94,7 +94,13 @@ public class PricingClient {
       maxRetries = 2,
       delay = 200,
       abortOn = {ApiException.class})
-  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
+  @CircuitBreaker(
+      requestVolumeThreshold = 5,
+      failureRatio = 0.6,
+      delay = 5000,
+      // A refusal is an answer, not a failure: four stickers refused in a row must not open the
+      // breaker and turn the fifth cashier's honest question into a 503.
+      skipOn = {ApiException.class})
   public ResolvedLine resolveLine(
       UUID tenantId, UUID variantId, UUID storeId, String channel, BigDecimal qty) {
     ServiceInstance instance =
@@ -142,8 +148,16 @@ public class PricingClient {
     }
   }
 
-  /** One line to resolve in a {@link #resolveLines} batch call. */
-  public record LineRequest(UUID variantId, BigDecimal qty) {}
+  /**
+   * One line to resolve in a {@link #resolveLines} batch call.
+   *
+   * @param markdownId the reduce-to-clear markdown a scanned sticker named (05.4), or null
+   */
+  public record LineRequest(UUID variantId, BigDecimal qty, UUID markdownId) {
+    public LineRequest(UUID variantId, BigDecimal qty) {
+      this(variantId, qty, null);
+    }
+  }
 
   /**
    * One promotion that pricing-svc applied to a basket.
@@ -218,7 +232,13 @@ public class PricingClient {
       maxRetries = 2,
       delay = 200,
       abortOn = {ApiException.class})
-  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
+  @CircuitBreaker(
+      requestVolumeThreshold = 5,
+      failureRatio = 0.6,
+      delay = 5000,
+      // A refusal is an answer, not a failure: four stickers refused in a row must not open the
+      // breaker and turn the fifth cashier's honest question into a 503.
+      skipOn = {ApiException.class})
   public QuotedBasket quoteBasket(
       UUID tenantId,
       List<LineRequest> lines,
@@ -238,6 +258,7 @@ public class PricingClient {
       JsonObjectBuilder lineObj =
           Json.createObjectBuilder().add("variantId", l.variantId().toString());
       if (l.qty() != null) lineObj.add("qty", l.qty());
+      if (l.markdownId() != null) lineObj.add("markdownId", l.markdownId().toString());
       linesArray.add(lineObj);
     }
     JsonObjectBuilder body = Json.createObjectBuilder().add("lines", linesArray);
@@ -258,12 +279,29 @@ public class PricingClient {
             .header(HeaderNames.CONTENT_TYPE, "application/json")
             .submit(body.build().toString())) {
       int status = res.status().code();
+      String payload = res.as(String.class);
       if (status == 404) {
+        // A markdown the basket names that pricing-svc does not know is the till's mistake, not
+        // a missing price; it is told so rather than being handed the generic price failure.
+        String code = errorCode(payload);
+        if (code != null && code.startsWith("PRICING_MARKDOWN")) {
+          throw ApiException.notFound(code, errorMessage(payload));
+        }
         throw ApiException.unprocessable(
             "ORDER_PRICE_UNRESOLVED", "no active price configured for one or more order lines");
       }
+      if (status == 400 || status == 409) {
+        // The basket itself was refused — a sticker for another product, a sticker with no packs
+        // left — and the cashier needs the reason, not a 503 (05.4).
+        String code = errorCode(payload);
+        if (code != null) {
+          throw status == 400
+              ? ApiException.badRequest(code, errorMessage(payload))
+              : ApiException.conflict(code, errorMessage(payload));
+        }
+      }
       if (status != 200) throw unavailable("pricing-svc returned HTTP " + status, null);
-      try (JsonReader reader = Json.createReader(new StringReader(res.as(String.class)))) {
+      try (JsonReader reader = Json.createReader(new StringReader(payload))) {
         JsonObject data = reader.readObject().getJsonObject("data");
         return parseQuote(data);
       } catch (RuntimeException e) {
@@ -394,6 +432,86 @@ public class PricingClient {
     }
   }
 
+  /**
+   * Tells pricing-svc what an order sold at reduced-price stickers (05.4), so each sticker counts
+   * down and can run out. Quietly, for the same reason as {@link #recordRedemptionsQuietly}: the
+   * order stands and is paid for; the count is idempotent on the order and can be caught up.
+   *
+   * @param tenantId the tenant
+   * @param orderId the order
+   * @param items its lines; those with no markdown are ignored
+   */
+  public void recordMarkdownRedemptionsQuietly(
+      UUID tenantId, UUID orderId, List<com.shelfj.order.domain.Domain.OrderItem> items) {
+    try {
+      JsonArrayBuilder arr = Json.createArrayBuilder();
+      int stickered = 0;
+      for (var i : items) {
+        if (i.markdownId() == null) continue;
+        arr.add(
+            Json.createObjectBuilder()
+                .add("markdownId", i.markdownId().toString())
+                .add("qty", i.qty()));
+        stickered++;
+      }
+      if (stickered == 0) return;
+      ServiceInstance instance = registry.resolve(PRICING_SERVICE).orElse(null);
+      if (instance == null) {
+        LOG.log(
+            System.Logger.Level.WARNING,
+            "No pricing-svc instance to record markdown redemptions for order {0}",
+            orderId);
+        return;
+      }
+      JsonObject body =
+          Json.createObjectBuilder().add("orderId", orderId.toString()).add("lines", arr).build();
+      try (HttpClientResponse res =
+          webClient
+              .post(instance.baseUri() + "/prices/markdown-redemptions")
+              .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
+              .header(HeaderNames.create(HttpHeaders.ROLES), INTERNAL_ROLE)
+              .header(HeaderNames.CONTENT_TYPE, "application/json")
+              .submit(body.toString())) {
+        int status = res.status().code();
+        if (status != 200) {
+          LOG.log(
+              System.Logger.Level.WARNING,
+              "pricing-svc returned HTTP {0} recording markdown redemptions for order {1}",
+              status,
+              orderId);
+        }
+      }
+    } catch (RuntimeException e) {
+      LOG.log(
+          System.Logger.Level.WARNING,
+          "Could not record markdown redemptions for order " + orderId,
+          e);
+    }
+  }
+
+  /** The machine code in an error envelope, or null when the body is not one. */
+  static String errorCode(String payload) {
+    try (JsonReader reader = Json.createReader(new StringReader(payload))) {
+      JsonObject o = reader.readObject();
+      if (!o.containsKey("error") || o.isNull("error")) return null;
+      JsonObject err = o.getJsonObject("error");
+      return err.containsKey("code") && !err.isNull("code") ? err.getString("code") : null;
+    } catch (RuntimeException e) {
+      return null;
+    }
+  }
+
+  static String errorMessage(String payload) {
+    try (JsonReader reader = Json.createReader(new StringReader(payload))) {
+      JsonObject err = reader.readObject().getJsonObject("error");
+      return err.containsKey("message") && !err.isNull("message")
+          ? err.getString("message")
+          : "refused by pricing-svc";
+    } catch (RuntimeException e) {
+      return "refused by pricing-svc";
+    }
+  }
+
   private static BigDecimal num(JsonObject o, String key, BigDecimal fallback) {
     return o.containsKey(key) && !o.isNull(key) ? o.getJsonNumber(key).bigDecimalValue() : fallback;
   }
@@ -409,7 +527,13 @@ public class PricingClient {
       maxRetries = 2,
       delay = 200,
       abortOn = {ApiException.class})
-  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
+  @CircuitBreaker(
+      requestVolumeThreshold = 5,
+      failureRatio = 0.6,
+      delay = 5000,
+      // A refusal is an answer, not a failure: four stickers refused in a row must not open the
+      // breaker and turn the fifth cashier's honest question into a 503.
+      skipOn = {ApiException.class})
   public List<ResolvedLine> resolveLines(
       UUID tenantId, List<LineRequest> lines, UUID storeId, String channel) {
     if (lines.isEmpty()) return List.of();

@@ -400,4 +400,89 @@ public final class Mappers {
         s.errorCode(),
         s.errorMessage());
   }
+
+  // ── Date-code markdown (05.4, 03.9) ──────────────────────────────────────
+
+  /**
+   * @param m a markdown
+   * @param today the date its effective status is judged on
+   * @return its API representation
+   */
+  public static Dtos.MarkdownResponse toDto(
+      com.shelfj.pricing.domain.Domain.Markdown m, java.time.LocalDate today) {
+    return new Dtos.MarkdownResponse(
+        m.id(),
+        m.storeId(),
+        m.variantId(),
+        m.batchId(),
+        m.batchNo(),
+        m.expiryDate().toString(),
+        m.qty(),
+        m.redeemedQty(),
+        m.remainingQty(),
+        m.currency(),
+        m.originalPrice(),
+        m.markdownPrice(),
+        m.percentOff(),
+        m.reason(),
+        m.labelCode(),
+        m.effectiveStatus(today),
+        m.appliedBy(),
+        m.createdAt(),
+        m.cancelledAt(),
+        m.cancelReason());
+  }
+
+  /**
+   * @param l a ladder
+   * @return its API representation
+   */
+  public static Dtos.MarkdownLadderResponse toDto(
+      com.shelfj.pricing.domain.Domain.MarkdownLadder l) {
+    return new Dtos.MarkdownLadderResponse(
+        l.storeId() == null ? null : l.storeId().toString(),
+        l.source(),
+        l.steps().stream()
+            .map(s -> new Dtos.MarkdownStepRequest(s.daysToExpiry(), s.percentOff()))
+            .toList());
+  }
+
+  /**
+   * @param s one suggestion of the plan
+   * @param today the date
+   * @return its API representation
+   */
+  public static Dtos.MarkdownSuggestionResponse toDto(
+      com.shelfj.pricing.domain.Domain.MarkdownSuggestion s, java.time.LocalDate today) {
+    return new Dtos.MarkdownSuggestionResponse(
+        s.batchId(),
+        s.variantId(),
+        s.batchNo(),
+        s.expiryDate() == null ? null : s.expiryDate().toString(),
+        s.daysToExpiry(),
+        s.remainingQty(),
+        s.currentPrice(),
+        s.currency(),
+        s.step() == null ? null : s.step().daysToExpiry(),
+        s.step() == null ? null : s.step().percentOff(),
+        s.suggestedPrice(),
+        s.existing() == null ? null : toDto(s.existing(), today));
+  }
+
+  /**
+   * @param m a live markdown a sticker named
+   * @return what the till needs
+   */
+  public static Dtos.MarkdownLabelResponse toLabelDto(com.shelfj.pricing.domain.Domain.Markdown m) {
+    return new Dtos.MarkdownLabelResponse(
+        m.id(),
+        m.variantId(),
+        m.storeId(),
+        m.labelCode(),
+        m.markdownPrice(),
+        m.originalPrice(),
+        m.currency(),
+        m.expiryDate().toString(),
+        m.remainingQty());
+  }
 }

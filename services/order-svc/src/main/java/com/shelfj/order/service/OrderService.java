@@ -292,14 +292,27 @@ public class OrderService {
       for (int i = 0; i < variantIds.size(); i++) {
         lineRequests.add(
             new com.shelfj.order.client.PricingClient.LineRequest(
-                variantIds.get(i), req.items().get(i).qty()));
+                variantIds.get(i),
+                req.items().get(i).qty(),
+                Parsing.optionalUuid(req.items().get(i).markdownId(), "markdownId")));
       }
       // The whole basket in one call, so the promotion engine can see rules that need the order
       // total — a spend threshold, a basket percentage, a buy-one-get-one. resolveLines priced
       // each line independently and gave those nothing to be about.
-      quoted =
-          pricing.quoteBasket(
-              tenantId, lineRequests, storeId, req.channel(), customerId, req.couponCodes());
+      try {
+        quoted =
+            pricing.quoteBasket(
+                tenantId, lineRequests, storeId, req.channel(), customerId, req.couponCodes());
+      } catch (org.eclipse.microprofile.faulttolerance.exceptions.CircuitBreakerOpenException e) {
+        // Thrown by the breaker's interceptor outside the client method, so the client's own
+        // catch never sees it; without this the checkout answered 500 for an open breaker.
+        throw new ApiException(
+            503,
+            "ORDER_PRICING_UNAVAILABLE",
+            "pricing-svc circuit open — too many recent failures",
+            List.of(),
+            e);
+      }
       resolvedLines = quoted.lines();
     }
 
@@ -348,7 +361,8 @@ public class OrderService {
               ir.notes(),
               instrumentId,
               BigDecimal.ZERO,
-              quotedLineVat));
+              quotedLineVat,
+              Parsing.optionalUuid(ir.markdownId(), "markdownId")));
     }
 
     // Hold stock for ONLINE orders before persisting, so a short line rejects the checkout with
@@ -459,6 +473,10 @@ public class OrderService {
       // written — and the redemption is idempotent on the order, so a retry costs nothing.
       if (quoted != null && !quoted.applied().isEmpty()) {
         pricing.recordRedemptionsQuietly(tenantId, orderId, customerId, quoted.applied(), currency);
+      }
+      // A reduced-price sticker counts down the same way (05.4): after the order, quietly, once.
+      if (quoted != null && items.stream().anyMatch(i -> i.markdownId() != null)) {
+        pricing.recordMarkdownRedemptionsQuietly(tenantId, orderId, items);
       }
       return placed;
     } catch (ApiException e) {

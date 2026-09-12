@@ -345,9 +345,14 @@ public final class Domain {
        * The VAT on this line as the quote priced it (18.5), so a fiscal file can list the sale by
        * rate. Null for a line placed with server-side pricing off.
        */
-      BigDecimal vatAmount) {
+      BigDecimal vatAmount,
+      /**
+       * The reduce-to-clear markdown a scanned sticker named (05.4), so pricing-svc can count the
+       * sticker down once the order stands. Null for a line sold at the list price.
+       */
+      UUID markdownId) {
 
-    /** A line as placed: nothing handed over yet, VAT unknown. */
+    /** A line as placed: nothing handed over yet, VAT unknown, no sticker. */
     public OrderItem(
         UUID id,
         UUID tenantId,
@@ -369,6 +374,35 @@ public final class Domain {
           notes,
           weighingInstrumentId,
           BigDecimal.ZERO,
+          null,
+          null);
+    }
+
+    /** A line as placed with its VAT known: nothing handed over yet, no sticker. */
+    public OrderItem(
+        UUID id,
+        UUID tenantId,
+        UUID orderId,
+        UUID variantId,
+        BigDecimal qty,
+        BigDecimal unitPrice,
+        BigDecimal lineTotal,
+        String notes,
+        UUID weighingInstrumentId,
+        BigDecimal fulfilledQty,
+        BigDecimal vatAmount) {
+      this(
+          id,
+          tenantId,
+          orderId,
+          variantId,
+          qty,
+          unitPrice,
+          lineTotal,
+          notes,
+          weighingInstrumentId,
+          fulfilledQty,
+          vatAmount,
           null);
     }
 

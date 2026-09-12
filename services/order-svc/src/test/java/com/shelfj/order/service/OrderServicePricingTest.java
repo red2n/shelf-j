@@ -87,7 +87,8 @@ class OrderServicePricingTest {
         "POS",
         "INSTORE",
         List.of(
-            new OrderItemRequest(VARIANT.toString(), BigDecimal.ONE, clientUnitPrice, null, null)),
+            new OrderItemRequest(
+                VARIANT.toString(), BigDecimal.ONE, clientUnitPrice, null, null, null)),
         null,
         discount,
         discountReason,
@@ -319,5 +320,99 @@ class OrderServicePricingTest {
                     request(new BigDecimal("10.00"), new BigDecimal("1.00"), "   "), ctx, null));
     assertEquals("ORDER_DISCOUNT_REASON_REQUIRED", e.code());
     verifyNoInteractions(repo);
+  }
+
+  // ── Date-code markdown (05.4) ──────────────────────────────────────────────
+
+  private static final UUID MARKDOWN = Ids.newId();
+
+  private static PlaceOrderRequest stickered() {
+    return new PlaceOrderRequest(
+        STORE.toString(),
+        null,
+        "POS",
+        "INSTORE",
+        List.of(
+            new OrderItemRequest(
+                VARIANT.toString(), new BigDecimal("2"), null, null, null, MARKDOWN.toString())),
+        null,
+        null,
+        null,
+        "USD",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  /**
+   * A line a reduced-price sticker was scanned for names its markdown to pricing-svc, keeps it on
+   * the stored line, and counts the sticker down once the order stands.
+   */
+  @Test
+  void aStickeredLineNamesItsMarkdownAndCountsItDown() {
+    when(config.pricingEnforce()).thenReturn(true);
+    when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
+        .thenReturn(
+            quoted(
+                new PricingClient.QuotedLine(
+                    new BigDecimal("2.00"), new BigDecimal("4.00"), BigDecimal.ZERO)));
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    Order order = svc.placeOrder(stickered(), ctx, null);
+
+    assertEquals(new BigDecimal("4.00"), order.subtotal());
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<PricingClient.LineRequest>> asked = ArgumentCaptor.forClass(List.class);
+    org.mockito.Mockito.verify(pricing)
+        .quoteBasket(eq(TENANT), asked.capture(), eq(STORE), eq("POS"), any(), any());
+    assertEquals(MARKDOWN, asked.getValue().get(0).markdownId());
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<OrderItem>> items = ArgumentCaptor.forClass(List.class);
+    org.mockito.Mockito.verify(repo).createOrder(any(), items.capture(), any(), any(), anyList());
+    assertEquals(MARKDOWN, items.getValue().get(0).markdownId());
+    org.mockito.Mockito.verify(pricing)
+        .recordMarkdownRedemptionsQuietly(eq(TENANT), any(), eq(items.getValue()));
+  }
+
+  /** A sticker pricing-svc refuses — another product's, or sold out — refuses the sale with why. */
+  @Test
+  void aRefusedStickerRefusesTheSaleWithTheReason() {
+    when(config.pricingEnforce()).thenReturn(true);
+    when(pricing.quoteBasket(any(), any(), any(), any(), any(), any()))
+        .thenThrow(ApiException.conflict("PRICING_MARKDOWN_EXHAUSTED", "none left"));
+
+    ApiException e = assertThrows(ApiException.class, () -> svc.placeOrder(stickered(), ctx, null));
+    assertEquals("PRICING_MARKDOWN_EXHAUSTED", e.code());
+    verifyNoInteractions(repo);
+  }
+
+  /** An ordinary line never touches the sticker counter. */
+  @Test
+  void anOrdinaryOrderRecordsNoMarkdownRedemption() {
+    when(config.pricingEnforce()).thenReturn(true);
+    when(pricing.quoteBasket(eq(TENANT), anyList(), eq(STORE), eq("POS"), any(), any()))
+        .thenReturn(
+            quoted(
+                new PricingClient.QuotedLine(
+                    new BigDecimal("7.77"), new BigDecimal("7.77"), BigDecimal.ZERO)));
+    when(repo.createOrder(any(), anyList(), any(), any(), anyList()))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    svc.placeOrder(request(new BigDecimal("0.01"), null), ctx, null);
+
+    org.mockito.Mockito.verify(pricing, org.mockito.Mockito.never())
+        .recordMarkdownRedemptionsQuietly(any(), any(), any());
   }
 }

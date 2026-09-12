@@ -11,13 +11,17 @@ import com.shelfj.pricing.domain.Domain.Promotion;
 import com.shelfj.pricing.domain.Domain.PromotionItem;
 import com.shelfj.pricing.domain.Domain.TaxTransaction;
 import com.shelfj.pricing.domain.Domain.VatRate;
+import com.shelfj.pricing.domain.MarkdownLabel;
 import com.shelfj.service.BaseOutboxRepository;
 import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -1193,5 +1197,317 @@ public class PricingRepository extends BaseOutboxRepository {
         rs.getObject("tax_point_date", OffsetDateTime.class).toInstant(),
         rs.getString("invoice_ref"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  // ── Date-code markdown (05.4, 03.9) ──────────────────────────────────────
+
+  private static final String MD_COLUMNS =
+      "m.id, m.tenant_id, m.store_id, m.variant_id, m.batch_id, m.batch_no, m.expiry_date, m.qty,"
+          + " m.currency, m.original_price, m.markdown_price, m.percent_off, m.reason,"
+          + " m.label_code, m.status, m.applied_by, m.created_at, m.cancelled_at,"
+          + " m.cancelled_by, m.cancel_reason,"
+          + " COALESCE((SELECT SUM(r.qty) FROM markdown_redemptions r"
+          + "   WHERE r.tenant_id = m.tenant_id AND r.markdown_id = m.id), 0) AS redeemed_qty";
+
+  /**
+   * The ladder steps for a store, or the tenant's when the store has none; empty when neither.
+   *
+   * @return the steps and where they came from, or empty
+   */
+  public Optional<Domain.MarkdownLadder> findLadder(UUID tenantId, UUID storeId) {
+    if (storeId != null) {
+      List<Domain.MarkdownStep> own = ladderSteps(tenantId, storeId);
+      if (!own.isEmpty()) {
+        return Optional.of(
+            new Domain.MarkdownLadder(storeId, own, Domain.MarkdownLadder.SOURCE_STORE));
+      }
+    }
+    List<Domain.MarkdownStep> tenant = ladderSteps(tenantId, null);
+    if (tenant.isEmpty()) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new Domain.MarkdownLadder(null, tenant, Domain.MarkdownLadder.SOURCE_TENANT));
+  }
+
+  private List<Domain.MarkdownStep> ladderSteps(UUID tenantId, UUID storeId) {
+    return query(
+        "SELECT days_to_expiry, percent_off FROM markdown_ladders"
+            + " WHERE tenant_id = ? AND store_id IS NOT DISTINCT FROM ?"
+            + " ORDER BY days_to_expiry DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+        },
+        rs -> new Domain.MarkdownStep(rs.getInt(1), rs.getBigDecimal(2)),
+        "ladder steps");
+  }
+
+  /** Replaces a ladder wholesale: the steps are one decision, not a row each. */
+  public void replaceLadder(
+      UUID tenantId, UUID storeId, List<Domain.MarkdownStep> steps, UUID userId) {
+    inTx(
+        c -> {
+          try (var del =
+              c.prepareStatement(
+                  "DELETE FROM markdown_ladders WHERE tenant_id = ? AND store_id IS NOT DISTINCT FROM ?")) {
+            del.setObject(1, tenantId);
+            del.setObject(2, storeId);
+            del.executeUpdate();
+          }
+          for (Domain.MarkdownStep s : steps) {
+            try (var ins =
+                c.prepareStatement(
+                    "INSERT INTO markdown_ladders (id, tenant_id, store_id, days_to_expiry,"
+                        + " percent_off, created_by) VALUES (?,?,?,?,?,?)")) {
+              ins.setObject(1, Ids.newId());
+              ins.setObject(2, tenantId);
+              ins.setObject(3, storeId);
+              ins.setInt(4, s.daysToExpiry());
+              ins.setBigDecimal(5, s.percentOff());
+              ins.setObject(6, userId);
+              ins.executeUpdate();
+            }
+          }
+          return null;
+        },
+        "replace markdown ladder");
+  }
+
+  /**
+   * Records a markdown, taking the sticker's item number from the tenant's series under its lock
+   * and encoding the label; refused when the label would collide with a live sticker (the series
+   * wraps at 100,000 and a tenant with that many live stickers has another problem).
+   *
+   * @param draft the markdown without its label
+   * @return the markdown as stored, with its label
+   */
+  public Domain.Markdown createMarkdown(Domain.Markdown draft) {
+    return inTx(
+        c -> {
+          try (var open =
+              c.prepareStatement(
+                  "INSERT INTO markdown_label_series (tenant_id, next_number) VALUES (?, 1)"
+                      + " ON CONFLICT DO NOTHING")) {
+            open.setObject(1, draft.tenantId());
+            open.executeUpdate();
+          }
+          long number;
+          try (var take =
+              c.prepareStatement(
+                  "UPDATE markdown_label_series SET next_number = next_number + 1"
+                      + " WHERE tenant_id = ? RETURNING next_number - 1")) {
+            take.setObject(1, draft.tenantId());
+            try (ResultSet rs = take.executeQuery()) {
+              if (!rs.next()) {
+                throw new SQLException("markdown label series vanished");
+              }
+              number = rs.getLong(1);
+            }
+          }
+          String label = MarkdownLabel.encode(number, draft.markdownPrice());
+          try (var ins =
+              c.prepareStatement(
+                  "INSERT INTO markdowns (id, tenant_id, store_id, variant_id, batch_id, batch_no,"
+                      + " expiry_date, qty, currency, original_price, markdown_price, percent_off,"
+                      + " reason, label_code, status, applied_by)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+            ins.setObject(1, draft.id());
+            ins.setObject(2, draft.tenantId());
+            ins.setObject(3, draft.storeId());
+            ins.setObject(4, draft.variantId());
+            ins.setObject(5, draft.batchId());
+            ins.setString(6, draft.batchNo());
+            ins.setObject(7, draft.expiryDate());
+            ins.setBigDecimal(8, draft.qty());
+            ins.setString(9, draft.currency());
+            ins.setBigDecimal(10, draft.originalPrice());
+            ins.setBigDecimal(11, draft.markdownPrice());
+            ins.setBigDecimal(12, draft.percentOff());
+            ins.setString(13, draft.reason());
+            ins.setString(14, label);
+            ins.setString(15, Domain.Markdown.STATUS_ACTIVE);
+            ins.setObject(16, draft.appliedBy());
+            ins.executeUpdate();
+          } catch (SQLException sqle) {
+            if (UNIQUE_VIOLATION.equals(sqle.getSQLState())) {
+              ApiException collision =
+                  ApiException.conflict(
+                      "PRICING_MARKDOWN_LABEL_COLLISION",
+                      "the sticker code " + label + " is still live on another markdown");
+              collision.initCause(sqle);
+              throw collision;
+            }
+            throw sqle;
+          }
+          Domain.Markdown stored = findMarkdownTx(c, draft.tenantId(), draft.id());
+          if (stored == null) {
+            throw new SQLException("markdown vanished after insert");
+          }
+          return stored;
+        },
+        "create markdown");
+  }
+
+  private static Domain.Markdown findMarkdownTx(Connection c, UUID tenantId, UUID id)
+      throws SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "SELECT " + MD_COLUMNS + " FROM markdowns m WHERE m.tenant_id = ? AND m.id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, id);
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next() ? mapMarkdown(rs) : null;
+      }
+    }
+  }
+
+  /**
+   * @return the markdown, or empty when it is not this tenant's
+   */
+  public Optional<Domain.Markdown> findMarkdown(UUID tenantId, UUID id) {
+    List<Domain.Markdown> rows =
+        query(
+            "SELECT " + MD_COLUMNS + " FROM markdowns m WHERE m.tenant_id = ? AND m.id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, id);
+            },
+            PricingRepository::mapMarkdown,
+            "find markdown");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /** The live markdown behind a sticker's code, or empty. */
+  public Optional<Domain.Markdown> findMarkdownByLabel(UUID tenantId, String labelCode) {
+    List<Domain.Markdown> rows =
+        query(
+            "SELECT "
+                + MD_COLUMNS
+                + " FROM markdowns m"
+                + " WHERE m.tenant_id = ? AND m.label_code = ? AND m.status = 'ACTIVE'",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, labelCode);
+            },
+            PricingRepository::mapMarkdown,
+            "find markdown by label");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /**
+   * A store's markdowns, newest first.
+   *
+   * @param status ACTIVE, CANCELLED, or null for all stored statuses
+   */
+  public List<Domain.Markdown> listMarkdowns(
+      UUID tenantId, UUID storeId, String status, int limit) {
+    return query(
+        "SELECT "
+            + MD_COLUMNS
+            + " FROM markdowns m"
+            + " WHERE m.tenant_id = ? AND m.store_id = ? AND (? IS NULL OR m.status = ?)"
+            + " ORDER BY m.created_at DESC LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, storeId);
+          ps.setString(3, status);
+          ps.setString(4, status);
+          ps.setInt(5, limit);
+        },
+        PricingRepository::mapMarkdown,
+        "list markdowns");
+  }
+
+  /** The active markdowns on a set of batches, for the plan to show beside the suggestion. */
+  public List<Domain.Markdown> findActiveMarkdownsForBatches(UUID tenantId, List<UUID> batchIds) {
+    if (batchIds.isEmpty()) {
+      return List.of();
+    }
+    return query(
+        "SELECT "
+            + MD_COLUMNS
+            + " FROM markdowns m"
+            + " WHERE m.tenant_id = ? AND m.status = 'ACTIVE' AND m.batch_id = ANY (?)",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setArray(2, ps.getConnection().createArrayOf("uuid", batchIds.toArray()));
+        },
+        PricingRepository::mapMarkdown,
+        "active markdowns for batches");
+  }
+
+  /**
+   * Cancels a live markdown; the state guard is in the WHERE clause.
+   *
+   * @return whether it was ACTIVE and is now CANCELLED
+   */
+  public boolean cancelMarkdown(UUID tenantId, UUID id, String reason, UUID userId) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE markdowns SET status = 'CANCELLED', cancelled_at = now(),"
+                      + " cancelled_by = ?, cancel_reason = ?"
+                      + " WHERE tenant_id = ? AND id = ? AND status = 'ACTIVE'")) {
+            ps.setObject(1, userId);
+            ps.setString(2, reason);
+            ps.setObject(3, tenantId);
+            ps.setObject(4, id);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "cancel markdown");
+  }
+
+  /**
+   * Records what an order sold at a markdown, once per (markdown, order).
+   *
+   * @return whether the row was written now
+   */
+  public boolean recordMarkdownRedemption(
+      UUID tenantId, UUID markdownId, UUID orderId, BigDecimal qty) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO markdown_redemptions (id, tenant_id, markdown_id, order_id, qty)"
+                      + " VALUES (?,?,?,?,?) ON CONFLICT (tenant_id, markdown_id, order_id) DO NOTHING")) {
+            ps.setObject(1, Ids.newId());
+            ps.setObject(2, tenantId);
+            ps.setObject(3, markdownId);
+            ps.setObject(4, orderId);
+            ps.setBigDecimal(5, qty);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "record markdown redemption");
+  }
+
+  private static Domain.Markdown mapMarkdown(ResultSet rs) throws SQLException {
+    OffsetDateTime created = rs.getObject("created_at", OffsetDateTime.class);
+    OffsetDateTime cancelled = rs.getObject("cancelled_at", OffsetDateTime.class);
+    return new Domain.Markdown(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("store_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getObject("batch_id", UUID.class),
+        rs.getString("batch_no"),
+        rs.getObject("expiry_date", LocalDate.class),
+        rs.getBigDecimal("qty"),
+        rs.getString("currency"),
+        rs.getBigDecimal("original_price"),
+        rs.getBigDecimal("markdown_price"),
+        rs.getBigDecimal("percent_off"),
+        rs.getString("reason"),
+        rs.getString("label_code"),
+        rs.getString("status"),
+        rs.getObject("applied_by", UUID.class),
+        created == null ? null : created.toInstant(),
+        cancelled == null ? null : cancelled.toInstant(),
+        rs.getObject("cancelled_by", UUID.class),
+        rs.getString("cancel_reason"),
+        rs.getBigDecimal("redeemed_qty"));
   }
 }

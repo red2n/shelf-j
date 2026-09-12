@@ -11,6 +11,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 import 'providers/inventory_levels_pagination.dart';
+import 'inventory_markdown_tab.dart';
 import 'inventory_warehouse_tabs.dart';
 import '../../shared/util/short_ref.dart';
 
@@ -25,16 +26,23 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 5,
+      length: 6,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(
-                AppSpacing.xl, AppSpacing.xl, AppSpacing.xl, 0),
+              AppSpacing.xl,
+              AppSpacing.xl,
+              AppSpacing.xl,
+              0,
+            ),
             child: Row(
               children: [
-                Text('Inventory', style: Theme.of(context).textTheme.headlineMedium),
+                Text(
+                  'Inventory',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
                 const Spacer(),
                 FilledButton.icon(
                   onPressed: () => _showReceiveDialog(context, ref),
@@ -52,6 +60,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
               Tab(text: 'Transfers'),
               Tab(text: 'Movements'),
               Tab(text: 'Thresholds'),
+              Tab(text: 'Reduce to clear'),
             ],
           ),
           const Expanded(
@@ -62,6 +71,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                 InventoryTransfersTab(),
                 InventoryMovementsTab(),
                 _ThresholdsTab(),
+                InventoryMarkdownTab(),
               ],
             ),
           ),
@@ -105,7 +115,8 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
   Widget build(BuildContext context) {
     final page = ref.watch(inventoryLevelsPaginationProvider);
     final summaryAsync = ref.watch(inventoryLevelsSummaryProvider);
-    final labels = ref.watch(inventoryVariantLabelsProvider).value ??
+    final labels =
+        ref.watch(inventoryVariantLabelsProvider).value ??
         const <String, VariantLabel>{};
     final thresholds =
         ref.watch(thresholdsMapProvider).value ?? const <String, double>{};
@@ -117,7 +128,11 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
         // Search + filter bar
         Padding(
           padding: const EdgeInsets.fromLTRB(
-              AppSpacing.xl, AppSpacing.lg, AppSpacing.xl, 0),
+            AppSpacing.xl,
+            AppSpacing.lg,
+            AppSpacing.xl,
+            0,
+          ),
           child: Row(
             children: [
               Expanded(
@@ -130,8 +145,11 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
               const SizedBox(width: 12),
               FilterChip(
                 label: const Text('Low stock'),
-                avatar: Icon(Icons.warning_amber_outlined,
-                    size: 14, color: _lowOnly ? cs.onError : null),
+                avatar: Icon(
+                  Icons.warning_amber_outlined,
+                  size: 14,
+                  color: _lowOnly ? cs.onError : null,
+                ),
                 selected: _lowOnly,
                 selectedColor: cs.errorContainer,
                 onSelected: (v) => setState(() => _lowOnly = v),
@@ -158,15 +176,17 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
               child: Row(
                 children: [
                   _SummaryChip(
-                      icon: Icons.inventory_2_outlined,
-                      label: '${summary.skuCount} SKUs',
-                      color: cs.secondaryContainer),
+                    icon: Icons.inventory_2_outlined,
+                    label: '${summary.skuCount} SKUs',
+                    color: cs.secondaryContainer,
+                  ),
                   const SizedBox(width: 8),
                   if (summary.lowStockCount > 0)
                     _SummaryChip(
-                        icon: Icons.warning_amber_outlined,
-                        label: '${summary.lowStockCount} low stock',
-                        color: cs.errorContainer),
+                      icon: Icons.warning_amber_outlined,
+                      label: '${summary.lowStockCount} low stock',
+                      color: cs.errorContainer,
+                    ),
                 ],
               ),
             );
@@ -177,109 +197,118 @@ class _LevelsTabState extends ConsumerState<_LevelsTab> {
         // Table — one cursor page at a time; free-text search / low-stock filtering
         // stays a client-side filter over the rows loaded so far.
         Expanded(
-          child: Builder(builder: (context) {
-            if (page.isLoadingInitial) {
-              return const LoadingView(label: 'Loading inventory…');
-            }
-            if (page.error != null && page.levels.isEmpty) {
-              return ErrorView(
-                message: 'Could not load inventory levels.',
-                onRetry: () => ref
-                    .read(inventoryLevelsPaginationProvider.notifier)
-                    .refresh(),
-              );
-            }
-
-            final filtered = page.levels.where((l) {
-              if (_lowOnly && !l.isLowAgainst(thresholds)) return false;
-              if (_search.isNotEmpty) {
-                final label = labels[l.variantId];
-                final hay =
-                    '${label?.productName ?? ''} ${label?.sku ?? ''} ${l.variantId}'
-                        .toLowerCase();
-                if (!hay.contains(_search.toLowerCase())) return false;
+          child: Builder(
+            builder: (context) {
+              if (page.isLoadingInitial) {
+                return const LoadingView(label: 'Loading inventory…');
               }
-              return true;
-            }).toList();
+              if (page.error != null && page.levels.isEmpty) {
+                return ErrorView(
+                  message: 'Could not load inventory levels.',
+                  onRetry: () => ref
+                      .read(inventoryLevelsPaginationProvider.notifier)
+                      .refresh(),
+                );
+              }
 
-            final loadMore = (page.hasMore || page.isLoadingMore)
-                ? Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: page.isLoadingMore
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child:
-                                CircularProgressIndicator(strokeWidth: 2))
-                        : OutlinedButton(
-                            onPressed: () => ref
-                                .read(inventoryLevelsPaginationProvider
-                                    .notifier)
-                                .loadMore(),
-                            child: const Text('Load more'),
-                          ),
-                  )
-                : null;
+              final filtered = page.levels.where((l) {
+                if (_lowOnly && !l.isLowAgainst(thresholds)) return false;
+                if (_search.isNotEmpty) {
+                  final label = labels[l.variantId];
+                  final hay =
+                      '${label?.productName ?? ''} ${label?.sku ?? ''} ${l.variantId}'
+                          .toLowerCase();
+                  if (!hay.contains(_search.toLowerCase())) return false;
+                }
+                return true;
+              }).toList();
 
-            if (filtered.isEmpty) {
-              final filtering = _search.isNotEmpty || _lowOnly;
-              return Column(
-                children: [
-                  Expanded(
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.inventory_2_outlined,
-                              size: 64, color: cs.outlineVariant),
-                          const SizedBox(height: 16),
-                          Text(
+              final loadMore = (page.hasMore || page.isLoadingMore)
+                  ? Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: page.isLoadingMore
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : OutlinedButton(
+                              onPressed: () => ref
+                                  .read(
+                                    inventoryLevelsPaginationProvider.notifier,
+                                  )
+                                  .loadMore(),
+                              child: const Text('Load more'),
+                            ),
+                    )
+                  : null;
+
+              if (filtered.isEmpty) {
+                final filtering = _search.isNotEmpty || _lowOnly;
+                return Column(
+                  children: [
+                    Expanded(
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.inventory_2_outlined,
+                              size: 64,
+                              color: cs.outlineVariant,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
                               filtering
                                   ? 'No matches on loaded items'
                                   : 'No items found',
-                              style: Theme.of(context).textTheme.titleMedium),
-                          if (filtering)
-                            TextButton(
-                              onPressed: () => setState(() {
-                                _search = '';
-                                _lowOnly = false;
-                              }),
-                              child: const Text('Clear filters'),
+                              style: Theme.of(context).textTheme.titleMedium,
                             ),
-                        ],
+                            if (filtering)
+                              TextButton(
+                                onPressed: () => setState(() {
+                                  _search = '';
+                                  _lowOnly = false;
+                                }),
+                                child: const Text('Clear filters'),
+                              ),
+                          ],
+                        ),
                       ),
+                    ),
+                    ?loadMore,
+                  ],
+                );
+              }
+
+              return Column(
+                children: [
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, bc) {
+                        final wide = bc.maxWidth >= 600;
+                        if (wide) {
+                          return _WideTable(
+                            levels: filtered,
+                            labels: labels,
+                            thresholds: thresholds,
+                            onChanged: _refreshLevels,
+                          );
+                        }
+                        return _NarrowList(
+                          levels: filtered,
+                          labels: labels,
+                          thresholds: thresholds,
+                          onChanged: _refreshLevels,
+                        );
+                      },
                     ),
                   ),
                   ?loadMore,
                 ],
               );
-            }
-
-            return Column(
-              children: [
-                Expanded(
-                  child: LayoutBuilder(builder: (context, bc) {
-                    final wide = bc.maxWidth >= 600;
-                    if (wide) {
-                      return _WideTable(
-                        levels: filtered,
-                        labels: labels,
-                        thresholds: thresholds,
-                        onChanged: _refreshLevels,
-                      );
-                    }
-                    return _NarrowList(
-                      levels: filtered,
-                      labels: labels,
-                      thresholds: thresholds,
-                      onChanged: _refreshLevels,
-                    );
-                  }),
-                ),
-                ?loadMore,
-              ],
-            );
-          }),
+            },
+          ),
         ),
       ],
     );
@@ -309,7 +338,11 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(
-              AppSpacing.xl, AppSpacing.lg, AppSpacing.xl, 0),
+            AppSpacing.xl,
+            AppSpacing.lg,
+            AppSpacing.xl,
+            0,
+          ),
           child: Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -318,8 +351,10 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                 width: 220,
                 child: storesAsync.when(
                   loading: () => const LinearProgressIndicator(),
-                  error: (e, _) => Text('Could not load stores',
-                      style: TextStyle(color: cs.error)),
+                  error: (e, _) => Text(
+                    'Could not load stores',
+                    style: TextStyle(color: cs.error),
+                  ),
                   data: (stores) => DropdownButtonFormField<String>(
                     initialValue: _storeId,
                     isExpanded: true,
@@ -329,11 +364,15 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                       prefixIcon: Icon(Icons.store_outlined),
                     ),
                     items: stores
-                        .map((s) => DropdownMenuItem(
-                              value: s.id,
-                              child: Text('${s.name} (${s.code})',
-                                  overflow: TextOverflow.ellipsis),
-                            ))
+                        .map(
+                          (s) => DropdownMenuItem(
+                            value: s.id,
+                            child: Text(
+                              '${s.name} (${s.code})',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
                         .toList(),
                     onChanged: (v) => setState(() {
                       _storeId = v;
@@ -361,12 +400,18 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                           ),
                           items: [
                             const DropdownMenuItem(
-                                value: null, child: Text('All zones')),
-                            ...zones.map((z) => DropdownMenuItem(
-                                  value: z.id,
-                                  child: Text('${z.name} (${z.code})',
-                                      overflow: TextOverflow.ellipsis),
-                                )),
+                              value: null,
+                              child: Text('All zones'),
+                            ),
+                            ...zones.map(
+                              (z) => DropdownMenuItem(
+                                value: z.id,
+                                child: Text(
+                                  '${z.name} (${z.code})',
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
                           ],
                           onChanged: (v) => setState(() => _zoneId = v),
                         ),
@@ -385,9 +430,18 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                   ),
                   items: const [
                     DropdownMenuItem(value: null, child: Text('Any status')),
-                    DropdownMenuItem(value: 'AVAILABLE', child: Text('Available')),
-                    DropdownMenuItem(value: 'QUARANTINE', child: Text('Quarantine')),
-                    DropdownMenuItem(value: 'REJECTED', child: Text('Rejected')),
+                    DropdownMenuItem(
+                      value: 'AVAILABLE',
+                      child: Text('Available'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'QUARANTINE',
+                      child: Text('Quarantine'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'REJECTED',
+                      child: Text('Rejected'),
+                    ),
                     DropdownMenuItem(value: 'HOLD', child: Text('Hold')),
                   ],
                   onChanged: (v) => setState(() => _materialStatus = v),
@@ -421,11 +475,16 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.inventory_outlined,
-                          size: 64, color: cs.outlineVariant),
+                      Icon(
+                        Icons.inventory_outlined,
+                        size: 64,
+                        color: cs.outlineVariant,
+                      ),
                       const SizedBox(height: 16),
-                      Text('Select a store to view its batches',
-                          style: Theme.of(context).textTheme.titleMedium),
+                      Text(
+                        'Select a store to view its batches',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                     ],
                   ),
                 )
@@ -438,10 +497,12 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                         z.id: '${z.name} (${z.code})',
                     };
                     return batchesAsync.when(
-                      loading: () => const LoadingView(label: 'Loading batches…'),
+                      loading: () =>
+                          const LoadingView(label: 'Loading batches…'),
                       error: (e, _) => ErrorView(
                         message: 'Could not load batches.',
-                        onRetry: () => ref.invalidate(batchesProvider(_storeId!)),
+                        onRetry: () =>
+                            ref.invalidate(batchesProvider(_storeId!)),
                       ),
                       data: (batches) {
                         var filtered = batches.where((b) {
@@ -453,8 +514,12 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                             return false;
                           }
                           if (_search.isNotEmpty &&
-                              !b.batchNo.toLowerCase().contains(_search.toLowerCase()) &&
-                              !b.variantId.toLowerCase().contains(_search.toLowerCase())) {
+                              !b.batchNo.toLowerCase().contains(
+                                _search.toLowerCase(),
+                              ) &&
+                              !b.variantId.toLowerCase().contains(
+                                _search.toLowerCase(),
+                              )) {
                             return false;
                           }
                           return true;
@@ -465,11 +530,18 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.inventory_outlined,
-                                    size: 64, color: cs.outlineVariant),
+                                Icon(
+                                  Icons.inventory_outlined,
+                                  size: 64,
+                                  color: cs.outlineVariant,
+                                ),
                                 const SizedBox(height: 16),
-                                Text('No batches found',
-                                    style: Theme.of(context).textTheme.titleMedium),
+                                Text(
+                                  'No batches found',
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
+                                ),
                               ],
                             ),
                           );
@@ -478,10 +550,23 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                         void refresh() =>
                             ref.invalidate(batchesProvider(_storeId!));
 
-                        return LayoutBuilder(builder: (context, bc) {
-                          final wide = bc.maxWidth >= 700;
-                          if (wide) {
-                            return _BatchWideTable(
+                        return LayoutBuilder(
+                          builder: (context, bc) {
+                            final wide = bc.maxWidth >= 700;
+                            if (wide) {
+                              return _BatchWideTable(
+                                batches: filtered,
+                                zoneNames: zoneNames,
+                                onMaterialStatus: (b) =>
+                                    showMaterialStatusDialog(
+                                      context,
+                                      ref,
+                                      batch: b,
+                                      onChanged: refresh,
+                                    ),
+                              );
+                            }
+                            return _BatchNarrowList(
                               batches: filtered,
                               zoneNames: zoneNames,
                               onMaterialStatus: (b) => showMaterialStatusDialog(
@@ -491,18 +576,8 @@ class _BatchesTabState extends ConsumerState<_BatchesTab> {
                                 onChanged: refresh,
                               ),
                             );
-                          }
-                          return _BatchNarrowList(
-                            batches: filtered,
-                            zoneNames: zoneNames,
-                            onMaterialStatus: (b) => showMaterialStatusDialog(
-                              context,
-                              ref,
-                              batch: b,
-                              onChanged: refresh,
-                            ),
-                          );
-                        });
+                          },
+                        );
                       },
                     );
                   },
@@ -528,7 +603,8 @@ class _ExpiringBannerState extends ConsumerState<_ExpiringBanner> {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(
-        expiringBatchesProvider((storeId: widget.storeId, withinDays: 30)));
+      expiringBatchesProvider((storeId: widget.storeId, withinDays: 30)),
+    );
     return async.when(
       loading: () => const SizedBox.shrink(),
       error: (_, _) => const SizedBox.shrink(),
@@ -540,20 +616,26 @@ class _ExpiringBannerState extends ConsumerState<_ExpiringBanner> {
           child: MaterialBanner(
             backgroundColor: cs.errorContainer.withValues(alpha: 0.45),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            leading: Icon(Icons.event_busy, size: 18, color: cs.onErrorContainer),
+            leading: Icon(
+              Icons.event_busy,
+              size: 18,
+              color: cs.onErrorContainer,
+            ),
             content: Text(
               '${rows.length} batch(es) expiring within 30 days'
               ' — e.g. ${rows.first.batchNo}'
               '${rows.first.expiryDate != null ? ' (${rows.first.expiryDate})' : ''}',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: cs.onErrorContainer),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: cs.onErrorContainer),
             ),
             actions: [
               TextButton(
                 onPressed: () => setState(() => _dismissed = true),
-                child: Text('Dismiss', style: TextStyle(color: cs.onErrorContainer)),
+                child: Text(
+                  'Dismiss',
+                  style: TextStyle(color: cs.onErrorContainer),
+                ),
               ),
             ],
           ),
@@ -568,7 +650,8 @@ class _ReceiveStockDialog extends ConsumerStatefulWidget {
   const _ReceiveStockDialog({required this.onReceived});
 
   @override
-  ConsumerState<_ReceiveStockDialog> createState() => _ReceiveStockDialogState();
+  ConsumerState<_ReceiveStockDialog> createState() =>
+      _ReceiveStockDialogState();
 }
 
 class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
@@ -604,8 +687,10 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
       _error = null;
     });
     try {
-      final resp = await ref.read(apiClientProvider).dio.get(
-          '/${ApiConstants.product}/catalog/variants/by-barcode/$code');
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get('/${ApiConstants.product}/catalog/variants/by-barcode/$code');
       final v = resp.data['data'] as Map<String, dynamic>;
       final variantId = v['variantId'] as String? ?? '';
       if (variantId.isEmpty) throw Exception('No product found for "$code"');
@@ -632,26 +717,30 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.inventory}/admin/inventory/receive',
-        data: {
-          'storeId': _storeId,
-          'variantId': _variantCtrl.text.trim(),
-          'qty': double.parse(_qtyCtrl.text.trim()),
-          if (_batchCtrl.text.trim().isNotEmpty) 'batchNo': _batchCtrl.text.trim(),
-          if (_costCtrl.text.trim().isNotEmpty)
-            'costPrice': double.parse(_costCtrl.text.trim()),
-          if (_expiryCtrl.text.trim().isNotEmpty)
-            'expiryDate': _expiryCtrl.text.trim(),
-          if (_zoneId != null) 'zoneId': _zoneId,
-        },
-      );
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.inventory}/admin/inventory/receive',
+            data: {
+              'storeId': _storeId,
+              'variantId': _variantCtrl.text.trim(),
+              'qty': double.parse(_qtyCtrl.text.trim()),
+              if (_batchCtrl.text.trim().isNotEmpty)
+                'batchNo': _batchCtrl.text.trim(),
+              if (_costCtrl.text.trim().isNotEmpty)
+                'costPrice': double.parse(_costCtrl.text.trim()),
+              if (_expiryCtrl.text.trim().isNotEmpty)
+                'expiryDate': _expiryCtrl.text.trim(),
+              if (_zoneId != null) 'zoneId': _zoneId,
+            },
+          );
       if (!mounted) return;
       widget.onReceived();
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Stock received.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Stock received.')));
     } catch (e) {
       setState(() {
         _loading = false;
@@ -694,16 +783,19 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                       color: cs.errorContainer,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child:
-                        Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: cs.onErrorContainer),
+                    ),
                   ),
                   const SizedBox(height: 12),
                 ],
                 storesAsync.when(
                   loading: () => const LinearProgressIndicator(),
                   error: (e, _) => Text(
-                      friendlyError(e, fallback: 'Could not load stores.'),
-                      style: TextStyle(color: cs.error)),
+                    friendlyError(e, fallback: 'Could not load stores.'),
+                    style: TextStyle(color: cs.error),
+                  ),
                   data: (stores) => DropdownButtonFormField<String>(
                     initialValue: _storeId,
                     isExpanded: true,
@@ -712,11 +804,15 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                       prefixIcon: Icon(Icons.store_outlined),
                     ),
                     items: stores
-                        .map((s) => DropdownMenuItem(
-                              value: s.id,
-                              child: Text('${s.name} (${s.code})',
-                                  overflow: TextOverflow.ellipsis),
-                            ))
+                        .map(
+                          (s) => DropdownMenuItem(
+                            value: s.id,
+                            child: Text(
+                              '${s.name} (${s.code})',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
                         .toList(),
                     onChanged: (v) => setState(() {
                       _storeId = v;
@@ -743,15 +839,17 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                                   prefixIcon: Icon(Icons.grid_view_outlined),
                                 ),
                                 items: zones
-                                    .map((z) => DropdownMenuItem(
-                                          value: z.id,
-                                          child: Text(
-                                              '${z.name} (${z.code})',
-                                              overflow: TextOverflow.ellipsis),
-                                        ))
+                                    .map(
+                                      (z) => DropdownMenuItem(
+                                        value: z.id,
+                                        child: Text(
+                                          '${z.name} (${z.code})',
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    )
                                     .toList(),
-                                onChanged: (v) =>
-                                    setState(() => _zoneId = v),
+                                onChanged: (v) => setState(() => _zoneId = v),
                               ),
                       );
                     },
@@ -771,8 +869,7 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                               ? 'Resolved: $_resolvedLabel'
                               : 'Scan a barcode or paste the variant UUID',
                         ),
-                        onChanged: (_) =>
-                            setState(() => _resolvedLabel = null),
+                        onChanged: (_) => setState(() => _resolvedLabel = null),
                         validator: (v) =>
                             v == null || v.trim().isEmpty ? 'Required' : null,
                       ),
@@ -785,7 +882,8 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                           ? const SizedBox(
                               height: 18,
                               width: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2))
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : const Icon(Icons.camera_alt_outlined),
                     ),
                   ],
@@ -797,8 +895,11 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                       child: TextFormField(
                         controller: _qtyCtrl,
                         keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true),
-                        decoration: const InputDecoration(labelText: 'Quantity *'),
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Quantity *',
+                        ),
                         validator: (v) {
                           if (v == null || v.trim().isEmpty) return 'Required';
                           final n = double.tryParse(v.trim());
@@ -812,7 +913,8 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                       child: TextFormField(
                         controller: _costCtrl,
                         keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true),
+                          decimal: true,
+                        ),
                         decoration: const InputDecoration(
                           labelText: 'Cost price',
                           prefixText: '£ ',
@@ -827,7 +929,9 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                     Expanded(
                       child: TextFormField(
                         controller: _batchCtrl,
-                        decoration: const InputDecoration(labelText: 'Batch no.'),
+                        decoration: const InputDecoration(
+                          labelText: 'Batch no.',
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -872,11 +976,14 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ?  SizedBox(
+              ? SizedBox(
                   height: 18,
                   width: 18,
-                  child:
-                      CircularProgressIndicator(strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                )
               : const Text('Receive'),
         ),
       ],
@@ -895,7 +1002,10 @@ String _skuOf(String variantId, Map<String, VariantLabel> labels) =>
     labels[variantId]?.sku ?? '';
 
 void _showAdjustDialog(
-    BuildContext context, InventoryLevel level, VoidCallback onChanged) {
+  BuildContext context,
+  InventoryLevel level,
+  VoidCallback onChanged,
+) {
   showDialog(
     context: context,
     builder: (_) => _AdjustStockDialog(level: level, onDone: onChanged),
@@ -903,7 +1013,10 @@ void _showAdjustDialog(
 }
 
 void _showSetThresholdDialog(
-    BuildContext context, InventoryLevel level, VoidCallback onChanged) {
+  BuildContext context,
+  InventoryLevel level,
+  VoidCallback onChanged,
+) {
   showDialog(
     context: context,
     builder: (_) => _SetThresholdDialog(
@@ -953,28 +1066,46 @@ class _WideTable extends StatelessWidget {
                   ? WidgetStatePropertyAll(cs.errorContainer.withAlpha(80))
                   : null,
               cells: [
-                DataCell(Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_productNameOf(l.variantId, labels),
+                DataCell(
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _productNameOf(l.variantId, labels),
                         style: const TextStyle(
-                            fontWeight: FontWeight.w600, fontSize: 13)),
-                    if (sku.isNotEmpty)
-                      Text(sku,
-                          style: TextStyle(fontSize: 11, color: cs.outline)),
-                  ],
-                )),
-                DataCell(Text(
-                  shortRef(l.storeId),
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                )),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                      if (sku.isNotEmpty)
+                        Text(
+                          sku,
+                          style: TextStyle(fontSize: 11, color: cs.outline),
+                        ),
+                    ],
+                  ),
+                ),
+                DataCell(
+                  Text(
+                    shortRef(l.storeId),
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
                 DataCell(Text(l.onHand.toStringAsFixed(0))),
                 DataCell(Text(l.reserved.toStringAsFixed(0))),
-                DataCell(Text(l.available.toStringAsFixed(0),
+                DataCell(
+                  Text(
+                    l.available.toStringAsFixed(0),
                     style: TextStyle(
-                        color: isLow ? cs.error : cs.onSurface,
-                        fontWeight: isLow ? FontWeight.bold : null))),
+                      color: isLow ? cs.error : cs.onSurface,
+                      fontWeight: isLow ? FontWeight.bold : null,
+                    ),
+                  ),
+                ),
                 DataCell(
                   Semantics(
                     label: isLow ? 'Low stock' : 'Stock OK',
@@ -982,40 +1113,55 @@ class _WideTable extends StatelessWidget {
                         ? Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.warning_amber_outlined,
-                                  size: 14, color: cs.error),
+                              Icon(
+                                Icons.warning_amber_outlined,
+                                size: 14,
+                                color: cs.error,
+                              ),
                               const SizedBox(width: 4),
                               Text(
-                                  threshold != null
-                                      ? 'Low (≤${threshold.toStringAsFixed(0)})'
-                                      : 'Low',
-                                  style: TextStyle(
-                                      color: cs.error,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12)),
+                                threshold != null
+                                    ? 'Low (≤${threshold.toStringAsFixed(0)})'
+                                    : 'Low',
+                                style: TextStyle(
+                                  color: cs.error,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
                             ],
                           )
-                        : Text('OK',
+                        : Text(
+                            'OK',
                             style: TextStyle(
-                                color: context.status.success, fontSize: 12)),
+                              color: context.status.success,
+                              fontSize: 12,
+                            ),
+                          ),
                   ),
                 ),
-                DataCell(PopupMenuButton<String>(
-                  tooltip: 'Actions',
-                  onSelected: (v) {
-                    if (v == 'adjust') {
-                      _showAdjustDialog(context, l, onChanged);
-                    } else if (v == 'threshold') {
-                      _showSetThresholdDialog(context, l, onChanged);
-                    }
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(
-                        value: 'adjust', child: Text('Adjust stock')),
-                    PopupMenuItem(
-                        value: 'threshold', child: Text('Set reorder level')),
-                  ],
-                )),
+                DataCell(
+                  PopupMenuButton<String>(
+                    tooltip: 'Actions',
+                    onSelected: (v) {
+                      if (v == 'adjust') {
+                        _showAdjustDialog(context, l, onChanged);
+                      } else if (v == 'threshold') {
+                        _showSetThresholdDialog(context, l, onChanged);
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'adjust',
+                        child: Text('Adjust stock'),
+                      ),
+                      PopupMenuItem(
+                        value: 'threshold',
+                        child: Text('Set reorder level'),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             );
           }).toList(),
@@ -1060,7 +1206,8 @@ class _NarrowList extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
             ),
             subtitle: Text(
-                '${sku.isNotEmpty ? '$sku  ·  ' : ''}On-hand: ${l.onHand.toStringAsFixed(0)}  ·  Reserved: ${l.reserved.toStringAsFixed(0)}'),
+              '${sku.isNotEmpty ? '$sku  ·  ' : ''}On-hand: ${l.onHand.toStringAsFixed(0)}  ·  Reserved: ${l.reserved.toStringAsFixed(0)}',
+            ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1081,10 +1228,11 @@ class _NarrowList extends StatelessWidget {
                     }
                   },
                   itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'adjust', child: Text('Adjust stock')),
                     PopupMenuItem(
-                        value: 'adjust', child: Text('Adjust stock')),
-                    PopupMenuItem(
-                        value: 'threshold', child: Text('Set reorder level')),
+                      value: 'threshold',
+                      child: Text('Set reorder level'),
+                    ),
                   ],
                 ),
               ],
@@ -1130,25 +1278,42 @@ class _BatchWideTable extends StatelessWidget {
             rows: batches.map((b) {
               return DataRow(
                 cells: [
-                  DataCell(Text(b.batchNo,
-                      style: const TextStyle(fontSize: 12))),
-                  DataCell(Text(
-                    b.variantId.length > 16 ? '…${shortRef(b.variantId)}' : b.variantId,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                  )),
-                  DataCell(Text(
-                      '${b.remainingQty.toStringAsFixed(0)} / ${b.receivedQty.toStringAsFixed(0)}')),
-                  DataCell(Text(b.zoneId == null
-                      ? '—'
-                      : zoneNames[b.zoneId] ?? 'Unassigned')),
+                  DataCell(
+                    Text(b.batchNo, style: const TextStyle(fontSize: 12)),
+                  ),
+                  DataCell(
+                    Text(
+                      b.variantId.length > 16
+                          ? '…${shortRef(b.variantId)}'
+                          : b.variantId,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      '${b.remainingQty.toStringAsFixed(0)} / ${b.receivedQty.toStringAsFixed(0)}',
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      b.zoneId == null
+                          ? '—'
+                          : zoneNames[b.zoneId] ?? 'Unassigned',
+                    ),
+                  ),
                   DataCell(Text(b.expiryDate ?? '—')),
                   DataCell(Text(b.grade ?? '—')),
                   DataCell(_MaterialStatusChip(status: b.materialStatus)),
-                  DataCell(IconButton(
-                    icon: const Icon(Icons.tune, size: 18),
-                    tooltip: 'Change material status',
-                    onPressed: () => onMaterialStatus(b),
-                  )),
+                  DataCell(
+                    IconButton(
+                      icon: const Icon(Icons.tune, size: 18),
+                      tooltip: 'Change material status',
+                      onPressed: () => onMaterialStatus(b),
+                    ),
+                  ),
                 ],
               );
             }).toList(),
@@ -1196,7 +1361,8 @@ class _BatchNarrowList extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                        '${b.remainingQty.toStringAsFixed(0)} / ${b.receivedQty.toStringAsFixed(0)}'),
+                      '${b.remainingQty.toStringAsFixed(0)} / ${b.receivedQty.toStringAsFixed(0)}',
+                    ),
                     const SizedBox(height: 4),
                     _MaterialStatusChip(status: b.materialStatus),
                   ],
@@ -1244,8 +1410,14 @@ class _MaterialStatusChip extends StatelessWidget {
         color: color.withAlpha(30),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Text(status,
-          style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+      child: Text(
+        status,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 }
@@ -1255,21 +1427,29 @@ class _SummaryChip extends StatelessWidget {
   final String label;
   final Color color;
 
-  const _SummaryChip(
-      {required this.icon, required this.label, required this.color});
+  const _SummaryChip({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration:
-          BoxDecoration(color: color, borderRadius: BorderRadius.circular(20)),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(20),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 14),
           const SizedBox(width: 6),
-          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
         ],
       ),
     );
@@ -1314,23 +1494,28 @@ class _AdjustStockDialogState extends ConsumerState<_AdjustStockDialog> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.inventory}/admin/inventory/adjust',
-        data: {
-          'storeId': widget.level.storeId,
-          'variantId': widget.level.variantId,
-          'delta': double.parse(_deltaCtrl.text.trim()),
-          if (_reasonCtrl.text.trim().isNotEmpty)
-            'reason': _reasonCtrl.text.trim(),
-        },
-        options: Options(headers: {'Idempotency-Key': _newIdempotencyKey()}),
-      );
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.inventory}/admin/inventory/adjust',
+            data: {
+              'storeId': widget.level.storeId,
+              'variantId': widget.level.variantId,
+              'delta': double.parse(_deltaCtrl.text.trim()),
+              if (_reasonCtrl.text.trim().isNotEmpty)
+                'reason': _reasonCtrl.text.trim(),
+            },
+            options: Options(
+              headers: {'Idempotency-Key': _newIdempotencyKey()},
+            ),
+          );
       if (!mounted) return;
       widget.onDone();
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Stock adjusted.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Stock adjusted.')));
     } catch (e) {
       setState(() {
         _loading = false;
@@ -1360,8 +1545,10 @@ class _AdjustStockDialogState extends ConsumerState<_AdjustStockDialog> {
                     color: cs.errorContainer,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child:
-                      Text(_error!, style: TextStyle(color: cs.onErrorContainer)),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: cs.onErrorContainer),
+                  ),
                 ),
                 const SizedBox(height: 12),
               ],
@@ -1372,8 +1559,10 @@ class _AdjustStockDialogState extends ConsumerState<_AdjustStockDialog> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _deltaCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true, signed: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                  signed: true,
+                ),
                 decoration: const InputDecoration(
                   labelText: 'Delta *',
                   helperText: 'Positive adds stock, negative removes',
@@ -1407,11 +1596,14 @@ class _AdjustStockDialogState extends ConsumerState<_AdjustStockDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ?  SizedBox(
+              ? SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
+                    strokeWidth: 2,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                )
               : const Text('Adjust'),
         ),
       ],
@@ -1484,22 +1676,25 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
       _error = null;
     });
     try {
-      await ref.read(apiClientProvider).dio.post(
-        '/${ApiConstants.inventory}/admin/inventory/thresholds',
-        data: {
-          'storeId': storeId,
-          'variantId': variantId,
-          'threshold': double.parse(_thresholdCtrl.text.trim()),
-          if (_maxQtyCtrl.text.trim().isNotEmpty)
-            'maxQty': double.parse(_maxQtyCtrl.text.trim()),
-        },
-      );
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .post(
+            '/${ApiConstants.inventory}/admin/inventory/thresholds',
+            data: {
+              'storeId': storeId,
+              'variantId': variantId,
+              'threshold': double.parse(_thresholdCtrl.text.trim()),
+              if (_maxQtyCtrl.text.trim().isNotEmpty)
+                'maxQty': double.parse(_maxQtyCtrl.text.trim()),
+            },
+          );
       if (!mounted) return;
       widget.onDone();
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Reorder level saved.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Reorder level saved.')));
     } catch (e) {
       setState(() {
         _loading = false;
@@ -1530,8 +1725,10 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
                       color: cs.errorContainer,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text(_error!,
-                        style: TextStyle(color: cs.onErrorContainer)),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: cs.onErrorContainer),
+                    ),
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -1544,8 +1741,9 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
                   storesAsync.when(
                     loading: () => const LinearProgressIndicator(),
                     error: (e, _) => Text(
-                        friendlyError(e, fallback: 'Could not load stores.'),
-                        style: TextStyle(color: cs.error)),
+                      friendlyError(e, fallback: 'Could not load stores.'),
+                      style: TextStyle(color: cs.error),
+                    ),
                     data: (stores) => DropdownButtonFormField<String>(
                       initialValue: _storeId,
                       isExpanded: true,
@@ -1554,11 +1752,15 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
                         prefixIcon: Icon(Icons.store_outlined),
                       ),
                       items: stores
-                          .map((s) => DropdownMenuItem(
-                                value: s.id,
-                                child: Text('${s.name} (${s.code})',
-                                    overflow: TextOverflow.ellipsis),
-                              ))
+                          .map(
+                            (s) => DropdownMenuItem(
+                              value: s.id,
+                              child: Text(
+                                '${s.name} (${s.code})',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
                           .toList(),
                       onChanged: (v) => setState(() => _storeId = v),
                       validator: (v) => v == null ? 'Required' : null,
@@ -1580,8 +1782,9 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _thresholdCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(
                     labelText: 'Threshold *',
                     prefixIcon: Icon(Icons.vertical_align_bottom),
@@ -1596,8 +1799,9 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _maxQtyCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(
                     labelText: 'Max qty (optional)',
                     helperText: 'Cap on suggested replenishment qty',
@@ -1617,11 +1821,14 @@ class _SetThresholdDialogState extends ConsumerState<_SetThresholdDialog> {
         FilledButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ?  SizedBox(
+              ? SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Theme.of(context).colorScheme.onPrimary))
+                    strokeWidth: 2,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                )
               : const Text('Save'),
         ),
       ],
@@ -1653,7 +1860,11 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(
-              AppSpacing.xl, AppSpacing.lg, AppSpacing.xl, 0),
+            AppSpacing.xl,
+            AppSpacing.lg,
+            AppSpacing.xl,
+            0,
+          ),
           child: Row(
             children: [
               SizedBox(
@@ -1661,8 +1872,9 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
                 child: storesAsync.when(
                   loading: () => const LinearProgressIndicator(),
                   error: (e, _) => Text(
-                      friendlyError(e, fallback: 'Could not load stores.'),
-                      style: TextStyle(color: cs.error)),
+                    friendlyError(e, fallback: 'Could not load stores.'),
+                    style: TextStyle(color: cs.error),
+                  ),
                   data: (stores) => DropdownButtonFormField<String?>(
                     initialValue: _storeId,
                     isExpanded: true,
@@ -1673,12 +1885,18 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
                     ),
                     items: [
                       const DropdownMenuItem(
-                          value: null, child: Text('All stores')),
-                      ...stores.map((s) => DropdownMenuItem(
-                            value: s.id,
-                            child: Text('${s.name} (${s.code})',
-                                overflow: TextOverflow.ellipsis),
-                          )),
+                        value: null,
+                        child: Text('All stores'),
+                      ),
+                      ...stores.map(
+                        (s) => DropdownMenuItem(
+                          value: s.id,
+                          child: Text(
+                            '${s.name} (${s.code})',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
                     ],
                     onChanged: (v) => setState(() => _storeId = v),
                   ),
@@ -1718,8 +1936,10 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
             loading: () =>
                 const LoadingView(label: 'Loading reorder thresholds…'),
             error: (e, _) => ErrorView(
-              message: friendlyError(e,
-                  fallback: 'Could not load reorder thresholds.'),
+              message: friendlyError(
+                e,
+                fallback: 'Could not load reorder thresholds.',
+              ),
               onRetry: () => ref.invalidate(thresholdsProvider(storeKey)),
             ),
             data: (rows) {
@@ -1730,8 +1950,10 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
                     children: [
                       Icon(Icons.tune, size: 64, color: cs.outlineVariant),
                       const SizedBox(height: 16),
-                      Text('No reorder thresholds set',
-                          style: Theme.of(context).textTheme.titleMedium),
+                      Text(
+                        'No reorder thresholds set',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                       const SizedBox(height: 8),
                       Text(
                         'Set a reorder level on a stock row, or use the button above.',
@@ -1741,14 +1963,20 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
                   ),
                 );
               }
-              final labels = ref
-                      .watch(variantLabelsProvider(
-                          variantIdsKey(rows.map((r) => r.variantId))))
+              final labels =
+                  ref
+                      .watch(
+                        variantLabelsProvider(
+                          variantIdsKey(rows.map((r) => r.variantId)),
+                        ),
+                      )
                       .value ??
                   const <String, VariantLabel>{};
               return ListView.separated(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 itemCount: rows.length,
                 separatorBuilder: (_, _) => const SizedBox(height: 4),
                 itemBuilder: (_, i) {
@@ -1756,18 +1984,22 @@ class _ThresholdsTabState extends ConsumerState<_ThresholdsTab> {
                   final sku = _skuOf(t.variantId, labels);
                   return Card(
                     child: ListTile(
-                      leading: Icon(Icons.vertical_align_bottom,
-                          color: cs.primary),
+                      leading: Icon(
+                        Icons.vertical_align_bottom,
+                        color: cs.primary,
+                      ),
                       title: Text(
                         _productNameOf(t.variantId, labels),
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
-                      subtitle: Text([
-                        if (sku.isNotEmpty) sku,
-                        'Store ${shortRef(t.storeId)}',
-                        if (t.maxQty != null)
-                          'max ${t.maxQty!.toStringAsFixed(0)}',
-                      ].join(' · ')),
+                      subtitle: Text(
+                        [
+                          if (sku.isNotEmpty) sku,
+                          'Store ${shortRef(t.storeId)}',
+                          if (t.maxQty != null)
+                            'max ${t.maxQty!.toStringAsFixed(0)}',
+                        ].join(' · '),
+                      ),
                       trailing: Text(
                         '≤ ${t.threshold.toStringAsFixed(0)}',
                         style: const TextStyle(fontWeight: FontWeight.bold),
