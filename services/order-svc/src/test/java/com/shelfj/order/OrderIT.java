@@ -2,6 +2,7 @@ package com.shelfj.order;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
@@ -15,7 +16,13 @@ import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -1889,5 +1896,213 @@ class OrderIT {
     assertThat(
         post("/orders/" + order + "/cancel", "{\"reason\":\"not stocked\"}", T).getStatus(),
         is(200));
+  }
+
+  /**
+   * The back-office void (09.13) is a management action. The shared filter refuses a cashier or a
+   * storekeeper before the resource is reached, so the sale stands and nothing is restocked; a
+   * manager's void is recorded against them, and the staff exception report reads it — which is
+   * what turns the report's voids column from a permanent zero into a number.
+   */
+  @Test
+  @DisplayName("A completed till sale is voided from the back office by a manager, by nobody below")
+  void backOfficeVoidIsAManagementActionAndIsCountedAgainstWhoMadeIt() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
+    assertThat(statusOf(orderId), is("FULFILLED"));
+
+    String cashier = Ids.newId().toString();
+    String keeper = Ids.newId().toString();
+    String manager = Ids.newId().toString();
+    String why = "{\"reason\":\"rang up twice\"}";
+
+    // The till and the warehouse are refused before the sale is touched.
+    for (String[] who : new String[][] {{cashier, "CASHIER"}, {keeper, "STOREKEEPER"}}) {
+      Response refused = postAs("/orders/" + orderId + "/void", why, T, who[0], who[1], null);
+      assertThat(who[1] + " must be refused", refused.getStatus(), is(403));
+    }
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    assertThat(outboxCount(orderId, "OrderVoided"), is(0L));
+
+    // A manager voids it: the sale is VOIDED, the stock goes back, the reason is on the record.
+    Response voided = postAs("/orders/" + orderId + "/void", why, T, manager, "MANAGER", null);
+    assertThat(voided.getStatus(), is(200));
+    assertThat(voided.readEntity(String.class), containsString("rang up twice"));
+    assertThat(statusOf(orderId), is("VOIDED"));
+    assertThat(outboxCount(orderId, "OrderVoided"), is(1L));
+
+    // Not twice: the receipt keeps its number and the second void is refused.
+    Response again = postAs("/orders/" + orderId + "/void", why, T, manager, "MANAGER", null);
+    assertThat(again.getStatus(), is(409));
+    assertThat(again.readEntity(String.class), containsString("ORDER_CANNOT_VOID"));
+    assertThat(outboxCount(orderId, "OrderVoided"), is(1L));
+
+    // And the exception report counts it against the manager, not against nobody.
+    String body =
+        getQuery("/admin/reports/exceptions", T, "groupBy", "ACTOR").readEntity(String.class);
+    int at = body.indexOf("\"groupKey\":\"" + manager + "\"");
+    assertThat("the manager has a row", at, greaterThanOrEqualTo(0));
+    String row = body.substring(at, body.indexOf('}', at));
+    assertThat(row, containsString("\"voids\":1"));
+  }
+
+  // ── the back-office void under abuse ──────────────────────────────────────
+
+  private static long voidLogRows(UUID orderId) {
+    try (var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement("SELECT count(*) FROM \"order\".pos_void_log WHERE order_id = ?")) {
+      ps.setObject(1, orderId);
+      try (var rs = ps.executeQuery()) {
+        rs.next();
+        return rs.getLong(1);
+      }
+    } catch (java.sql.SQLException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private UUID paidTillSale() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    orderService.handlePaymentCaptured(
+        UUID.fromString(T), orderId, Ids.newId(), new BigDecimal("20.00"));
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    return orderId;
+  }
+
+  /**
+   * A refused caller hammering the endpoint wears nothing down: twenty-five attempts by the cashier
+   * who rang the sale are twenty-five refusals, the sale stands, nothing is restocked and the void
+   * log has no row to show for it.
+   */
+  @Test
+  @DisplayName("Hammering the void as a cashier never gets through")
+  void hammeringTheVoidAsACashierNeverGetsThrough() {
+    UUID orderId = paidTillSale();
+    String cashier = Ids.newId().toString();
+    for (int i = 0; i < 25; i++) {
+      Response r =
+          postAs(
+              "/orders/" + orderId + "/void",
+              "{\"reason\":\"attempt " + i + "\"}",
+              T,
+              cashier,
+              "CASHIER",
+              null);
+      assertThat("attempt " + i, r.getStatus(), is(403));
+      r.close();
+    }
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    assertThat(outboxCount(orderId, "OrderVoided"), is(0L));
+    assertThat(voidLogRows(orderId), is(0L));
+  }
+
+  /**
+   * Eight managers void the same sale at the same moment. The row lock decides: one void, one
+   * restock event, one log row, and everyone else is told the sale is already voided. Without the
+   * lock the stock would go back once per caller.
+   */
+  @Test
+  @DisplayName("Concurrent voids of one sale produce exactly one void")
+  void concurrentVoidsOfOneSaleProduceExactlyOneVoid() throws Exception {
+    UUID orderId = paidTillSale();
+    int callers = 8;
+    CountDownLatch start = new CountDownLatch(1);
+    var pool = Executors.newFixedThreadPool(callers);
+    List<Integer> statuses = new ArrayList<>();
+    try {
+      List<Future<Integer>> results = new ArrayList<>();
+      for (int i = 0; i < callers; i++) {
+        String manager = Ids.newId().toString();
+        results.add(
+            pool.submit(
+                () -> {
+                  start.await();
+                  Response r =
+                      postAs(
+                          "/orders/" + orderId + "/void",
+                          "{\"reason\":\"race\"}",
+                          T,
+                          manager,
+                          "MANAGER",
+                          null);
+                  int status = r.getStatus();
+                  r.close();
+                  return status;
+                }));
+      }
+      start.countDown();
+      for (Future<Integer> f : results) statuses.add(f.get(30, TimeUnit.SECONDS));
+    } finally {
+      pool.shutdownNow();
+    }
+    assertThat(statuses.toString(), statuses.stream().filter(s -> s == 200).count(), is(1L));
+    assertThat(
+        statuses.toString(), statuses.stream().filter(s -> s == 409).count(), is(callers - 1L));
+    assertThat(statusOf(orderId), is("VOIDED"));
+    assertThat(outboxCount(orderId, "OrderVoided"), is(1L));
+    assertThat(voidLogRows(orderId), is(1L));
+  }
+
+  /** The void is scoped like every other write: by tenant first, then by store (SJ-D48). */
+  @Test
+  @DisplayName("A void from another tenant or another store does not reach the sale")
+  void voidIsScopedByTenantThenStore() {
+    UUID orderId = paidTillSale();
+    String why = "{\"reason\":\"not mine\"}";
+    // Another tenant's manager holding the order id: not found, because tenant_id filters first.
+    Response rival =
+        postAs(
+            "/orders/" + orderId + "/void",
+            why,
+            "01a090ae-611e-7014-8cd5-baf0862fa319",
+            Ids.newId().toString(),
+            "MANAGER",
+            null);
+    assertThat(rival.getStatus(), is(404));
+    // Same tenant, a manager scoped to a different store: refused.
+    Response elsewhere =
+        target
+            .path("/orders/" + orderId + "/void")
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-User-Id", Ids.newId().toString())
+            .header("X-Roles", "MANAGER")
+            .header("X-Store-Ids", Ids.newId().toString())
+            .post(Entity.entity(why, MediaType.APPLICATION_JSON));
+    assertThat(elsewhere.getStatus(), is(403));
+    assertThat(statusOf(orderId), is("FULFILLED"));
+    assertThat(outboxCount(orderId, "OrderVoided"), is(0L));
+    assertThat(voidLogRows(orderId), is(0L));
+  }
+
+  /**
+   * The reason is free text, and free text is bounded at the boundary: it goes onto two records and
+   * a receipt, so a megabyte of it is refused before anything is written.
+   */
+  @Test
+  @DisplayName("The void reason is required and bounded at 500 characters")
+  void voidReasonIsRequiredAndBounded() {
+    UUID orderId = placeAt("POS", "INSTORE");
+    String manager = Ids.newId().toString();
+    for (String bad :
+        new String[] {"{}", "{\"reason\":\"   \"}", "{\"reason\":\"" + "x".repeat(501) + "\"}"}) {
+      Response r = postAs("/orders/" + orderId + "/void", bad, T, manager, "MANAGER", null);
+      assertThat(bad.length() > 40 ? "501 characters" : bad, r.getStatus(), is(400));
+      r.close();
+    }
+    assertThat(statusOf(orderId), is("PENDING"));
+    assertThat(voidLogRows(orderId), is(0L));
+    Response atTheLimit =
+        postAs(
+            "/orders/" + orderId + "/void",
+            "{\"reason\":\"" + "x".repeat(500) + "\"}",
+            T,
+            manager,
+            "MANAGER",
+            null);
+    assertThat(atTheLimit.getStatus(), is(200));
+    assertThat(voidLogRows(orderId), is(1L));
   }
 }
