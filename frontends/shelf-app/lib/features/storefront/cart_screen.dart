@@ -8,6 +8,7 @@ import '../../core/constants.dart';
 import '../../core/format.dart';
 import '../../core/network/api_error.dart';
 import '../../core/storage/app_storage.dart';
+import 'account_screen.dart' show MyCustomer, SavedAddress, myAddressesProvider, myCustomerProvider;
 import 'storefront_providers.dart';
 import 'storefront_shell.dart' show StorefrontAuthDialog;
 import 'survey_widgets.dart';
@@ -40,6 +41,9 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
   final _recipientNameCtrl = TextEditingController();
   final _recipientPhoneCtrl = TextEditingController();
   final _contactPhoneCtrl = TextEditingController();
+
+  /// The saved address the delivery form was last filled from, if any (12.10).
+  String? _savedAddressId;
 
   static const _addressStorage = AppStorage();
 
@@ -100,6 +104,24 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     }
   }
 
+  /// Fills the delivery form from one of the shopper's saved addresses (12.10). The recipient
+  /// name and phone come from the shop's record of them when the form has none yet.
+  void _useSavedAddress(SavedAddress a, MyCustomer? me) {
+    setState(() {
+      _savedAddressId = a.id;
+      _line1Ctrl.text = a.line1;
+      _line2Ctrl.text = a.line2 ?? '';
+      _cityCtrl.text = a.city ?? '';
+      _postalCtrl.text = a.pincode ?? '';
+      if (me != null) {
+        if (_recipientNameCtrl.text.trim().isEmpty) _recipientNameCtrl.text = me.fullName;
+        if (_recipientPhoneCtrl.text.trim().isEmpty && me.phone != null) {
+          _recipientPhoneCtrl.text = me.phone!;
+        }
+      }
+    });
+  }
+
   @override
   void dispose() {
     _line1Ctrl.dispose();
@@ -157,6 +179,11 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     final currency = cart.isNotEmpty ? cart.first.currency : 'GBP';
     final total = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final enabledMethods = ref.watch(storefrontPaymentMethodsProvider);
+    // Default first, so the address the shopper marked is the one offered at the top.
+    final savedAddresses = [...(ref.watch(myAddressesProvider).value ?? const <SavedAddress>[])]
+      ..sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0));
+    // Watched, not read at the moment of a pick, so the record is loaded by the time it is needed.
+    final me = ref.watch(myCustomerProvider).value;
     final payOptions =
         _payOptions(showPrices, enabledMethods, _fulfilment == 'DELIVERY');
     final selectedPay = _selectedOption(payOptions);
@@ -267,6 +294,35 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
                   ),
                   if (_fulfilment == 'DELIVERY') ...[
                     const SizedBox(height: 12),
+                    // The shopper's address book at this shop, when they keep one (12.10).
+                    // Picking one fills the form; the form stays editable afterwards.
+                    if (savedAddresses.isNotEmpty) ...[
+                      DropdownButtonFormField<String?>(
+                        key: const Key('cart-saved-address'),
+                        isExpanded: true,
+                        initialValue: _savedAddressId,
+                        decoration: const InputDecoration(
+                            labelText: 'Use a saved address', isDense: true),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                              value: null, child: Text('Type an address')),
+                          for (final a in savedAddresses)
+                            DropdownMenuItem<String?>(
+                                value: a.id,
+                                child: Text(
+                                    '${a.oneLine}${a.isDefault ? ' (default)' : ''}',
+                                    overflow: TextOverflow.ellipsis)),
+                        ],
+                        onChanged: (id) {
+                          if (id == null) {
+                            setState(() => _savedAddressId = null);
+                            return;
+                          }
+                          _useSavedAddress(savedAddresses.firstWhere((a) => a.id == id), me);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     Form(
                       key: _addressFormKey,
                       child: Column(

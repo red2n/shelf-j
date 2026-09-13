@@ -44,6 +44,32 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("POST", "/cart-something"));
   }
 
+  // ── 12.10: the shopper's own profile and address book ────────────────────────
+
+  @Test
+  void ownProfileAndAddressBookAreOpenToASignedInShopper() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertNotAborted(invoke("PUT", "/customers/me"));
+    assertNotAborted(invoke("GET", "/customers/me/addresses"));
+    assertNotAborted(invoke("POST", "/customers/me/addresses"));
+    assertNotAborted(invoke("PUT", "/customers/me/addresses/01a090ae-611e-7011-ae7d-1bd68c966ff6"));
+    assertNotAborted(
+        invoke("DELETE", "/customers/me/addresses/01a090ae-611e-7011-ae7d-1bd68c966ff6"));
+  }
+
+  @Test
+  void addressBookIsMatchedByShapeNotPrefix() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    // A literal or a deeper child under the book is not the book.
+    assertAborted(invoke("GET", "/customers/me/addresses/all"), 403);
+    assertAborted(
+        invoke("POST", "/customers/me/addresses/01a090ae-611e-7011-ae7d-1bd68c966ff6/share"), 403);
+    assertAborted(invoke("GET", "/customers/me/addressesX"), 403);
+    // Somebody else's book, addressed by id, is still staff-only.
+    assertAborted(invoke("GET", "/customers/01a090ae-611e-7011-ae7d-1bd68c966ff6/addresses"), 403);
+    assertAborted(invoke("POST", "/customers/01a090ae-611e-7011-ae7d-1bd68c966ff6/addresses"), 403);
+  }
+
   // ── SJ-D11: reads default-deny, like mutations always have ──────────────────
 
   /**

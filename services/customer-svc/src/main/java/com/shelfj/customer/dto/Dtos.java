@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
@@ -33,23 +34,24 @@ public final class Dtos {
 
   @Schema(name = "UpdateCustomerRequest", description = "Update a customer's profile fields.")
   public record UpdateCustomerRequest(
-      String phone,
-      @NotBlank String firstName,
-      @NotBlank String lastName,
+      @Size(max = 32) String phone,
+      @NotBlank @Size(max = 100) String firstName,
+      @NotBlank @Size(max = 100) String lastName,
       @Schema(description = "Date of birth, ISO-8601 yyyy-MM-dd.") String dob,
-      String gender,
+      @Size(max = 20) String gender,
       @Schema(description = "True if the customer consented to GDPR data processing.")
           Boolean gdprConsent) {}
 
   @Schema(name = "AddAddressRequest", description = "Add or replace a customer address.")
   public record AddAddressRequest(
-      @Schema(description = "HOME, WORK, or other address type.") @NotBlank String type,
-      @NotBlank String line1,
-      String line2,
-      String city,
-      String state,
-      @NotBlank String country,
-      String pincode,
+      @Schema(description = "HOME, WORK, or other address type.") @NotBlank @Size(max = 20)
+          String type,
+      @NotBlank @Size(max = 120) String line1,
+      @Size(max = 120) String line2,
+      @Size(max = 120) String city,
+      @Size(max = 120) String state,
+      @NotBlank @Size(max = 120) String country,
+      @Size(max = 20) String pincode,
       @Schema(description = "True to mark this the customer's default address.")
           Boolean isDefault) {}
 

@@ -192,6 +192,23 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   }
 
   /**
+   * The shopper's own address book: {@code /customers/me/addresses} and {@code
+   * /customers/me/addresses/{id}} (12.10). Keyed on the token's login like {@code /customers/me},
+   * so the only book reachable is the caller's; another shopper's address id is not found there.
+   * Matched by shape, so nothing else that may appear under {@code /customers/me/} later is
+   * admitted by accident.
+   *
+   * @param path the service-local request path
+   * @return {@code true} for the book or one id-addressed address in it
+   */
+  private static boolean isCustomerSelfAddress(String path) {
+    if (!path.startsWith("/customers/me/addresses")) return false;
+    String rest = path.substring("/customers/me/addresses".length());
+    if (rest.isEmpty()) return true;
+    return rest.startsWith("/") && looksLikeUuid(rest.substring(1));
+  }
+
+  /**
    * Reads reachable without a staff role. The counterpart of {@link #isOpenMutation}, and curated
    * the same way: every entry is either something the public storefront genuinely needs, or a
    * service-to-service read that carries no identity headers.
@@ -243,6 +260,8 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || "/customers/me".equals(path)
         || "/customers/me/export".equals(path)
         || "/customers/me/marketing".equals(path)
+        // The shopper's own address book, same shape and same reason (12.10).
+        || isCustomerSelfAddress(path)
         // Storefront promotions, the read side of what /prices/resolve already exposes.
         || "/promotions".equals(path)
         // The caller's own principal — it describes the caller, so it leaks nothing new.
@@ -326,6 +345,9 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // The shopper's own preference centre. Same shape and same reason as /customers/me: the
         // login comes from the token, so the only preferences reachable are the caller's.
         || "/customers/me/marketing".equals(path)
+        // The shopper's own profile is the same path as the claim, PUT rather than POST; the
+        // address book is the shopper's own, keyed on the login, id-addressed by shape (12.10).
+        || isCustomerSelfAddress(path)
         // The opt-out link in a marketing message. Deliberately unauthenticated: the token is the
         // capability, and PECR reg.23 asks for a simple means of refusing — one that works from a
         // forwarded email, on a device that was never signed in, for a customer who has no

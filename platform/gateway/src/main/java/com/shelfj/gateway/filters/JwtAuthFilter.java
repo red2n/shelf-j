@@ -278,11 +278,45 @@ public class JwtAuthFilter implements ContainerRequestFilter {
   private static boolean isStorefrontCustomerAccount(String path, String method) {
     boolean get = "GET".equals(method);
     return switch (path) {
-      case "api/customer-svc/customers/me" -> get || "POST".equals(method);
+      // Claiming the record, reading it, and editing the profile on it (12.10).
+      case "api/customer-svc/customers/me" -> get || "POST".equals(method) || "PUT".equals(method);
       case "api/customer-svc/customers/me/marketing" -> get || "PUT".equals(method);
       case "api/customer-svc/customers/me/export" -> get;
-      default -> false;
+      // The shopper's own address book (12.10), and below, one address in it by id.
+      case "api/customer-svc/customers/me/addresses" -> get || "POST".equals(method);
+      default -> isStorefrontCustomerAddress(path, method);
     };
+  }
+
+  /**
+   * One id-addressed address in the shopper's own book: replace or remove. Matched by shape, like
+   * the order self-reads, so a literal child under the book is not admitted by accident — the first
+   * live run of the account flow found the book itself missing from this list, which is exactly the
+   * failure mode this comment exists to remember.
+   *
+   * @param path the normalized request path
+   * @param method the HTTP method
+   * @return {@code true} for PUT or DELETE of {@code .../customers/me/addresses/{uuid}}
+   */
+  private static boolean isStorefrontCustomerAddress(String path, String method) {
+    String prefix = "api/customer-svc/customers/me/addresses/";
+    if (!path.startsWith(prefix)) {
+      return false;
+    }
+    String id = path.substring(prefix.length());
+    return looksLikeUuid(id) && ("PUT".equals(method) || "DELETE".equals(method));
+  }
+
+  /** Whether a path segment has the shape of a UUID: 36 characters of hex and hyphens. */
+  private static boolean looksLikeUuid(String id) {
+    return id.length() == 36
+        && id.chars()
+            .allMatch(
+                c ->
+                    c == '-'
+                        || (c >= '0' && c <= '9')
+                        || (c >= 'a' && c <= 'f')
+                        || (c >= 'A' && c <= 'F'));
   }
 
   /**
@@ -362,14 +396,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     String rest = path.substring(prefix.length());
     int slash = rest.indexOf('/');
     String id = slash < 0 ? rest : rest.substring(0, slash);
-    if (id.length() != 36
-        || !id.chars()
-            .allMatch(
-                c ->
-                    c == '-'
-                        || (c >= '0' && c <= '9')
-                        || (c >= 'a' && c <= 'f')
-                        || (c >= 'A' && c <= 'F'))) {
+    if (!looksLikeUuid(id)) {
       return false;
     }
     if (slash < 0) {

@@ -252,6 +252,55 @@ class JwtAuthFilterTest {
   }
 
   @Test
+  void customerTokenReachesItsOwnProfileAndAddressBookFromAStorefront() throws IOException {
+    // 12.10. The first live run of the account flow got NO_TENANT on PUT /customers/me: the
+    // downstream filter admitted the shape, the gateway's storefront list had never heard of it.
+    String[][] cases = {
+      {"PUT", "api/customer-svc/customers/me"},
+      {"GET", "api/customer-svc/customers/me/addresses"},
+      {"POST", "api/customer-svc/customers/me/addresses"},
+      {"PUT", "api/customer-svc/customers/me/addresses/01a09509-72ec-72e9-9f08-94a93df26a36"},
+      {"DELETE", "api/customer-svc/customers/me/addresses/01a09509-72ec-72e9-9f08-94a93df26a36"},
+    };
+    for (String[] c : cases) {
+      headers.clear();
+      when(uriInfo.getPath()).thenReturn(c[1]);
+      when(requestContext.getMethod()).thenReturn(c[0]);
+      when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + customerToken());
+      when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+      filter.filter(requestContext);
+      org.junit.jupiter.api.Assertions.assertEquals(
+          "tenant-abc", headers.getFirst("X-Tenant-Id"), c[0] + " " + c[1]);
+    }
+  }
+
+  @Test
+  void customerTokenGetsNoTenantForAddressPathsOutsideTheShape() throws IOException {
+    // A literal child, a non-id, or a method the book does not take: no tenant is derived, so the
+    // request reaches the service without one and is refused there.
+    String[][] cases = {
+      {"DELETE", "api/customer-svc/customers/me/addresses/not-an-id"},
+      {"POST", "api/customer-svc/customers/me/addresses/01a09509-72ec-72e9-9f08-94a93df26a36"},
+      {"GET", "api/customer-svc/customers/me/addresses/01a09509-72ec-72e9-9f08-94a93df26a36/share"},
+      {"DELETE", "api/customer-svc/customers/me"},
+      {"PUT", "api/customer-svc/customers/01a09509-72ec-72e9-9f08-94a93df26a36/addresses"},
+    };
+    for (String[] c : cases) {
+      headers.clear();
+      when(uriInfo.getPath()).thenReturn(c[1]);
+      when(requestContext.getMethod()).thenReturn(c[0]);
+      when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + customerToken());
+      // Never read for these paths, which is the point; lenient so strict stubs do not object.
+      lenient()
+          .when(requestContext.getHeaderString("X-Storefront-Tenant"))
+          .thenReturn("tenant-abc");
+      filter.filter(requestContext);
+      org.junit.jupiter.api.Assertions.assertNull(
+          headers.getFirst("X-Tenant-Id"), c[0] + " " + c[1]);
+    }
+  }
+
+  @Test
   void customerTokenOpensItsOwnOrderById() throws IOException {
     // A shopper could list their orders through /orders/mine and open none of them: no tenant was
     // derived for the read by id. The id-shaped self-reads now get the storefront tenant too;

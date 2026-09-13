@@ -303,6 +303,13 @@ final routerProvider = Provider<GoRouter>((ref) {
               builder: (_) => storefront_lib.StorefrontPrivacyScreen(),
             ),
           ),
+          GoRoute(
+            path: '/store/account',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: storefront_lib.loadLibrary,
+              builder: (_) => storefront_lib.StorefrontAccountScreen(),
+            ),
+          ),
         ],
       ),
     ],

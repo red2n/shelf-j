@@ -205,6 +205,8 @@ class _AccountAction extends ConsumerWidget {
       onSelected: (v) {
         if (v == 'orders') {
           context.go('/store/orders');
+        } else if (v == 'account') {
+          context.go('/store/account');
         } else if (v == 'preferences') {
           showPreferencesSheet(context);
         } else if (v == 'privacy') {
@@ -224,6 +226,7 @@ class _AccountAction extends ConsumerWidget {
               style: const TextStyle(fontWeight: FontWeight.bold)),
         ),
         const PopupMenuItem(value: 'orders', child: Text('My orders')),
+        const PopupMenuItem(value: 'account', child: Text('My account')),
         const PopupMenuItem(value: 'preferences', child: Text('My preferences')),
         const PopupMenuItem(
             value: 'privacy', child: Text('Privacy & marketing')),

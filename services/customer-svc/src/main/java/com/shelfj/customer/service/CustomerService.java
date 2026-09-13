@@ -598,6 +598,66 @@ public class CustomerService {
     repo.deleteAddress(tenantId, customerId, addressId);
   }
 
+  // ── the shopper's own profile and address book (12.10) ────────────────────
+
+  /** How many addresses one shopper may keep. A shop's address book is not a free-text store. */
+  static final int MAX_ADDRESSES = 10;
+
+  /**
+   * Updates the signed-in shopper's own profile. The record is found by the token's login, so a
+   * caller can reach no profile but their own; the email is the login's and is not writable here.
+   *
+   * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when this shop holds no record for the
+   *     login — the shopper claims one first with {@code POST /customers/me}
+   */
+  public Customer updateMine(UUID tenantId, UUID loginId, UpdateCustomerRequest req) {
+    return update(tenantId, getByLogin(tenantId, loginId).id(), req);
+  }
+
+  /** The signed-in shopper's own address book. */
+  public List<CustomerAddress> listMyAddresses(UUID tenantId, UUID loginId) {
+    return listAddresses(tenantId, getByLogin(tenantId, loginId).id());
+  }
+
+  /**
+   * Adds an address to the signed-in shopper's own book, capped at {@link #MAX_ADDRESSES}. The cap
+   * is decided under the customer's row lock, so two adds racing for the last place cannot both
+   * take it.
+   *
+   * @throws ApiException {@code CUSTOMER_ADDRESS_LIMIT} (409) when the book is full
+   */
+  public CustomerAddress addMyAddress(UUID tenantId, UUID loginId, AddAddressRequest req) {
+    Customer mine = getByLogin(tenantId, loginId);
+    String type =
+        req.type() == null || req.type().isBlank() ? CustomerAddress.TYPE_HOME : req.type();
+    var address =
+        new CustomerAddress(
+            Ids.newId(),
+            tenantId,
+            mine.id(),
+            type,
+            req.line1(),
+            req.line2(),
+            req.city(),
+            req.state(),
+            req.country(),
+            req.pincode(),
+            Boolean.TRUE.equals(req.isDefault()),
+            Instant.now());
+    return repo.createAddressCapped(address, MAX_ADDRESSES);
+  }
+
+  /** Replaces one of the signed-in shopper's own addresses; another shopper's is not found. */
+  public CustomerAddress updateMyAddress(
+      UUID tenantId, UUID loginId, UUID addressId, AddAddressRequest req) {
+    return updateAddress(tenantId, getByLogin(tenantId, loginId).id(), addressId, req);
+  }
+
+  /** Removes one of the signed-in shopper's own addresses; another shopper's is not found. */
+  public void deleteMyAddress(UUID tenantId, UUID loginId, UUID addressId) {
+    deleteAddress(tenantId, getByLogin(tenantId, loginId).id(), addressId);
+  }
+
   // ── loyalty ───────────────────────────────────────────────────────────────
 
   /**
