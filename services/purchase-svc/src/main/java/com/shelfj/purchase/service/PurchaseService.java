@@ -2,7 +2,6 @@ package com.shelfj.purchase.service;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.purchase.client.PricingClient;
-import com.shelfj.purchase.client.TenantClient;
 import com.shelfj.purchase.config.ServiceConfig;
 import com.shelfj.purchase.domain.BankAccount;
 import com.shelfj.purchase.domain.Domain;
@@ -57,7 +56,7 @@ public class PurchaseService {
 
   @Inject PurchaseRepository repo;
 
-  @Inject TenantClient tenants;
+  @Inject com.shelfj.service.TenantProfiles tenants;
 
   @Inject PricingClient pricing;
   @Inject com.shelfj.purchase.client.InventoryClient inventory;
@@ -75,16 +74,16 @@ public class PurchaseService {
    * is one country's currency written onto another country's money, and every downstream figure
    * built on it inherits the error.
    *
-   * <p>Falls back to the configured platform default when tenant-svc cannot answer, rather than
-   * refusing the write — see {@link TenantClient} for why that trade is the right way round here.
+   * <p>There is no platform default behind it any more (SJ-D53). The configured fallback was "GBP",
+   * so a yen tenant's supplier was set up in pounds whenever tenant-svc was slow; a refused write
+   * can be retried, a wrong currency on a supplier cannot be told from a right one.
    *
    * @param tenantId the tenant whose currency is wanted
    * @return an ISO 4217 code, never null
+   * @throws ApiException 503 {@code TENANT_PROFILE_UNAVAILABLE} when tenant-svc cannot answer
    */
   String resolveTenantCurrency(UUID tenantId) {
-    return tenants
-        .findCurrency(tenantId)
-        .orElseGet(() -> config.defaultCurrency().toUpperCase(java.util.Locale.ROOT));
+    return tenants.requireCurrency(tenantId);
   }
 
   // ── Suppliers ─────────────────────────────────────────────────────────────────
@@ -121,7 +120,7 @@ public class PurchaseService {
             req.name(),
             req.vatNumber(),
             req.vatRegistered(),
-            req.countryCode() != null ? req.countryCode().toUpperCase(java.util.Locale.ROOT) : "GB",
+            tenants.countryOr(tenantId, req.countryCode()),
             currency,
             req.paymentTermsDays() != null ? req.paymentTermsDays() : BACS_TERMS_DAYS,
             now,

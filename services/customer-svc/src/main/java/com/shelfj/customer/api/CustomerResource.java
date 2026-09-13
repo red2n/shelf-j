@@ -810,8 +810,7 @@ public class CustomerResource {
   @GET
   @Path("/{id}/store-credit")
   public ApiResponse<?> getStoreCredit(
-      @PathParam("id") UUID customerId,
-      @QueryParam("currency") @DefaultValue("GBP") String currency) {
+      @PathParam("id") UUID customerId, @QueryParam("currency") String currency) {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
         Mappers.toStoreCredit(service.getStoreCredit(tenantId, customerId, currency, ctx)),
@@ -824,7 +823,8 @@ public class CustomerResource {
    * <p>Not idempotent — calling it twice issues twice.
    *
    * @param customerId the customer to credit
-   * @param req the amount, optional currency (defaults to GBP), originating order and reason
+   * @param req the amount, optional currency (the tenant's own when omitted), originating order and
+   *     reason
    * @return the account with its new balance
    * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist
    */
@@ -852,7 +852,8 @@ public class CustomerResource {
    * retry a store-credit tender safely.
    *
    * @param customerId the customer to debit
-   * @param req the amount, optional currency (defaults to GBP), order being paid and reason
+   * @param req the amount, optional currency (the tenant's own when omitted), order being paid and
+   *     reason
    * @return the account with its new balance
    * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist; {@code 422}
    *     when the balance is insufficient

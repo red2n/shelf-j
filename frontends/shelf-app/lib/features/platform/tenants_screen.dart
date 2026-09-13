@@ -6,6 +6,7 @@ import '../../core/theme.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/reference_fields.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'tenant_onboarding_notifier.dart';
 
@@ -394,10 +395,12 @@ class _OnboardingDialogState extends ConsumerState<_OnboardingDialog> {
   final _storeNameCtrl = TextEditingController();
   final _storeCodeCtrl = TextEditingController();
   final _cityCtrl = TextEditingController();
-  String _country = 'IN';
-  String _currency = 'INR';
+  // Nothing preselected: a new business's country, currency and zone are its
+  // own to choose (SJ-D53). Choosing a country suggests its currency.
+  String? _country;
+  String? _currency;
   String _storeType = 'STORE';
-  String _timezone = 'Asia/Kolkata';
+  String? _timezone;
   final _step1Key = GlobalKey<FormState>();
 
   @override
@@ -512,8 +515,10 @@ class _OnboardingDialogState extends ConsumerState<_OnboardingDialog> {
                         currency: _currency,
                         storeType: _storeType,
                         timezone: _timezone,
-                        onCountryChanged: (v) =>
-                            setState(() => _country = v!),
+                        onCountryChanged: (v) => setState(() {
+                          _country = v;
+                          _currency = currencyOfCountry(v) ?? _currency;
+                        }),
                         onCurrencyChanged: (v) =>
                             setState(() => _currency = v!),
                         onTypeChanged: (v) =>
@@ -527,8 +532,8 @@ class _OnboardingDialogState extends ConsumerState<_OnboardingDialog> {
                               .read(tenantOnboardingProvider.notifier)
                               .onboard(
                                 businessName: _bizNameCtrl.text.trim(),
-                                country: _country,
-                                currency: _currency,
+                                country: _country!,
+                                currency: _currency!,
                                 storeName: _storeNameCtrl.text.trim(),
                                 storeCode: _storeCodeCtrl.text
                                     .trim()
@@ -536,7 +541,7 @@ class _OnboardingDialogState extends ConsumerState<_OnboardingDialog> {
                                 storeType: _storeType,
                                 storeCity: _cityCtrl.text.trim(),
                                 storeCountry: _country,
-                                storeTimezone: _timezone,
+                                storeTimezone: _timezone!,
                               );
                         },
                       ),
@@ -632,10 +637,10 @@ class _BusinessStoreForm extends StatelessWidget {
   final TextEditingController storeNameCtrl;
   final TextEditingController storeCodeCtrl;
   final TextEditingController cityCtrl;
-  final String country;
-  final String currency;
+  final String? country;
+  final String? currency;
   final String storeType;
-  final String timezone;
+  final String? timezone;
   final ValueChanged<String?> onCountryChanged;
   final ValueChanged<String?> onCurrencyChanged;
   final ValueChanged<String?> onTypeChanged;
@@ -687,35 +692,18 @@ class _BusinessStoreForm extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: country,
-                    decoration: const InputDecoration(labelText: 'Country *'),
-                    items: const [
-                      DropdownMenuItem(value: 'IN', child: Text('India')),
-                      DropdownMenuItem(value: 'US', child: Text('USA')),
-                      DropdownMenuItem(value: 'GB', child: Text('UK')),
-                      DropdownMenuItem(value: 'SG', child: Text('Singapore')),
-                      DropdownMenuItem(value: 'AE', child: Text('UAE')),
-                    ],
+                  child: CountryField(
+                    label: 'Country *',
+                    value: country,
                     onChanged: onCountryChanged,
-                    validator: (v) => v == null ? 'Required' : null,
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: currency,
-                    decoration:
-                        const InputDecoration(labelText: 'Currency *'),
-                    items: const [
-                      DropdownMenuItem(value: 'INR', child: Text('INR')),
-                      DropdownMenuItem(value: 'USD', child: Text('USD')),
-                      DropdownMenuItem(value: 'GBP', child: Text('GBP')),
-                      DropdownMenuItem(value: 'SGD', child: Text('SGD')),
-                      DropdownMenuItem(value: 'AED', child: Text('AED')),
-                    ],
+                  child: CurrencyField(
+                    label: 'Currency *',
+                    value: currency,
                     onChanged: onCurrencyChanged,
-                    validator: (v) => v == null ? 'Required' : null,
                   ),
                 ),
               ],
@@ -781,22 +769,9 @@ class _BusinessStoreForm extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: timezone,
-                    decoration:
-                        const InputDecoration(labelText: 'Timezone'),
-                    items: const [
-                      DropdownMenuItem(
-                          value: 'Asia/Kolkata', child: Text('IST')),
-                      DropdownMenuItem(
-                          value: 'America/New_York', child: Text('ET')),
-                      DropdownMenuItem(
-                          value: 'Europe/London', child: Text('GMT')),
-                      DropdownMenuItem(
-                          value: 'Asia/Singapore', child: Text('SGT')),
-                      DropdownMenuItem(
-                          value: 'Asia/Dubai', child: Text('GST')),
-                    ],
+                  child: TimezoneField(
+                    label: 'Timezone *',
+                    value: timezone,
                     onChanged: onTimezoneChanged,
                   ),
                 ),

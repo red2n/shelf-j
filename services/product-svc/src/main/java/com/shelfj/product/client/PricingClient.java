@@ -164,7 +164,8 @@ public class PricingClient {
     }
 
     // None found — create the default.
-    String cur = (currency != null && !currency.isBlank()) ? currency : "GBP";
+    // The caller resolves the tenant's currency; a default list is never created in a guessed one.
+    String cur = java.util.Objects.requireNonNull(currency, "the price list's currency");
     String createBody =
         Json.createObjectBuilder()
             .add("name", "Default")

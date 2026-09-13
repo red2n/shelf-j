@@ -7,6 +7,7 @@ import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/reference_fields.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -1061,8 +1062,8 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
   final _cityCtrl = TextEditingController();
   final _pincodeCtrl = TextEditingController();
   String _type = 'STORE';
-  String _country = 'IN';
-  String _timezone = 'Asia/Kolkata';
+  String? _country;
+  String? _timezone;
   bool _showPrices = true;
   List<String> _payMethods = ['CASH', 'CARD'];
   bool _loading = false;
@@ -1093,7 +1094,7 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
           'type': _type,
           if (_line1Ctrl.text.trim().isNotEmpty) 'line1': _line1Ctrl.text.trim(),
           if (_cityCtrl.text.trim().isNotEmpty) 'city': _cityCtrl.text.trim(),
-          'country': _country,
+          'country': _country ?? ref.read(tenantInfoProvider).value?.country,
           if (_pincodeCtrl.text.trim().isNotEmpty) 'pincode': _pincodeCtrl.text.trim(),
           'timezone': _timezone,
           'showPrices': _showPrices,
@@ -1251,33 +1252,16 @@ class _AddStoreDialogState extends ConsumerState<_AddStoreDialog> {
                 Row(
                   children: [
                     Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _country,
-                        decoration: const InputDecoration(labelText: 'Country'),
-                        items: const [
-                          DropdownMenuItem(value: 'IN', child: Text('India')),
-                          DropdownMenuItem(value: 'US', child: Text('USA')),
-                          DropdownMenuItem(value: 'GB', child: Text('UK')),
-                          DropdownMenuItem(value: 'SG', child: Text('Singapore')),
-                          DropdownMenuItem(value: 'AE', child: Text('UAE')),
-                        ],
-                        onChanged: (v) => setState(() => _country = v!),
+                      child: CountryField(
+                        value: _country ?? ref.watch(tenantInfoProvider).value?.country,
+                        onChanged: (v) => setState(() => _country = v),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _timezone,
-                        decoration: const InputDecoration(labelText: 'Timezone'),
-                        items: const [
-                          DropdownMenuItem(value: 'Asia/Kolkata', child: Text('IST')),
-                          DropdownMenuItem(
-                              value: 'America/New_York', child: Text('ET')),
-                          DropdownMenuItem(value: 'Europe/London', child: Text('GMT')),
-                          DropdownMenuItem(value: 'Asia/Singapore', child: Text('SGT')),
-                          DropdownMenuItem(value: 'Asia/Dubai', child: Text('GST')),
-                        ],
-                        onChanged: (v) => setState(() => _timezone = v!),
+                      child: TimezoneField(
+                        value: _timezone,
+                        onChanged: (v) => setState(() => _timezone = v),
                       ),
                     ),
                   ],

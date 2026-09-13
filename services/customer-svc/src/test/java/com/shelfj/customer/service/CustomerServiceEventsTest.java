@@ -39,11 +39,25 @@ class CustomerServiceEventsTest {
   private static final UUID CUSTOMER = Ids.newId();
 
   @Mock CustomerRepository repo;
+  @Mock com.shelfj.service.TenantProfiles profiles;
   private CustomerService service;
 
   @BeforeEach
   void setUp() {
     service = new CustomerService();
+    service.profiles = profiles;
+    // The named currency, or the tenant's own as tenant-svc would answer (SJ-D53).
+    org.mockito.Mockito.lenient()
+        .when(
+            profiles.currencyOr(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            inv -> {
+              String named = inv.getArgument(1);
+              return named == null || named.isBlank()
+                  ? "GBP"
+                  : named.trim().toUpperCase(java.util.Locale.ROOT);
+            });
     service.repo = repo;
     when(repo.findById(eq(TENANT), eq(CUSTOMER)))
         .thenReturn(

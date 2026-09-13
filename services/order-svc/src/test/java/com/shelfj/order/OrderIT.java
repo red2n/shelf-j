@@ -9,6 +9,7 @@ import static org.hamcrest.Matchers.not;
 import com.shelfj.ids.Ids;
 import com.shelfj.order.service.OrderService;
 import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.client.Entity;
@@ -35,9 +36,20 @@ import org.junit.jupiter.api.Test;
 class OrderIT {
 
   private static final PostgresSupport PG;
+  private static final TenantSvcStub TENANTS;
 
   static {
     PG = PostgresSupport.start();
+    // The tenants this suite acts for, as tenant-svc would describe them (SJ-D53).
+    TENANTS =
+        TenantSvcStub.start()
+            .with(OrderIT.T, "USD", "US")
+            .with("01a090ae-611e-7014-8cd5-baf0862fa319", "USD", "US")
+            .with("01a090ae-611e-7015-8c11-fd62230bf57a", "USD", "US")
+            .with("01a090ae-611e-7016-a809-076a3374b722", "USD", "US")
+            .with("01a090ae-611e-7017-bdd9-d7612c647032", "USD", "US")
+            .with("01a090ae-611e-7019-ba7e-5901486ca70a", "USD", "US")
+            .with("01a090ae-611e-701b-8b9c-fe24949dad64", "USD", "US");
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
     System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
@@ -169,7 +181,7 @@ class OrderIT {
                 + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
                 + "\"items\":[{\"variantId\":\""
                 + V
-                + "\",\"qty\":2,\"unitPrice\":10.00}],\"currency\":\"GBP\"}",
+                + "\",\"qty\":2,\"unitPrice\":10.00}]}",
             T,
             "it-refund-status");
     assertThat(placed.getStatus(), is(201));
@@ -209,7 +221,7 @@ class OrderIT {
             + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
             + "\"items\":[{\"variantId\":\""
             + V
-            + "\",\"qty\":1,\"unitPrice\":10.00}],\"currency\":\"GBP\"}";
+            + "\",\"qty\":1,\"unitPrice\":10.00}]}";
 
     // A: placed, left PENDING (client never paid).
     String aId = extractId(post("/orders", orderJson, T, "it-sweep-a").readEntity(String.class));
@@ -1512,7 +1524,9 @@ class OrderIT {
    * Orders, gift cards and special orders each used to stamp their own literal ("USD", "USD",
    * "GBP") while pricing-svc priced lines in the price list's currency. All three now resolve
    * through the tenant's projected currency, a request naming a different one is rejected, and a
-   * tenant with no projection yet falls back to the single configured default.
+   * tenant with no projection yet is read from tenant-svc. The single configured default that used
+   * to stand behind it is gone (SJ-D53): it stamped pounds on any tenant whose projection lagged,
+   * so an undescribed tenant is now refused rather than guessed.
    */
   @Test
   void currencyResolvesFromTheTenantNotAHardcodedLiteral() {
@@ -1572,10 +1586,42 @@ class OrderIT {
     assertThat(mismatch.getStatus(), is(400));
     assertThat(mismatch.readEntity(String.class), containsString("ORDER_CURRENCY_MISMATCH"));
 
-    // A tenant with no projection yet (onboarded before this existed, or event lag) falls back to
-    // the one configured default rather than to three different literals.
+    // A tenant with no projection yet (onboarded before this existed, or event lag) is read from
+    // tenant-svc: a yen tenant's till sale is in yen, not in a configured default.
     String unprojected = Ids.newId().toString();
-    Response fallback =
+    TENANTS.with(unprojected, "JPY", "JP");
+    Response fromProfile =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":1000}]}",
+            unprojected,
+            "it-currency-from-profile");
+    String fromProfileBody = fromProfile.readEntity(String.class);
+    assertThat(fromProfileBody, fromProfile.getStatus(), is(201));
+    assertThat(fromProfileBody, containsString("\"currency\":\"JPY\""));
+
+    // ...and the same rule holds there: pounds for a yen tenant are refused.
+    Response yenMismatch =
+        post(
+            "/orders",
+            "{\"storeId\":\""
+                + S
+                + "\",\"channel\":\"POS\",\"fulfilmentType\":\"INSTORE\","
+                + "\"items\":[{\"variantId\":\""
+                + V
+                + "\",\"qty\":1,\"unitPrice\":10.00}],\"currency\":\"GBP\"}",
+            unprojected,
+            "it-currency-profile-mismatch");
+    assertThat(yenMismatch.getStatus(), is(400));
+
+    // A tenant neither the projection nor tenant-svc can describe is refused, not guessed.
+    String undescribed = Ids.newId().toString();
+    Response refused =
         post(
             "/orders",
             "{\"storeId\":\""
@@ -1584,10 +1630,12 @@ class OrderIT {
                 + "\"items\":[{\"variantId\":\""
                 + V
                 + "\",\"qty\":1,\"unitPrice\":10.00}]}",
-            unprojected,
-            "it-currency-fallback");
-    assertThat(fallback.getStatus(), is(201));
-    assertThat(fallback.readEntity(String.class), containsString("\"currency\":\"GBP\""));
+            undescribed,
+            "it-currency-undescribed");
+    String refusedBody = refused.readEntity(String.class);
+    assertThat(refusedBody, refused.getStatus(), is(503));
+    assertThat(refusedBody, containsString("TENANT_PROFILE_UNAVAILABLE"));
+    assertThat(get("/orders", undescribed).readEntity(String.class), not(containsString(S)));
   }
 
   /** A redelivered TenantCreated must not re-apply the projection (golden rule #7). */

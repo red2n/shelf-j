@@ -81,7 +81,7 @@ public final class Dtos {
   public record IssueStoreCreditRequest(
       @Schema(description = "Amount to issue; must be positive.") @NotNull @Positive
           BigDecimal amount,
-      @Schema(description = "ISO currency code; defaults to GBP.") String currency,
+      @Schema(description = "ISO currency code; the tenant's own when omitted.") String currency,
       @Schema(description = "UUID of the order this issuance relates to, if any.") String orderId,
       String reason) {}
 
@@ -91,7 +91,7 @@ public final class Dtos {
           @NotNull
           @Positive
           BigDecimal amount,
-      @Schema(description = "ISO currency code; defaults to GBP.") String currency,
+      @Schema(description = "ISO currency code; the tenant's own when omitted.") String currency,
       @Schema(
               description =
                   "UUID of the order this redemption relates to; makes the redemption idempotent"

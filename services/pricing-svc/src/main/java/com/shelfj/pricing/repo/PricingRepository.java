@@ -243,7 +243,7 @@ public class PricingRepository extends BaseOutboxRepository {
             ps.setString(4, cvs.vatNumber());
             ps.setBoolean(5, cvs.vatRegistered());
             ps.setBoolean(6, cvs.reverseChargeEligible());
-            ps.setString(7, cvs.countryCode() != null ? cvs.countryCode() : "GB");
+            ps.setString(7, cvs.countryCode());
             ps.executeUpdate();
           }
           return cvs;

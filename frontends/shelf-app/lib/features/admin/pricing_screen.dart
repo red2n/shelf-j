@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
+import '../../shared/widgets/reference_fields.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'pricing_providers.dart';
@@ -197,7 +198,7 @@ class _PriceListDialog extends ConsumerStatefulWidget {
 class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
   final _nameCtrl = TextEditingController();
   String _channel = 'ALL';
-  String _currency = 'INR';
+  String? _currency;
   DateTime _from = DateTime.now();
   bool _loading = false;
   String? _error;
@@ -226,7 +227,7 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
             data: {
               'name': _nameCtrl.text.trim(),
               'channel': _channel,
-              'currency': _currency,
+              if (_currency != null) 'currency': _currency,
               // A bare '2026-01-01' is rejected with INVALID_DATE — the column is
               // TIMESTAMPTZ. Sent as a UTC instant, which is also what golden rule
               // 14 asks for: convert at the UI edge, store UTC.
@@ -280,9 +281,9 @@ class _PriceListDialogState extends ConsumerState<_PriceListDialog> {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: _currencyDropdown(
-                    _currency,
-                    (v) => setState(() => _currency = v),
+                  child: CurrencyField(
+                    value: _currency ?? ref.watch(tenantInfoProvider).value?.currency,
+                    onChanged: (v) => setState(() => _currency = v),
                   ),
                 ),
               ],
@@ -2238,20 +2239,6 @@ Widget _errorBox(BuildContext context, String? error) {
     ),
   );
 }
-
-Widget _currencyDropdown(String value, ValueChanged<String> onChanged) =>
-    DropdownButtonFormField<String>(
-      initialValue: value,
-      decoration: const InputDecoration(labelText: 'Currency'),
-      items: const [
-        DropdownMenuItem(value: 'INR', child: Text('INR')),
-        DropdownMenuItem(value: 'USD', child: Text('USD')),
-        DropdownMenuItem(value: 'GBP', child: Text('GBP')),
-        DropdownMenuItem(value: 'SGD', child: Text('SGD')),
-        DropdownMenuItem(value: 'AED', child: Text('AED')),
-      ],
-      onChanged: (v) => onChanged(v!),
-    );
 
 Widget _datePickerTile(
   BuildContext context,

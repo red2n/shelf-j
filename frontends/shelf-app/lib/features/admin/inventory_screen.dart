@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
@@ -655,6 +656,14 @@ class _ReceiveStockDialog extends ConsumerStatefulWidget {
 }
 
 class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
+  /// The tenant's currency symbol before the cost, or none while it is unknown.
+  String? _costPrefix() {
+    final symbol = AppFormat.currencySymbol(
+      ref.watch(tenantInfoProvider).value?.currency,
+    );
+    return symbol.isEmpty ? null : '$symbol ';
+  }
+
   final _formKey = GlobalKey<FormState>();
   final _variantCtrl = TextEditingController();
   final _qtyCtrl = TextEditingController();
@@ -915,9 +924,9 @@ class _ReceiveStockDialogState extends ConsumerState<_ReceiveStockDialog> {
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
                         ),
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Cost price',
-                          prefixText: '£ ',
+                          prefixText: _costPrefix(),
                         ),
                       ),
                     ),

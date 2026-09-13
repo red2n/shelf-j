@@ -53,6 +53,7 @@ public class CustomerService {
   public static final String ORDER_CONFIRMED_CONSUMER = "customer-svc/order-confirmed";
 
   @Inject CustomerRepository repo;
+  @Inject com.shelfj.service.TenantProfiles profiles;
   @Inject com.shelfj.customer.client.OrderClient orders;
   @Inject MarketingConsentService marketing;
 
@@ -875,6 +876,18 @@ public class CustomerService {
   // ── store credit ──────────────────────────────────────────────────────────
 
   /**
+   * The currency a store-credit account is held in: the one named, upper-cased, or the tenant's own
+   * (SJ-D53). Store credit is kept per currency, so reading, issuing and redeeming must agree on
+   * which account a request means.
+   *
+   * @throws ApiException 400 {@code CURRENCY_INVALID} for a named code that is not one; 503 {@code
+   *     TENANT_PROFILE_UNAVAILABLE} when none is named and the tenant's cannot be read
+   */
+  private String storeCreditCurrency(UUID tenantId, String requested) {
+    return profiles.currencyOr(tenantId, requested);
+  }
+
+  /**
    * Reads a store-credit balance, with tenant scoping but <strong>no</strong> object-level
    * authorization.
    *
@@ -883,14 +896,14 @@ public class CustomerService {
    *
    * @param tenantId owning tenant
    * @param customerId the customer whose balance to read
-   * @param currency ISO-4217 code; blank or {@code null} defaults to {@code GBP}
+   * @param currency ISO-4217 code; blank or {@code null} means the tenant's own currency
    * @return the store-credit account, real or a zero-balance stand-in
    * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists in this
    *     tenant
    */
   public StoreCreditAccount getStoreCredit(UUID tenantId, UUID customerId, String currency) {
     get(tenantId, customerId);
-    String cur = currency == null || currency.isBlank() ? "GBP" : currency.toUpperCase(Locale.ROOT);
+    String cur = storeCreditCurrency(tenantId, currency);
     return repo.findStoreCreditAccount(tenantId, customerId, cur)
         .orElseGet(
             () ->
@@ -909,7 +922,7 @@ public class CustomerService {
    *
    * @param tenantId owning tenant
    * @param customerId the customer whose balance to read
-   * @param currency ISO-4217 code; blank or {@code null} defaults to {@code GBP}
+   * @param currency ISO-4217 code; blank or {@code null} means the tenant's own currency
    * @param ctx caller context; staff may read anyone in the tenant, a customer only themselves
    * @return the store-credit account, real or a zero-balance stand-in
    * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists or the
@@ -928,7 +941,8 @@ public class CustomerService {
    *
    * @param tenantId owning tenant
    * @param customerId the customer to credit
-   * @param req the amount, optional currency (defaults to GBP), originating order and reason
+   * @param req the amount, optional currency (the tenant's own when omitted), originating order and
+   *     reason
    * @return the account with its new balance
    * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists in this
    *     tenant
@@ -936,10 +950,7 @@ public class CustomerService {
   public StoreCreditAccount issueStoreCredit(
       UUID tenantId, UUID customerId, IssueStoreCreditRequest req) {
     get(tenantId, customerId);
-    String cur =
-        req.currency() == null || req.currency().isBlank()
-            ? "GBP"
-            : req.currency().toUpperCase(Locale.ROOT);
+    String cur = storeCreditCurrency(tenantId, req.currency());
     UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
     String payload =
         Json.createObjectBuilder()
@@ -968,7 +979,8 @@ public class CustomerService {
    *
    * @param tenantId owning tenant
    * @param customerId the customer to debit
-   * @param req the amount, optional currency (defaults to GBP), order being paid and reason
+   * @param req the amount, optional currency (the tenant's own when omitted), order being paid and
+   *     reason
    * @return the account with its new balance
    * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists; a 422 when
    *     the balance is insufficient
@@ -976,10 +988,7 @@ public class CustomerService {
   public StoreCreditAccount redeemStoreCredit(
       UUID tenantId, UUID customerId, RedeemStoreCreditRequest req) {
     get(tenantId, customerId);
-    String cur =
-        req.currency() == null || req.currency().isBlank()
-            ? "GBP"
-            : req.currency().toUpperCase(Locale.ROOT);
+    String cur = storeCreditCurrency(tenantId, req.currency());
     UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
     String payload =
         Json.createObjectBuilder()

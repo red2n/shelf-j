@@ -48,6 +48,7 @@ public class MarkdownService {
 
   @Inject PricingRepository repo;
   @Inject InventoryClient inventory;
+  @Inject com.shelfj.service.TenantProfiles profiles;
 
   /** Today, in UTC — the date a markdown's status is judged on. */
   static LocalDate today() {
@@ -199,7 +200,9 @@ public class MarkdownService {
                         "PRICING_MARKDOWN_NO_PRICE",
                         "variant " + variantId + " has no POS price to reduce from"));
     String currency =
-        repo.findPriceList(tenantId, base.priceListId()).map(PriceList::currency).orElse("GBP");
+        repo.findPriceList(tenantId, base.priceListId())
+            .map(PriceList::currency)
+            .orElseGet(() -> profiles.requireCurrency(tenantId));
     BigDecimal original = base.price().setScale(2, RoundingMode.HALF_UP);
     BigDecimal reduced;
     BigDecimal percent;

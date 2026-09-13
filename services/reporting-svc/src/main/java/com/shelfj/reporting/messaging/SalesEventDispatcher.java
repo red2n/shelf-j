@@ -58,7 +58,8 @@ class SalesEventDispatcher {
     String channel = obj.getString("channel", null);
     UUID customerId = optUuid(obj, "customerId");
     BigDecimal gross = obj.getJsonNumber("total").bigDecimalValue();
-    String currency = obj.getString("currency", "GBP");
+    // A sale without its currency is malformed: recording it as pounds would corrupt revenue.
+    String currency = obj.getString("currency");
     service.recordSale(tenantId, orderId, storeId, channel, customerId, gross, currency);
   }
 

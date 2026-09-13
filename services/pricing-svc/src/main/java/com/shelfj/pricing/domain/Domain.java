@@ -89,7 +89,7 @@ public final class Domain {
 
   /**
    * Time-bounded promotional discount. type=PERCENT: value is percentage off (e.g. 10 = 10% off).
-   * type=FLAT: value is flat amount off in base currency (GBP).
+   * type=FLAT: value is flat amount off in the price list's currency.
    */
   public record Promotion(
       UUID id,

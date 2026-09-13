@@ -12,7 +12,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Parsing of the two cross-service payloads purchase-svc now depends on.
+ * Parsing of the cross-service payloads purchase-svc depends on. The tenant profile moved to {@code
+ * TenantProfiles} in common-service, and its parsing is tested there.
  *
  * <p>These exist because of SJ-D14 and SJ-D20, which were the same finding twice: the only two
  * places in this codebase that parsed another service's DTO inline — behind Consul and a circuit
@@ -20,49 +21,6 @@ import org.junit.jupiter.api.Test;
  * months. The parse is extracted here for no reason other than to be asserted.
  */
 class ClientParseTest {
-
-  // ── tenant currency ─────────────────────────────────────────────────────────
-
-  @Test
-  @DisplayName("A tenant's currency is read out of the envelope's data object")
-  void tenantCurrency() {
-    for (String c : new String[] {"GBP", "USD", "JPY", "INR", "CNY"}) {
-      String body = "{\"data\":{\"id\":\"x\",\"currency\":\"" + c + "\"},\"error\":null}";
-      assertThat(TenantClient.parseCurrency(body), is(Optional.of(c)));
-    }
-  }
-
-  @Test
-  @DisplayName("Lower case is normalised — the JWT and the database need not agree on case")
-  void tenantCurrencyNormalised() {
-    assertThat(
-        TenantClient.parseCurrency("{\"data\":{\"currency\":\" jpy \"}}"), is(Optional.of("JPY")));
-  }
-
-  @Test
-  @DisplayName("SJ-D14: an absent currency key is empty, not an exception")
-  void tenantCurrencyAbsent() {
-    // JSON-B omits a null field rather than serialising it as null — the exact shape that made
-    // every guest checkout return 503 for months.
-    assertThat(TenantClient.parseCurrency("{\"data\":{\"id\":\"x\"}}"), is(Optional.empty()));
-    assertThat(TenantClient.parseCurrency("{\"data\":null}"), is(Optional.empty()));
-    assertThat(TenantClient.parseCurrency("{}"), is(Optional.empty()));
-  }
-
-  @Test
-  @DisplayName("A currency that is not three characters is refused rather than stamped onto money")
-  void tenantCurrencyMalformed() {
-    assertThat(
-        TenantClient.parseCurrency("{\"data\":{\"currency\":\"POUNDS\"}}"), is(Optional.empty()));
-    assertThat(TenantClient.parseCurrency("{\"data\":{\"currency\":\"\"}}"), is(Optional.empty()));
-  }
-
-  @Test
-  @DisplayName("A body that is not JSON at all is empty, not a 500")
-  void tenantCurrencyGarbage() {
-    assertThat(TenantClient.parseCurrency("<html>502 Bad Gateway</html>"), is(Optional.empty()));
-    assertThat(TenantClient.parseCurrency(""), is(Optional.empty()));
-  }
 
   // ── VAT rates ───────────────────────────────────────────────────────────────
 

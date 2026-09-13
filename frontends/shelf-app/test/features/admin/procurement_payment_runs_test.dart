@@ -159,6 +159,18 @@ class _Server implements HttpClientAdapter {
         'data': [run],
       });
     }
+    // The tenant the dialogs start from (SJ-D53).
+    if (o.path.endsWith('/admin/tenant')) {
+      return json({
+        'data': {
+          'id': 't',
+          'name': 'Shop',
+          'status': 'ACTIVE',
+          'currency': 'GBP',
+          'country': 'GB',
+        },
+      });
+    }
     return json({'data': <Object>[]});
   }
 }

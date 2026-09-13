@@ -105,7 +105,7 @@ public final class Dtos {
       boolean vatRegistered,
       @Schema(description = "True if this customer is eligible for reverse-charge VAT.")
           boolean reverseChargeEligible,
-      @Schema(description = "ISO 3166-1 alpha-2 country code. Defaults to GB.")
+      @Schema(description = "ISO 3166-1 alpha-2 country code. The tenant's own when omitted.")
           String countryCode) {}
 
   @Schema(name = "CustomerVatStatusResponse")
@@ -126,7 +126,8 @@ public final class Dtos {
   public record CreatePriceListRequest(
       @NotBlank String name,
       @Schema(description = "ALL, ONLINE, or POS. Defaults to ALL.") String channel,
-      @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
+      @Schema(description = "ISO 4217 currency code. The tenant's own when omitted.")
+          String currency,
       @Schema(
               description =
                   "ISO-8601 instant this price list takes effect, e.g."

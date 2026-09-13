@@ -40,7 +40,7 @@ class OrderSummary {
         fulfilmentType: j['fulfilmentType'] as String? ?? 'INSTORE',
         status: j['status'] as String? ?? '-',
         total: (j['total'] as num?)?.toDouble() ?? 0,
-        currency: j['currency'] as String? ?? 'INR',
+        currency: j['currency'] as String? ?? '',
         createdAt: j['createdAt'] as String? ?? '',
         paymentMethod: j['paymentMethod'] as String?,
       );
@@ -125,8 +125,8 @@ class TenantInfo {
         id: j['id'] as String? ?? '',
         name: j['name'] as String? ?? '-',
         status: j['status'] as String? ?? '-',
-        currency: j['currency'] as String? ?? 'INR',
-        country: j['country'] as String? ?? '-',
+        currency: j['currency'] as String? ?? '',
+        country: j['country'] as String? ?? '',
       );
 }
 

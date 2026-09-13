@@ -2,6 +2,7 @@ package com.shelfj.purchase;
 
 import com.shelfj.test.PermissionGate;
 import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.client.WebTarget;
@@ -22,6 +23,8 @@ class PermissionsIT {
 
   static {
     System.setProperty("shelfj.purchase.approval.limits", "");
+    // The tenants this suite acts for, as tenant-svc would describe them (SJ-D53).
+    TenantSvcStub.start().with(PermissionsIT.T, "GBP", "GB");
   }
 
   private static final String T = "01a090ae-611e-702c-a97b-d1b8025478e1";

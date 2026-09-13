@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.notNullValue;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -47,6 +48,8 @@ class LedgerIT {
 
   static {
     System.setProperty("shelfj.purchase.approval.limits", "");
+    // The tenants this suite acts for, as tenant-svc would describe them (SJ-D53).
+    TenantSvcStub.start().with(LedgerIT.T, "GBP", "GB").with(LedgerIT.T2, "GBP", "GB");
   }
 
   private static final String T = "01a090ae-611e-702c-a97b-d1b8025478e1";

@@ -225,7 +225,7 @@ class ResolvedPrice {
   factory ResolvedPrice.fromJson(Map<String, dynamic> j) => ResolvedPrice(
         unitPrice: (j['unitPrice'] as num?)?.toDouble() ?? 0,
         totalWithVat: (j['totalWithVat'] as num?)?.toDouble() ?? 0,
-        currency: j['currency'] as String? ?? 'GBP',
+        currency: j['currency'] as String? ?? '',
       );
 }
 

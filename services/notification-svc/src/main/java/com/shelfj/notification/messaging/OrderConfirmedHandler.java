@@ -43,7 +43,8 @@ class OrderConfirmedHandler {
       orderId = UUID.fromString(obj.getString("orderId"));
       customerId = UUID.fromString(obj.getString("customerId"));
       total = obj.getJsonNumber("total").bigDecimalValue();
-      currency = obj.getString("currency", "GBP");
+      // order-svc always sends the order's currency; one without is malformed, not pounds (SJ-D53).
+      currency = obj.getString("currency");
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed OrderConfirmed payload skipped: " + e.getMessage());
       return;

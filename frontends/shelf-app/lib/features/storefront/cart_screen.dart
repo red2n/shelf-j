@@ -176,7 +176,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
     final showPrices = ref.watch(storefrontShowPricesProvider);
     final configAsync = ref.watch(storefrontConfigProvider);
     final storeName = configAsync.value?.storeName ?? '-';
-    final currency = cart.isNotEmpty ? cart.first.currency : 'GBP';
+    final currency = cart.isNotEmpty ? cart.first.currency : '';
     final total = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final enabledMethods = ref.watch(storefrontPaymentMethodsProvider);
     // Default first, so the address the shopper marked is the one offered at the top.
@@ -547,7 +547,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
       List<CartLine> cart, bool delivery, _PayOption pay) async {
     final showPrices = ref.read(storefrontShowPricesProvider);
     final storeName = ref.read(storefrontConfigProvider).value?.storeName ?? '-';
-    final currency = cart.first.currency.isNotEmpty ? cart.first.currency : 'GBP';
+    final currency = cart.first.currency;
     final total = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final itemCount = cart.fold<int>(0, (s, l) => s + l.qty);
     final confirmed = await showModalBottomSheet<bool>(
@@ -654,11 +654,10 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
 
     final dio = ref.read(storefrontDioProvider);
     final storeId = ref.read(storefrontStoreProvider);
-    // In catalog mode, CartLine.currency is '' (no price was ever fetched). Fall
-    // back to 'GBP' so the order-svc currency field is never an empty string,
-    // which would trigger a 400 validation error on the server.
-    final rawCurrency = cart.first.currency;
-    final currency = rawCurrency.isNotEmpty ? rawCurrency : 'GBP';
+    // In catalog mode, CartLine.currency is '' (no price was ever fetched). The
+    // currency is then left out and order-svc stamps the tenant's own; guessing
+    // one here once stamped pounds on every catalog-mode order (SJ-D53).
+    final currency = cart.first.currency;
     final cartTotal = cart.fold<double>(0, (s, l) => s + l.lineTotal);
     final idemBase = 'sf-${DateTime.now().millisecondsSinceEpoch}';
     setState(() => _placing = true);
@@ -671,7 +670,7 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
           'storeId': storeId,
           'channel': 'ONLINE',
           'fulfilmentType': _fulfilment,
-          'currency': currency,
+          if (currency.isNotEmpty) 'currency': currency,
           'items': [
             for (final l in cart)
               // In catalog mode unitPrice is 0 (no price was ever fetched); the

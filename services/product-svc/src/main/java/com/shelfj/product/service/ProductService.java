@@ -94,6 +94,7 @@ public class ProductService {
   @Inject ComplianceRepository complianceRepo;
   @Inject com.shelfj.product.client.InventoryClient inventoryClient;
   @Inject com.shelfj.product.client.PricingClient pricingClient;
+  @Inject com.shelfj.service.TenantProfiles profiles;
 
   // ─────────────────────────────────────────────────────────────────── brands
 
@@ -2264,7 +2265,7 @@ public class ProductService {
                           v.variantId(), parsed.skuPrice().get(v.sku())))
               .toList();
       if (!priceItems.isEmpty()) {
-        String cur = (req.currency() != null && !req.currency().isBlank()) ? req.currency() : "GBP";
+        String cur = profiles.currencyOr(tenantId, req.currency());
         var r = pricingClient.batchSetPrices(tenantId, cur, rolesHeader, priceItems);
         pricesSet = r.upserted();
         priceErrors = r.errors().isEmpty() ? null : r.errors();

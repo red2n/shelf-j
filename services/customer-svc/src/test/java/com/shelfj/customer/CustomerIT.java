@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.not;
 import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
 import com.shelfj.test.ShelfJArchRules;
+import com.shelfj.test.TenantSvcStub;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
@@ -30,6 +31,8 @@ class CustomerIT {
 
   static {
     PG = PostgresSupport.start();
+    // The tenants this suite acts for, as tenant-svc would describe them (SJ-D53).
+    TenantSvcStub.start().with(CustomerIT.TENANT, "JPY", "JP");
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
     System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
@@ -513,5 +516,55 @@ class CustomerIT {
     if (i < 0) throw new AssertionError(name + " not in: " + json);
     int start = i + key.length();
     return json.substring(start, json.indexOf('"', start));
+  }
+
+  // ── SJ-D53: store credit in the tenant's own currency ────────────────────────
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "Store credit without a currency is the tenant's yen; an undescribed tenant is refused")
+  void storeCreditIsInTheTenantsOwnCurrency() {
+    Response r =
+        post(
+            "/customers",
+            "{\"email\":\"yuki@example.com\",\"firstName\":\"Yuki\",\"lastName\":\"Sato\"}");
+    String id = field(r.readEntity(String.class), "id");
+    Response issued =
+        post("/customers/" + id + "/store-credit/issue", "{\"amount\":500,\"reason\":\"refund\"}");
+    String body = issued.readEntity(String.class);
+    assertThat(body, issued.getStatus(), is(200));
+    assertThat(body, containsString("\"currency\":\"JPY\""));
+    assertThat(body, not(containsString("GBP")));
+    String read =
+        target
+            .path("/customers/" + id + "/store-credit")
+            .request()
+            .header("X-Tenant-Id", TENANT)
+            .header("X-Roles", "MANAGER")
+            .get()
+            .readEntity(String.class);
+    assertThat(read, containsString("\"currency\":\"JPY\""));
+
+    String nobody = "01a090ae-611e-70f0-8a00-0000000000b9";
+    Response created =
+        target
+            .path("/customers")
+            .request()
+            .header("X-Tenant-Id", nobody)
+            .header("X-Roles", "MANAGER")
+            .post(
+                jakarta.ws.rs.client.Entity.json(
+                    "{\"email\":\"ghost@example.com\",\"firstName\":\"G\",\"lastName\":\"H\"}"));
+    String ghost = field(created.readEntity(String.class), "id");
+    Response refused =
+        target
+            .path("/customers/" + ghost + "/store-credit/issue")
+            .request()
+            .header("X-Tenant-Id", nobody)
+            .header("X-Roles", "MANAGER")
+            .post(jakarta.ws.rs.client.Entity.json("{\"amount\":5,\"reason\":\"x\"}"));
+    String refusedBody = refused.readEntity(String.class);
+    assertThat(refusedBody, refused.getStatus(), is(503));
+    assertThat(refusedBody, containsString("TENANT_PROFILE_UNAVAILABLE"));
   }
 }

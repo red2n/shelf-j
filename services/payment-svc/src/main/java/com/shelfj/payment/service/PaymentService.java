@@ -55,6 +55,7 @@ public class PaymentService {
           PaymentTender.METHOD_WALLET);
 
   @Inject PaymentRepository repo;
+  @Inject com.shelfj.service.TenantProfiles profiles;
   @Inject OrderClient orderClient;
   @Inject OrderPaymentGuard guard;
   @Inject com.shelfj.payment.client.TenantStoreClient storeClient;
@@ -150,10 +151,8 @@ public class PaymentService {
       throw ApiException.badRequest(
           "PAYMENT_CUSTOMER_REQUIRED", "customerId is required for a STORE_CREDIT tender");
     UUID customerId = UUID.fromString(req.customerId());
-    String currency =
-        req.currency() == null || req.currency().isBlank()
-            ? "GBP"
-            : req.currency().toUpperCase(Locale.ROOT);
+    // The tenant's own currency when the tender names none — never a literal (SJ-D53).
+    String currency = profiles.currencyOr(tenantId, req.currency());
     String key = "sc:" + orderId;
 
     Optional<PaymentTender> existing = repo.findTenderByKey(tenantId, key);

@@ -201,7 +201,7 @@ Future<PosLine?> scanMarkdownLabel(WidgetRef ref, String rawCode) async {
     qty: 1,
     unitPrice:
         (m['markdownPrice'] as num?)?.toDouble() ?? markdownLabelPrice(code),
-    currency: m['currency'] as String? ?? 'GBP',
+    currency: m['currency'] as String? ?? '',
     markdownId: m['markdownId'] as String?,
     originalPrice: (m['originalPrice'] as num?)?.toDouble(),
   );
@@ -237,7 +237,7 @@ Future<PosLine> scanBarcode(WidgetRef ref, String rawCode) async {
     name: v['productName'] as String? ?? (v['sku'] as String? ?? code),
     qty: 1,
     unitPrice: (p['unitPrice'] as num?)?.toDouble() ?? 0,
-    currency: p['currency'] as String? ?? 'GBP',
+    currency: p['currency'] as String? ?? '',
   );
 }
 
@@ -361,7 +361,7 @@ Future<({double balance, String currency, String status})> giftCardLookup(
   final d = resp.data['data'] as Map<String, dynamic>;
   return (
     balance: (d['currentBalance'] as num?)?.toDouble() ?? 0,
-    currency: d['currency'] as String? ?? 'GBP',
+    currency: d['currency'] as String? ?? '',
     status: d['status'] as String? ?? '',
   );
 }
@@ -502,7 +502,7 @@ final posProductOfferProvider = FutureProvider.autoDispose
         sku: v['sku'] as String? ?? '',
         name: product.name,
         unitPrice: (p['unitPrice'] as num?)?.toDouble() ?? 0,
-        currency: p['currency'] as String? ?? 'GBP',
+        currency: p['currency'] as String? ?? '',
         inStock: avail[variantId] ?? true,
       );
     });

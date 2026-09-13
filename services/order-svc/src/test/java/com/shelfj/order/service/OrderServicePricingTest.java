@@ -48,6 +48,7 @@ class OrderServicePricingTest {
   @Mock TenantContext ctx;
   @Mock TenantStatusRepository tenantStatusRepo;
   @Mock StoreStatusRepository storeStatusRepo;
+  @Mock com.shelfj.service.TenantProfiles profiles;
 
   private OrderService svc;
 
@@ -60,6 +61,9 @@ class OrderServicePricingTest {
     svc.inventory = inventory;
     svc.tenantStatusRepo = tenantStatusRepo;
     svc.storeStatusRepo = storeStatusRepo;
+    svc.profiles = profiles;
+    // The tenant's declared currency, as tenant-svc would answer (SJ-D53).
+    org.mockito.Mockito.lenient().when(profiles.requireCurrency(TENANT)).thenReturn("USD");
     when(ctx.requireTenantId()).thenReturn(TENANT);
     when(tenantStatusRepo.isActive(any())).thenReturn(true);
     when(storeStatusRepo.isActive(any(), any())).thenReturn(true);

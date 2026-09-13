@@ -49,30 +49,6 @@ public class ServiceConfig extends BaseServiceConfig {
   }
 
   /**
-   * Fallback currency for a tenant whose declared currency cannot be read — tenant-svc unreachable,
-   * or no such tenant. The last resort, not the normal path: every money-bearing row in this
-   * service resolves through {@code PurchaseService.resolveTenantCurrency}, which prefers what the
-   * tenant actually declared at onboarding.
-   *
-   * <p>It replaces three hardcoded {@code "GBP"} literals — supplier, purchase order and
-   * intercompany invoice (SJ-D23). That is SJ-D2's defect exactly, in the one service SJ-D2's sweep
-   * never reached: a multi-currency platform stamping one country's currency onto another tenant's
-   * money.
-   */
-  @Inject
-  @ConfigProperty(name = "shelfj.purchase.currency.default", defaultValue = "GBP")
-  String defaultCurrency;
-
-  /**
-   * The fallback currency described above.
-   *
-   * @return the configured fallback, {@code GBP} unless overridden
-   */
-  public String defaultCurrency() {
-    return defaultCurrency;
-  }
-
-  /**
    * Per-currency, per-role spend authority for submitting a purchase order, as {@code
    * CURRENCY:ROLE:amount} entries. {@code UNLIMITED} is accepted in place of an amount.
    *

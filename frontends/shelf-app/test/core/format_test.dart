@@ -14,17 +14,27 @@ void main() {
       expect(s, contains('1,234.50'));
     });
 
-    test('defaults to GBP when no currency is given', () {
-      expect(AppFormat.money(1000), contains('£'));
-      expect(AppFormat.money(1000), contains('1,000.00'));
+    test('an amount with no currency is not turned into pounds (SJ-D53)', () {
+      final s = AppFormat.money(1000);
+      expect(s, '1,000.00');
+      expect(s, isNot(contains('£')));
+      expect(AppFormat.money(5, currencyCode: ''), '5.00');
+      expect(AppFormat.money(5, currencyCode: '   '), '5.00');
     });
 
-    test('blank currency falls back to the default', () {
-      expect(AppFormat.money(5, currencyCode: ''), contains('£'));
-    });
-
-    test('honours a different ISO currency', () {
+    test('each currency keeps its own symbol and minor units', () {
       expect(AppFormat.money(2.5, currencyCode: 'USD'), contains('2.50'));
+      final yen = AppFormat.money(3702, currencyCode: 'JPY');
+      expect(yen, contains('3,702'));
+      expect(yen, isNot(contains('.00')));
+      expect(AppFormat.money(1.234, currencyCode: 'KWD'), contains('1.234'));
+    });
+
+    test('the currency symbol follows the code, and is empty without one', () {
+      expect(AppFormat.currencySymbol('GBP'), '£');
+      expect(AppFormat.currencySymbol('JPY'), contains('¥'));
+      expect(AppFormat.currencySymbol(null), '');
+      expect(AppFormat.currencySymbol(''), '');
     });
   });
 

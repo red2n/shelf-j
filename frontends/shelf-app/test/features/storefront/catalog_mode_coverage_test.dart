@@ -489,18 +489,19 @@ void main() {
     });
 
     testWidgets(
-        'checkout POST uses "GBP" as currency fallback when cart lines carry empty currency',
+        'checkout POST leaves the currency out when cart lines carry none (SJ-D53)',
         (tester) async {
-      // Catalog mode: CartLine.currency is '' (no price-resolve call is ever made)
+      // Catalog mode: CartLine.currency is '' (no price-resolve call is ever made).
+      // The currency is omitted and order-svc stamps the tenant's own; the app
+      // used to fill in pounds for every catalog-mode order.
       final interceptor =
           await setupAndCheckout(tester, [_catalogLine()]);
 
       expect(interceptor.orderPostPayload, isNotNull);
       expect(
-        interceptor.orderPostPayload!['currency'],
-        equals('GBP'),
-        reason:
-            'Empty cart-line currency must be filled with "GBP" so the server does not receive an empty string',
+        interceptor.orderPostPayload!.containsKey('currency'),
+        isFalse,
+        reason: 'an unknown currency is left to the server, never guessed',
       );
     });
 

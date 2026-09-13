@@ -404,7 +404,10 @@ public class PricingClient {
       JsonObjectBuilder body =
           Json.createObjectBuilder()
               .add("orderId", orderId.toString())
-              .add("currency", currency == null ? "GBP" : currency)
+              .add(
+                  "currency",
+                  java.util.Objects.requireNonNull(
+                      currency, "a redemption is recorded in the order's currency"))
               .add("appliedPromotions", arr);
       if (customerId != null) body.add("customerId", customerId.toString());
 

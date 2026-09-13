@@ -10,6 +10,7 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
 
 import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.json.Json;
@@ -57,6 +58,10 @@ class PaymentRunIT {
 
   static {
     System.setProperty("shelfj.purchase.approval.limits", "");
+    // The tenants this suite acts for, as tenant-svc would describe them (SJ-D53).
+    TenantSvcStub.start()
+        .with(PurchaseFixtures.T, "GBP", "GB")
+        .with(PurchaseFixtures.T2, "GBP", "GB");
   }
 
   private static final String USER2 = "01a090ae-611e-7a2b-8c3d-4e5f60718293";

@@ -430,7 +430,7 @@ public final class Dtos {
    *
    * @param storeId destination store UUID for stock receipt (optional — if absent no stock is
    *     received)
-   * @param currency ISO-4217 currency for price list creation (defaults to GBP when absent)
+   * @param currency ISO-4217 currency for price list creation (the tenant's own when absent)
    */
   @Schema(name = "SupplierCsvImportRequest")
   public record SupplierCsvImportRequest(
@@ -442,7 +442,9 @@ public final class Dtos {
               description =
                   "Destination store UUID for stock receipt; if absent no stock is received.")
           String storeId,
-      @Schema(description = "ISO-4217 currency for price-list creation. Defaults to GBP.")
+      @Schema(
+              description =
+                  "ISO-4217 currency for price-list creation. The tenant's own when omitted.")
           String currency) {}
 
   @Schema(name = "BulkImportError")

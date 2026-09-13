@@ -214,7 +214,7 @@ public class PriceResolveResource {
             com.shelfj.web.Parsing.uuid(req.orderId(), "orderId"),
             com.shelfj.web.Parsing.optionalUuid(req.customerId(), "customerId"),
             req.appliedPromotions(),
-            req.currency() == null ? "GBP" : req.currency());
+            req.currency());
     return Response.ok(
             ApiResponse.ok(
                 new RecordRedemptionsResponse(recorded), ApiResponse.Meta.of(ctx.requestId())))

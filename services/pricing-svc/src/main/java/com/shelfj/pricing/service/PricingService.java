@@ -55,6 +55,7 @@ import java.util.UUID;
 public class PricingService {
 
   @Inject PricingRepository repo;
+  @Inject com.shelfj.service.TenantProfiles profiles;
   @Inject PromotionEngine engine;
   @Inject MarkdownService markdowns;
   @Inject TaxReportRepository taxReportRepo;
@@ -222,7 +223,7 @@ public class PricingService {
             req.vatNumber(),
             req.vatRegistered(),
             req.reverseChargeEligible(),
-            req.countryCode() != null ? req.countryCode() : "GB",
+            profiles.countryOr(ctx.tenantId(), req.countryCode()),
             Instant.now(),
             Instant.now());
     return repo.upsertCustomerVatStatus(cvs);
@@ -249,8 +250,8 @@ public class PricingService {
   /**
    * Creates a price list, active from the moment it is created.
    *
-   * @param req the name, channel (defaulting to ALL), currency (defaulting to GBP) and effective
-   *     window
+   * @param req the name, channel (defaulting to ALL), currency (the tenant's own when omitted) and
+   *     effective window
    * @param ctx caller context; supplies the tenant
    * @return the created price list
    */
@@ -261,7 +262,7 @@ public class PricingService {
             ctx.tenantId(),
             req.name(),
             req.channel() != null ? req.channel() : PriceList.CHANNEL_ALL,
-            req.currency() != null ? req.currency() : "GBP",
+            profiles.currencyOr(ctx.tenantId(), req.currency()),
             Parsing.instant(req.effectiveFrom(), "effectiveFrom"),
             req.effectiveTo() != null ? Parsing.instant(req.effectiveTo(), "effectiveTo") : null,
             true,
@@ -480,9 +481,11 @@ public class PricingService {
             : unitPrice.multiply(vatRate.rate()).setScale(2, RoundingMode.HALF_UP);
     BigDecimal totalWithVat = unitPrice.add(vatAmount);
 
-    String currency = "GBP";
-    var pl = repo.findPriceList(tenantId, baseItem.priceListId());
-    if (pl.isPresent()) currency = pl.get().currency();
+    // The price list's own currency; the tenant's when the list is gone — never a literal (SJ-D53).
+    String currency =
+        repo.findPriceList(tenantId, baseItem.priceListId())
+            .map(PriceList::currency)
+            .orElseGet(() -> profiles.requireCurrency(tenantId));
 
     return new ResolvedPrice(
         variantId,
@@ -778,7 +781,7 @@ public class PricingService {
         basketDiscount,
         vatTotal,
         total,
-        currency != null ? currency : "GBP",
+        currency != null ? currency : profiles.requireCurrency(ctx.requireTenantId()),
         appliedResponses,
         outcome.rejectedCoupons());
   }
@@ -823,12 +826,13 @@ public class PricingService {
       UUID customerId,
       List<AppliedPromotionResponse> applied,
       String currency) {
+    String cur = profiles.currencyOr(ctx.requireTenantId(), currency);
     Map<UUID, BigDecimal> perPromotion = new java.util.LinkedHashMap<>();
     for (var a : applied) perPromotion.merge(a.promotionId(), a.amount(), BigDecimal::add);
     int recorded = 0;
     for (var e : perPromotion.entrySet()) {
-      if (repo.recordRedemption(
-          ctx.tenantId(), e.getKey(), orderId, customerId, e.getValue(), currency)) recorded++;
+      if (repo.recordRedemption(ctx.tenantId(), e.getKey(), orderId, customerId, e.getValue(), cur))
+        recorded++;
     }
     return recorded;
   }

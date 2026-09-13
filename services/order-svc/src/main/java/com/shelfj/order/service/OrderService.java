@@ -67,6 +67,7 @@ public class OrderService {
   @Inject com.shelfj.order.repo.FiscalReceiptRepository receiptRepo;
   @Inject com.shelfj.order.repo.SalesAnalyticsRepository salesAnalyticsRepo;
   @Inject TenantStatusRepository tenantStatusRepo;
+  @Inject com.shelfj.service.TenantProfiles profiles;
   @Inject StoreStatusRepository storeStatusRepo;
   @Inject com.shelfj.order.config.ServiceConfig config;
   @Inject com.shelfj.order.client.PricingClient pricing;
@@ -96,22 +97,21 @@ public class OrderService {
    * rejected rather than silently overridden — a client asking to be billed in a currency the
    * tenant does not trade in is a bug on the caller's side, and silently correcting it would hide a
    * mispriced basket. When the projection has no row yet (a tenant onboarded before this projection
-   * existed, or event-delivery lag) the request's currency is honoured if given, else the
-   * configured platform default — the same fail-open convention the status projection uses.
+   * existed, or event-delivery lag) the tenant's currency is read from tenant-svc instead, and the
+   * same rule applies. There is no platform default any more (SJ-D53): a configured "GBP" stamped
+   * pounds onto a yen tenant's order whenever the projection lagged; when neither source can
+   * answer, the order is refused with 503 rather than guessed.
    *
    * @param tenantId the tenant the row belongs to
    * @param requested the client-supplied currency, or {@code null} when the request omitted it
    * @return the ISO-4217 code to persist, upper-cased
    * @throws ApiException 400 {@code ORDER_CURRENCY_MISMATCH} if {@code requested} contradicts the
-   *     tenant's own currency
+   *     tenant's own currency; 503 {@code TENANT_PROFILE_UNAVAILABLE} when it cannot be read
    */
   private String resolveCurrency(UUID tenantId, String requested) {
     String asked = isBlank(requested) ? null : requested.trim().toUpperCase(Locale.ROOT);
-    String tenantCurrency = tenantStatusRepo.findCurrency(tenantId).orElse(null);
-
-    if (tenantCurrency == null) {
-      return asked != null ? asked : config.defaultCurrency().toUpperCase(Locale.ROOT);
-    }
+    String tenantCurrency =
+        tenantStatusRepo.findCurrency(tenantId).orElseGet(() -> profiles.requireCurrency(tenantId));
     if (asked != null && !asked.equals(tenantCurrency)) {
       throw ApiException.badRequest(
           "ORDER_CURRENCY_MISMATCH",

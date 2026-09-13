@@ -62,7 +62,7 @@ final class Events {
       String currency) {
     String customerPart = customerId != null ? "\"" + customerId + "\"" : "null";
     String amount = total != null ? total.toPlainString() : "0";
-    String cur = currency != null ? currency : "GBP";
+    String cur = java.util.Objects.requireNonNull(currency, "an order always carries its currency");
     return new OutboxRow(
         "OrderConfirmed",
         "shelfj.order.order-confirmed",

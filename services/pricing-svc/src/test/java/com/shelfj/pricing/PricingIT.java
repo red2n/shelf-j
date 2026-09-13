@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.not;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.client.Entity;
@@ -27,9 +28,16 @@ import org.junit.jupiter.api.Test;
 class PricingIT {
 
   private static final PostgresSupport PG;
+  private static final TenantSvcStub TENANTS;
 
   static {
     PG = PostgresSupport.start();
+    // A pound tenant and two yen tenants, as tenant-svc would describe them (SJ-D53).
+    TENANTS =
+        TenantSvcStub.start()
+            .with(PricingIT.T, "GBP", "GB")
+            .with(PricingIT.YEN, "JPY", "JP")
+            .with(PricingIT.YEN_BUSY, "JPY", "JP");
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
     System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
@@ -40,6 +48,9 @@ class PricingIT {
   }
 
   private static final String T = "01a090ae-611e-702c-a97b-d1b8025478e1";
+  private static final String YEN = "01a090ae-611e-70f0-8a00-0000000000a1";
+  private static final String YEN_BUSY = "01a090ae-611e-70f0-8a00-0000000000a2";
+  private static final String NOBODY = "01a090ae-611e-70f0-8a00-0000000000a3";
   private static final String V = "01a090ae-611e-7037-a4b7-c854f0266ace";
   private static final String S = "01a090ae-611e-703c-a378-a4972ea461c8";
   private static final String ORDER_ID = "01a090ae-611e-7056-8f30-ecdbb48160eb";
@@ -1562,5 +1573,117 @@ class PricingIT {
     String body = vr.readEntity(String.class);
     assertThat(body, containsString("\"box4\":0.00"));
     assertThat(body, containsString("\"box7\":0.00"));
+  }
+
+  // ── SJ-D53: the tenant's own currency and country, never a literal ──────────
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "A price list or VAT status without a currency or country is in the tenant's own")
+  void defaultsAreTheTenantsOwn() {
+    Response pl =
+        post(
+            "/admin/price-lists",
+            "{\"name\":\"Yen list\",\"channel\":\"ALL\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            YEN);
+    String body = pl.readEntity(String.class);
+    assertThat(body, pl.getStatus(), is(201));
+    assertThat(body, containsString("\"currency\":\"JPY\""));
+
+    // A code keyed in lower case is stored as the code.
+    Response lower =
+        post(
+            "/admin/price-lists",
+            "{\"name\":\"Lower\",\"channel\":\"POS\",\"currency\":\" jpy \",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            YEN);
+    assertThat(lower.readEntity(String.class), containsString("\"currency\":\"JPY\""));
+
+    Response vat =
+        post(
+            "/customer-vat-status",
+            "{\"customerId\":\"01a090ae-611e-70f0-8a00-0000000000c1\",\"vatRegistered\":false,\"reverseChargeEligible\":false}",
+            YEN);
+    String vatBody = vat.readEntity(String.class);
+    assertThat(vatBody, vat.getStatus(), is(200));
+    assertThat(vatBody, containsString("\"countryCode\":\"JP\""));
+  }
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "A tenant tenant-svc cannot describe is refused with 503 and nothing is stored")
+  void anUndescribedTenantIsRefusedNotGuessed() {
+    Response pl =
+        post(
+            "/admin/price-lists",
+            "{\"name\":\"Guess\",\"channel\":\"ALL\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            NOBODY);
+    String body = pl.readEntity(String.class);
+    assertThat(body, pl.getStatus(), is(503));
+    assertThat(body, containsString("TENANT_PROFILE_UNAVAILABLE"));
+    assertThat(body, not(containsString("GBP")));
+    Response vat =
+        post(
+            "/customer-vat-status",
+            "{\"customerId\":\"01a090ae-611e-70f0-8a00-0000000000c2\",\"vatRegistered\":false,\"reverseChargeEligible\":false}",
+            NOBODY);
+    assertThat(vat.getStatus(), is(503));
+    String listed = get("/admin/price-lists", NOBODY).readEntity(String.class);
+    assertThat(listed, not(containsString("Guess")));
+    // Naming the currency needs no profile at all.
+    Response named =
+        post(
+            "/admin/price-lists",
+            "{\"name\":\"Named\",\"channel\":\"ALL\",\"currency\":\"EUR\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            NOBODY);
+    assertThat(named.getStatus(), is(201));
+  }
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "Twenty price lists at once are all in yen, and the profile is then served from cache")
+  void concurrentDefaultsAgreeAndTheProfileIsCached() throws Exception {
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(20);
+    try {
+      var start = new java.util.concurrent.CountDownLatch(1);
+      var futures = new java.util.ArrayList<java.util.concurrent.Future<String>>();
+      for (int i = 0; i < 20; i++) {
+        int n = i;
+        futures.add(
+            pool.submit(
+                () -> {
+                  start.await();
+                  try (Response r =
+                      post(
+                          "/admin/price-lists",
+                          "{\"name\":\"Busy "
+                              + n
+                              + "\",\"channel\":\"ONLINE\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+                          YEN_BUSY)) {
+                    return r.getStatus() + " " + r.readEntity(String.class);
+                  }
+                }));
+      }
+      start.countDown();
+      for (var f : futures) {
+        String out = f.get(60, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(out, out.startsWith("201"), is(true));
+        assertThat(out, containsString("\"currency\":\"JPY\""));
+      }
+    } finally {
+      pool.shutdownNow();
+    }
+    int before = TENANTS.requests();
+    for (int i = 0; i < 20; i++) {
+      try (Response r =
+          post(
+              "/admin/price-lists",
+              "{\"name\":\"Later "
+                  + i
+                  + "\",\"channel\":\"POS\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+              YEN_BUSY)) {
+        assertThat(r.getStatus(), is(201));
+      }
+    }
+    assertThat(TENANTS.requests(), is(before));
   }
 }

@@ -1,0 +1,109 @@
+// Tenant defaults (SJ-D53), through the gateway: a business that trades in yen gets yen, and one
+// that trades in dinars gets dinars, wherever a request leaves the currency or country out — a
+// price list, a customer's VAT status, a supplier, store credit, a Z-report, a gift card, a till
+// sale. Nothing falls back to pounds any more. The refusals and the abuse around each: a currency
+// that contradicts the tenant's, malformed codes, and twenty defaulted writes at once.
+//
+//   k6/run.sh tenant-defaults
+import http from 'k6/http';
+import { Counter } from 'k6/metrics';
+import {
+  ALL_CHECKS_PASS,
+  BASE,
+  call,
+  data,
+  errorCode,
+  expect,
+  must,
+  onboardTenant,
+  priceVariants,
+  receive,
+  sellableVariant,
+  truthy,
+} from './lib/shelfj.js';
+
+// Added on the last line only, so a flow that stopped part-way fails instead of passing.
+const completed = new Counter('flow_completed');
+export const options = {
+  vus: 1,
+  iterations: 1,
+  thresholds: { ...ALL_CHECKS_PASS, flow_completed: ['count==1'] },
+  batch: 20,
+  batchPerHost: 20,
+  setupTimeout: '4m',
+};
+
+export function setup() {
+  const yen = onboardTenant('defaults-yen', { country: 'JP', currency: 'JPY' });
+  const pound = onboardTenant('defaults-pound', { country: 'GB', currency: 'GBP' });
+  const dinar = onboardTenant('defaults-dinar', { country: 'KW', currency: 'KWD' });
+  const { variantId } = sellableVariant(yen, 'Yen widget');
+  priceVariants(yen, [variantId], '500');
+  must(receive(yen, yen.stores[0].id, variantId, 20, '300'), [200, 201], 'receive stock');
+  return { yen, pound, dinar, variantId };
+}
+
+export default function ({ yen, pound, dinar, variantId }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const stamp = Date.now();
+  const store = yen.stores[0];
+  const from = new Date(Date.now() - 86400000).toISOString();
+  const priceList = (tenant, extra = {}) =>
+    call('POST', '/api/pricing-svc/admin/price-lists', { token: tenant.owner.token, body: { name: `defaults ${stamp} ${Math.random()}`, channel: 'ONLINE', effectiveFrom: from, ...extra } });
+
+  // ── a price list: the tenant's own currency ──────────────────────────────────
+  const yenList = priceList(yen);
+  expect(yenList, '[+] a price list with no currency is created', 201);
+  truthy('[+] ...in the yen tenant\'s yen', data(yenList).currency === 'JPY', data(yenList));
+  truthy('[+] a pound tenant\'s is in pounds: per tenant, not one default', data(priceList(pound)).currency === 'GBP');
+  truthy('[+] a dinar tenant\'s is in dinars', data(priceList(dinar)).currency === 'KWD');
+
+  // ── a customer's VAT status: the tenant's own country ────────────────────────
+  const vat = call('POST', '/api/pricing-svc/customer-vat-status', { token: yen.owner.token, body: { customerId: '01a090ae-611e-70f0-8a00-00000000e001', vatRegistered: false, reverseChargeEligible: false } });
+  expect(vat, '[+] a VAT status with no country is recorded', [200, 201]);
+  truthy('[+] ...in the yen tenant\'s country', data(vat).countryCode === 'JP', data(vat));
+
+  // ── a supplier: the tenant's own currency and country ────────────────────────
+  const supplier = call('POST', '/api/purchase-svc/suppliers', { token: yen.owner.token, body: { name: `Osaka Trading ${stamp}` } });
+  expect(supplier, '[+] a supplier with no currency or country is created', 201);
+  truthy('[+] ...in yen, in Japan', data(supplier).currency === 'JPY' && data(supplier).countryCode === 'JP', data(supplier));
+
+  // ── store credit: the tenant's own currency ──────────────────────────────────
+  const customer = must(call('POST', '/api/customer-svc/customers', { token: yen.owner.token, body: { email: `yuki-${stamp}@example.com`, firstName: 'Yuki', lastName: 'Sato' } }), 201, 'customer');
+  const credit = call('POST', `/api/customer-svc/customers/${customer.id}/store-credit/issue`, { token: yen.owner.token, body: { amount: 500, reason: 'goodwill' } });
+  expect(credit, '[+] store credit with no currency is issued', 200);
+  truthy('[+] ...in yen', data(credit).currency === 'JPY', data(credit));
+  truthy('[+] reading the balance with no currency reads the yen account', data(call('GET', `/api/customer-svc/customers/${customer.id}/store-credit`, { token: yen.owner.token })).currency === 'JPY');
+
+  // ── a Z-report: the tenant's own currency ────────────────────────────────────
+  const z = call('POST', '/api/payment-svc/admin/cash/z-report', { token: yen.owner.token, body: { storeId: store.id, businessDate: today, countedCash: 0 } });
+  expect(z, '[+] a Z-report with no currency is generated', [200, 201]);
+  truthy('[+] ...in yen', data(z).currency === 'JPY', data(z));
+
+  // ── a gift card and a till sale: the tenant's own currency, and no other ─────
+  const card = call('POST', '/api/order-svc/gift-cards', { token: yen.owner.token, idem: true, body: { storeId: store.id, amount: 1000 } });
+  expect(card, '[+] a gift card with no currency is issued', [200, 201]);
+  truthy('[+] ...in yen', data(card).currency === 'JPY', data(card));
+  expect(call('POST', '/api/order-svc/gift-cards', { token: yen.owner.token, idem: true, body: { storeId: store.id, amount: 1000, currency: 'GBP' } }), '[-] a gift card in pounds for a yen tenant is refused', 400, 'ORDER_CURRENCY_MISMATCH');
+  const sale = call('POST', '/api/order-svc/orders', { token: yen.owner.token, idem: true, body: { storeId: store.id, channel: 'POS', items: [{ variantId, qty: 1, unitPrice: 500 }] } });
+  expect(sale, '[+] a till sale with no currency is placed', 201);
+  truthy('[+] ...in yen', data(sale).currency === 'JPY', data(sale));
+  expect(call('POST', '/api/order-svc/orders', { token: yen.owner.token, idem: true, body: { storeId: store.id, channel: 'POS', currency: 'USD', items: [{ variantId, qty: 1, unitPrice: 500 }] } }), '[-] a sale in dollars for a yen tenant is refused', 400, 'ORDER_CURRENCY_MISMATCH');
+
+  // ── abuse: a blank code is the tenant's; a malformed one is refused, never stored ──
+  const blanks = ['', ' '].map((c) => priceList(yen, { currency: c }));
+  truthy('[abuse] a blank currency is the tenant\'s yen, not an empty code', blanks.every((r) => r.status === 201 && data(r).currency === 'JPY'), blanks.map((r) => `${r.status} ${data(r).currency}`));
+  const bad = ['12', 'POUNDS', "';-", '<b>', 'GB P', 'ZZZ'];
+  const badLists = bad.map((c) => priceList(yen, { currency: c }));
+  truthy('[abuse] malformed currency codes are refused by name, never stored and never a server error', badLists.every((r) => r.status === 400 && errorCode(r) === 'CURRENCY_INVALID'), badLists.map((r) => `${r.status} ${errorCode(r)}`));
+  const badCountry = call('POST', '/api/purchase-svc/suppliers', { token: yen.owner.token, body: { name: `Bad Country ${stamp}`, countryCode: 'UK' } });
+  expect(badCountry, '[abuse] a country that is not an ISO code is refused', 400, 'COUNTRY_INVALID');
+  expect(call('POST', `/api/customer-svc/customers/${customer.id}/store-credit/issue`, { token: yen.owner.token, body: { amount: 5, reason: 'x', currency: 'POUNDS' } }), '[abuse] store credit in a currency that is not one is refused', 400, 'CURRENCY_INVALID');
+
+  // ── abuse: twenty defaulted price lists at once all agree ───────────────────
+  const params = { headers: { Authorization: `Bearer ${yen.owner.token}`, 'Content-Type': 'application/json' }, tags: { name: 'POST /admin/price-lists' } };
+  const burst = http.batch(Array.from({ length: 20 }, (_, i) => ['POST', `${BASE}/api/pricing-svc/admin/price-lists`, JSON.stringify({ name: `burst ${stamp} ${i}`, channel: 'POS', effectiveFrom: from }), params]));
+  truthy('[abuse] twenty price lists at once are all created in yen', burst.every((r) => r.status === 201 && data(r).currency === 'JPY'), burst.map((r) => `${r.status} ${data(r).currency}`));
+
+  completed.add(1);
+}

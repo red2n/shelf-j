@@ -7,6 +7,7 @@ import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/reference_fields.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -588,37 +589,15 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
   final _ibanCtrl = TextEditingController();
   final _bicCtrl = TextEditingController();
   bool _clearBank = false;
-  String _country = 'IN';
-  String _currency = 'INR';
+  // Empty until chosen; a new supplier starts in the tenant's own country and
+  // currency, an existing one in its own (SJ-D53).
+  String? _country;
+  String? _currency;
   bool _vatRegistered = false;
   bool _loading = false;
   String? _error;
 
-  static const _countries = {
-    'IN': 'India',
-    'US': 'USA',
-    'GB': 'UK',
-    'SG': 'Singapore',
-    'AE': 'UAE',
-  };
-  static const _currencies = ['INR', 'USD', 'GBP', 'SGD', 'AED'];
-
   bool get _editing => widget.existing != null;
-
-  /// The picker's choices, plus whatever the supplier already has — a JPY
-  /// supplier must open in JPY, not in the first currency on the list.
-  List<DropdownMenuItem<String>> _countryItems() => [
-    for (final e in _countries.entries)
-      DropdownMenuItem(value: e.key, child: Text(e.value)),
-    if (!_countries.containsKey(_country))
-      DropdownMenuItem(value: _country, child: Text(_country)),
-  ];
-
-  List<DropdownMenuItem<String>> _currencyItems() => [
-    for (final c in _currencies) DropdownMenuItem(value: c, child: Text(c)),
-    if (!_currencies.contains(_currency))
-      DropdownMenuItem(value: _currency, child: Text(_currency)),
-  ];
 
   @override
   void initState() {
@@ -731,8 +710,9 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
         'name': _nameCtrl.text.trim(),
         'vatNumber': _vatCtrl.text.trim().isEmpty ? null : _vatCtrl.text.trim(),
         'vatRegistered': _vatRegistered,
-        'countryCode': _country,
-        'currency': _currency,
+        // Omitted, purchase-svc takes the tenant's own (SJ-D53).
+        if (_country != null) 'countryCode': _country,
+        if (_currency != null) 'currency': _currency,
         'paymentTermsDays': int.tryParse(_termsCtrl.text.trim()) ?? 30,
         // On an edit an empty email clears it; on a create it is just absent.
         'remittanceEmail': _editing
@@ -820,22 +800,18 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                 Row(
                   children: [
                     Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _country,
-                        decoration: const InputDecoration(labelText: 'Country'),
-                        items: _countryItems(),
-                        onChanged: (v) => setState(() => _country = v!),
+                      child: CountryField(
+                        value: _country ??
+                            (_editing ? null : ref.watch(tenantInfoProvider).value?.country),
+                        onChanged: (v) => setState(() => _country = v),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _currency,
-                        decoration: const InputDecoration(
-                          labelText: 'Currency',
-                        ),
-                        items: _currencyItems(),
-                        onChanged: (v) => setState(() => _currency = v!),
+                      child: CurrencyField(
+                        value: _currency ??
+                            (_editing ? null : ref.watch(tenantInfoProvider).value?.currency),
+                        onChanged: (v) => setState(() => _currency = v),
                       ),
                     ),
                   ],
@@ -1077,7 +1053,7 @@ class _CreatePoDialog extends ConsumerStatefulWidget {
 class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
   String? _supplierId;
   String? _storeId;
-  String _currency = 'INR';
+  String? _currency;
   DateTime? _eta;
   bool _loading = false;
   String? _error;
@@ -1100,7 +1076,7 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
             data: {
               'supplierId': _supplierId,
               'storeId': _storeId,
-              'currency': _currency,
+              if (_currency != null) 'currency': _currency,
               if (_eta != null)
                 'expectedDelivery': _eta!.toIso8601String().split('T').first,
             },
@@ -1191,17 +1167,10 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
               ),
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _currency,
-              decoration: const InputDecoration(labelText: 'Currency'),
-              items: const [
-                DropdownMenuItem(value: 'INR', child: Text('INR')),
-                DropdownMenuItem(value: 'USD', child: Text('USD')),
-                DropdownMenuItem(value: 'GBP', child: Text('GBP')),
-                DropdownMenuItem(value: 'SGD', child: Text('SGD')),
-                DropdownMenuItem(value: 'AED', child: Text('AED')),
-              ],
-              onChanged: (v) => setState(() => _currency = v!),
+            // The supplier's currency once one is picked, the tenant's before.
+            CurrencyField(
+              value: _currency ?? ref.watch(tenantInfoProvider).value?.currency,
+              onChanged: (v) => setState(() => _currency = v),
             ),
             const SizedBox(height: 12),
             ListTile(

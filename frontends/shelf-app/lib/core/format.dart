@@ -1,25 +1,49 @@
 import 'package:intl/intl.dart';
 
-/// Locale-aware formatting for money and dates, replacing the hardcoded `'$'`
-/// prefix and bare `toStringAsFixed(2)` / `substring` formatting scattered through
-/// the screens. Defaults to the UK locale (`en_GB`) and GBP; pass a `locale`
-/// (e.g. `Localizations.localeOf(context).toString()`) to follow the user's locale.
+import 'l10n/app_locales.dart';
+
+/// Locale-aware formatting for money and dates.
+///
+/// There is no default currency (SJ-D53). A constant pound-sterling code here
+/// once turned any amount whose currency was unknown into pounds, on a platform
+/// whose tenants trade in yen, rupees and dinars. An amount with no currency is
+/// formatted as a plain number with two decimals, which is visibly incomplete
+/// rather than quietly wrong. The locale is the one the app is running in
+/// unless a caller passes another.
 class AppFormat {
   AppFormat._();
 
-  static const String _defaultLocale = 'en_GB';
-  static const String defaultCurrency = 'GBP';
+  /// The locale the app runs in, or the app's own UI fallback when none is set
+  /// (a plain unit test, a background isolate).
+  static String get _locale =>
+      Intl.defaultLocale ?? AppLocales.fallback.toLanguageTag().replaceAll('-', '_');
 
-  /// Money in the given ISO-4217 [currencyCode] (defaults to GBP), formatted for
-  /// [locale] — correct symbol, grouping and decimal places, e.g. `£1,234.50`.
+  /// Money in the given ISO-4217 [currencyCode], formatted for [locale], with
+  /// the right symbol, grouping and minor units, e.g. `£1,234.50` or `¥3,702`.
+  /// Without a currency, the amount alone: `1,234.50`.
   static String money(num amount, {String? currencyCode, String? locale}) {
-    final code = (currencyCode == null || currencyCode.isEmpty)
-        ? defaultCurrency
-        : currencyCode;
+    final code = currencyCode?.trim() ?? '';
+    if (code.isEmpty) {
+      return NumberFormat.decimalPatternDigits(
+        locale: locale ?? _locale,
+        decimalDigits: 2,
+      ).format(amount);
+    }
     return NumberFormat.simpleCurrency(
-      locale: locale ?? _defaultLocale,
+      locale: locale ?? _locale,
       name: code,
     ).format(amount);
+  }
+
+  /// The symbol a currency is written with in [locale] (`£`, `¥`, `₹`), or the
+  /// code itself when the locale has none; empty for no currency.
+  static String currencySymbol(String? currencyCode, {String? locale}) {
+    final code = currencyCode?.trim() ?? '';
+    if (code.isEmpty) return '';
+    return NumberFormat.simpleCurrency(
+      locale: locale ?? _locale,
+      name: code,
+    ).currencySymbol;
   }
 
   /// A locale-formatted date, e.g. `23 Jun 2026`. Accepts an ISO-8601 string;
@@ -27,14 +51,14 @@ class AppFormat {
   static String date(String? iso, {String? locale}) {
     final dt = _parse(iso);
     if (dt == null) return iso ?? '';
-    return DateFormat.yMMMd(locale ?? _defaultLocale).format(dt);
+    return DateFormat.yMMMd(locale ?? _locale).format(dt);
   }
 
   /// A locale-formatted date + time, e.g. `23 Jun 2026, 14:05`.
   static String dateTime(String? iso, {String? locale}) {
     final dt = _parse(iso);
     if (dt == null) return iso ?? '';
-    return DateFormat.yMMMd(locale ?? _defaultLocale).add_Hm().format(dt);
+    return DateFormat.yMMMd(locale ?? _locale).add_Hm().format(dt);
   }
 
   static DateTime? _parse(String? iso) {

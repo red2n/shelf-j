@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/format.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme.dart';
@@ -104,7 +105,7 @@ class DashboardScreen extends ConsumerWidget {
                     label: 'Revenue',
                     value: ordersAsync.isLoading
                         ? '…'
-                        : '${_currencySymbol(tenantAsync.value?.currency)}${revenue.toStringAsFixed(0)}',
+                        : '${AppFormat.currencySymbol(tenantAsync.value?.currency)}${revenue.toStringAsFixed(0)}',
                     icon: Icons.attach_money,
                     loading: ordersAsync.isLoading,
                   ),
@@ -309,18 +310,6 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
-  String _currencySymbol(String? currency) {
-    switch (currency) {
-      case 'INR':
-        return '₹';
-      case 'USD':
-        return '\$';
-      case 'GBP':
-        return '£';
-      default:
-        return '';
-    }
-  }
 }
 
 class _StatCard extends StatelessWidget {
