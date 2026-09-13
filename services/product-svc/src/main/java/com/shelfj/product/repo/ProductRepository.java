@@ -17,7 +17,9 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -93,14 +95,82 @@ public class ProductRepository extends BaseOutboxRepository {
    * @return the product as stored
    */
   public Product createProductWithOutbox(Product p, OutboxRow event) {
+    return createProductWithOutbox(p, List.of(event));
+  }
+
+  /**
+   * Inserts a product and every event that announces it, in one transaction.
+   *
+   * @param p the product
+   * @param events the outbox rows to commit with it
+   * @return the product
+   */
+  public Product createProductWithOutbox(Product p, List<OutboxRow> events) {
     return inTx(
         c -> {
           insertProduct(c, p);
-          insertOutbox(c, event);
+          for (OutboxRow e : events) insertOutbox(c, e);
           return p;
         },
         "create product");
   }
+
+  /**
+   * Writes outbox rows on their own: how the catalogue is re-announced (03.8) for a consumer that
+   * arrived after the products did.
+   *
+   * @param events the rows to commit together
+   */
+  public void appendOutbox(List<OutboxRow> events) {
+    inTx(
+        c -> {
+          for (OutboxRow e : events) insertOutbox(c, e);
+          return null;
+        },
+        "append outbox");
+  }
+
+  /**
+   * Every active product of a tenant with its category, for re-announcing the catalogue. Unpaged: a
+   * tenant's catalogue is announced whole or not at all.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return product id and category id, in creation order
+   */
+  public List<CatalogueProduct> listCatalogueForRepublish(UUID tenantId) {
+    return query(
+        "SELECT id, category_id FROM products WHERE tenant_id = ? AND status = 'ACTIVE'"
+            + " ORDER BY created_at",
+        ps -> ps.setObject(1, tenantId),
+        rs ->
+            new CatalogueProduct(
+                rs.getObject("id", UUID.class), rs.getObject("category_id", UUID.class)),
+        "list catalogue for republish");
+  }
+
+  /**
+   * The active variants of a tenant, grouped by product, for re-announcing the catalogue.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @return variant ids by product id, in creation order
+   */
+  public Map<UUID, List<UUID>> listVariantIdsByProduct(UUID tenantId) {
+    Map<UUID, List<UUID>> out = new java.util.HashMap<>();
+    query(
+        "SELECT id, product_id FROM product_variants WHERE tenant_id = ? AND status = 'ACTIVE'"
+            + " ORDER BY created_at",
+        ps -> ps.setObject(1, tenantId),
+        rs -> {
+          out.computeIfAbsent(rs.getObject("product_id", UUID.class), k -> new ArrayList<>())
+              .add(rs.getObject("id", UUID.class));
+          return null;
+        },
+        "list variants for republish");
+    return out;
+  }
+
+  /** A product's id and category, for re-announcing the catalogue. */
+  public record CatalogueProduct(UUID productId, UUID categoryId) {}
 
   /**
    * Writes a product back and its event in one transaction.
@@ -110,6 +180,17 @@ public class ProductRepository extends BaseOutboxRepository {
    * @return the product as stored
    */
   public Product updateProductWithOutbox(Product p, OutboxRow event) {
+    return updateProductWithOutbox(p, List.of(event));
+  }
+
+  /**
+   * Updates a product and commits every event that announces the change with it.
+   *
+   * @param p the product as it should now be
+   * @param events the outbox rows to commit with it
+   * @return the product
+   */
+  public Product updateProductWithOutbox(Product p, List<OutboxRow> events) {
     Product updated =
         inTx(
             c -> {
@@ -132,7 +213,7 @@ public class ProductRepository extends BaseOutboxRepository {
                   throw ApiException.notFound(
                       "PRODUCT_NOT_FOUND", "No such product in this tenant");
               }
-              insertOutbox(c, event);
+              for (OutboxRow e : events) insertOutbox(c, e);
               return p;
             },
             "update product");

@@ -280,6 +280,22 @@ public class AdminResource {
    * way to reach the rest of a tenant's catalog.
    */
   @Operation(
+      summary = "Re-announce the catalogue",
+      description =
+          "Publishes ProductCategorised for every active product — its category path and its"
+              + " variants — so a service whose projection arrived after the catalogue did"
+              + " (pricing-svc, for category-scoped promotions) can catch up. Management only."
+              + " Returns how many products were announced.")
+  @APIResponse(responseCode = "200", description = "Announced")
+  @Tag(name = "Products")
+  @POST
+  @Path("/products/republish-catalogue")
+  public ApiResponse<com.shelfj.product.dto.Dtos.CatalogueRepublishResponse> republishCatalogue() {
+    int announced = service.republishCatalogue(ctx.requireTenantId());
+    return ApiResponse.ok(new com.shelfj.product.dto.Dtos.CatalogueRepublishResponse(announced));
+  }
+
+  @Operation(
       summary = "List products (admin)",
       description =
           "Returns products in all statuses; optional ?status= and ?category= filters."

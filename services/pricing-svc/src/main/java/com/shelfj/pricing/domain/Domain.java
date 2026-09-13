@@ -131,6 +131,13 @@ public final class Domain {
     /** Buy {@code buyQty}, get {@code getQty} at {@code getDiscountPct} off (100 = free). */
     public static final String TYPE_BOGO = "BOGO";
 
+    /**
+     * Mix and match (03.8): any {@code buyQty} units from the scope for {@code value} — "any 3 for
+     * £10". Whole bundles only; the dearest units make up the bundles; the leftover units are
+     * charged in full.
+     */
+    public static final String TYPE_MIX_MATCH = "MIX_MATCH";
+
     /** True when this promotion must be presented rather than applying on its own. */
     public boolean requiresCoupon() {
       return couponCode != null && !couponCode.isBlank();

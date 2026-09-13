@@ -740,6 +740,13 @@ public class PricingRepository extends BaseOutboxRepository {
           UUID scopeId = rs.getObject("scope_id", UUID.class);
           if (PromotionItem.SCOPE_VARIANT.equals(scopeType) && scopeId != null) {
             out.computeIfAbsent(promo, k -> new java.util.LinkedHashSet<>()).add(scopeId);
+          } else if (PromotionItem.SCOPE_CATEGORY.equals(scopeType) && scopeId != null) {
+            // Resolved through the catalogue product-svc announces (03.8): every variant of every
+            // product whose category path carries this category, so a parent's scope reaches its
+            // children's products. A category nothing was announced for adds no variant — and the
+            // set stays present but empty, which the engine reads as "nothing", not "everything".
+            out.computeIfAbsent(promo, k -> new java.util.LinkedHashSet<>())
+                .addAll(findVariantsInCategory(tenantId, scopeId));
           } else {
             // ALL (or a malformed row): this promotion is not variant-scoped at all.
             unscoped.add(promo);
@@ -1509,5 +1516,95 @@ public class PricingRepository extends BaseOutboxRepository {
         rs.getObject("cancelled_by", UUID.class),
         rs.getString("cancel_reason"),
         rs.getBigDecimal("redeemed_qty"));
+  }
+
+  // ── the catalogue projection (03.8) ──────────────────────────────────────
+
+  /**
+   * The variants of every product whose category path carries a category.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param categoryId the category, or an ancestor of the products' categories
+   * @return the variant ids, empty when nothing announced sits under it
+   */
+  public Set<UUID> findVariantsInCategory(UUID tenantId, UUID categoryId) {
+    return new java.util.LinkedHashSet<>(
+        query(
+            "SELECT cv.variant_id FROM catalogue_variants cv"
+                + " JOIN catalogue_products cp"
+                + "   ON cp.tenant_id = cv.tenant_id AND cp.product_id = cv.product_id"
+                + " WHERE cv.tenant_id = ? AND ? = ANY (cp.category_path)",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, categoryId);
+            },
+            rs -> rs.getObject("variant_id", UUID.class),
+            "find variants in category"));
+  }
+
+  /**
+   * Records a product's category path and its variants, once per event: what {@code
+   * ProductCategorised} says. The path replaces what was known; the variants are added to it, never
+   * removed by it — a delisted variant simply never appears in a basket.
+   *
+   * @return {@code true} when this event was processed now
+   */
+  public boolean projectProductCategorisedOnce(
+      UUID eventId,
+      String consumer,
+      UUID tenantId,
+      UUID productId,
+      List<UUID> categoryPath,
+      List<UUID> variantIds) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumer)) return false;
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO catalogue_products (tenant_id, product_id, category_path, updated_at)"
+                      + " VALUES (?, ?, ?, now()) ON CONFLICT (tenant_id, product_id)"
+                      + " DO UPDATE SET category_path = EXCLUDED.category_path, updated_at = now()")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, productId);
+            ps.setArray(3, c.createArrayOf("uuid", categoryPath.toArray()));
+            ps.executeUpdate();
+          }
+          for (UUID variantId : variantIds)
+            upsertCatalogueVariantTx(c, tenantId, variantId, productId);
+          return true;
+        },
+        "project product categorised");
+  }
+
+  /**
+   * Records which product a new variant belongs to, once per event: what {@code VariantCreated}
+   * says, so a variant added after its product was categorised still falls under the category.
+   *
+   * @return {@code true} when this event was processed now
+   */
+  public boolean projectVariantCreatedOnce(
+      UUID eventId, String consumer, UUID tenantId, UUID variantId, UUID productId) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumer)) return false;
+          upsertCatalogueVariantTx(c, tenantId, variantId, productId);
+          return true;
+        },
+        "project variant created");
+  }
+
+  private static void upsertCatalogueVariantTx(
+      java.sql.Connection c, UUID tenantId, UUID variantId, UUID productId)
+      throws java.sql.SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "INSERT INTO catalogue_variants (tenant_id, variant_id, product_id, updated_at)"
+                + " VALUES (?, ?, ?, now()) ON CONFLICT (tenant_id, variant_id)"
+                + " DO UPDATE SET product_id = EXCLUDED.product_id, updated_at = now()")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, variantId);
+      ps.setObject(3, productId);
+      ps.executeUpdate();
+    }
   }
 }

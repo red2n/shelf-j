@@ -207,9 +207,16 @@ public class ProductService {
    * @throws ApiException a 404 when no such category exists in this tenant
    */
   public Category updateCategory(UUID tenantId, UUID id, UpdateCategoryRequest req) {
-    getCategory(tenantId, id);
+    Category existing = getCategory(tenantId, id);
     UUID parentId = parseOptionalUuid(req.parentId(), "parentId");
-    return categoryRepo.updateCategory(tenantId, id, req.name().trim(), parentId);
+    Category updated = categoryRepo.updateCategory(tenantId, id, req.name().trim(), parentId);
+    // A category moved under a new parent changes the path of every product beneath it; the
+    // whole catalogue is re-announced rather than the subtree computed, because a tenant's
+    // catalogue is hundreds of products and the arithmetic is not worth being wrong about.
+    if (!java.util.Objects.equals(existing.parentId(), parentId)) {
+      republishCatalogue(tenantId);
+    }
+    return updated;
   }
 
   /**
@@ -257,7 +264,8 @@ public class ProductService {
             tenantId,
             id,
             Events.productCreated(tenantId, id, product.name()));
-    return repo.createProductWithOutbox(product, event);
+    return repo.createProductWithOutbox(
+        product, List.of(event, categorised(tenantId, id, product.categoryId(), List.of())));
   }
 
   /**
@@ -293,7 +301,65 @@ public class ProductService {
             tenantId,
             productId,
             Events.productUpdated(tenantId, productId, updated.status()));
-    return repo.updateProductWithOutbox(updated, event);
+    // Always announced, not only when the category changed: a consumer that missed an earlier
+    // announcement catches up on the next, and a category removed is a change too.
+    List<UUID> variantIds =
+        repo.listVariants(tenantId, productId).stream().map(Variant::id).toList();
+    return repo.updateProductWithOutbox(
+        updated,
+        List.of(event, categorised(tenantId, productId, updated.categoryId(), variantIds)));
+  }
+
+  // ── the catalogue event (03.8) ─────────────────────────────────────────────
+
+  /**
+   * The category path a product sits on, from its own category up to the root. Empty when it has
+   * none; a cycle or a missing parent ends the walk rather than the request.
+   */
+  List<UUID> categoryPath(UUID tenantId, UUID categoryId) {
+    List<UUID> path = new java.util.ArrayList<>();
+    UUID current = categoryId;
+    while (current != null && path.size() < 32 && !path.contains(current)) {
+      path.add(current);
+      current = categoryRepo.findCategory(tenantId, current).map(Category::parentId).orElse(null);
+    }
+    return path;
+  }
+
+  private OutboxRow categorised(
+      UUID tenantId, UUID productId, UUID categoryId, List<UUID> variantIds) {
+    return new OutboxRow(
+        "ProductCategorised",
+        "shelfj.catalog.product-categorised",
+        tenantId,
+        productId,
+        Events.productCategorised(
+            tenantId, productId, categoryPath(tenantId, categoryId), variantIds));
+  }
+
+  /**
+   * Re-announces every active product's category path and variants (03.8), for a consumer that
+   * arrived after the catalogue did — pricing-svc's projection, built on this branch, starts empty
+   * for a tenant whose products predate it. Also how a category moved in the tree reaches the
+   * products beneath it.
+   *
+   * @param tenantId owning tenant
+   * @return how many products were announced
+   */
+  public int republishCatalogue(UUID tenantId) {
+    var products = repo.listCatalogueForRepublish(tenantId);
+    var variantsByProduct = repo.listVariantIdsByProduct(tenantId);
+    List<OutboxRow> events = new java.util.ArrayList<>(products.size());
+    for (var p : products) {
+      events.add(
+          categorised(
+              tenantId,
+              p.productId(),
+              p.categoryId(),
+              variantsByProduct.getOrDefault(p.productId(), List.of())));
+    }
+    if (!events.isEmpty()) repo.appendOutbox(events);
+    return events.size();
   }
 
   /** Delist a product (soft) — sets status DELISTED, publishes ProductDelisted. */

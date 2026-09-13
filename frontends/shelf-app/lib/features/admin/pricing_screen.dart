@@ -816,7 +816,16 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
   String? _error;
 
   bool get _isBogo => _type == 'BOGO';
+  bool get _isMixMatch => _type == 'MIX_MATCH';
   bool get _isThreshold => _type == 'SPEND_THRESHOLD';
+
+  // Where the promotion applies (03.8): the whole shop, one category — a parent
+  // reaches its children's products — or one variant. It used to be sent as
+  // ALL silently, which is the one scope a "10% off drinks" is never meant to be.
+  String _scope = 'ALL';
+  String? _scopeCategoryId;
+  String? _scopeProductId;
+  String? _scopeVariantId;
 
   @override
   void dispose() {
@@ -834,6 +843,18 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
   }
 
   Future<void> _submit() async {
+    if (_isMixMatch && (int.tryParse(_buyQtyCtrl.text.trim()) ?? 0) < 2) {
+      setState(() => _error = 'A bundle is at least two units.');
+      return;
+    }
+    if (_scope == 'CATEGORY' && _scopeCategoryId == null) {
+      setState(() => _error = 'Choose the category the deal applies to.');
+      return;
+    }
+    if (_scope == 'VARIANT' && _scopeVariantId == null) {
+      setState(() => _error = 'Choose the variant the deal applies to.');
+      return;
+    }
     // A BOGO is described by its quantities, not by a value, so the server takes
     // a placeholder 1 there. Validating client-side as well as server-side is
     // deliberate: a half-configured BOGO would apply to every basket and
@@ -899,15 +920,21 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
           if (_isBogo) 'getQty': double.tryParse(_getQtyCtrl.text.trim()),
           if (_isBogo)
             'getDiscountPct': double.tryParse(_getPctCtrl.text.trim()),
+          if (_isMixMatch) 'buyQty': int.tryParse(_buyQtyCtrl.text.trim()),
         },
       );
-      // Apply to all products by default so the promo is usable immediately.
+      // Then where it applies. A promotion with no scope row applies nowhere,
+      // so the scope is always sent — ALL unless a category or variant was chosen.
       final promo = resp.data['data'] as Map<String, dynamic>;
       final promoId = promo['id'] as String?;
       if (promoId != null) {
         await dio.post(
           '/${ApiConstants.pricing}/admin/promotions/$promoId/items',
-          data: {'scopeType': 'ALL'},
+          data: {
+            'scopeType': _scope,
+            if (_scope == 'CATEGORY') 'scopeId': _scopeCategoryId,
+            if (_scope == 'VARIANT') 'scopeId': _scopeVariantId,
+          },
         );
       }
       if (!mounted) return;
@@ -943,6 +970,7 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       initialValue: _type,
+                      isExpanded: true,
                       decoration: const InputDecoration(labelText: 'Type'),
                       items: const [
                         DropdownMenuItem(
@@ -969,6 +997,10 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                           value: 'BOGO',
                           child: Text('Buy X get Y'),
                         ),
+                        DropdownMenuItem(
+                          value: 'MIX_MATCH',
+                          child: Text('Any N for a price'),
+                        ),
                       ],
                       onChanged: (v) => setState(() => _type = v!),
                     ),
@@ -981,19 +1013,84 @@ class _PromotionDialogState extends ConsumerState<_PromotionDialog> {
                     child: _isBogo
                         ? const SizedBox.shrink()
                         : TextField(
+                            key: const Key('promo-value'),
                             controller: _valueCtrl,
                             keyboardType: const TextInputType.numberWithOptions(
                               decimal: true,
                             ),
                             decoration: InputDecoration(
-                              labelText: _type.contains('PERCENT')
-                                  ? 'Percent'
-                                  : 'Amount',
+                              labelText: _isMixMatch
+                                  ? 'Bundle price'
+                                  : _type.contains('PERCENT')
+                                      ? 'Percent'
+                                      : 'Amount',
                             ),
                           ),
                   ),
                 ],
               ),
+              if (_isMixMatch) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  key: const Key('promo-bundle-size'),
+                  controller: _buyQtyCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Bundle size *',
+                    helperText:
+                        'Any this many units from the scope for the bundle price. Whole bundles only; the dearest units make up the bundles.',
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                key: const Key('promo-scope'),
+                initialValue: _scope,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Applies to'),
+                items: const [
+                  DropdownMenuItem(value: 'ALL', child: Text('Everything')),
+                  DropdownMenuItem(value: 'CATEGORY', child: Text('One category')),
+                  DropdownMenuItem(value: 'VARIANT', child: Text('One variant')),
+                ],
+                onChanged: (v) => setState(() => _scope = v!),
+              ),
+              if (_scope == 'CATEGORY') ...[
+                const SizedBox(height: 8),
+                ref.watch(categoriesProvider).when(
+                      loading: () => const LinearProgressIndicator(),
+                      error: (e, _) => Text(
+                          friendlyError(e, fallback: 'Could not load categories.'),
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.error)),
+                      data: (cats) => DropdownButtonFormField<String>(
+                        key: const Key('promo-category'),
+                        initialValue: _scopeCategoryId,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Category *',
+                          helperText: 'A parent reaches the products of every category beneath it.',
+                        ),
+                        items: [
+                          for (final c in cats.where((c) => c.status == 'ACTIVE'))
+                            DropdownMenuItem(value: c.id, child: Text(c.name)),
+                        ],
+                        onChanged: (v) => setState(() => _scopeCategoryId = v),
+                      ),
+                    ),
+              ],
+              if (_scope == 'VARIANT') ...[
+                const SizedBox(height: 8),
+                VariantPicker(
+                  productId: _scopeProductId,
+                  variantId: _scopeVariantId,
+                  onProduct: (v) => setState(() {
+                    _scopeProductId = v;
+                    _scopeVariantId = null;
+                  }),
+                  onVariant: (v) => setState(() => _scopeVariantId = v),
+                ),
+              ],
               if (_isBogo) ...[
                 const SizedBox(height: 12),
                 Row(

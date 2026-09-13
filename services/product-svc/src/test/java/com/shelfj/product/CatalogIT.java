@@ -521,4 +521,161 @@ class CatalogIT {
     String obj = json.substring(objStart, objEnd + 1);
     return field(obj, name);
   }
+
+  // ── the catalogue event (03.8) ─────────────────────────────────────────────
+
+  /** The newest outbox payload of a type for a tenant, or empty. */
+  private static String outbox(String tenant, String type, String aggregateId) throws Exception {
+    try (Connection c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT payload FROM product.outbox WHERE tenant_id = ?::uuid AND event_type = ?"
+                    + (aggregateId == null ? "" : " AND aggregate_id = ?::uuid")
+                    + " ORDER BY created_at DESC LIMIT 1")) {
+      ps.setString(1, tenant);
+      ps.setString(2, type);
+      if (aggregateId != null) ps.setString(3, aggregateId);
+      var rs = ps.executeQuery();
+      return rs.next() ? rs.getString(1) : "";
+    }
+  }
+
+  private static int outboxCount(String tenant, String type) throws Exception {
+    try (Connection c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT count(*) FROM product.outbox WHERE tenant_id = ?::uuid AND event_type = ?")) {
+      ps.setString(1, tenant);
+      ps.setString(2, type);
+      var rs = ps.executeQuery();
+      rs.next();
+      return rs.getInt(1);
+    }
+  }
+
+  @Test
+  void aProductAnnouncesItsCategoryPathAndItsVariants() throws Exception {
+    String drinks =
+        field(
+            post("/admin/categories", "{\"name\":\"Drinks\"}", TENANT_A).readEntity(String.class),
+            "id");
+    String soft =
+        field(
+            post(
+                    "/admin/categories",
+                    "{\"name\":\"Soft drinks\",\"parentId\":\"" + drinks + "\"}",
+                    TENANT_A)
+                .readEntity(String.class),
+            "id");
+    Response created =
+        post("/admin/products", "{\"name\":\"Cola\",\"categoryId\":\"" + soft + "\"}", TENANT_A);
+    assertThat(created.getStatus(), is(201));
+    String productId = field(created.readEntity(String.class), "id");
+    // Announced at creation: the path runs from the product's own category to the root.
+    String announced = outbox(TENANT_A, "ProductCategorised", productId);
+    assertThat(announced, containsString("\"categoryPath\":[\"" + soft + "\",\"" + drinks + "\"]"));
+    assertThat(announced, containsString("\"variantIds\":[]"));
+
+    String variantId =
+        field(
+            post(
+                    "/admin/products/" + productId + "/variants",
+                    "{\"sku\":\"COLA-330\",\"unit\":\"PCS\"}",
+                    TENANT_A)
+                .readEntity(String.class),
+            "id");
+    // A variant created afterwards names its product, which is what a projection needs.
+    assertThat(
+        outbox(TENANT_A, "VariantCreated", variantId),
+        containsString("\"productId\":\"" + productId + "\""));
+
+    // Re-categorised: announced again, now with the variant, on the new path.
+    String snacks =
+        field(
+            post("/admin/categories", "{\"name\":\"Snacks\"}", TENANT_A).readEntity(String.class),
+            "id");
+    assertThat(
+        put(
+                "/admin/products/" + productId,
+                "{\"name\":\"Cola\",\"categoryId\":\""
+                    + snacks
+                    + "\",\"sellableOnline\":true,\"sellablePos\":true}",
+                TENANT_A)
+            .getStatus(),
+        is(200));
+    String moved = outbox(TENANT_A, "ProductCategorised", productId);
+    assertThat(moved, containsString("\"categoryPath\":[\"" + snacks + "\"]"));
+    assertThat(moved, containsString("\"variantIds\":[\"" + variantId + "\"]"));
+
+    // A category moved under a new parent re-announces the catalogue.
+    int before = outboxCount(TENANT_A, "ProductCategorised");
+    assertThat(
+        put(
+                "/admin/categories/" + snacks,
+                "{\"name\":\"Snacks\",\"parentId\":\"" + drinks + "\"}",
+                TENANT_A)
+            .getStatus(),
+        is(200));
+    assertThat(outboxCount(TENANT_A, "ProductCategorised") > before, is(true));
+    assertThat(
+        outbox(TENANT_A, "ProductCategorised", productId),
+        containsString("\"categoryPath\":[\"" + snacks + "\",\"" + drinks + "\"]"));
+    // A rename alone does not.
+    int afterMove = outboxCount(TENANT_A, "ProductCategorised");
+    assertThat(
+        put(
+                "/admin/categories/" + snacks,
+                "{\"name\":\"Crisps\",\"parentId\":\"" + drinks + "\"}",
+                TENANT_A)
+            .getStatus(),
+        is(200));
+    assertThat(outboxCount(TENANT_A, "ProductCategorised"), is(afterMove));
+    // Another tenant announced nothing.
+    assertThat(outbox(TENANT_B, "ProductCategorised", productId), is(""));
+  }
+
+  @Test
+  void theCatalogueCanBeReannouncedForAConsumerThatArrivedLate() throws Exception {
+    String cat =
+        field(
+            post("/admin/categories", "{\"name\":\"Republished\"}", TENANT_B)
+                .readEntity(String.class),
+            "id");
+    String p1 =
+        field(
+            post("/admin/products", "{\"name\":\"One\",\"categoryId\":\"" + cat + "\"}", TENANT_B)
+                .readEntity(String.class),
+            "id");
+    String p2 =
+        field(
+            post("/admin/products", "{\"name\":\"Two\"}", TENANT_B).readEntity(String.class), "id");
+    String v1 =
+        field(
+            post(
+                    "/admin/products/" + p1 + "/variants",
+                    "{\"sku\":\"ONE-1\",\"unit\":\"PCS\"}",
+                    TENANT_B)
+                .readEntity(String.class),
+            "id");
+    int before = outboxCount(TENANT_B, "ProductCategorised");
+
+    Response r = post("/admin/products/republish-catalogue", "{}", TENANT_B);
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(200));
+    assertThat(body, containsString("\"announced\":2"));
+    assertThat(outboxCount(TENANT_B, "ProductCategorised"), is(before + 2));
+    assertThat(
+        outbox(TENANT_B, "ProductCategorised", p1),
+        containsString("\"variantIds\":[\"" + v1 + "\"]"));
+    assertThat(outbox(TENANT_B, "ProductCategorised", p2), containsString("\"categoryPath\":[]"));
+    // Management only: the shared filter refuses a storekeeper under /admin.
+    Response keeper =
+        target
+            .path("/admin/products/republish-catalogue")
+            .request()
+            .header("X-Tenant-Id", TENANT_B)
+            .header("X-Roles", "STOREKEEPER")
+            .post(Entity.entity("{}", MediaType.APPLICATION_JSON));
+    assertThat(keeper.getStatus(), is(403));
+  }
 }

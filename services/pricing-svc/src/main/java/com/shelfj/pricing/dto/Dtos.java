@@ -310,9 +310,9 @@ public final class Dtos {
   public record AddPromotionItemRequest(
       @Schema(
               description =
-                  "ALL or VARIANT. CATEGORY is rejected: pricing-svc has no variant→category"
-                      + " mapping, because product-svc publishes no catalogue event, and a"
-                      + " category promotion was previously accepted and silently never applied.")
+                  "ALL, VARIANT or CATEGORY. A CATEGORY scope resolves to the variants of every"
+                      + " product whose category path carries it — a parent reaches its children's"
+                      + " products — through the catalogue product-svc announces (03.8).")
           @NotBlank
           String scopeType,
       @Schema(description = "UUID of the variant; null when scopeType is ALL.") String scopeId) {}

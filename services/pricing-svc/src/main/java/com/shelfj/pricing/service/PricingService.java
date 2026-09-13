@@ -888,7 +888,8 @@ public class PricingService {
           Promotion.TYPE_BASKET_PERCENT,
           Promotion.TYPE_BASKET_FLAT,
           Promotion.TYPE_SPEND_THRESHOLD,
-          Promotion.TYPE_BOGO);
+          Promotion.TYPE_BOGO,
+          Promotion.TYPE_MIX_MATCH);
 
   private static void validatePromotionShape(String type, CreatePromotionRequest req) {
     if (!PROMOTION_TYPES.contains(type))
@@ -910,10 +911,24 @@ public class PricingService {
           || req.getDiscountPct().compareTo(new BigDecimal("100")) > 0)
         throw ApiException.badRequest(
             "PRICING_INCOMPLETE_BOGO", "getDiscountPct must be between 0 and 100 (100 = free)");
+    } else if (Promotion.TYPE_MIX_MATCH.equals(type)) {
+      // "Any N for a price": buyQty is the bundle size and value the bundle price. A bundle of one
+      // is a unit price, and a bundle with no size would apply to nothing.
+      if (req.buyQty() == null
+          || req.buyQty().compareTo(new BigDecimal("2")) < 0
+          || req.buyQty().stripTrailingZeros().scale() > 0)
+        throw ApiException.badRequest(
+            "PRICING_INCOMPLETE_MIX_MATCH",
+            "MIX_MATCH requires buyQty — the bundle size, a whole number of at least 2 — and value,"
+                + " the bundle price");
+      if (req.getQty() != null || req.getDiscountPct() != null)
+        throw ApiException.badRequest(
+            "PRICING_INVALID_PROMOTION_SHAPE",
+            "getQty / getDiscountPct belong to a BOGO; a MIX_MATCH has a bundle size and a price");
     } else if (req.buyQty() != null || req.getQty() != null || req.getDiscountPct() != null) {
       throw ApiException.badRequest(
           "PRICING_INVALID_PROMOTION_SHAPE",
-          "buyQty / getQty / getDiscountPct belong to a BOGO — got type " + type);
+          "buyQty / getQty / getDiscountPct belong to a BOGO or a MIX_MATCH — got type " + type);
     }
 
     if (Promotion.TYPE_SPEND_THRESHOLD.equals(type) && req.minOrderAmount() == null)
@@ -1028,21 +1043,23 @@ public class PricingService {
   public PromotionItem addPromotionItem(
       TenantContext ctx, UUID promotionId, AddPromotionItemRequest req) {
     String scopeType = req.scopeType().toUpperCase(java.util.Locale.ROOT);
-    if (PromotionItem.SCOPE_CATEGORY.equals(scopeType))
+    boolean needsId =
+        PromotionItem.SCOPE_VARIANT.equals(scopeType)
+            || PromotionItem.SCOPE_CATEGORY.equals(scopeType);
+    if (!needsId && !PromotionItem.SCOPE_ALL.equals(scopeType))
       throw ApiException.badRequest(
-          "PRICING_CATEGORY_SCOPE_UNSUPPORTED",
-          "category-scoped promotions cannot be honoured yet: pricing-svc has no variant→category"
-              + " mapping, because product-svc publishes no catalogue event. Scope to VARIANT or"
-              + " ALL. Previously such a promotion was accepted and silently never applied.");
-    if (!PromotionItem.SCOPE_VARIANT.equals(scopeType)
-        && !PromotionItem.SCOPE_ALL.equals(scopeType))
+          "PRICING_INVALID_SCOPE",
+          "scopeType must be VARIANT, CATEGORY or ALL — got: " + scopeType);
+    if (needsId && (req.scopeId() == null || req.scopeId().isBlank()))
       throw ApiException.badRequest(
-          "PRICING_INVALID_SCOPE", "scopeType must be VARIANT or ALL — got: " + scopeType);
-    if (PromotionItem.SCOPE_VARIANT.equals(scopeType)
-        && (req.scopeId() == null || req.scopeId().isBlank()))
-      throw ApiException.badRequest(
-          "PRICING_INVALID_SCOPE", "a VARIANT scope needs a scopeId naming the variant");
-    UUID scopeId = req.scopeId() != null ? UUID.fromString(req.scopeId()) : null;
+          "PRICING_INVALID_SCOPE",
+          "a "
+              + scopeType
+              + " scope needs a scopeId naming the "
+              + scopeType.toLowerCase(java.util.Locale.ROOT));
+    // A CATEGORY scope (03.8) resolves to variants at quote time through the catalogue product-svc
+    // announces; a category nothing has been announced for discounts nothing, not everything.
+    UUID scopeId = needsId ? Parsing.uuid(req.scopeId(), "scopeId") : null;
     PromotionItem pi =
         new PromotionItem(
             Ids.newId(), ctx.tenantId(), promotionId, scopeType, scopeId, Instant.now());

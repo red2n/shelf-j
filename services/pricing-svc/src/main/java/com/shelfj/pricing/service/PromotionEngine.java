@@ -214,6 +214,10 @@ public class PromotionEngine {
       return out;
     }
 
+    if (Promotion.TYPE_MIX_MATCH.equals(p.type())) {
+      return applyMixMatch(p, lines, scope, remaining);
+    }
+
     for (BasketLine l : lines) {
       if (!inScope(l, scope)) continue;
       BigDecimal amount =
@@ -264,8 +268,69 @@ public class PromotionEngine {
   }
 
   /** An absent or empty scope means "everything" — the ALL scope, without a special case. */
+  /**
+   * "Any N for a price" (03.8). The in-scope units are laid out dearest first and cut into whole
+   * bundles of {@code buyQty}; each bundle is charged {@code value} instead of the sum of its
+   * units, never more than that sum, and the units left over after the last whole bundle are
+   * charged in full. The dearest units make up the bundles because that is the saving the offer
+   * promises: "any 3 for £10" on a £4, a £4 and a £2 item is a £10 basket, not a £12 one with the
+   * £2 item in the deal. Each bundle's saving is split across its units in proportion to their
+   * price, so the lines still add up to the total.
+   */
+  private static List<LineDiscount> applyMixMatch(
+      Promotion p, List<BasketLine> lines, Set<UUID> scope, Map<UUID, BigDecimal> remaining) {
+    List<LineDiscount> out = new ArrayList<>();
+    if (p.buyQty() == null || p.buyQty().compareTo(BigDecimal.ONE) <= 0) return out;
+    int bundle = p.buyQty().intValue();
+
+    // One entry per unit, dearest first. Fractional quantities are rounded down: a bundle is made
+    // of things, not of parts of things.
+    List<BasketLine> units = new ArrayList<>();
+    lines.stream()
+        .filter(l -> inScope(l, scope))
+        .sorted(Comparator.comparing(BasketLine::unitPrice).reversed())
+        .forEach(
+            l -> {
+              int n = l.qty().setScale(0, RoundingMode.DOWN).intValue();
+              for (int i = 0; i < n; i++) units.add(l);
+            });
+    int bundles = units.size() / bundle;
+    if (bundles == 0) return out;
+
+    Map<UUID, BigDecimal> perVariant = new LinkedHashMap<>();
+    for (int b = 0; b < bundles; b++) {
+      List<BasketLine> inBundle = units.subList(b * bundle, (b + 1) * bundle);
+      BigDecimal full =
+          inBundle.stream().map(BasketLine::unitPrice).reduce(BigDecimal.ZERO, BigDecimal::add);
+      BigDecimal saving = full.subtract(p.value()).setScale(2, RoundingMode.HALF_UP);
+      if (saving.signum() <= 0) continue;
+      // Split by price; the rounding remainder lands on the last unit so the bundle adds up.
+      BigDecimal allocated = BigDecimal.ZERO;
+      for (int i = 0; i < inBundle.size(); i++) {
+        BasketLine u = inBundle.get(i);
+        BigDecimal share =
+            i == inBundle.size() - 1
+                ? saving.subtract(allocated)
+                : saving.multiply(u.unitPrice()).divide(full, 2, RoundingMode.HALF_UP);
+        allocated = allocated.add(share);
+        perVariant.merge(u.variantId(), share, BigDecimal::add);
+      }
+    }
+    for (var e : perVariant.entrySet()) {
+      BigDecimal amount = clamp(e.getValue(), remaining, e.getKey());
+      if (amount.signum() > 0) out.add(new LineDiscount(e.getKey(), p.id(), p.name(), amount));
+    }
+    return out;
+  }
+
+  /**
+   * {@code null} means the promotion is not scoped — it applies to every line. An empty set means
+   * it is scoped to nothing that is in the basket, or to a category no product is in yet, and
+   * applies to no line. The two used to be the same, which made a category scope that resolved to
+   * nothing discount everything.
+   */
   private static boolean inScope(BasketLine l, Set<UUID> scope) {
-    return scope == null || scope.isEmpty() || scope.contains(l.variantId());
+    return scope == null || scope.contains(l.variantId());
   }
 
   private static BigDecimal lineTotal(BasketLine l) {

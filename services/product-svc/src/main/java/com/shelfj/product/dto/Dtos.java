@@ -676,4 +676,8 @@ public final class Dtos {
       @Schema(description = "UUID of the category within that set.") String categoryId,
       String createdAt,
       String updatedAt) {}
+
+  @Schema(name = "CatalogueRepublishResponse")
+  public record CatalogueRepublishResponse(
+      @Schema(description = "How many products were announced.") int announced) {}
 }
