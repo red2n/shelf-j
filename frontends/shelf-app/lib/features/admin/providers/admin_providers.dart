@@ -2024,6 +2024,47 @@ class TrialBalance {
 /// The trial balance for the selected range. Unlike the reporting-svc reports
 /// this endpoint takes plain dates (yyyy-MM-dd, inclusive at both ends), so the
 /// picker's values go through as they are.
+// ── Sales clearing (17.7): sales whose takings did not clear ────────────────
+
+/// An order left open on 1105 Sales Receipts Clearing. [balance] is debit less
+/// credit: negative means money was taken that no confirmed sale has claimed,
+/// positive a sale confirmed for more than was taken.
+class SalesClearingItem {
+  final String orderId;
+  final String? storeId;
+  final double balance;
+  final String? firstPosted;
+  final String? lastPosted;
+
+  const SalesClearingItem({
+    required this.orderId,
+    this.storeId,
+    required this.balance,
+    this.firstPosted,
+    this.lastPosted,
+  });
+
+  factory SalesClearingItem.fromJson(Map<String, dynamic> j) => SalesClearingItem(
+        orderId: j['orderId'] as String? ?? '',
+        storeId: j['storeId'] as String?,
+        balance: (j['balance'] as num?)?.toDouble() ?? 0,
+        firstPosted: j['firstPosted'] as String?,
+        lastPosted: j['lastPosted'] as String?,
+      );
+}
+
+final salesClearingProvider =
+    FutureProvider.autoDispose<List<SalesClearingItem>>((ref) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.purchase}/nominal-ledger/sales-clearing');
+  final data = (resp.data['data'] as List?) ?? const [];
+  return data
+      .map((e) => SalesClearingItem.fromJson(Map<String, dynamic>.from(e as Map)))
+      .toList();
+});
+
 final trialBalanceProvider =
     FutureProvider.autoDispose<TrialBalance>((ref) async {
   final range = ref.watch(reportDateRangeProvider);

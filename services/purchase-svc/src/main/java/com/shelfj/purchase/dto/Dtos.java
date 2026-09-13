@@ -689,4 +689,20 @@ public final class Dtos {
   @Schema(name = "PaymentRunExcludedResponse")
   public record PaymentRunExcludedResponse(
       UUID supplierId, String name, String reason, BigDecimal net) {}
+
+  // ── Sales clearing (17.7) ─────────────────────────────────────────────────────
+
+  @Schema(
+      name = "SalesClearingResponse",
+      description = "An order whose sales receipts clearing (1105) has not netted to zero.")
+  public record SalesClearingResponse(
+      UUID orderId,
+      UUID storeId,
+      @Schema(
+              description =
+                  "Debit less credit on 1105: negative is money taken that no confirmed sale has"
+                      + " claimed; positive is a sale confirmed for more than was taken.")
+          BigDecimal balance,
+      LocalDate firstPosted,
+      LocalDate lastPosted) {}
 }

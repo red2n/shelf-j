@@ -391,6 +391,39 @@ void main() {
       expect(find.textContaining('fault to investigate'), findsOneWidget);
     });
 
+    testWidgets('open sales clearing is listed under the trial balance (17.7)', (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['trial-balance'] = '{"data":{"rows":[],"totalDebit":0,'
+            '"totalCredit":0,"balanced":true}}'
+        ..bodyFor['sales-clearing'] = '{"data":[{"orderId":"01a090ae-611e-7a00-8000-00000000abcd",'
+            '"storeId":"s-1","balance":-40.00,"firstPosted":"2026-09-13","lastPosted":"2026-09-13"}]}';
+      await pump(tester, adapter);
+      await tester.ensureVisible(find.text('Trial Balance', skipOffstage: false).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Trial Balance').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Open sales clearing: 1 order(s)'), findsOneWidget);
+      await tester.tap(find.text('Open sales clearing: 1 order(s)'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('taken, no confirmed sale'), findsOneWidget);
+      expect(find.text('-40.00'), findsOneWidget);
+      expect(adapter.callTo('sales-clearing').path, contains('/nominal-ledger/sales-clearing'));
+    });
+
+    testWidgets('a ledger whose sales all cleared says so', (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['trial-balance'] = '{"data":{"rows":[],"totalDebit":0,'
+            '"totalCredit":0,"balanced":true}}'
+        ..bodyFor['sales-clearing'] = '{"data":[]}';
+      await pump(tester, adapter);
+      await tester.ensureVisible(find.text('Trial Balance', skipOffstage: false).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Trial Balance').last);
+      await tester.pumpAndSettle();
+      expect(find.textContaining("Every sale's takings cleared"), findsOneWidget);
+      expect(find.textContaining('Open sales clearing'), findsNothing);
+    });
+
     testWidgets('an empty trial balance says so, and opens the journal dialog', (tester) async {
       await pump(tester, _RecordingAdapter());
       // The sidebar scrolls and the sixteenth entry starts below the fold.

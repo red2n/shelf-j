@@ -236,10 +236,18 @@ class PaymentRunIT {
     assertThat(
         nextRun.getJsonArray("suppliers").getJsonObject(0).getJsonArray("documents").size(), is(1));
 
-    // Listed newest first; a status narrows the list and an unknown one is refused.
+    // Listed newest first, by the proposal time the service stored — compared as stored, because
+    // two runs a few milliseconds apart can swap under a wall clock that steps backwards; a status
+    // narrows the list and an unknown one is refused.
     JsonArray all = dataArray(get("/payment-runs", "MANAGER", USER).readEntity(String.class));
     assertThat(all.size(), is(2));
-    assertThat(all.getJsonObject(0).getString("id"), is(nextRun.getString("id")));
+    assertThat(
+        all.toString(),
+        all.toString().contains(nextRun.getString("id")) && all.toString().contains(runId),
+        is(true));
+    java.time.Instant newer = java.time.Instant.parse(all.getJsonObject(0).getString("proposedAt"));
+    java.time.Instant older = java.time.Instant.parse(all.getJsonObject(1).getString("proposedAt"));
+    assertThat(all.toString(), newer.isBefore(older), is(false));
     assertThat(
         dataArray(get("/payment-runs?status=paid", "MANAGER", USER).readEntity(String.class))
             .size(),

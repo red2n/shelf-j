@@ -170,4 +170,15 @@ public final class Domain {
       long failedCount,
       BigDecimal netAmount,
       BigDecimal shareOfNet) {}
+
+  /**
+   * One tender's share of a refund (17.7): the tender refunded, how it was paid, how much of the
+   * refund it carries and the store it was taken at, so the ledger credits the right control
+   * account.
+   */
+  public record RefundAllocation(
+      java.util.UUID paymentId,
+      String method,
+      java.math.BigDecimal amount,
+      java.util.UUID storeId) {}
 }

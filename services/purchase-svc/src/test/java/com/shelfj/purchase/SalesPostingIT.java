@@ -1,0 +1,333 @@
+package com.shelfj.purchase;
+
+import static com.shelfj.purchase.PurchaseFixtures.STORE_A;
+import static com.shelfj.purchase.PurchaseFixtures.T;
+import static com.shelfj.purchase.PurchaseFixtures.T2;
+import static com.shelfj.purchase.PurchaseFixtures.USER;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.is;
+
+import com.shelfj.ids.Ids;
+import com.shelfj.purchase.messaging.SalesEventHandler;
+import com.shelfj.test.PostgresSupport;
+import io.helidon.microprofile.testing.junit5.HelidonTest;
+import jakarta.inject.Inject;
+import jakarta.json.Json;
+import jakarta.json.JsonArray;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonValue;
+import jakarta.ws.rs.client.WebTarget;
+import jakarta.ws.rs.core.Response;
+import java.io.StringReader;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Sales and tender posting (17.7): what a sale's events write to the ledger. Kafka is off here, so
+ * the handler is driven with the payloads order-svc and payment-svc publish; the live path is
+ * driven by {@code k6/sales-posting}.
+ */
+@HelidonTest
+class SalesPostingIT {
+
+  private static final PostgresSupport PG = PostgresSupport.start().wire("purchase");
+
+  @Inject WebTarget target;
+  @Inject SalesEventHandler handler;
+
+  @AfterAll
+  static void stopDb() {
+    PG.stop();
+  }
+
+  @BeforeEach
+  void truncateTables() throws Exception {
+    PurchaseFixtures.truncateAll(PG);
+    try (var conn =
+            java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var st = conn.createStatement()) {
+      st.execute(
+          "TRUNCATE TABLE purchase.sales_orders, purchase.sales_tenders, purchase.processed_events");
+    }
+  }
+
+  // ── payloads as the producers write them ────────────────────────────────────
+
+  private static String confirmed(String tenant, String order, String total, String tax) {
+    return "{\"eventId\":\""
+        + Ids.newId()
+        + "\",\"eventType\":\"OrderConfirmed\",\"tenantId\":\""
+        + tenant
+        + "\",\"orderId\":\""
+        + order
+        + "\",\"storeId\":\""
+        + STORE_A
+        + "\",\"channel\":\"POS\",\"customerId\":null,\"total\":"
+        + total
+        + ",\"taxAmount\":"
+        + tax
+        + ",\"currency\":\"GBP\"}";
+  }
+
+  private static String captured(
+      String tenant, String payment, String order, String amount, String method) {
+    return "{\"eventType\":\"PaymentCaptured\",\"tenantId\":\""
+        + tenant
+        + "\",\"paymentId\":\""
+        + payment
+        + "\",\"orderId\":\""
+        + order
+        + "\",\"amount\":"
+        + amount
+        + (method == null ? "" : ",\"method\":\"" + method + "\"")
+        + ",\"storeId\":\""
+        + STORE_A
+        + "\"}";
+  }
+
+  private static String refunded(String tenant, String order, String amount, String shares) {
+    return "{\"eventId\":\""
+        + Ids.newId()
+        + "\",\"eventType\":\"PaymentRefunded\",\"tenantId\":\""
+        + tenant
+        + "\",\"refundId\":\""
+        + Ids.newId()
+        + "\",\"orderId\":\""
+        + order
+        + "\",\"amount\":"
+        + amount
+        + (shares == null ? "" : ",\"tenders\":[" + shares + "]")
+        + "}";
+  }
+
+  // ── the sale ────────────────────────────────────────────────────────────────
+
+  @Test
+  @DisplayName("A sale paid in cash and card posts revenue net of VAT and nets clearing, once")
+  void aSplitTenderSaleIsPostedOnce() {
+    String order = Ids.newId().toString();
+    String cash = captured(T, Ids.newId().toString(), order, "70.00", "CASH");
+    String card = captured(T, Ids.newId().toString(), order, "50.00", "CARD");
+    String sale = confirmed(T, order, "120.00", "20.00");
+    handler.paymentCaptured(cash);
+    handler.paymentCaptured(card);
+    handler.orderConfirmed(sale);
+
+    JsonObject tb = trialBalance();
+    assertThat(tb.getBoolean("balanced"), is(true));
+    same(row(tb, "1210"), "70.00");
+    same(row(tb, "1250"), "50.00");
+    same(row(tb, "4010"), "-100.00");
+    same(row(tb, "2200"), "-20.00");
+    same(row(tb, "1105"), "0");
+    assertThat(lines("SALE").size(), is(3));
+    assertThat(lines("SALE_TENDER").size(), is(4));
+    for (JsonValue v : lines("SALE")) {
+      assertThat(v.asJsonObject().getString("sourceRef"), is(order));
+      assertThat(v.asJsonObject().getString("storeId"), is(STORE_A));
+    }
+    assertThat(clearing("").size(), is(0));
+
+    // Redelivered, and a second announcement of the same sale under a new event id: nothing twice.
+    handler.paymentCaptured(cash);
+    handler.paymentCaptured(card);
+    handler.orderConfirmed(sale);
+    handler.orderConfirmed(confirmed(T, order, "120.00", "20.00"));
+    assertThat(lines("SALE").size(), is(3));
+    assertThat(lines("SALE_TENDER").size(), is(4));
+  }
+
+  @Test
+  @DisplayName("A refund takes back revenue and VAT in the sale's ratio and credits the tender")
+  void aRefundReversesRevenueVatAndTheTender() {
+    String order = Ids.newId().toString();
+    handler.paymentCaptured(captured(T, Ids.newId().toString(), order, "120.00", "CARD"));
+    handler.orderConfirmed(confirmed(T, order, "120.00", "20.00"));
+    String refund =
+        refunded(
+            T,
+            order,
+            "30.00",
+            "{\"paymentId\":\"" + Ids.newId() + "\",\"method\":\"CARD\",\"amount\":30.00}");
+    handler.paymentRefunded(refund);
+    handler.paymentRefunded(refund);
+
+    JsonObject tb = trialBalance();
+    assertThat(tb.getBoolean("balanced"), is(true));
+    same(row(tb, "4010"), "-75.00");
+    same(row(tb, "2200"), "-15.00");
+    same(row(tb, "1250"), "90.00");
+    same(row(tb, "1105"), "0");
+    assertThat(lines("SALE_REFUND").size(), is(3));
+  }
+
+  @Test
+  @DisplayName("Store credit, gift cards and an unmapped method each post to their own account")
+  void liabilitiesAndUnmappedMethodsAreKeptApart() {
+    String order = Ids.newId().toString();
+    handler.paymentCaptured(captured(T, Ids.newId().toString(), order, "10.00", "STORE_CREDIT"));
+    handler.paymentCaptured(captured(T, Ids.newId().toString(), order, "15.00", "GIFT_CARD"));
+    handler.paymentCaptured(captured(T, Ids.newId().toString(), order, "5.00", "BARTER"));
+    handler.paymentCaptured(captured(T, Ids.newId().toString(), order, "1.00", null));
+    handler.orderConfirmed(confirmed(T, order, "31.00", "0"));
+    JsonObject tb = trialBalance();
+    same(row(tb, "2320"), "10.00");
+    same(row(tb, "2310"), "15.00");
+    same(row(tb, "1299"), "6.00");
+    same(row(tb, "1105"), "0");
+    // A refund from before payment-svc sent shares goes to unallocated receipts, not a guess.
+    handler.paymentRefunded(refunded(T, order, "2.00", null));
+    same(row(trialBalance(), "1299"), "4.00");
+  }
+
+  // ── the clearing report: what did not net ───────────────────────────────────
+
+  @Test
+  @DisplayName("Money taken for a sale never confirmed stays open on clearing until it is refunded")
+  void anUnconfirmedSaleIsReportedUntilRefunded() {
+    String order = Ids.newId().toString();
+    handler.paymentCaptured(captured(T, Ids.newId().toString(), order, "40.00", "CASH"));
+    JsonArray open = clearing("");
+    assertThat(open.size(), is(1));
+    assertThat(open.getJsonObject(0).getString("orderId"), is(order));
+    same(open.getJsonObject(0), "balance", "-40.00");
+    assertThat(clearing("?storeId=" + STORE_A).size(), is(1));
+
+    handler.paymentRefunded(
+        refunded(
+            T,
+            order,
+            "40.00",
+            "{\"paymentId\":\"" + Ids.newId() + "\",\"method\":\"CASH\",\"amount\":40.00}"));
+    assertThat(clearing("").size(), is(0));
+    same(row(trialBalance(), "1210"), "0");
+    same(row(trialBalance(), "4010"), "0");
+  }
+
+  // ── abuse and refusals ─────────────────────────────────────────────────────
+
+  @Test
+  @DisplayName("Twenty deliveries of the same sale and tender at once post each once")
+  void concurrentDeliveriesPostOnce() throws Exception {
+    String order = Ids.newId().toString();
+    String tender = captured(T, Ids.newId().toString(), order, "12.00", "CASH");
+    String sale = confirmed(T, order, "12.00", "2.00");
+    var pool = Executors.newFixedThreadPool(20);
+    try {
+      var start = new CountDownLatch(1);
+      List<Future<?>> futures = new ArrayList<>();
+      for (int i = 0; i < 20; i++) {
+        futures.add(
+            pool.submit(
+                () -> {
+                  start.await();
+                  handler.paymentCaptured(tender);
+                  handler.orderConfirmed(sale);
+                  return null;
+                }));
+      }
+      start.countDown();
+      for (var f : futures) f.get(60, TimeUnit.SECONDS);
+    } finally {
+      pool.shutdownNow();
+    }
+    assertThat(lines("SALE_TENDER").size(), is(2));
+    assertThat(lines("SALE").size(), is(3));
+    assertThat(trialBalance().getBoolean("balanced"), is(true));
+  }
+
+  @Test
+  @DisplayName("Malformed events post nothing; the report is management-only and per tenant")
+  void malformedEventsAndRefusals() {
+    String order = Ids.newId().toString();
+    handler.orderConfirmed("{not json");
+    handler.orderConfirmed(
+        confirmed(T, order, "10.00", "1.00").replace(",\"currency\":\"GBP\"", ""));
+    handler.orderConfirmed(confirmed(T, order, "10.00", "1.00").replace(",\"taxAmount\":1.00", ""));
+    handler.orderConfirmed(confirmed(T, "not-a-uuid", "10.00", "1.00"));
+    handler.paymentCaptured(captured(T, "not-a-uuid", order, "10.00", "CASH"));
+    handler.paymentCaptured(captured(T, Ids.newId().toString(), order, "-10.00", "CASH"));
+    handler.paymentRefunded("{\"eventType\":\"PaymentRefunded\"}");
+    handler.orderConfirmed(
+        confirmed(T, order, "10.00", "1.00").replace("OrderConfirmed", "OrderPlaced"));
+    assertThat(lines("SALE").size(), is(0));
+    assertThat(lines("SALE_TENDER").size(), is(0));
+    assertThat(lines("SALE_REFUND").size(), is(0));
+
+    handler.paymentCaptured(captured(T, Ids.newId().toString(), order, "9.00", "CASH"));
+    assertThat(get("/nominal-ledger/sales-clearing", T, "STOREKEEPER").getStatus(), is(403));
+    assertThat(get("/nominal-ledger/sales-clearing", T, "CASHIER").getStatus(), is(403));
+    Response bad = get("/nominal-ledger/sales-clearing?storeId=nope", T, "OWNER");
+    assertThat(bad.getStatus(), is(400));
+    assertThat(dataArray(get("/nominal-ledger/sales-clearing", T2, "OWNER")).size(), is(0));
+    assertThat(clearing("").size(), is(1));
+  }
+
+  // ── helpers ─────────────────────────────────────────────────────────────────
+
+  private Response get(String pathAndQuery, String tenant, String role) {
+    return com.shelfj.test.WebTargets.at(target, pathAndQuery)
+        .request()
+        .header("X-Tenant-Id", tenant)
+        .header("X-User-Id", USER)
+        .header("X-Roles", role)
+        .get();
+  }
+
+  private JsonArray clearing(String query) {
+    Response r = get("/nominal-ledger/sales-clearing" + query, T, "OWNER");
+    return dataArray(r);
+  }
+
+  private JsonObject trialBalance() {
+    Response r = get("/nominal-ledger/trial-balance", T, "OWNER");
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(200));
+    try (var reader = Json.createReader(new StringReader(body))) {
+      return reader.readObject().getJsonObject("data");
+    }
+  }
+
+  private JsonArray lines(String sourceType) {
+    var out = Json.createArrayBuilder();
+    for (JsonValue v : dataArray(get("/nominal-ledger?limit=100", T, "OWNER"))) {
+      if (sourceType.equals(v.asJsonObject().getString("sourceType", null))) out.add(v);
+    }
+    return out.build();
+  }
+
+  private static JsonArray dataArray(Response r) {
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(200));
+    try (var reader = Json.createReader(new StringReader(body))) {
+      return reader.readObject().getJsonArray("data");
+    }
+  }
+
+  /** A code's balance on the trial balance, zero when it has no row. */
+  private static BigDecimal row(JsonObject trialBalance, String code) {
+    for (JsonValue v : trialBalance.getJsonArray("rows")) {
+      if (code.equals(v.asJsonObject().getString("nominalCode"))) {
+        return v.asJsonObject().getJsonNumber("balance").bigDecimalValue();
+      }
+    }
+    return BigDecimal.ZERO;
+  }
+
+  private static void same(BigDecimal actual, String expected) {
+    assertThat(actual + " vs " + expected, actual.compareTo(new BigDecimal(expected)), is(0));
+  }
+
+  private static void same(JsonObject o, String field, String expected) {
+    same(o.getJsonNumber(field).bigDecimalValue(), expected);
+  }
+}

@@ -49,7 +49,8 @@ final class Events {
    * OrderConfirmed carries an {@code eventId} (consumer dedupe) plus the buyer and settled amount
    * so downstream consumers can react to the sale without a callback to order-svc — customer-svc
    * accrues loyalty from {@code customerId}/{@code total} (guest orders send {@code
-   * customerId:null} and earn nothing). Emitted exactly once, at full payment (see
+   * customerId:null} and earn nothing), and purchase-svc posts the sale to the ledger from {@code
+   * total} and {@code taxAmount} (17.7). Emitted exactly once, at full payment (see
    * OrderRepository.applyPaymentCaptured).
    */
   static OutboxRow orderConfirmed(
@@ -59,9 +60,12 @@ final class Events {
       String channel,
       UUID customerId,
       BigDecimal total,
+      BigDecimal taxAmount,
       String currency) {
     String customerPart = customerId != null ? "\"" + customerId + "\"" : "null";
     String amount = total != null ? total.toPlainString() : "0";
+    // The VAT inside the total, so the ledger can post revenue net of it (17.7).
+    String tax = taxAmount != null ? taxAmount.toPlainString() : "0";
     String cur = java.util.Objects.requireNonNull(currency, "an order always carries its currency");
     return new OutboxRow(
         "OrderConfirmed",
@@ -82,6 +86,8 @@ final class Events {
             + customerPart
             + ",\"total\":"
             + amount
+            + ",\"taxAmount\":"
+            + tax
             + ",\"currency\":\""
             + esc(cur)
             + "\"}");

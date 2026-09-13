@@ -421,4 +421,10 @@ public final class Mappers {
                         e.supplierId(), e.name(), e.reason(), e.net()))
             .toList());
   }
+
+  /** An order left open on the sales receipts clearing account, in wire form. */
+  public static Dtos.SalesClearingResponse toDto(Domain.OpenClearing o) {
+    return new Dtos.SalesClearingResponse(
+        o.orderId(), o.storeId(), o.balance(), o.firstPosted(), o.lastPosted());
+  }
 }

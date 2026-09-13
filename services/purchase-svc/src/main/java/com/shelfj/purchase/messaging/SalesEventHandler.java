@@ -1,0 +1,108 @@
+package com.shelfj.purchase.messaging;
+
+import com.shelfj.purchase.domain.SalesPosting;
+import com.shelfj.purchase.service.SalesPostingService;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonValue;
+import java.io.StringReader;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Reads the three events that describe a sale and hands them to {@link SalesPostingService} (17.7).
+ * A payload that is not what its producer sends is logged and skipped: redelivering it would never
+ * make it parse, and the order's clearing stays open on the report where someone will see it.
+ */
+@ApplicationScoped
+public class SalesEventHandler {
+
+  private static final Logger LOG = System.getLogger(SalesEventHandler.class.getName());
+
+  @Inject SalesPostingService postings;
+
+  /** {@code OrderConfirmed}: the sale, with its total, the VAT inside it and its currency. */
+  public void orderConfirmed(String json) {
+    try {
+      JsonObject o = parse(json);
+      if (!"OrderConfirmed".equals(o.getString("eventType", ""))) return;
+      postings.postSale(
+          UUID.fromString(o.getString("eventId")),
+          UUID.fromString(o.getString("tenantId")),
+          UUID.fromString(o.getString("orderId")),
+          optUuid(o, "storeId"),
+          o.getJsonNumber("total").bigDecimalValue(),
+          o.getJsonNumber("taxAmount").bigDecimalValue(),
+          o.getString("currency"));
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "OrderConfirmed not posted, malformed: " + e.getMessage());
+    }
+  }
+
+  /** {@code PaymentCaptured}: one tender, keyed by its payment id. */
+  public void paymentCaptured(String json) {
+    try {
+      JsonObject o = parse(json);
+      if (!"PaymentCaptured".equals(o.getString("eventType", ""))) return;
+      postings.postTender(
+          UUID.fromString(o.getString("paymentId")),
+          UUID.fromString(o.getString("tenantId")),
+          UUID.fromString(o.getString("orderId")),
+          optUuid(o, "storeId"),
+          o.getString("method", null),
+          o.getJsonNumber("amount").bigDecimalValue());
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "PaymentCaptured not posted, malformed: " + e.getMessage());
+    }
+  }
+
+  /**
+   * {@code PaymentRefunded}: the refund and each tender's share of it. A refund announced before
+   * payment-svc sent shares posts its whole amount to unallocated receipts rather than guessing.
+   */
+  public void paymentRefunded(String json) {
+    try {
+      JsonObject o = parse(json);
+      if (!"PaymentRefunded".equals(o.getString("eventType", ""))) return;
+      List<SalesPosting.Allocation> shares = new ArrayList<>();
+      UUID store = null;
+      if (o.containsKey("tenders")
+          && o.get("tenders").getValueType() == JsonValue.ValueType.ARRAY) {
+        for (JsonObject t : o.getJsonArray("tenders").getValuesAs(JsonObject.class)) {
+          shares.add(
+              new SalesPosting.Allocation(
+                  t.getString("method", null), t.getJsonNumber("amount").bigDecimalValue()));
+          if (store == null) store = optUuid(t, "storeId");
+        }
+      }
+      if (shares.isEmpty()) {
+        shares.add(new SalesPosting.Allocation(null, o.getJsonNumber("amount").bigDecimalValue()));
+      }
+      postings.postRefund(
+          UUID.fromString(o.getString("eventId")),
+          UUID.fromString(o.getString("tenantId")),
+          UUID.fromString(o.getString("orderId")),
+          store,
+          shares);
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "PaymentRefunded not posted, malformed: " + e.getMessage());
+    }
+  }
+
+  private static JsonObject parse(String json) {
+    try (var reader = Json.createReader(new StringReader(json))) {
+      return reader.readObject();
+    }
+  }
+
+  private static UUID optUuid(JsonObject o, String key) {
+    if (!o.containsKey(key) || o.isNull(key)) return null;
+    String v = o.getString(key, "");
+    return v.isBlank() ? null : UUID.fromString(v);
+  }
+}

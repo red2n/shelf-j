@@ -33,6 +33,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 public class NominalLedgerResource {
 
   @Inject PurchaseService svc;
+  @Inject com.shelfj.purchase.service.SalesPostingService sales;
   @Inject TenantContext ctx;
 
   /**
@@ -103,6 +104,30 @@ public class NominalLedgerResource {
   @Path("/journals/{id}")
   public Response journal(@PathParam("id") UUID id) {
     return Response.ok(ApiResponse.ok(Mappers.toDto(svc.getJournal(ctx, id)))).build();
+  }
+
+  @Operation(
+      summary = "Orders left open on the sales receipts clearing account",
+      description =
+          "Sales reach the ledger from order-svc and payment-svc (17.7): each tender debits its"
+              + " control account and credits 1105 sales receipts clearing, and the confirmed sale"
+              + " debits 1105 and credits sales and VAT output, so a sale paid in full nets 1105 to"
+              + " zero for its order. These are the orders that did not: taken but never confirmed,"
+              + " confirmed for more than was taken, or refunded against a sale the ledger never"
+              + " saw. Oldest first; ?storeId= narrows to one store, ?limit= up to 200. Management"
+              + " only.")
+  @APIResponse(responseCode = "200", description = "Open orders, oldest first")
+  @APIResponse(responseCode = "400", description = "A storeId that is not a UUID")
+  @APIResponse(responseCode = "403", description = "Not a management role, or not that store's")
+  @GET
+  @Path("/sales-clearing")
+  public Response salesClearing(
+      @QueryParam("storeId") String storeId,
+      @QueryParam("limit") @jakarta.ws.rs.DefaultValue("50") int limit) {
+    return Response.ok(
+            ApiResponse.ok(
+                sales.openClearing(ctx, storeId, limit).stream().map(Mappers::toDto).toList()))
+        .build();
   }
 
   @Operation(

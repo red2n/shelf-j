@@ -21,11 +21,16 @@ final class Events {
    * (18.5). Null is written as an absent field, which older consumers never read.
    */
   static OutboxRow paymentCaptured(
-      UUID tenantId, UUID paymentId, UUID orderId, java.math.BigDecimal amount, String method) {
+      UUID tenantId,
+      UUID paymentId,
+      UUID orderId,
+      java.math.BigDecimal amount,
+      String method,
+      UUID storeId) {
     String methodField =
-        method == null || method.isBlank()
-            ? ""
-            : ",\"method\":\"" + method.replace("\\", "").replace("\"", "") + "\"";
+        method == null || method.isBlank() ? "" : ",\"method\":\"" + clean(method) + "\"";
+    // The store the tender was taken at, so the ledger posts it to that store (17.7).
+    String storeField = storeId == null ? "" : ",\"storeId\":\"" + storeId + "\"";
     return new OutboxRow(
         "PaymentCaptured",
         "shelfj.payment.payment-captured",
@@ -33,8 +38,8 @@ final class Events {
         paymentId,
         String.format(
             "{\"eventType\":\"PaymentCaptured\",\"tenantId\":\"%s\",\"paymentId\":\"%s\","
-                + "\"orderId\":\"%s\",\"amount\":%s%s}",
-            tenantId, paymentId, orderId, amount.toPlainString(), methodField));
+                + "\"orderId\":\"%s\",\"amount\":%s%s%s}",
+            tenantId, paymentId, orderId, amount.toPlainString(), methodField, storeField));
   }
 
   static OutboxRow paymentFailed(UUID tenantId, UUID paymentId, UUID orderId) {
@@ -55,7 +60,20 @@ final class Events {
    * automatic order-event refund path.
    */
   static OutboxRow paymentRefunded(
-      UUID tenantId, UUID refundId, UUID orderId, java.math.BigDecimal amount) {
+      UUID tenantId,
+      UUID refundId,
+      UUID orderId,
+      java.math.BigDecimal amount,
+      java.util.List<com.shelfj.payment.domain.Domain.RefundAllocation> tenders) {
+    // Each tender's share, so the ledger credits the control account the money left from (17.7).
+    StringBuilder shares = new StringBuilder();
+    for (var t : tenders) {
+      if (shares.length() > 0) shares.append(',');
+      shares.append("{\"paymentId\":\"").append(t.paymentId()).append('"');
+      if (t.method() != null) shares.append(",\"method\":\"").append(clean(t.method())).append('"');
+      if (t.storeId() != null) shares.append(",\"storeId\":\"").append(t.storeId()).append('"');
+      shares.append(",\"amount\":").append(t.amount().toPlainString()).append('}');
+    }
     return new OutboxRow(
         "PaymentRefunded",
         "shelfj.payment.payment-refunded",
@@ -63,7 +81,11 @@ final class Events {
         refundId,
         String.format(
             "{\"eventId\":\"%s\",\"eventType\":\"PaymentRefunded\",\"tenantId\":\"%s\","
-                + "\"refundId\":\"%s\",\"orderId\":\"%s\",\"amount\":%s}",
-            Ids.newId(), tenantId, refundId, orderId, amount.toPlainString()));
+                + "\"refundId\":\"%s\",\"orderId\":\"%s\",\"amount\":%s,\"tenders\":[%s]}",
+            Ids.newId(), tenantId, refundId, orderId, amount.toPlainString(), shares));
+  }
+
+  private static String clean(String s) {
+    return s.replace("\\", "").replace("\"", "");
   }
 }

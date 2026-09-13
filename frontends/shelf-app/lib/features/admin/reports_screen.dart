@@ -2026,6 +2026,67 @@ class _Caveat extends StatelessWidget {
 /// ledger purchase-svc writes on goods receipts, supplier invoices, credit
 /// notes, intercompany invoices and manual journals — and the way in to post
 /// a manual journal.
+/// Sales whose takings did not clear (17.7). A sale paid in full nets 1105
+/// Sales Receipts Clearing to zero for its order, so each order listed here is
+/// a reconciliation exception: taken but never confirmed, confirmed for more
+/// than was taken, or refunded against a sale the ledger never saw.
+class _SalesClearingCard extends ConsumerWidget {
+  const _SalesClearingCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final async = ref.watch(salesClearingProvider);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+      child: async.when(
+        loading: () => const LinearProgressIndicator(),
+        error: (e, _) => Text(
+          friendlyError(e, fallback: 'Could not load the sales clearing.'),
+          style: TextStyle(color: cs.error),
+        ),
+        data: (open) {
+          if (open.isEmpty) {
+            return Row(children: [
+              Icon(Icons.check_circle_outline, color: cs.primary, size: 18),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                    "Every sale's takings cleared: nothing is left open on 1105 Sales Receipts Clearing."),
+              ),
+            ]);
+          }
+          return Card(
+            color: cs.tertiaryContainer,
+            child: ExpansionTile(
+              key: const Key('sales-clearing'),
+              leading: Icon(Icons.rule_folder_outlined, color: cs.onTertiaryContainer),
+              title: Text('Open sales clearing: ${open.length} order(s)'),
+              subtitle: const Text(
+                  'Takings that did not clear against a confirmed sale. Check each before closing the period.'),
+              children: [
+                for (final o in open)
+                  ListTile(
+                    dense: true,
+                    title: Text('Order ${shortRef(o.orderId)}'),
+                    subtitle: Text([
+                      if (o.balance < 0) 'taken, no confirmed sale' else 'confirmed for more than was taken',
+                      if (o.firstPosted != null) 'since ${o.firstPosted}',
+                    ].join(' · ')),
+                    trailing: Text(
+                      o.balance.toStringAsFixed(2),
+                      style: const TextStyle(fontFamily: 'monospace'),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _TrialBalanceReport extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2108,6 +2169,7 @@ class _TrialBalanceReport extends ConsumerWidget {
                 ),
               ]),
             ),
+          const _SalesClearingCard(),
           const SizedBox(height: 12),
           if (report.rows.isEmpty)
             const Expanded(

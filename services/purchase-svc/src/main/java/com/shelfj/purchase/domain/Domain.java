@@ -51,6 +51,57 @@ public final class Domain {
   public static final String SOURCE_SETTLEMENT = "SETTLEMENT";
   public static final String SOURCE_JOURNAL = "JOURNAL";
   public static final String SOURCE_SUPPLIER_PAYMENT = "SUPPLIER_PAYMENT";
+  public static final String SOURCE_SALE = "SALE";
+  public static final String SOURCE_SALE_TENDER = "SALE_TENDER";
+  public static final String SOURCE_SALE_REFUND = "SALE_REFUND";
+
+  // ── Sales and tender posting (17.7) ───────────────────────────────────────────
+  public static final String CODE_SALES_CLEARING = "1105";
+  public static final String NAME_SALES_CLEARING = "Sales Receipts Clearing";
+  public static final String CODE_CASH_IN_TILLS = "1210";
+  public static final String NAME_CASH_IN_TILLS = "Cash in Tills";
+  public static final String CODE_CARD_CLEARING = "1250";
+  public static final String NAME_CARD_CLEARING = "Card and Wallet Clearing";
+  public static final String CODE_UNALLOCATED_RECEIPTS = "1299";
+  public static final String NAME_UNALLOCATED_RECEIPTS = "Unallocated Receipts";
+  public static final String CODE_GIFT_CARD_LIABILITY = "2310";
+  public static final String NAME_GIFT_CARD_LIABILITY = "Gift Card and Voucher Liability";
+  public static final String CODE_STORE_CREDIT_LIABILITY = "2320";
+  public static final String NAME_STORE_CREDIT_LIABILITY = "Store Credit Liability";
+  public static final String CODE_SALES = "4010";
+  public static final String NAME_SALES = "Sales";
+
+  /** A confirmed sale as order-svc announced it. */
+  public record SalesOrder(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      String currency,
+      java.math.BigDecimal total,
+      java.math.BigDecimal taxAmount) {}
+
+  /** A captured tender as payment-svc announced it. */
+  public record SalesTender(
+      UUID tenantId,
+      UUID paymentId,
+      UUID orderId,
+      UUID storeId,
+      String method,
+      java.math.BigDecimal amount) {}
+
+  /**
+   * An order whose receipts clearing has not netted to zero: paid but never confirmed, confirmed
+   * but not fully paid, or refunded against a sale the ledger never saw.
+   *
+   * @param balance debit less credit on 1105 for the order; negative means money received that no
+   *     sale has claimed
+   */
+  public record OpenClearing(
+      UUID orderId,
+      UUID storeId,
+      java.math.BigDecimal balance,
+      java.time.LocalDate firstPosted,
+      java.time.LocalDate lastPosted) {}
 
   // ── Supplier ──────────────────────────────────────────────────────────────────
   /**

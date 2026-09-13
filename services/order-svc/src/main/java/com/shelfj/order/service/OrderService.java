@@ -749,6 +749,7 @@ public class OrderService {
             order.channel(),
             order.customerId(),
             order.total(),
+            order.taxAmount(),
             order.currency());
     Order confirmed =
         isTillSale(order.channel(), order.fulfilmentType())
@@ -1740,6 +1741,7 @@ public class OrderService {
                 order.channel(),
                 order.customerId(),
                 order.total(),
+                order.taxAmount(),
                 order.currency()),
             fulfilEvent);
 

@@ -135,7 +135,7 @@ public class PaymentService {
             storeId);
 
     return repo.createTender(
-        tender, Events.paymentCaptured(tenantId, tenderId, orderId, req.amount(), method));
+        tender, Events.paymentCaptured(tenantId, tenderId, orderId, req.amount(), method, storeId));
   }
 
   /**
@@ -180,7 +180,7 @@ public class PaymentService {
     return repo.createTender(
         tender,
         Events.paymentCaptured(
-            tenantId, tenderId, orderId, req.amount(), PaymentTender.METHOD_STORE_CREDIT));
+            tenantId, tenderId, orderId, req.amount(), PaymentTender.METHOD_STORE_CREDIT, storeId));
   }
 
   /**
@@ -321,7 +321,15 @@ public class PaymentService {
     // transaction with the payment row locked — checking them here first would be a TOCTOU race
     // letting two concurrent refunds together exceed the original payment.
     return repo.createRefundGuarded(
-        refund, Events.paymentRefunded(tenantId, refundId, orderId, req.amount()));
+        refund,
+        Events.paymentRefunded(
+            tenantId,
+            refundId,
+            orderId,
+            req.amount(),
+            List.of(
+                new com.shelfj.payment.domain.Domain.RefundAllocation(
+                    UUID.fromString(req.paymentId()), method, req.amount(), null))));
   }
 
   /**
@@ -386,6 +394,6 @@ public class PaymentService {
         orderId,
         requestedAmount,
         reason,
-        amt -> Events.paymentRefunded(tenantId, refundBatchId, orderId, amt));
+        (amt, shares) -> Events.paymentRefunded(tenantId, refundBatchId, orderId, amt, shares));
   }
 }
