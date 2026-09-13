@@ -27,6 +27,30 @@ public final class Domain {
   public static final String NAME_IC_SALES = "Sales - Intercompany";
   public static final String NAME_IC_PURCHASES = "Purchases - Intercompany";
 
+  /**
+   * Stock on hand, the asset a goods receipt recognises. The default when the store has no GL
+   * mapping in inventory-svc; a mapped store posts to its own code instead (17.3).
+   */
+  public static final String CODE_STOCK = "1001";
+
+  /**
+   * Goods received not invoiced: the accrual a receipt credits and the invoice debits, so that
+   * between the lorry and the paperwork the liability is visible and after both it nets to zero.
+   */
+  public static final String CODE_GRIR = "2109";
+
+  public static final String NAME_STOCK = "Stock";
+  public static final String NAME_GRIR = "Goods Received Not Invoiced";
+
+  // ── What produced a ledger posting ────────────────────────────────────────────
+  public static final String SOURCE_GOODS_RECEIPT = "GOODS_RECEIPT";
+  public static final String SOURCE_SUPPLIER_INVOICE = "SUPPLIER_INVOICE";
+  public static final String SOURCE_INVOICE_REVERSAL = "INVOICE_REVERSAL";
+  public static final String SOURCE_CREDIT_NOTE = "CREDIT_NOTE";
+  public static final String SOURCE_INTERCOMPANY = "INTERCOMPANY";
+  public static final String SOURCE_SETTLEMENT = "SETTLEMENT";
+  public static final String SOURCE_JOURNAL = "JOURNAL";
+
   // ── Supplier ──────────────────────────────────────────────────────────────────
   public record Supplier(
       UUID id,
@@ -185,8 +209,17 @@ public final class Domain {
   /** Every line agreed with the order and the receipt, inside tolerance. */
   public static final String INVOICE_MATCHED = "MATCHED";
 
-  /** At least one line did not. Captured anyway — flagging never blocks. */
+  /** At least one line did not. Captured and posted anyway; blocked for payment until resolved. */
   public static final String INVOICE_FLAGGED = "FLAGGED";
+
+  /** A flagged invoice a manager released for payment, with a reason. */
+  public static final String INVOICE_APPROVED = "APPROVED";
+
+  /**
+   * A flagged invoice a manager refused. Its posting is reversed and the quantities it billed no
+   * longer count against the order, so the supplier's corrected invoice matches cleanly.
+   */
+  public static final String INVOICE_REJECTED = "REJECTED";
 
   /**
    * A supplier's invoice against a purchase order.
@@ -194,7 +227,15 @@ public final class Domain {
    * @param invoiceNumber the supplier's own reference as printed on the document; unique per
    *     supplier case-insensitively, because the commonest way to pay twice is for two people to
    *     type the same paper reference on the same morning
-   * @param status {@link #INVOICE_MATCHED} or {@link #INVOICE_FLAGGED}
+   * @param status {@link #INVOICE_MATCHED}, {@link #INVOICE_FLAGGED}, {@link #INVOICE_APPROVED} or
+   *     {@link #INVOICE_REJECTED}
+   * @param dueDate the invoice date plus the supplier's payment terms
+   * @param statedGross the total printed on the document, when keyed; null when not
+   * @param headerVariances comma-separated header-level variances, empty when the header agreed
+   * @param postedAt when the AP posting was written; null for invoices captured before postings
+   * @param resolvedAt when a flagged invoice was approved or rejected
+   * @param resolvedBy who decided
+   * @param resolutionReason why
    */
   public record SupplierInvoice(
       UUID id,
@@ -210,7 +251,20 @@ public final class Domain {
       String status,
       Instant matchedAt,
       UUID createdBy,
-      Instant createdAt) {}
+      Instant createdAt,
+      LocalDate dueDate,
+      BigDecimal statedGross,
+      String headerVariances,
+      Instant postedAt,
+      Instant resolvedAt,
+      UUID resolvedBy,
+      String resolutionReason) {
+
+    /** Whether the invoice may be paid: matched, or flagged and then approved. */
+    public boolean payable() {
+      return INVOICE_MATCHED.equals(status) || INVOICE_APPROVED.equals(status);
+    }
+  }
 
   /**
    * One line of a supplier invoice, carrying the match outcome it was captured with.
@@ -318,5 +372,39 @@ public final class Domain {
       BigDecimal credit,
       String description,
       UUID sourceRef,
-      Instant createdAt) {}
+      Instant createdAt,
+      UUID journalId,
+      String sourceType,
+      UUID storeId) {}
+
+  /** One journal read back whole: its lines and the header they share. */
+  public record Journal(
+      UUID journalId,
+      LocalDate entryDate,
+      String description,
+      String sourceType,
+      UUID sourceRef,
+      UUID storeId,
+      java.util.List<NominalLedgerEntry> lines) {
+
+    public BigDecimal totalDebit() {
+      return lines.stream().map(NominalLedgerEntry::debit).reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    public BigDecimal totalCredit() {
+      return lines.stream()
+          .map(NominalLedgerEntry::credit)
+          .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+  }
+
+  /** One nominal code's movement and balance over a trial balance's range. */
+  public record TrialBalanceRow(
+      String nominalCode, String nominalName, BigDecimal debit, BigDecimal credit) {
+
+    /** Debit less credit: positive for an asset or expense balance, negative for a liability. */
+    public BigDecimal balance() {
+      return debit.subtract(credit);
+    }
+  }
 }

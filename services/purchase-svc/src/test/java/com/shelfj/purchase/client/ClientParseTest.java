@@ -120,4 +120,55 @@ class ClientParseTest {
         comparesEqualTo(new BigDecimal("0.2")));
     assertThat(PricingClient.parseRates("nonsense"), is(anEmptyMap()));
   }
+
+  // ── inventory-svc: the store's GL mapping and its accounting periods ───────
+
+  @Test
+  @DisplayName("The store-level GL mapping is the row with no zone; a zone's row is not it")
+  void storeNominalCode() {
+    String body =
+        "{\"data\":[{\"id\":\"a\",\"zoneId\":\"01a0-zone\",\"nominalCode\":\"1002\"},"
+            + "{\"id\":\"b\",\"zoneId\":null,\"nominalCode\":\" 1005 \"}]}";
+    assertThat(InventoryClient.parseStoreNominalCode(body), is(Optional.of("1005")));
+    // The key absent altogether is also store-level: JSON-B omits nulls.
+    assertThat(
+        InventoryClient.parseStoreNominalCode("{\"data\":[{\"nominalCode\":\"1006\"}]}"),
+        is(Optional.of("1006")));
+  }
+
+  @Test
+  @DisplayName("No mapping, no data, a code that is not a code, or a body that is not JSON: empty")
+  void storeNominalCodeAbsent() {
+    assertThat(InventoryClient.parseStoreNominalCode("{\"data\":[]}"), is(Optional.empty()));
+    assertThat(InventoryClient.parseStoreNominalCode("{\"data\":null}"), is(Optional.empty()));
+    assertThat(InventoryClient.parseStoreNominalCode("{}"), is(Optional.empty()));
+    assertThat(
+        InventoryClient.parseStoreNominalCode(
+            "{\"data\":[{\"zoneId\":\"z\",\"nominalCode\":\"1002\"}]}"),
+        is(Optional.empty()));
+    // A mapping written with a code the ledger's column cannot hold is not a code to post to.
+    assertThat(
+        InventoryClient.parseStoreNominalCode(
+            "{\"data\":[{\"nominalCode\":\"1001; DROP TABLE x\"}]}"),
+        is(Optional.empty()));
+    assertThat(InventoryClient.parseStoreNominalCode("not json"), is(Optional.empty()));
+  }
+
+  @Test
+  @DisplayName(
+      "Periods are read with their date and status; a row with an unreadable date is skipped")
+  void periods() {
+    String body =
+        "{\"data\":[{\"id\":\"a\",\"periodDate\":\"2026-06-01\",\"status\":\"CLOSED\"},"
+            + "{\"id\":\"b\",\"periodDate\":\"June\",\"status\":\"OPEN\"},"
+            + "{\"id\":\"c\",\"periodDate\":\"2026-07-01\",\"status\":\"OPEN\"},"
+            + "{\"id\":\"d\",\"status\":\"OPEN\"}]}";
+    var periods = InventoryClient.parsePeriods(body);
+    assertThat(periods.size(), is(2));
+    assertThat(periods.get(0).periodDate(), is(java.time.LocalDate.of(2026, 6, 1)));
+    assertThat(periods.get(0).status(), is("CLOSED"));
+    assertThat(periods.get(1).status(), is("OPEN"));
+    assertThat(InventoryClient.parsePeriods("{\"data\":null}").size(), is(0));
+    assertThat(InventoryClient.parsePeriods("garbage").size(), is(0));
+  }
 }

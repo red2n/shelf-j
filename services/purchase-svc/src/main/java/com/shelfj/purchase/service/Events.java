@@ -167,6 +167,50 @@ final class Events {
         json);
   }
 
+  /**
+   * A flagged invoice was rejected: its input VAT must leave the return, and its posting has been
+   * reversed here. Same topic as capture, so the consumer that projected the invoice reverses it.
+   *
+   * @param tenantId the owning tenant
+   * @param inv the rejected invoice, its figures as captured
+   * @param eventId the event's own id — derived from the invoice id so a retried rejection is one
+   *     event, not two
+   * @return the outbox row
+   */
+  static OutboxRow supplierInvoiceRejected(
+      UUID tenantId, Domain.SupplierInvoice inv, UUID eventId) {
+    String json =
+        "{\"eventId\":\""
+            + eventId
+            + "\",\"eventType\":\"SupplierInvoiceRejected\",\"tenantId\":\""
+            + tenantId
+            + "\",\"invoiceId\":\""
+            + inv.id()
+            + "\",\"poId\":\""
+            + inv.poId()
+            + "\",\"supplierId\":\""
+            + inv.supplierId()
+            + "\",\"invoiceNumber\":\""
+            + inv.invoiceNumber().replace("\\", "\\\\").replace("\"", "\\\"")
+            + "\",\"invoiceDate\":\""
+            + inv.invoiceDate()
+            + "\",\"currency\":\""
+            + inv.currency()
+            + "\",\"netAmount\":"
+            + inv.netAmount().toPlainString()
+            + ",\"vatAmount\":"
+            + inv.vatAmount().toPlainString()
+            + ",\"grossAmount\":"
+            + inv.grossAmount().toPlainString()
+            + "}";
+    return new OutboxRow(
+        "SupplierInvoiceRejected",
+        "shelfj.purchase.supplier-invoice-captured",
+        tenantId,
+        inv.id(),
+        json);
+  }
+
   static OutboxRow intercompanyInvoiceRaised(UUID tenantId, UUID invoiceId) {
     return new OutboxRow(
         "IntercompanyInvoiceRaised",

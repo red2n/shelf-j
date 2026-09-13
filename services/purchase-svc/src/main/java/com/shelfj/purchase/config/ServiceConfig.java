@@ -201,20 +201,42 @@ public class ServiceConfig extends BaseServiceConfig {
   @ConfigProperty(name = "shelfj.purchase.match.tolerance.price-percent", defaultValue = "0")
   BigDecimal matchPricePercent;
 
-  /** Accepted quantity difference, as a percentage of what was received. Zero by default. */
+  /** How far below the order a price may be; defaults to the upper band, i.e. symmetric. */
+  @Inject
+  @ConfigProperty(name = "shelfj.purchase.match.tolerance.price-lower-percent")
+  Optional<BigDecimal> matchPriceLowerPercent;
+
+  /** The most a unit price may differ from the order's in money; unset for no absolute limit. */
+  @Inject
+  @ConfigProperty(name = "shelfj.purchase.match.tolerance.price-absolute")
+  Optional<BigDecimal> matchPriceAbsolute;
+
   @Inject
   @ConfigProperty(name = "shelfj.purchase.match.tolerance.qty-percent", defaultValue = "0")
   BigDecimal matchQtyPercent;
 
+  /** The most units a line may bill above what was received; unset for no absolute limit. */
+  @Inject
+  @ConfigProperty(name = "shelfj.purchase.match.tolerance.qty-absolute")
+  Optional<BigDecimal> matchQtyAbsolute;
+
+  /** How far the supplier's stated total may differ from their own lines plus VAT. */
+  @Inject
+  @ConfigProperty(name = "shelfj.purchase.match.tolerance.total-absolute", defaultValue = "0")
+  BigDecimal matchTotalAbsolute;
+
   /**
-   * The configured three-way match tolerances.
-   *
-   * @return the accepted price and quantity percentages; both zero by default, which surfaces any
-   *     difference at all
-   * @throws IllegalStateException at first use if either percentage is negative
+   * The match tolerance this deployment runs with. Every band defaults to exact, which surfaces
+   * every difference; widening one is a procurement policy, made in configuration.
    */
   public ThreeWayMatch.Tolerance matchTolerance() {
-    return new ThreeWayMatch.Tolerance(matchPricePercent, matchQtyPercent);
+    return new ThreeWayMatch.Tolerance(
+        matchPricePercent,
+        matchPriceLowerPercent.orElse(matchPricePercent),
+        matchPriceAbsolute.orElse(null),
+        matchQtyPercent,
+        matchQtyAbsolute.orElse(null),
+        matchTotalAbsolute);
   }
 
   /**

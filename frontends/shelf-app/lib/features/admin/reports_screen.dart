@@ -7,6 +7,7 @@ import '../../shared/util/file_download.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import 'post_journal_dialog.dart';
 import '../../shared/util/short_ref.dart';
 
 enum _ReportType {
@@ -25,6 +26,7 @@ enum _ReportType {
   tenderMix,
   stockTurn,
   deadStock,
+  trialBalance,
 }
 
 class ReportsScreen extends ConsumerStatefulWidget {
@@ -191,6 +193,8 @@ class _ReportContent extends ConsumerWidget {
         return _StockTurnReport();
       case _ReportType.deadStock:
         return _DeadStockReport();
+      case _ReportType.trialBalance:
+        return _TrialBalanceReport();
     }
   }
 }
@@ -774,6 +778,8 @@ String _reportLabel(_ReportType r) {
       return 'Stock Turn';
     case _ReportType.deadStock:
       return 'Dead Stock';
+    case _ReportType.trialBalance:
+      return 'Trial Balance';
   }
 }
 
@@ -809,6 +815,8 @@ IconData _reportIcon(_ReportType r) {
       return Icons.autorenew_outlined;
     case _ReportType.deadStock:
       return Icons.hourglass_bottom_outlined;
+    case _ReportType.trialBalance:
+      return Icons.account_balance_outlined;
   }
 }
 
@@ -2008,6 +2016,155 @@ class _Caveat extends StatelessWidget {
                   TextStyle(color: cs.onTertiaryContainer, fontSize: 13)),
         ),
       ]),
+    );
+  }
+}
+
+// ── The trial balance (17.1) ─────────────────────────────────────────────────
+
+/// Every nominal code's debits, credits and balance over the range, from the
+/// ledger purchase-svc writes on goods receipts, supplier invoices, credit
+/// notes, intercompany invoices and manual journals — and the way in to post
+/// a manual journal.
+class _TrialBalanceReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final range = ref.watch(reportDateRangeProvider);
+    final async = ref.watch(trialBalanceProvider);
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading trial balance…'),
+      error: (e, _) => ErrorView(
+        message: friendlyError(e, fallback: 'Could not load the trial balance.'),
+        onRetry: () => ref.invalidate(trialBalanceProvider),
+      ),
+      data: (report) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ReportHeader(
+            title: 'Trial Balance',
+            subtitle:
+                'Debits, credits and balance per nominal code${range.from != null ? ' · ${range.from} → ${range.to}' : ''}',
+            onRefresh: () => ref.invalidate(trialBalanceProvider),
+            onExportCsv: report.rows.isEmpty
+                ? null
+                : () {
+                    final buf = StringBuffer(
+                        'nominalCode,nominalName,debit,credit,balance\n');
+                    for (final r in report.rows) {
+                      buf.writeln([
+                        _csvEscape(r.nominalCode),
+                        _csvEscape(r.nominalName),
+                        r.debit.toStringAsFixed(2),
+                        r.credit.toStringAsFixed(2),
+                        r.balance.toStringAsFixed(2),
+                      ].join(','));
+                    }
+                    _downloadCsv('trial-balance.csv', buf.toString());
+                  },
+          ),
+          Row(
+            children: [
+              const Expanded(child: _DateRangeBar()),
+              Padding(
+                padding: const EdgeInsets.only(right: 24),
+                child: FilledButton.tonalIcon(
+                  key: const Key('post-journal'),
+                  onPressed: () => showDialog<bool>(
+                    context: context,
+                    builder: (_) => const PostJournalDialog(),
+                  ).then((posted) {
+                    if (posted == true) ref.invalidate(trialBalanceProvider);
+                  }),
+                  icon: const Icon(Icons.post_add_outlined, size: 18),
+                  label: const Text('Post journal'),
+                ),
+              ),
+            ],
+          ),
+          // Every posting the service writes balances, so two totals that
+          // disagree mean a fault, not a finding — and it must not be read as
+          // a figure.
+          if (!report.balanced)
+            Container(
+              margin: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: cs.errorContainer,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(children: [
+                Icon(Icons.warning_amber_outlined, color: cs.onErrorContainer),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'The ledger does not balance over this range: debits '
+                    '${report.totalDebit.toStringAsFixed(2)} against credits '
+                    '${report.totalCredit.toStringAsFixed(2)}. Every posting the '
+                    'service writes balances, so this is a fault to investigate '
+                    'before these figures are used.',
+                    style: TextStyle(color: cs.onErrorContainer, fontSize: 13),
+                  ),
+                ),
+              ]),
+            ),
+          const SizedBox(height: 12),
+          if (report.rows.isEmpty)
+            const Expanded(
+                child: Center(child: Text('Nothing was posted in this range.')))
+          else
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Card(
+                  child: DataTable(
+                    headingRowColor:
+                        WidgetStatePropertyAll(cs.surfaceContainerHigh),
+                    columnSpacing: 24,
+                    columns: const [
+                      DataColumn(label: Text('Code')),
+                      DataColumn(label: Text('Account')),
+                      DataColumn(label: Text('Debit'), numeric: true),
+                      DataColumn(label: Text('Credit'), numeric: true),
+                      DataColumn(label: Text('Balance'), numeric: true),
+                    ],
+                    rows: [
+                      ...report.rows.map((r) => DataRow(cells: [
+                            DataCell(Text(r.nominalCode,
+                                style:
+                                    const TextStyle(fontFamily: 'monospace'))),
+                            DataCell(Text(r.nominalName)),
+                            DataCell(Text(r.debit.toStringAsFixed(2))),
+                            DataCell(Text(r.credit.toStringAsFixed(2))),
+                            DataCell(Text(
+                              r.balance.toStringAsFixed(2),
+                              style: TextStyle(
+                                  color: r.balance < 0 ? cs.outline : null),
+                            )),
+                          ])),
+                      DataRow(cells: [
+                        const DataCell(Text('Total',
+                            style: TextStyle(fontWeight: FontWeight.bold))),
+                        const DataCell(Text('')),
+                        DataCell(Text(report.totalDebit.toStringAsFixed(2),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(report.totalCredit.toStringAsFixed(2),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(Text(
+                            (report.totalDebit - report.totalCredit)
+                                .toStringAsFixed(2),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold))),
+                      ]),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

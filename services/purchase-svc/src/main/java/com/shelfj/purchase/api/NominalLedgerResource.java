@@ -1,18 +1,25 @@
 package com.shelfj.purchase.api;
 
+import com.shelfj.purchase.dto.Dtos.PostJournalRequest;
 import com.shelfj.purchase.mapper.Mappers;
 import com.shelfj.purchase.service.PurchaseService;
 import com.shelfj.web.ApiResponse;
 import com.shelfj.web.Cursor;
+import com.shelfj.web.Parsing;
 import com.shelfj.web.TenantContext;
+import com.shelfj.web.Validations;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
@@ -21,6 +28,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 @RequestScoped
 @Path("/nominal-ledger")
 @Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
 @Tag(name = "Nominal Ledger")
 public class NominalLedgerResource {
 
@@ -42,9 +50,12 @@ public class NominalLedgerResource {
   @Operation(
       summary = "List nominal ledger entries",
       description =
-          "Read-only double-entry journal view, optionally filtered by nominal code and date range"
-              + " (?code=&from=&to=), where from and to are yyyy-MM-dd. Cursor-paginated:"
-              + " ?after=<meta.nextCursor>&limit=1-100.")
+          "The double-entry ledger, line by line, optionally filtered by nominal code and date"
+              + " range (?code=&from=&to=), where from and to are yyyy-MM-dd. Cursor-paginated:"
+              + " ?after=<meta.nextCursor>&limit=1-100. Written by goods receipts (Dr Stock / Cr"
+              + " GR/IR), supplier invoices (Dr GR/IR, Dr VAT input / Cr Creditors), credit notes,"
+              + " rejections, intercompany invoices and manual journals; every posting balances"
+              + " and its lines share a journalId.")
   @APIResponse(
       responseCode = "400",
       description = "Malformed pagination cursor, or from/to not in yyyy-MM-dd form")
@@ -59,6 +70,65 @@ public class NominalLedgerResource {
     var entries = page.items().stream().map(Mappers::toDto).toList();
     return Response.ok(
             ApiResponse.ok(entries, new ApiResponse.Meta(ctx.requestId(), page.nextCursor())))
+        .build();
+  }
+
+  @Operation(
+      summary = "Post a manual journal",
+      description =
+          "Management only. Two to fifty lines, each a debit or a credit and never both, that"
+              + " balance to the penny; a nominal code is one to ten letters or digits. A store,"
+              + " when named, must be one the caller may operate in and its accounting period for"
+              + " the date must be open. Returns the journal with its journalId.")
+  @APIResponse(responseCode = "201", description = "Journal posted")
+  @APIResponse(
+      responseCode = "400",
+      description = "A line that is neither a debit nor a credit, or both, or a bad code or date")
+  @APIResponse(responseCode = "403", description = "Not a management role, or not the store's")
+  @APIResponse(responseCode = "409", description = "The period is closed (PURCHASE_PERIOD_CLOSED)")
+  @APIResponse(responseCode = "422", description = "Debits and credits disagree")
+  @POST
+  @Path("/journals")
+  public Response postJournal(PostJournalRequest req) {
+    Validations.validate(req);
+    return Response.status(201)
+        .entity(ApiResponse.ok(Mappers.toDto(svc.postJournal(ctx, req))))
+        .build();
+  }
+
+  @Operation(summary = "One journal, whole", description = "Management only.")
+  @APIResponse(responseCode = "200", description = "The journal and its lines")
+  @APIResponse(responseCode = "404", description = "Journal not found in this tenant")
+  @GET
+  @Path("/journals/{id}")
+  public Response journal(@PathParam("id") UUID id) {
+    return Response.ok(ApiResponse.ok(Mappers.toDto(svc.getJournal(ctx, id)))).build();
+  }
+
+  @Operation(
+      summary = "The trial balance",
+      description =
+          "Management only. Every nominal code's debits, credits and balance over ?from=&to="
+              + " (yyyy-MM-dd, both optional), optionally for one store (?storeId=). totalDebit"
+              + " equals totalCredit on a ledger where every posting balanced, which is every"
+              + " posting this service writes; balanced=false is a fault to investigate, not a"
+              + " figure to report.")
+  @APIResponse(responseCode = "200", description = "The trial balance")
+  @APIResponse(responseCode = "400", description = "A range that ends before it starts")
+  @GET
+  @Path("/trial-balance")
+  public Response trialBalance(
+      @QueryParam("from") String from,
+      @QueryParam("to") String to,
+      @QueryParam("storeId") String storeId) {
+    var rows = svc.trialBalance(ctx, from, to, storeId);
+    return Response.ok(
+            ApiResponse.ok(
+                Mappers.toTrialBalance(
+                    rows,
+                    from == null ? null : Parsing.date(from, "from"),
+                    to == null ? null : Parsing.date(to, "to"),
+                    Parsing.optionalUuid(storeId, "storeId"))))
         .build();
   }
 }

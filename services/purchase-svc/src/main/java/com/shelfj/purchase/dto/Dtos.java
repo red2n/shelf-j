@@ -384,7 +384,24 @@ public final class Dtos {
                       + " placed in is not a variance to flag, it is a different document.")
           String currency,
       @Schema(description = "VAT charged on the invoice. Defaults to zero.") BigDecimal vatAmount,
-      @NotNull List<CaptureSupplierInvoiceLine> lines) {}
+      @Schema(
+              description =
+                  "The total printed on the supplier's document, when keyed. Compared with the sum"
+                      + " of the lines plus VAT; a difference beyond the configured tolerance flags"
+                      + " the invoice with TOTAL_MISMATCH.")
+          @DecimalMin("0")
+          BigDecimal statedGross,
+      @NotNull @Size(max = 200) List<CaptureSupplierInvoiceLine> lines) {}
+
+  @Schema(
+      name = "ResolveSupplierInvoiceRequest",
+      description = "The decision on a flagged invoice, and why.")
+  public record ResolveSupplierInvoiceRequest(
+      @Schema(description = "APPROVE releases it for payment; REJECT reverses its posting.")
+          @NotBlank
+          @Size(max = 16)
+          String action,
+      @NotBlank @Size(max = 500) String reason) {}
 
   @Schema(name = "CaptureSupplierInvoiceLine")
   public record CaptureSupplierInvoiceLine(
@@ -409,10 +426,22 @@ public final class Dtos {
       @Schema(
               description =
                   "MATCHED when every line agreed with the order and the receipt inside tolerance;"
-                      + " FLAGGED when at least one did not. Flagging never blocks capture.")
+                      + " FLAGGED when at least one did not. Flagging never blocks capture."
+                      + " APPROVED and REJECTED are a manager's decision on a flagged one.")
           String status,
       UUID createdBy,
       Instant createdAt,
+      @Schema(description = "Invoice date plus the supplier's payment terms.") LocalDate dueDate,
+      @Schema(description = "The supplier's stated total, when keyed.") BigDecimal statedGross,
+      @Schema(description = "Header-level variances: TOTAL_MISMATCH. Empty when the header agreed.")
+          List<String> headerVariances,
+      @Schema(description = "When the AP posting was written; null for invoices captured before.")
+          Instant postedAt,
+      @Schema(description = "Whether it may be paid: MATCHED, or FLAGGED and then APPROVED.")
+          boolean payable,
+      Instant resolvedAt,
+      UUID resolvedBy,
+      String resolutionReason,
       List<SupplierInvoiceMatchLineResponse> lines) {}
 
   @Schema(
@@ -466,6 +495,15 @@ public final class Dtos {
   public record NominalLedgerEntryResponse(
       UUID id,
       UUID tenantId,
+      @Schema(description = "The lines of one double-entry posting share a journal id.")
+          UUID journalId,
+      @Schema(
+              description =
+                  "GOODS_RECEIPT, SUPPLIER_INVOICE, INVOICE_REVERSAL, CREDIT_NOTE, INTERCOMPANY,"
+                      + " SETTLEMENT or JOURNAL; null for rows written before postings existed.")
+          String sourceType,
+      @Schema(description = "The store the posting belongs to; null for a tenant-level journal.")
+          UUID storeId,
       LocalDate entryDate,
       @Schema(description = "Nominal account code, e.g. 1100 (Debtors), 2100 (Creditors).")
           String nominalCode,
@@ -476,4 +514,57 @@ public final class Dtos {
       @Schema(description = "UUID of the source document (invoice, settlement, etc.).")
           UUID sourceRef,
       Instant createdAt) {}
+
+  @Schema(name = "JournalLineRequest", description = "One line: a debit or a credit, never both.")
+  public record JournalLineRequest(
+      @NotBlank @Size(max = 10) String nominalCode,
+      @Size(max = 100) String nominalName,
+      @DecimalMin("0") BigDecimal debit,
+      @DecimalMin("0") BigDecimal credit) {}
+
+  @Schema(name = "PostJournalRequest", description = "A manual journal. Must balance.")
+  public record PostJournalRequest(
+      @Schema(description = "yyyy-MM-dd") @NotBlank @Size(max = 10) String entryDate,
+      @NotBlank @Size(max = 500) String description,
+      @Schema(description = "The store it belongs to, optional; its period must be open.")
+          String storeId,
+      @NotNull @Size(min = 2, max = 50) @Valid List<JournalLineRequest> lines) {}
+
+  @Schema(name = "JournalResponse", description = "One posting, read back whole.")
+  public record JournalResponse(
+      UUID journalId,
+      LocalDate entryDate,
+      String description,
+      String sourceType,
+      UUID sourceRef,
+      UUID storeId,
+      BigDecimal totalDebit,
+      BigDecimal totalCredit,
+      List<NominalLedgerEntryResponse> lines) {}
+
+  @Schema(name = "TrialBalanceRowResponse")
+  public record TrialBalanceRowResponse(
+      String nominalCode,
+      String nominalName,
+      BigDecimal debit,
+      BigDecimal credit,
+      @Schema(
+              description =
+                  "Debit less credit: positive for assets and expenses, negative for liabilities"
+                      + " and income.")
+          BigDecimal balance) {}
+
+  @Schema(
+      name = "TrialBalanceResponse",
+      description =
+          "Every nominal code's movement over the range. balanced is the ledger's own invariant:"
+              + " false means a posting was written that does not balance.")
+  public record TrialBalanceResponse(
+      LocalDate from,
+      LocalDate to,
+      UUID storeId,
+      List<TrialBalanceRowResponse> rows,
+      BigDecimal totalDebit,
+      BigDecimal totalCredit,
+      boolean balanced) {}
 }

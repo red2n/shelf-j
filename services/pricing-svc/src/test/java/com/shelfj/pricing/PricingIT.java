@@ -1208,9 +1208,16 @@ class PricingIT {
 
   private static String invoiceEvent(
       String eventId, String tenant, String vat, String net, String date) {
+    return invoiceEvent("SupplierInvoiceCaptured", eventId, tenant, vat, net, date);
+  }
+
+  private static String invoiceEvent(
+      String type, String eventId, String tenant, String vat, String net, String date) {
     return "{\"eventId\":\""
         + eventId
-        + "\",\"eventType\":\"SupplierInvoiceCaptured\",\"tenantId\":\""
+        + "\",\"eventType\":\""
+        + type
+        + "\",\"tenantId\":\""
         + tenant
         + "\",\"invoiceId\":\""
         + eventId
@@ -1266,5 +1273,36 @@ class PricingIT {
     // No output VAT was recorded in this test, so box 5 is |0 - 30| = 30.00: a reclaim.
     assertThat(body, containsString("\"box5\":30.00"));
     assertThat(body, containsString("\"fitToFile\":true"));
+  }
+
+  @Test
+  void aRejectedInvoiceLeavesBoxFour() {
+    // 07.7: an invoice a manager rejected was reversed in purchase-svc's ledger; its input VAT
+    // must leave the return too, or the business reclaims VAT on a bill it refused to pay.
+    String captured = com.shelfj.ids.Ids.newId().toString();
+    assertThat(
+        invoiceEvents.handle(invoiceEvent(captured, T, "40.00", "200.00", "2023-05-10")), is(true));
+    String rejection = com.shelfj.ids.Ids.newId().toString();
+    assertThat(
+        invoiceEvents.handle(
+            invoiceEvent("SupplierInvoiceRejected", rejection, T, "40.00", "200.00", "2023-05-10")),
+        is(true));
+    // Redelivered: the reversal is projected once.
+    assertThat(
+        invoiceEvents.handle(
+            invoiceEvent("SupplierInvoiceRejected", rejection, T, "40.00", "200.00", "2023-05-10")),
+        is(false));
+    // A malformed rejection is skipped, not thrown.
+    assertThat(
+        invoiceEvents.handle(
+            "{\"eventType\":\"SupplierInvoiceRejected\",\"tenantId\":\"" + T + "\"}"),
+        is(false));
+
+    Response vr =
+        getAs("/vat-return?from=2023-04-01T00:00:00Z&to=2023-07-01T00:00:00Z", T, "OWNER");
+    assertThat(vr.getStatus(), is(200));
+    String body = vr.readEntity(String.class);
+    assertThat(body, containsString("\"box4\":0.00"));
+    assertThat(body, containsString("\"box7\":0.00"));
   }
 }

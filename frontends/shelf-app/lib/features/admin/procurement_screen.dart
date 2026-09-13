@@ -11,6 +11,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
 import 'procurement_providers.dart';
+import 'resolve_invoice_dialog.dart';
 import 'widgets/variant_picker.dart';
 
 class ProcurementScreen extends ConsumerWidget {
@@ -237,22 +238,34 @@ class _SupplierInvoicesTab extends ConsumerWidget {
   }
 }
 
-class _InvoiceCard extends StatelessWidget {
+class _InvoiceCard extends ConsumerWidget {
   final SupplierInvoice invoice;
   const _InvoiceCard(this.invoice);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final flagged = invoice.flagged;
+    final cs = Theme.of(context).colorScheme;
+    final auth = ref.watch(authNotifierProvider).value;
+    // The server refuses anyone else with 403; not offering the buttons spares a
+    // storekeeper a pair of controls that can only ever fail.
+    final canDecide = auth is AuthAuthenticated && auth.isManager;
+    final leadingIcon = invoice.rejected
+        ? Icons.block_outlined
+        : flagged
+            ? Icons.warning_amber_rounded
+            : Icons.check_circle_outline;
+    final leadingColor = invoice.rejected
+        ? cs.outline
+        : flagged
+            ? context.status.warning
+            : context.status.success;
     return Card(
       child: ExpansionTile(
         // Flagged invoices open by default. A variance the buyer has to click to
         // discover is a variance that waits until the payment run.
         initiallyExpanded: flagged,
-        leading: Icon(
-          flagged ? Icons.warning_amber_rounded : Icons.check_circle_outline,
-          color: flagged ? context.status.warning : context.status.success,
-        ),
+        leading: Icon(leadingIcon, color: leadingColor),
         title: Row(
           children: [
             Text(
@@ -270,7 +283,11 @@ class _InvoiceCard extends StatelessWidget {
               currencyCode: invoice.currency,
             ),
             if (invoice.invoiceDate != null) invoice.invoiceDate!,
+            // The date accounts payable schedules by, beside the one on the
+            // document.
+            if (invoice.dueDate != null) 'due ${invoice.dueDate}',
             'PO ${_short(invoice.poId, 8)}',
+            if (invoice.postedAt != null) 'posted',
           ].join(' · '),
         ),
         children: [
@@ -279,9 +296,67 @@ class _InvoiceCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // The header check comes before the lines: an invoice whose own
+                // total does not add up is wrong before any line is compared.
+                if (invoice.headerVariances.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        for (final v in invoice.headerVariances)
+                          _VarianceChip(v,
+                              detail: v == 'TOTAL_MISMATCH' &&
+                                      invoice.statedGross != null
+                                  ? ' (${_trim(invoice.statedGross!)} stated, '
+                                      '${_trim(invoice.grossAmount)} from the lines)'
+                                  : null),
+                      ],
+                    ),
+                  ),
                 const _MatchHeaderRow(),
                 const Divider(height: 12),
                 for (final l in invoice.lines) _MatchRow(l, invoice.currency),
+                if (invoice.resolutionReason != null &&
+                    invoice.resolutionReason!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      '${invoice.approved ? 'Approved' : 'Rejected'}: ${invoice.resolutionReason}',
+                      style: TextStyle(fontSize: 12, color: cs.outline),
+                    ),
+                  ),
+                if (flagged && canDecide)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        OutlinedButton.icon(
+                          key: Key('reject-invoice-${invoice.id}'),
+                          onPressed: () => showDialog<bool>(
+                            context: context,
+                            builder: (_) => ResolveInvoiceDialog(
+                                invoice: invoice, approve: false),
+                          ),
+                          icon: const Icon(Icons.block_outlined, size: 18),
+                          label: const Text('Reject'),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          key: Key('approve-invoice-${invoice.id}'),
+                          onPressed: () => showDialog<bool>(
+                            context: context,
+                            builder: (_) => ResolveInvoiceDialog(
+                                invoice: invoice, approve: true),
+                          ),
+                          icon: const Icon(Icons.check, size: 18),
+                          label: const Text('Approve for payment'),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),
@@ -402,7 +477,8 @@ class _MatchRow extends StatelessWidget {
 /// supplier needs the sentence, not the constant.
 class _VarianceChip extends StatelessWidget {
   final String code;
-  const _VarianceChip(this.code);
+  final String? detail;
+  const _VarianceChip(this.code, {this.detail});
 
   static const _labels = {
     'INVOICED_ABOVE_RECEIVED': 'Billed for more than arrived',
@@ -410,6 +486,7 @@ class _VarianceChip extends StatelessWidget {
     'NOT_ON_ORDER': 'Not on the purchase order',
     'PRICE_ABOVE_ORDER': 'Charged above the agreed price',
     'PRICE_BELOW_ORDER': 'Charged below the agreed price',
+    'TOTAL_MISMATCH': 'The stated total does not add up',
   };
 
   @override
@@ -422,7 +499,7 @@ class _VarianceChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
-        _labels[code] ?? code,
+        '${_labels[code] ?? code}${detail ?? ''}',
         style: TextStyle(
           fontSize: 11,
           color: warn,
@@ -439,8 +516,11 @@ class _InvoiceStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final flagged = status == 'FLAGGED';
-    final fg = flagged ? context.status.warning : context.status.success;
+    final fg = switch (status) {
+      'FLAGGED' => context.status.warning,
+      'REJECTED' => Theme.of(context).colorScheme.outline,
+      _ => context.status.success,
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(

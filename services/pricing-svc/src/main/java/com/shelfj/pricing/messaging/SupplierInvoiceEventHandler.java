@@ -18,11 +18,13 @@ import java.util.UUID;
 
 /**
  * Projects {@code SupplierInvoiceCaptured} (purchase-svc) into input VAT (SJ-D39): the figures box
- * 4 and box 7 of the VAT return are made of, keyed by invoice date as the tax point.
+ * 4 and box 7 of the VAT return are made of, keyed by invoice date as the tax point. A {@code
+ * SupplierInvoiceRejected} on the same topic (07.7) is projected as the negative of the same
+ * figures, so an invoice a manager refused leaves the return the way it left the ledger.
  *
- * <p>Idempotent on the event id — which is the invoice id — so a redelivered event records nothing
- * twice. A malformed event is logged and skipped, never retried into a loop; a transient database
- * failure propagates so the consumer loop redelivers.
+ * <p>Idempotent on the event id — the invoice id for a capture, derived from it for a rejection —
+ * so a redelivered event records nothing twice. A malformed event is logged and skipped, never
+ * retried into a loop; a transient database failure propagates so the consumer loop redelivers.
  */
 @ApplicationScoped
 public class SupplierInvoiceEventHandler {
@@ -46,9 +48,14 @@ public class SupplierInvoiceEventHandler {
     BigDecimal vat;
     BigDecimal gross;
     Instant taxPoint;
+    boolean rejected;
     try {
       obj = Json.createReader(new StringReader(json)).readObject();
-      if (!"SupplierInvoiceCaptured".equals(obj.getString("eventType", ""))) {
+      String type = obj.getString("eventType", "");
+      // A rejection carries the same figures as the capture it undoes. It is projected as a
+      // second, negative row rather than a delete: the table is append-only, and box 4 is a sum.
+      rejected = "SupplierInvoiceRejected".equals(type);
+      if (!rejected && !"SupplierInvoiceCaptured".equals(type)) {
         return false;
       }
       eventId = UUID.fromString(obj.getString("eventId"));
@@ -60,8 +67,13 @@ public class SupplierInvoiceEventHandler {
       taxPoint =
           LocalDate.parse(obj.getString("invoiceDate")).atStartOfDay(ZoneOffset.UTC).toInstant();
     } catch (RuntimeException e) {
-      LOG.log(Level.WARNING, "Malformed SupplierInvoiceCaptured skipped: " + e.getMessage());
+      LOG.log(Level.WARNING, "Malformed supplier invoice event skipped: " + e.getMessage());
       return false;
+    }
+    if (rejected) {
+      net = net.negate();
+      vat = vat.negate();
+      gross = gross.negate();
     }
     var row =
         new InputTaxTransaction(
@@ -80,7 +92,8 @@ public class SupplierInvoiceEventHandler {
     boolean recorded = repo.recordInputTaxOnce(row);
     LOG.log(
         Level.INFO,
-        "SupplierInvoiceCaptured {0}: {1}",
+        "{0} {1}: {2}",
+        rejected ? "SupplierInvoiceRejected" : "SupplierInvoiceCaptured",
         invoiceId,
         recorded ? "input VAT " + vat + " recorded" : "already recorded");
     return recorded;

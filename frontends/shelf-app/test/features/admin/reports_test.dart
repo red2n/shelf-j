@@ -351,6 +351,59 @@ void main() {
       expect(find.text('Export CSV'), findsOneWidget);
     });
 
+    testWidgets('the trial balance is reachable, with its journal button', (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['trial-balance'] = '{"data":{"rows":[{"nominalCode":"1001",'
+            '"nominalName":"Stock","debit":150,"credit":0,"balance":150},'
+            '{"nominalCode":"2109","nominalName":"Goods Received Not Invoiced",'
+            '"debit":0,"credit":150,"balance":-150}],"totalDebit":150,'
+            '"totalCredit":150,"balanced":true}}';
+      await pump(tester, adapter);
+      // The sidebar scrolls and the sixteenth entry starts below the fold.
+      await tester.ensureVisible(find.text('Trial Balance', skipOffstage: false).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Trial Balance').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Goods Received Not Invoiced'), findsOneWidget);
+      expect(find.text('-150.00'), findsOneWidget);
+      expect(find.text('Export CSV'), findsOneWidget);
+      expect(find.byKey(const Key('post-journal')), findsOneWidget);
+      expect(find.textContaining('does not balance'), findsNothing);
+      // The picker's dates go through as they are: this endpoint takes days.
+      final call = adapter.callTo('trial-balance');
+      expect(call.query['from'], matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
+      expect(call.query['to'], matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
+    });
+
+    testWidgets('a ledger that does not balance warns instead of printing two totals',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['trial-balance'] = '{"data":{"rows":[{"nominalCode":"1001",'
+            '"nominalName":"Stock","debit":150,"credit":0,"balance":150}],'
+            '"totalDebit":150,"totalCredit":0,"balanced":false}}';
+      await pump(tester, adapter);
+      // The sidebar scrolls and the sixteenth entry starts below the fold.
+      await tester.ensureVisible(find.text('Trial Balance', skipOffstage: false).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Trial Balance').last);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('The ledger does not balance over this range'), findsOneWidget);
+      expect(find.textContaining('fault to investigate'), findsOneWidget);
+    });
+
+    testWidgets('an empty trial balance says so, and opens the journal dialog', (tester) async {
+      await pump(tester, _RecordingAdapter());
+      // The sidebar scrolls and the sixteenth entry starts below the fold.
+      await tester.ensureVisible(find.text('Trial Balance', skipOffstage: false).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Trial Balance').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Nothing was posted in this range.'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('post-journal')));
+      await tester.pumpAndSettle();
+      expect(find.text('Post a journal'), findsOneWidget);
+    });
+
     testWidgets('the four that finish the pack are reachable too', (tester) async {
       await pump(tester, _RecordingAdapter());
       for (final label in [

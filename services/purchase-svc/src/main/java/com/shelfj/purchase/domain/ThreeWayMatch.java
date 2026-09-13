@@ -105,25 +105,79 @@ public final class ThreeWayMatch {
    * @param pricePercent accepted per-unit price difference, as a percentage of the ordered price
    * @param qtyPercent accepted quantity difference, as a percentage of the received quantity
    */
-  public record Tolerance(BigDecimal pricePercent, BigDecimal qtyPercent) {
+  /**
+   * How much disagreement is accepted, in the shape SAP's tolerance keys use: a percentage
+   * <em>and</em> an absolute amount for each check, with separate upper and lower limits on price.
+   *
+   * <p>The stricter limit governs. A price 5% over the order on a £2 item is 10p, which a 5% band
+   * accepts; the same 5% on a £2,000 item is £100, which an absolute limit of £20 refuses. Neither
+   * figure alone describes what a buyer will tolerate. An absolute limit of {@code null} means "not
+   * checked"; a percentage of zero means exact.
+   *
+   * @param priceUpperPercent how far above the order's price a line may be, in percent
+   * @param priceLowerPercent how far below; a supplier under-charging is still a variance, but a
+   *     business may reasonably care less
+   * @param priceAbsolute the most a unit price may differ from the order's in money, either way;
+   *     null for no absolute limit
+   * @param qtyPercent how far above what was received a line may bill, in percent
+   * @param qtyAbsolute the most units a line may bill above what was received; null for none
+   * @param totalAbsolute how far the supplier's stated total may differ from the sum of their own
+   *     lines plus VAT, in money; zero for exact
+   */
+  public record Tolerance(
+      BigDecimal priceUpperPercent,
+      BigDecimal priceLowerPercent,
+      BigDecimal priceAbsolute,
+      BigDecimal qtyPercent,
+      BigDecimal qtyAbsolute,
+      BigDecimal totalAbsolute) {
 
-    /** Zero on both axes: every difference, however small, is surfaced. */
-    public static final Tolerance EXACT = new Tolerance(BigDecimal.ZERO, BigDecimal.ZERO);
+    public static final Tolerance EXACT =
+        new Tolerance(BigDecimal.ZERO, BigDecimal.ZERO, null, BigDecimal.ZERO, null, ZERO_TOTAL);
 
-    /**
-     * Rejects a nonsensical tolerance at construction rather than letting it skew a match.
-     *
-     * @throws IllegalArgumentException when either percentage is null or negative
-     */
+    /** A symmetric percentage band on price and a percentage band on quantity, nothing absolute. */
+    public Tolerance(BigDecimal pricePercent, BigDecimal qtyPercent) {
+      this(pricePercent, pricePercent, null, qtyPercent, null, ZERO_TOTAL);
+    }
+
     public Tolerance {
-      if (pricePercent == null || qtyPercent == null) {
+      if (priceUpperPercent == null
+          || priceLowerPercent == null
+          || qtyPercent == null
+          || totalAbsolute == null) {
         throw new IllegalArgumentException("tolerances must not be null");
       }
-      if (pricePercent.signum() < 0 || qtyPercent.signum() < 0) {
+      if (priceUpperPercent.signum() < 0
+          || priceLowerPercent.signum() < 0
+          || qtyPercent.signum() < 0
+          || totalAbsolute.signum() < 0
+          || (priceAbsolute != null && priceAbsolute.signum() < 0)
+          || (qtyAbsolute != null && qtyAbsolute.signum() < 0)) {
         throw new IllegalArgumentException("tolerances must not be negative");
       }
     }
+
+    /** The symmetric price percentage, for callers that predate the asymmetric form. */
+    public BigDecimal pricePercent() {
+      return priceUpperPercent;
+    }
+
+    /**
+     * Whether the supplier's stated total disagrees with the figures by more than is tolerated.
+     *
+     * @param stated the total printed on the document
+     * @param computed the sum of the lines plus VAT
+     * @return {@code true} when they differ by more than {@link #totalAbsolute}
+     */
+    public boolean totalMismatch(BigDecimal stated, BigDecimal computed) {
+      return stated.subtract(computed).abs().compareTo(totalAbsolute) > 0;
+    }
   }
+
+  private static final BigDecimal ZERO_TOTAL = BigDecimal.ZERO;
+
+  /** The header-level variance: the supplier's own total does not add up. */
+  public static final String TOTAL_MISMATCH = "TOTAL_MISMATCH";
 
   /** One line of the invoice being matched. */
   public record InvoicedLine(UUID variantId, BigDecimal qty, BigDecimal unitPrice) {}
@@ -173,12 +227,13 @@ public final class ThreeWayMatch {
         variances.add(NOT_ON_ORDER);
       } else if (received.signum() == 0) {
         variances.add(NOT_RECEIVED);
-      } else if (exceeds(before.add(line.qty()), received, tolerance.qtyPercent())) {
+      } else if (exceeds(
+          before.add(line.qty()), received, tolerance.qtyPercent(), tolerance.qtyAbsolute())) {
         variances.add(INVOICED_ABOVE_RECEIVED);
       }
 
       if (orderedPrice != null && line.unitPrice() != null) {
-        int cmp = comparePrice(line.unitPrice(), orderedPrice, tolerance.pricePercent());
+        int cmp = comparePrice(line.unitPrice(), orderedPrice, tolerance);
         if (cmp > 0) {
           variances.add(PRICE_ABOVE_ORDER);
         } else if (cmp < 0) {
@@ -201,33 +256,39 @@ public final class ThreeWayMatch {
   }
 
   /**
-   * Whether {@code actual} is above {@code allowed} by more than {@code percent} of it.
+   * Whether {@code actual} is above {@code allowed} by more than the band allows.
    *
-   * <p>A zero allowance is compared exactly rather than by percentage: a percentage of zero is
-   * zero, so any invoiced quantity would exceed it, which is the right answer and worth reaching
-   * directly rather than through a multiplication that reads like it might not be.
+   * <p>A zero percentage is compared exactly rather than by percentage: a percentage of zero is
+   * zero, so any excess would exceed it, which is the right answer and worth reaching directly
+   * rather than through a multiplication that reads like it might not be. When an absolute limit is
+   * also set the narrower of the two bands governs.
    */
-  private static boolean exceeds(BigDecimal actual, BigDecimal allowed, BigDecimal percent) {
-    if (percent.signum() == 0) {
-      return actual.compareTo(allowed) > 0;
-    }
-    BigDecimal band = allowed.multiply(percent).divide(HUNDRED, 6, RoundingMode.HALF_UP);
-    return actual.compareTo(allowed.add(band)) > 0;
+  private static boolean exceeds(
+      BigDecimal actual, BigDecimal allowed, BigDecimal percent, BigDecimal absolute) {
+    return actual.compareTo(allowed.add(band(allowed, percent, absolute))) > 0;
   }
 
   /**
-   * Compares an invoiced price against the ordered one within tolerance.
-   *
-   * @return positive if above the band, negative if below it, zero if inside
+   * Compares an invoiced price with the ordered one: positive above the upper band, negative below
+   * the lower band, zero inside both.
    */
-  private static int comparePrice(BigDecimal invoiced, BigDecimal ordered, BigDecimal percent) {
-    if (percent.signum() == 0) {
-      return invoiced.compareTo(ordered);
-    }
-    BigDecimal band = ordered.abs().multiply(percent).divide(HUNDRED, 6, RoundingMode.HALF_UP);
-    if (invoiced.compareTo(ordered.add(band)) > 0) return 1;
-    if (invoiced.compareTo(ordered.subtract(band)) < 0) return -1;
+  private static int comparePrice(BigDecimal invoiced, BigDecimal ordered, Tolerance t) {
+    BigDecimal base = ordered.abs();
+    BigDecimal up = band(base, t.priceUpperPercent(), t.priceAbsolute());
+    BigDecimal down = band(base, t.priceLowerPercent(), t.priceAbsolute());
+    if (invoiced.compareTo(ordered.add(up)) > 0) return 1;
+    if (invoiced.compareTo(ordered.subtract(down)) < 0) return -1;
     return 0;
+  }
+
+  /** The allowance: {@code percent} of {@code base}, capped at {@code absolute} when one is set. */
+  private static BigDecimal band(BigDecimal base, BigDecimal percent, BigDecimal absolute) {
+    BigDecimal byPercent =
+        percent.signum() == 0
+            ? BigDecimal.ZERO
+            : base.multiply(percent).divide(HUNDRED, 6, RoundingMode.HALF_UP);
+    if (absolute == null) return byPercent;
+    return byPercent.min(absolute);
   }
 
   private static final BigDecimal HUNDRED = new BigDecimal("100");

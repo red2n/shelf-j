@@ -126,6 +126,16 @@ public final class Mappers {
         inv.status(),
         inv.createdBy(),
         inv.createdAt(),
+        inv.dueDate(),
+        inv.statedGross(),
+        inv.headerVariances() == null || inv.headerVariances().isBlank()
+            ? java.util.List.of()
+            : java.util.List.of(inv.headerVariances().split(",")),
+        inv.postedAt(),
+        inv.payable(),
+        inv.resolvedAt(),
+        inv.resolvedBy(),
+        inv.resolutionReason(),
         rows);
   }
 
@@ -238,6 +248,9 @@ public final class Mappers {
     return new NominalLedgerEntryResponse(
         e.id(),
         e.tenantId(),
+        e.journalId(),
+        e.sourceType(),
+        e.storeId(),
         e.entryDate(),
         e.nominalCode(),
         e.nominalName(),
@@ -294,5 +307,52 @@ public final class Mappers {
                     new com.shelfj.purchase.dto.Dtos.VendorReturnLineResponse(
                         l.id(), l.variantId(), l.qty(), l.unitPrice(), l.vatCode(), l.lineNet()))
             .toList());
+  }
+
+  /**
+   * Converts a journal to its wire form: the header its lines share and the lines.
+   *
+   * @param j the journal
+   * @return its API representation
+   */
+  public static Dtos.JournalResponse toDto(Domain.Journal j) {
+    return new Dtos.JournalResponse(
+        j.journalId(),
+        j.entryDate(),
+        j.description(),
+        j.sourceType(),
+        j.sourceRef(),
+        j.storeId(),
+        j.totalDebit(),
+        j.totalCredit(),
+        j.lines().stream().map(Mappers::toDto).toList());
+  }
+
+  /**
+   * Converts trial balance rows to the wire form, with the totals and whether they agree.
+   *
+   * @param rows one per nominal code
+   * @param from the range start, or null
+   * @param to the range end, or null
+   * @param storeId the store filter, or null
+   * @return the trial balance
+   */
+  public static Dtos.TrialBalanceResponse toTrialBalance(
+      java.util.List<Domain.TrialBalanceRow> rows,
+      java.time.LocalDate from,
+      java.time.LocalDate to,
+      java.util.UUID storeId) {
+    java.math.BigDecimal debit = java.math.BigDecimal.ZERO;
+    java.math.BigDecimal credit = java.math.BigDecimal.ZERO;
+    var out = new java.util.ArrayList<Dtos.TrialBalanceRowResponse>(rows.size());
+    for (Domain.TrialBalanceRow r : rows) {
+      debit = debit.add(r.debit());
+      credit = credit.add(r.credit());
+      out.add(
+          new Dtos.TrialBalanceRowResponse(
+              r.nominalCode(), r.nominalName(), r.debit(), r.credit(), r.balance()));
+    }
+    return new Dtos.TrialBalanceResponse(
+        from, to, storeId, out, debit, credit, debit.compareTo(credit) == 0);
   }
 }

@@ -164,7 +164,7 @@ This is the deepest part of the platform — everything about knowing what stock
 - **Picking rules** (e.g. pick the soonest-to-expire batch first, or the oldest-received) can be scoped to a store, category, or specific variant, with a defined zone priority order, and resolved on demand for "which batch/zone should I pick from for this line."
 
 **Costing & the books**
-- Each store/variant carries a configured **costing method** (e.g. FIFO or average cost), and stock activity can be locked behind **accounting periods** once closed, so a closed month's numbers can't shift underneath finance later. Zones can be mapped to a general-ledger code for accounting reconciliation.
+- Each store/variant carries a configured **costing method** (e.g. FIFO or average cost), and postings can be locked behind **accounting periods** once closed: a goods receipt, a supplier invoice, a credit note or a journal dated in a closed month is refused, so a closed month's numbers can't shift underneath finance later. A store can be mapped to a **general-ledger code**, and the ledger uses it — the stock a goods receipt recognises posts to the store's mapped code.
 
 **What the storefront sees:** customers only ever see an in-stock / out-of-stock flag for a store — actual on-hand counts are never exposed publicly.
 
@@ -185,7 +185,7 @@ This is the deepest part of the platform — everything about knowing what stock
 - **Suppliers** are onboarded with a name, country, currency, and VAT-registration flag.
 - A **purchase order** starts as a draft, has lines added (variant, quantity, cost, tax rate) with a running total, and is then submitted to the supplier.
 - When goods turn up, a **goods receipt** is recorded against the PO — confirming actual quantities received, which is what actually creates receivable stock in the relevant store/zone (see [§7](#7-inventory--warehouse-operations)). Partial and short deliveries are handled the same way, line by line.
-- For businesses with related entities trading stock between themselves, **intercompany invoices** raise a matched receivable/payable pair for an inter-org transfer and can be settled once paid, and a read-only **nominal ledger** gives a double-entry view of the resulting postings for reconciliation.
+- The **nominal ledger** is written by the documents: a goods receipt recognises the stock against a goods-received-not-invoiced accrual; a supplier invoice posts the creditor (and VAT input) against that accrual, dated the invoice, due by the supplier's terms, whether or not it matched — a variance blocks *payment*, not the posting; a manager **approves** a flagged invoice for payment or **rejects** it, a rejection reversing the posting line for line and taking the invoice back out of the VAT return; a supplier's credit note reverses the creditor. Finance posts **manual journals** that must balance, reads any journal whole, and reads the **trial balance** per store or for the whole business. For businesses with related entities trading stock between themselves, **intercompany invoices** raise a matched receivable/payable pair for an inter-org transfer and can be settled once paid, on the same ledger.
 
 ---
 

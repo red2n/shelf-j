@@ -352,6 +352,26 @@ class SupplierInvoice {
   final String status;
   final List<InvoiceMatchLine> lines;
 
+  /// Invoice date plus the supplier's payment terms — what accounts payable
+  /// schedules by.
+  final String? dueDate;
+
+  /// The total printed on the supplier's document, when the capturer keyed it.
+  final double? statedGross;
+
+  /// Header-level variances: `TOTAL_MISMATCH` when the supplier's own total does
+  /// not equal their own lines plus VAT.
+  final List<String> headerVariances;
+
+  /// When the AP posting was written; null for invoices captured before the
+  /// ledger was wired in.
+  final String? postedAt;
+
+  /// Whether it may be paid: MATCHED, or FLAGGED and then APPROVED.
+  final bool payable;
+  final String? resolvedAt;
+  final String? resolutionReason;
+
   const SupplierInvoice({
     required this.id,
     required this.poId,
@@ -363,9 +383,19 @@ class SupplierInvoice {
     required this.grossAmount,
     required this.status,
     required this.lines,
+    this.dueDate,
+    this.statedGross,
+    this.headerVariances = const [],
+    this.postedAt,
+    this.payable = false,
+    this.resolvedAt,
+    this.resolutionReason,
   });
 
+  /// Awaiting a manager's decision.
   bool get flagged => status == 'FLAGGED';
+  bool get approved => status == 'APPROVED';
+  bool get rejected => status == 'REJECTED';
 
   factory SupplierInvoice.fromJson(Map<String, dynamic> j) => SupplierInvoice(
     id: j['id'] as String? ?? '',
@@ -380,6 +410,15 @@ class SupplierInvoice {
     lines: ((j['lines'] as List?) ?? const [])
         .map((e) => InvoiceMatchLine.fromJson(e as Map<String, dynamic>))
         .toList(),
+    dueDate: j['dueDate'] as String?,
+    statedGross: (j['statedGross'] as num?)?.toDouble(),
+    headerVariances: ((j['headerVariances'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+    postedAt: j['postedAt'] as String?,
+    payable: j['payable'] == true,
+    resolvedAt: j['resolvedAt'] as String?,
+    resolutionReason: j['resolutionReason'] as String?,
   );
 }
 

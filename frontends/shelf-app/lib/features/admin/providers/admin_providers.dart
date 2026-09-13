@@ -1875,3 +1875,82 @@ final salesByStaffReportProvider =
       .map((e) => SalesByStaffRow.fromJson(e as Map<String, dynamic>))
       .toList();
 });
+
+// ── The trial balance (17.1): every nominal code's movement over a range ─────
+
+/// One nominal code on the trial balance. [balance] is debit less credit:
+/// positive for an asset or expense, negative for a liability or income.
+class TrialBalanceRow {
+  final String nominalCode;
+  final String nominalName;
+  final double debit;
+  final double credit;
+  final double balance;
+
+  const TrialBalanceRow({
+    required this.nominalCode,
+    required this.nominalName,
+    required this.debit,
+    required this.credit,
+    required this.balance,
+  });
+
+  factory TrialBalanceRow.fromJson(Map<String, dynamic> j) => TrialBalanceRow(
+        nominalCode: j['nominalCode'] as String? ?? '',
+        nominalName: j['nominalName'] as String? ?? '',
+        debit: (j['debit'] as num?)?.toDouble() ?? 0,
+        credit: (j['credit'] as num?)?.toDouble() ?? 0,
+        balance: (j['balance'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// The trial balance purchase-svc computes over its nominal ledger. [balanced]
+/// is the ledger's own invariant — every posting it writes balances — so
+/// `false` is a fault to investigate, not a figure to report, and the screen
+/// says so rather than printing two totals that disagree in the same font.
+class TrialBalance {
+  final List<TrialBalanceRow> rows;
+  final double totalDebit;
+  final double totalCredit;
+  final bool balanced;
+  final String? from;
+  final String? to;
+
+  const TrialBalance({
+    required this.rows,
+    required this.totalDebit,
+    required this.totalCredit,
+    required this.balanced,
+    this.from,
+    this.to,
+  });
+
+  factory TrialBalance.fromJson(Map<String, dynamic> j) => TrialBalance(
+        rows: ((j['rows'] as List?) ?? [])
+            .map((e) => TrialBalanceRow.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        totalDebit: (j['totalDebit'] as num?)?.toDouble() ?? 0,
+        totalCredit: (j['totalCredit'] as num?)?.toDouble() ?? 0,
+        balanced: j['balanced'] != false,
+        from: j['from'] as String?,
+        to: j['to'] as String?,
+      );
+}
+
+/// The trial balance for the selected range. Unlike the reporting-svc reports
+/// this endpoint takes plain dates (yyyy-MM-dd, inclusive at both ends), so the
+/// picker's values go through as they are.
+final trialBalanceProvider =
+    FutureProvider.autoDispose<TrialBalance>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final params = <String, dynamic>{};
+  if (range.from != null && range.from!.isNotEmpty) params['from'] = range.from;
+  if (range.to != null && range.to!.isNotEmpty) params['to'] = range.to;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.purchase}/nominal-ledger/trial-balance',
+        queryParameters: params.isEmpty ? null : params,
+      );
+  final body = resp.data['data'];
+  return TrialBalance.fromJson(
+      body is Map ? Map<String, dynamic>.from(body) : const {});
+});
