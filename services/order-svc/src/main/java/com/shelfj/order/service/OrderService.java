@@ -1312,7 +1312,9 @@ public class OrderService {
             method,
             Return.STATUS_COMPLETED,
             Instant.now(),
-            Instant.now());
+            Instant.now(),
+            // The audit trail (20.11) names who took the goods back; a return never used to.
+            ctx.userId());
 
     return repo.createReturn(
         ret,

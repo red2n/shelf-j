@@ -251,7 +251,9 @@ public final class Dtos {
       @Schema(description = "UUID of the product variant.") String variantId,
       @Schema(description = "UUID of the batch this movement affected, if applicable.")
           String batchId,
-      @Schema(description = "e.g. RECEIPT, SALE, ADJUSTMENT, TRANSFER_OUT, TRANSFER_IN.")
+      @Schema(
+              description =
+                  "RECEIVE, SALE, ADJUST, TRANSFER_OUT or TRANSFER_IN (a manual adjustment is ADJUST with refType ADJUSTMENT).")
           String type,
       @Schema(description = "Signed movement quantity.") BigDecimal qty,
       String refType,

@@ -119,6 +119,14 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Audit',
+      icon: Icons.manage_search_outlined,
+      selectedIcon: Icons.manage_search,
+    ),
+    route: '/admin/audit',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Customers',
       icon: Icons.groups_outlined,
       selectedIcon: Icons.groups,

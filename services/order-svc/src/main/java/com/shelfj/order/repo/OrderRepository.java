@@ -1139,8 +1139,8 @@ public class OrderRepository extends BaseOutboxRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO returns"
-                      + " (id,tenant_id,order_id,store_id,reason,refund_amount,refund_method,status)"
-                      + " VALUES (?,?,?,?,?,?,?,?)")) {
+                      + " (id,tenant_id,order_id,store_id,reason,refund_amount,refund_method,"
+                      + "status,created_by) VALUES (?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, ret.id());
             ps.setObject(2, ret.tenantId());
             ps.setObject(3, ret.orderId());
@@ -1149,6 +1149,7 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setBigDecimal(6, ret.refundAmount());
             ps.setString(7, ret.refundMethod());
             ps.setString(8, ret.status());
+            ps.setObject(9, ret.createdBy());
             ps.executeUpdate();
           }
           for (ReturnItem item : items) {
@@ -1183,7 +1184,7 @@ public class OrderRepository extends BaseOutboxRepository {
   public List<Return> findReturns(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, store_id, reason, refund_amount, refund_method,"
-            + " status, created_at, completed_at"
+            + " status, created_at, completed_at, created_by"
             + " FROM returns WHERE tenant_id=? AND order_id=? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
@@ -2074,7 +2075,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getString("refund_method"),
         rs.getString("status"),
         toInstant(rs.getObject("created_at", OffsetDateTime.class)),
-        toInstant(rs.getObject("completed_at", OffsetDateTime.class)));
+        toInstant(rs.getObject("completed_at", OffsetDateTime.class)),
+        rs.getObject("created_by", UUID.class));
   }
 
   private ReturnItem mapReturnItem(ResultSet rs) throws SQLException {

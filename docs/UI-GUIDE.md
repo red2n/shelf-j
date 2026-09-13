@@ -241,6 +241,10 @@ A sidebar (wide) / chip selector (narrow) between fifteen read-only tables, each
 
 ---
 
+### 4.11 Audit trail (management)
+
+The business audit trail (20.11): who discounted, voided, opened the drawer without a sale, cancelled an order, took goods back or wrote stock off — one timeline, newest first, each row naming the member of staff. Two sources: order-svc's `GET /admin/audit/events` (discounts, voids, no-sales, cancels, returns — every filter server-side, cursor-paged, *Load older* fetches the next page) and inventory-svc's movements ledger read as `type=ADJUST` only (a single bounded read; the period and the actor are applied on the client because that ledger filters by store and type alone). Filters: one store or all, a date range (the last 30 days by default), one kind of action or everything, one member of staff or anyone. Each row shows the action with its own qualifier (the discount and the role that authorised it, the status a cancel came from, a return's refund and method, an adjustment's signed quantity), when, who (*Unattributed* when the log recorded nobody), the order and the reason, with a *Till* or *Stock* chip for its source. **Export CSV** writes what is loaded. Nothing on the screen edits or deletes a row: every source is append-only on the server, a cashier or storekeeper is refused the trail before the service is reached, and a store-bound manager reads their own stores only. Management-only nav item, after Reports.
+
 ## 5. POS — cashier-facing terminal
 
 **Persona:** in-store cashiers (and managers acting as cashiers). Built to work as a real till on a tablet or desktop, and to degrade sensibly on a phone.

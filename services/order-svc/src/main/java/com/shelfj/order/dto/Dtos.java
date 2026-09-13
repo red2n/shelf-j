@@ -236,6 +236,10 @@ public final class Dtos {
       BigDecimal refundAmount,
       String refundMethod,
       String status,
+      @Schema(
+              description =
+                  "The member of staff who took the goods back; null before the audit trail.")
+          String createdBy,
       String createdAt,
       String completedAt,
       List<ReturnItemResponse> items) {}
@@ -810,4 +814,29 @@ public final class Dtos {
           String period,
       @Schema(description = "Letters, digits and hyphens, at most 16; blank for none.")
           String prefix) {}
+
+  // ── Business audit trail (20.11) ──────────────────────────────────────────
+
+  @Schema(
+      name = "AuditEventResponse",
+      description =
+          "One sensitive action from an append-only log: who, what, when, where, how much and"
+              + " why.")
+  public record AuditEventResponse(
+      String id,
+      @Schema(description = "DISCOUNT, VOID, NO_SALE, CANCEL or RETURN.") String type,
+      String occurredAt,
+      @Schema(description = "The member of staff responsible; null when the log recorded nobody.")
+          String actorId,
+      String storeId,
+      @Schema(description = "The order acted on; null for a no-sale.") String orderId,
+      @Schema(description = "The discount granted or the refund made; null for the rest.")
+          BigDecimal amount,
+      String reason,
+      @Schema(
+              description =
+                  "The log's own qualifier: the role that authorised a discount, the status a"
+                      + " cancel came from, a return's refund method, the supervisor who"
+                      + " authorised a no-sale.")
+          String detail) {}
 }
