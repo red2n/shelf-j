@@ -79,6 +79,18 @@ public class OrderService {
 
   // ── Orders ────────────────────────────────────────────────────────────────
 
+  /** OrderFulfilled for the whole order, each line carrying its net revenue (19.7). */
+  private static com.shelfj.service.OutboxRow fulfilledWithRevenue(
+      UUID tenantId, Order order, List<OrderItem> lines) {
+    return Events.orderFulfilled(
+        tenantId,
+        order.id(),
+        order.storeId(),
+        lines,
+        com.shelfj.order.domain.LineRevenue.unitNet(order, lines),
+        java.util.Currency.getInstance(order.currency()).getDefaultFractionDigits());
+  }
+
   private static boolean isBlank(String s) {
     return s == null || s.isBlank();
   }
@@ -758,8 +770,7 @@ public class OrderService {
                 orderId,
                 userId,
                 confirmEvent,
-                Events.orderFulfilled(
-                    tenantId, orderId, order.storeId(), repo.findOrderItems(tenantId, orderId)))
+                fulfilledWithRevenue(tenantId, order, repo.findOrderItems(tenantId, orderId)))
             : repo.transitionOrderStatus(
                 tenantId,
                 orderId,
@@ -1219,6 +1230,11 @@ public class OrderService {
         wanted.merge(Parsing.uuid(line.variantId(), "variantId"), line.qty(), BigDecimal::add);
       }
     }
+    // The lines' prices are read before the handover, so each part handed over carries its own
+    // share of the order's net revenue (19.7).
+    var unitNet =
+        com.shelfj.order.domain.LineRevenue.unitNet(order, repo.findOrderItems(tenantId, orderId));
+    int scale = java.util.Currency.getInstance(order.currency()).getDefaultFractionDigits();
     return repo.fulfilLines(
         tenantId,
         orderId,
@@ -1242,7 +1258,9 @@ public class OrderService {
                                 BigDecimal.ZERO,
                                 null,
                                 null))
-                    .toList()));
+                    .toList(),
+                unitNet,
+                scale));
   }
 
   // ── Returns ───────────────────────────────────────────────────────────────
@@ -1724,8 +1742,7 @@ public class OrderService {
     // written by the one that completes the sale; a partial tender or a redelivery writes nothing.
     var fulfilEvent =
         isTillSale(order.channel(), order.fulfilmentType())
-            ? Events.orderFulfilled(
-                tenantId, orderId, order.storeId(), repo.findOrderItems(tenantId, orderId))
+            ? fulfilledWithRevenue(tenantId, order, repo.findOrderItems(tenantId, orderId))
             : null;
     boolean completed =
         repo.applyPaymentCaptured(

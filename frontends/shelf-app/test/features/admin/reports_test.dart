@@ -256,7 +256,9 @@ void main() {
 
   group('the screen', () {
     Future<void> pump(WidgetTester tester, _RecordingAdapter adapter) async {
-      tester.view.physicalSize = const Size(1400, 1000);
+      // Tall enough that the whole sidebar is built: a report below the fold
+      // of a lazy list is not "unreachable", only unscrolled.
+      tester.view.physicalSize = const Size(1400, 1300);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -444,6 +446,7 @@ void main() {
         'Sales by Staff',
         'Tender Mix',
         'Stock Turn',
+        'Gross Margin',
         'Dead Stock',
       ]) {
         expect(find.text(label), findsWidgets, reason: '$label is not reachable');
@@ -514,6 +517,45 @@ void main() {
       expect(find.textContaining('no cost price'), findsOneWidget);
     });
 
+    testWidgets('gross margin marks a loss and declares what it could not price',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['gross-margin'] = '{"data":{"rows":['
+            '{"groupKey":"v-loss","revenue":10.00,"cogs":15.00,"grossMargin":-5.00,'
+            '"marginPercent":-50.0,"averageValue":50.00,"gmroi":-0.10,'
+            '"annualisedGmroi":-1.22,"uncostedSaleQty":0,"unpricedSaleQty":0},'
+            '{"groupKey":"v-unpriced","revenue":0,"cogs":3.00,"grossMargin":-3.00,'
+            '"marginPercent":null,"averageValue":0,"gmroi":null,'
+            '"annualisedGmroi":null,"uncostedSaleQty":0,"unpricedSaleQty":3.000}],'
+            '"historyComplete":true,"windowDays":30}}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Gross Margin').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('-50.0%'), findsOneWidget);
+      expect(find.text('-0.10'), findsOneWidget);
+      // Nothing earned has no margin percentage and nothing held no GMROI.
+      expect(find.text('—'), findsNWidgets(3));
+      expect(find.textContaining('no revenue recorded'), findsOneWidget);
+      // A complete history and fully costed sales raise no caveat.
+      expect(find.textContaining('has been archived'), findsNothing);
+      expect(find.textContaining('no cost price'), findsNothing);
+    });
+
+    testWidgets('gross margin with no sales says so instead of a blank table',
+        (tester) async {
+      final adapter = _RecordingAdapter()
+        ..bodyFor['gross-margin'] =
+            '{"data":{"rows":[],"historyComplete":false,"windowDays":1}}';
+      await pump(tester, adapter);
+      await tester.tap(find.text('Gross Margin').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('No sales in this range.'), findsOneWidget);
+      expect(find.textContaining('over 1 day ·'), findsOneWidget);
+      expect(find.textContaining('has been archived'), findsOneWidget);
+    });
+
     testWidgets('dead stock says which date each age is measured from',
         (tester) async {
       final adapter = _RecordingAdapter()
@@ -545,6 +587,26 @@ void main() {
       expect(call.query['from'], '2026-08-01T00:00:00Z');
       expect(call.query['to'], '2026-09-01T00:00:00Z');
       expect(call.query['groupBy'], 'STORE');
+    });
+
+    test('gross margin sends the same window and grouping as stock turn',
+        () async {
+      final h = _harness(bodies: {
+        'gross-margin':
+            '{"data":{"rows":[{"groupKey":"v","revenue":12,"cogs":null,'
+                '"grossMargin":12,"marginPercent":100.0,"gmroi":null}],'
+                '"historyComplete":true,"windowDays":31}}'
+      });
+      final report = await h.container.read(grossMarginReportProvider.future);
+
+      final call = h.adapter.callTo('/reports/gross-margin');
+      expect(call.query['from'], '2026-08-01T00:00:00Z');
+      expect(call.query['to'], '2026-09-01T00:00:00Z');
+      expect(call.query['groupBy'], 'STORE');
+      // A missing amount reads as zero; a missing ratio stays missing.
+      expect(report.rows.single.cogs, 0);
+      expect(report.rows.single.gmroi, isNull);
+      expect(report.rows.single.annualisedGmroi, isNull);
     });
 
     test('dead stock sends no window — it is a question about now', () async {

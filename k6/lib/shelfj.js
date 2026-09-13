@@ -301,3 +301,19 @@ export function receive(tenant, storeId, variantId, qty, costPrice = '10.00') {
 
 /** k6 thresholds shared by the functional suites: every check must pass. */
 export const ALL_CHECKS_PASS = { checks: ['rate==1.0'] };
+
+/**
+ * A tenant selling one priced, stocked variant from its first store, with a rival tenant and the two
+ * staff roles the refusal checks need: the setup the ledger and margin flows share.
+ */
+export function sellingTenant(label, { price = '12.00', qty = 50, costPrice = '6.00', country = 'GB', currency = 'GBP' } = {}) {
+  const tenant = onboardTenant(label, { country, currency });
+  const rival = onboardTenant(`${label}-rival`, { country, currency });
+  const store = tenant.stores[0];
+  const { variantId } = sellableVariant(tenant, `${label} widget`);
+  priceVariants(tenant, [variantId], price);
+  must(receive(tenant, store.id, variantId, qty, costPrice), [200, 201], 'receive stock');
+  const storekeeper = staffUser(tenant, 'STOREKEEPER', [store.id]);
+  const cashier = staffUser(tenant, 'CASHIER', [store.id]);
+  return { tenant, rival, store, variantId, storekeeper, cashier };
+}

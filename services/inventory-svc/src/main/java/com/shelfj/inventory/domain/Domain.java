@@ -216,6 +216,36 @@ public final class Domain {
    */
   public record StockTurnReport(List<StockTurnRow> rows, boolean historyComplete, int windowDays) {}
 
+  /**
+   * One line of the gross-margin report (19.7).
+   *
+   * @param revenue what the group's sales earned in the window, net of VAT and discounts and of
+   *     returns
+   * @param cogs cost of the stock those sales drew down, less the cost of what came back
+   * @param marginPercent gross margin as a percentage of revenue; null when nothing was earned
+   * @param averageValue the holding's average value at cost over the window, as stock turn has it
+   * @param gmroi gross margin return on inventory investment over the window; null when nothing was
+   *     held
+   * @param annualisedGmroi gmroi scaled to a year, the figure buyers compare
+   * @param unpricedSaleQty quantity sold with no revenue recorded (sales from before orders carried
+   *     it); its cost is in cogs, so the margin is understated by it and the report says so
+   */
+  public record GrossMarginRow(
+      String groupKey,
+      BigDecimal revenue,
+      BigDecimal cogs,
+      BigDecimal grossMargin,
+      BigDecimal marginPercent,
+      BigDecimal averageValue,
+      BigDecimal gmroi,
+      BigDecimal annualisedGmroi,
+      BigDecimal uncostedSaleQty,
+      BigDecimal unpricedSaleQty) {}
+
+  /** The gross-margin report, with the same history caveat as stock turn. */
+  public record GrossMarginReport(
+      List<GrossMarginRow> rows, boolean historyComplete, int windowDays) {}
+
   /** How the dead-stock report groups its rows. An enum, so no request text reaches the SQL. */
   public enum DeadStockGrouping {
     BUCKET,

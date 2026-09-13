@@ -166,7 +166,7 @@ public class StockTurnResource {
   }
 
   /** Defaults to STORE — "how is each site doing?" is what this report gets opened with. */
-  private static StockTurnGrouping turnGrouping(String raw) {
+  static StockTurnGrouping turnGrouping(String raw) {
     if (raw == null || raw.isBlank()) return StockTurnGrouping.STORE;
     try {
       return StockTurnGrouping.valueOf(raw.trim().toUpperCase(Locale.ROOT));

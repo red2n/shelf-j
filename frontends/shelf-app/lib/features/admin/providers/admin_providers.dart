@@ -1720,16 +1720,107 @@ final stockTurnGroupingProvider = StateProvider<String>((ref) => 'STORE');
 /// rather than being omitted.
 final stockTurnReportProvider =
     FutureProvider.autoDispose<StockTurnReport>((ref) async {
-  final range = ref.watch(reportDateRangeProvider);
   final resp = await ref.read(apiClientProvider).dio.get(
-    '/${ApiConstants.inventory}/admin/inventory/reports/stock-turn',
-    queryParameters: {
-      'from': _dayStartInstant(range.from),
-      'to': _dayEndInstant(range.to),
-      'groupBy': ref.watch(stockTurnGroupingProvider),
-    },
-  );
+        '/${ApiConstants.inventory}/admin/inventory/reports/stock-turn',
+        queryParameters: _costedWindow(ref, stockTurnGroupingProvider),
+      );
   return StockTurnReport.fromJson(
+      Map<String, dynamic>.from(resp.data['data'] as Map));
+});
+
+/// The window and grouping the two reports costed from the movement ledger
+/// both require — stock turn and gross margin reject a call without from/to.
+Map<String, dynamic> _costedWindow(Ref ref, StateProvider<String> grouping) {
+  final range = ref.watch(reportDateRangeProvider);
+  return {
+    'from': _dayStartInstant(range.from),
+    'to': _dayEndInstant(range.to),
+    'groupBy': ref.watch(grouping),
+  };
+}
+
+// ── Gross margin and GMROI (19.7) ────────────────────────────────────────────
+
+/// One line of the gross-margin report. [marginPercent] is null when nothing
+/// was earned and [gmroi] when nothing was held — neither is a zero.
+class GrossMarginRow {
+  final String groupKey;
+  final double revenue;
+  final double cogs;
+  final double grossMargin;
+  final double? marginPercent;
+  final double averageValue;
+  final double? gmroi;
+  final double? annualisedGmroi;
+  final double uncostedSaleQty;
+
+  /// Sold with no revenue recorded; its cost is still in [cogs].
+  final double unpricedSaleQty;
+
+  const GrossMarginRow({
+    required this.groupKey,
+    required this.revenue,
+    required this.cogs,
+    required this.grossMargin,
+    this.marginPercent,
+    required this.averageValue,
+    this.gmroi,
+    this.annualisedGmroi,
+    required this.uncostedSaleQty,
+    required this.unpricedSaleQty,
+  });
+
+  factory GrossMarginRow.fromJson(Map<String, dynamic> j) {
+    double amount(String k) => (j[k] as num?)?.toDouble() ?? 0;
+    double? ratio(String k) => (j[k] as num?)?.toDouble();
+    return GrossMarginRow(
+      groupKey: j['groupKey'] as String? ?? '-',
+      revenue: amount('revenue'),
+      cogs: amount('cogs'),
+      grossMargin: amount('grossMargin'),
+      marginPercent: ratio('marginPercent'),
+      averageValue: amount('averageValue'),
+      gmroi: ratio('gmroi'),
+      annualisedGmroi: ratio('annualisedGmroi'),
+      uncostedSaleQty: amount('uncostedSaleQty'),
+      unpricedSaleQty: amount('unpricedSaleQty'),
+    );
+  }
+}
+
+class GrossMarginReport {
+  /// Lowest margin first — the end of the list worth acting on.
+  final List<GrossMarginRow> rows;
+  final bool historyComplete;
+  final int windowDays;
+
+  const GrossMarginReport(
+      {required this.rows,
+      required this.historyComplete,
+      required this.windowDays});
+
+  factory GrossMarginReport.fromJson(Map<String, dynamic> j) =>
+      GrossMarginReport(
+        rows: [
+          for (final e in (j['rows'] as List?) ?? const [])
+            GrossMarginRow.fromJson(e as Map<String, dynamic>)
+        ],
+        historyComplete: j['historyComplete'] as bool? ?? true,
+        windowDays: (j['windowDays'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// STORE (compare sites) · VARIANT (find the lines that earn least).
+final grossMarginGroupingProvider = StateProvider<String>((ref) => 'STORE');
+
+/// Gross margin and GMROI over the report window (19.7).
+final grossMarginReportProvider =
+    FutureProvider.autoDispose<GrossMarginReport>((ref) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.inventory}/admin/inventory/reports/gross-margin',
+        queryParameters: _costedWindow(ref, grossMarginGroupingProvider),
+      );
+  return GrossMarginReport.fromJson(
       Map<String, dynamic>.from(resp.data['data'] as Map));
 });
 

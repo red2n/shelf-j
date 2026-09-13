@@ -109,6 +109,25 @@ final class Events {
 
   static OutboxRow orderFulfilled(
       UUID tenantId, UUID orderId, UUID storeId, List<OrderItem> items) {
+    return orderFulfilled(tenantId, orderId, storeId, items, java.util.Map.of(), 2);
+  }
+
+  /**
+   * OrderFulfilled with each line's revenue, net of VAT and of the order's discounts ({@code
+   * netAmount}), so inventory-svc can set it against the cost of the batches the line draws down
+   * (19.7). A line with no price known carries none, and the gross-margin report counts it as
+   * unpriced rather than as free.
+   *
+   * @param unitNet net revenue per unit by variant, from {@code LineRevenue.unitNet}
+   * @param scale the currency's minor-unit digits
+   */
+  static OutboxRow orderFulfilled(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      List<OrderItem> items,
+      java.util.Map<UUID, BigDecimal> unitNet,
+      int scale) {
     // eventId is required by inventory-svc's OrderEventHandler for per-line dedupe — without it,
     // every OrderFulfilled is dropped as a malformed event and stock is never deducted.
     StringBuilder sb = new StringBuilder();
@@ -126,8 +145,12 @@ final class Events {
       sb.append("{\"variantId\":\"")
           .append(items.get(i).variantId())
           .append("\",\"qty\":")
-          .append(items.get(i).qty().toPlainString())
-          .append('}');
+          .append(items.get(i).qty().toPlainString());
+      BigDecimal net =
+          com.shelfj.order.domain.LineRevenue.forQty(
+              unitNet, items.get(i).variantId(), items.get(i).qty(), scale);
+      if (net != null) sb.append(",\"netAmount\":").append(net.toPlainString());
+      sb.append('}');
     }
     sb.append("]}");
     return new OutboxRow(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
+import '../../core/format.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/util/file_download.dart';
 import '../../shared/widgets/error_view.dart';
@@ -25,6 +26,7 @@ enum _ReportType {
   salesByStaff,
   tenderMix,
   stockTurn,
+  grossMargin,
   deadStock,
   trialBalance,
 }
@@ -191,6 +193,8 @@ class _ReportContent extends ConsumerWidget {
         return _TenderMixReport();
       case _ReportType.stockTurn:
         return _StockTurnReport();
+      case _ReportType.grossMargin:
+        return _GrossMarginReport();
       case _ReportType.deadStock:
         return _DeadStockReport();
       case _ReportType.trialBalance:
@@ -776,6 +780,8 @@ String _reportLabel(_ReportType r) {
       return 'Tender Mix';
     case _ReportType.stockTurn:
       return 'Stock Turn';
+    case _ReportType.grossMargin:
+      return 'Gross Margin';
     case _ReportType.deadStock:
       return 'Dead Stock';
     case _ReportType.trialBalance:
@@ -813,6 +819,8 @@ IconData _reportIcon(_ReportType r) {
       return Icons.account_balance_wallet_outlined;
     case _ReportType.stockTurn:
       return Icons.autorenew_outlined;
+    case _ReportType.grossMargin:
+      return Icons.percent_outlined;
     case _ReportType.deadStock:
       return Icons.hourglass_bottom_outlined;
     case _ReportType.trialBalance:
@@ -1836,49 +1844,160 @@ class _StockTurnReport extends ConsumerWidget {
                     'would have understated the turns.',
               ),
             const SizedBox(height: 12),
-            if (report.rows.isEmpty)
-              const Expanded(
-                  child: Center(
-                      child: Text('No stock movement in this range.')))
-            else
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Card(
-                    child: DataTable(
-                      headingRowColor:
-                          WidgetStatePropertyAll(cs.surfaceContainerHigh),
-                      columnSpacing: 20,
-                      columns: const [
-                        DataColumn(label: Text('Group')),
-                        DataColumn(label: Text('COGS'), numeric: true),
-                        DataColumn(label: Text('Opening'), numeric: true),
-                        DataColumn(label: Text('Closing'), numeric: true),
-                        DataColumn(label: Text('Turns'), numeric: true),
-                        DataColumn(label: Text('Days on hand'), numeric: true),
-                      ],
-                      rows: report.rows.map((r) {
-                        return DataRow(cells: [
-                          DataCell(Text(_short(r.groupKey), style: _idStyle)),
-                          DataCell(Text(r.cogs.toStringAsFixed(2))),
-                          DataCell(Text(r.openingValue.toStringAsFixed(2))),
-                          DataCell(Text(r.closingValue.toStringAsFixed(2))),
-                          DataCell(Text(
-                            // A dash, not a zero: nothing to turn is not the
-                            // same finding as turning it zero times.
-                            r.turnoverRatio?.toStringAsFixed(2) ?? '—',
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: cs.outline),
-                          )),
-                          DataCell(
-                              Text(r.daysOnHand?.toStringAsFixed(1) ?? '—')),
-                        ]);
-                      }).toList(),
-                    ),
-                  ),
-                ),
+            _ReportTable(
+              emptyText: 'No stock movement in this range.',
+              columns: const [
+                DataColumn(label: Text('Group')),
+                DataColumn(label: Text('COGS'), numeric: true),
+                DataColumn(label: Text('Opening'), numeric: true),
+                DataColumn(label: Text('Closing'), numeric: true),
+                DataColumn(label: Text('Turns'), numeric: true),
+                DataColumn(label: Text('Days on hand'), numeric: true),
+              ],
+              rows: [
+                for (final r in report.rows)
+                  DataRow(cells: [
+                    DataCell(Text(_short(r.groupKey), style: _idStyle)),
+                    DataCell(Text(r.cogs.toStringAsFixed(2))),
+                    DataCell(Text(r.openingValue.toStringAsFixed(2))),
+                    DataCell(Text(r.closingValue.toStringAsFixed(2))),
+                    DataCell(Text(
+                      // A dash, not a zero: nothing to turn is not the
+                      // same finding as turning it zero times.
+                      r.turnoverRatio?.toStringAsFixed(2) ?? '—',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, color: cs.outline),
+                    )),
+                    DataCell(Text(r.daysOnHand?.toStringAsFixed(1) ?? '—')),
+                  ]),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _GrossMarginReport extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final range = ref.watch(reportDateRangeProvider);
+    final async = ref.watch(grossMarginReportProvider);
+    return async.when(
+      loading: () => const LoadingView(label: 'Loading gross margin…'),
+      error: (e, _) => ErrorView(
+        message: friendlyError(e, fallback: 'Could not load gross margin.'),
+        onRetry: () => ref.invalidate(grossMarginReportProvider),
+      ),
+      data: (report) {
+        double total(double Function(GrossMarginRow) f) =>
+            report.rows.fold<double>(0, (n, r) => n + f(r));
+        final revenue = total((r) => r.revenue);
+        final margin = total((r) => r.grossMargin);
+        final unpriced = total((r) => r.unpricedSaleQty);
+        final uncosted = total((r) => r.uncostedSaleQty);
+        // No currency code: inventory-svc stores the amounts order-svc sent
+        // and never learns the tenant's currency, so they are shown as plain
+        // amounts rather than guessed into one (SJ-D53).
+        String amount(double v) => AppFormat.money(v);
+        final share = revenue > 0
+            ? ' (${(margin * 100 / revenue).toStringAsFixed(1)}%)'
+            : '';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _ReportHeader(
+              title: 'Gross Margin',
+              subtitle:
+                  'What sales earned against what they cost over ${report.windowDays} day${report.windowDays == 1 ? '' : 's'} · margin ${amount(margin)}$share${range.from != null ? ' · ${range.from} → ${range.to}' : ''}',
+              onRefresh: () => ref.invalidate(grossMarginReportProvider),
+              onExportCsv: report.rows.isEmpty
+                  ? null
+                  : () {
+                      final buf = StringBuffer(
+                          'groupKey,revenue,cogs,grossMargin,marginPercent,averageValue,gmroi,annualisedGmroi,uncostedSaleQty,unpricedSaleQty\n');
+                      for (final r in report.rows) {
+                        buf.writeln([
+                          _csvEscape(r.groupKey),
+                          r.revenue,
+                          r.cogs,
+                          r.grossMargin,
+                          r.marginPercent ?? '',
+                          r.averageValue,
+                          r.gmroi ?? '',
+                          r.annualisedGmroi ?? '',
+                          r.uncostedSaleQty,
+                          r.unpricedSaleQty,
+                        ].join(','));
+                      }
+                      _downloadCsv('gross-margin.csv', buf.toString());
+                    },
+            ),
+            _GroupingBar(
+              provider: grossMarginGroupingProvider,
+              options: const {'STORE': 'By store', 'VARIANT': 'By product'},
+            ),
+            const _DateRangeBar(),
+            // The two quantity caveats pull the margin in opposite directions,
+            // so each says which way.
+            if (!report.historyComplete)
+              const _Caveat(
+                icon: Icons.history_toggle_off,
+                text:
+                    'Part of the movement history for this window has been archived, so average '
+                    'holdings are a floor and GMROI reads high.',
               ),
+            if (unpriced > 0)
+              _Caveat(
+                icon: Icons.money_off_outlined,
+                text:
+                    '${unpriced.toStringAsFixed(3)} units sold with no revenue recorded, from sales '
+                    'made before orders carried it. Their cost is still counted, so the margin '
+                    'reads low rather than being invented.',
+              ),
+            if (uncosted > 0)
+              _Caveat(
+                icon: Icons.help_outline,
+                text:
+                    '${uncosted.toStringAsFixed(3)} units sold out of batches with no cost price. '
+                    'They are left out of cost of goods sold, so the margin reads high.',
+              ),
+            const SizedBox(height: 12),
+            _ReportTable(
+              emptyText: 'No sales in this range.',
+              columns: const [
+                DataColumn(label: Text('Group')),
+                DataColumn(label: Text('Revenue'), numeric: true),
+                DataColumn(label: Text('COGS'), numeric: true),
+                DataColumn(label: Text('Margin'), numeric: true),
+                DataColumn(label: Text('Margin %'), numeric: true),
+                DataColumn(label: Text('GMROI'), numeric: true),
+                DataColumn(label: Text('Per year'), numeric: true),
+              ],
+              rows: [
+                for (final r in report.rows)
+                  DataRow(cells: [
+                    DataCell(Text(_short(r.groupKey), style: _idStyle)),
+                    DataCell(Text(amount(r.revenue))),
+                    DataCell(Text(amount(r.cogs))),
+                    DataCell(Text(
+                      amount(r.grossMargin),
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: r.grossMargin < 0 ? cs.error : null),
+                    )),
+                    // Dashes, not zeros: nothing earned has no margin
+                    // percentage and nothing held has no return on it.
+                    DataCell(Text(r.marginPercent == null
+                        ? '—'
+                        : '${r.marginPercent!.toStringAsFixed(1)}%')),
+                    DataCell(Text(r.gmroi?.toStringAsFixed(2) ?? '—')),
+                    DataCell(Text(r.annualisedGmroi?.toStringAsFixed(2) ?? '—')),
+                  ]),
+              ],
+            ),
           ],
         );
       },
@@ -1992,6 +2111,38 @@ class _DeadStockReport extends ConsumerWidget {
 
 /// A one-line note under a report's controls, for the caveats that change how a
 /// figure should be read rather than merely decorating it.
+/// The table a period report sits in below its caveats: a scrolling card, or a
+/// centred line saying there is nothing to show when there are no rows.
+class _ReportTable extends StatelessWidget {
+  final String emptyText;
+  final List<DataColumn> columns;
+  final List<DataRow> rows;
+
+  const _ReportTable(
+      {required this.emptyText, required this.columns, required this.rows});
+
+  @override
+  Widget build(BuildContext context) {
+    if (rows.isEmpty) {
+      return Expanded(child: Center(child: Text(emptyText)));
+    }
+    return Expanded(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Card(
+          child: DataTable(
+            headingRowColor: WidgetStatePropertyAll(
+                Theme.of(context).colorScheme.surfaceContainerHigh),
+            columnSpacing: 20,
+            columns: columns,
+            rows: rows,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Caveat extends StatelessWidget {
   final IconData icon;
   final String text;

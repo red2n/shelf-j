@@ -13,12 +13,8 @@ import {
   data,
   expect,
   must,
-  onboardTenant,
   poll,
-  priceVariants,
-  receive,
-  sellableVariant,
-  staffUser,
+  sellingTenant,
   truthy,
 } from './lib/shelfj.js';
 
@@ -33,15 +29,7 @@ export const options = {
 const LEDGER = '/api/purchase-svc/nominal-ledger';
 
 export function setup() {
-  const tenant = onboardTenant('sales-post', { country: 'GB', currency: 'GBP' });
-  const rival = onboardTenant('sales-post-rival', { country: 'GB', currency: 'GBP' });
-  const store = tenant.stores[0];
-  const { variantId } = sellableVariant(tenant, 'Posted widget');
-  priceVariants(tenant, [variantId], '12.00');
-  must(receive(tenant, store.id, variantId, 50, '6.00'), [200, 201], 'receive stock');
-  const storekeeper = staffUser(tenant, 'STOREKEEPER', [store.id]);
-  const cashier = staffUser(tenant, 'CASHIER', [store.id]);
-  return { tenant, rival, store, variantId, storekeeper, cashier };
+  return sellingTenant('sales-post', { price: '12.00', costPrice: '6.00' });
 }
 
 export default function ({ tenant, rival, store, variantId, storekeeper, cashier }) {

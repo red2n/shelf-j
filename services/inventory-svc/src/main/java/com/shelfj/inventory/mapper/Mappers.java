@@ -830,4 +830,27 @@ public final class Mappers {
   private static String ts(Instant i) {
     return i == null ? null : i.toString();
   }
+
+  /** The gross-margin report in wire form (19.7). */
+  public static com.shelfj.inventory.dto.Dtos.GrossMarginReportResponse toGrossMarginReport(
+      com.shelfj.inventory.domain.Domain.GrossMarginReport report) {
+    return new com.shelfj.inventory.dto.Dtos.GrossMarginReportResponse(
+        report.rows().stream()
+            .map(
+                r ->
+                    new com.shelfj.inventory.dto.Dtos.GrossMarginRowResponse(
+                        r.groupKey(),
+                        r.revenue(),
+                        r.cogs(),
+                        r.grossMargin(),
+                        r.marginPercent(),
+                        r.averageValue(),
+                        r.gmroi(),
+                        r.annualisedGmroi(),
+                        r.uncostedSaleQty(),
+                        r.unpricedSaleQty()))
+            .toList(),
+        report.historyComplete(),
+        report.windowDays());
+  }
 }

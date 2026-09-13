@@ -220,6 +220,25 @@ public class InventoryService {
       UUID variantId,
       BigDecimal qty,
       UUID orderId) {
+    return deductSaleFromOrderOnce(
+        dedupeId, consumerName, tenantId, storeId, variantId, qty, orderId, null);
+  }
+
+  /**
+   * {@link #deductSaleFromOrderOnce} recording the line's net revenue beside the stock it drew, for
+   * gross margin (19.7).
+   *
+   * @param netAmount revenue net of VAT and discounts, or null when the sale carried none
+   */
+  public boolean deductSaleFromOrderOnce(
+      UUID dedupeId,
+      String consumerName,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      BigDecimal qty,
+      UUID orderId,
+      BigDecimal netAmount) {
     return repo.deductSaleOnce(
         dedupeId,
         consumerName,
@@ -228,6 +247,7 @@ public class InventoryService {
         variantId,
         qty,
         orderId,
+        netAmount,
         stockDeductedEvent(tenantId, storeId, variantId, qty, orderId));
   }
 
@@ -271,8 +291,8 @@ public class InventoryService {
       BigDecimal qty,
       UUID orderId) {
     Batch batch = returnBatch(tenantId, storeId, variantId, qty, orderId);
-    return repo.receiveOnce(
-        dedupeId, consumerName, batch, "RETURN", orderId, stockReceivedEvent(batch));
+    return repo.receiveReturnOnce(
+        dedupeId, consumerName, batch, orderId, stockReceivedEvent(batch));
   }
 
   /**
@@ -654,7 +674,13 @@ public class InventoryService {
    */
   public boolean consumeOnce(
       UUID dedupeId, String consumerName, UUID tenantId, UUID reservationId) {
-    return repo.consumeOnce(dedupeId, consumerName, tenantId, reservationId);
+    return consumeOnce(dedupeId, consumerName, tenantId, reservationId, null);
+  }
+
+  /** {@link #consumeOnce} recording the line's net revenue beside the draw-down (19.7). */
+  public boolean consumeOnce(
+      UUID dedupeId, String consumerName, UUID tenantId, UUID reservationId, BigDecimal netAmount) {
+    return repo.consumeOnce(dedupeId, consumerName, tenantId, reservationId, netAmount);
   }
 
   /** The HELD reservations placed for one order at checkout. */
