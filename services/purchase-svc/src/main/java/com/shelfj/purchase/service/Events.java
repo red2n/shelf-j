@@ -133,38 +133,17 @@ final class Events {
    * event and is recorded once.
    */
   static OutboxRow supplierInvoiceCaptured(UUID tenantId, Domain.SupplierInvoice inv) {
-    String json =
-        "{\"eventId\":\""
-            + inv.id()
-            + "\",\"eventType\":\"SupplierInvoiceCaptured\",\"tenantId\":\""
-            + tenantId
-            + "\",\"invoiceId\":\""
-            + inv.id()
-            + "\",\"poId\":\""
-            + inv.poId()
-            + "\",\"supplierId\":\""
-            + inv.supplierId()
-            + "\",\"invoiceNumber\":\""
-            + inv.invoiceNumber().replace("\\", "\\\\").replace("\"", "\\\"")
-            + "\",\"invoiceDate\":\""
-            + inv.invoiceDate()
-            + "\",\"currency\":\""
-            + inv.currency()
-            + "\",\"netAmount\":"
-            + inv.netAmount().toPlainString()
-            + ",\"vatAmount\":"
-            + inv.vatAmount().toPlainString()
-            + ",\"grossAmount\":"
-            + inv.grossAmount().toPlainString()
-            + ",\"status\":\""
-            + inv.status()
-            + "\"}";
     return new OutboxRow(
         "SupplierInvoiceCaptured",
         "shelfj.purchase.supplier-invoice-captured",
         tenantId,
         inv.id(),
-        json);
+        invoiceJson(
+            "SupplierInvoiceCaptured",
+            inv.id(),
+            tenantId,
+            inv,
+            ",\"status\":\"" + inv.status() + "\""));
   }
 
   /**
@@ -179,36 +158,43 @@ final class Events {
    */
   static OutboxRow supplierInvoiceRejected(
       UUID tenantId, Domain.SupplierInvoice inv, UUID eventId) {
-    String json =
-        "{\"eventId\":\""
-            + eventId
-            + "\",\"eventType\":\"SupplierInvoiceRejected\",\"tenantId\":\""
-            + tenantId
-            + "\",\"invoiceId\":\""
-            + inv.id()
-            + "\",\"poId\":\""
-            + inv.poId()
-            + "\",\"supplierId\":\""
-            + inv.supplierId()
-            + "\",\"invoiceNumber\":\""
-            + inv.invoiceNumber().replace("\\", "\\\\").replace("\"", "\\\"")
-            + "\",\"invoiceDate\":\""
-            + inv.invoiceDate()
-            + "\",\"currency\":\""
-            + inv.currency()
-            + "\",\"netAmount\":"
-            + inv.netAmount().toPlainString()
-            + ",\"vatAmount\":"
-            + inv.vatAmount().toPlainString()
-            + ",\"grossAmount\":"
-            + inv.grossAmount().toPlainString()
-            + "}";
     return new OutboxRow(
         "SupplierInvoiceRejected",
         "shelfj.purchase.supplier-invoice-captured",
         tenantId,
         inv.id(),
-        json);
+        invoiceJson("SupplierInvoiceRejected", eventId, tenantId, inv, ""));
+  }
+
+  /** The figures pricing-svc projects, the same for a capture and for its reversal. */
+  private static String invoiceJson(
+      String type, UUID eventId, UUID tenantId, Domain.SupplierInvoice inv, String extra) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\""
+        + type
+        + "\",\"tenantId\":\""
+        + tenantId
+        + "\",\"invoiceId\":\""
+        + inv.id()
+        + "\",\"poId\":\""
+        + inv.poId()
+        + "\",\"supplierId\":\""
+        + inv.supplierId()
+        + "\",\"invoiceNumber\":\""
+        + EventPayload.esc(inv.invoiceNumber())
+        + "\",\"invoiceDate\":\""
+        + inv.invoiceDate()
+        + "\",\"currency\":\""
+        + inv.currency()
+        + "\",\"netAmount\":"
+        + inv.netAmount().toPlainString()
+        + ",\"vatAmount\":"
+        + inv.vatAmount().toPlainString()
+        + ",\"grossAmount\":"
+        + inv.grossAmount().toPlainString()
+        + extra
+        + "}";
   }
 
   static OutboxRow intercompanyInvoiceRaised(UUID tenantId, UUID invoiceId) {

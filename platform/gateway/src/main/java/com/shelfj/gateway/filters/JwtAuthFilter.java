@@ -97,6 +97,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     ctx.getHeaders().remove(HttpHeaders.USER_EMAIL);
     ctx.getHeaders().remove(HttpHeaders.ROLES);
     ctx.getHeaders().remove(HttpHeaders.STORE_IDS);
+    ctx.getHeaders().remove(HttpHeaders.PERMISSIONS);
 
     // Allow public auth paths without a token.
     if (isPublic(path)) {
@@ -167,6 +168,7 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     String tenantId = jwt.getClaim("tenant").asString();
     List<String> roles = jwt.getClaim("roles").asList(String.class);
     List<String> storeIds = jwt.getClaim("storeIds").asList(String.class);
+    List<String> perms = jwt.getClaim("perms").asList(String.class);
 
     if (userId != null) {
       ctx.getHeaders().putSingle(HttpHeaders.USER_ID, userId);
@@ -201,6 +203,13 @@ public class JwtAuthFilter implements ContainerRequestFilter {
     }
     if (storeIds != null && !storeIds.isEmpty()) {
       ctx.getHeaders().putSingle(HttpHeaders.STORE_IDS, String.join(",", storeIds));
+    }
+    // The permission claim (20.10). Present-but-empty is a real value — a role narrowed to
+    // nothing — and must reach the service as one, so it goes as "-" rather than as no header,
+    // which would read as "no claim, judge by the tier" and undo the narrowing.
+    if (perms != null) {
+      ctx.getHeaders()
+          .putSingle(HttpHeaders.PERMISSIONS, perms.isEmpty() ? "-" : String.join(",", perms));
     }
 
     // Restore preserved tenant ID for onboarding paths (flow guard: user provides tenant context)

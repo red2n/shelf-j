@@ -34,6 +34,7 @@ import com.shelfj.purchase.dto.Dtos.UpdateSupplierRequest;
 import com.shelfj.purchase.repo.PurchaseRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.Parsing;
+import com.shelfj.web.Permissions;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -394,6 +395,7 @@ public class PurchaseService {
    */
   public PurchaseOrder approvePurchaseOrder(
       TenantContext ctx, UUID poId, DecidePurchaseOrderRequest req) {
+    ctx.requirePermission(Permissions.PURCHASING_APPROVE);
     UUID tenantId = ctx.requireTenantId();
     PurchaseOrder po = requirePendingApproval(ctx, poId);
 
@@ -1634,6 +1636,7 @@ public class PurchaseService {
   public Domain.SupplierInvoice resolveSupplierInvoice(
       TenantContext ctx, UUID id, ResolveSupplierInvoiceRequest req) {
     ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
+    ctx.requirePermission(Permissions.PURCHASING_INVOICES_DECIDE);
     UUID tenantId = ctx.requireTenantId();
     String action = req.action().trim().toUpperCase(java.util.Locale.ROOT);
     boolean approve = "APPROVE".equals(action);
@@ -1692,6 +1695,7 @@ public class PurchaseService {
    */
   public Domain.Journal postJournal(TenantContext ctx, PostJournalRequest req) {
     ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
+    ctx.requirePermission(Permissions.FINANCE_JOURNAL);
     UUID tenantId = ctx.requireTenantId();
     LocalDate date = Parsing.date(req.entryDate(), "entryDate");
     UUID storeId = Parsing.optionalUuid(req.storeId(), "storeId");

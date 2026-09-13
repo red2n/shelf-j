@@ -595,4 +595,294 @@ class AuthIT {
     assertThat(r.getStatus(), is(403));
     assertThat(r.readEntity(String.class).contains("ACCOUNT_MANAGED_BY_EMPLOYER"), is(true));
   }
+
+  // ── custom roles and the permission claim (20.10) ───────────────────────────
+
+  @Inject com.shelfj.iam.messaging.StaffAssignedHandler staffAssigned;
+  @Inject com.shelfj.iam.messaging.StaffRemovedHandler staffRemoved;
+  @Inject com.shelfj.iam.messaging.RoleDefinedHandler roleDefined;
+
+  private static String staffEvent(
+      String type,
+      String eventId,
+      String tenant,
+      String user,
+      String store,
+      String role,
+      String roleCode,
+      String perms) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\""
+        + type
+        + "\",\"tenantId\":\""
+        + tenant
+        + "\",\"aggregateId\":\""
+        + user
+        + "\",\"occurredAt\":\"2026-09-13T00:00:00Z\",\"userId\":\""
+        + user
+        + "\",\"storeId\":\""
+        + store
+        + "\",\"role\":\""
+        + role
+        + "\""
+        + (roleCode == null ? "" : ",\"roleCode\":\"" + roleCode + "\"")
+        + (perms == null ? "" : ",\"permissions\":" + perms)
+        + "}";
+  }
+
+  private static String roleEvent(String eventId, String tenant, String code, String perms) {
+    return roleEvent(eventId, tenant, code, perms, "2026-09-13T12:00:00Z");
+  }
+
+  private static String roleEvent(
+      String eventId, String tenant, String code, String perms, String updatedAt) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\"RoleDefined\",\"tenantId\":\""
+        + tenant
+        + "\",\"aggregateId\":\""
+        + tenant
+        + "\",\"occurredAt\":\"2026-09-13T00:00:00Z\",\"code\":\""
+        + code
+        + "\",\"baseTier\":\"MANAGER\",\"permissions\":"
+        + perms
+        + ",\"updatedAt\":\""
+        + updatedAt
+        + "\"}";
+  }
+
+  private String claimsOf(String email) {
+    Response login =
+        post("/auth/login", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
+    assertThat(login.getStatus(), is(200));
+    String access = extract(login.readEntity(String.class), "accessToken");
+    return new String(
+        java.util.Base64.getUrlDecoder().decode(access.split("\\.")[1]),
+        java.nio.charset.StandardCharsets.UTF_8);
+  }
+
+  private String meOf(String email) {
+    Response login =
+        post("/auth/login", "{\"email\":\"" + email + "\",\"password\":\"strongpass1\"}");
+    String access = extract(login.readEntity(String.class), "accessToken");
+    DecodedJWT jwt = JWT.decode(access);
+    var req = target.path("/auth/me").request().header("X-User-Id", jwt.getSubject());
+    if (!jwt.getClaim("tenant").isMissing())
+      req = req.header("X-Tenant-Id", jwt.getClaim("tenant").asString());
+    req = req.header("X-Roles", String.join(",", jwt.getClaim("roles").asList(String.class)));
+    if (!jwt.getClaim("perms").isMissing()) {
+      var perms = jwt.getClaim("perms").asList(String.class);
+      req = req.header("X-Permissions", perms.isEmpty() ? "-" : String.join(",", perms));
+    }
+    return req.get(String.class);
+  }
+
+  @Test
+  void aCustomRoleMintsItsPermissionsAndAPlainTierMintsNone() {
+    String tenant = com.shelfj.ids.Ids.newId().toString();
+    String store = com.shelfj.ids.Ids.newId().toString();
+    // A plain cashier: no claim at all — judged by the tier's defaults, as before.
+    String plain = registerAndGetUserId("plain-cashier@example.com");
+    staffAssigned.handle(
+        staffEvent(
+            "StaffAssigned",
+            com.shelfj.ids.Ids.newId().toString(),
+            tenant,
+            plain,
+            store,
+            "CASHIER",
+            null,
+            null));
+    assertThat(claimsOf("plain-cashier@example.com"), not(containsString("\"perms\"")));
+    assertThat(
+        meOf("plain-cashier@example.com"),
+        containsString("\"permissions\":[\"purchasing.approve\",\"till.no_sale\"]"));
+
+    // A trainee: a cashier narrowed to nothing. The claim is present and empty, and /auth/me
+    // shows nothing — not the cashier's drawer.
+    String trainee = registerAndGetUserId("trainee@example.com");
+    staffAssigned.handle(
+        staffEvent(
+            "StaffAssigned",
+            com.shelfj.ids.Ids.newId().toString(),
+            tenant,
+            trainee,
+            store,
+            "CASHIER",
+            "TRAINEE",
+            "[]"));
+    assertThat(claimsOf("trainee@example.com"), containsString("\"perms\":[]"));
+    assertThat(meOf("trainee@example.com"), containsString("\"permissions\":[]"));
+
+    // A shift lead: a manager who may approve purchases and nothing else; sorted in the claim.
+    String lead = registerAndGetUserId("lead@example.com");
+    String assigned = com.shelfj.ids.Ids.newId().toString();
+    staffAssigned.handle(
+        staffEvent(
+            "StaffAssigned",
+            assigned,
+            tenant,
+            lead,
+            store,
+            "MANAGER",
+            "SHIFT_LEAD",
+            "[\"purchasing.approve\",\"finance.journal\"]"));
+    String claims = claimsOf("lead@example.com");
+    assertThat(claims, containsString("\"perms\":[\"finance.journal\",\"purchasing.approve\"]"));
+    assertThat(claims, containsString("\"roles\":["));
+    assertThat(claims, containsString("MANAGER"));
+    // Redelivered: nothing changes.
+    staffAssigned.handle(
+        staffEvent(
+            "StaffAssigned",
+            assigned,
+            tenant,
+            lead,
+            store,
+            "MANAGER",
+            "SHIFT_LEAD",
+            "[\"sales.void\"]"));
+    assertThat(claimsOf("lead@example.com"), not(containsString("sales.void")));
+  }
+
+  @Test
+  void aRoleRedefinedReachesItsHoldersAtTheirNextLogin() {
+    String tenant = com.shelfj.ids.Ids.newId().toString();
+    String other = com.shelfj.ids.Ids.newId().toString();
+    String store = com.shelfj.ids.Ids.newId().toString();
+    String lead = registerAndGetUserId("redefined@example.com");
+    staffAssigned.handle(
+        staffEvent(
+            "StaffAssigned",
+            com.shelfj.ids.Ids.newId().toString(),
+            tenant,
+            lead,
+            store,
+            "MANAGER",
+            "SHIFT_LEAD",
+            "[\"purchasing.approve\"]"));
+    String defined = com.shelfj.ids.Ids.newId().toString();
+    roleDefined.handle(
+        roleEvent(defined, tenant, "SHIFT_LEAD", "[\"purchasing.approve\",\"sales.void\"]"));
+    assertThat(
+        claimsOf("redefined@example.com"),
+        containsString("\"perms\":[\"purchasing.approve\",\"sales.void\"]"));
+    // Redelivered: still the same set. Another tenant's role of the same code: not ours.
+    roleDefined.handle(roleEvent(defined, tenant, "SHIFT_LEAD", "[]"));
+    roleDefined.handle(roleEvent(com.shelfj.ids.Ids.newId().toString(), other, "SHIFT_LEAD", "[]"));
+    assertThat(claimsOf("redefined@example.com"), containsString("sales.void"));
+    // Narrowed to nothing, one second later: the claim is present and empty.
+    roleDefined.handle(
+        roleEvent(
+            com.shelfj.ids.Ids.newId().toString(),
+            tenant,
+            "SHIFT_LEAD",
+            "[]",
+            "2026-09-13T12:00:01Z"));
+    assertThat(claimsOf("redefined@example.com"), containsString("\"perms\":[]"));
+    // A definition older than the one applied, arriving late — two redefinitions in one second can
+    // land in either order — changes nothing.
+    roleDefined.handle(
+        roleEvent(
+            com.shelfj.ids.Ids.newId().toString(),
+            tenant,
+            "SHIFT_LEAD",
+            "[\"sales.void\"]",
+            "2026-09-13T11:59:59Z"));
+    assertThat(claimsOf("redefined@example.com"), containsString("\"perms\":[]"));
+    // Malformed, and the wrong event type: skipped, not thrown.
+    roleDefined.handle("{\"eventType\":\"RoleDefined\"}");
+    roleDefined.handle("{\"eventType\":\"SomethingElse\",\"eventId\":\"x\"}");
+    roleDefined.handle("not json");
+  }
+
+  @Test
+  void aRemovedAssignmentLeavesTheLogin() {
+    // SJ-D51: removing an assignment in tenant-svc used to leave the role on the login for good.
+    String tenant = com.shelfj.ids.Ids.newId().toString();
+    String store = com.shelfj.ids.Ids.newId().toString();
+    String otherStore = com.shelfj.ids.Ids.newId().toString();
+    String cashier = registerAndGetUserId("unassigned@example.com");
+    staffAssigned.handle(
+        staffEvent(
+            "StaffAssigned",
+            com.shelfj.ids.Ids.newId().toString(),
+            tenant,
+            cashier,
+            store,
+            "CASHIER",
+            null,
+            null));
+    staffAssigned.handle(
+        staffEvent(
+            "StaffAssigned",
+            com.shelfj.ids.Ids.newId().toString(),
+            tenant,
+            cashier,
+            otherStore,
+            "CASHIER",
+            null,
+            null));
+    assertThat(claimsOf("unassigned@example.com"), containsString("CASHIER"));
+    String removed = com.shelfj.ids.Ids.newId().toString();
+    staffRemoved.handle(
+        staffEvent("StaffRemoved", removed, tenant, cashier, store, "CASHIER", null, null));
+    String claims = claimsOf("unassigned@example.com");
+    // Still a cashier — at the other store only.
+    assertThat(claims, containsString("CASHIER"));
+    assertThat(claims, containsString(otherStore));
+    assertThat(claims, not(containsString(store)));
+    staffRemoved.handle(
+        staffEvent(
+            "StaffRemoved",
+            com.shelfj.ids.Ids.newId().toString(),
+            tenant,
+            cashier,
+            otherStore,
+            "CASHIER",
+            null,
+            null));
+    String last = claimsOf("unassigned@example.com");
+    assertThat(last, not(containsString("CASHIER")));
+    // The last staff role gone, the login is no longer the tenant's: a shopper's token naming a
+    // tenant would make the gateway record their next order at another shop against this one.
+    assertThat(last, not(containsString("\"tenant\"")));
+    assertThat(last, containsString("\"type\":\"CUSTOMER\""));
+    // Redelivered and malformed: no-ops.
+    staffRemoved.handle(
+        staffEvent("StaffRemoved", removed, tenant, cashier, store, "CASHIER", null, null));
+    staffRemoved.handle("{\"eventType\":\"StaffRemoved\"}");
+    staffRemoved.handle("{\"eventType\":\"StaffAssigned\",\"eventId\":\"x\"}");
+  }
+
+  @Test
+  void anOwnerIsNeverNarrowed() throws Exception {
+    String tenant = com.shelfj.ids.Ids.newId().toString();
+    String store = com.shelfj.ids.Ids.newId().toString();
+    String owner = registerAndGetUserId("narrow-owner@example.com");
+    try (var c = iamConnection();
+        var ps =
+            c.prepareStatement(
+                "INSERT INTO user_roles (id, user_id, role_id, store_id)"
+                    + " SELECT ?, ?, id, NULL FROM roles WHERE name = 'OWNER'")) {
+      ps.setObject(1, com.shelfj.ids.Ids.newId());
+      ps.setObject(2, java.util.UUID.fromString(owner));
+      ps.executeUpdate();
+    }
+    // An owner who is also given a narrowed role somewhere still carries no claim: the owner is
+    // the tenant's root, and a custom role narrows staff, not them.
+    staffAssigned.handle(
+        staffEvent(
+            "StaffAssigned",
+            com.shelfj.ids.Ids.newId().toString(),
+            tenant,
+            owner,
+            store,
+            "CASHIER",
+            "TRAINEE",
+            "[]"));
+    assertThat(claimsOf("narrow-owner@example.com"), not(containsString("\"perms\"")));
+    assertThat(meOf("narrow-owner@example.com"), containsString("staff.manage"));
+  }
 }

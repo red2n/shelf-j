@@ -27,6 +27,7 @@ public class TenantContext {
   private String email;
   private Set<String> roles = Set.of();
   private Set<UUID> storeIds = Set.of();
+  private Set<String> permissions;
   private String requestId;
 
   /**
@@ -71,6 +72,44 @@ public class TenantContext {
    */
   public String requestId() {
     return requestId;
+  }
+
+  /**
+   * The permissions this caller holds (20.10): the token's own claim when it carries one, else the
+   * defaults of the roles held. An owner or platform admin holds every permission whatever the
+   * claim says — they are the tenant's root and the platform, and a custom role narrows staff, not
+   * them.
+   *
+   * @return the effective permission codes; never null
+   */
+  public Set<String> permissions() {
+    if (Permissions.unrestricted(roles)) return Permissions.ALL;
+    return permissions != null ? permissions : Permissions.effective(roles);
+  }
+
+  /**
+   * Whether the caller may take the named decision.
+   *
+   * @param permission a code from {@link Permissions}
+   * @return {@code true} when the caller holds it
+   */
+  public boolean hasPermission(String permission) {
+    return permissions().contains(permission);
+  }
+
+  /**
+   * Refuses the request unless the caller holds the permission. Checked at the one place the action
+   * happens, after the tier gate the shared filter applies by path: a custom role can only be
+   * narrower than its tier, so this only ever refuses what the tier would have allowed.
+   *
+   * @param permission a code from {@link Permissions}
+   * @throws ApiException 403 {@code PERMISSION_DENIED}, naming the permission
+   */
+  public void requirePermission(String permission) {
+    if (!hasPermission(permission)) {
+      throw ApiException.forbidden(
+          "PERMISSION_DENIED", "This action needs the " + permission + " permission");
+    }
   }
 
   /**
@@ -149,10 +188,32 @@ public class TenantContext {
    * @param requestId the correlation id for this request
    */
   void set(UUID tenantId, UUID userId, Set<String> roles, Set<UUID> storeIds, String requestId) {
+    set(tenantId, userId, roles, storeIds, null, requestId);
+  }
+
+  /**
+   * Populates this request-scoped context, permissions included.
+   *
+   * @param tenantId the caller's tenant, or {@code null} if unauthenticated
+   * @param userId the caller's user id, or {@code null} if unauthenticated
+   * @param roles the caller's roles; {@code null} is stored as empty
+   * @param storeIds the stores the caller may operate in; {@code null} is stored as empty
+   * @param permissions the token's permission claim; {@code null} when the token carries none, in
+   *     which case the roles' defaults apply; an empty set when it carries none by choice
+   * @param requestId the correlation id for this request
+   */
+  void set(
+      UUID tenantId,
+      UUID userId,
+      Set<String> roles,
+      Set<UUID> storeIds,
+      Set<String> permissions,
+      String requestId) {
     this.tenantId = tenantId;
     this.userId = userId;
     this.roles = roles == null ? Set.of() : Set.copyOf(roles);
     this.storeIds = storeIds == null ? Set.of() : Set.copyOf(storeIds);
+    this.permissions = permissions == null ? null : Set.copyOf(permissions);
     this.requestId = requestId;
   }
 

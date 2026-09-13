@@ -466,6 +466,9 @@ public class OrderResource {
   @POST
   @Path("/{id}/void")
   public Response voidOrder(@PathParam("id") String id, VoidRequest req) {
+    // Management by path (the shared filter); by permission here (20.10): a shift lead who is a
+    // manager in every other way can be a manager who cannot void a sale.
+    ctx.requirePermission(com.shelfj.web.Permissions.SALES_VOID);
     Validations.validate(req);
     var vl = svc.voidOrder(ctx.tenantId(), Parsing.uuid(id, "id"), req, ctx);
     return Response.ok(ApiResponse.ok(Mappers.toDto(vl))).build();

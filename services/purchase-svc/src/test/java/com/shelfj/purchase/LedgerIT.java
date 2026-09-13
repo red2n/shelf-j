@@ -43,17 +43,9 @@ import org.junit.jupiter.api.Test;
 @HelidonTest
 class LedgerIT {
 
-  private static final PostgresSupport PG;
+  private static final PostgresSupport PG = PostgresSupport.start().wire("purchase");
 
   static {
-    PG = PostgresSupport.start();
-    System.setProperty("shelfj.db.url", PG.jdbcUrl());
-    System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
-    System.setProperty("shelfj.db.user", PG.username());
-    System.setProperty("shelfj.db.password", PG.password());
-    System.setProperty("shelfj.db.schema", "purchase");
-    System.setProperty("shelfj.consul.enabled", "false");
-    System.setProperty("shelfj.kafka.enabled", "false");
     System.setProperty("shelfj.purchase.approval.limits", "");
   }
 
@@ -695,14 +687,7 @@ class LedgerIT {
   }
 
   private Response getAs(String pathAndQuery, String tenant, String role) {
-    int q = pathAndQuery.indexOf('?');
-    WebTarget t = target.path(q < 0 ? pathAndQuery : pathAndQuery.substring(0, q));
-    if (q >= 0) {
-      for (String param : pathAndQuery.substring(q + 1).split("&")) {
-        int eq = param.indexOf('=');
-        t = t.queryParam(param.substring(0, eq), param.substring(eq + 1));
-      }
-    }
+    WebTarget t = com.shelfj.test.WebTargets.at(target, pathAndQuery);
     return t.request()
         .header("X-Tenant-Id", tenant)
         .header("X-User-Id", USER)

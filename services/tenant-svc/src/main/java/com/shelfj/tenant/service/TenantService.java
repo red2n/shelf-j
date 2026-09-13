@@ -2,12 +2,14 @@ package com.shelfj.tenant.service;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.service.OutboxRow;
+import com.shelfj.tenant.domain.Domain;
 import com.shelfj.tenant.domain.Domain.DeliveryArea;
 import com.shelfj.tenant.domain.Domain.StaffAssignment;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.StoreWithZone;
 import com.shelfj.tenant.domain.Domain.Tenant;
 import com.shelfj.tenant.domain.Domain.TenantInventoryConfig;
+import com.shelfj.tenant.domain.Domain.TenantRole;
 import com.shelfj.tenant.domain.Domain.TenantWithStore;
 import com.shelfj.tenant.domain.Domain.Zone;
 import com.shelfj.tenant.dto.Dtos.AssignStaffRequest;
@@ -29,6 +31,8 @@ import com.shelfj.tenant.mapper.Mappers;
 import com.shelfj.tenant.repo.TenantRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.Cursor;
+import com.shelfj.web.Permissions;
+import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Instant;
@@ -36,6 +40,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -253,23 +258,224 @@ public class TenantService {
     return repo.createZoneWithOutbox(zone, event);
   }
 
-  /** Assign a staff user to a store with a role. Publishes StaffAssigned. */
-  public void assignStaff(UUID tenantId, AssignStaffRequest req) {
+  /**
+   * Assigns a staff user a role at a store and publishes {@code StaffAssigned}.
+   *
+   * <p>The role is a built-in tier or one of the tenant's own (20.10). A custom role is resolved
+   * here: the event carries the tier iam-svc binds, the code, and the permissions the role holds
+   * now — so a login made tomorrow carries them, and a role redefined later reaches its holders
+   * through {@code RoleDefined}.
+   *
+   * @throws ApiException 400 {@code STAFF_ROLE_UNKNOWN} for a role that is neither; 403 {@code
+   *     PERMISSION_DENIED} without {@code staff.manage}; 404 {@code STORE_NOT_FOUND}
+   */
+  public void assignStaff(TenantContext ctx, AssignStaffRequest req) {
+    ctx.requirePermission(Permissions.STAFF_MANAGE);
+    UUID tenantId = ctx.requireTenantId();
     UUID userId = parseUuid(req.userId(), "userId");
     UUID storeId = parseUuid(req.storeId(), "storeId");
     repo.findStore(tenantId, storeId)
         .orElseThrow(
             () -> ApiException.notFound("STORE_NOT_FOUND", "No such store in this tenant"));
+    String role = req.role().trim().toUpperCase(Locale.ROOT);
+    String baseTier;
+    String roleCode = null;
+    Set<String> permissions = null;
+    Instant roleUpdatedAt = null;
+    if (Domain.STAFF_TIERS.contains(role)) {
+      baseTier = role;
+    } else {
+      TenantRole custom =
+          repo.findRole(tenantId, role)
+              .orElseThrow(
+                  () ->
+                      ApiException.badRequest(
+                          "STAFF_ROLE_UNKNOWN",
+                          "role must be one of "
+                              + Domain.STAFF_TIERS
+                              + " or one of this tenant's own roles, not "
+                              + req.role()));
+      baseTier = custom.baseTier();
+      roleCode = custom.code();
+      permissions = custom.permissions();
+      roleUpdatedAt = custom.updatedAt();
+    }
     var assignment =
-        new StaffAssignment(Ids.newId(), tenantId, userId, storeId, req.role(), Instant.now());
+        new StaffAssignment(Ids.newId(), tenantId, userId, storeId, role, baseTier, Instant.now());
     var event =
         new OutboxRow(
             "StaffAssigned",
             "shelfj.tenant.staff-assigned",
             tenantId,
             userId,
-            Events.staffAssigned(tenantId, userId, storeId, req.role()));
+            Events.staffAssigned(
+                tenantId, userId, storeId, baseTier, roleCode, permissions, roleUpdatedAt));
     repo.createStaffWithOutbox(assignment, event);
+  }
+
+  // ── custom roles (20.10) ──────────────────────────────────────────────────
+
+  private static final java.util.regex.Pattern ROLE_CODE =
+      java.util.regex.Pattern.compile("[A-Z][A-Z0-9_]{1,31}");
+
+  /**
+   * The permission catalogue with the tiers holding each by default: what a role-definition screen
+   * shows beside its checkboxes.
+   */
+  public List<com.shelfj.tenant.dto.Dtos.PermissionResponse> permissionCatalogue() {
+    return Permissions.catalogue().entrySet().stream()
+        .map(
+            e ->
+                new com.shelfj.tenant.dto.Dtos.PermissionResponse(
+                    e.getKey(),
+                    e.getValue(),
+                    Permissions.TIERS.stream()
+                        .filter(t -> Permissions.defaultsFor(t).contains(e.getKey()))
+                        .sorted()
+                        .toList()))
+        .toList();
+  }
+
+  /**
+   * Defines a custom role and publishes {@code RoleDefined}.
+   *
+   * <p>A role stands on one tier and holds a subset of that tier's default permissions — never
+   * more, so nothing the tier refuses by path becomes reachable by naming a permission. Its code is
+   * upper snake case and cannot be a built-in role's name, because a token carrying {@code MANAGER}
+   * must mean one thing.
+   *
+   * @throws ApiException 400 {@code ROLE_CODE_INVALID}, {@code ROLE_CODE_RESERVED}, {@code
+   *     ROLE_TIER_INVALID}, {@code ROLE_PERMISSION_UNKNOWN}, {@code ROLE_PERMISSION_OUTSIDE_TIER};
+   *     403 {@code PERMISSION_DENIED}; 409 {@code ROLE_ALREADY_EXISTS}
+   */
+  public TenantRole defineRole(
+      TenantContext ctx, com.shelfj.tenant.dto.Dtos.DefineRoleRequest req) {
+    ctx.requirePermission(Permissions.STAFF_MANAGE);
+    UUID tenantId = ctx.requireTenantId();
+    String code = req.code().trim().toUpperCase(Locale.ROOT);
+    if (!ROLE_CODE.matcher(code).matches()) {
+      throw ApiException.badRequest(
+          "ROLE_CODE_INVALID",
+          "a role code is 2-32 characters of upper-case letters, digits and underscores");
+    }
+    if (Domain.STAFF_TIERS.contains(code)
+        || "PLATFORM_ADMIN".equals(code)
+        || "CUSTOMER".equals(code)
+        || "GUEST".equals(code)) {
+      throw ApiException.badRequest(
+          "ROLE_CODE_RESERVED", code + " is a built-in role and cannot be redefined");
+    }
+    String tier = req.baseTier().trim().toUpperCase(Locale.ROOT);
+    Set<String> permissions = checkedPermissions(tier, req.permissions());
+    Instant now = Instant.now();
+    TenantRole role =
+        new TenantRole(
+            Ids.newId(),
+            tenantId,
+            code,
+            req.name().trim(),
+            tier,
+            permissions,
+            blankToNull(req.description()),
+            now,
+            now);
+    repo.createRole(role, roleDefinedEvent(role));
+    return role;
+  }
+
+  /**
+   * Renames a role or changes what it holds, and publishes {@code RoleDefined} so iam-svc rewrites
+   * every assignment made through it; holders carry the new set from their next login. The tier
+   * cannot change: an assignment's tier is bound on the login, and a role that changed tier under
+   * it would leave the token saying one thing and the role another.
+   *
+   * @throws ApiException 404 {@code ROLE_NOT_FOUND}; the 400s of {@link #defineRole}
+   */
+  public TenantRole updateRole(
+      TenantContext ctx, String code, com.shelfj.tenant.dto.Dtos.UpdateRoleRequest req) {
+    ctx.requirePermission(Permissions.STAFF_MANAGE);
+    TenantRole existing = getRole(ctx.requireTenantId(), code);
+    Set<String> permissions = checkedPermissions(existing.baseTier(), req.permissions());
+    TenantRole role =
+        new TenantRole(
+            existing.id(),
+            existing.tenantId(),
+            existing.code(),
+            req.name().trim(),
+            existing.baseTier(),
+            permissions,
+            blankToNull(req.description()),
+            existing.createdAt(),
+            Instant.now());
+    if (!repo.updateRole(role, roleDefinedEvent(role))) {
+      throw ApiException.notFound("ROLE_NOT_FOUND", "No such role: " + code);
+    }
+    return role;
+  }
+
+  /**
+   * @throws ApiException 404 {@code ROLE_NOT_FOUND}
+   */
+  public TenantRole getRole(UUID tenantId, String code) {
+    return repo.findRole(tenantId, code.trim().toUpperCase(Locale.ROOT))
+        .orElseThrow(() -> ApiException.notFound("ROLE_NOT_FOUND", "No such role: " + code));
+  }
+
+  /** The tenant's custom roles, by code. */
+  public List<TenantRole> listRoles(UUID tenantId) {
+    return repo.listRoles(tenantId);
+  }
+
+  /**
+   * Deletes a custom role nobody holds.
+   *
+   * @throws ApiException 404 {@code ROLE_NOT_FOUND}; 409 {@code ROLE_IN_USE}
+   */
+  public void deleteRole(TenantContext ctx, String code) {
+    ctx.requirePermission(Permissions.STAFF_MANAGE);
+    if (!repo.deleteRole(ctx.requireTenantId(), code.trim().toUpperCase(Locale.ROOT))) {
+      throw ApiException.notFound("ROLE_NOT_FOUND", "No such role: " + code);
+    }
+  }
+
+  private static Set<String> checkedPermissions(String tier, List<String> requested) {
+    if (!Permissions.TIERS.contains(tier)) {
+      throw ApiException.badRequest(
+          "ROLE_TIER_INVALID", "baseTier must be one of " + Permissions.TIERS + ", not " + tier);
+    }
+    Set<String> allowed = Permissions.defaultsFor(tier);
+    Set<String> out = new java.util.LinkedHashSet<>();
+    for (String p : requested) {
+      String code = p.trim();
+      if (!Permissions.isKnown(code)) {
+        throw ApiException.badRequest(
+            "ROLE_PERMISSION_UNKNOWN", code + " is not a permission; see /admin/roles/permissions");
+      }
+      if (!allowed.contains(code)) {
+        throw ApiException.badRequest(
+            "ROLE_PERMISSION_OUTSIDE_TIER",
+            code
+                + " is not held by a "
+                + tier
+                + "; a role can only narrow its tier, never widen it");
+      }
+      out.add(code);
+    }
+    return Set.copyOf(out);
+  }
+
+  private static OutboxRow roleDefinedEvent(TenantRole role) {
+    return new OutboxRow(
+        "RoleDefined",
+        "shelfj.tenant.role-defined",
+        role.tenantId(),
+        role.id(),
+        Events.roleDefined(
+            role.tenantId(), role.code(), role.baseTier(), role.permissions(), role.updatedAt()));
+  }
+
+  private static String blankToNull(String s) {
+    return s == null || s.isBlank() ? null : s.trim();
   }
 
   // --- reads ---
@@ -618,8 +824,21 @@ public class TenantService {
    * @param userId the staff member to unassign
    * @param storeId the store to unassign them from
    */
-  public void removeStaff(UUID tenantId, UUID userId, UUID storeId) {
-    repo.removeStaff(tenantId, userId, storeId);
+  public void removeStaff(TenantContext ctx, UUID userId, UUID storeId) {
+    ctx.requirePermission(Permissions.STAFF_MANAGE);
+    UUID tenantId = ctx.requireTenantId();
+    // SJ-D51: the removal used to stop at this table, and the role stayed on the login for good.
+    repo.removeStaffWithOutbox(
+        tenantId,
+        userId,
+        storeId,
+        tier ->
+            new OutboxRow(
+                "StaffRemoved",
+                "shelfj.tenant.staff-removed",
+                tenantId,
+                userId,
+                Events.staffRemoved(tenantId, userId, storeId, tier)));
   }
 
   // ── Gap #53: Inventory org parameters ────────────────────────────────────

@@ -324,14 +324,20 @@ public class AdminResource {
    */
   @Operation(
       summary = "Assign staff to a store",
-      description = "Grants a user a role at a store. userId must already exist (see iam-svc).")
+      description =
+          "Grants a user a role at a store. userId must already exist (see iam-svc). The role is a"
+              + " built-in one (OWNER, MANAGER, STOREKEEPER, CASHIER) or the code of one of the"
+              + " tenant's own roles (20.10), whose tier and permissions the login then carries."
+              + " Needs the staff.manage permission.")
   @APIResponse(responseCode = "201", description = "Staff assigned")
+  @APIResponse(responseCode = "400", description = "A role that is neither built in nor defined")
+  @APIResponse(responseCode = "403", description = "The caller may not manage staff")
   @APIResponse(responseCode = "404", description = "No such store in this tenant")
   @POST
   @Path("/staff")
   public Response assignStaff(AssignStaffRequest req) {
     Validations.validate(req);
-    service.assignStaff(ctx.requireTenantId(), req);
+    service.assignStaff(ctx, req);
     return Response.status(Response.Status.CREATED).entity(ApiResponse.ok("assigned")).build();
   }
 
@@ -371,7 +377,9 @@ public class AdminResource {
    */
   @Operation(
       summary = "Remove a staff assignment",
-      description = "Removes a user's role assignment at the given store (?store=<storeId>).")
+      description =
+          "Removes a user's role assignment at the given store (?store=<storeId>) and tells"
+              + " iam-svc, which takes the role off the login (SJ-D51). Needs staff.manage.")
   @APIResponse(responseCode = "400", description = "?store=<storeId> query parameter is missing")
   @DELETE
   @Path("/staff/{userId}")
@@ -381,7 +389,7 @@ public class AdminResource {
       throw ApiException.badRequest("MISSING_STORE", "?store=<storeId> is required");
     }
     UUID storeId = com.shelfj.web.Parsing.uuid(storeParam, "store");
-    service.removeStaff(ctx.requireTenantId(), userId, storeId);
+    service.removeStaff(ctx, userId, storeId);
     return ApiResponse.ok("removed");
   }
 }

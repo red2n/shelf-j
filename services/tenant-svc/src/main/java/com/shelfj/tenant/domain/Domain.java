@@ -72,8 +72,43 @@ public final class Domain {
     public static final String TYPE_DEFAULT = "DEFAULT";
   }
 
+  /**
+   * One staff member's role at one store.
+   *
+   * @param role the role as assigned: a built-in tier, or a tenant's custom role code (20.10)
+   * @param baseTier the tier the role stands on — what iam-svc binds and the token carries
+   */
   public record StaffAssignment(
-      UUID id, UUID tenantId, UUID userId, UUID storeId, String role, Instant createdAt) {}
+      UUID id,
+      UUID tenantId,
+      UUID userId,
+      UUID storeId,
+      String role,
+      String baseTier,
+      Instant createdAt) {}
+
+  /** The built-in roles a staff member may be assigned directly. */
+  public static final java.util.Set<String> STAFF_TIERS =
+      java.util.Set.of("OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
+
+  /**
+   * A tenant's custom role (20.10): a name of its own, standing on one tier and holding a subset of
+   * that tier's permissions.
+   *
+   * @param code the tenant's code, upper snake case, unique per tenant
+   * @param baseTier MANAGER, STOREKEEPER or CASHIER
+   * @param permissions the permission codes held; a subset of the tier's defaults
+   */
+  public record TenantRole(
+      UUID id,
+      UUID tenantId,
+      String code,
+      String name,
+      String baseTier,
+      java.util.Set<String> permissions,
+      String description,
+      Instant createdAt,
+      Instant updatedAt) {}
 
   /** Paired result of creating a store and its default zone atomically. */
   public record StoreWithZone(Store store, Zone defaultZone) {}

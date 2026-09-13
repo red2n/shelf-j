@@ -90,7 +90,53 @@ public final class Dtos {
       @Schema(description = "UUID of the user to assign (must already exist in iam-svc).") @NotBlank
           String userId,
       @Schema(description = "UUID of the store the role applies to.") @NotBlank String storeId,
-      @Schema(description = "Role name, e.g. OWNER, MANAGER, STAFF.") @NotBlank String role) {}
+      @Schema(
+              description =
+                  "A built-in role (OWNER, MANAGER, STOREKEEPER, CASHIER) or the code of one of"
+                      + " the tenant's own roles (20.10).")
+          @NotBlank
+          @Size(max = 32)
+          String role) {}
+
+  @Schema(
+      name = "DefineRoleRequest",
+      description =
+          "A custom role: a code and name of the tenant's own, the tier it stands on, and the"
+              + " subset of that tier's permissions it holds.")
+  public record DefineRoleRequest(
+      @Schema(description = "Upper snake case, 2-32 characters, e.g. SHIFT_LEAD.")
+          @NotBlank
+          @Size(min = 2, max = 32)
+          String code,
+      @NotBlank @Size(max = 60) String name,
+      @Schema(description = "MANAGER, STOREKEEPER or CASHIER.") @NotBlank String baseTier,
+      @Schema(description = "Permission codes from GET /admin/roles/permissions; may be empty.")
+          @NotNull
+          @Size(max = 50)
+          List<@NotBlank @Size(max = 64) String> permissions,
+      @Size(max = 200) String description) {}
+
+  @Schema(name = "UpdateRoleRequest", description = "Rename a role or change what it holds.")
+  public record UpdateRoleRequest(
+      @NotBlank @Size(max = 60) String name,
+      @NotNull @Size(max = 50) List<@NotBlank @Size(max = 64) String> permissions,
+      @Size(max = 200) String description) {}
+
+  @Schema(name = "RoleResponse")
+  public record RoleResponse(
+      String code,
+      String name,
+      @Schema(description = "The tier the role stands on; a built-in role is its own tier.")
+          String baseTier,
+      List<String> permissions,
+      String description,
+      @Schema(description = "false for the built-in roles, which cannot be changed or removed.")
+          boolean custom,
+      String createdAt,
+      String updatedAt) {}
+
+  @Schema(name = "PermissionResponse", description = "One permission and who holds it by default.")
+  public record PermissionResponse(String code, String description, List<String> defaultFor) {}
 
   // ── responses ────────────────────────────────────────────────────────────────
 
@@ -157,7 +203,12 @@ public final class Dtos {
 
   @Schema(name = "StaffResponse")
   public record StaffResponse(
-      String id, String userId, String storeId, String role, String assignedAt) {}
+      String id,
+      String userId,
+      String storeId,
+      @Schema(description = "The role as assigned: a tier or a custom role code.") String role,
+      @Schema(description = "The tier the assignment stands on.") String baseTier,
+      String assignedAt) {}
 
   @Schema(name = "OnboardingStatus", description = "Setup-checklist state for the tenant.")
   public record OnboardingStatus(

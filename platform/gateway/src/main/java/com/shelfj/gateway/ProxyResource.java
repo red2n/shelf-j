@@ -320,6 +320,7 @@ public class ProxyResource {
           HttpHeaders.USER_EMAIL,
           HttpHeaders.ROLES,
           HttpHeaders.STORE_IDS,
+          HttpHeaders.PERMISSIONS,
           // Client-controlled, not identity — forwarded so downstream writes can dedupe retries
           // (golden rule #11). Not stripped/overwritten: the client owns this value.
           HttpHeaders.IDEMPOTENCY_KEY);

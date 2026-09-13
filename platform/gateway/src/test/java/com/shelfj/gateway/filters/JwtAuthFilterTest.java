@@ -419,19 +419,7 @@ class JwtAuthFilterTest {
     // storefront context and sends no X-Storefront-Tenant — it must fall through to normal Bearer
     // verification instead of being silently left tenant-less (previously surfaced downstream as
     // a blanket 401 NO_TENANT on every call).
-    String token =
-        com.auth0
-            .jwt
-            .JWT
-            .create()
-            .withIssuer("shelfj")
-            .withSubject("01a090ae-611e-700f-b645-a14095230b77")
-            .withClaim("type", "STAFF")
-            .withClaim("tenant", "tenant-xyz")
-            .withArrayClaim("roles", new String[] {"OWNER"})
-            .sign(
-                com.auth0.jwt.algorithms.Algorithm.HMAC256(
-                    "unit-test-secret-of-at-least-32-chars!!"));
+    String token = staffToken(new String[] {"OWNER"}, null);
     when(uriInfo.getPath()).thenReturn("api/inventory-svc/inventory/availability");
     when(requestContext.getMethod()).thenReturn("GET");
     when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + token);
@@ -461,6 +449,7 @@ class JwtAuthFilterTest {
     headers.putSingle("X-Tenant-Id", "spoofed");
     headers.putSingle("X-User-Id", "spoofed");
     headers.putSingle("X-Roles", "PLATFORM_ADMIN");
+    headers.putSingle("X-Permissions", "sales.void,staff.manage");
     when(uriInfo.getPath()).thenReturn("api/iam-svc/auth/login");
 
     filter.filter(requestContext);
@@ -468,5 +457,68 @@ class JwtAuthFilterTest {
     org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Tenant-Id"));
     org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-User-Id"));
     org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Roles"));
+    org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Permissions"));
+  }
+
+  // ── the permission claim (20.10) ─────────────────────────────────────────────
+
+  private String staffToken(String[] roles, String[] perms) {
+    var b =
+        com.auth0
+            .jwt
+            .JWT
+            .create()
+            .withIssuer("shelfj")
+            .withSubject("01a090ae-611e-700f-b645-a14095230b77")
+            .withClaim("type", "STAFF")
+            .withClaim("tenant", "tenant-xyz")
+            .withArrayClaim("roles", roles);
+    if (perms != null) b = b.withArrayClaim("perms", perms);
+    return b.sign(
+        com.auth0.jwt.algorithms.Algorithm.HMAC256("unit-test-secret-of-at-least-32-chars!!"));
+  }
+
+  @Test
+  void permissionClaimIsStampedAsAHeader() throws IOException {
+    when(uriInfo.getPath()).thenReturn("api/order-svc/orders");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization"))
+        .thenReturn(
+            "Bearer "
+                + staffToken(
+                    new String[] {"MANAGER"}, new String[] {"sales.void", "finance.journal"}));
+
+    filter.filter(requestContext);
+
+    verify(requestContext, never()).abortWith(any());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "sales.void,finance.journal", headers.getFirst("X-Permissions"));
+  }
+
+  @Test
+  void aClaimNamingNothingIsStampedAsADashNotDropped() throws IOException {
+    // A role narrowed to nothing must reach the service as "nothing", not as "no claim": the
+    // latter would make the service fall back to the tier's defaults and undo the narrowing.
+    when(uriInfo.getPath()).thenReturn("api/order-svc/orders");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization"))
+        .thenReturn("Bearer " + staffToken(new String[] {"CASHIER"}, new String[] {}));
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertEquals("-", headers.getFirst("X-Permissions"));
+  }
+
+  @Test
+  void aTokenWithoutTheClaimStampsNoHeaderAndAForgedOneIsReplaced() throws IOException {
+    headers.putSingle("X-Permissions", "sales.void");
+    when(uriInfo.getPath()).thenReturn("api/order-svc/orders");
+    when(requestContext.getMethod()).thenReturn("GET");
+    when(requestContext.getHeaderString("Authorization"))
+        .thenReturn("Bearer " + staffToken(new String[] {"CASHIER"}, null));
+
+    filter.filter(requestContext);
+
+    org.junit.jupiter.api.Assertions.assertFalse(headers.containsKey("X-Permissions"));
   }
 }

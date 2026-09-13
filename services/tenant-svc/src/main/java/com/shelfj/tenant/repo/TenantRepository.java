@@ -581,7 +581,7 @@ public class TenantRepository extends BaseOutboxRepository {
       UUID tenantId, Instant afterCreatedAt, UUID afterId, int limit) {
     StringBuilder sql =
         new StringBuilder(
-            "SELECT id, tenant_id, user_id, store_id, role, created_at"
+            "SELECT id, tenant_id, user_id, store_id, role, base_tier, created_at"
                 + " FROM staff_assignments WHERE tenant_id = ?");
     if (afterCreatedAt != null && afterId != null) sql.append(" AND (created_at, id) > (?, ?)");
     sql.append(" ORDER BY created_at, id LIMIT ?");
@@ -608,14 +608,234 @@ public class TenantRepository extends BaseOutboxRepository {
    * @param storeId the store to unassign them from
    */
   public void removeStaff(UUID tenantId, UUID userId, UUID storeId) {
-    exec(
-        "DELETE FROM staff_assignments WHERE tenant_id = ? AND user_id = ? AND store_id = ?",
-        ps -> {
-          ps.setObject(1, tenantId);
-          ps.setObject(2, userId);
-          ps.setObject(3, storeId);
+    removeStaffWithOutbox(tenantId, userId, storeId, tier -> null);
+  }
+
+  /**
+   * Deletes a user's assignments at a store and, for each tier taken away, writes the event iam-svc
+   * unbinds on, in one transaction (SJ-D51).
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   * @param userId the staff member to unassign
+   * @param storeId the store to unassign them from
+   * @param event builds the {@code StaffRemoved} row for a tier, or returns null for none
+   * @return how many assignments were removed
+   */
+  public int removeStaffWithOutbox(
+      UUID tenantId,
+      UUID userId,
+      UUID storeId,
+      java.util.function.Function<String, OutboxRow> event) {
+    return inTx(
+        c -> {
+          java.util.List<String> tiers = new java.util.ArrayList<>();
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "DELETE FROM staff_assignments WHERE tenant_id = ? AND user_id = ?"
+                      + " AND store_id = ? RETURNING base_tier")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, userId);
+            ps.setObject(3, storeId);
+            try (ResultSet rs = ps.executeQuery()) {
+              while (rs.next()) tiers.add(rs.getString(1));
+            }
+          }
+          for (String tier : new java.util.LinkedHashSet<>(tiers)) {
+            OutboxRow row = event.apply(tier);
+            if (row != null) insertOutbox(c, row);
+          }
+          return tiers.size();
         },
         "remove staff");
+  }
+
+  // ──────────────────────────────────────────────────────── custom roles (20.10)
+
+  private static final String ROLE_COLUMNS =
+      "id, tenant_id, code, name, base_tier, permissions, description, created_at, updated_at";
+
+  /**
+   * Inserts a custom role and the event iam-svc applies it on, in one transaction.
+   *
+   * @param r the role
+   * @param event {@code RoleDefined}
+   * @throws ApiException 409 {@code ROLE_ALREADY_EXISTS} when the tenant already has the code
+   */
+  public void createRole(com.shelfj.tenant.domain.Domain.TenantRole r, OutboxRow event) {
+    inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "INSERT INTO tenant_roles (" + ROLE_COLUMNS + ") VALUES (?,?,?,?,?,?,?,?,?)")) {
+            ps.setObject(1, r.id());
+            ps.setObject(2, r.tenantId());
+            ps.setString(3, r.code());
+            ps.setString(4, r.name());
+            ps.setString(5, r.baseTier());
+            ps.setString(6, String.join(",", r.permissions()));
+            ps.setString(7, r.description());
+            ps.setObject(8, r.createdAt().atOffset(ZoneOffset.UTC));
+            ps.setObject(9, r.updatedAt().atOffset(ZoneOffset.UTC));
+            ps.executeUpdate();
+          } catch (SQLException e) {
+            if (UNIQUE_VIOLATION.equals(e.getSQLState())) {
+              throw new ApiException(
+                  409,
+                  "ROLE_ALREADY_EXISTS",
+                  "This tenant already has a role " + r.code(),
+                  List.of(),
+                  e);
+            }
+            throw e;
+          }
+          insertOutbox(c, event);
+          return null;
+        },
+        "define role");
+  }
+
+  /**
+   * Rewrites a custom role's name, permissions and description, with the event that carries the
+   * change to its holders.
+   *
+   * @return {@code true} when the role existed in this tenant
+   */
+  public boolean updateRole(com.shelfj.tenant.domain.Domain.TenantRole r, OutboxRow event) {
+    return inTx(
+        c -> {
+          int n;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "UPDATE tenant_roles SET name = ?, permissions = ?, description = ?,"
+                      + " updated_at = now() WHERE tenant_id = ? AND code = ?")) {
+            ps.setString(1, r.name());
+            ps.setString(2, String.join(",", r.permissions()));
+            ps.setString(3, r.description());
+            ps.setObject(4, r.tenantId());
+            ps.setString(5, r.code());
+            n = ps.executeUpdate();
+          }
+          if (n == 0) return false;
+          insertOutbox(c, event);
+          return true;
+        },
+        "redefine role");
+  }
+
+  /**
+   * Deletes a custom role no assignment names.
+   *
+   * @return {@code true} when deleted; {@code false} when the tenant has no such role
+   * @throws ApiException 409 {@code ROLE_IN_USE} while an assignment still names it, decided under
+   *     the role's row lock so an assignment made at the same moment cannot slip past
+   */
+  public boolean deleteRole(UUID tenantId, String code) {
+    return inTx(
+        c -> {
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT id FROM tenant_roles WHERE tenant_id = ? AND code = ? FOR UPDATE")) {
+            ps.setObject(1, tenantId);
+            ps.setString(2, code);
+            try (ResultSet rs = ps.executeQuery()) {
+              if (!rs.next()) return false;
+            }
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT count(*) FROM staff_assignments WHERE tenant_id = ? AND role = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setString(2, code);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              if (rs.getInt(1) > 0) {
+                throw ApiException.conflict(
+                    "ROLE_IN_USE",
+                    rs.getInt(1)
+                        + " staff assignment(s) still use "
+                        + code
+                        + "; remove them first");
+              }
+            }
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement("DELETE FROM tenant_roles WHERE tenant_id = ? AND code = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setString(2, code);
+            ps.executeUpdate();
+          }
+          return true;
+        },
+        "delete role");
+  }
+
+  /**
+   * @param tenantId owning tenant; the first condition of the query
+   * @param code the role's code
+   * @return the role, or empty when the tenant has none by that code
+   */
+  public Optional<com.shelfj.tenant.domain.Domain.TenantRole> findRole(UUID tenantId, String code) {
+    var rows =
+        query(
+            "SELECT " + ROLE_COLUMNS + " FROM tenant_roles WHERE tenant_id = ? AND code = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, code);
+            },
+            TenantRepository::mapRole,
+            "find role");
+    return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+  }
+
+  /**
+   * @param tenantId owning tenant; the first condition of the query
+   * @return the tenant's custom roles, by code
+   */
+  public List<com.shelfj.tenant.domain.Domain.TenantRole> listRoles(UUID tenantId) {
+    return query(
+        "SELECT " + ROLE_COLUMNS + " FROM tenant_roles WHERE tenant_id = ? ORDER BY code",
+        ps -> ps.setObject(1, tenantId),
+        TenantRepository::mapRole,
+        "list roles");
+  }
+
+  /**
+   * @param tenantId owning tenant; the first condition of the query
+   * @param code a custom role's code
+   * @return how many assignments name it
+   */
+  public int countStaffWithRole(UUID tenantId, String code) {
+    var rows =
+        query(
+            "SELECT count(*) AS n FROM staff_assignments WHERE tenant_id = ? AND role = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, code);
+            },
+            rs -> rs.getInt("n"),
+            "count staff with role");
+    return rows.isEmpty() ? 0 : rows.get(0);
+  }
+
+  private static com.shelfj.tenant.domain.Domain.TenantRole mapRole(ResultSet rs)
+      throws SQLException {
+    String perms = rs.getString("permissions");
+    java.util.Set<String> set = new java.util.LinkedHashSet<>();
+    if (perms != null) {
+      for (String p : perms.split(",")) {
+        if (!p.isBlank()) set.add(p.trim());
+      }
+    }
+    return new com.shelfj.tenant.domain.Domain.TenantRole(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getString("code"),
+        rs.getString("name"),
+        rs.getString("base_tier"),
+        java.util.Set.copyOf(set),
+        rs.getString("description"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
   }
 
   // ─────────────────────────────────────────────────────────── inserts
@@ -696,14 +916,15 @@ public class TenantRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO staff_assignments"
-                + " (id, tenant_id, user_id, store_id, role, created_at)"
-                + " VALUES (?,?,?,?,?,?)")) {
+                + " (id, tenant_id, user_id, store_id, role, base_tier, created_at)"
+                + " VALUES (?,?,?,?,?,?,?)")) {
       ps.setObject(1, s.id());
       ps.setObject(2, s.tenantId());
       ps.setObject(3, s.userId());
       ps.setObject(4, s.storeId());
       ps.setString(5, s.role());
-      ps.setObject(6, s.createdAt().atOffset(ZoneOffset.UTC));
+      ps.setString(6, s.baseTier());
+      ps.setObject(7, s.createdAt().atOffset(ZoneOffset.UTC));
       ps.executeUpdate();
     }
   }
@@ -790,6 +1011,7 @@ public class TenantRepository extends BaseOutboxRepository {
         rs.getObject("user_id", UUID.class),
         rs.getObject("store_id", UUID.class),
         rs.getString("role"),
+        rs.getString("base_tier"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
   }
 

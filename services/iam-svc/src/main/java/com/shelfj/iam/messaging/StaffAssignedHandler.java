@@ -22,19 +22,22 @@ import java.util.UUID;
  * redelivers the record instead of losing it.
  */
 @ApplicationScoped
-class StaffAssignedHandler {
+public class StaffAssignedHandler {
 
   private static final Logger LOG = System.getLogger(StaffAssignedHandler.class.getName());
   static final String CONSUMER_NAME = "iam-svc/staff-assigned";
 
   @Inject UserRepository users;
 
-  void handle(String json) {
+  public void handle(String json) {
     UUID eventId;
     UUID tenantId;
     UUID userId;
     UUID storeId;
     String role;
+    String roleCode;
+    java.util.Set<String> permissions;
+    java.time.Instant roleUpdatedAt;
     try (var reader = Json.createReader(new StringReader(json))) {
       JsonObject obj = reader.readObject();
       eventId = UUID.fromString(obj.getString("eventId"));
@@ -42,19 +45,34 @@ class StaffAssignedHandler {
       userId = UUID.fromString(obj.getString("userId"));
       storeId = UUID.fromString(obj.getString("storeId"));
       role = obj.getString("role");
+      // A custom role (20.10): the tier is in "role" as ever; the code and the permissions it
+      // held at assignment ride beside it. Absent for a plain tier assignment.
+      roleCode = obj.getString("roleCode", null);
+      permissions = roleCode == null ? null : Permissions.parse(obj);
+      roleUpdatedAt = roleCode == null ? null : Permissions.instant(obj, "roleUpdatedAt");
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed StaffAssigned payload skipped: " + e.getMessage());
       return;
     }
 
     boolean processed =
-        users.bindStaffOnce(eventId, CONSUMER_NAME, userId, tenantId, role, storeId);
+        users.bindStaffOnce(
+            eventId,
+            CONSUMER_NAME,
+            userId,
+            tenantId,
+            role,
+            storeId,
+            roleCode,
+            permissions,
+            roleUpdatedAt);
     if (processed) {
       LOG.log(
           Level.INFO,
-          "Bound user {0} as {1} of tenant {2} store {3}",
+          "Bound user {0} as {1}{2} of tenant {3} store {4}",
           userId,
           role,
+          roleCode == null ? "" : " (" + roleCode + ")",
           tenantId,
           storeId);
     }

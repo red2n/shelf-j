@@ -249,7 +249,9 @@ class _InvoiceCard extends ConsumerWidget {
     final auth = ref.watch(authNotifierProvider).value;
     // The server refuses anyone else with 403; not offering the buttons spares a
     // storekeeper a pair of controls that can only ever fail.
-    final canDecide = auth is AuthAuthenticated && auth.isManager;
+    final canDecide = auth is AuthAuthenticated &&
+        auth.isManager &&
+        auth.hasPermission('purchasing.invoices.decide');
     final leadingIcon = invoice.rejected
         ? Icons.block_outlined
         : flagged

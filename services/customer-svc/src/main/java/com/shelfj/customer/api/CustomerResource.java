@@ -281,6 +281,7 @@ public class CustomerResource {
   @GET
   @Path("/{id}/export")
   public ApiResponse<?> exportCustomer(@PathParam("id") UUID id) {
+    ctx.requirePermission(com.shelfj.web.Permissions.CUSTOMERS_PRIVACY);
     UUID tenantId = ctx.requireTenantId();
     var customer = service.get(tenantId, id);
     return ApiResponse.ok(
@@ -537,6 +538,7 @@ public class CustomerResource {
   @Path("/{id}")
   public Response anonymize(@PathParam("id") UUID id) {
     ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
+    ctx.requirePermission(com.shelfj.web.Permissions.CUSTOMERS_PRIVACY);
     UUID tenantId = ctx.requireTenantId();
     service.anonymize(tenantId, id);
     return Response.noContent().build();

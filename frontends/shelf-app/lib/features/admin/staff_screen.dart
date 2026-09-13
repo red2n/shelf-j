@@ -8,12 +8,44 @@ import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import 'role_dialog.dart';
 import '../../shared/util/short_ref.dart';
 
 const _roles = ['OWNER', 'MANAGER', 'STOREKEEPER', 'CASHIER'];
 
-class StaffScreen extends ConsumerWidget {
+/// Staff and the roles they hold (20.10). Two tabs: the people assigned to
+/// stores, and the roles — the four built-in tiers beside the tenant's own,
+/// each of which stands on a tier and holds fewer of that tier's permissions.
+class StaffScreen extends StatelessWidget {
   const StaffScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            child: Text('Staff', style: Theme.of(context).textTheme.headlineMedium),
+          ),
+          const TabBar(
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            tabs: [Tab(text: 'People'), Tab(text: 'Roles')],
+          ),
+          const Expanded(
+            child: TabBarView(children: [_PeopleTab(), _RolesTab()]),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PeopleTab extends ConsumerWidget {
+  const _PeopleTab();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -24,10 +56,9 @@ class StaffScreen extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
           child: Row(
             children: [
-              Text('Staff', style: Theme.of(context).textTheme.headlineMedium),
               const Spacer(),
               FilledButton.icon(
                 onPressed: () => _showAssignDialog(context, ref),
@@ -43,7 +74,7 @@ class StaffScreen extends ConsumerWidget {
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Expanded(
           child: staffAsync.when(
             loading: () => const LoadingView(label: 'Loading staff…'),
@@ -96,6 +127,11 @@ class StaffScreen extends ConsumerWidget {
                       title: Row(
                         children: [
                           _RoleBadge(role: m.role),
+                          if (m.customRole) ...[
+                            const SizedBox(width: 4),
+                            Text('on ${m.baseTier}',
+                                style: TextStyle(fontSize: 11, color: cs.outline)),
+                          ],
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
@@ -222,6 +258,23 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
   bool _loading = false;
   String? _error;
 
+  /// The dropdown: the built-in tiers first, then the tenant's own roles, each
+  /// named with the tier it stands on. Falls back to the tiers alone while the
+  /// list loads or if it cannot be read.
+  List<DropdownMenuItem<String>> _roleItems(AsyncValue<List<TenantRole>> roles) {
+    final items = _roles
+        .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+        .toList();
+    for (final r in (roles.value ?? const <TenantRole>[]).where((r) => r.custom)) {
+      items.add(DropdownMenuItem(
+        value: r.code,
+        child: Text('${r.name} (${r.code}, on ${r.baseTier})',
+            overflow: TextOverflow.ellipsis),
+      ));
+    }
+    return items;
+  }
+
   @override
   void dispose() {
     _emailCtrl.dispose();
@@ -321,6 +374,7 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final storesAsync = ref.watch(storesProvider);
+    final rolesAsync = ref.watch(rolesProvider);
     return AlertDialog(
       title: const Text('Assign Staff'),
       content: SizedBox(
@@ -411,14 +465,14 @@ class _AssignStaffDialogState extends ConsumerState<_AssignStaffDialog> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
+                key: const Key('assign-role'),
                 initialValue: _role,
+                isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: 'Role *',
                   prefixIcon: Icon(Icons.shield_outlined),
                 ),
-                items: _roles
-                    .map((r) => DropdownMenuItem(value: r, child: Text(r)))
-                    .toList(),
+                items: _roleItems(rolesAsync),
                 onChanged: (v) => setState(() => _role = v!),
               ),
             ],
@@ -505,6 +559,147 @@ class _TempPasswordRevealState extends State<_TempPasswordReveal> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Roles (20.10) ────────────────────────────────────────────────────────────
+
+class _RolesTab extends ConsumerWidget {
+  const _RolesTab();
+
+  Future<void> _delete(BuildContext context, WidgetRef ref, TenantRole role) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete ${role.code}?'),
+        content: const Text(
+            'Refused while anyone still holds it — remove those assignments first.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            key: const Key('role-delete-confirm'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    try {
+      await ref
+          .read(apiClientProvider)
+          .dio
+          .delete('/${ApiConstants.tenant}/admin/roles/${role.code}');
+      ref.invalidate(rolesProvider);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('${role.code} deleted.')));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(friendlyError(e, fallback: 'Could not delete the role.'))));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final rolesAsync = ref.watch(rolesProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'A role of your own stands on a built-in tier and holds fewer of its '
+                  'permissions — a manager who cannot void a sale, a cashier who cannot '
+                  'open the drawer. It can never hold more than its tier.',
+                  style: TextStyle(color: cs.outline, fontSize: 13),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                key: const Key('define-role'),
+                onPressed: () => showDialog<bool>(
+                    context: context, builder: (_) => const RoleDialog()),
+                icon: const Icon(Icons.add_moderator_outlined),
+                label: const Text('Define role'),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh roles',
+                onPressed: () => ref.invalidate(rolesProvider),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: rolesAsync.when(
+            loading: () => const LoadingView(label: 'Loading roles…'),
+            error: (e, _) => ErrorView(
+              message: friendlyError(e, fallback: 'Could not load roles.'),
+              onRetry: () => ref.invalidate(rolesProvider),
+            ),
+            data: (roles) => ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              itemCount: roles.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 4),
+              itemBuilder: (context, i) {
+                final r = roles[i];
+                return Card(
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor:
+                          r.custom ? cs.tertiaryContainer : cs.secondaryContainer,
+                      child: Icon(
+                        r.custom ? Icons.shield_outlined : Icons.verified_user_outlined,
+                        color: r.custom ? cs.onTertiaryContainer : cs.onSecondaryContainer,
+                      ),
+                    ),
+                    title: Row(children: [
+                      _RoleBadge(role: r.code),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(r.name, overflow: TextOverflow.ellipsis)),
+                    ]),
+                    subtitle: Text(
+                      r.custom
+                          ? 'On ${r.baseTier} · ${r.permissions.isEmpty ? 'holds nothing' : r.permissions.join(', ')}'
+                          : r.permissions.isEmpty
+                              ? 'Built in · holds no permission'
+                              : 'Built in · ${r.permissions.join(', ')}',
+                      style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                    ),
+                    trailing: r.custom
+                        ? Row(mainAxisSize: MainAxisSize.min, children: [
+                            IconButton(
+                              key: Key('edit-role-${r.code}'),
+                              icon: const Icon(Icons.edit_outlined),
+                              tooltip: 'Redefine',
+                              onPressed: () => showDialog<bool>(
+                                  context: context,
+                                  builder: (_) => RoleDialog(existing: r)),
+                            ),
+                            IconButton(
+                              key: Key('delete-role-${r.code}'),
+                              icon: Icon(Icons.delete_outline, color: cs.error),
+                              tooltip: 'Delete',
+                              onPressed: () => _delete(context, ref, r),
+                            ),
+                          ])
+                        : null,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

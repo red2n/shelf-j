@@ -229,8 +229,12 @@ A sidebar (wide) / chip selector (narrow) between sixteen tables, each with a re
 
 ### 4.10 Staff
 
-- List of staff assigned to stores: email, role badge, store. **Remove** (with confirmation).
-- **Assign Staff**: enter an email (finds an existing account or provisions a new one), optional password, a role (Owner / Manager / Storekeeper / Cashier), and a store. If a new account was created, a one-time **"Staff account created"** dialog reveals a temporary password (masked by default, tap-to-reveal, one-tap copy with a "clear your clipboard" reminder).
+Two tabs: **People** and **Roles** (20.10).
+
+- **People**: staff assigned to stores: role badge (a custom role shows the tier it stands on beside it), store. **Remove** (with confirmation) — and the role comes off the login, not just the list (SJ-D51).
+- **Assign Staff**: enter an email (finds an existing account or provisions a new one), optional password, a role — the four built-in ones, then **the tenant's own roles**, each named with the tier it stands on — and a store. If a new account was created, a one-time **"Staff account created"** dialog reveals a temporary password (masked by default, tap-to-reveal, one-tap copy with a "clear your clipboard" reminder).
+- **Roles**: the four built-in tiers, each saying what it holds, beside the tenant's own. **Define role**: a code (upper snake case; a built-in name is refused before it is sent), a name, the tier it stands on, and **the permissions it holds — the checkboxes offered are exactly the tier's**, because the server refuses anything outside them and a box that cannot be ticked should not be on the screen; changing the tier drops the ticks the new tier cannot hold. **Redefine** keeps the code and tier fixed; the snackbar says holders carry the change from their next sign-in. **Delete** is refused in words while anyone still holds the role.
+- What a login's permissions do on screen: **Void sale**, **Approve / Reject** on a flagged invoice are offered only to a login that holds `sales.void` / `purchasing.invoices.decide` (an owner always; a manager by default; a custom role by its claim). The server refuses the rest regardless — the app only hides what would fail.
 - Also reachable from every Admin screen's app bar: **Change password** and **Sign out**.
 
 **Key admin flows:**

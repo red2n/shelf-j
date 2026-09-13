@@ -112,7 +112,45 @@ public final class Mappers {
         s.userId().toString(),
         s.storeId().toString(),
         s.role(),
+        s.baseTier(),
         ts(s.createdAt()));
+  }
+
+  /**
+   * Converts a custom role to its wire form.
+   *
+   * @param r the role
+   * @return its API representation
+   */
+  public static com.shelfj.tenant.dto.Dtos.RoleResponse toRole(
+      com.shelfj.tenant.domain.Domain.TenantRole r) {
+    return new com.shelfj.tenant.dto.Dtos.RoleResponse(
+        r.code(),
+        r.name(),
+        r.baseTier(),
+        r.permissions().stream().sorted().toList(),
+        r.description(),
+        true,
+        ts(r.createdAt()),
+        ts(r.updatedAt()));
+  }
+
+  /**
+   * A built-in tier in the same shape as a custom role, so one list shows both.
+   *
+   * @param tier OWNER, MANAGER, STOREKEEPER or CASHIER
+   * @return its API representation, holding the tier's default permissions
+   */
+  public static com.shelfj.tenant.dto.Dtos.RoleResponse toBuiltInRole(String tier) {
+    return new com.shelfj.tenant.dto.Dtos.RoleResponse(
+        tier,
+        tier.charAt(0) + tier.substring(1).toLowerCase(java.util.Locale.ROOT),
+        tier,
+        com.shelfj.web.Permissions.defaultsFor(tier).stream().sorted().toList(),
+        "Built in",
+        false,
+        null,
+        null);
   }
 
   /**

@@ -182,6 +182,7 @@ public class PaymentResource {
       @PathParam("orderId") UUID orderId,
       RecordRefundRequest req) {
     ctx.requireAnyRole("MANAGER", "OWNER");
+    ctx.requirePermission(com.shelfj.web.Permissions.SALES_REFUND);
     Validations.validate(req);
     var refund =
         svc.recordRefund(

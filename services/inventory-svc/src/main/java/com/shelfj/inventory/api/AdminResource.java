@@ -172,6 +172,8 @@ public class AdminResource {
   public ApiResponse<String> adjust(
       @jakarta.ws.rs.HeaderParam(com.shelfj.web.HttpHeaders.IDEMPOTENCY_KEY) String idempotencyKey,
       AdjustRequest req) {
+    // Writing stock off is the one warehouse action a tenant may keep from a storekeeper (20.10).
+    ctx.requirePermission(com.shelfj.web.Permissions.STOCK_ADJUST);
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     service.adjust(

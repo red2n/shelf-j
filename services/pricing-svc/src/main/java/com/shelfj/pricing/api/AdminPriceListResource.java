@@ -81,6 +81,7 @@ public class AdminPriceListResource {
   @APIResponse(responseCode = "403", description = "Caller is not management")
   @POST
   public Response create(CreatePriceListRequest req) {
+    ctx.requirePermission(com.shelfj.web.Permissions.PRICING_WRITE);
     Validations.validate(req);
     return Response.status(201)
         .entity(ApiResponse.ok(Mappers.toDto(svc.createPriceList(req, ctx))))
@@ -104,6 +105,7 @@ public class AdminPriceListResource {
   @POST
   @Path("/{id}/items")
   public Response upsertItem(@PathParam("id") UUID id, UpsertPriceListItemRequest req) {
+    ctx.requirePermission(com.shelfj.web.Permissions.PRICING_WRITE);
     Validations.validate(req);
     return Response.status(200)
         .entity(ApiResponse.ok(Mappers.toDto(svc.upsertPriceListItem(ctx, id, req))))
@@ -136,6 +138,7 @@ public class AdminPriceListResource {
   @POST
   @Path("/{id}/items/batch")
   public Response batchUpsertItems(@PathParam("id") UUID id, BatchUpsertPriceListItemsRequest req) {
+    ctx.requirePermission(com.shelfj.web.Permissions.PRICING_WRITE);
     if (req == null || req.items() == null || req.items().isEmpty()) {
       return Response.status(400)
           .entity(
@@ -171,6 +174,7 @@ public class AdminPriceListResource {
   @POST
   @Path("/{id}/deactivate")
   public Response deactivate(@PathParam("id") UUID id, SetActiveRequest req) {
+    ctx.requirePermission(com.shelfj.web.Permissions.PRICING_WRITE);
     return Response.ok(
             ApiResponse.ok(
                 Mappers.toDto(svc.setActive(ctx, Domain.StatusChange.PRICE_LIST, id, false, req))))
@@ -195,6 +199,7 @@ public class AdminPriceListResource {
   @POST
   @Path("/{id}/activate")
   public Response activate(@PathParam("id") UUID id, SetActiveRequest req) {
+    ctx.requirePermission(com.shelfj.web.Permissions.PRICING_WRITE);
     return Response.ok(
             ApiResponse.ok(
                 Mappers.toDto(svc.setActive(ctx, Domain.StatusChange.PRICE_LIST, id, true, req))))

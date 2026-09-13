@@ -58,8 +58,8 @@ public abstract class BaseOutboxRepository extends BaseJdbcRepository implements
           List<PendingOutbox> rows = new ArrayList<>();
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "SELECT id, topic, payload FROM outbox"
-                      + " WHERE published_at IS NULL ORDER BY created_at ASC LIMIT ?"
+                  "SELECT id, aggregate_id, topic, payload FROM outbox"
+                      + " WHERE published_at IS NULL ORDER BY created_at ASC, id ASC LIMIT ?"
                       + " FOR UPDATE SKIP LOCKED")) {
             ps.setInt(1, limit);
             try (ResultSet rs = ps.executeQuery()) {
@@ -67,6 +67,7 @@ public abstract class BaseOutboxRepository extends BaseJdbcRepository implements
                 rows.add(
                     new PendingOutbox(
                         rs.getObject("id", UUID.class),
+                        rs.getObject("aggregate_id", UUID.class),
                         rs.getString("topic"),
                         rs.getString("payload")));
               }

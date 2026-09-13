@@ -118,6 +118,12 @@ public final class Dtos {
       @Schema(description = "CUSTOMER, STAFF, or PLATFORM_ADMIN.") String type,
       @Schema(description = "Role names granted to this user, e.g. OWNER, MANAGER, PLATFORM_ADMIN.")
           java.util.List<String> roles,
+      @Schema(
+              description =
+                  "The permissions this login holds (20.10): the token's own claim when a custom"
+                      + " role narrowed it, else the defaults of the roles held. An owner holds"
+                      + " every permission.")
+          java.util.List<String> permissions,
       String email,
       String phone,
       @Schema(description = "Account status, e.g. ACTIVE, DISABLED.") String status,

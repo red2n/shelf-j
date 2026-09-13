@@ -236,6 +236,32 @@ public class UserRepository extends BaseOutboxRepository {
       UUID tenantId,
       String roleName,
       UUID storeId) {
+    return bindStaffOnce(
+        eventId, consumerName, userId, tenantId, roleName, storeId, null, null, null);
+  }
+
+  /**
+   * Binds a staff role at a store, once per event, carrying the custom role it was assigned through
+   * (20.10).
+   *
+   * <p>One row per (user, tier, store): assigning a second custom role on the same tier at the same
+   * store replaces the code and permissions on that row rather than adding a second, because a
+   * login holds one set of permissions per tier and store, not a history of them.
+   *
+   * @param roleCode the tenant's code for the custom role, or {@code null} for a plain tier
+   * @param permissions the custom role's permissions, or {@code null} for a plain tier
+   * @return {@code true} when this event was processed now; {@code false} when it had been
+   */
+  public boolean bindStaffOnce(
+      UUID eventId,
+      String consumerName,
+      UUID userId,
+      UUID tenantId,
+      String roleName,
+      UUID storeId,
+      String roleCode,
+      Set<String> permissions,
+      java.time.Instant permissionsAt) {
     return inTx(
         c -> {
           if (!markProcessedIfNewTx(c, eventId, consumerName)) {
@@ -250,24 +276,189 @@ public class UserRepository extends BaseOutboxRepository {
             ps.executeUpdate();
           }
           UUID roleId = roleIdByName(c, roleName);
+          String perms = permissions == null ? null : String.join(",", permissions);
           try (PreparedStatement ps =
               c.prepareStatement(
-                  "INSERT INTO user_roles (id, user_id, role_id, store_id)"
-                      + " SELECT ?, ?, ?, ? WHERE NOT EXISTS"
-                      + " (SELECT 1 FROM user_roles WHERE user_id = ? AND role_id = ? AND store_id = ?)")) {
+                  "INSERT INTO user_roles (id, user_id, role_id, store_id, role_code, permissions,"
+                      + " permissions_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                      + " ON CONFLICT (user_id, role_id, store_id)"
+                      + " DO UPDATE SET permissions_at = EXCLUDED.permissions_at,"
+                      + " role_code = EXCLUDED.role_code,"
+                      + " permissions = EXCLUDED.permissions")) {
             ps.setObject(1, Ids.newId());
             ps.setObject(2, userId);
             ps.setObject(3, roleId);
             ps.setObject(4, storeId);
-            ps.setObject(5, userId);
-            ps.setObject(6, roleId);
-            ps.setObject(7, storeId);
+            ps.setString(5, roleCode);
+            ps.setString(6, perms);
+            ps.setObject(7, permissionsAt == null ? null : permissionsAt.atOffset(ZoneOffset.UTC));
             ps.executeUpdate();
           }
-          auditTx(c, tenantId, userId, "STAFF_BOUND", roleName + " @ store " + storeId);
+          auditTx(
+              c,
+              tenantId,
+              userId,
+              "STAFF_BOUND",
+              (roleCode == null ? roleName : roleCode + " (" + roleName + ")")
+                  + " @ store "
+                  + storeId);
           return true;
         },
         "bind staff");
+  }
+
+  /**
+   * Takes a staff role at a store away, once per event: what {@code StaffRemoved} asks for.
+   *
+   * <p>Before this, removing an assignment in tenant-svc left the role on the login for good
+   * (SJ-D51): a cashier taken off a store could sign in as its cashier the next morning.
+   *
+   * @return {@code true} when this event was processed now
+   */
+  public boolean unbindStaffOnce(
+      UUID eventId,
+      String consumerName,
+      UUID userId,
+      UUID tenantId,
+      String roleName,
+      UUID storeId) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumerName)) {
+            return false;
+          }
+          UUID roleId = roleIdByName(c, roleName);
+          int removed;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "DELETE FROM user_roles WHERE user_id = ? AND role_id = ? AND store_id = ?")) {
+            ps.setObject(1, userId);
+            ps.setObject(2, roleId);
+            ps.setObject(3, storeId);
+            removed = ps.executeUpdate();
+          }
+          // The last staff role gone: the login is no longer this tenant's. Left as it was, the
+          // token would still carry the tenant with no role — harmless for admin work, which the
+          // filter refuses without a role, but a shopper's token that names a tenant is a token
+          // the gateway trusts over the storefront header, so their next order at another shop
+          // would be recorded against the business that let them go.
+          int staffRolesLeft;
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  "SELECT count(*) FROM user_roles ur JOIN roles r ON r.id = ur.role_id"
+                      + " WHERE ur.user_id = ? AND r.name NOT IN ('CUSTOMER', 'PLATFORM_ADMIN')")) {
+            ps.setObject(1, userId);
+            try (ResultSet rs = ps.executeQuery()) {
+              rs.next();
+              staffRolesLeft = rs.getInt(1);
+            }
+          }
+          if (staffRolesLeft == 0) {
+            try (PreparedStatement ps =
+                c.prepareStatement(
+                    "UPDATE users SET tenant_id = NULL, type = CASE WHEN EXISTS"
+                        + " (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id"
+                        + "   WHERE ur.user_id = users.id AND r.name = 'CUSTOMER')"
+                        + " THEN 'CUSTOMER' ELSE type END WHERE id = ? AND tenant_id = ?")) {
+              ps.setObject(1, userId);
+              ps.setObject(2, tenantId);
+              ps.executeUpdate();
+            }
+          }
+          auditTx(
+              c,
+              tenantId,
+              userId,
+              "STAFF_UNBOUND",
+              roleName
+                  + " @ store "
+                  + storeId
+                  + " x"
+                  + removed
+                  + (staffRolesLeft == 0 ? ", last role: unbound from the tenant" : ""));
+          return true;
+        },
+        "unbind staff");
+  }
+
+  /**
+   * Rewrites the permissions of every assignment in a tenant made through a custom role, once per
+   * event: what {@code RoleDefined} asks for when a role is redefined. The next login carries the
+   * new set; a token already issued carries the old one until it expires.
+   *
+   * @return {@code true} when this event was processed now
+   */
+  public boolean applyRolePermissionsOnce(
+      UUID eventId,
+      String consumerName,
+      UUID tenantId,
+      String roleCode,
+      Set<String> permissions,
+      java.time.Instant updatedAt) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumerName)) {
+            return false;
+          }
+          try (PreparedStatement ps =
+              c.prepareStatement(
+                  // Only forward: a redefinition arriving after a newer one is a no-op, and so
+                  // is one older than the definition an assignment was made with.
+                  "UPDATE user_roles ur SET permissions = ?, permissions_at = ? FROM users u"
+                      + " WHERE u.id = ur.user_id AND u.tenant_id = ? AND ur.role_code = ?"
+                      + " AND (ur.permissions_at IS NULL OR ? IS NULL OR ur.permissions_at < ?)")) {
+            var at = updatedAt == null ? null : updatedAt.atOffset(ZoneOffset.UTC);
+            ps.setString(1, String.join(",", permissions));
+            ps.setObject(2, at);
+            ps.setObject(3, tenantId);
+            ps.setString(4, roleCode);
+            ps.setObject(5, at);
+            ps.setObject(6, at);
+            ps.executeUpdate();
+          }
+          return true;
+        },
+        "apply role permissions");
+  }
+
+  /**
+   * The permissions a login carries (20.10), or empty when none of its roles is a custom one.
+   *
+   * <p>Empty means "no claim": the token carries no {@code perms} and every service judges the
+   * holder by their tiers' defaults, exactly as before custom roles existed. Present means the
+   * union, over every assignment, of the custom role's permissions where there is one and the
+   * tier's defaults where there is not — so a cashier who is also a narrowed shift lead keeps the
+   * cashier's drawer.
+   *
+   * @param userId the user logging in
+   * @return the claim to mint, or empty for none
+   */
+  public Optional<Set<String>> permissionsOf(UUID userId) {
+    String sql =
+        "SELECT r.name, ur.permissions FROM user_roles ur JOIN roles r ON r.id = ur.role_id"
+            + " WHERE ur.user_id = ?";
+    Set<String> out = new java.util.LinkedHashSet<>();
+    boolean custom = false;
+    try (var c = dataSource.getConnection();
+        var ps = c.prepareStatement(sql)) {
+      ps.setObject(1, userId);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          String perms = rs.getString("permissions");
+          if (perms == null) {
+            out.addAll(com.shelfj.web.Permissions.defaultsFor(rs.getString("name")));
+          } else {
+            custom = true;
+            for (String p : perms.split(",")) {
+              if (!p.isBlank()) out.add(p.trim());
+            }
+          }
+        }
+      }
+      return custom ? Optional.of(Set.copyOf(out)) : Optional.empty();
+    } catch (SQLException e) {
+      throw dbError("load permissions", e);
+    }
   }
 
   // --- audit ---

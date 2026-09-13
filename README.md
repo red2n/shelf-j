@@ -96,6 +96,8 @@ Everyone — platform operator, business owner, cashier, or customer — ultimat
 
 A person's role decides which of these they land in immediately after signing in, and the Admin/POS/Platform experiences are locked to the roles that should see them — a cashier can't wander into the Admin Console, and a Platform Admin's login is entirely separate from any business's staff login, so the two credentials can never be confused or reused for each other.
 
+A business also defines **roles of its own** on those tiers, each holding fewer of the tier's permissions: a shift lead who is a manager in every way but cannot void a sale or post a journal, a trainee who is a cashier who cannot open the drawer without a sale. A role can only narrow the tier it stands on, never widen it; the login's token carries what the role holds, every gated decision refuses a narrowed role by name, a role redefined reaches its holders at their next sign-in, and a role cannot be deleted while anyone holds it.
+
 ---
 
 ## 5. Setting up a business

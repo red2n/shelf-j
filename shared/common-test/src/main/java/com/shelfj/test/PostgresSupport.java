@@ -88,6 +88,24 @@ public final class PostgresSupport implements AutoCloseable {
    * @return this, for chaining after {@link #start()}
    * @throws org.flywaydb.core.api.FlywayException if a migration fails to apply
    */
+  /**
+   * Points a service's Helidon test at this database and switches discovery and Kafka off: the
+   * static block every integration test opens with.
+   *
+   * @param schema the service's schema, e.g. {@code "purchase"}
+   * @return this, for chaining
+   */
+  public PostgresSupport wire(String schema) {
+    System.setProperty("shelfj.db.url", jdbcUrl());
+    System.setProperty("shelfj.db.migration-url", jdbcUrl());
+    System.setProperty("shelfj.db.user", username());
+    System.setProperty("shelfj.db.password", password());
+    System.setProperty("shelfj.db.schema", schema);
+    System.setProperty("shelfj.consul.enabled", "false");
+    System.setProperty("shelfj.kafka.enabled", "false");
+    return this;
+  }
+
   public PostgresSupport migrate(String location) {
     Flyway.configure()
         .dataSource(container.getJdbcUrl(), container.getUsername(), container.getPassword())

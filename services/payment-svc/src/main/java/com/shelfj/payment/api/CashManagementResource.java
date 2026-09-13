@@ -77,6 +77,7 @@ public class CashManagementResource {
   @Path("/{id}/drops")
   public Response drop(@PathParam("id") UUID id, RecordCashDropRequest req) {
     ctx.requireAnyRole("MANAGER", "OWNER");
+    ctx.requirePermission(com.shelfj.web.Permissions.TILL_MANAGE);
     Validations.validate(req);
     UUID tenantId = ctx.requireTenantId();
     UUID userId = ctx.userId();
@@ -97,6 +98,7 @@ public class CashManagementResource {
   @Path("/{id}/x-report")
   public Response xReport(@PathParam("id") UUID id) {
     ctx.requireAnyRole("MANAGER", "OWNER");
+    ctx.requirePermission(com.shelfj.web.Permissions.TILL_MANAGE);
     return Response.ok(ApiResponse.ok(svc.xReport(ctx.requireTenantId(), id, ctx))).build();
   }
 
@@ -114,6 +116,7 @@ public class CashManagementResource {
   @Path("/{id}/close")
   public Response close(@PathParam("id") UUID id, CloseTillRequest req) {
     ctx.requireAnyRole("MANAGER", "OWNER");
+    ctx.requirePermission(com.shelfj.web.Permissions.TILL_MANAGE);
     Validations.validate(req);
     return Response.ok(ApiResponse.ok(svc.zReport(ctx.requireTenantId(), id, req, ctx))).build();
   }

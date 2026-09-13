@@ -595,7 +595,12 @@ class StaffMember {
   final String id;
   final String userId;
   final String storeId;
+
+  /// The role as assigned: a built-in tier or one of the tenant's own codes.
   final String role;
+
+  /// The tier the assignment stands on; equals [role] for a built-in one.
+  final String baseTier;
   final String assignedAt;
 
   const StaffMember({
@@ -603,17 +608,96 @@ class StaffMember {
     required this.userId,
     required this.storeId,
     required this.role,
+    String? baseTier,
     required this.assignedAt,
-  });
+  }) : baseTier = baseTier ?? role;
+
+  bool get customRole => role != baseTier;
 
   factory StaffMember.fromJson(Map<String, dynamic> j) => StaffMember(
         id: j['id'] as String? ?? '',
         userId: j['userId'] as String? ?? '-',
         storeId: j['storeId'] as String? ?? '-',
         role: j['role'] as String? ?? '-',
+        baseTier: j['baseTier'] as String?,
         assignedAt: j['assignedAt'] as String? ?? '',
       );
 }
+
+// ── Roles (20.10): the built-in tiers beside the tenant's own ─────────────────
+
+/// A role the tenant's staff can hold: one of the four built-in tiers, or a
+/// role of the tenant's own standing on a tier with a subset of its permissions.
+class TenantRole {
+  final String code;
+  final String name;
+  final String baseTier;
+  final List<String> permissions;
+  final String? description;
+  final bool custom;
+
+  const TenantRole({
+    required this.code,
+    required this.name,
+    required this.baseTier,
+    required this.permissions,
+    this.description,
+    required this.custom,
+  });
+
+  factory TenantRole.fromJson(Map<String, dynamic> j) => TenantRole(
+        code: j['code'] as String? ?? '',
+        name: j['name'] as String? ?? '',
+        baseTier: j['baseTier'] as String? ?? '',
+        permissions: ((j['permissions'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        description: j['description'] as String?,
+        custom: j['custom'] == true,
+      );
+}
+
+/// One permission from the catalogue, with the tiers that hold it by default.
+class PermissionInfo {
+  final String code;
+  final String description;
+  final List<String> defaultFor;
+
+  const PermissionInfo({
+    required this.code,
+    required this.description,
+    required this.defaultFor,
+  });
+
+  factory PermissionInfo.fromJson(Map<String, dynamic> j) => PermissionInfo(
+        code: j['code'] as String? ?? '',
+        description: j['description'] as String? ?? '',
+        defaultFor: ((j['defaultFor'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+      );
+}
+
+final rolesProvider = FutureProvider.autoDispose<List<TenantRole>>((ref) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.tenant}/admin/roles');
+  final data = (resp.data['data'] as List?) ?? [];
+  return data.map((e) => TenantRole.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+final permissionCatalogueProvider =
+    FutureProvider.autoDispose<List<PermissionInfo>>((ref) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.tenant}/admin/roles/permissions');
+  final data = (resp.data['data'] as List?) ?? [];
+  return data
+      .map((e) => PermissionInfo.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
 
 /// All staff assignments for the tenant (walks the cursor-paginated admin list).
 final staffProvider = FutureProvider.autoDispose<List<StaffMember>>((ref) async {

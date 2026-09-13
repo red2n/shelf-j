@@ -56,6 +56,23 @@ public class JwtService {
       String email,
       Set<String> roles,
       Set<UUID> storeIds) {
+    return issueAccessToken(userId, tenantId, userType, email, roles, storeIds, null);
+  }
+
+  /**
+   * Issue a signed access token carrying a permission claim (20.10).
+   *
+   * @param permissions the {@code perms} claim, or {@code null} to omit it — a login with no custom
+   *     role carries none and is judged by its tiers' defaults
+   */
+  public String issueAccessToken(
+      UUID userId,
+      UUID tenantId,
+      String userType,
+      String email,
+      Set<String> roles,
+      Set<UUID> storeIds,
+      Set<String> permissions) {
     Instant now = Instant.now();
     var builder =
         JWT.create()
@@ -81,6 +98,11 @@ public class JwtService {
     // omitted form is what an unrestricted-access user (OWNER/PLATFORM_ADMIN) actually carries.
     if (storeIds != null && !storeIds.isEmpty()) {
       builder.withClaim("storeIds", storeIds.stream().map(UUID::toString).toList());
+    }
+    // Present, possibly empty, only for a login that holds a custom role: the gateway stamps the
+    // claim as X-Permissions ("-" when empty) and a service judges the holder by it alone.
+    if (permissions != null) {
+      builder.withClaim("perms", List.copyOf(new java.util.TreeSet<>(permissions)));
     }
     return builder.sign(algorithm);
   }

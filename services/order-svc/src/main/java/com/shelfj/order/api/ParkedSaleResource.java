@@ -153,6 +153,8 @@ public class ParkedSaleResource {
   @Path("/no-sale")
   public Response logNoSale(NoSaleRequest req) {
     ctx.requireAnyRole("CASHIER", "MANAGER", "OWNER");
+    // A trainee is a cashier who cannot open the drawer without a sale (20.10).
+    ctx.requirePermission(com.shelfj.web.Permissions.TILL_NO_SALE);
     UUID tenantId = ctx.requireTenantId();
     UUID cashierId = ctx.userId();
     var entry = svc.logNoSale(tenantId, cashierId, req);

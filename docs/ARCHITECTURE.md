@@ -231,7 +231,7 @@ Every business service has the same internal shape:
     └── db/migration/  # Flyway: V1__init.sql, V2__...
 ```
 
-Data flow for a write: `HTTP → api/ (validate DTO) → service/ (logic + repo save + outbox row, same tx) → return DTO`, then a background publisher drains the outbox to Kafka.
+Data flow for a write: `HTTP → api/ (validate DTO) → service/ (logic + repo save + outbox row, same tx) → return DTO`, then a background publisher drains the outbox to Kafka. **Each record is keyed by the row's `aggregate_id`** (SJ-D52), so every event about one aggregate lands on one partition and is consumed in the order it was written; a consumer that keeps "the last event about X" as X's state depends on that. The drain orders by `created_at, id`.
 
 ---
 
