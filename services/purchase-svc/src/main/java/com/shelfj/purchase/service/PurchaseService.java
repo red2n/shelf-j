@@ -4,6 +4,7 @@ import com.shelfj.ids.Ids;
 import com.shelfj.purchase.client.PricingClient;
 import com.shelfj.purchase.client.TenantClient;
 import com.shelfj.purchase.config.ServiceConfig;
+import com.shelfj.purchase.domain.BankAccount;
 import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.GoodsReceipt;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
@@ -80,7 +81,7 @@ public class PurchaseService {
    * @param tenantId the tenant whose currency is wanted
    * @return an ISO 4217 code, never null
    */
-  private String resolveTenantCurrency(UUID tenantId) {
+  String resolveTenantCurrency(UUID tenantId) {
     return tenants
         .findCurrency(tenantId)
         .orElseGet(() -> config.defaultCurrency().toUpperCase(java.util.Locale.ROOT));
@@ -102,6 +103,17 @@ public class PurchaseService {
         req.currency() != null
             ? Money.requireIso4217(req.currency())
             : resolveTenantCurrency(tenantId);
+    BankAccount.Details bank =
+        bankDetails(
+            req.bankAccountName(),
+            req.bankSortCode(),
+            req.bankAccountNumber(),
+            req.bankIban(),
+            req.bankBic());
+    // Where a supplier is paid is a finance decision (17.10): a storekeeper may add a supplier,
+    // not the account its money goes to.
+    if (!bank.empty()) ctx.requirePermission(Permissions.FINANCE_PAYMENTS);
+    Instant now = Instant.now();
     Supplier s =
         new Supplier(
             Ids.newId(),
@@ -112,8 +124,16 @@ public class PurchaseService {
             req.countryCode() != null ? req.countryCode().toUpperCase(java.util.Locale.ROOT) : "GB",
             currency,
             req.paymentTermsDays() != null ? req.paymentTermsDays() : BACS_TERMS_DAYS,
-            Instant.now(),
-            Instant.now());
+            now,
+            now,
+            blankToNull(req.remittanceEmail()),
+            bank.accountName(),
+            bank.sortCode(),
+            bank.accountNumber(),
+            bank.iban(),
+            bank.bic(),
+            bank.empty() ? null : now,
+            bank.empty() ? null : ctx.userId());
     return repo.createSupplier(s);
   }
 
@@ -146,6 +166,32 @@ public class PurchaseService {
                 + "; receive, close or cancel them before changing the currency");
       }
     }
+    // Bank details are replaced as a set or not touched; clearing them is explicit. Either needs
+    // finance.payments, and only an actual change moves the stamp a payment run checks.
+    BankAccount.Details bank = existing.bank();
+    Instant bankChangedAt = existing.bankDetailsChangedAt();
+    UUID bankChangedBy = existing.bankDetailsChangedBy();
+    boolean clear = Boolean.TRUE.equals(req.clearBankDetails());
+    BankAccount.Details asked =
+        bankDetails(
+            req.bankAccountName(),
+            req.bankSortCode(),
+            req.bankAccountNumber(),
+            req.bankIban(),
+            req.bankBic());
+    if (clear || !asked.empty()) {
+      ctx.requirePermission(Permissions.FINANCE_PAYMENTS);
+      BankAccount.Details next = clear ? BankAccount.Details.NONE : asked;
+      if (!next.equals(bank)) {
+        bank = next;
+        bankChangedAt = Instant.now();
+        bankChangedBy = ctx.userId();
+      }
+    }
+    String remittanceEmail =
+        req.remittanceEmail() == null
+            ? existing.remittanceEmail()
+            : validEmailOrNull(req.remittanceEmail());
     Supplier updated =
         new Supplier(
             existing.id(),
@@ -159,7 +205,15 @@ public class PurchaseService {
             currency,
             req.paymentTermsDays() != null ? req.paymentTermsDays() : existing.paymentTermsDays(),
             existing.createdAt(),
-            Instant.now());
+            Instant.now(),
+            remittanceEmail,
+            bank.accountName(),
+            bank.sortCode(),
+            bank.accountNumber(),
+            bank.iban(),
+            bank.bic(),
+            bankChangedAt,
+            bankChangedBy);
     if (!repo.updateSupplier(updated)) {
       throw ApiException.notFound("PURCHASE_SUPPLIER_NOT_FOUND", "Supplier not found: " + id);
     }
@@ -173,6 +227,33 @@ public class PurchaseService {
    * @param limit maximum rows; the caller is expected to have clamped this
    * @return the suppliers
    */
+  /** Validates bank details as keyed; a bad set is a 400 naming what is wrong. */
+  private static BankAccount.Details bankDetails(
+      String name, String sortCode, String accountNumber, String iban, String bic) {
+    try {
+      return BankAccount.details(name, sortCode, accountNumber, iban, bic);
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(400, "PURCHASE_BANK_DETAILS_INVALID", e.getMessage(), List.of(), e);
+    }
+  }
+
+  private static final java.util.regex.Pattern EMAIL =
+      java.util.regex.Pattern.compile("[^@\\s]+@[^@\\s]+\\.[^@\\s]+");
+
+  /** An empty value clears the email; anything else must look like one. */
+  private static String validEmailOrNull(String raw) {
+    String v = blankToNull(raw);
+    if (v != null && !EMAIL.matcher(v).matches()) {
+      throw ApiException.badRequest(
+          "PURCHASE_REMITTANCE_EMAIL_INVALID", "remittanceEmail is not an email address");
+    }
+    return v;
+  }
+
+  private static String blankToNull(String s) {
+    return s == null || s.isBlank() ? null : s.trim();
+  }
+
   public List<Supplier> listSuppliers(TenantContext ctx, int limit) {
     return repo.findSuppliers(ctx.requireTenantId(), limit);
   }
@@ -715,6 +796,8 @@ public class PurchaseService {
             statedGross,
             String.join(",", headerVariances),
             now,
+            null,
+            null,
             null,
             null,
             null);
@@ -1558,7 +1641,7 @@ public class PurchaseService {
    *
    * @throws ApiException 409 {@code PURCHASE_PERIOD_CLOSED}
    */
-  private void requireOpenPeriod(UUID tenantId, UUID storeId, LocalDate date) {
+  void requireOpenPeriod(UUID tenantId, UUID storeId, LocalDate date) {
     if (storeId == null) return;
     var periods = inventory.accountingPeriods(tenantId, storeId);
     if (periods.isPresent() && PeriodControl.closedOn(periods.get(), date)) {

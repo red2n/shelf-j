@@ -31,7 +31,8 @@ public final class PermissionGate {
           "finance.journal",
           "pricing.write",
           "customers.privacy",
-          "staff.manage");
+          "staff.manage",
+          "finance.payments");
 
   private static final AtomicLong KEYS = new AtomicLong();
 

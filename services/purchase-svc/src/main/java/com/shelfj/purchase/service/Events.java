@@ -197,6 +197,56 @@ final class Events {
         + "}";
   }
 
+  /**
+   * A payment run paid a supplier (17.10): the advice notification-svc emails to the supplier's
+   * remittance address — which invoices the payment settles, which credit notes it offsets, the
+   * total. One per supplier per run; the event id is derived from the two, so a retried payment is
+   * one advice, not two.
+   *
+   * @param items the documents the run settled for this supplier
+   * @return the outbox row, keyed by the run so a run's advices are delivered in order
+   */
+  static OutboxRow supplierRemittanceIssued(
+      UUID tenantId,
+      com.shelfj.purchase.domain.PaymentRuns.PaymentRun run,
+      Domain.Supplier supplier,
+      java.util.List<com.shelfj.purchase.domain.PaymentRuns.Item> items,
+      java.math.BigDecimal total) {
+    UUID eventId = com.shelfj.ids.Ids.derived(run.id(), "remittance:" + supplier.id());
+    var lines = jakarta.json.Json.createArrayBuilder();
+    for (var item : items) {
+      var line =
+          jakarta.json.Json.createObjectBuilder()
+              .add("type", item.itemType())
+              .add("reference", item.reference())
+              .add("amount", item.amount());
+      if (item.documentDate() != null) line.add("documentDate", item.documentDate().toString());
+      lines.add(line);
+    }
+    var json =
+        jakarta.json.Json.createObjectBuilder()
+            .add("eventId", eventId.toString())
+            .add("eventType", "SupplierRemittanceIssued")
+            .add("tenantId", tenantId.toString())
+            .add("aggregateId", run.id().toString())
+            .add("occurredAt", java.time.Instant.now().toString())
+            .add("runId", run.id().toString())
+            .add("runReference", run.reference())
+            .add("supplierId", supplier.id().toString())
+            .add("supplierName", supplier.name())
+            .add("paymentDate", run.paymentDate().toString())
+            .add("currency", run.currency())
+            .add("total", total)
+            .add("items", lines);
+    if (supplier.remittanceEmail() != null) json.add("remittanceEmail", supplier.remittanceEmail());
+    return new OutboxRow(
+        "SupplierRemittanceIssued",
+        "shelfj.purchase.supplier-remittance-issued",
+        tenantId,
+        run.id(),
+        json.build().toString());
+  }
+
   static OutboxRow intercompanyInvoiceRaised(UUID tenantId, UUID invoiceId) {
     return new OutboxRow(
         "IntercompanyInvoiceRaised",

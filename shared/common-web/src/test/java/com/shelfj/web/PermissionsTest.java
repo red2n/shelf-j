@@ -22,7 +22,7 @@ class PermissionsTest {
   @Test
   @DisplayName("Every code in the catalogue has a sentence, and the sets agree")
   void catalogueIsComplete() {
-    assertEquals(11, Permissions.ALL.size());
+    assertEquals(12, Permissions.ALL.size());
     for (String code : Permissions.ALL) {
       assertTrue(Permissions.catalogue().containsKey(code));
       assertTrue(Permissions.isKnown(code));

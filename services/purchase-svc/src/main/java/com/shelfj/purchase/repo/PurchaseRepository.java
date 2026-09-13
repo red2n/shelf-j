@@ -46,8 +46,10 @@ public class PurchaseRepository extends BaseOutboxRepository {
           try (var ps =
               c.prepareStatement(
                   "INSERT INTO suppliers"
-                      + " (id,tenant_id,name,vat_number,vat_registered,country_code,currency,payment_terms_days)"
-                      + " VALUES (?,?,?,?,?,?,?,?)")) {
+                      + " (id,tenant_id,name,vat_number,vat_registered,country_code,currency,payment_terms_days,"
+                      + "  remittance_email,bank_account_name,bank_sort_code,bank_account_number,bank_iban,"
+                      + "  bank_bic,bank_details_changed_at,bank_details_changed_by)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, s.id());
             ps.setObject(2, s.tenantId());
             ps.setString(3, s.name());
@@ -56,6 +58,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ps.setString(6, s.countryCode());
             ps.setString(7, s.currency());
             ps.setInt(8, s.paymentTermsDays());
+            bindPaymentFields(ps, 9, s);
             ps.executeUpdate();
           } catch (java.sql.SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -81,14 +84,12 @@ public class PurchaseRepository extends BaseOutboxRepository {
    */
   public List<Supplier> findSuppliers(UUID tenantId, int limit) {
     return query(
-        "SELECT id,tenant_id,name,vat_number,vat_registered,country_code,currency,"
-            + "payment_terms_days,created_at,updated_at"
-            + " FROM suppliers WHERE tenant_id=? ORDER BY name LIMIT ?",
+        "SELECT " + SUPPLIER_COLUMNS + " FROM suppliers WHERE tenant_id=? ORDER BY name LIMIT ?",
         ps -> {
           ps.setObject(1, tenantId);
           ps.setInt(2, limit);
         },
-        this::mapSupplier,
+        PurchaseRepository::mapSupplier,
         "find suppliers");
   }
 
@@ -102,14 +103,12 @@ public class PurchaseRepository extends BaseOutboxRepository {
   public Optional<Supplier> findSupplier(UUID tenantId, UUID id) {
     var rows =
         query(
-            "SELECT id,tenant_id,name,vat_number,vat_registered,country_code,currency,"
-                + "payment_terms_days,created_at,updated_at"
-                + " FROM suppliers WHERE tenant_id=? AND id=?",
+            "SELECT " + SUPPLIER_COLUMNS + " FROM suppliers WHERE tenant_id=? AND id=?",
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
             },
-            this::mapSupplier,
+            PurchaseRepository::mapSupplier,
             "find supplier");
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
@@ -127,7 +126,9 @@ public class PurchaseRepository extends BaseOutboxRepository {
           try (var ps =
               c.prepareStatement(
                   "UPDATE suppliers SET name=?, vat_number=?, vat_registered=?, country_code=?,"
-                      + " currency=?, payment_terms_days=?, updated_at=now()"
+                      + " currency=?, payment_terms_days=?, remittance_email=?, bank_account_name=?,"
+                      + " bank_sort_code=?, bank_account_number=?, bank_iban=?, bank_bic=?,"
+                      + " bank_details_changed_at=?, bank_details_changed_by=?, updated_at=now()"
                       + " WHERE tenant_id=? AND id=?")) {
             ps.setString(1, s.name());
             ps.setString(2, s.vatNumber());
@@ -135,8 +136,9 @@ public class PurchaseRepository extends BaseOutboxRepository {
             ps.setString(4, s.countryCode());
             ps.setString(5, s.currency());
             ps.setInt(6, s.paymentTermsDays());
-            ps.setObject(7, s.tenantId());
-            ps.setObject(8, s.id());
+            bindPaymentFields(ps, 7, s);
+            ps.setObject(15, s.tenantId());
+            ps.setObject(16, s.id());
             return ps.executeUpdate() > 0;
           } catch (java.sql.SQLException sqle) {
             if (UNIQUE_VIOLATION.equals(sqle.getSQLState()))
@@ -174,7 +176,29 @@ public class PurchaseRepository extends BaseOutboxRepository {
     return rows.isEmpty() ? 0 : rows.get(0);
   }
 
-  private Supplier mapSupplier(ResultSet rs) throws SQLException {
+  static final String SUPPLIER_COLUMNS =
+      "id,tenant_id,name,vat_number,vat_registered,country_code,currency,payment_terms_days,"
+          + "created_at,updated_at,remittance_email,bank_account_name,bank_sort_code,"
+          + "bank_account_number,bank_iban,bank_bic,bank_details_changed_at,bank_details_changed_by";
+
+  /**
+   * Binds the eight payment fields — remittance email, bank details, the change stamp — from {@code
+   * at}.
+   */
+  private static void bindPaymentFields(java.sql.PreparedStatement ps, int at, Supplier s)
+      throws SQLException {
+    ps.setString(at, s.remittanceEmail());
+    ps.setString(at + 1, s.bankAccountName());
+    ps.setString(at + 2, s.bankSortCode());
+    ps.setString(at + 3, s.bankAccountNumber());
+    ps.setString(at + 4, s.bankIban());
+    ps.setString(at + 5, s.bankBic());
+    ps.setObject(at + 6, toOdt(s.bankDetailsChangedAt()));
+    ps.setObject(at + 7, s.bankDetailsChangedBy());
+  }
+
+  static Supplier mapSupplier(ResultSet rs) throws SQLException {
+    OffsetDateTime changed = rs.getObject("bank_details_changed_at", OffsetDateTime.class);
     return new Supplier(
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
@@ -185,7 +209,15 @@ public class PurchaseRepository extends BaseOutboxRepository {
         rs.getString("currency"),
         rs.getInt("payment_terms_days"),
         rs.getObject("created_at", OffsetDateTime.class).toInstant(),
-        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant(),
+        rs.getString("remittance_email"),
+        rs.getString("bank_account_name"),
+        rs.getString("bank_sort_code"),
+        rs.getString("bank_account_number"),
+        rs.getString("bank_iban"),
+        rs.getString("bank_bic"),
+        changed == null ? null : changed.toInstant(),
+        rs.getObject("bank_details_changed_by", UUID.class));
   }
 
   // ── Purchase Orders ───────────────────────────────────────────────────────────
@@ -1043,7 +1075,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
           if (status != null) ps.setString(i++, status);
           ps.setInt(i, limit);
         },
-        this::mapSupplierInvoice,
+        PurchaseRepository::mapSupplierInvoice,
         "find supplier invoices");
   }
 
@@ -1062,7 +1094,7 @@ public class PurchaseRepository extends BaseOutboxRepository {
               ps.setObject(1, tenantId);
               ps.setObject(2, id);
             },
-            this::mapSupplierInvoice,
+            PurchaseRepository::mapSupplierInvoice,
             "find supplier invoice");
     return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
   }
@@ -1103,11 +1135,13 @@ public class PurchaseRepository extends BaseOutboxRepository {
   private static final String SI_COLUMNS =
       "id,tenant_id,po_id,supplier_id,invoice_number,invoice_date,currency,net_amount,vat_amount,"
           + "gross_amount,status,matched_at,created_by,created_at,due_date,stated_gross,"
-          + "header_variances,posted_at,resolved_at,resolved_by,resolution_reason";
+          + "header_variances,posted_at,resolved_at,resolved_by,resolution_reason,paid_at,"
+          + "payment_run_id";
 
-  private Domain.SupplierInvoice mapSupplierInvoice(ResultSet rs) throws SQLException {
+  private static Domain.SupplierInvoice mapSupplierInvoice(ResultSet rs) throws SQLException {
     OffsetDateTime posted = rs.getObject("posted_at", OffsetDateTime.class);
     OffsetDateTime resolved = rs.getObject("resolved_at", OffsetDateTime.class);
+    OffsetDateTime paid = rs.getObject("paid_at", OffsetDateTime.class);
     return new Domain.SupplierInvoice(
         rs.getObject("id", UUID.class),
         rs.getObject("tenant_id", UUID.class),
@@ -1129,7 +1163,9 @@ public class PurchaseRepository extends BaseOutboxRepository {
         posted == null ? null : posted.toInstant(),
         resolved == null ? null : resolved.toInstant(),
         rs.getObject("resolved_by", UUID.class),
-        rs.getString("resolution_reason"));
+        rs.getString("resolution_reason"),
+        paid == null ? null : paid.toInstant(),
+        rs.getObject("payment_run_id", UUID.class));
   }
 
   private GoodsReceipt findGoodsReceiptByKeyTx(
@@ -1324,31 +1360,12 @@ public class PurchaseRepository extends BaseOutboxRepository {
 
   private void insertNominalEntry(java.sql.Connection c, NominalLedgerEntry e)
       throws java.sql.SQLException {
-    try (var ps =
-        c.prepareStatement(
-            "INSERT INTO nominal_ledger_entries"
-                + " (id,tenant_id,entry_date,nominal_code,nominal_name,debit,credit,description,"
-                + "  source_ref,journal_id,source_type,store_id)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
-      ps.setObject(1, e.id());
-      ps.setObject(2, e.tenantId());
-      ps.setObject(3, e.entryDate());
-      ps.setString(4, e.nominalCode());
-      ps.setString(5, e.nominalName());
-      ps.setBigDecimal(6, e.debit());
-      ps.setBigDecimal(7, e.credit());
-      ps.setString(8, e.description());
-      ps.setObject(9, e.sourceRef());
-      ps.setObject(10, e.journalId());
-      ps.setString(11, e.sourceType());
-      ps.setObject(12, e.storeId());
-      ps.executeUpdate();
-    }
+    LedgerWriter.insert(c, List.of(e));
   }
 
   private void insertNominalEntries(java.sql.Connection c, List<NominalLedgerEntry> entries)
       throws SQLException {
-    for (NominalLedgerEntry e : entries) insertNominalEntry(c, e);
+    LedgerWriter.insert(c, entries);
   }
 
   /**

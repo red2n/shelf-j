@@ -870,7 +870,9 @@ class PurchaseIT {
     String body = get("/purchase-orders/" + poId, T).readEntity(String.class);
     assertThat(body, containsString("\"currency\":\"KWD\""));
     assertThat(body, containsString("\"totalNet\":2.468"));
-    assertThat(body, not(containsString("2.47")));
+    // On the totals, not the whole body: a timestamp such as "…42.470778Z" contains "2.47" too.
+    assertThat(body, not(containsString("\"totalNet\":2.47")));
+    assertThat(body, not(containsString("\"totalGross\":2.47")));
   }
 
   /**

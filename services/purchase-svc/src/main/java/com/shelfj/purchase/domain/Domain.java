@@ -50,8 +50,17 @@ public final class Domain {
   public static final String SOURCE_INTERCOMPANY = "INTERCOMPANY";
   public static final String SOURCE_SETTLEMENT = "SETTLEMENT";
   public static final String SOURCE_JOURNAL = "JOURNAL";
+  public static final String SOURCE_SUPPLIER_PAYMENT = "SUPPLIER_PAYMENT";
 
   // ── Supplier ──────────────────────────────────────────────────────────────────
+  /**
+   * A supplier.
+   *
+   * @param remittanceEmail where remittance advice is emailed when a payment run pays it (17.10)
+   * @param bankDetailsChangedAt when its bank details last changed, and {@code
+   *     bankDetailsChangedBy} who changed them: a change shortly before a payment is the pattern
+   *     payment-diversion fraud leaves, so a run flags it
+   */
   public record Supplier(
       UUID id,
       UUID tenantId,
@@ -62,7 +71,27 @@ public final class Domain {
       String currency,
       int paymentTermsDays,
       Instant createdAt,
-      Instant updatedAt) {}
+      Instant updatedAt,
+      String remittanceEmail,
+      String bankAccountName,
+      String bankSortCode,
+      String bankAccountNumber,
+      String bankIban,
+      String bankBic,
+      Instant bankDetailsChangedAt,
+      UUID bankDetailsChangedBy) {
+
+    /** The bank details as one validated value. */
+    public BankAccount.Details bank() {
+      return new BankAccount.Details(
+          bankAccountName, bankSortCode, bankAccountNumber, bankIban, bankBic);
+    }
+
+    /** Whether a payment run can pay this supplier. */
+    public boolean hasBankDetails() {
+      return bank().payable();
+    }
+  }
 
   // ── Purchase Order ────────────────────────────────────────────────────────────
   public static final String PO_DRAFT = "DRAFT";
@@ -258,7 +287,9 @@ public final class Domain {
       Instant postedAt,
       Instant resolvedAt,
       UUID resolvedBy,
-      String resolutionReason) {
+      String resolutionReason,
+      Instant paidAt,
+      UUID paymentRunId) {
 
     /** Whether the invoice may be paid: matched, or flagged and then approved. */
     public boolean payable() {

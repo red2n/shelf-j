@@ -35,6 +35,7 @@ public final class Permissions {
   public static final String PRICING_WRITE = "pricing.write";
   public static final String CUSTOMERS_PRIVACY = "customers.privacy";
   public static final String STAFF_MANAGE = "staff.manage";
+  public static final String FINANCE_PAYMENTS = "finance.payments";
 
   /** Every permission, with the sentence a screen shows beside its checkbox. */
   private static final Map<String, String> CATALOGUE;
@@ -55,6 +56,9 @@ public final class Permissions {
     m.put(PRICING_WRITE, "Create and change price lists");
     m.put(CUSTOMERS_PRIVACY, "Export or erase a customer's personal data");
     m.put(STAFF_MANAGE, "Assign and remove staff, and define roles");
+    m.put(
+        FINANCE_PAYMENTS,
+        "Propose, approve and pay supplier payment runs, and change a supplier's bank details");
     CATALOGUE = Map.copyOf(m);
   }
 

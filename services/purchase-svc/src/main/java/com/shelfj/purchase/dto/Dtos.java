@@ -35,7 +35,21 @@ public final class Dtos {
                       + " order raised against this supplier inherits it.")
           String currency,
       @Schema(description = "Payment terms in days. Defaults to 30 (BACS standard).") @Min(1)
-          Integer paymentTermsDays) {}
+          Integer paymentTermsDays,
+      @Schema(description = "Where remittance advice is emailed when a payment run pays it.")
+          @jakarta.validation.constraints.Email
+          @Size(max = 254)
+          String remittanceEmail,
+      @Schema(description = "The account holder's name, as the bank has it.") @Size(max = 140)
+          String bankAccountName,
+      @Schema(description = "UK sort code, six digits; dashes and spaces allowed.") @Size(max = 12)
+          String bankSortCode,
+      @Schema(description = "UK account number, eight digits.") @Size(max = 12)
+          String bankAccountNumber,
+      @Schema(description = "IBAN for an international payment; its check digits are verified.")
+          @Size(max = 42)
+          String bankIban,
+      @Schema(description = "BIC (SWIFT code), with an IBAN.") @Size(max = 14) String bankBic) {}
 
   @Schema(
       name = "UpdateSupplierRequest",
@@ -51,7 +65,22 @@ public final class Dtos {
           String countryCode,
       @Schema(description = "ISO 4217 currency code; unchanged when omitted.") String currency,
       @Schema(description = "Payment terms in days; unchanged when omitted.") @Min(1)
-          Integer paymentTermsDays) {}
+          Integer paymentTermsDays,
+      @Schema(description = "Remittance email; unchanged when omitted, cleared when empty.")
+          @Size(max = 254)
+          String remittanceEmail,
+      @Schema(
+              description =
+                  "Bank details, all or none: when any is given the whole set is replaced."
+                      + " Unchanged when all are omitted. Needs finance.payments.")
+          @Size(max = 140)
+          String bankAccountName,
+      @Size(max = 12) String bankSortCode,
+      @Size(max = 12) String bankAccountNumber,
+      @Size(max = 42) String bankIban,
+      @Size(max = 14) String bankBic,
+      @Schema(description = "True to remove the bank details. Needs finance.payments.")
+          Boolean clearBankDetails) {}
 
   @Schema(name = "SupplierResponse")
   public record SupplierResponse(
@@ -64,7 +93,19 @@ public final class Dtos {
       String currency,
       int paymentTermsDays,
       Instant createdAt,
-      Instant updatedAt) {}
+      Instant updatedAt,
+      String remittanceEmail,
+      String bankAccountName,
+      String bankSortCode,
+      @Schema(
+              description =
+                  "The last four digits only; the full number reaches the bank file alone.")
+          String bankAccountNumberMasked,
+      @Schema(description = "The last four characters only.") String bankIbanMasked,
+      String bankBic,
+      @Schema(description = "Whether a payment run can pay this supplier.") boolean hasBankDetails,
+      @Schema(description = "When the bank details last changed; a run flags a recent change.")
+          Instant bankDetailsChangedAt) {}
 
   // ── Purchase Order ────────────────────────────────────────────────────────────
   @Schema(name = "CreatePurchaseOrderRequest", description = "Create a DRAFT purchase order.")
@@ -442,6 +483,10 @@ public final class Dtos {
       Instant resolvedAt,
       UUID resolvedBy,
       String resolutionReason,
+      @Schema(description = "When a payment run paid it (17.10); null while unpaid.")
+          Instant paidAt,
+      @Schema(description = "The payment run that paid it.") UUID paymentRunId,
+      @Schema(description = "Whether it has been paid.") boolean paid,
       List<SupplierInvoiceMatchLineResponse> lines) {}
 
   @Schema(
@@ -567,4 +612,81 @@ public final class Dtos {
       BigDecimal totalDebit,
       BigDecimal totalCredit,
       boolean balanced) {}
+
+  // ── Supplier payment runs (17.10) ─────────────────────────────────────────────
+
+  @Schema(name = "ProposePaymentRunRequest")
+  public record ProposePaymentRunRequest(
+      @Schema(
+              description = "Invoices due on or before this date are proposed.",
+              example = "2026-09-30")
+          @NotBlank
+          String payUpTo,
+      @Schema(
+              description =
+                  "The date the payment is made and posted: today or later, within a year.")
+          @NotBlank
+          String paymentDate,
+      @Schema(description = "ISO 4217. A run pays one currency; the tenant's own when omitted.")
+          @Size(min = 3, max = 3)
+          String currency) {}
+
+  @Schema(name = "CancelPaymentRunRequest")
+  public record CancelPaymentRunRequest(
+      @Schema(description = "Why the run is abandoned; kept on the run.") @NotBlank @Size(max = 500)
+          String reason) {}
+
+  @Schema(name = "PaymentRunResponse")
+  public record PaymentRunResponse(
+      UUID id,
+      @Schema(description = "What the bank statement and the remittance advice say.")
+          String reference,
+      @Schema(description = "PROPOSED, APPROVED, PAID or CANCELLED.") String status,
+      LocalDate payUpTo,
+      LocalDate paymentDate,
+      String currency,
+      @Schema(description = "What the run pays: invoices less credit notes, across suppliers.")
+          BigDecimal total,
+      UUID proposedBy,
+      Instant proposedAt,
+      UUID approvedBy,
+      Instant approvedAt,
+      UUID paidBy,
+      Instant paidAt,
+      UUID cancelledBy,
+      Instant cancelledAt,
+      String cancelReason,
+      List<PaymentRunSupplierResponse> suppliers,
+      @Schema(
+              description =
+                  "Suppliers with something due that the run does not pay, and why:"
+                      + " NO_BANK_DETAILS or NET_NOT_POSITIVE. On a run already proposed, a"
+                      + " supplier that can no longer be paid; approving or paying it is refused.")
+          List<PaymentRunExcludedResponse> excluded) {}
+
+  @Schema(name = "PaymentRunSupplierResponse")
+  public record PaymentRunSupplierResponse(
+      UUID supplierId,
+      String name,
+      @Schema(description = "Invoices less credit notes: what this supplier is paid.")
+          BigDecimal net,
+      @Schema(description = "Whether a remittance advice can be emailed.")
+          boolean remittanceEmailOnFile,
+      @Schema(description = "BANK_DETAILS_CHANGED_RECENTLY when they changed in the last 14 days.")
+          List<String> warnings,
+      List<PaymentRunDocumentResponse> documents) {}
+
+  @Schema(name = "PaymentRunDocumentResponse")
+  public record PaymentRunDocumentResponse(
+      @Schema(description = "INVOICE (paid) or CREDIT_NOTE (offset).") String type,
+      UUID documentId,
+      UUID storeId,
+      String reference,
+      LocalDate documentDate,
+      LocalDate dueDate,
+      BigDecimal amount) {}
+
+  @Schema(name = "PaymentRunExcludedResponse")
+  public record PaymentRunExcludedResponse(
+      UUID supplierId, String name, String reason, BigDecimal net) {}
 }

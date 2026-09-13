@@ -56,4 +56,25 @@ class PermissionsIT {
             "{\"entryDate\":\"2026-02-05\",\"description\":\"x\",\"lines\":[{\"nominalCode\":\"1001\",\"debit\":1},{\"nominalCode\":\"3000\",\"credit\":1}]}",
             "finance.journal");
   }
+
+  @Test
+  @DisplayName(
+      "Payment runs, the bank file and a supplier's bank details are gated by finance.payments")
+  void supplierPaymentsAreGated() {
+    gate()
+        .assertGated(
+            "POST",
+            "/payment-runs",
+            "{\"payUpTo\":\"2026-01-01\",\"paymentDate\":\"2099-01-01\"}",
+            "finance.payments");
+    gate().assertGated("POST", "/payment-runs/" + ID + "/approve", "{}", "finance.payments");
+    gate().assertGated("POST", "/payment-runs/" + ID + "/pay", "{}", "finance.payments");
+    gate().assertGated("GET", "/payment-runs/" + ID + "/bank-file", null, "finance.payments");
+    gate()
+        .assertGated(
+            "POST",
+            "/suppliers",
+            "{\"name\":\"Gated Ltd\",\"bankAccountName\":\"Gated Ltd\",\"bankSortCode\":\"123456\",\"bankAccountNumber\":\"31415926\"}",
+            "finance.payments");
+  }
 }

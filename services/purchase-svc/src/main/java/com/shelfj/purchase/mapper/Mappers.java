@@ -42,7 +42,15 @@ public final class Mappers {
         s.currency(),
         s.paymentTermsDays(),
         s.createdAt(),
-        s.updatedAt());
+        s.updatedAt(),
+        s.remittanceEmail(),
+        s.bankAccountName(),
+        s.bankSortCode(),
+        com.shelfj.purchase.domain.BankAccount.masked(s.bankAccountNumber()),
+        com.shelfj.purchase.domain.BankAccount.masked(s.bankIban()),
+        s.bankBic(),
+        s.hasBankDetails(),
+        s.bankDetailsChangedAt());
   }
 
   /**
@@ -136,6 +144,9 @@ public final class Mappers {
         inv.resolvedAt(),
         inv.resolvedBy(),
         inv.resolutionReason(),
+        inv.paidAt(),
+        inv.paymentRunId(),
+        inv.paidAt() != null,
         rows);
   }
 
@@ -354,5 +365,60 @@ public final class Mappers {
     }
     return new Dtos.TrialBalanceResponse(
         from, to, storeId, out, debit, credit, debit.compareTo(credit) == 0);
+  }
+
+  /**
+   * Converts a payment run to its wire form: the run, what it pays each supplier, and any supplier
+   * it does not pay. Bank details never appear here; they reach the bank file alone.
+   */
+  public static Dtos.PaymentRunResponse toDto(com.shelfj.purchase.domain.PaymentRuns.View v) {
+    var r = v.run();
+    return new Dtos.PaymentRunResponse(
+        r.id(),
+        r.reference(),
+        r.status(),
+        r.payUpTo(),
+        r.paymentDate(),
+        r.currency(),
+        r.total(),
+        r.proposedBy(),
+        r.proposedAt(),
+        r.approvedBy(),
+        r.approvedAt(),
+        r.paidBy(),
+        r.paidAt(),
+        r.cancelledBy(),
+        r.cancelledAt(),
+        r.cancelReason(),
+        v.proposal().payments().stream()
+            .map(
+                p -> {
+                  var s = v.suppliers().get(p.supplierId());
+                  return new Dtos.PaymentRunSupplierResponse(
+                      p.supplierId(),
+                      p.name(),
+                      p.net(),
+                      s != null && s.remittanceEmail() != null,
+                      p.warnings(),
+                      p.documents().stream()
+                          .map(
+                              d ->
+                                  new Dtos.PaymentRunDocumentResponse(
+                                      d.type(),
+                                      d.documentId(),
+                                      d.storeId(),
+                                      d.reference(),
+                                      d.documentDate(),
+                                      d.dueDate(),
+                                      d.amount()))
+                          .toList());
+                })
+            .toList(),
+        v.proposal().excluded().stream()
+            .map(
+                e ->
+                    new Dtos.PaymentRunExcludedResponse(
+                        e.supplierId(), e.name(), e.reason(), e.net()))
+            .toList());
   }
 }
