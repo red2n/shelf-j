@@ -369,7 +369,7 @@ Fan-in from Kafka events, plus a staff send path for POS receipts etc.
 - `POST /admin/pos-log/orders/{orderId}` — record the POSLog transaction-journal entry for a fulfilled POS order.
 - `GET /admin/pos-log`, `GET /admin/pos-log/orders/{orderId}` — list the POS transaction journal, tenant-wide or per order.
 - `GET /admin/pos/stock-positions` — live (eventually-consistent) on-hand snapshot for POS screens, fed asynchronously from inventory-svc events.
-- `POST /admin/orders/{orderId}/receipts`, `GET /admin/orders/{orderId}/receipts` — log/list receipt generation events (print or email; the frontend renders the receipt itself).
+- `POST /admin/orders/{orderId}/receipts`, `GET /admin/orders/{orderId}/receipts` — log/list receipt generation events. `receiptType` records how the receipt came out: `PRINT` (the browser's dialog), `THERMAL` (ESC/POS to a receipt printer, 09.12), `SAVE` (kept as a file), `EMAIL` (sent; `emailedTo` required). The frontend renders the receipt itself.
 
 ### Alternative Sale Types
 - `POST /gift-cards` — issue a gift card. `GET /gift-cards/{code}` — look one up. `POST /gift-cards/{code}/reload` — top up balance. `POST /gift-cards/{code}/redeem` — spend from balance; **idempotent per `orderId`** (a repeat redemption against the same order returns the card unchanged rather than deducting twice, matching how a `STORE_CREDIT` tender is keyed in payment-svc). A redemption sent without an `orderId` is a manual adjustment and is not deduplicated. `GET /gift-cards/{code}/transactions` — transaction history.

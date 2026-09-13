@@ -452,7 +452,12 @@ public final class Dtos {
 
   @Schema(name = "GenerateReceiptRequest")
   public record GenerateReceiptRequest(
-      @Schema(description = "PRINT or EMAIL.") @NotBlank String receiptType,
+      @Schema(
+              description =
+                  "How the receipt came out: PRINT (browser), THERMAL (ESC/POS), SAVE (file) or EMAIL.")
+          @NotBlank
+          @Size(max = 20)
+          String receiptType,
       @Schema(description = "Required when receiptType is EMAIL.") String emailedTo,
       Integer printCount) {}
 

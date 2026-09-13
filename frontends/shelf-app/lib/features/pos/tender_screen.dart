@@ -15,6 +15,7 @@ import '../admin/providers/admin_providers.dart';
 import 'pos_fiscal_receipt.dart';
 import 'pos_providers.dart';
 import 'pos_receipt.dart';
+import 'pos_receipt_printer.dart';
 import 'pos_session_providers.dart';
 import '../../shared/util/short_ref.dart';
 
@@ -296,8 +297,9 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       if (!mounted) return;
       setState(() => _processing = false);
 
-      // Open print dialog automatically — cashier can dismiss or save as PDF.
-      openReceiptPrint(receiptData);
+      // The receipt comes out the way this till is set up to (09.12): the
+      // browser's dialog, a thermal printer, a file. A cash sale may open the drawer.
+      await _produceReceipt(receiptData, kickDrawer: true);
 
       await _showReceiptDialog(
         orderId,
@@ -361,7 +363,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     if (!mounted) return;
     setState(() => _processing = false);
 
-    openReceiptPrint(receiptData);
+    await _produceReceipt(receiptData, kickDrawer: true);
     await _showOfflineSavedDialog(sale, currency, change, receiptData);
   }
 
@@ -405,10 +407,21 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
             ),
             const SizedBox(height: 16),
             // No "Email receipt": that needs the server this sale is waiting for.
-            OutlinedButton.icon(
-              onPressed: () => openReceiptPrint(receiptData),
-              icon: const Icon(Icons.print_outlined, size: 18),
-              label: const Text('Reprint'),
+            Wrap(
+              spacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _produceReceipt(receiptData),
+                  icon: const Icon(Icons.print_outlined, size: 18),
+                  label: const Text('Reprint'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _saveReceipt(receiptData),
+                  icon: const Icon(Icons.save_alt_outlined, size: 18),
+                  label: const Text('Save'),
+                ),
+              ],
             ),
           ],
         ),
@@ -474,7 +487,45 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
     );
   }
 
-  /// Record a printed or emailed receipt (best-effort — never blocks completion).
+  /// Produces the receipt the way this till is set up to (09.12), says what
+  /// happened when that was not the browser dialog, and records it against the
+  /// order when asked. A cash sale may open the drawer; a reprint never does.
+  Future<void> _produceReceipt(
+    PosReceiptData data, {
+    String? recordFor,
+    bool kickDrawer = false,
+  }) async {
+    final printer = ref.read(receiptPrinterProvider);
+    final cash = data.tenders.any((t) => t.method == 'CASH');
+    final outcome = await printer.print(
+      data,
+      openDrawer: kickDrawer && cash && printer.settings.openDrawer,
+    );
+    if (!mounted) return;
+    if (!outcome.ok) {
+      _snack(outcome.message, error: true);
+      return;
+    }
+    if (outcome.method == ReceiptMethod.thermal || outcome.method == ReceiptMethod.save) {
+      _snack(outcome.message);
+    }
+    if (recordFor != null && outcome.method != ReceiptMethod.none) {
+      await _recordReceipt(recordFor, outcome.method.code, null);
+    }
+  }
+
+  /// Keeps a copy of the receipt as a file — downloaded on the web, written to
+  /// the documents folder on a native till — whatever the printer mode.
+  Future<void> _saveReceipt(PosReceiptData data, {String? recordFor}) async {
+    final outcome = await ref.read(receiptPrinterProvider).save(data);
+    if (!mounted) return;
+    _snack(outcome.message, error: !outcome.ok);
+    if (outcome.ok && recordFor != null) {
+      await _recordReceipt(recordFor, ReceiptMethod.save.code, null);
+    }
+  }
+
+  /// Record a printed, saved or emailed receipt (best-effort — never blocks completion).
   Future<void> _recordReceipt(
     String orderId,
     String type,
@@ -493,7 +544,11 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
             },
           );
       if (!mounted) return;
-      _snack(type == 'EMAIL' ? 'Receipt emailed.' : 'Receipt printed.');
+      _snack(switch (type) {
+        'EMAIL' => 'Receipt emailed.',
+        'SAVE' => 'Receipt saved.',
+        _ => 'Receipt printed.',
+      });
     } catch (e) {
       if (!mounted) return;
       _snack(
@@ -557,11 +612,15 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
                       );
                       if (stamp != null) data = data.withFiscalStamp(stamp);
                     }
-                    openReceiptPrint(data);
-                    _recordReceipt(orderId, 'PRINT', null);
+                    await _produceReceipt(data, recordFor: orderId);
                   },
                   icon: const Icon(Icons.print_outlined, size: 18),
                   label: const Text('Reprint'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _saveReceipt(receiptData, recordFor: orderId),
+                  icon: const Icon(Icons.save_alt_outlined, size: 18),
+                  label: const Text('Save'),
                 ),
                 if (customerEmail != null && customerEmail.isNotEmpty)
                   OutlinedButton.icon(
@@ -739,7 +798,7 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
       ref.read(posWalkInPhoneProvider.notifier).state = '';
       if (!mounted) return;
       setState(() => _processing = false);
-      openReceiptPrint(receiptData);
+      await _produceReceipt(receiptData);
       await _showOrderPlacedDialog(orderId, email, receiptData: receiptData);
     } catch (e) {
       if (!isOfflineError(e)) {
@@ -783,12 +842,14 @@ class _TenderScreenState extends ConsumerState<TenderScreen> {
               alignment: WrapAlignment.center,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () {
-                    openReceiptPrint(receiptData);
-                    _recordReceipt(orderId, 'PRINT', null);
-                  },
+                  onPressed: () => _produceReceipt(receiptData, recordFor: orderId),
                   icon: const Icon(Icons.print_outlined, size: 18),
                   label: const Text('Reprint'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _saveReceipt(receiptData, recordFor: orderId),
+                  icon: const Icon(Icons.save_alt_outlined, size: 18),
+                  label: const Text('Save'),
                 ),
                 if (customerEmail != null && customerEmail.isNotEmpty)
                   OutlinedButton.icon(
