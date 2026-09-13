@@ -284,8 +284,20 @@ public class JwtAuthFilter implements ContainerRequestFilter {
       case "api/customer-svc/customers/me/export" -> get;
       // The shopper's own address book (12.10), and below, one address in it by id.
       case "api/customer-svc/customers/me/addresses" -> get || "POST".equals(method);
-      default -> isStorefrontCustomerAddress(path, method);
+      // The shopper's own push devices (13.7), and below, one device by id.
+      case "api/notification-svc/notifications/devices" -> get || "POST".equals(method);
+      default ->
+          isStorefrontCustomerAddress(path, method) || isStorefrontCustomerDevice(path, method);
     };
+  }
+
+  /** One id-addressed device in the shopper's own list: remove only. */
+  private static boolean isStorefrontCustomerDevice(String path, String method) {
+    String prefix = "api/notification-svc/notifications/devices/";
+    if (!path.startsWith(prefix)) {
+      return false;
+    }
+    return looksLikeUuid(path.substring(prefix.length())) && "DELETE".equals(method);
   }
 
   /**

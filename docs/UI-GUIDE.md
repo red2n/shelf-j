@@ -215,6 +215,8 @@ A sidebar (wide) / chip selector (narrow) between fifteen read-only tables, each
 - **Export data** — a subject access / portability request (art.15/20) that reached the shop by phone or letter: the same document the storefront's *Download my data* produces, copied to the clipboard and shown. All of it or none of it — if order-svc cannot be reached nothing partial is produced.
 - **Anonymize** (with confirmation) — a GDPR-style right-to-be-forgotten control that scrubs the customer's personal details and their saved addresses, and tells order-svc/notification-svc to redact what each holds about them (SJ-D43): a settled order is redacted at once, an order still being fulfilled once it finishes.
 
+- **Send text** (13.7) on a customer with a phone number: a text through notification-svc's SMS channel to the E.164 number on the record — transactional by default, or marketing, which the server allows only with the customer's recorded SMS consent and refuses in words otherwise. The body is capped at 1600 characters before it is sent.
+
 ### 4.9 Sales tools (4 tabs)
 
 | Tab | What the user does |

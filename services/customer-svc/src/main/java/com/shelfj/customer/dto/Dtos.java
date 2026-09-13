@@ -104,6 +104,10 @@ public final class Dtos {
   @Schema(name = "CustomerResponse", description = "A customer profile.")
   public record CustomerResponse(
       String id,
+      @Schema(
+              description =
+                  "The login this record is linked to, when a shopper has claimed it (SJ-D44); null for a till-only customer.")
+          String loginId,
       String email,
       String phone,
       String firstName,

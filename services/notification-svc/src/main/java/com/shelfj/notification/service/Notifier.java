@@ -1,5 +1,6 @@
 package com.shelfj.notification.service;
 
+import com.shelfj.notification.channel.Channels;
 import com.shelfj.notification.channel.NotificationChannel;
 import com.shelfj.notification.repo.NotificationRepository;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -19,6 +20,7 @@ public class Notifier {
   private static final Logger LOG = System.getLogger(Notifier.class.getName());
 
   @Inject NotificationChannel channel;
+  @Inject Channels channels;
   @Inject NotificationRepository repo;
 
   /**
@@ -45,5 +47,36 @@ public class Notifier {
     channel.send(tenantId, recipient, subject, body);
     repo.recordNotification(
         tenantId, subjectId, eventId, type, channel.name(), recipient, subject, body, "SENT");
+  }
+
+  /**
+   * The same, on a named channel (13.7): EMAIL or APP for the configured default, SMS to a number,
+   * PUSH to a login's devices. Idempotent on (eventId, type) like the default path.
+   *
+   * @throws IllegalArgumentException for a channel name that is not one of them
+   */
+  public void notifyOnce(
+      UUID eventId,
+      String type,
+      UUID tenantId,
+      UUID subjectId,
+      String recipient,
+      String subject,
+      String body,
+      String channelName) {
+    NotificationChannel c = channels.forName(channelName);
+    if (c == null) {
+      throw new IllegalArgumentException("unknown channel " + channelName);
+    }
+    if (recipient == null || recipient.isBlank()) {
+      LOG.log(Level.DEBUG, "No recipient for {0} {1} — skipped", type, eventId);
+      return;
+    }
+    if (repo.alreadyNotified(eventId, type)) {
+      return;
+    }
+    c.send(tenantId, recipient, subject, body);
+    repo.recordNotification(
+        tenantId, subjectId, eventId, type, c.name(), recipient, subject, body, "SENT");
   }
 }

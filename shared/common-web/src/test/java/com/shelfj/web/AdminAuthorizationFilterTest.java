@@ -70,6 +70,20 @@ class AdminAuthorizationFilterTest {
     assertAborted(invoke("POST", "/customers/01a090ae-611e-7011-ae7d-1bd68c966ff6/addresses"), 403);
   }
 
+  // ── 13.7: the caller's own push devices ──────────────────────────────────────
+
+  @Test
+  void ownPushDevicesAreOpenToAnySignedInCaller() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertNotAborted(invoke("GET", "/notifications/devices"));
+    assertNotAborted(invoke("POST", "/notifications/devices"));
+    assertNotAborted(
+        invoke("DELETE", "/notifications/devices/01a090ae-611e-7011-ae7d-1bd68c966ff6"));
+    // A literal child is not a device, and the send route stays staff-only.
+    assertAborted(invoke("DELETE", "/notifications/devices/all"), 403);
+    assertAborted(invoke("POST", "/notifications/send"), 403);
+  }
+
   // ── SJ-D11: reads default-deny, like mutations always have ──────────────────
 
   /**

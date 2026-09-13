@@ -261,6 +261,9 @@ class JwtAuthFilterTest {
       {"POST", "api/customer-svc/customers/me/addresses"},
       {"PUT", "api/customer-svc/customers/me/addresses/01a09509-72ec-72e9-9f08-94a93df26a36"},
       {"DELETE", "api/customer-svc/customers/me/addresses/01a09509-72ec-72e9-9f08-94a93df26a36"},
+      {"GET", "api/notification-svc/notifications/devices"},
+      {"POST", "api/notification-svc/notifications/devices"},
+      {"DELETE", "api/notification-svc/notifications/devices/01a09509-72ec-72e9-9f08-94a93df26a36"},
     };
     for (String[] c : cases) {
       headers.clear();
@@ -284,6 +287,8 @@ class JwtAuthFilterTest {
       {"GET", "api/customer-svc/customers/me/addresses/01a09509-72ec-72e9-9f08-94a93df26a36/share"},
       {"DELETE", "api/customer-svc/customers/me"},
       {"PUT", "api/customer-svc/customers/01a09509-72ec-72e9-9f08-94a93df26a36/addresses"},
+      {"PUT", "api/notification-svc/notifications/devices/01a09509-72ec-72e9-9f08-94a93df26a36"},
+      {"POST", "api/notification-svc/notifications/send"},
     };
     for (String[] c : cases) {
       headers.clear();

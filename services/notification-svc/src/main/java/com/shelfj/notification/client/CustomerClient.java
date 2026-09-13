@@ -62,10 +62,33 @@ public class CustomerClient {
    * notification the full connect+read timeout and back up the whole consumer, not just this one
    * lookup. {@code @Fallback} keeps the existing "never blocks the notification" contract.
    */
+  /**
+   * The login behind a customer record (SJ-D44), for a push to the devices that login registered
+   * here (13.7). Empty for a till-only customer, and empty when customer-svc cannot be reached — a
+   * push that cannot find its device is skipped, never retried into a storm.
+   */
+  @Retry(maxRetries = 2, delay = 200)
+  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
+  @Fallback(fallbackMethod = "loginUnavailable")
+  public Optional<UUID> loginIdOf(UUID tenantId, UUID customerId) {
+    return read(tenantId, customerId, "loginId").map(UUID::fromString);
+  }
+
+  @SuppressWarnings({"PMD.UnusedFormalParameter", "PMD.UnusedPrivateMethod"})
+  private Optional<UUID> loginUnavailable(UUID tenantId, UUID customerId) {
+    LOG.log(Level.WARNING, "customer-svc unreachable — no login for customer {0}", customerId);
+    return Optional.empty();
+  }
+
   @Retry(maxRetries = 2, delay = 200)
   @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
   @Fallback(fallbackMethod = "emailUnavailable")
   public Optional<String> emailOf(UUID tenantId, UUID customerId) {
+    return read(tenantId, customerId, "email");
+  }
+
+  /** One string field of the customer record, empty when absent, null or blank. */
+  private Optional<String> read(UUID tenantId, UUID customerId, String field) {
     ServiceInstance instance = registry.resolve(CUSTOMER_SERVICE).orElse(null);
     if (instance == null) {
       return Optional.empty();
@@ -88,11 +111,11 @@ public class CustomerClient {
         // containsKey first: JSON-B omits a null field from the DTO rather than serialising it
         // as null, and isNull throws on an absent key. A customer with no email address is
         // ordinary (POS walk-ins are created from a phone number).
-        if (data == null || !data.containsKey("email") || data.isNull("email")) {
+        if (data == null || !data.containsKey(field) || data.isNull(field)) {
           return Optional.empty();
         }
-        String email = data.getString("email", null);
-        return email == null || email.isBlank() ? Optional.empty() : Optional.of(email);
+        String value = data.getString(field, null);
+        return value == null || value.isBlank() ? Optional.empty() : Optional.of(value);
       }
     }
   }

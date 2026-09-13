@@ -11,6 +11,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'customer_providers.dart';
+import 'send_text_dialog.dart';
 import 'providers/customers_pagination.dart';
 
 class CustomersScreen extends ConsumerStatefulWidget {
@@ -389,6 +390,18 @@ class _CustomerDetailDialog extends ConsumerWidget {
                     icon: const Icon(Icons.payment, size: 18),
                     label: const Text('Redeem credit'),
                   ),
+                  // A text to the number on the record (13.7). Marketing goes only with
+                  // the customer's recorded SMS consent; the server refuses in words.
+                  if (c.phone != null && c.phone!.trim().isNotEmpty)
+                    OutlinedButton.icon(
+                      key: const Key('customer-send-text'),
+                      onPressed: () => showDialog<void>(
+                        context: context,
+                        builder: (_) => SendTextDialog(customer: c),
+                      ),
+                      icon: const Icon(Icons.sms_outlined, size: 18),
+                      label: const Text('Send text'),
+                    ),
                 ],
               ),
               const SizedBox(height: 16),
