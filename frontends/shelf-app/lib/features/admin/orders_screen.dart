@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/auth/auth_notifier.dart';
+import '../../core/auth/auth_state.dart';
 import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
@@ -11,6 +13,14 @@ import '../../core/theme.dart';
 import 'providers/admin_providers.dart';
 import 'providers/orders_pagination.dart';
 import '../../shared/util/short_ref.dart';
+
+/// The body of a cancel. The reason is optional, and the server takes "no
+/// reason" as no body at all: a body with a blank reason is refused (SJ-D49),
+/// so a dialog left empty sends nothing rather than an empty string.
+Map<String, dynamic>? cancelBody(String? reason) {
+  final r = reason?.trim() ?? '';
+  return r.isEmpty ? null : {'reason': r};
+}
 
 class AdminOrdersScreen extends ConsumerStatefulWidget {
   const AdminOrdersScreen({super.key});
@@ -31,7 +41,8 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
     'CONFIRMED',
     'PARTIALLY_FULFILLED',
     'FULFILLED',
-    'CANCELLED'
+    'CANCELLED',
+    'VOIDED',
   ];
 
   final _scrollController = ScrollController();
@@ -61,6 +72,10 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
   @override
   Widget build(BuildContext context) {
     final page = ref.watch(ordersPaginationProvider(_filter));
+    // A void is a management action: the shared filter refuses anyone else, so the menu
+    // offers it to an owner or manager rather than showing a button that always fails.
+    final auth = ref.watch(authNotifierProvider).value;
+    final canVoid = auth is AuthAuthenticated && auth.isManager;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -242,9 +257,11 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
                                               fontWeight: FontWeight.bold)),
                                 ],
                               ),
-                            _OrderActionsMenu(
+                            OrderActionsMenu(
                               status: o.status,
+                              channel: o.channel,
                               paymentMethod: o.paymentMethod,
+                              canVoid: canVoid,
                               onAction: (a) => _action(o, a),
                             ),
                           ],
@@ -316,6 +333,21 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
       );
       return;
     }
+    if (action == 'void') {
+      // 09.13: a completed till sale corrected from the back office. The dialog asks why;
+      // the server puts the stock back and keeps the receipt's number, marked void.
+      await showDialog<void>(
+        context: context,
+        builder: (_) => VoidSaleDialog(
+          orderId: o.id,
+          onDone: () {
+            ref.read(ordersPaginationProvider(_filter).notifier).refresh();
+            ref.invalidate(recentOrdersProvider);
+          },
+        ),
+      );
+      return;
+    }
     if (action == 'receipt') {
       try {
         await ref.read(apiClientProvider).dio.post(
@@ -344,7 +376,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
     try {
       await ref.read(apiClientProvider).dio.post(
             '/${ApiConstants.order}/orders/${o.id}/$action',
-            data: action == 'cancel' ? {'reason': reason} : null,
+            data: action == 'cancel' ? cancelBody(reason) : null,
           );
       ref.read(ordersPaginationProvider(_filter).notifier).refresh();
       ref.invalidate(recentOrdersProvider);
@@ -737,13 +769,23 @@ class _ReturnLineRow extends StatelessWidget {
   }
 }
 
-/// Per-order action menu — options depend on the current status.
-class _OrderActionsMenu extends StatelessWidget {
+/// The per-order actions. Which appear is decided by the order's status and
+/// channel — and, for the void, by who is looking: it is offered on a till
+/// sale that is still standing, to an owner or manager only.
+class OrderActionsMenu extends StatelessWidget {
   final String status;
+  final String channel;
   final String? paymentMethod;
+  final bool canVoid;
   final void Function(String action) onAction;
-  const _OrderActionsMenu(
-      {required this.status, this.paymentMethod, required this.onAction});
+  const OrderActionsMenu({
+    super.key,
+    required this.status,
+    this.channel = '',
+    this.paymentMethod,
+    this.canVoid = false,
+    required this.onAction,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -796,6 +838,20 @@ class _OrderActionsMenu extends StatelessWidget {
             Icon(Icons.cancel_outlined, size: 18, color: cs.error),
             const SizedBox(width: 8),
             Text('Cancel', style: TextStyle(color: cs.error)),
+          ])));
+    }
+    // A till sale that is still standing can be voided from here (09.13): the stock goes
+    // back and the receipt keeps its number. An online order is cancelled or returned
+    // instead, and the server refuses anyone below manager, so the menu does not offer it
+    // to them.
+    if (canVoid && channel.toUpperCase() == 'POS' && s != 'VOIDED' && s != 'CANCELLED') {
+      final cs = Theme.of(context).colorScheme;
+      items.add(PopupMenuItem(
+          value: 'void',
+          child: Row(children: [
+            Icon(Icons.block_outlined, size: 18, color: cs.error),
+            const SizedBox(width: 8),
+            Text('Void sale', style: TextStyle(color: cs.error)),
           ])));
     }
     // Returns are allowed on orders that weren't cancelled/voided.
@@ -1365,6 +1421,104 @@ class _PriceOrderDialogState extends ConsumerState<PriceOrderDialog> {
         FilledButton(
           onPressed: _saving || !detail.hasValue ? null : () => _submit(detail.value!.items),
           child: const Text('Price and release'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Voids a completed till sale from the back office (09.13). A reason is
+/// required — it goes on the void log the staff exception report reads and on
+/// the fiscal receipt, which keeps its number rather than disappearing. The
+/// server puts the stock back, and refuses an online order or a sale already
+/// voided; the refusal is shown in words and the dialog stays open.
+class VoidSaleDialog extends ConsumerStatefulWidget {
+  const VoidSaleDialog({super.key, required this.orderId, required this.onDone});
+  final String orderId;
+  final VoidCallback onDone;
+
+  @override
+  ConsumerState<VoidSaleDialog> createState() => _VoidSaleDialogState();
+}
+
+class _VoidSaleDialogState extends ConsumerState<VoidSaleDialog> {
+  final _reasonCtrl = TextEditingController();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final reason = _reasonCtrl.text.trim();
+    if (reason.isEmpty) {
+      setState(() => _error = 'A reason is required.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref.read(apiClientProvider).dio.post(
+            '/${ApiConstants.order}/orders/${widget.orderId}/void',
+            data: {'reason': reason},
+          );
+      widget.onDone();
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Sale voided. The stock goes back and the receipt keeps its number.')));
+    } catch (e) {
+      setState(() {
+        _saving = false;
+        _error = friendlyError(e, fallback: 'Could not void the sale.');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Void sale?'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('The sale is cancelled after the fact: anything handed over goes back '
+                'into stock, and the receipt keeps its number, marked void with this reason. '
+                'This cannot be undone.'),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('void-reason'),
+              controller: _reasonCtrl,
+              autofocus: true,
+              // The server bounds the reason at 500; stop it here so nothing is sent to be refused.
+              maxLength: 500,
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                hintText: 'e.g. rang up twice',
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!, style: TextStyle(color: cs.error)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Keep sale')),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: cs.error, foregroundColor: cs.onError),
+          onPressed: _saving ? null : _submit,
+          child: const Text('Void sale'),
         ),
       ],
     );

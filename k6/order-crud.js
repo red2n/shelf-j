@@ -3,8 +3,10 @@
 // shopper's view — with the refusals around each.
 //
 //   k6/run.sh order-crud
+import http from 'k6/http';
 import {
   ALL_CHECKS_PASS,
+  BASE,
   call,
   data,
   expect,
@@ -14,6 +16,7 @@ import {
   receive,
   register,
   sellableVariant,
+  staffUser,
   truthy,
 } from './lib/shelfj.js';
 
@@ -28,6 +31,7 @@ export function setup() {
   tenant.variantId = sellableVariant(tenant, 'Ordered mug').variantId;
   priceVariants(tenant, [tenant.variantId], '12.50');
   if (receive(tenant, storeId, tenant.variantId, 200).status !== 201) throw new Error('receive failed');
+  tenant.cashier = staffUser(tenant, 'CASHIER', [storeId]);
   return { tenant, rival, shopper: register('order-shopper'), stranger: register('order-stranger') };
 }
 
@@ -157,6 +161,8 @@ export default function ({ tenant, rival, shopper, stranger }) {
   // ── cancel and void ─────────────────────────────────────────────────────────
   const toCancel = data(place(sale()));
   expect(call('POST', `/api/order-svc/orders/${toCancel.id}/cancel`, { token: t, body: {} }), '[-] cancel: a body must give a reason', 400);
+  expect(call('POST', `/api/order-svc/orders/${toCancel.id}/cancel`, { token: t, body: { reason: '' } }), '[-] cancel: a blank reason is refused — what the admin dialog used to send (SJ-D49)', 400);
+  expect(call('POST', `/api/order-svc/orders/${toCancel.id}/cancel`, { token: t, body: { reason: 'x'.repeat(501) } }), '[-] cancel: a reason longer than 500 characters', 400);
   expect(call('POST', `/api/order-svc/orders/${toCancel.id}/cancel`, { token: t, body: { reason: 'Customer walked out' } }), '[+] cancel a pending order', 200);
   expect(call('POST', `/api/order-svc/orders/${toCancel.id}/fulfil`, { token: t }), '[-] fulfil a cancelled order', 409, 'ORDER_NOT_FULFILLABLE');
   expect(
@@ -170,6 +176,41 @@ export default function ({ tenant, rival, shopper, stranger }) {
   expect(call('POST', `/api/order-svc/orders/${toVoid.id}/void`, { token: t, body: { reason: 'Rang up twice' } }), '[+] void a POS order', 200);
   truthy('[+] ...VOIDED', statusOf(toVoid.id) === 'VOIDED', statusOf(toVoid.id));
   expect(call('POST', `/api/order-svc/orders/${toVoid.id}/void`, { token: t, body: { reason: 'Again' } }), '[-] void twice', 409);
+
+  // ── the back-office void (09.13) ────────────────────────────────────────────
+  // A management action: the cashier who rang the sale is refused before it is touched, an
+  // online order is refused because it is cancelled or returned instead, and the manager's
+  // void is counted against them on the staff exception report.
+  const standingSale = data(place(sale()));
+  expect(pay(standingSale), '[+] pay for a sale to void from the back office', [200, 201]);
+  poll(30, () => statusOf(standingSale.id) === 'FULFILLED');
+  truthy('[+] ...handed over at the till', statusOf(standingSale.id) === 'FULFILLED', statusOf(standingSale.id));
+  expect(call('POST', `/api/order-svc/orders/${standingSale.id}/void`, { token: cashierToken, body: { reason: 'Rang up twice' } }), '[-] a cashier cannot void a completed sale', 403);
+  truthy('[+] ...and the sale still stands', statusOf(standingSale.id) === 'FULFILLED', statusOf(standingSale.id));
+  expect(call('POST', `/api/order-svc/orders/${standingSale.id}/void`, { token: t, body: { reason: 'Rang up twice' } }), '[+] the owner voids it from the back office', 200);
+  truthy('[+] ...VOIDED', statusOf(standingSale.id) === 'VOIDED', statusOf(standingSale.id));
+  const webOrder = data(parkedOnline());
+  expect(call('POST', `/api/order-svc/orders/${webOrder.id}/void`, { token: t, body: { reason: 'Not a till sale' } }), '[-] an online order is cancelled or returned, never voided', 409, 'ORDER_VOID_ONLY_POS');
+  const exceptionRows = data(call('GET', `/api/order-svc/admin/reports/exceptions?storeId=${storeId}&groupBy=ACTOR`, { token: t }));
+  const ownerRow = (exceptionRows.rows || []).find((r) => r.groupKey === tenant.owner.userId);
+  truthy('[+] the voids are counted against who made them', !!ownerRow && Number(ownerRow.voids) >= 2, JSON.stringify(exceptionRows));
+  expect(call('GET', `/api/order-svc/admin/reports/exceptions?storeId=${storeId}`, { token: cashierToken }), '[-] a cashier cannot read who is voiding', 403);
+
+  // ── abuse: the void does not wear down, leak across tenants, or race ─────────
+  const voidAt = (id, token, reason) => ['POST', `${BASE}/api/order-svc/orders/${id}/void`, JSON.stringify({ reason }), { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, tags: { name: 'POST /api/order-svc/orders/{id}/void (batch)' } }];
+  const abused = data(place(sale()));
+  expect(pay(abused), '[+] a second paid sale for the abuse cases', [200, 201]);
+  poll(30, () => statusOf(abused.id) === 'FULFILLED');
+  const hammered = http.batch(Array.from({ length: 20 }, (_, i) => voidAt(abused.id, cashierToken, `attempt ${i}`)));
+  truthy('[-] twenty cashier attempts at once: every one refused', hammered.every((r) => r.status === 403 || r.status === 429), hammered.map((r) => r.status).join(','));
+  truthy('[+] ...and the sale still stands', statusOf(abused.id) === 'FULFILLED', statusOf(abused.id));
+  expect(call('POST', `/api/order-svc/orders/${abused.id}/void`, { token: rival.owner.token, body: { reason: 'Not mine' } }), '[-] another tenant cannot void it', 404);
+  expect(call('POST', `/api/order-svc/orders/${abused.id}/void`, { token: t, body: { reason: 'x'.repeat(501) } }), '[-] a reason longer than 500 characters', 400);
+  truthy('[+] ...and it still stands', statusOf(abused.id) === 'FULFILLED', statusOf(abused.id));
+  const raceVoids = http.batch(Array.from({ length: 6 }, () => voidAt(abused.id, t, 'race')));
+  const raceWon = raceVoids.filter((r) => r.status === 200).length;
+  truthy('[+] six managers at once: exactly one void, the rest told it is done', raceWon === 1 && raceVoids.every((r) => r.status === 200 || r.status === 409), raceVoids.map((r) => r.status).join(','));
+  truthy('[+] ...VOIDED once', statusOf(abused.id) === 'VOIDED', statusOf(abused.id));
 
   // ── receipts, POS log, fiscal receipt ──────────────────────────────────────
   const receipts = `/api/order-svc/admin/orders/${order.id}/receipts`;

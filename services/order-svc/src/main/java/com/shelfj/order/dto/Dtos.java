@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
@@ -261,7 +262,11 @@ public final class Dtos {
       String paymentMethod) {}
 
   @Schema(name = "VoidRequest")
-  public record VoidRequest(@NotBlank String reason) {}
+  public record VoidRequest(
+      @Schema(description = "Why the sale is voided; recorded on the void log and the receipt.")
+          @NotBlank
+          @Size(max = 500)
+          String reason) {}
 
   @Schema(name = "VoidResponse")
   public record VoidResponse(String orderId, String reason, String voidedAt) {}
