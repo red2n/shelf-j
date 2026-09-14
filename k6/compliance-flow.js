@@ -3,8 +3,10 @@
 //
 //   k6/run.sh compliance-flow
 import { group } from 'k6';
+import http from 'k6/http';
 import {
   ALL_CHECKS_PASS,
+  BASE,
   addStore,
   call,
   data,
@@ -24,6 +26,8 @@ export const options = {
   // Four businesses are onboarded in setup, each waiting on its owner's grant to arrive over Kafka.
   setupTimeout: '5m',
   thresholds: ALL_CHECKS_PASS,
+  batch: 20,
+  batchPerHost: 20,
 };
 
 export function setup() {
@@ -36,6 +40,9 @@ export function setup() {
   priceVariants(tenant, [variantId], '12.00');
   must(receive(tenant, storeA.id, variantId, 20), [200, 201], 'receive stock');
   const cashierA = staffUser(tenant, 'CASHIER', [storeA.id]);
+  // Group 2b: a tobacco line, for the generational ban's date-of-birth rule (10.8).
+  const cigs = sellableVariant(tenant, 'Compliance Cigarettes').variantId;
+  must(call('PUT', `/api/product-svc/admin/products/variants/${cigs}/compliance`, { token: tenant.owner.token, body: { restrictionCategory: 'TOBACCO' } }), 200, 'tobacco category');
 
   // Groups 5 and 6: a German and a Portuguese business, each with a store that sells one line at
   // its own standard rate, so the regime's stamp has real figures to sign (18.5).
@@ -50,7 +57,7 @@ export function setup() {
   const ptVariant = sellableVariant(pt, 'Vinho Verde').variantId;
   priceVariants(pt, [ptVariant], '10.00');
   must(receive(pt, pt.stores[0].id, ptVariant, 50), [200, 201], 'PT stock');
-  return { tenant, rival, storeA, storeB, variantId, cashierA, de, deVariant, deCashier, pt, ptVariant };
+  return { tenant, rival, storeA, storeB, variantId, cigs, cashierA, de, deVariant, deCashier, pt, ptVariant };
 }
 
 /** A till sale of one unit, paid in cash at the till, and its receipt as the till reads it. */
@@ -62,7 +69,7 @@ function sellAndRead(biz, cashierToken, storeId, variantId, method) {
   return { orderId: data(sale).id, total: data(sale).total, receipt };
 }
 
-export default function ({ tenant, rival, storeA, storeB, variantId, cashierA, de, deVariant, deCashier, pt, ptVariant }) {
+export default function ({ tenant, rival, storeA, storeB, variantId, cigs, cashierA, de, deVariant, deCashier, pt, ptVariant }) {
   const owner = tenant.owner.token;
   const shopper = register('compliance-shopper');
   const check = (extra = {}) => ({
@@ -123,6 +130,46 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cashierA, d
     const id = (data(page) || [])[0].id;
     expect(call('DELETE', `/api/order-svc/admin/pos/age-checks/${id}`, { token: owner }), 'nothing deletes a record', [404, 405]);
     expect(call('PUT', `/api/order-svc/pos/age-checks/${id}`, { token: owner, body: {} }), 'nothing edits one', [404, 405]);
+  });
+
+  group('2b age of sale by date of birth: the generational tobacco ban', () => {
+    const RULES = '/api/product-svc/admin/age-restriction-rules';
+    const askTill = (token) => call('GET', `/api/product-svc/catalog/variants/${cigs}/age-check?country=GB`, { token });
+    const beforeBan = new Date().toISOString().slice(0, 10) < '2027-01-01';
+
+    const rules = data(call('GET', `${RULES}?country=GB`, { token: owner })) || [];
+    const law = rules.find((r) => r.category === 'TOBACCO');
+    truthy('the law is a date of birth with the day it takes effect', law && law.bornBefore === '2009-01-01' && law.bornBeforeFrom === '2027-01-01' && law.tenantOverride === false, law);
+    const today = data(askTill(cashierA.token));
+    truthy('the till is asked for 18', today.restricted === true && today.minimumAge === 18, today);
+    truthy(beforeBan ? 'and, before 1 Jan 2027, not yet for the date' : 'and, from 1 Jan 2027, for the date', beforeBan ? !today.bornBefore : today.bornBefore === '2009-01-01', today);
+
+    const set = (token, bornBefore) => call('PUT', RULES, { token, body: { country: 'GB', category: 'TOBACCO', minimumAge: 18, bornBefore, reason: 'adopting the generational ban early' } });
+    expect(set(cashierA.token, '2009-01-01'), 'a cashier cannot set an age rule', 403);
+    expect(set(owner, '2009-01-01'), 'the owner adopts the ban early as store policy', 200);
+    const policy = data(askTill(cashierA.token));
+    truthy('the till now asks for the date', policy.bornBefore === '2009-01-01', policy);
+    if (beforeBan) truthy('as store policy, not yet the law', policy.bornBeforeTenantOverride === true, policy);
+    expect(set(owner, '2010-01-01'), 'a later cut-off than the law is refused', 400, 'PRODUCT_BORN_BEFORE_LAXER');
+    expect(set(owner, '01/01/2009'), 'a date that is not a date is refused', 400, 'PRODUCT_INVALID_BORN_BEFORE');
+    expect(set(owner, '2999-01-01'), 'a cut-off after today is refused', 400, 'PRODUCT_INVALID_BORN_BEFORE');
+    expect(call('GET', `/api/product-svc/catalog/variants/${cigs}/age-check?country=GB`, { token: rival.owner.token }), "a rival tenant cannot ask about our line", [403, 404]);
+
+    const cutCheck = (extra) => check(Object.assign({ variantId: cigs, category: 'TOBACCO', bornBefore: '2009-01-01', bornBeforeStorePolicy: true }, extra));
+    const refusal = record(cashierA.token, cutCheck({ outcome: 'REFUSED', reason: 'BORN_AFTER_CUTOFF' }));
+    expect(refusal, 'the till records a refusal for the date of birth', 201);
+    truthy('with the cut-off it was judged by', data(refusal).bornBefore === '2009-01-01' && data(refusal).bornBeforeStorePolicy === true, data(refusal));
+    expect(record(cashierA.token, cutCheck({ outcome: 'PASSED', idType: 'PASSPORT' })), 'and a pass against it', 201);
+    expect(record(cashierA.token, check({ variantId: cigs, category: 'TOBACCO', outcome: 'REFUSED', reason: 'BORN_AFTER_CUTOFF' })), 'a date-of-birth refusal with no cut-off is refused', 400, 'AGE_CHECK_CUTOFF_REQUIRED');
+    expect(record(cashierA.token, cutCheck({ outcome: 'REFUSED', reason: 'BORN_AFTER_CUTOFF', bornBefore: '2009-02-30' })), 'an impossible date is refused', 400, 'AGE_CHECK_BORN_BEFORE_INVALID');
+
+    // Abuse: twenty laxer rules at once change nothing, and the register counts the refusal.
+    const params = { headers: { Authorization: `Bearer ${owner}`, 'Content-Type': 'application/json' }, tags: { name: 'PUT age rule burst' } };
+    const burst = http.batch(Array.from({ length: 20 }, (_, i) => ['PUT', `${BASE}${RULES}`, JSON.stringify({ country: 'GB', category: 'TOBACCO', minimumAge: 18, bornBefore: `201${i % 10}-01-01` }), params]));
+    truthy('twenty laxer cut-offs at once are all refused', burst.every((r) => r.status === 400), burst.map((r) => r.status));
+    truthy('and the early adoption stands', data(askTill(cashierA.token)).bornBefore === '2009-01-01');
+    const summary = data(call('GET', `/api/order-svc/admin/pos/age-checks/summary?store=${storeA.id}`, { token: owner }));
+    truthy('the register counts refusals for the date of birth', (summary.refusedByReason || {}).BORN_AFTER_CUTOFF >= 1, summary);
   });
 
   group('3 weighing instruments: the register', () => {

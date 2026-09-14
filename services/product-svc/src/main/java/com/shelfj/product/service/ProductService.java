@@ -955,7 +955,7 @@ public class ProductService {
    * line scanned, and resolving a store to its country through tenant-svc would put a second
    * network hop in front of a queue. The caller already knows which store it is.
    */
-  public Domain.AgeRestrictionRule ageCheck(UUID tenantId, UUID variantId, String country) {
+  public Domain.AgeCheck ageCheck(UUID tenantId, UUID variantId, String country) {
     var c = complianceOf(tenantId, variantId);
     if (c.restrictionCategory() == null) {
       return null;
@@ -973,8 +973,63 @@ public class ProductService {
     boolean override =
         complianceRepo.rulesFor(tenantId, cc).stream()
             .anyMatch(r -> r.category().equals(c.restrictionCategory()) && r.tenantId() != null);
-    return new Domain.AgeRestrictionRule(
-        override ? tenantId : null, cc, c.restrictionCategory(), age, null);
+    // A date of birth, not an age (10.8): the law's cut-off once its day has come, or the
+    // tenant's own when it adopted one, whichever refuses more people.
+    var cutoff =
+        complianceRepo.birthCutoff(
+            tenantId, cc, c.restrictionCategory(), java.time.LocalDate.now(clock));
+    return new Domain.AgeCheck(
+        cc,
+        c.restrictionCategory(),
+        age,
+        override,
+        cutoff == null ? null : cutoff.bornBefore(),
+        cutoff != null && cutoff.tenantPolicy());
+  }
+
+  /**
+   * The day rules that take effect on a date are judged by; UTC, the UK's own offset in January.
+   */
+  java.time.Clock clock = java.time.Clock.systemUTC();
+
+  /**
+   * A cut-off earlier than this would refuse everyone alive; it is a typing error, not a policy.
+   */
+  private static final java.time.LocalDate EARLIEST_CUTOFF = java.time.LocalDate.of(1900, 1, 1);
+
+  private java.time.LocalDate tenantBornBefore(String raw, String country, String category) {
+    if (raw == null || raw.isBlank()) {
+      return null;
+    }
+    java.time.LocalDate date;
+    try {
+      date = java.time.LocalDate.parse(raw.trim());
+    } catch (java.time.format.DateTimeParseException e) {
+      throw new ApiException(
+          400,
+          "PRODUCT_INVALID_BORN_BEFORE",
+          "bornBefore must be a date written yyyy-mm-dd",
+          java.util.List.of(),
+          e);
+    }
+    if (date.isBefore(EARLIEST_CUTOFF) || date.isAfter(java.time.LocalDate.now(clock))) {
+      throw ApiException.badRequest(
+          "PRODUCT_INVALID_BORN_BEFORE",
+          "bornBefore must be a date between 1900 and today; a later one refuses nobody born yet");
+    }
+    var law = complianceRepo.statutoryBornBefore(country, category);
+    if (law != null && date.isAfter(law)) {
+      throw ApiException.badRequest(
+          "PRODUCT_BORN_BEFORE_LAXER",
+          "The law refuses anyone born on or after "
+              + law
+              + " for "
+              + category
+              + " in "
+              + country
+              + "; a tenant cut-off may be earlier, never later");
+    }
+    return date;
   }
 
   /**
@@ -1017,7 +1072,15 @@ public class ProductService {
               + statutory
               + "; a tenant rule may be stricter, never laxer");
     }
-    var rule = new Domain.AgeRestrictionRule(tenantId, cc, category, age, trimToNull(req.reason()));
+    var rule =
+        new Domain.AgeRestrictionRule(
+            tenantId,
+            cc,
+            category,
+            age,
+            trimToNull(req.reason()),
+            tenantBornBefore(req.bornBefore(), cc, category),
+            null);
     complianceRepo.upsertTenantRule(rule, actor);
     return rule;
   }

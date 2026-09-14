@@ -176,7 +176,13 @@ public final class Mappers {
    */
   public static AgeRestrictionRuleResponse toAgeRule(Domain.AgeRestrictionRule r) {
     return new AgeRestrictionRuleResponse(
-        r.country(), r.category(), r.minimumAge(), r.note(), r.tenantId() != null);
+        r.country(),
+        r.category(),
+        r.minimumAge(),
+        r.note(),
+        r.tenantId() != null,
+        r.bornBefore() == null ? null : r.bornBefore().toString(),
+        r.bornBeforeFrom() == null ? null : r.bornBeforeFrom().toString());
   }
 
   /**

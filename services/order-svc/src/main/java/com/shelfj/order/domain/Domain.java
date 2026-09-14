@@ -236,6 +236,8 @@ public final class Domain {
       int minimumAge,
       String country,
       boolean storePolicy,
+      java.time.LocalDate bornBefore,
+      boolean bornBeforePolicy,
       String outcome,
       String reason,
       String idType,
@@ -243,9 +245,14 @@ public final class Domain {
       Instant checkedAt) {
 
     public static final String OUTCOME_PASSED = "PASSED";
+
+    /** Refused for the date of birth: born on or after the cut-off, whatever the age (10.8). */
+    public static final String REASON_BORN_AFTER_CUTOFF = "BORN_AFTER_CUTOFF";
+
     public static final String OUTCOME_REFUSED = "REFUSED";
     public static final java.util.Set<String> REASONS =
-        java.util.Set.of("UNDER_AGE", "NO_ID", "ID_REJECTED", "PROXY_SALE", "OTHER");
+        java.util.Set.of(
+            "UNDER_AGE", "NO_ID", "ID_REJECTED", "PROXY_SALE", REASON_BORN_AFTER_CUTOFF, "OTHER");
     public static final java.util.Set<String> ID_TYPES =
         java.util.Set.of(
             "PASSPORT", "DRIVING_LICENCE", "PASS_CARD", "MILITARY_ID", "NATIONAL_ID", "OTHER");

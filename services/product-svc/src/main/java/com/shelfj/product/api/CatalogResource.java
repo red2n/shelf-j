@@ -310,7 +310,11 @@ public class CatalogResource {
               + " Japan and 21 in the US — the restriction belongs to the product, the age belongs"
               + " to the jurisdiction.\n\n"
               + "A tenant's own rule wins over the statutory default, and may only ever be"
-              + " stricter. `minimumAge` null means the item is not restricted at all.")
+              + " stricter. `minimumAge` null means the item is not restricted at all.\n\n"
+              + "`bornBefore` is a date of birth rather than an age: when present, refuse anyone"
+              + " born on or after it however old they are. The UK's generational tobacco ban"
+              + " takes effect on 1 Jan 2027 and appears here from that day; a business that"
+              + " adopts it, or an earlier date, sees its own at once.")
   @APIResponse(responseCode = "200", description = "The check to perform, or no restriction")
   @APIResponse(
       responseCode = "400",
@@ -331,6 +335,8 @@ public class CatalogResource {
                 false,
                 null,
                 null,
+                false,
+                null,
                 false)
             : new AgeCheckResponse(
                 variantId.toString(),
@@ -338,7 +344,9 @@ public class CatalogResource {
                 true,
                 rule.category(),
                 rule.minimumAge(),
-                rule.tenantId() != null));
+                rule.ageFromTenant(),
+                rule.bornBefore() == null ? null : rule.bornBefore().toString(),
+                rule.bornBeforeFromTenant()));
   }
 
   /**

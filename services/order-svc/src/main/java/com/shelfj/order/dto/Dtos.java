@@ -641,13 +641,22 @@ public final class Dtos {
           String country,
       @Schema(description = "True when the age came from the shop's own stricter policy.")
           Boolean storePolicy,
+      @Schema(
+              description =
+                  "The birth-date cut-off that applied (yyyy-mm-dd), copied from product-svc's"
+                      + " answer: anyone born on or after it is refused. Absent when the rule had"
+                      + " none. The customer's own date of birth is never sent.")
+          String bornBefore,
+      @Schema(description = "True when the cut-off was the shop's own policy rather than the law.")
+          Boolean bornBeforeStorePolicy,
       @jakarta.validation.constraints.NotBlank
           @Schema(description = "PASSED — the sale went ahead; REFUSED — it did not.")
           String outcome,
       @Schema(
               description =
                   "Required on a refusal, absent on a pass: UNDER_AGE, NO_ID, ID_REJECTED,"
-                      + " PROXY_SALE (buying for someone under age) or OTHER.")
+                      + " PROXY_SALE (buying for someone under age), BORN_AFTER_CUTOFF (born on"
+                      + " or after the cut-off, which needs bornBefore) or OTHER.")
           String reason,
       @Schema(
               description =
@@ -669,6 +678,8 @@ public final class Dtos {
       int minimumAge,
       String country,
       boolean storePolicy,
+      String bornBefore,
+      boolean bornBeforeStorePolicy,
       String outcome,
       String reason,
       String idType,

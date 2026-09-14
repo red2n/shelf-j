@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_error.dart';
 import '../admin/providers/admin_providers.dart';
 import 'pos_providers.dart';
@@ -41,13 +42,32 @@ class AgeCheckRestricted extends AgeCheckResult {
   /// minimum — product-svc lets a tenant be stricter, never laxer.
   final bool storePolicy;
 
+  /// A date of birth rather than an age: anyone born on or after it is
+  /// refused, however old they are — the UK's generational tobacco ban from
+  /// 1 Jan 2027, or a business's own earlier policy. Null when there is none.
+  final DateTime? bornBefore;
+
+  /// True when [bornBefore] is the business's policy rather than the law.
+  final bool bornBeforeStorePolicy;
+
   const AgeCheckRestricted({
     required this.category,
     required this.minimumAge,
     required this.country,
     required this.storePolicy,
+    this.bornBefore,
+    this.bornBeforeStorePolicy = false,
   });
+
+  /// [bornBefore] as the API writes it, yyyy-mm-dd.
+  String? get bornBeforeIso => bornBefore == null ? null : isoDay(bornBefore!);
 }
+
+/// A calendar date as yyyy-mm-dd, the form every age-rule date travels in.
+String isoDay(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+final _isoDayPattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
 
 class AgeCheckBlocked extends AgeCheckResult {
   final String message;
@@ -87,11 +107,28 @@ Future<AgeCheckResult> checkAgeRestriction(
           "This item is age-restricted but its minimum age couldn't be read. "
           'Scan it again.');
     }
+    // A cut-off that is present but unreadable is not "no cut-off": the item
+    // stays out rather than being sold on the age alone.
+    final rawCutoff = data?['bornBefore'];
+    DateTime? bornBefore;
+    if (rawCutoff != null) {
+      final parsed = rawCutoff is String && _isoDayPattern.hasMatch(rawCutoff)
+          ? DateTime.tryParse(rawCutoff)
+          : null;
+      if (parsed == null || isoDay(parsed) != rawCutoff) {
+        return const AgeCheckBlocked(
+            "This item has a date-of-birth rule that couldn't be read. "
+            'Scan it again.');
+      }
+      bornBefore = parsed;
+    }
     return AgeCheckRestricted(
       category: category,
       minimumAge: age,
       country: cc,
       storePolicy: data?['tenantOverride'] == true,
+      bornBefore: bornBefore,
+      bornBeforeStorePolicy: data?['bornBeforeTenantOverride'] == true,
     );
   } on DioException catch (e) {
     if (apiErrorCode(e) == 'PRODUCT_NO_AGE_RULE') {
@@ -152,8 +189,13 @@ const ageRefusalReasons = <String, String>{
   'NO_ID': 'No ID shown',
   'ID_REJECTED': 'ID not accepted',
   'PROXY_SALE': 'Buying for someone under age',
+  'BORN_AFTER_CUTOFF': 'Born on or after the cut-off date',
   'OTHER': 'Other',
 };
+
+/// The refusal reason that only makes sense when the rule has a birth-date
+/// cut-off; offered only then.
+const bornAfterCutoffReason = 'BORN_AFTER_CUTOFF';
 
 const ageIdTypes = <String, String>{
   'PASSPORT': 'Passport',
@@ -184,6 +226,9 @@ Future<bool> recordAgeCheck(
       'minimumAge': check.minimumAge,
       'country': check.country,
       'storePolicy': check.storePolicy,
+      if (check.bornBefore != null) 'bornBefore': check.bornBeforeIso,
+      if (check.bornBefore != null)
+        'bornBeforeStorePolicy': check.bornBeforeStorePolicy,
       'outcome': decision is AgeRefused ? 'REFUSED' : 'PASSED',
       if (decision is AgeRefused) 'reason': decision.reason,
       if (decision is AgePassed && decision.idType != null)
@@ -254,6 +299,15 @@ class _AgeVerificationDialogState extends State<AgeVerificationDialog> {
             Text(check.storePolicy
                 ? 'Store policy in ${check.country} — stricter than the legal minimum.'
                 : 'Legal minimum in ${check.country}.'),
+            if (check.bornBefore != null) ...[
+              const SizedBox(height: 12),
+              Text('And born before ${AppFormat.date(check.bornBeforeIso)}.',
+                  style: text.titleMedium),
+              const SizedBox(height: 4),
+              Text(check.bornBeforeStorePolicy
+                  ? 'Store policy: anyone born on or after that date is refused, whatever their age.'
+                  : 'The law in ${check.country}: anyone born on or after that date can never be sold this, whatever their age.'),
+            ],
             const SizedBox(height: 12),
             if (!_refusing) ...[
               const Text(
@@ -288,6 +342,8 @@ class _AgeVerificationDialogState extends State<AgeVerificationDialog> {
                 runSpacing: 6,
                 children: [
                   for (final e in ageRefusalReasons.entries)
+                    if (e.key != bornAfterCutoffReason ||
+                        check.bornBefore != null)
                     ChoiceChip(
                       label: Text(e.value),
                       selected: _reason == e.key,
@@ -322,7 +378,9 @@ class _AgeVerificationDialogState extends State<AgeVerificationDialog> {
               FilledButton(
                 onPressed: () =>
                     Navigator.pop(context, AgePassed(idType: _idType)),
-                child: Text('Checked — ${check.minimumAge}+'),
+                child: Text(check.bornBefore == null
+                    ? 'Checked — ${check.minimumAge}+'
+                    : 'Checked — ${check.minimumAge}+, born before ${AppFormat.date(check.bornBeforeIso)}'),
               ),
             ],
     );

@@ -1850,6 +1850,14 @@ public class OrderService {
       throw ApiException.badRequest(
           "AGE_CHECK_ID_TYPE_ON_REFUSAL", "an id type is recorded on a sale that went ahead");
     }
+    java.time.LocalDate bornBefore = ageCheckCutoff(req.bornBefore());
+    boolean cutoffPolicy = Boolean.TRUE.equals(req.bornBeforeStorePolicy());
+    if (bornBefore == null
+        && (cutoffPolicy || AgeVerification.REASON_BORN_AFTER_CUTOFF.equals(reason))) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_CUTOFF_REQUIRED",
+          "a refusal for the date of birth, or a cut-off policy, names the cut-off in bornBefore");
+    }
     var record =
         new AgeVerification(
             Ids.newId(),
@@ -1862,12 +1870,38 @@ public class OrderService {
             req.minimumAge(),
             req.country().trim().toUpperCase(Locale.ROOT),
             Boolean.TRUE.equals(req.storePolicy()),
+            bornBefore,
+            cutoffPolicy,
             outcome,
             reason,
             idType,
             req.orderId() == null ? null : Parsing.uuid(req.orderId(), "orderId"),
             Instant.now());
     return repo.recordAgeVerification(record);
+  }
+
+  /**
+   * The cut-off an age check was judged against, as product-svc gave it: a date between 1900 and
+   * today, since a later one refuses nobody born yet.
+   */
+  private static java.time.LocalDate ageCheckCutoff(String raw) {
+    if (raw == null || raw.isBlank()) return null;
+    java.time.LocalDate date;
+    try {
+      date = java.time.LocalDate.parse(raw.trim());
+    } catch (java.time.format.DateTimeParseException e) {
+      throw new ApiException(
+          400,
+          "AGE_CHECK_BORN_BEFORE_INVALID",
+          "bornBefore is a date written yyyy-mm-dd",
+          java.util.List.of(),
+          e);
+    }
+    if (date.getYear() < 1900 || date.isAfter(java.time.LocalDate.now(java.time.ZoneOffset.UTC))) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_BORN_BEFORE_INVALID", "bornBefore is a date between 1900 and today");
+    }
+    return date;
   }
 
   private static String blankToNull(String s) {

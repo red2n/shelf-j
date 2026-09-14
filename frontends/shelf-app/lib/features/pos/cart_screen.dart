@@ -286,7 +286,7 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     }
     final check = result as AgeCheckRestricted;
     final cart = ref.read(posCartProvider.notifier);
-    if (cart.ageVerifiedUpTo >= check.minimumAge) return true;
+    if (cart.coversAgeCheck(check.minimumAge, check.bornBefore)) return true;
     final decision = await showDialog<AgeDecision>(
       context: context,
       barrierDismissible: false,
@@ -294,7 +294,7 @@ class _PosCartScreenState extends ConsumerState<PosCartScreen> {
     );
     if (decision == null) return false;
     final passed = decision is AgePassed;
-    if (passed) cart.ageVerifiedUpTo = check.minimumAge;
+    if (passed) cart.recordAgePass(check.minimumAge, check.bornBefore);
     // The decision stands either way; the record is what makes it a defence.
     final storeId = ref.read(posStoreProvider);
     if (storeId != null) {

@@ -544,6 +544,8 @@ public final class Mappers {
         v.minimumAge(),
         v.country(),
         v.storePolicy(),
+        v.bornBefore() == null ? null : v.bornBefore().toString(),
+        v.bornBeforePolicy(),
         v.outcome(),
         v.reason(),
         v.idType(),

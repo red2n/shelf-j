@@ -110,7 +110,42 @@ public final class Domain {
    * level (India varies by state).
    */
   public record AgeRestrictionRule(
-      UUID tenantId, String country, String category, int minimumAge, String note) {}
+      UUID tenantId,
+      String country,
+      String category,
+      int minimumAge,
+      String note,
+      java.time.LocalDate bornBefore,
+      java.time.LocalDate bornBeforeFrom) {
+
+    /** A rule with no birth-date cut-off, as every rule was before the generational tobacco ban. */
+    public AgeRestrictionRule(
+        UUID tenantId, String country, String category, int minimumAge, String note) {
+      this(tenantId, country, category, minimumAge, note, null, null);
+    }
+  }
+
+  /**
+   * A birth-date cut-off in force: refuse anyone born on or after {@code bornBefore}.
+   *
+   * @param tenantPolicy true when the tenant adopted it, false when it is the law
+   */
+  public record BirthCutoff(java.time.LocalDate bornBefore, boolean tenantPolicy) {}
+
+  /**
+   * What the till must ask before selling an item in a country (10.8).
+   *
+   * @param ageFromTenant true when the minimum age is the tenant's stricter policy
+   * @param bornBefore the cut-off in force today, or null when there is none
+   * @param bornBeforeFromTenant true when that cut-off is the tenant's policy rather than the law
+   */
+  public record AgeCheck(
+      String country,
+      String category,
+      int minimumAge,
+      boolean ageFromTenant,
+      java.time.LocalDate bornBefore,
+      boolean bornBeforeFromTenant) {}
 
   /** How a variant is sold, and the declarations attached to it. */
   public record VariantCompliance(

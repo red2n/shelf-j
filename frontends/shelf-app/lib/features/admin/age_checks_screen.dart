@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/constants.dart';
+import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/spacing.dart';
@@ -26,6 +27,10 @@ class AgeCheckRecord {
   final int minimumAge;
   final String country;
   final bool storePolicy;
+
+  /// The birth-date cut-off the check was judged against, yyyy-mm-dd, or null.
+  final String? bornBefore;
+  final bool bornBeforeStorePolicy;
   final String outcome;
   final String? reason;
   final String? idType;
@@ -40,6 +45,8 @@ class AgeCheckRecord {
     required this.minimumAge,
     required this.country,
     required this.storePolicy,
+    this.bornBefore,
+    this.bornBeforeStorePolicy = false,
     required this.outcome,
     this.reason,
     this.idType,
@@ -57,6 +64,8 @@ class AgeCheckRecord {
         minimumAge: (j['minimumAge'] as num?)?.toInt() ?? 0,
         country: j['country'] as String? ?? '',
         storePolicy: j['storePolicy'] as bool? ?? false,
+        bornBefore: j['bornBefore'] as String?,
+        bornBeforeStorePolicy: j['bornBeforeStorePolicy'] as bool? ?? false,
         outcome: j['outcome'] as String? ?? '',
         reason: j['reason'] as String?,
         idType: j['idType'] as String?,
@@ -287,7 +296,8 @@ class AgeChecksScreen extends ConsumerWidget {
                           title: Text(
                             '${AgeVerificationDialog.categoryLabel(r.category)} · '
                             '${r.minimumAge}+ in ${r.country}'
-                            '${r.storePolicy ? ' (store policy)' : ''}',
+                            '${r.storePolicy ? ' (store policy)' : ''}'
+                            '${r.bornBefore != null ? ' · born before ${AppFormat.date(r.bornBefore)}${r.bornBeforeStorePolicy ? ' (store policy)' : ''}' : ''}',
                           ),
                           subtitle: Text([
                             if (r.checkedAt != null)

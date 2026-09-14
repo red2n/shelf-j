@@ -495,6 +495,139 @@ class FoodSafetyIT {
         body, containsString("\"category\":\"TOBACCO\",\"country\":\"GB\",\"minimumAge\":18"));
   }
 
+  // ── 10.8: a date of birth, not an age ─────────────────────────────────────
+
+  private static final java.time.LocalDate BAN_DAY = java.time.LocalDate.of(2027, 1, 1);
+
+  private String cutoffAt(String variant, String country, String tenant) {
+    Response r = getWith("/catalog/variants/" + variant + "/age-check", "country", country, tenant);
+    assertThat(country + " -> " + r.getStatus(), r.getStatus(), is(200));
+    return r.readEntity(String.class);
+  }
+
+  private String tobacco(String tenant) {
+    String v = variant(tenant, "Cigarettes", "CIG-" + com.shelfj.ids.Ids.newId());
+    assertThat(
+        put(
+                "/admin/products/variants/" + v + "/compliance",
+                "{\"restrictionCategory\":\"TOBACCO\"}",
+                tenant)
+            .getStatus(),
+        is(200));
+    return v;
+  }
+
+  @Test
+  @DisplayName("The generational tobacco ban is a date of birth, and the till sees it from its day")
+  void theGenerationalBanTakesEffectOnItsDay() throws Exception {
+    String tenant = com.shelfj.ids.Ids.newId().toString();
+    String cig = tobacco(tenant);
+
+    String rules =
+        getWith("/admin/age-restriction-rules", "country", "GB", tenant).readEntity(String.class);
+    assertThat(
+        rules,
+        containsString(
+            "\"bornBefore\":\"2009-01-01\",\"bornBeforeFrom\":\"2027-01-01\",\"category\":\"TOBACCO\""));
+
+    // Until 1 Jan 2027 everyone the ban catches is under 18 anyway, so the till is not asked about
+    // it yet; from that day it is. Written to stay true on either side of the date.
+    String gb = cutoffAt(cig, "GB", tenant);
+    assertThat(gb, containsString("\"minimumAge\":18"));
+    if (java.time.LocalDate.now(java.time.ZoneOffset.UTC).isBefore(BAN_DAY)) {
+      assertThat(gb, not(containsString("bornBefore\"")));
+    } else {
+      assertThat(gb, containsString("\"bornBefore\":\"2009-01-01\""));
+    }
+
+    // A cut-off already in force, and one not yet, in jurisdictions this seed does not carry.
+    try (var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "INSERT INTO product.age_restriction_rules"
+                    + " (country, category, minimum_age, note, born_before, born_before_from)"
+                    + " VALUES (?, 'TOBACCO', 18, 'test', DATE '2009-01-01', ?)")) {
+      ps.setString(1, "NZ");
+      ps.setObject(2, java.time.LocalDate.of(2023, 1, 1));
+      ps.executeUpdate();
+      ps.setString(1, "AU");
+      ps.setObject(2, java.time.LocalDate.of(2999, 1, 1));
+      ps.executeUpdate();
+    }
+    String nz = cutoffAt(cig, "NZ", tenant);
+    assertThat(nz, containsString("\"bornBefore\":\"2009-01-01\""));
+    assertThat(nz, containsString("\"bornBeforeTenantOverride\":false"));
+    assertThat(cutoffAt(cig, "AU", tenant), not(containsString("bornBefore\"")));
+    // Wine carries no cut-off anywhere.
+    String wine = variant(tenant, "Wine", "WINE-CUT");
+    put(
+        "/admin/products/variants/" + wine + "/compliance",
+        "{\"restrictionCategory\":\"ALCOHOL\"}",
+        tenant);
+    assertThat(cutoffAt(wine, "GB", tenant), not(containsString("bornBefore\"")));
+  }
+
+  @Test
+  @DisplayName("A business may adopt a cut-off early or an earlier one, never a later one")
+  void aTenantCutoffIsStricterNeverLaxer() {
+    String tenant = com.shelfj.ids.Ids.newId().toString();
+    String cig = tobacco(tenant);
+    String rule = "{\"country\":\"GB\",\"category\":\"TOBACCO\",\"minimumAge\":18,\"bornBefore\":";
+
+    Response early =
+        put("/admin/age-restriction-rules", rule + "\"2009-01-01\",\"reason\":\"early\"}", tenant);
+    assertThat(early.getStatus(), is(200));
+    String now = cutoffAt(cig, "GB", tenant);
+    assertThat(now, containsString("\"bornBefore\":\"2009-01-01\""));
+    if (java.time.LocalDate.now(java.time.ZoneOffset.UTC).isBefore(BAN_DAY)) {
+      assertThat(
+          "before the law takes effect the date is the business's",
+          now,
+          containsString("\"bornBeforeTenantOverride\":true"));
+    }
+
+    assertThat(
+        put("/admin/age-restriction-rules", rule + "\"2008-06-01\"}", tenant).getStatus(), is(200));
+    String stricter = cutoffAt(cig, "GB", tenant);
+    assertThat(stricter, containsString("\"bornBefore\":\"2008-06-01\""));
+    assertThat(stricter, containsString("\"bornBeforeTenantOverride\":true"));
+
+    Response later = put("/admin/age-restriction-rules", rule + "\"2010-01-01\"}", tenant);
+    assertThat(later.getStatus(), is(400));
+    assertThat(later.readEntity(String.class), containsString("PRODUCT_BORN_BEFORE_LAXER"));
+
+    for (String bad :
+        new String[] {
+          "\"01/01/2009\"",
+          "\"2009-02-30\"",
+          "\"1850-01-01\"",
+          "\"2999-01-01\"",
+          "\"2009-01-01' OR '1'='1\"",
+          "\"" + "9".repeat(500) + "\""
+        }) {
+      Response r = put("/admin/age-restriction-rules", rule + bad + "}", tenant);
+      assertThat(bad, r.getStatus(), is(400));
+      assertThat(bad, r.readEntity(String.class), containsString("PRODUCT_INVALID_BORN_BEFORE"));
+    }
+    // Every refusal left the stricter date standing, and another business sees none of it.
+    assertThat(cutoffAt(cig, "GB", tenant), containsString("\"bornBefore\":\"2008-06-01\""));
+    String theirs = tobacco(OTHER);
+    if (java.time.LocalDate.now(java.time.ZoneOffset.UTC).isBefore(BAN_DAY)) {
+      assertThat(cutoffAt(theirs, "GB", OTHER), not(containsString("bornBefore\"")));
+    }
+    // Setting the age alone again clears the business's own date: a rule is replaced, not merged.
+    assertThat(
+        put(
+                "/admin/age-restriction-rules",
+                "{\"country\":\"GB\",\"category\":\"TOBACCO\",\"minimumAge\":21}",
+                tenant)
+            .getStatus(),
+        is(200));
+    String cleared = cutoffAt(cig, "GB", tenant);
+    assertThat(cleared, containsString("\"minimumAge\":21"));
+    assertThat(cleared, not(containsString("2008-06-01")));
+  }
+
   // ── origin and selling by weight ───────────────────────────────────────────
 
   @Test

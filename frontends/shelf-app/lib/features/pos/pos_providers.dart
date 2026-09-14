@@ -104,7 +104,32 @@ class PosCartNotifier extends StateNotifier<List<PosLine>> {
   /// the next sale is the next customer.
   int ageVerifiedUpTo = 0;
 
+  /// The earliest birth-date cut-off this sale's customer was checked against:
+  /// shown to be born before it, so born before any later one too. Null until a
+  /// check with a cut-off passes, and cleared with the cart like the age.
+  DateTime? verifiedBornBefore;
+
   PosCartNotifier() : super(const []);
+
+  /// Whether an earlier check in this sale already covers one asking for
+  /// [minimumAge] and, when set, a date of birth before [bornBefore]. A pass
+  /// for 18 covers the next bottle of wine; it does not cover tobacco under a
+  /// cut-off, because an age says nothing about the year someone was born.
+  bool coversAgeCheck(int minimumAge, DateTime? bornBefore) {
+    if (ageVerifiedUpTo < minimumAge) return false;
+    if (bornBefore == null) return true;
+    final shown = verifiedBornBefore;
+    return shown != null && !shown.isAfter(bornBefore);
+  }
+
+  /// Remembers a passed check for the rest of the sale.
+  void recordAgePass(int minimumAge, DateTime? bornBefore) {
+    if (minimumAge > ageVerifiedUpTo) ageVerifiedUpTo = minimumAge;
+    if (bornBefore != null &&
+        (verifiedBornBefore == null || bornBefore.isBefore(verifiedBornBefore!))) {
+      verifiedBornBefore = bornBefore;
+    }
+  }
 
   /// A stickered pack and the same product at the list price are two lines:
   /// the sticker prices its own packs and nothing else.
@@ -137,6 +162,7 @@ class PosCartNotifier extends StateNotifier<List<PosLine>> {
 
   void clear() {
     ageVerifiedUpTo = 0;
+    verifiedBornBefore = null;
     state = const [];
   }
 
@@ -146,6 +172,7 @@ class PosCartNotifier extends StateNotifier<List<PosLine>> {
   /// customer who parked it.
   void loadLines(List<PosLine> lines) {
     ageVerifiedUpTo = 0;
+    verifiedBornBefore = null;
     state = lines;
   }
 

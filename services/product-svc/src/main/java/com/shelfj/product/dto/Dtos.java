@@ -164,7 +164,15 @@ public final class Dtos {
       @Schema(description = "Null when the item is not age-restricted.") String category,
       @Schema(description = "Null when the item is not age-restricted.") Integer minimumAge,
       @Schema(description = "True when the rule came from the tenant rather than the statute.")
-          boolean tenantOverride) {}
+          boolean tenantOverride,
+      @Schema(
+              description =
+                  "Present when a birth-date cut-off is in force: refuse anyone born on or after"
+                      + " this date (yyyy-mm-dd), whatever their age — the UK's generational"
+                      + " tobacco ban from 1 Jan 2027, or a business's own earlier policy.")
+          String bornBefore,
+      @Schema(description = "True when that cut-off is the tenant's policy rather than the law.")
+          boolean bornBeforeTenantOverride) {}
 
   @Schema(name = "AgeRestrictionRuleResponse")
   public record AgeRestrictionRuleResponse(
@@ -173,7 +181,16 @@ public final class Dtos {
       int minimumAge,
       String note,
       @Schema(description = "True when this tenant set it, false when it is the statutory default.")
-          boolean tenantOverride) {}
+          boolean tenantOverride,
+      @Schema(
+              description =
+                  "Refuse anyone born on or after this date; null when there is no cut-off.")
+          String bornBefore,
+      @Schema(
+              description =
+                  "The day a statutory cut-off takes effect; null for a tenant's own, which applies"
+                      + " at once.")
+          String bornBeforeFrom) {}
 
   @Schema(name = "SetAgeRestrictionRuleRequest")
   public record SetAgeRestrictionRuleRequest(
@@ -184,7 +201,12 @@ public final class Dtos {
                   "Must be at or above the statutory minimum — a business may be stricter, never laxer.")
           @NotNull
           Integer minimumAge,
-      @Schema(description = "Why this differs from the statutory default.") String reason) {}
+      @Schema(description = "Why this differs from the statutory default.") String reason,
+      @Schema(
+              description =
+                  "Optional: refuse anyone born on or after this date (yyyy-mm-dd), whatever their"
+                      + " age. May be earlier than a statutory cut-off, never later.")
+          String bornBefore) {}
 
   @Schema(name = "CreateVariantRequest")
   public record CreateVariantRequest(

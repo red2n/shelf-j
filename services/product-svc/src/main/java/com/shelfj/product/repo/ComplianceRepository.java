@@ -2,6 +2,7 @@ package com.shelfj.product.repo;
 
 import com.shelfj.product.domain.Domain.AgeRestrictionRule;
 import com.shelfj.product.domain.Domain.Allergen;
+import com.shelfj.product.domain.Domain.BirthCutoff;
 import com.shelfj.product.domain.Domain.VariantAllergen;
 import com.shelfj.product.domain.Domain.VariantCompliance;
 import com.shelfj.service.BaseJdbcRepository;
@@ -260,13 +261,15 @@ public class ComplianceRepository extends BaseJdbcRepository {
   public List<AgeRestrictionRule> rulesFor(UUID tenantId, String country) {
     return query(
         "SELECT d.category, COALESCE(t.minimum_age, d.minimum_age),"
-            + " COALESCE(t.reason, d.note), t.tenant_id"
+            + " COALESCE(t.reason, d.note), t.tenant_id,"
+            + " t.born_before, d.born_before, d.born_before_from"
             + " FROM age_restriction_rules d"
             + " LEFT JOIN tenant_age_restriction_rules t"
             + "   ON t.tenant_id = ? AND t.country = d.country AND t.category = d.category"
             + " WHERE d.country = ?"
             + " UNION ALL"
-            + " SELECT t.category, t.minimum_age, t.reason, t.tenant_id"
+            + " SELECT t.category, t.minimum_age, t.reason, t.tenant_id,"
+            + " t.born_before, NULL::date, NULL::date"
             + " FROM tenant_age_restriction_rules t"
             + " WHERE t.tenant_id = ? AND t.country = ?"
             + "   AND NOT EXISTS (SELECT 1 FROM age_restriction_rules d"
@@ -278,10 +281,69 @@ public class ComplianceRepository extends BaseJdbcRepository {
           ps.setObject(3, tenantId);
           ps.setString(4, country);
         },
-        rs ->
-            new AgeRestrictionRule(
-                (UUID) rs.getObject(4), country, rs.getString(1), rs.getInt(2), rs.getString(3)),
+        rs -> {
+          // The strictest cut-off is the one listed: a tenant's own when it is earlier than the
+          // law's, which applies at once; otherwise the law's, with the day it takes effect.
+          var tenantCut = rs.getObject(5, java.time.LocalDate.class);
+          var lawCut = rs.getObject(6, java.time.LocalDate.class);
+          boolean tenantWins = tenantCut != null && (lawCut == null || tenantCut.isBefore(lawCut));
+          return new AgeRestrictionRule(
+              (UUID) rs.getObject(4),
+              country,
+              rs.getString(1),
+              rs.getInt(2),
+              rs.getString(3),
+              tenantWins ? tenantCut : lawCut,
+              tenantWins ? null : rs.getObject(7, java.time.LocalDate.class));
+        },
         "rules for country");
+  }
+
+  /**
+   * The birth-date cut-off in force on {@code today}: the earliest of the tenant's own and the
+   * law's once it has taken effect, because the earlier date refuses more people. A tie is the
+   * law's, so the till says so.
+   *
+   * @return the cut-off, or null when neither applies
+   */
+  public BirthCutoff birthCutoff(
+      UUID tenantId, String country, String category, java.time.LocalDate today) {
+    var rows =
+        query(
+            "SELECT born_before, tenant FROM ("
+                + "  SELECT born_before, TRUE AS tenant FROM tenant_age_restriction_rules"
+                + "    WHERE tenant_id = ? AND country = ? AND category = ? AND born_before IS NOT NULL"
+                + "  UNION ALL"
+                + "  SELECT born_before, FALSE AS tenant FROM age_restriction_rules"
+                + "    WHERE country = ? AND category = ? AND born_before IS NOT NULL"
+                + "      AND born_before_from <= ?"
+                + ") c ORDER BY born_before, tenant LIMIT 1",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setString(2, country);
+              ps.setString(3, category);
+              ps.setString(4, country);
+              ps.setString(5, category);
+              ps.setObject(6, today);
+            },
+            rs -> new BirthCutoff(rs.getObject(1, java.time.LocalDate.class), rs.getBoolean(2)),
+            "birth cut-off");
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  /** The law's cut-off for a category in a country, whether or not it has taken effect yet. */
+  public java.time.LocalDate statutoryBornBefore(String country, String category) {
+    var rows =
+        query(
+            "SELECT born_before FROM age_restriction_rules"
+                + " WHERE country = ? AND category = ? AND born_before IS NOT NULL",
+            ps -> {
+              ps.setString(1, country);
+              ps.setString(2, category);
+            },
+            rs -> rs.getObject(1, java.time.LocalDate.class),
+            "statutory cut-off");
+    return rows.isEmpty() ? null : rows.get(0);
   }
 
   /**
@@ -293,11 +355,11 @@ public class ComplianceRepository extends BaseJdbcRepository {
   public void upsertTenantRule(AgeRestrictionRule rule, UUID setBy) {
     exec(
         "INSERT INTO tenant_age_restriction_rules"
-            + " (tenant_id, country, category, minimum_age, reason, set_by)"
-            + " VALUES (?,?,?,?,?,?)"
+            + " (tenant_id, country, category, minimum_age, reason, set_by, born_before)"
+            + " VALUES (?,?,?,?,?,?,?)"
             + " ON CONFLICT (tenant_id, country, category) DO UPDATE SET"
             + " minimum_age = EXCLUDED.minimum_age, reason = EXCLUDED.reason,"
-            + " set_by = EXCLUDED.set_by, set_at = now()",
+            + " born_before = EXCLUDED.born_before, set_by = EXCLUDED.set_by, set_at = now()",
         ps -> {
           ps.setObject(1, rule.tenantId());
           ps.setString(2, rule.country());
@@ -305,6 +367,7 @@ public class ComplianceRepository extends BaseJdbcRepository {
           ps.setInt(4, rule.minimumAge());
           ps.setString(5, rule.note());
           ps.setObject(6, setBy);
+          ps.setObject(7, rule.bornBefore());
         },
         "upsert tenant age rule");
   }
