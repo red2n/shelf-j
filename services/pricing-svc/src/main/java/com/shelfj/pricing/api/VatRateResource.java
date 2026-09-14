@@ -21,7 +21,11 @@ import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
-/** HMRC UK VAT rate management (T1/T5/T0/TX per VAT Notice 700). */
+/**
+ * A business's VAT rates by code: T1 its standard rate, charged on any variant with no VAT
+ * category, and any others it sets. Written by management only — a rate is what every sale is taxed
+ * at — and never assumed: until a business sets its rate, nothing is quoted (SJ-D56).
+ */
 @RequestScoped
 @Path("/vat-rates")
 @Produces(MediaType.APPLICATION_JSON)
@@ -44,8 +48,10 @@ public class VatRateResource {
       description = "Registers a new VAT rate/code (e.g. T1 standard, T0 zero, T5 exempt).")
   @APIResponse(responseCode = "201", description = "VAT rate created")
   @APIResponse(responseCode = "400", description = "VAT rate is not between 0 and 1")
+  @APIResponse(responseCode = "403", description = "Not a manager, owner or platform admin")
   @POST
   public Response create(CreateVatRateRequest req) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
     Validations.validate(req);
     return Response.status(201)
         .entity(ApiResponse.ok(Mappers.toDto(svc.createVatRate(req, ctx))))
@@ -98,10 +104,12 @@ public class VatRateResource {
       description = "Updates the name, rate, exemption flag, description, or effective-from date.")
   @APIResponse(responseCode = "200", description = "VAT rate updated")
   @APIResponse(responseCode = "400", description = "VAT rate is not between 0 and 1")
+  @APIResponse(responseCode = "403", description = "Not a manager, owner or platform admin")
   @APIResponse(responseCode = "404", description = "VAT code not found")
   @PUT
   @Path("/{code}")
   public Response update(@PathParam("code") String code, CreateVatRateRequest req) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
     Validations.validate(req);
     return Response.ok(ApiResponse.ok(Mappers.toDto(svc.updateVatRate(ctx, code, req)))).build();
   }

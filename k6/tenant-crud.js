@@ -31,7 +31,7 @@ export default function ({ admin, tenant, rival }) {
   const founder = register('tenant-founder');
   const combined = call('POST', '/api/tenant-svc/onboarding', {
     token: founder.token,
-    body: { businessName: `One Shot ${uniq()}`, country: 'GB', currency: 'GBP', storeName: 'Flagship', storeCode: `FLAG-${uniq()}`.slice(0, 24), storeCity: 'Leeds', storeCountry: 'GB' },
+    body: { businessName: `One Shot ${uniq()}`, country: 'GB', currency: 'GBP', storeName: 'Flagship', storeCode: `FLAG-${uniq()}`.slice(0, 24), storeCity: 'Leeds', storeCountry: 'GB', storeTimezone: 'Europe/London' },
   });
   expect(combined, '[+] onboard tenant and first store in one call', 201);
   expect(
@@ -64,8 +64,8 @@ export default function ({ admin, tenant, rival }) {
   expect(warehouse, '[+] create a warehouse', 201);
   const warehouseId = data(warehouse).id;
   truthy('[+] a second store is not the default', data(warehouse).isDefault === false && data(warehouse).type === 'WAREHOUSE', data(warehouse));
-  expect(call('POST', '/api/tenant-svc/admin/stores', { token: t, body: { name: 'Clash', code } }), '[-] create store: code taken', 409);
-  expect(call('POST', '/api/tenant-svc/admin/stores', { token: rival.owner.token, body: { name: 'Same code, other tenant', code } }), '[+] store codes are per tenant', 201);
+  expect(call('POST', '/api/tenant-svc/admin/stores', { token: t, body: { name: 'Clash', code, timezone: 'Europe/London' } }), '[-] create store: code taken', 409);
+  expect(call('POST', '/api/tenant-svc/admin/stores', { token: rival.owner.token, body: { name: 'Same code, other tenant', code, timezone: 'Europe/London' } }), '[+] store codes are per tenant', 201);
 
   const page1 = call('GET', '/api/tenant-svc/admin/stores?limit=1', { token: t });
   expect(page1, '[+] list stores, one per page', 200);
@@ -85,6 +85,12 @@ export default function ({ admin, tenant, rival }) {
   // A UUID path parameter that does not convert is a JAX-RS 404, never a 5xx.
   expect(call('GET', '/api/tenant-svc/admin/stores/not-a-uuid', { token: t }), '[-] get store: id is not a UUID', 404);
   expect(call('PUT', `/api/tenant-svc/admin/stores/${warehouseId}`, { token: t, body: { name: 'Main Warehouse', showPrices: true } }), '[+] update store', 200);
+  // SJ-D54: a store's zone is required, must be real, and an update that leaves it out keeps it.
+  truthy('[+] an update that leaves the zone out keeps it, not UTC', data(call('GET', `/api/tenant-svc/admin/stores/${warehouseId}`, { token: t })).timezone === 'Europe/London');
+  expect(call('POST', '/api/tenant-svc/admin/stores', { token: t, body: { name: 'No zone', code: `NZ-${uniq()}`.slice(0, 24) } }), '[-] create store: a time zone is required', 400, 'STORE_TIMEZONE_REQUIRED');
+  expect(call('POST', '/api/tenant-svc/admin/stores', { token: t, body: { name: 'Bad zone', code: `BZ-${uniq()}`.slice(0, 24), timezone: 'Mars/Olympus' } }), '[-] create store: the zone must be a real one', 400, 'STORE_TIMEZONE_INVALID');
+  expect(call('PUT', `/api/tenant-svc/admin/stores/${warehouseId}`, { token: t, body: { name: 'Main Warehouse', timezone: 'UTC+01:00' } }), '[-] update store: an offset is not a zone', 400, 'STORE_TIMEZONE_INVALID');
+  expect(call('POST', '/api/tenant-svc/onboarding', { token: register('zone-founder').token, body: { businessName: `No Zone ${uniq()}`, country: 'AU', currency: 'AUD', storeName: 'Sydney', storeCode: `SYD-${uniq()}`.slice(0, 24) } }), '[-] one-shot onboarding: the first store needs a zone', 400, 'STORE_TIMEZONE_REQUIRED');
   expect(call('PUT', `/api/tenant-svc/admin/stores/${UNKNOWN}`, { token: t, body: { name: 'Ghost' } }), '[-] update unknown store', 404);
   expect(call('PATCH', `/api/tenant-svc/admin/stores/${warehouseId}/status`, { token: t, body: { status: 'CLOSED' } }), '[+] close a store', 200);
   expect(call('PATCH', `/api/tenant-svc/admin/stores/${warehouseId}/status`, { token: t, body: { status: 'ACTIVE' } }), '[+] reopen a store', 200);

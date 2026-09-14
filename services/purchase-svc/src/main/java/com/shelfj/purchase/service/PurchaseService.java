@@ -2,8 +2,8 @@ package com.shelfj.purchase.service;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.purchase.client.PricingClient;
-import com.shelfj.purchase.client.TenantClient;
 import com.shelfj.purchase.config.ServiceConfig;
+import com.shelfj.purchase.domain.BankAccount;
 import com.shelfj.purchase.domain.Domain;
 import com.shelfj.purchase.domain.Domain.GoodsReceipt;
 import com.shelfj.purchase.domain.Domain.GoodsReceiptLine;
@@ -12,7 +12,9 @@ import com.shelfj.purchase.domain.Domain.NominalLedgerEntry;
 import com.shelfj.purchase.domain.Domain.PurchaseOrder;
 import com.shelfj.purchase.domain.Domain.PurchaseOrderLine;
 import com.shelfj.purchase.domain.Domain.Supplier;
+import com.shelfj.purchase.domain.LedgerPosting;
 import com.shelfj.purchase.domain.Money;
+import com.shelfj.purchase.domain.PeriodControl;
 import com.shelfj.purchase.domain.SpendAuthority;
 import com.shelfj.purchase.domain.ThreeWayMatch;
 import com.shelfj.purchase.domain.Totals;
@@ -23,19 +25,24 @@ import com.shelfj.purchase.dto.Dtos.CreateGoodsReceiptRequest;
 import com.shelfj.purchase.dto.Dtos.CreatePurchaseOrderRequest;
 import com.shelfj.purchase.dto.Dtos.CreateSupplierRequest;
 import com.shelfj.purchase.dto.Dtos.DecidePurchaseOrderRequest;
+import com.shelfj.purchase.dto.Dtos.PostJournalRequest;
 import com.shelfj.purchase.dto.Dtos.RaiseIntercompanyInvoiceRequest;
 import com.shelfj.purchase.dto.Dtos.RaiseVendorReturnRequest;
 import com.shelfj.purchase.dto.Dtos.RecordCreditNoteRequest;
+import com.shelfj.purchase.dto.Dtos.ResolveSupplierInvoiceRequest;
 import com.shelfj.purchase.dto.Dtos.UpdateSupplierRequest;
 import com.shelfj.purchase.repo.PurchaseRepository;
 import com.shelfj.web.ApiException;
 import com.shelfj.web.Parsing;
+import com.shelfj.web.Permissions;
 import com.shelfj.web.TenantContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -49,7 +56,7 @@ public class PurchaseService {
 
   @Inject PurchaseRepository repo;
 
-  @Inject TenantClient tenants;
+  @Inject com.shelfj.service.TenantProfiles tenants;
 
   @Inject PricingClient pricing;
   @Inject com.shelfj.purchase.client.InventoryClient inventory;
@@ -67,16 +74,16 @@ public class PurchaseService {
    * is one country's currency written onto another country's money, and every downstream figure
    * built on it inherits the error.
    *
-   * <p>Falls back to the configured platform default when tenant-svc cannot answer, rather than
-   * refusing the write — see {@link TenantClient} for why that trade is the right way round here.
+   * <p>There is no platform default behind it any more (SJ-D53). The configured fallback was "GBP",
+   * so a yen tenant's supplier was set up in pounds whenever tenant-svc was slow; a refused write
+   * can be retried, a wrong currency on a supplier cannot be told from a right one.
    *
    * @param tenantId the tenant whose currency is wanted
    * @return an ISO 4217 code, never null
+   * @throws ApiException 503 {@code TENANT_PROFILE_UNAVAILABLE} when tenant-svc cannot answer
    */
-  private String resolveTenantCurrency(UUID tenantId) {
-    return tenants
-        .findCurrency(tenantId)
-        .orElseGet(() -> config.defaultCurrency().toUpperCase(java.util.Locale.ROOT));
+  String resolveTenantCurrency(UUID tenantId) {
+    return tenants.requireCurrency(tenantId);
   }
 
   // ── Suppliers ─────────────────────────────────────────────────────────────────
@@ -95,6 +102,17 @@ public class PurchaseService {
         req.currency() != null
             ? Money.requireIso4217(req.currency())
             : resolveTenantCurrency(tenantId);
+    BankAccount.Details bank =
+        bankDetails(
+            req.bankAccountName(),
+            req.bankSortCode(),
+            req.bankAccountNumber(),
+            req.bankIban(),
+            req.bankBic());
+    // Where a supplier is paid is a finance decision (17.10): a storekeeper may add a supplier,
+    // not the account its money goes to.
+    if (!bank.empty()) ctx.requirePermission(Permissions.FINANCE_PAYMENTS);
+    Instant now = Instant.now();
     Supplier s =
         new Supplier(
             Ids.newId(),
@@ -102,11 +120,19 @@ public class PurchaseService {
             req.name(),
             req.vatNumber(),
             req.vatRegistered(),
-            req.countryCode() != null ? req.countryCode().toUpperCase(java.util.Locale.ROOT) : "GB",
+            tenants.countryOr(tenantId, req.countryCode()),
             currency,
             req.paymentTermsDays() != null ? req.paymentTermsDays() : BACS_TERMS_DAYS,
-            Instant.now(),
-            Instant.now());
+            now,
+            now,
+            blankToNull(req.remittanceEmail()),
+            bank.accountName(),
+            bank.sortCode(),
+            bank.accountNumber(),
+            bank.iban(),
+            bank.bic(),
+            bank.empty() ? null : now,
+            bank.empty() ? null : ctx.userId());
     return repo.createSupplier(s);
   }
 
@@ -139,6 +165,32 @@ public class PurchaseService {
                 + "; receive, close or cancel them before changing the currency");
       }
     }
+    // Bank details are replaced as a set or not touched; clearing them is explicit. Either needs
+    // finance.payments, and only an actual change moves the stamp a payment run checks.
+    BankAccount.Details bank = existing.bank();
+    Instant bankChangedAt = existing.bankDetailsChangedAt();
+    UUID bankChangedBy = existing.bankDetailsChangedBy();
+    boolean clear = Boolean.TRUE.equals(req.clearBankDetails());
+    BankAccount.Details asked =
+        bankDetails(
+            req.bankAccountName(),
+            req.bankSortCode(),
+            req.bankAccountNumber(),
+            req.bankIban(),
+            req.bankBic());
+    if (clear || !asked.empty()) {
+      ctx.requirePermission(Permissions.FINANCE_PAYMENTS);
+      BankAccount.Details next = clear ? BankAccount.Details.NONE : asked;
+      if (!next.equals(bank)) {
+        bank = next;
+        bankChangedAt = Instant.now();
+        bankChangedBy = ctx.userId();
+      }
+    }
+    String remittanceEmail =
+        req.remittanceEmail() == null
+            ? existing.remittanceEmail()
+            : validEmailOrNull(req.remittanceEmail());
     Supplier updated =
         new Supplier(
             existing.id(),
@@ -152,7 +204,15 @@ public class PurchaseService {
             currency,
             req.paymentTermsDays() != null ? req.paymentTermsDays() : existing.paymentTermsDays(),
             existing.createdAt(),
-            Instant.now());
+            Instant.now(),
+            remittanceEmail,
+            bank.accountName(),
+            bank.sortCode(),
+            bank.accountNumber(),
+            bank.iban(),
+            bank.bic(),
+            bankChangedAt,
+            bankChangedBy);
     if (!repo.updateSupplier(updated)) {
       throw ApiException.notFound("PURCHASE_SUPPLIER_NOT_FOUND", "Supplier not found: " + id);
     }
@@ -166,6 +226,33 @@ public class PurchaseService {
    * @param limit maximum rows; the caller is expected to have clamped this
    * @return the suppliers
    */
+  /** Validates bank details as keyed; a bad set is a 400 naming what is wrong. */
+  private static BankAccount.Details bankDetails(
+      String name, String sortCode, String accountNumber, String iban, String bic) {
+    try {
+      return BankAccount.details(name, sortCode, accountNumber, iban, bic);
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(400, "PURCHASE_BANK_DETAILS_INVALID", e.getMessage(), List.of(), e);
+    }
+  }
+
+  private static final java.util.regex.Pattern EMAIL =
+      java.util.regex.Pattern.compile("[^@\\s]+@[^@\\s]+\\.[^@\\s]+");
+
+  /** An empty value clears the email; anything else must look like one. */
+  private static String validEmailOrNull(String raw) {
+    String v = blankToNull(raw);
+    if (v != null && !EMAIL.matcher(v).matches()) {
+      throw ApiException.badRequest(
+          "PURCHASE_REMITTANCE_EMAIL_INVALID", "remittanceEmail is not an email address");
+    }
+    return v;
+  }
+
+  private static String blankToNull(String s) {
+    return s == null || s.isBlank() ? null : s.trim();
+  }
+
   public List<Supplier> listSuppliers(TenantContext ctx, int limit) {
     return repo.findSuppliers(ctx.requireTenantId(), limit);
   }
@@ -388,6 +475,7 @@ public class PurchaseService {
    */
   public PurchaseOrder approvePurchaseOrder(
       TenantContext ctx, UUID poId, DecidePurchaseOrderRequest req) {
+    ctx.requirePermission(Permissions.PURCHASING_APPROVE);
     UUID tenantId = ctx.requireTenantId();
     PurchaseOrder po = requirePendingApproval(ctx, poId);
 
@@ -662,7 +750,29 @@ public class PurchaseService {
         Money.round(req.vatAmount() == null ? BigDecimal.ZERO : req.vatAmount(), currency);
 
     boolean allMatched = matched.stream().allMatch(ThreeWayMatch.MatchLine::matched);
+    BigDecimal gross = net.add(vat);
+    LocalDate invoiceDate = Parsing.date(req.invoiceDate(), "invoiceDate");
+
+    // The header check: the supplier's own total against the sum of the supplier's own lines.
+    // An invoice that does not add up is wrong before any line is compared with anything.
+    BigDecimal statedGross =
+        req.statedGross() == null ? null : Money.round(req.statedGross(), currency);
+    List<String> headerVariances = new ArrayList<>();
+    if (statedGross != null && config.matchTolerance().totalMismatch(statedGross, gross)) {
+      headerVariances.add(ThreeWayMatch.TOTAL_MISMATCH);
+    }
+
+    // Payment terms: the supplier's, counted from the invoice date. The one figure accounts
+    // payable schedules by.
+    Supplier supplier = getSupplier(ctx, po.supplierId());
+    LocalDate dueDate = invoiceDate.plusDays(supplier.paymentTermsDays());
+
+    // Posted whether or not it matched (SAP's model, not "post on approval"): the liability
+    // exists the moment the supplier has invoiced. What a variance stops is payment.
+    requireOpenPeriod(tenantId, po.storeId(), invoiceDate);
+
     UUID invoiceId = Ids.newId();
+    Instant now = Instant.now();
     Domain.SupplierInvoice invoice =
         new Domain.SupplierInvoice(
             invoiceId,
@@ -670,15 +780,26 @@ public class PurchaseService {
             po.id(),
             po.supplierId(),
             req.invoiceNumber().trim(),
-            Parsing.date(req.invoiceDate(), "invoiceDate"),
+            invoiceDate,
             currency,
             net,
             vat,
-            net.add(vat),
-            allMatched ? Domain.INVOICE_MATCHED : Domain.INVOICE_FLAGGED,
-            Instant.now(),
+            gross,
+            allMatched && headerVariances.isEmpty()
+                ? Domain.INVOICE_MATCHED
+                : Domain.INVOICE_FLAGGED,
+            now,
             ctx.userId(),
-            Instant.now());
+            now,
+            dueDate,
+            statedGross,
+            String.join(",", headerVariances),
+            now,
+            null,
+            null,
+            null,
+            null,
+            null);
 
     List<Domain.SupplierInvoiceLine> lines = new ArrayList<>(req.lines().size());
     for (int i = 0; i < req.lines().size(); i++) {
@@ -696,7 +817,10 @@ public class PurchaseService {
               Instant.now()));
     }
     return repo.captureSupplierInvoice(
-        invoice, lines, Events.supplierInvoiceCaptured(tenantId, invoice));
+        invoice,
+        lines,
+        Events.supplierInvoiceCaptured(tenantId, invoice),
+        invoicePosting(tenantId, invoice, po.storeId()));
   }
 
   /**
@@ -708,9 +832,25 @@ public class PurchaseService {
    * @return the supplier invoices
    */
   public List<Domain.SupplierInvoice> listSupplierInvoices(
-      TenantContext ctx, UUID poId, int limit) {
-    return repo.findSupplierInvoices(ctx.requireTenantId(), poId, limit);
+      TenantContext ctx, UUID poId, String status, int limit) {
+    String wanted = null;
+    if (status != null && !status.isBlank()) {
+      wanted = status.trim().toUpperCase(java.util.Locale.ROOT);
+      if (!INVOICE_STATUSES.contains(wanted)) {
+        throw ApiException.badRequest(
+            "PURCHASE_INVOICE_STATUS_UNKNOWN",
+            "status must be one of " + INVOICE_STATUSES + ", not " + status);
+      }
+    }
+    return repo.findSupplierInvoices(ctx.requireTenantId(), poId, wanted, limit);
   }
+
+  private static final java.util.Set<String> INVOICE_STATUSES =
+      java.util.Set.of(
+          Domain.INVOICE_MATCHED,
+          Domain.INVOICE_FLAGGED,
+          Domain.INVOICE_APPROVED,
+          Domain.INVOICE_REJECTED);
 
   /**
    * Reads one supplier invoice.
@@ -813,10 +953,14 @@ public class PurchaseService {
                         l.qtyReceived(),
                         Instant.now()))
             .toList();
+    // Dr Stock / Cr GR/IR, in the receipt's own transaction. The period is checked first so a
+    // closed month refuses the receipt before anything is written.
+    requireOpenPeriod(ctx.requireTenantId(), gr.storeId(), today());
     return repo.createGoodsReceipt(
         gr,
         lines,
-        Events.goodsReceived(ctx.requireTenantId(), gr.id(), gr.storeId(), gr.poId(), lines));
+        Events.goodsReceived(ctx.requireTenantId(), gr.id(), gr.storeId(), gr.poId(), lines),
+        receiptPosting(ctx.requireTenantId(), po, gr, lines));
   }
 
   /**
@@ -1038,16 +1182,53 @@ public class PurchaseService {
     ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
     Domain.VendorReturn ret = getVendorReturn(ctx, id);
     LocalDate date = Parsing.date(req.creditNoteDate(), "creditNoteDate");
-    BigDecimal amount = req.amount() == null ? ret.grossAmount() : req.amount();
+    BigDecimal amount =
+        Money.round(req.amount() == null ? ret.grossAmount() : req.amount(), ret.currency());
+    requireOpenPeriod(ctx.requireTenantId(), ret.storeId(), date);
     boolean credited =
         repo.creditVendorReturn(
-            ctx.requireTenantId(), id, req.creditNoteNumber().trim(), date, amount, ctx.userId());
+            ctx.requireTenantId(),
+            id,
+            req.creditNoteNumber().trim(),
+            date,
+            amount,
+            ctx.userId(),
+            creditNotePosting(ctx.requireTenantId(), ret, date, amount));
     if (!credited) {
       throw ApiException.conflict(
           "PURCHASE_RTV_ALREADY_CREDITED",
           "this return already carries credit note " + ret.creditNoteNumber());
     }
     return getVendorReturn(ctx, id);
+  }
+
+  /**
+   * Dr Creditors for the credit, Cr VAT input for its VAT share and Cr Stock for the rest. The VAT
+   * share is the return's own VAT ratio applied to the amount credited, so a partial credit splits
+   * the way the debit note did. Empty when nothing was credited.
+   */
+  private List<NominalLedgerEntry> creditNotePosting(
+      UUID tenantId, Domain.VendorReturn ret, LocalDate date, BigDecimal amount) {
+    if (amount.signum() <= 0) return List.of();
+    BigDecimal vat = BigDecimal.ZERO;
+    if (ret.grossAmount() != null && ret.grossAmount().signum() > 0 && ret.vatAmount() != null) {
+      vat =
+          Money.round(
+              amount.multiply(ret.vatAmount()).divide(ret.grossAmount(), 10, RoundingMode.HALF_UP),
+              ret.currency());
+    }
+    BigDecimal net = amount.subtract(vat);
+    return LedgerPosting.of(
+            tenantId,
+            date,
+            "Supplier credit note against " + ret.debitNoteNumber(),
+            Domain.SOURCE_CREDIT_NOTE,
+            ret.id(),
+            ret.storeId())
+        .debit(Domain.CODE_CREDITORS, Domain.NAME_CREDITORS, amount)
+        .credit(Domain.CODE_VAT_INPUT, Domain.NAME_VAT_INPUT, vat)
+        .credit(stockCodeFor(tenantId, ret.storeId()), Domain.NAME_STOCK, net)
+        .build();
   }
 
   // ── Intercompany Invoices (Gap #20) ───────────────────────────────────────────
@@ -1127,8 +1308,10 @@ public class PurchaseService {
             currency,
             Instant.now());
 
-    List<NominalLedgerEntry> arEntries = buildArEntries(tenantId, arId, req, today);
-    List<NominalLedgerEntry> apEntries = buildApEntries(tenantId, apId, req, today);
+    List<NominalLedgerEntry> arEntries =
+        asJournal(buildArEntries(tenantId, arId, req, today), Domain.SOURCE_INTERCOMPANY);
+    List<NominalLedgerEntry> apEntries =
+        asJournal(buildApEntries(tenantId, apId, req, today), Domain.SOURCE_INTERCOMPANY);
 
     return repo.createIntercompanyInvoicePair(
         ar,
@@ -1343,7 +1526,8 @@ public class PurchaseService {
               desc,
               id));
     }
-    repo.settleIntercompanyInvoice(ctx.requireTenantId(), id, settlements);
+    repo.settleIntercompanyInvoice(
+        ctx.requireTenantId(), id, asJournal(settlements, Domain.SOURCE_SETTLEMENT));
   }
 
   // ── Nominal Ledger ────────────────────────────────────────────────────────────
@@ -1402,6 +1586,272 @@ public class PurchaseService {
       String desc,
       UUID sourceRef) {
     return new NominalLedgerEntry(
-        Ids.newId(), tenantId, date, code, name, debit, credit, desc, sourceRef, Instant.now());
+        Ids.newId(),
+        tenantId,
+        date,
+        code,
+        name,
+        debit,
+        credit,
+        desc,
+        sourceRef,
+        Instant.now(),
+        null,
+        null,
+        null);
+  }
+
+  /** Stamps one journal id and a source type onto lines built as a set. */
+  private static List<NominalLedgerEntry> asJournal(
+      List<NominalLedgerEntry> lines, String sourceType) {
+    UUID journal = Ids.newId();
+    return lines.stream()
+        .map(
+            e ->
+                new NominalLedgerEntry(
+                    e.id(),
+                    e.tenantId(),
+                    e.entryDate(),
+                    e.nominalCode(),
+                    e.nominalName(),
+                    e.debit(),
+                    e.credit(),
+                    e.description(),
+                    e.sourceRef(),
+                    e.createdAt(),
+                    journal,
+                    sourceType,
+                    e.storeId()))
+        .toList();
+  }
+
+  // ── The accounting seam: postings, period control, journals, trial balance ──
+
+  private static LocalDate today() {
+    return LocalDate.now(ZoneOffset.UTC);
+  }
+
+  /**
+   * Refuses a posting into a month finance has closed (04.7).
+   *
+   * <p>Periods live in inventory-svc beside the costing they freeze; this reads them through the
+   * client and applies {@link PeriodControl}'s rule. Unreachable is treated as open, and logged
+   * there — see the client for why.
+   *
+   * @throws ApiException 409 {@code PURCHASE_PERIOD_CLOSED}
+   */
+  void requireOpenPeriod(UUID tenantId, UUID storeId, LocalDate date) {
+    if (storeId == null) return;
+    var periods = inventory.accountingPeriods(tenantId, storeId);
+    if (periods.isPresent() && PeriodControl.closedOn(periods.get(), date)) {
+      throw ApiException.conflict(
+          "PURCHASE_PERIOD_CLOSED",
+          "the accounting period covering " + date + " is closed for this store");
+    }
+  }
+
+  /** The nominal code a store's stock posts to: its GL mapping, or the default (17.3). */
+  private String stockCodeFor(UUID tenantId, UUID storeId) {
+    return inventory.storeNominalCode(tenantId, storeId).orElse(Domain.CODE_STOCK);
+  }
+
+  /**
+   * Dr Stock / Cr GR/IR for the goods received, at the order's own prices. Empty when the receipt
+   * values to nothing — an order priced at zero is recorded, not posted.
+   */
+  private List<NominalLedgerEntry> receiptPosting(
+      UUID tenantId, PurchaseOrder po, GoodsReceipt gr, List<GoodsReceiptLine> lines) {
+    var priceByVariant = new java.util.HashMap<UUID, BigDecimal>();
+    for (PurchaseOrderLine l : repo.findPurchaseOrderLines(tenantId, po.id())) {
+      priceByVariant.putIfAbsent(l.variantId(), l.unitPrice());
+    }
+    BigDecimal value = BigDecimal.ZERO;
+    for (GoodsReceiptLine l : lines) {
+      BigDecimal price = priceByVariant.get(l.variantId());
+      if (price != null) {
+        value = value.add(Money.round(l.qtyReceived().multiply(price), po.currency()));
+      }
+    }
+    value = Money.round(value, po.currency());
+    if (value.signum() <= 0) return List.of();
+    return LedgerPosting.of(
+            tenantId,
+            today(),
+            "Goods received against PO " + po.id(),
+            Domain.SOURCE_GOODS_RECEIPT,
+            gr.id(),
+            gr.storeId())
+        .debit(stockCodeFor(tenantId, gr.storeId()), Domain.NAME_STOCK, value)
+        .credit(Domain.CODE_GRIR, Domain.NAME_GRIR, value)
+        .build();
+  }
+
+  /** Dr GR/IR net, Dr VAT input, Cr Creditors gross: the liability, the moment it exists. */
+  private static List<NominalLedgerEntry> invoicePosting(
+      UUID tenantId, Domain.SupplierInvoice inv, UUID storeId) {
+    if (inv.grossAmount().signum() <= 0) return List.of();
+    return LedgerPosting.of(
+            tenantId,
+            inv.invoiceDate(),
+            "Supplier invoice " + inv.invoiceNumber(),
+            Domain.SOURCE_SUPPLIER_INVOICE,
+            inv.id(),
+            storeId)
+        .debit(Domain.CODE_GRIR, Domain.NAME_GRIR, inv.netAmount())
+        .debit(Domain.CODE_VAT_INPUT, Domain.NAME_VAT_INPUT, inv.vatAmount())
+        .credit(Domain.CODE_CREDITORS, Domain.NAME_CREDITORS, inv.grossAmount())
+        .build();
+  }
+
+  /**
+   * Decides a flagged invoice (07.7): APPROVE releases it for payment; REJECT reverses its posting,
+   * takes it out of the VAT return and frees the quantities it billed, so the supplier's corrected
+   * invoice matches cleanly. Management only, and the reason is kept — a decision about money with
+   * no reason is the thing an auditor asks about first.
+   *
+   * @throws ApiException 400 {@code PURCHASE_RESOLUTION_UNKNOWN} for an action that is neither; 404
+   *     when the invoice does not exist in this tenant; 409 {@code PURCHASE_INVOICE_NOT_FLAGGED}
+   *     when it is not awaiting a decision; 409 {@code PURCHASE_INVOICE_ALREADY_RESOLVED} when
+   *     another decision landed first; 409 {@code PURCHASE_PERIOD_CLOSED} when the reversal would
+   *     land in a closed month
+   */
+  public Domain.SupplierInvoice resolveSupplierInvoice(
+      TenantContext ctx, UUID id, ResolveSupplierInvoiceRequest req) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
+    ctx.requirePermission(Permissions.PURCHASING_INVOICES_DECIDE);
+    UUID tenantId = ctx.requireTenantId();
+    String action = req.action().trim().toUpperCase(java.util.Locale.ROOT);
+    boolean approve = "APPROVE".equals(action);
+    if (!approve && !"REJECT".equals(action)) {
+      throw ApiException.badRequest(
+          "PURCHASE_RESOLUTION_UNKNOWN", "action must be APPROVE or REJECT, not " + req.action());
+    }
+    Domain.SupplierInvoice inv = getSupplierInvoice(ctx, id);
+    if (!Domain.INVOICE_FLAGGED.equals(inv.status())) {
+      throw ApiException.conflict(
+          "PURCHASE_INVOICE_NOT_FLAGGED",
+          "only a FLAGGED invoice can be decided — this one is " + inv.status());
+    }
+    List<NominalLedgerEntry> reversal = List.of();
+    com.shelfj.service.OutboxRow event = null;
+    if (!approve) {
+      PurchaseOrder po = getPurchaseOrder(ctx, inv.poId());
+      requireOpenPeriod(tenantId, po.storeId(), today());
+      List<NominalLedgerEntry> posted =
+          repo.findPostingFor(tenantId, Domain.SOURCE_SUPPLIER_INVOICE, inv.id());
+      if (!posted.isEmpty()) {
+        reversal =
+            LedgerPosting.reversalOf(
+                    posted,
+                    today(),
+                    "Rejected supplier invoice " + inv.invoiceNumber() + ": " + req.reason().trim(),
+                    Domain.SOURCE_INVOICE_REVERSAL)
+                .build();
+      }
+      event = Events.supplierInvoiceRejected(tenantId, inv, Ids.derived(inv.id(), "rejected"));
+    }
+    boolean decided =
+        repo.resolveSupplierInvoice(
+            tenantId,
+            id,
+            approve ? Domain.INVOICE_APPROVED : Domain.INVOICE_REJECTED,
+            ctx.userId(),
+            req.reason().trim(),
+            reversal,
+            event);
+    if (!decided) {
+      throw ApiException.conflict(
+          "PURCHASE_INVOICE_ALREADY_RESOLVED", "this invoice has already been decided");
+    }
+    return getSupplierInvoice(ctx, id);
+  }
+
+  /**
+   * Posts a manual journal (17.1). Management only. The lines must balance and each must carry a
+   * debit or a credit, never both; a store, when named, must be one the caller may operate in and
+   * its period for the date must be open.
+   *
+   * @throws ApiException 400 {@code PURCHASE_JOURNAL_LINE_INVALID}; 422 {@code
+   *     PURCHASE_JOURNAL_UNBALANCED}; 403 {@code STORE_ACCESS_DENIED}; 409 {@code
+   *     PURCHASE_PERIOD_CLOSED}
+   */
+  public Domain.Journal postJournal(TenantContext ctx, PostJournalRequest req) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
+    ctx.requirePermission(Permissions.FINANCE_JOURNAL);
+    UUID tenantId = ctx.requireTenantId();
+    LocalDate date = Parsing.date(req.entryDate(), "entryDate");
+    UUID storeId = Parsing.optionalUuid(req.storeId(), "storeId");
+    if (storeId != null) ctx.requireStoreAccess(storeId);
+    LedgerPosting posting;
+    try {
+      posting =
+          LedgerPosting.of(tenantId, date, req.description(), Domain.SOURCE_JOURNAL, null, storeId);
+      for (var l : req.lines()) {
+        posting.line(l.nominalCode().trim(), l.nominalName(), l.debit(), l.credit());
+      }
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(400, "PURCHASE_JOURNAL_LINE_INVALID", e.getMessage(), List.of(), e);
+    }
+    if (posting.size() < 2) {
+      throw ApiException.badRequest(
+          "PURCHASE_JOURNAL_LINE_INVALID", "a journal needs at least two lines with an amount");
+    }
+    if (!posting.balanced()) {
+      throw ApiException.unprocessable(
+          "PURCHASE_JOURNAL_UNBALANCED",
+          "debits "
+              + posting.totalDebit().toPlainString()
+              + " do not equal credits "
+              + posting.totalCredit().toPlainString());
+    }
+    requireOpenPeriod(tenantId, storeId, date);
+    List<NominalLedgerEntry> lines = posting.build();
+    repo.postJournal(lines);
+    return journalOf(lines);
+  }
+
+  /**
+   * Reads one journal whole. Management only: the ledger's lines are readable by any member of
+   * staff, but a journal is a finance document and its reader is finance.
+   *
+   * @throws ApiException 404 {@code PURCHASE_JOURNAL_NOT_FOUND}
+   */
+  public Domain.Journal getJournal(TenantContext ctx, UUID journalId) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
+    List<NominalLedgerEntry> lines = repo.findJournal(ctx.requireTenantId(), journalId);
+    if (lines.isEmpty()) {
+      throw ApiException.notFound("PURCHASE_JOURNAL_NOT_FOUND", "Journal not found: " + journalId);
+    }
+    return journalOf(lines);
+  }
+
+  private static Domain.Journal journalOf(List<NominalLedgerEntry> lines) {
+    NominalLedgerEntry first = lines.get(0);
+    return new Domain.Journal(
+        first.journalId(),
+        first.entryDate(),
+        first.description(),
+        first.sourceType(),
+        first.sourceRef(),
+        first.storeId(),
+        lines);
+  }
+
+  /**
+   * The trial balance: every code's debits, credits and balance over a range (17.1). Management
+   * only.
+   *
+   * @throws ApiException 400 {@code PURCHASE_INVALID_PERIOD} when the range ends before it starts
+   */
+  public List<Domain.TrialBalanceRow> trialBalance(
+      TenantContext ctx, String fromStr, String toStr, String storeIdStr) {
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
+    LocalDate from = fromStr != null ? Parsing.date(fromStr, "from") : null;
+    LocalDate to = toStr != null ? Parsing.date(toStr, "to") : null;
+    if (from != null && to != null && to.isBefore(from)) {
+      throw ApiException.badRequest("PURCHASE_INVALID_PERIOD", "to must not be before from");
+    }
+    UUID storeId = Parsing.optionalUuid(storeIdStr, "storeId");
+    return repo.findTrialBalance(ctx.requireTenantId(), from, to, storeId);
   }
 }

@@ -251,7 +251,9 @@ public final class Dtos {
       @Schema(description = "UUID of the product variant.") String variantId,
       @Schema(description = "UUID of the batch this movement affected, if applicable.")
           String batchId,
-      @Schema(description = "e.g. RECEIPT, SALE, ADJUSTMENT, TRANSFER_OUT, TRANSFER_IN.")
+      @Schema(
+              description =
+                  "RECEIVE, SALE, ADJUST, TRANSFER_OUT or TRANSFER_IN (a manual adjustment is ADJUST with refType ADJUSTMENT).")
           String type,
       @Schema(description = "Signed movement quantity.") BigDecimal qty,
       String refType,
@@ -1039,4 +1041,36 @@ public final class Dtos {
       description = "Public in-stock/out-of-stock signal for a variant; no quantities exposed.")
   public record AvailabilityResponse(
       @Schema(description = "UUID of the product variant.") String variantId, boolean inStock) {}
+
+  // ── Gross margin and GMROI (19.7) ─────────────────────────────────────────────
+
+  @Schema(name = "GrossMarginRowResponse")
+  public record GrossMarginRowResponse(
+      @Schema(description = "The store id or variant id this line covers.") String groupKey,
+      @Schema(description = "Net revenue in the window, after VAT, discounts and returns.")
+          BigDecimal revenue,
+      @Schema(description = "Cost of the batches the sales drew down, less what came back.")
+          BigDecimal cogs,
+      BigDecimal grossMargin,
+      @Schema(
+              description =
+                  "Gross margin as a percentage of revenue; null when nothing was earned.")
+          BigDecimal marginPercent,
+      @Schema(description = "Average value of the holding at cost over the window.")
+          BigDecimal averageValue,
+      @Schema(description = "Gross margin / average inventory at cost; null when nothing was held.")
+          BigDecimal gmroi,
+      @Schema(description = "GMROI scaled to a year.") BigDecimal annualisedGmroi,
+      @Schema(description = "Quantity sold out of batches with no cost price.")
+          BigDecimal uncostedSaleQty,
+      @Schema(description = "Quantity sold with no revenue recorded; its cost is still in cogs.")
+          BigDecimal unpricedSaleQty) {}
+
+  @Schema(name = "GrossMarginReportResponse")
+  public record GrossMarginReportResponse(
+      @Schema(description = "One line per store or variant, lowest margin first.")
+          List<GrossMarginRowResponse> rows,
+      @Schema(description = "False when archived movements make the average holding a floor.")
+          boolean historyComplete,
+      int windowDays) {}
 }

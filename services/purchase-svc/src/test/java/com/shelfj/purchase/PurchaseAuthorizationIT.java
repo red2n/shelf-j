@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.is;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.client.Entity;
@@ -43,6 +44,8 @@ class PurchaseAuthorizationIT {
 
   static {
     PG = PostgresSupport.start();
+    // The tenants this suite acts for, as tenant-svc would describe them (SJ-D53).
+    TenantSvcStub.start().with(PurchaseAuthorizationIT.T, "GBP", "GB");
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
     System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());

@@ -243,13 +243,25 @@ export function setStoreStatus(tenant, storeId, status) {
 // ── catalogue and stock ───────────────────────────────────────────────────────
 
 /** A product with one variant, sellable online and at the till. Returns { productId, variantId, sku }. */
+/**
+ * What an online offer shows about a product (01.12): an EU manufacturer and no warnings. Sent for
+ * every tenant; where EU product safety law binds one, a product cannot be offered online without it.
+ */
+export const SAFETY_INFORMATION = {
+  manufacturerName: 'k6 Manufacturing GmbH',
+  manufacturerAddress: 'Teststraße 1, 10115 Berlin',
+  manufacturerContact: 'safety@k6.shelfj.test',
+  manufacturerCountry: 'DE',
+  noWarnings: true,
+};
+
 export function sellableVariant(tenant, name) {
   const t = tenant.owner.token;
   const run = uniq();
   const product = must(
     call('POST', '/api/product-svc/admin/products', {
       token: t,
-      body: { name: `${name} ${run}`, sellableOnline: true, sellablePos: true },
+      body: { name: `${name} ${run}`, sellableOnline: true, sellablePos: true, safetyInformation: SAFETY_INFORMATION },
     }),
     201,
     `create product ${name}`
@@ -270,7 +282,31 @@ export function sellableVariant(tenant, name) {
  * An active all-channel price list in the tenant's own currency — order-svc resolves prices from
  * it and refuses an order whose currency differs from the tenant's.
  */
+// The standard VAT rate a test business in each country charges. pricing-svc never assumes one
+// (SJ-D56): a business sets its own, exempt if it charges none — as Kuwait's and a US seller's do.
+const STANDARD_VAT = { GB: 0.2, IN: 0.18, US: 0, DE: 0.19, PT: 0.23, FR: 0.2, JP: 0.1, KW: 0 };
+
+/** Sets the business's standard VAT rate (T1) unless it already has one: nothing is quoted without it. */
+export function ensureStandardVat(tenant) {
+  if (tenant.standardVat) return;
+  const token = tenant.owner.token;
+  if (call('GET', '/api/pricing-svc/vat-rates/T1', { token }).status !== 200) {
+    const rate = STANDARD_VAT[tenant.country];
+    if (rate === undefined) throw new Error(`no standard VAT rate known for ${tenant.country}`);
+    must(
+      call('POST', '/api/pricing-svc/vat-rates', {
+        token,
+        body: { code: 'T1', name: 'Standard rate', rate, exempt: rate === 0, effectiveFrom: '2020-01-01T00:00:00Z' },
+      }),
+      201,
+      'standard VAT rate'
+    );
+  }
+  tenant.standardVat = true;
+}
+
 export function priceVariants(tenant, variantIds, price = '25.00') {
+  ensureStandardVat(tenant);
   const t = tenant.owner.token;
   const list = must(
     call('POST', '/api/pricing-svc/admin/price-lists', {
@@ -301,3 +337,19 @@ export function receive(tenant, storeId, variantId, qty, costPrice = '10.00') {
 
 /** k6 thresholds shared by the functional suites: every check must pass. */
 export const ALL_CHECKS_PASS = { checks: ['rate==1.0'] };
+
+/**
+ * A tenant selling one priced, stocked variant from its first store, with a rival tenant and the two
+ * staff roles the refusal checks need: the setup the ledger and margin flows share.
+ */
+export function sellingTenant(label, { price = '12.00', qty = 50, costPrice = '6.00', country = 'GB', currency = 'GBP' } = {}) {
+  const tenant = onboardTenant(label, { country, currency });
+  const rival = onboardTenant(`${label}-rival`, { country, currency });
+  const store = tenant.stores[0];
+  const { variantId } = sellableVariant(tenant, `${label} widget`);
+  priceVariants(tenant, [variantId], price);
+  must(receive(tenant, store.id, variantId, qty, costPrice), [200, 201], 'receive stock');
+  const storekeeper = staffUser(tenant, 'STOREKEEPER', [store.id]);
+  const cashier = staffUser(tenant, 'CASHIER', [store.id]);
+  return { tenant, rival, store, variantId, storekeeper, cashier };
+}

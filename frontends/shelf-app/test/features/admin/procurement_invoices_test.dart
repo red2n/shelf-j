@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shelf_app/core/auth/auth_notifier.dart';
+import 'package:shelf_app/core/auth/auth_state.dart';
 import 'package:shelf_app/core/network/api_client.dart';
 import 'package:shelf_app/features/admin/procurement_screen.dart';
 
@@ -138,5 +140,219 @@ void main() {
     await _pump(tester, '{"data":[]}');
     expect(find.text('No supplier invoices yet'), findsOneWidget);
     expect(find.textContaining('Capture one from a purchase order'), findsOneWidget);
+  });
+
+  lifecycleTests();
+}
+
+// ---------------------------------------------------------------------------
+// The accounting seam (07.7): due dates, the header check, the decision on a
+// flagged invoice, and the badge for what a manager decided.
+// ---------------------------------------------------------------------------
+
+class _Auth extends AuthNotifier {
+  final String role;
+  _Auth(this.role);
+
+  @override
+  Future<AuthState> build() async => AuthAuthenticated(
+        accessToken: 'a',
+        refreshToken: 'r',
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        roles: [role],
+      );
+}
+
+class _Server implements HttpClientAdapter {
+  final List<RequestOptions> requests = [];
+  String listBody = '{"data":[]}';
+  int resolveStatus = 200;
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  Future<ResponseBody> fetch(
+      RequestOptions o, Stream<List<int>>? s, Future<void>? c) async {
+    requests.add(o);
+    if (o.path.endsWith('/resolve')) {
+      final body = resolveStatus == 200
+          ? '{"data":{"id":"i-INV-9","status":"APPROVED"}}'
+          : '{"error":{"code":"PURCHASE_INVOICE_ALREADY_RESOLVED","message":"this invoice has already been decided"}}';
+      return ResponseBody.fromString(body, resolveStatus,
+          headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
+    }
+    return ResponseBody.fromString(listBody, 200,
+        headers: {Headers.contentTypeHeader: [Headers.jsonContentType]});
+  }
+}
+
+String _lifecycleInvoice({
+  required String number,
+  required String status,
+  String variances = '',
+  String headerVariances = '',
+  String? dueDate = '2026-03-03',
+  bool posted = true,
+  double statedGross = 180,
+  String? reason,
+}) =>
+    '''
+{"id":"i-$number","poId":"po-1111111111","invoiceNumber":"$number",
+ "invoiceDate":"2026-02-01","currency":"GBP","netAmount":150,"vatAmount":30,
+ "grossAmount":180,"status":"$status","statedGross":$statedGross,
+ "headerVariances":[$headerVariances],${dueDate == null ? '' : '"dueDate":"$dueDate",'}
+ ${posted ? '"postedAt":"2026-02-01T10:00:00Z",' : ''}
+ "payable":${status == 'MATCHED' || status == 'APPROVED'},
+ ${reason == null ? '' : '"resolutionReason":"$reason",'}
+ "lines":[
+   {"variantId":"v-abcdef123456","qtyOrdered":100,"qtyReceived":60,
+    "qtyInvoicedBefore":0,"qtyInvoiced":60,
+    "orderedUnitPrice":2.50,"invoicedUnitPrice":2.50,
+    "variances":[$variances]}]}''';
+
+Future<_Server> _pumpAs(WidgetTester tester, String role, String body,
+    {int resolveStatus = 200}) async {
+  final server = _Server()
+    ..listBody = body
+    ..resolveStatus = resolveStatus;
+  final dio = Dio(BaseOptions(baseUrl: 'http://test'))..httpClientAdapter = server;
+  // A fresh key: pumpWidget UPDATES a root of the same type, and a ProviderScope
+  // keeps the container it was born with, overrides included. Without the key a
+  // second pump in the same test would keep the first pump's login.
+  await tester.pumpWidget(ProviderScope(
+    key: UniqueKey(),
+    overrides: [
+      apiClientProvider.overrideWithValue(_FakeApiClient(dio)),
+      authNotifierProvider.overrideWith(() => _Auth(role)),
+    ],
+    child: const MaterialApp(home: Scaffold(body: ProcurementScreen())),
+  ));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Invoices'));
+  await tester.pumpAndSettle();
+  return server;
+}
+
+void lifecycleTests() {
+  testWidgets('the due date and the posting are on the card, not in a detail view',
+      (tester) async {
+    await _pumpAs(tester, 'OWNER',
+        '{"data":[${_lifecycleInvoice(number: "INV-5", status: "MATCHED")}]}');
+    expect(find.textContaining('due 2026-03-03'), findsOneWidget);
+    expect(find.textContaining('posted'), findsOneWidget);
+  });
+
+  testWidgets('a stated total that does not add up is a sentence with both figures',
+      (tester) async {
+    await _pumpAs(
+        tester,
+        'OWNER',
+        '{"data":[${_lifecycleInvoice(number: "INV-6", status: "FLAGGED", headerVariances: '"TOTAL_MISMATCH"', statedGross: 181)}]}');
+    expect(find.textContaining('The stated total does not add up'), findsOneWidget);
+    expect(find.textContaining('181 stated, 180 from the lines'), findsOneWidget);
+    expect(find.text('TOTAL_MISMATCH'), findsNothing);
+  });
+
+  testWidgets('a manager sees Approve and Reject on a flagged invoice; a storekeeper does not',
+      (tester) async {
+    final flagged =
+        '{"data":[${_lifecycleInvoice(number: "INV-7", status: "FLAGGED", variances: '"PRICE_ABOVE_ORDER"')}]}';
+    await _pumpAs(tester, 'MANAGER', flagged);
+    expect(find.text('Approve for payment'), findsOneWidget);
+    expect(find.text('Reject'), findsOneWidget);
+
+    await _pumpAs(tester, 'STOREKEEPER', flagged);
+    expect(find.text('Approve for payment'), findsNothing);
+    expect(find.text('Reject'), findsNothing);
+  });
+
+  testWidgets('a matched, approved or rejected invoice offers no decision', (tester) async {
+    await _pumpAs(
+        tester,
+        'OWNER',
+        '{"data":['
+        '${_lifecycleInvoice(number: "INV-A", status: "APPROVED", reason: "Supplier confirmed")},'
+        '${_lifecycleInvoice(number: "INV-R", status: "REJECTED", reason: "Billed for six that never came")},'
+        '${_lifecycleInvoice(number: "INV-M", status: "MATCHED")}'
+        ']}');
+    expect(find.text('Approve for payment'), findsNothing);
+    expect(find.text('APPROVED'), findsOneWidget);
+    expect(find.text('REJECTED'), findsOneWidget);
+    // The reason travels with the decision.
+    await tester.tap(find.text('INV-R'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Rejected: Billed for six that never came'), findsOneWidget);
+  });
+
+  testWidgets('approving sends the action and the reason, and needs the reason first',
+      (tester) async {
+    final server = await _pumpAs(
+        tester,
+        'OWNER',
+        '{"data":[${_lifecycleInvoice(number: "INV-9", status: "FLAGGED", variances: '"PRICE_ABOVE_ORDER"')}]}');
+    await tester.tap(find.byKey(const Key('approve-invoice-i-INV-9')));
+    await tester.pumpAndSettle();
+    expect(find.text('Approve INV-9'), findsOneWidget);
+
+    // No reason: the button is not even enabled, and nothing was sent.
+    final button = tester.widget<FilledButton>(find.byKey(const Key('resolve-invoice-submit')));
+    expect(button.onPressed, isNull);
+    expect(server.requests.where((r) => r.path.endsWith('/resolve')), isEmpty);
+
+    await tester.enterText(
+        find.byKey(const Key('resolve-invoice-reason')), '  Supplier confirmed the price rise  ');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('resolve-invoice-submit')));
+    await tester.pumpAndSettle();
+
+    final sent = server.requests.singleWhere((r) => r.path.endsWith('/resolve'));
+    expect(sent.method, 'POST');
+    expect(sent.path, contains('/purchase-svc/supplier-invoices/i-INV-9/resolve'));
+    expect(sent.data['action'], 'APPROVE');
+    expect(sent.data['reason'], 'Supplier confirmed the price rise');
+    expect(find.text('Approve INV-9'), findsNothing);
+    expect(find.textContaining('approved for payment'), findsOneWidget);
+  });
+
+  testWidgets('rejecting says what it does, and a refusal is shown in words', (tester) async {
+    final server = await _pumpAs(
+        tester,
+        'OWNER',
+        '{"data":[${_lifecycleInvoice(number: "INV-9", status: "FLAGGED", variances: '"NOT_RECEIVED"')}]}',
+        resolveStatus: 409);
+    await tester.tap(find.byKey(const Key('reject-invoice-i-INV-9')));
+    await tester.pumpAndSettle();
+    expect(find.text('Reject INV-9'), findsOneWidget);
+    expect(find.textContaining('Its posting is reversed'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('resolve-invoice-reason')), 'Never arrived');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('resolve-invoice-submit')));
+    await tester.pumpAndSettle();
+
+    expect(server.requests.singleWhere((r) => r.path.endsWith('/resolve')).data['action'],
+        'REJECT');
+    // Still open, the server's sentence on screen, not a code.
+    expect(find.text('Reject INV-9'), findsOneWidget);
+    expect(find.text('this invoice has already been decided'), findsOneWidget);
+  });
+
+  testWidgets('a double tap on the decision sends it once', (tester) async {
+    final server = await _pumpAs(
+        tester,
+        'OWNER',
+        '{"data":[${_lifecycleInvoice(number: "INV-9", status: "FLAGGED", variances: '"NOT_RECEIVED"')}]}');
+    await tester.tap(find.byKey(const Key('approve-invoice-i-INV-9')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('resolve-invoice-reason')), 'fine');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('resolve-invoice-submit')));
+    await tester.pump();
+    final again = tester.widget<FilledButton>(find.byKey(const Key('resolve-invoice-submit')));
+    expect(again.onPressed, isNull);
+    await tester.pumpAndSettle();
+    expect(server.requests.where((r) => r.path.endsWith('/resolve')).length, 1);
   });
 }

@@ -1361,11 +1361,16 @@ class InventoryIT {
   /** Find the value of {@code name} in the JSON object that contains {@code marker}. */
   /** {@link #fieldNear} for an unquoted numeric value. */
   private static String numericFieldNear(String json, String marker, String name) {
+    return numericField(objectNear(json, marker), name);
+  }
+
+  /** The flat JSON object that mentions {@code marker}. */
+  private static String objectNear(String json, String marker) {
     int m = json.indexOf(marker);
     if (m < 0) throw new AssertionError(marker + " not found in " + json);
     int objStart = json.lastIndexOf('{', m);
     int objEnd = json.indexOf('}', m);
-    return numericField(json.substring(objStart, objEnd + 1), name);
+    return json.substring(objStart, objEnd + 1);
   }
 
   private static String fieldNear(String json, String marker, String name) {
@@ -1639,9 +1644,14 @@ class InventoryIT {
 
   /** A window wide enough to contain everything a test just did. */
   private String stockTurn(String tenant, String groupBy, String storeId) {
+    return windowReport("stock-turn", tenant, groupBy, storeId);
+  }
+
+  /** A management report over the day either side of now, as the owner. */
+  private String windowReport(String report, String tenant, String groupBy, String storeId) {
     var t =
         target
-            .path("/admin/inventory/reports/stock-turn")
+            .path("/admin/inventory/reports/" + report)
             .queryParam("from", OffsetDateTime.now().minusDays(1).toInstant().toString())
             .queryParam("to", OffsetDateTime.now().plusDays(1).toInstant().toString());
     if (groupBy != null) t = t.queryParam("groupBy", groupBy);
@@ -1654,5 +1664,183 @@ class InventoryIT {
     if (groupBy != null) t = t.queryParam("groupBy", groupBy);
     if (asOf != null) t = t.queryParam("asOf", asOf);
     return t.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get(String.class);
+  }
+
+  // ── 19.7: gross margin and GMROI ─────────────────────────────────────────────
+
+  private static java.math.BigDecimal money(String v) {
+    return new java.math.BigDecimal(v);
+  }
+
+  /** Revenue set against the cost of the batches the sale drew, by both fulfilment paths. */
+  @Test
+  void grossMarginSetsWhatTheSalesEarnedAgainstWhatTheyCost() {
+    UUID t = Ids.newId();
+    UUID s = UUID.fromString(S);
+    UUID v = Ids.newId();
+    String tenant = t.toString();
+    receiveCosted(tenant, v.toString(), "10", "3.00");
+
+    // A till sale, deducted straight from the order: 4 at 3.00 cost, 20.00 earned.
+    inventoryService.deductSaleFromOrderOnce(
+        Ids.newId(), "it", t, s, v, money("4"), Ids.newId(), money("20.00"));
+    // An online sale, consuming its checkout hold: 2 at 3.00 cost, 11.00 earned.
+    Response held =
+        post(
+            "/inventory/reservations",
+            "{\"storeId\":\""
+                + S
+                + "\",\"variantId\":\""
+                + v
+                + "\",\"qty\":2,\"orderId\":\""
+                + Ids.newId()
+                + "\"}",
+            tenant);
+    assertThat(held.getStatus(), is(201));
+    UUID hold = UUID.fromString(field(held.readEntity(String.class), "id"));
+    inventoryService.consumeOnce(Ids.newId(), "it", t, hold, money("11.00"));
+
+    String body = windowReport("gross-margin", tenant, "VARIANT", null);
+    assertThat(numericFieldNear(body, v.toString(), "revenue"), is("31.00"));
+    assertThat(money(numericFieldNear(body, v.toString(), "cogs")).compareTo(money("18")), is(0));
+    assertThat(
+        money(numericFieldNear(body, v.toString(), "grossMargin")).compareTo(money("13")), is(0));
+    assertThat(numericFieldNear(body, v.toString(), "marginPercent"), is("41.9"));
+    assertThat(numericFieldNear(body, v.toString(), "unpricedSaleQty"), is("0"));
+
+    // GMROI is the margin over the same average holding stock turn reports, not a second replay.
+    String average =
+        numericFieldNear(
+            windowReport("stock-turn", tenant, "VARIANT", null), v.toString(), "averageValue");
+    assertThat(numericFieldNear(body, v.toString(), "averageValue"), is(average));
+    assertThat(
+        money(numericFieldNear(body, v.toString(), "gmroi")),
+        is(money("13").divide(money(average), 2, java.math.RoundingMode.HALF_UP)));
+
+    // By store, the same sales roll up; another tenant sees none of it.
+    String byStore = windowReport("gross-margin", tenant, "STORE", null);
+    assertThat(numericFieldNear(byStore, S, "revenue"), is("31.00"));
+    assertThat(
+        windowReport("gross-margin", OTHER, "VARIANT", null), not(containsString(v.toString())));
+  }
+
+  /**
+   * A return takes back its share of the revenue and the cost, once however often it is delivered,
+   * and never more than the line has left to return.
+   */
+  @Test
+  void aReturnTakesBackRevenueAndCostOnceAndNeverMoreThanWasSold() {
+    UUID t = Ids.newId();
+    UUID s = UUID.fromString(S);
+    UUID v = Ids.newId();
+    UUID order = Ids.newId();
+    String tenant = t.toString();
+    receiveCosted(tenant, v.toString(), "10", "2.00");
+
+    UUID sale = Ids.newId();
+    assertThat(
+        inventoryService.deductSaleFromOrderOnce(
+            sale, "it", t, s, v, money("5"), order, money("25.00")),
+        is(true));
+    // Redelivered: the dedupe mark that stops a second deduction stops a second revenue row.
+    assertThat(
+        inventoryService.deductSaleFromOrderOnce(
+            sale, "it", t, s, v, money("5"), order, money("25.00")),
+        is(false));
+
+    UUID ret = Ids.newId();
+    assertThat(
+        inventoryService.receiveReturnFromOrderOnce(ret, "it", t, s, v, money("2"), order),
+        is(true));
+    assertThat(
+        inventoryService.receiveReturnFromOrderOnce(ret, "it", t, s, v, money("2"), order),
+        is(false));
+
+    String body = windowReport("gross-margin", tenant, "VARIANT", null);
+    assertThat(numericFieldNear(body, v.toString(), "revenue"), is("15.00"));
+    assertThat(money(numericFieldNear(body, v.toString(), "cogs")).compareTo(money("6")), is(0));
+    assertThat(numericFieldNear(body, v.toString(), "marginPercent"), is("60.0"));
+
+    // Returning ten against three unreturned takes back three: the line nets to nothing sold, so it
+    // is not a margin row at all rather than a row with a negative revenue.
+    inventoryService.receiveReturnFromOrderOnce(Ids.newId(), "it", t, s, v, money("10"), order);
+    assertThat(
+        windowReport("gross-margin", tenant, "VARIANT", null), not(containsString(v.toString())));
+  }
+
+  /**
+   * A sale with no revenue is declared rather than priced at zero; a voided sale earns nothing; the
+   * report is management's, and its window and grouping are validated.
+   */
+  @Test
+  void grossMarginDeclaresUnpricedSalesExcludesVoidsAndIsGuarded() {
+    UUID t = Ids.newId();
+    UUID s = UUID.fromString(S);
+    UUID v = Ids.newId();
+    String tenant = t.toString();
+    receiveCosted(tenant, v.toString(), "10", "1.00");
+
+    sell(tenant, v.toString(), 3); // consumed with no revenue: a sale from before 19.7
+    UUID voided = Ids.newId();
+    inventoryService.deductSaleFromOrderOnce(
+        Ids.newId(), "it", t, s, v, money("2"), voided, money("50.00"));
+    inventoryService.receiveVoidFromOrderOnce(Ids.newId(), "it", t, s, v, money("2"), voided);
+
+    String row = objectNear(windowReport("gross-margin", tenant, "VARIANT", null), v.toString());
+    assertThat(numericField(row, "unpricedSaleQty"), is("3.000"));
+    assertThat(money(numericField(row, "revenue")).signum(), is(0));
+    assertThat(money(numericField(row, "cogs")).compareTo(money("3")), is(0));
+    // Nothing earned has no margin percentage, whether it is serialised as null or left out.
+    assertThat(row.matches("(?s).*\"marginPercent\":\\s*-?\\d.*"), is(false));
+
+    String[][] rejected = {
+      {null, null, null, "from"},
+      {"2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z", null, "INVENTORY_INVALID_PERIOD"},
+      {"2026-01-01", "2026-02-01T00:00:00Z", null, "from"},
+      {"2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", "REASON", "INVENTORY_INVALID_GROUPING"},
+      {
+        "2026-01-01T00:00:00Z",
+        "2026-02-01T00:00:00Z",
+        "store_id;DROP TABLE sale_revenue",
+        "INVENTORY_INVALID_GROUPING"
+      },
+    };
+    for (String[] bad : rejected) {
+      var q = target.path("/admin/inventory/reports/gross-margin");
+      if (bad[0] != null) q = q.queryParam("from", bad[0]);
+      if (bad[1] != null) q = q.queryParam("to", bad[1]);
+      if (bad[2] != null) q = q.queryParam("groupBy", bad[2]);
+      Response r = q.request().header("X-Tenant-Id", tenant).header("X-Roles", "OWNER").get();
+      assertThat(String.join(",", java.util.Arrays.asList(bad)), r.getStatus(), is(400));
+      assertThat(r.readEntity(String.class), containsString(bad[3]));
+    }
+
+    for (String role : new String[] {"CASHIER", "STOREKEEPER"}) {
+      Response r =
+          target
+              .path("/admin/inventory/reports/gross-margin")
+              .queryParam("from", "2026-01-01T00:00:00Z")
+              .queryParam("to", "2026-02-01T00:00:00Z")
+              .request()
+              .header("X-Tenant-Id", tenant)
+              .header("X-Roles", role)
+              .get();
+      assertThat(role, r.getStatus(), is(403));
+    }
+
+    // An absurd limit is clamped, not obeyed and not an error.
+    for (String limit : new String[] {"-5", "0", "1000000"}) {
+      Response r =
+          target
+              .path("/admin/inventory/reports/gross-margin")
+              .queryParam("from", OffsetDateTime.now().minusDays(1).toInstant().toString())
+              .queryParam("to", OffsetDateTime.now().plusDays(1).toInstant().toString())
+              .queryParam("limit", limit)
+              .request()
+              .header("X-Tenant-Id", tenant)
+              .header("X-Roles", "OWNER")
+              .get();
+      assertThat(limit, r.getStatus(), is(200));
+    }
   }
 }

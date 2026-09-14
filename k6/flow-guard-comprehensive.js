@@ -62,7 +62,7 @@ export default function () {
     const t = ctx.owner.token;
     expect(call('GET', '/api/tenant-svc/admin/tenant', { token: t }), 'before a tenant: admin reads refused', 403);
     expect(
-      call('POST', '/api/tenant-svc/admin/stores', { token: t, body: { name: 'Too soon', code: 'EARLY' } }),
+      call('POST', '/api/tenant-svc/admin/stores', { token: t, body: { name: 'Too soon', code: 'EARLY', timezone: 'Europe/London' } }),
       'before a tenant: cannot add a store',
       403
     );
@@ -89,7 +89,7 @@ export default function () {
     const stranger = register('flow-stranger');
     const spoof = { 'X-Tenant-Id': ctx.tenantId };
     expect(
-      call('POST', '/api/tenant-svc/onboarding/stores', { token: stranger.token, headers: spoof, body: { name: 'Hijack', code: 'HIJACK' } }),
+      call('POST', '/api/tenant-svc/onboarding/stores', { token: stranger.token, headers: spoof, body: { name: 'Hijack', code: 'HIJACK', timezone: 'Europe/London' } }),
       "a stranger naming someone else's tenant cannot add a store",
       403,
       'TENANT_ACCESS_DENIED'
@@ -134,7 +134,7 @@ export default function () {
     expect(call('GET', `/api/tenant-svc/admin/stores/${UNKNOWN}`, { token: t }), 'get unknown store', 404);
     expect(call('PUT', `/api/tenant-svc/admin/stores/${ctx.storeId}`, { token: t, body: { name: 'Flow Main (renamed)' } }), 'update store', 200);
     expect(
-      call('POST', '/api/tenant-svc/admin/stores', { token: t, body: { name: 'Dup', code: `MAIN-${run}`.slice(0, 24) } }),
+      call('POST', '/api/tenant-svc/admin/stores', { token: t, body: { name: 'Dup', code: `MAIN-${run}`.slice(0, 24), timezone: 'Europe/London' } }),
       'store code is unique in the tenant',
       409
     );

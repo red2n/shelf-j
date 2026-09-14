@@ -95,12 +95,14 @@ public final class Dtos {
       String notes,
       @Schema(description = "UUID of the store the tender is attributed to.") String storeId,
       // Required only for STORE_CREDIT tenders: the customer whose balance is redeemed, and the
-      // currency of that balance (defaults to GBP).
+      // currency of that balance (the tenant's own when omitted).
       @Schema(
               description =
                   "Required for STORE_CREDIT tenders: the customer whose balance is" + " redeemed.")
           String customerId,
-      @Schema(description = "ISO currency code of the store-credit balance; defaults to GBP.")
+      @Schema(
+              description =
+                  "ISO currency code of the store-credit balance; the tenant's own when omitted.")
           String currency) {}
 
   @Schema(
@@ -245,7 +247,7 @@ public final class Dtos {
           String businessDate,
       @Schema(description = "Physically counted cash for the day.") @NotNull @PositiveOrZero
           BigDecimal countedCash,
-      @Schema(description = "ISO currency code; defaults to GBP.") String currency) {}
+      @Schema(description = "ISO currency code; the tenant's own when omitted.") String currency) {}
 
   @Schema(
       name = "ZReportResponse",

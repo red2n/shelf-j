@@ -337,6 +337,7 @@ class PaymentServiceTest {
     svc.repo = storeCreditRepo();
     var cust = new RecordingCustomerClient();
     svc.customerClient = cust;
+    svc.profiles = namedOrTenantCurrency();
     UUID orderId = Ids.newId();
     UUID customerId = Ids.newId();
 
@@ -358,6 +359,7 @@ class PaymentServiceTest {
     PaymentService svc = new PaymentService();
     svc.repo = storeCreditRepo();
     svc.customerClient = new RecordingCustomerClient();
+    svc.profiles = namedOrTenantCurrency();
 
     var ex =
         assertThrows(
@@ -395,6 +397,7 @@ class PaymentServiceTest {
         };
     var cust = new RecordingCustomerClient();
     svc.customerClient = cust;
+    svc.profiles = namedOrTenantCurrency();
 
     var tender =
         svc.recordTender(
@@ -591,6 +594,21 @@ class PaymentServiceTest {
       @Override
       public List<RefundTender> findRefundsByOrder(UUID tenantId, UUID orderId) {
         return List.of(refund);
+      }
+    };
+  }
+
+  /**
+   * The currency a tender names, or the tenant's own as tenant-svc would answer, standing in for
+   * the resolver that has no tenant-svc to ask here (SJ-D53).
+   */
+  private static com.shelfj.service.TenantProfiles namedOrTenantCurrency() {
+    return new com.shelfj.service.TenantProfiles() {
+      @Override
+      public String currencyOr(UUID tenantId, String requested) {
+        return requested == null || requested.isBlank()
+            ? "GBP"
+            : requested.trim().toUpperCase(java.util.Locale.ROOT);
       }
     };
   }

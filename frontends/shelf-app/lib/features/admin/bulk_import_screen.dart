@@ -211,7 +211,6 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
           'mode': _mode,
           if (storeNameToId.isNotEmpty) 'storeNameToId': storeNameToId,
           if (_destinationStoreId != null) 'storeId': _destinationStoreId,
-          'currency': 'GBP',
         },
         options: Options(receiveTimeout: const Duration(minutes: 10)),
       );

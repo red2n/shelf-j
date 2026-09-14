@@ -7,10 +7,13 @@ import '../../core/format.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/reference_fields.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import 'payment_runs_tab.dart';
 import 'procurement_providers.dart';
+import 'resolve_invoice_dialog.dart';
 import 'widgets/variant_picker.dart';
 
 class ProcurementScreen extends ConsumerWidget {
@@ -18,8 +21,9 @@ class ProcurementScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final canPay = canRunPayments(ref.watch(authNotifierProvider).value);
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Builder(
         // A Builder gives this subtree a context below DefaultTabController,
         // so DefaultTabController.of(context) below can find it.
@@ -43,6 +47,7 @@ class ProcurementScreen extends ConsumerWidget {
                     Tab(text: 'Purchase Orders'),
                     Tab(text: 'Invoices'),
                     Tab(text: 'Suppliers'),
+                    Tab(text: 'Payments'),
                   ],
                 ),
                 const Expanded(
@@ -51,6 +56,7 @@ class ProcurementScreen extends ConsumerWidget {
                       _PurchaseOrdersTab(),
                       _SupplierInvoicesTab(),
                       _SuppliersTab(),
+                      PaymentRunsTab(),
                     ],
                   ),
                 ),
@@ -61,7 +67,18 @@ class ProcurementScreen extends ConsumerWidget {
             // per tab.
             floatingActionButton: ListenableBuilder(
               listenable: tabController,
-              builder: (context, _) => tabController.index == 2
+              builder: (context, _) => tabController.index == 3
+                  ? (canPay
+                        ? FloatingActionButton.extended(
+                            onPressed: () => showDialog(
+                              context: context,
+                              builder: (_) => const ProposePaymentRunDialog(),
+                            ),
+                            icon: const Icon(Icons.payments_outlined),
+                            label: const Text('Propose run'),
+                          )
+                        : const SizedBox.shrink())
+                  : tabController.index == 2
                   ? FloatingActionButton.extended(
                       onPressed: () => showDialog(
                         context: context,
@@ -149,6 +166,10 @@ class _SuppliersTab extends ConsumerWidget {
                           '${s.paymentTermsDays}d terms',
                           if (s.vatRegistered) 'VAT ${s.vatNumber ?? 'reg'}',
                           if (s.countryCode != null) s.countryCode,
+                          if (isManager)
+                            s.hasBankDetails
+                                ? 'bank details on file'
+                                : 'no bank details',
                         ].whereType<String>().join(' · '),
                       ),
                       trailing: isManager
@@ -237,22 +258,37 @@ class _SupplierInvoicesTab extends ConsumerWidget {
   }
 }
 
-class _InvoiceCard extends StatelessWidget {
+class _InvoiceCard extends ConsumerWidget {
   final SupplierInvoice invoice;
   const _InvoiceCard(this.invoice);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final flagged = invoice.flagged;
+    final cs = Theme.of(context).colorScheme;
+    final auth = ref.watch(authNotifierProvider).value;
+    // The server refuses anyone else with 403; not offering the buttons spares a
+    // storekeeper a pair of controls that can only ever fail.
+    final canDecide =
+        auth is AuthAuthenticated &&
+        auth.isManager &&
+        auth.hasPermission('purchasing.invoices.decide');
+    final leadingIcon = invoice.rejected
+        ? Icons.block_outlined
+        : flagged
+        ? Icons.warning_amber_rounded
+        : Icons.check_circle_outline;
+    final leadingColor = invoice.rejected
+        ? cs.outline
+        : flagged
+        ? context.status.warning
+        : context.status.success;
     return Card(
       child: ExpansionTile(
         // Flagged invoices open by default. A variance the buyer has to click to
         // discover is a variance that waits until the payment run.
         initiallyExpanded: flagged,
-        leading: Icon(
-          flagged ? Icons.warning_amber_rounded : Icons.check_circle_outline,
-          color: flagged ? context.status.warning : context.status.success,
-        ),
+        leading: Icon(leadingIcon, color: leadingColor),
         title: Row(
           children: [
             Text(
@@ -270,7 +306,11 @@ class _InvoiceCard extends StatelessWidget {
               currencyCode: invoice.currency,
             ),
             if (invoice.invoiceDate != null) invoice.invoiceDate!,
+            // The date accounts payable schedules by, beside the one on the
+            // document.
+            if (invoice.dueDate != null) 'due ${invoice.dueDate}',
             'PO ${_short(invoice.poId, 8)}',
+            if (invoice.postedAt != null) 'posted',
           ].join(' · '),
         ),
         children: [
@@ -279,9 +319,74 @@ class _InvoiceCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // The header check comes before the lines: an invoice whose own
+                // total does not add up is wrong before any line is compared.
+                if (invoice.headerVariances.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        for (final v in invoice.headerVariances)
+                          _VarianceChip(
+                            v,
+                            detail:
+                                v == 'TOTAL_MISMATCH' &&
+                                    invoice.statedGross != null
+                                ? ' (${_trim(invoice.statedGross!)} stated, '
+                                      '${_trim(invoice.grossAmount)} from the lines)'
+                                : null,
+                          ),
+                      ],
+                    ),
+                  ),
                 const _MatchHeaderRow(),
                 const Divider(height: 12),
                 for (final l in invoice.lines) _MatchRow(l, invoice.currency),
+                if (invoice.resolutionReason != null &&
+                    invoice.resolutionReason!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      '${invoice.approved ? 'Approved' : 'Rejected'}: ${invoice.resolutionReason}',
+                      style: TextStyle(fontSize: 12, color: cs.outline),
+                    ),
+                  ),
+                if (flagged && canDecide)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        OutlinedButton.icon(
+                          key: Key('reject-invoice-${invoice.id}'),
+                          onPressed: () => showDialog<bool>(
+                            context: context,
+                            builder: (_) => ResolveInvoiceDialog(
+                              invoice: invoice,
+                              approve: false,
+                            ),
+                          ),
+                          icon: const Icon(Icons.block_outlined, size: 18),
+                          label: const Text('Reject'),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          key: Key('approve-invoice-${invoice.id}'),
+                          onPressed: () => showDialog<bool>(
+                            context: context,
+                            builder: (_) => ResolveInvoiceDialog(
+                              invoice: invoice,
+                              approve: true,
+                            ),
+                          ),
+                          icon: const Icon(Icons.check, size: 18),
+                          label: const Text('Approve for payment'),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),
@@ -402,7 +507,8 @@ class _MatchRow extends StatelessWidget {
 /// supplier needs the sentence, not the constant.
 class _VarianceChip extends StatelessWidget {
   final String code;
-  const _VarianceChip(this.code);
+  final String? detail;
+  const _VarianceChip(this.code, {this.detail});
 
   static const _labels = {
     'INVOICED_ABOVE_RECEIVED': 'Billed for more than arrived',
@@ -410,6 +516,7 @@ class _VarianceChip extends StatelessWidget {
     'NOT_ON_ORDER': 'Not on the purchase order',
     'PRICE_ABOVE_ORDER': 'Charged above the agreed price',
     'PRICE_BELOW_ORDER': 'Charged below the agreed price',
+    'TOTAL_MISMATCH': 'The stated total does not add up',
   };
 
   @override
@@ -422,7 +529,7 @@ class _VarianceChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
-        _labels[code] ?? code,
+        '${_labels[code] ?? code}${detail ?? ''}',
         style: TextStyle(
           fontSize: 11,
           color: warn,
@@ -439,8 +546,11 @@ class _InvoiceStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final flagged = status == 'FLAGGED';
-    final fg = flagged ? context.status.warning : context.status.success;
+    final fg = switch (status) {
+      'FLAGGED' => context.status.warning,
+      'REJECTED' => Theme.of(context).colorScheme.outline,
+      _ => context.status.success,
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
@@ -472,37 +582,22 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
   final _nameCtrl = TextEditingController();
   final _vatCtrl = TextEditingController();
   final _termsCtrl = TextEditingController(text: '30');
-  String _country = 'IN';
-  String _currency = 'INR';
+  final _emailCtrl = TextEditingController();
+  final _bankNameCtrl = TextEditingController();
+  final _sortCtrl = TextEditingController();
+  final _accountCtrl = TextEditingController();
+  final _ibanCtrl = TextEditingController();
+  final _bicCtrl = TextEditingController();
+  bool _clearBank = false;
+  // Empty until chosen; a new supplier starts in the tenant's own country and
+  // currency, an existing one in its own (SJ-D53).
+  String? _country;
+  String? _currency;
   bool _vatRegistered = false;
   bool _loading = false;
   String? _error;
 
-  static const _countries = {
-    'IN': 'India',
-    'US': 'USA',
-    'GB': 'UK',
-    'SG': 'Singapore',
-    'AE': 'UAE',
-  };
-  static const _currencies = ['INR', 'USD', 'GBP', 'SGD', 'AED'];
-
   bool get _editing => widget.existing != null;
-
-  /// The picker's choices, plus whatever the supplier already has — a JPY
-  /// supplier must open in JPY, not in the first currency on the list.
-  List<DropdownMenuItem<String>> _countryItems() => [
-    for (final e in _countries.entries)
-      DropdownMenuItem(value: e.key, child: Text(e.value)),
-    if (!_countries.containsKey(_country))
-      DropdownMenuItem(value: _country, child: Text(_country)),
-  ];
-
-  List<DropdownMenuItem<String>> _currencyItems() => [
-    for (final c in _currencies) DropdownMenuItem(value: c, child: Text(c)),
-    if (!_currencies.contains(_currency))
-      DropdownMenuItem(value: _currency, child: Text(_currency)),
-  ];
 
   @override
   void initState() {
@@ -515,6 +610,9 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
       _country = e.countryCode ?? _country;
       _currency = e.currency ?? _currency;
       _vatRegistered = e.vatRegistered;
+      _emailCtrl.text = e.remittanceEmail ?? '';
+      // Bank details are never prefilled: the app only holds the last four
+      // digits, and a set is replaced whole or left alone.
     }
   }
 
@@ -523,11 +621,85 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
     _nameCtrl.dispose();
     _vatCtrl.dispose();
     _termsCtrl.dispose();
+    _emailCtrl.dispose();
+    _bankNameCtrl.dispose();
+    _sortCtrl.dispose();
+    _accountCtrl.dispose();
+    _ibanCtrl.dispose();
+    _bicCtrl.dispose();
     super.dispose();
+  }
+
+  static String? _text(TextEditingController c) =>
+      c.text.trim().isEmpty ? null : c.text.trim();
+
+  bool get _bankKeyed => [
+    _bankNameCtrl,
+    _sortCtrl,
+    _accountCtrl,
+    _ibanCtrl,
+    _bicCtrl,
+  ].any((c) => c.text.trim().isNotEmpty);
+
+  static String _digits(String? v) =>
+      (v ?? '').replaceAll(RegExp(r'[\s-]'), '');
+
+  static String? validEmail(String? v) {
+    final t = v?.trim() ?? '';
+    if (t.isEmpty) return null;
+    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(t)
+        ? null
+        : 'Not an email address';
+  }
+
+  String? _validSortCode(String? v) {
+    final t = _digits(v);
+    if (t.isEmpty) {
+      return _accountCtrl.text.trim().isNotEmpty
+          ? 'Required with an account number'
+          : null;
+    }
+    return RegExp(r'^\d{6}$').hasMatch(t) ? null : 'Six digits';
+  }
+
+  String? _validAccount(String? v) {
+    final t = _digits(v);
+    if (t.isEmpty) {
+      return _sortCtrl.text.trim().isNotEmpty
+          ? 'Required with a sort code'
+          : null;
+    }
+    return RegExp(r'^\d{8}$').hasMatch(t) ? null : 'Eight digits';
+  }
+
+  String? _validIban(String? v) {
+    final t = (v ?? '').replaceAll(' ', '').toUpperCase();
+    if (t.isEmpty) {
+      return _bicCtrl.text.trim().isNotEmpty ? 'Required with a BIC' : null;
+    }
+    return RegExp(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$').hasMatch(t)
+        ? null
+        : 'Not an IBAN';
+  }
+
+  static String? _validBic(String? v) {
+    final t = v?.trim() ?? '';
+    if (t.isEmpty) return null;
+    return RegExp(r'^[A-Za-z]{6}[A-Za-z0-9]{2}([A-Za-z0-9]{3})?$').hasMatch(t)
+        ? null
+        : 'Eight or eleven characters';
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final canBank = canRunPayments(ref.read(authNotifierProvider).value);
+    final bank = canBank && _bankKeyed;
+    if (bank && _text(_ibanCtrl) == null && _text(_sortCtrl) == null) {
+      setState(
+        () => _error = 'Give a sort code and account number, or an IBAN.',
+      );
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -538,9 +710,23 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
         'name': _nameCtrl.text.trim(),
         'vatNumber': _vatCtrl.text.trim().isEmpty ? null : _vatCtrl.text.trim(),
         'vatRegistered': _vatRegistered,
-        'countryCode': _country,
-        'currency': _currency,
+        // Omitted, purchase-svc takes the tenant's own (SJ-D53).
+        if (_country != null) 'countryCode': _country,
+        if (_currency != null) 'currency': _currency,
         'paymentTermsDays': int.tryParse(_termsCtrl.text.trim()) ?? 30,
+        // On an edit an empty email clears it; on a create it is just absent.
+        'remittanceEmail': _editing
+            ? _emailCtrl.text.trim()
+            : _text(_emailCtrl),
+        if (bank) ...{
+          'bankAccountName': _text(_bankNameCtrl),
+          'bankSortCode': _text(_sortCtrl),
+          'bankAccountNumber': _text(_accountCtrl),
+          'bankIban': _text(_ibanCtrl),
+          'bankBic': _text(_bicCtrl),
+        },
+        if (canBank && _editing && _clearBank && !bank)
+          'clearBankDetails': true,
       };
       if (_editing) {
         await dio.put(
@@ -574,6 +760,8 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final canBank = canRunPayments(ref.watch(authNotifierProvider).value);
+    final onFile = widget.existing?.hasBankDetails == true;
     return AlertDialog(
       title: Text(_editing ? 'Edit supplier' : 'Add supplier'),
       content: SizedBox(
@@ -612,22 +800,18 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                 Row(
                   children: [
                     Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _country,
-                        decoration: const InputDecoration(labelText: 'Country'),
-                        items: _countryItems(),
-                        onChanged: (v) => setState(() => _country = v!),
+                      child: CountryField(
+                        value: _country ??
+                            (_editing ? null : ref.watch(tenantInfoProvider).value?.country),
+                        onChanged: (v) => setState(() => _country = v),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _currency,
-                        decoration: const InputDecoration(
-                          labelText: 'Currency',
-                        ),
-                        items: _currencyItems(),
-                        onChanged: (v) => setState(() => _currency = v!),
+                      child: CurrencyField(
+                        value: _currency ??
+                            (_editing ? null : ref.watch(tenantInfoProvider).value?.currency),
+                        onChanged: (v) => setState(() => _currency = v),
                       ),
                     ),
                   ],
@@ -653,6 +837,93 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                     controller: _vatCtrl,
                     decoration: const InputDecoration(labelText: 'VAT number'),
                   ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Remittance email',
+                    helperText: 'Where payment advice is sent',
+                    prefixIcon: Icon(Icons.alternate_email),
+                  ),
+                  validator: validEmail,
+                ),
+                // Where a supplier's money goes is a finance decision: only a
+                // manager holding finance.payments sees these fields.
+                if (canBank) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    'Bank details',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  if (onFile)
+                    Text(
+                      'On file: ${[widget.existing!.bankAccountName, widget.existing!.bankAccountNumberMasked ?? widget.existing!.bankIbanMasked].whereType<String>().join(' · ')}. Leave blank to keep them.',
+                      style: TextStyle(
+                        color: cs.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  TextFormField(
+                    controller: _bankNameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Account holder name',
+                    ),
+                    validator: (v) => _bankKeyed && (v ?? '').trim().isEmpty
+                        ? 'Required with bank details'
+                        : null,
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _sortCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Sort code',
+                          ),
+                          validator: _validSortCode,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextFormField(
+                          controller: _accountCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Account number',
+                          ),
+                          validator: _validAccount,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: TextFormField(
+                          controller: _ibanCtrl,
+                          decoration: const InputDecoration(labelText: 'IBAN'),
+                          validator: _validIban,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextFormField(
+                          controller: _bicCtrl,
+                          decoration: const InputDecoration(labelText: 'BIC'),
+                          validator: _validBic,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (onFile)
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _clearBank,
+                      onChanged: (v) => setState(() => _clearBank = v ?? false),
+                      title: const Text('Remove the bank details'),
+                    ),
+                ],
               ],
             ),
           ),
@@ -782,7 +1053,7 @@ class _CreatePoDialog extends ConsumerStatefulWidget {
 class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
   String? _supplierId;
   String? _storeId;
-  String _currency = 'INR';
+  String? _currency;
   DateTime? _eta;
   bool _loading = false;
   String? _error;
@@ -805,7 +1076,7 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
             data: {
               'supplierId': _supplierId,
               'storeId': _storeId,
-              'currency': _currency,
+              if (_currency != null) 'currency': _currency,
               if (_eta != null)
                 'expectedDelivery': _eta!.toIso8601String().split('T').first,
             },
@@ -896,17 +1167,10 @@ class _CreatePoDialogState extends ConsumerState<_CreatePoDialog> {
               ),
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _currency,
-              decoration: const InputDecoration(labelText: 'Currency'),
-              items: const [
-                DropdownMenuItem(value: 'INR', child: Text('INR')),
-                DropdownMenuItem(value: 'USD', child: Text('USD')),
-                DropdownMenuItem(value: 'GBP', child: Text('GBP')),
-                DropdownMenuItem(value: 'SGD', child: Text('SGD')),
-                DropdownMenuItem(value: 'AED', child: Text('AED')),
-              ],
-              onChanged: (v) => setState(() => _currency = v!),
+            // The supplier's currency once one is picked, the tenant's before.
+            CurrencyField(
+              value: _currency ?? ref.watch(tenantInfoProvider).value?.currency,
+              onChanged: (v) => setState(() => _currency = v),
             ),
             const SizedBox(height: 12),
             ListTile(

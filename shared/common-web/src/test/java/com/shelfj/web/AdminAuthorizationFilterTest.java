@@ -44,6 +44,46 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("POST", "/cart-something"));
   }
 
+  // ── 12.10: the shopper's own profile and address book ────────────────────────
+
+  @Test
+  void ownProfileAndAddressBookAreOpenToASignedInShopper() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertNotAborted(invoke("PUT", "/customers/me"));
+    assertNotAborted(invoke("GET", "/customers/me/addresses"));
+    assertNotAborted(invoke("POST", "/customers/me/addresses"));
+    assertNotAborted(invoke("PUT", "/customers/me/addresses/01a090ae-611e-7011-ae7d-1bd68c966ff6"));
+    assertNotAborted(
+        invoke("DELETE", "/customers/me/addresses/01a090ae-611e-7011-ae7d-1bd68c966ff6"));
+  }
+
+  @Test
+  void addressBookIsMatchedByShapeNotPrefix() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    // A literal or a deeper child under the book is not the book.
+    assertAborted(invoke("GET", "/customers/me/addresses/all"), 403);
+    assertAborted(
+        invoke("POST", "/customers/me/addresses/01a090ae-611e-7011-ae7d-1bd68c966ff6/share"), 403);
+    assertAborted(invoke("GET", "/customers/me/addressesX"), 403);
+    // Somebody else's book, addressed by id, is still staff-only.
+    assertAborted(invoke("GET", "/customers/01a090ae-611e-7011-ae7d-1bd68c966ff6/addresses"), 403);
+    assertAborted(invoke("POST", "/customers/01a090ae-611e-7011-ae7d-1bd68c966ff6/addresses"), 403);
+  }
+
+  // ── 13.7: the caller's own push devices ──────────────────────────────────────
+
+  @Test
+  void ownPushDevicesAreOpenToAnySignedInCaller() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertNotAborted(invoke("GET", "/notifications/devices"));
+    assertNotAborted(invoke("POST", "/notifications/devices"));
+    assertNotAborted(
+        invoke("DELETE", "/notifications/devices/01a090ae-611e-7011-ae7d-1bd68c966ff6"));
+    // A literal child is not a device, and the send route stays staff-only.
+    assertAborted(invoke("DELETE", "/notifications/devices/all"), 403);
+    assertAborted(invoke("POST", "/notifications/send"), 403);
+  }
+
   // ── SJ-D11: reads default-deny, like mutations always have ──────────────────
 
   /**
@@ -105,6 +145,22 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("GET", "/customers"));
     assertNotAborted(invoke("GET", "/orders"));
     assertNotAborted(invoke("GET", "/suppliers"));
+  }
+
+  /** The laws a business trades under are read by the staff who obey them, never by a shopper. */
+  @Test
+  void legalObligationsAreReadByStaffNotShoppers() throws Exception {
+    for (String role : new String[] {"CASHIER", "STOREKEEPER"}) {
+      ctx.set(null, null, Set.of(role), null, null);
+      assertNotAborted(invoke("GET", "/admin/tenant/obligations"));
+      // Reading is all staff may do there; nothing below management writes under /admin/tenant.
+      assertAborted(invoke("POST", "/admin/tenant/obligations"), 403);
+    }
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/admin/tenant/obligations"), 403);
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    // Only the exact path: nothing beneath or beside it is widened.
+    assertAborted(invoke("GET", "/admin/tenant/obligations/extra"), 403);
   }
 
   /** A CUSTOMER is not staff — that is the whole point, since storefront tokens carry it. */
@@ -171,6 +227,20 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("GET", "/health/ready"));
     assertNotAborted(invoke("GET", "/metrics"));
     assertNotAborted(invoke("GET", "/openapi"));
+  }
+
+  /**
+   * RFC 9116's security.txt is read by someone with no account. Exactly that document: a sibling
+   * under /.well-known, a path beneath it, or a write to it stays where the defaults put it.
+   */
+  @Test
+  void theVulnerabilityDisclosureFileIsPublicAndNothingBesideIt() throws Exception {
+    assertNotAborted(invoke("GET", "/.well-known/security.txt"));
+    assertNotAborted(invoke("HEAD", "/.well-known/security.txt"));
+    assertAborted(invoke("GET", "/.well-known/security.txt/extra"), 403);
+    assertAborted(invoke("GET", "/.well-known/openid-configuration"), 403);
+    assertAborted(invoke("GET", "/.well-known/security.txt.bak"), 403);
+    assertAborted(invoke("POST", "/.well-known/security.txt"), 403);
   }
 
   /** CORS preflight carries no credentials by design; denying it breaks every browser client. */

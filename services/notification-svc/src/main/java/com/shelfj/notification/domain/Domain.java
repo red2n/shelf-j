@@ -25,6 +25,33 @@ public final class Domain {
       Instant alertedAt) {}
 
   /** One delivered outbound notification (N1). */
+  /**
+   * The channels a message can go out on (13.7). EMAIL is whatever the deployment's default channel
+   * is.
+   */
+  public static final class Channel {
+    public static final String EMAIL = "EMAIL";
+    public static final String SMS = "SMS";
+    public static final String PUSH = "PUSH";
+    public static final String APP = "APP";
+    public static final java.util.List<String> ALL = java.util.List.of(EMAIL, SMS, PUSH, APP);
+
+    private Channel() {}
+  }
+
+  /** A device a login registered for push (13.7). */
+  public record PushDevice(
+      UUID id,
+      UUID tenantId,
+      UUID userId,
+      String platform,
+      String token,
+      Instant registeredAt,
+      Instant lastSeenAt) {
+    public static final java.util.List<String> PLATFORMS =
+        java.util.List.of("ANDROID", "IOS", "WEB");
+  }
+
   public record NotificationLog(
       UUID id,
       UUID tenantId,

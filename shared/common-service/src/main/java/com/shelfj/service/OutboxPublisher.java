@@ -122,8 +122,7 @@ public class OutboxPublisher {
   private List<UUID> publishBatch(List<OutboxStore.PendingOutbox> rows) {
     var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>(rows.size());
     for (var row : rows) {
-      futures.add(
-          producer.send(new ProducerRecord<>(row.topic(), row.id().toString(), row.payload())));
+      futures.add(producer.send(new ProducerRecord<>(row.topic(), row.key(), row.payload())));
     }
     producer.flush();
     var published = new java.util.ArrayList<UUID>(rows.size());

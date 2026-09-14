@@ -64,11 +64,71 @@ final class Events {
         .formatted(Ids.newId(), tenantId, zoneId, Instant.now(), storeId, esc(code), esc(type));
   }
 
-  static String staffAssigned(UUID tenantId, UUID userId, UUID storeId, String role) {
+  /**
+   * A staff role bound at a store. {@code role} is the tier iam-svc binds; {@code roleCode} and
+   * {@code permissions} ride beside it when the assignment was made through a custom role (20.10).
+   */
+  static String staffAssigned(
+      UUID tenantId,
+      UUID userId,
+      UUID storeId,
+      String baseTier,
+      String roleCode,
+      java.util.Set<String> permissions,
+      Instant roleUpdatedAt) {
+    String custom =
+        roleCode == null
+            ? ""
+            : ",\"roleCode\":\""
+                + esc(roleCode)
+                + "\",\"permissions\":"
+                + array(permissions)
+                + ",\"roleUpdatedAt\":\""
+                + roleUpdatedAt
+                + "\"";
     return """
                 {"eventId":"%s","eventType":"StaffAssigned","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
+                "userId":"%s","storeId":"%s","role":"%s"%s}"""
+        .formatted(
+            Ids.newId(), tenantId, userId, Instant.now(), userId, storeId, esc(baseTier), custom);
+  }
+
+  /** A staff role taken away at a store (SJ-D51): iam-svc unbinds it. */
+  static String staffRemoved(UUID tenantId, UUID userId, UUID storeId, String baseTier) {
+    return """
+                {"eventId":"%s","eventType":"StaffRemoved","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
                 "userId":"%s","storeId":"%s","role":"%s"}"""
-        .formatted(Ids.newId(), tenantId, userId, Instant.now(), userId, storeId, esc(role));
+        .formatted(Ids.newId(), tenantId, userId, Instant.now(), userId, storeId, esc(baseTier));
+  }
+
+  /** A custom role defined or redefined (20.10): iam-svc applies it to the role's holders. */
+  static String roleDefined(
+      UUID tenantId,
+      String code,
+      String baseTier,
+      java.util.Set<String> permissions,
+      Instant updatedAt) {
+    // updatedAt is the role's own version: two redefinitions in one second may reach iam-svc in
+    // either order, and the older must not overwrite the newer.
+    return """
+                {"eventId":"%s","eventType":"RoleDefined","tenantId":"%s","aggregateId":"%s","occurredAt":"%s",\
+                "code":"%s","baseTier":"%s","permissions":%s,"updatedAt":"%s"}"""
+        .formatted(
+            Ids.newId(),
+            tenantId,
+            tenantId,
+            Instant.now(),
+            esc(code),
+            esc(baseTier),
+            array(permissions),
+            updatedAt);
+  }
+
+  private static String array(java.util.Set<String> values) {
+    return values.stream()
+        .sorted()
+        .map(v -> "\"" + esc(v) + "\"")
+        .collect(java.util.stream.Collectors.joining(",", "[", "]"));
   }
 
   static String tenantStatusChanged(UUID tenantId, String status) {

@@ -1,5 +1,6 @@
 package com.shelfj.notification.api;
 
+import com.shelfj.notification.dto.Dtos.ChannelStatusResponse;
 import com.shelfj.notification.mapper.Mappers;
 import com.shelfj.notification.service.NotificationService;
 import com.shelfj.web.ApiResponse;
@@ -29,6 +30,7 @@ public class AdminResource {
 
   @Inject NotificationService service;
   @Inject TenantContext ctx;
+  @Inject com.shelfj.notification.channel.Channels channelRouter;
 
   /**
    * List shortage alerts for the tenant, newest first.
@@ -81,12 +83,39 @@ public class AdminResource {
   @GET
   public ApiResponse<Object> listNotifications(
       @QueryParam("recipient") String recipient,
+      @QueryParam("channel") String channel,
       @QueryParam("limit") @DefaultValue("20") int limit) {
     UUID tenantId = ctx.requireTenantId();
     int effectiveLimit = (limit < 1 || limit > 100) ? 20 : limit;
     var notifications =
         service.listNotifications(
-            tenantId, recipient != null && !recipient.isBlank() ? recipient : null, effectiveLimit);
+            tenantId,
+            recipient != null && !recipient.isBlank() ? recipient : null,
+            channel != null && !channel.isBlank()
+                ? channel.trim().toUpperCase(java.util.Locale.ROOT)
+                : null,
+            effectiveLimit);
     return ApiResponse.ok(notifications.stream().map(Mappers::toDto).toList());
+  }
+
+  @Operation(
+      summary = "The channels this deployment can send on",
+      description =
+          "EMAIL (the configured default channel), SMS and PUSH, each with the provider behind it"
+              + " and whether that provider is configured (13.7). Management-only by path.")
+  @APIResponse(responseCode = "200", description = "One row per channel")
+  @GET
+  @Path("/channels")
+  public ApiResponse<Object> channels() {
+    ctx.requireTenantId();
+    var sms = channelRouter.sms().provider();
+    var push = channelRouter.push().provider();
+    return ApiResponse.ok(
+        java.util.List.of(
+            new ChannelStatusResponse("EMAIL", channelRouter.configured().name(), true),
+            new ChannelStatusResponse(
+                "SMS", sms == null ? "NONE" : sms.name(), sms != null && sms.isConfigured()),
+            new ChannelStatusResponse(
+                "PUSH", push == null ? "NONE" : push.name(), push != null && push.isConfigured())));
   }
 }

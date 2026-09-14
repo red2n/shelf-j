@@ -16,7 +16,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.function.Function;
 
 /**
  * JDBC access to payment tenders and refunds, with their outbox events.
@@ -208,7 +207,9 @@ public class PaymentRepository extends BaseOutboxRepository {
       UUID orderId,
       BigDecimal requestedAmount,
       String reason,
-      Function<BigDecimal, OutboxRow> eventBuilder) {
+      java.util.function.BiFunction<
+              BigDecimal, List<com.shelfj.payment.domain.Domain.RefundAllocation>, OutboxRow>
+          eventBuilder) {
     inTx(
         c -> {
           if (!markProcessedIfNewTx(c, eventId, consumer)) {
@@ -229,15 +230,19 @@ public class PaymentRepository extends BaseOutboxRepository {
             return null;
           }
           BigDecimal left = toRefund;
+          List<com.shelfj.payment.domain.Domain.RefundAllocation> shares = new ArrayList<>();
           for (PaymentTender t : captured) {
             if (left.signum() <= 0) break;
             BigDecimal residual = t.amount().subtract(sumRefundsTx(c, tenantId, t.id()));
             if (residual.signum() <= 0) continue;
             BigDecimal alloc = left.min(residual);
             insertRefundTenderTx(c, tenantId, orderId, t.id(), alloc, t.method(), reason);
+            shares.add(
+                new com.shelfj.payment.domain.Domain.RefundAllocation(
+                    t.id(), t.method(), alloc, t.storeId()));
             left = left.subtract(alloc);
           }
-          insertOutbox(c, eventBuilder.apply(toRefund));
+          insertOutbox(c, eventBuilder.apply(toRefund, shares));
           return null;
         },
         "refund order from event");

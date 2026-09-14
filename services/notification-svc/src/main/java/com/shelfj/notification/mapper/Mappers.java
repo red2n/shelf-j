@@ -34,6 +34,18 @@ public final class Mappers {
    * @param n the logged notification to convert
    * @return the DTO, with every id rendered as a string
    */
+  /** A device as its holder sees it: never the whole token, which is a capability. */
+  public static com.shelfj.notification.dto.Dtos.PushDeviceResponse toDto(
+      com.shelfj.notification.domain.Domain.PushDevice d) {
+    String t = d.token();
+    return new com.shelfj.notification.dto.Dtos.PushDeviceResponse(
+        d.id().toString(),
+        d.platform(),
+        t.length() <= 6 ? t : "…" + t.substring(t.length() - 6),
+        d.registeredAt().toString(),
+        d.lastSeenAt().toString());
+  }
+
   public static NotificationDto toDto(NotificationLog n) {
     return new NotificationDto(
         n.id().toString(),

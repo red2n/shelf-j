@@ -367,9 +367,15 @@ public class AuthService {
   private TokenResponse issueTokens(User user) {
     Set<String> roles = users.rolesOf(user.id());
     Set<UUID> storeIds = users.storeScopeOf(user.id());
+    // An owner is never narrowed by a custom role, so the claim is omitted for one whatever the
+    // rows say; anyone else carries it as soon as one of their roles is a custom one.
+    Set<String> permissions =
+        com.shelfj.web.Permissions.unrestricted(roles)
+            ? null
+            : users.permissionsOf(user.id()).orElse(null);
     String access =
         jwt.issueAccessToken(
-            user.id(), user.tenantId(), user.type(), user.email(), roles, storeIds);
+            user.id(), user.tenantId(), user.type(), user.email(), roles, storeIds, permissions);
 
     String refresh = Tokens.newOpaqueToken();
     refreshTokens.store(

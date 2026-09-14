@@ -11,7 +11,6 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 /** Pay-in / pay-out (petty cash) and daily Z-report settlement. */
@@ -19,6 +18,7 @@ import java.util.UUID;
 public class CashMovementService {
 
   @Inject CashMovementRepository repo;
+  @Inject com.shelfj.service.TenantProfiles profiles;
 
   /**
    * Records a pay-in or pay-out against an open till session.
@@ -75,7 +75,8 @@ public class CashMovementService {
    *
    * @param tenantId owning tenant
    * @param generatedBy the user settling the day
-   * @param req the store, business date, counted cash and optional currency (defaults to GBP)
+   * @param req the store, business date, counted cash and optional currency (the tenant's own when
+   *     omitted)
    * @param ctx caller context, checked for access to the store
    * @return the settled Z-report
    * @throws ApiException {@code 400} when {@code businessDate} is not a valid date
@@ -85,10 +86,7 @@ public class CashMovementService {
     UUID storeId = UUID.fromString(req.storeId());
     ctx.requireStoreAccess(storeId);
     LocalDate businessDate = com.shelfj.web.Parsing.date(req.businessDate(), "businessDate");
-    String currency =
-        req.currency() == null || req.currency().isBlank()
-            ? "GBP"
-            : req.currency().toUpperCase(Locale.ROOT);
+    String currency = profiles.currencyOr(tenantId, req.currency());
     return repo.generateZReport(
         tenantId, storeId, businessDate, req.countedCash(), currency, generatedBy);
   }

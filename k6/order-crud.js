@@ -215,9 +215,12 @@ export default function ({ tenant, rival, shopper, stranger }) {
   // ── receipts, POS log, fiscal receipt ──────────────────────────────────────
   const receipts = `/api/order-svc/admin/orders/${order.id}/receipts`;
   expect(call('POST', receipts, { token: t, body: { receiptType: 'PRINT', printCount: 1 } }), '[+] print a receipt', 201);
+  expect(call('POST', receipts, { token: t, body: { receiptType: 'THERMAL', printCount: 1 } }), '[+] a receipt printed on thermal paper is recorded as such (09.12)', 201);
+  expect(call('POST', receipts, { token: t, body: { receiptType: 'SAVE', printCount: 1 } }), '[+] and one kept as a file', 201);
   expect(call('POST', receipts, { token: t, body: { receiptType: 'EMAIL', emailedTo: 'customer@example.com' } }), '[+] email a receipt', 201);
   expect(call('POST', receipts, { token: t, body: { receiptType: 'EMAIL' } }), '[-] email receipt: address required', 400);
   expect(call('GET', receipts, { token: t }), '[+] list receipts', 200);
+  truthy('[+] the list names how each came out', ['PRINT', 'THERMAL', 'SAVE', 'EMAIL'].every((k) => data(call('GET', receipts, { token: t })).some((r) => r.receiptType === k)));
   expect(call('POST', `/api/order-svc/admin/orders/${UNKNOWN}/receipts`, { token: t, body: { receiptType: 'PRINT' } }), '[-] receipt for an unknown order', 404);
 
   const logged = call('POST', `/api/order-svc/pos/log/orders/${order.id}`, { token: t });

@@ -320,9 +320,30 @@ public class ProxyResource {
           HttpHeaders.USER_EMAIL,
           HttpHeaders.ROLES,
           HttpHeaders.STORE_IDS,
+          HttpHeaders.PERMISSIONS,
           // Client-controlled, not identity — forwarded so downstream writes can dedupe retries
           // (golden rule #11). Not stripped/overwritten: the client owns this value.
           HttpHeaders.IDEMPOTENCY_KEY);
+
+  /**
+   * The response headers the proxy passes back from a service, beyond the Content-Type it always
+   * relays. An explicit list for the same reason as {@link #FORWARDED_HEADERS}: everything a
+   * service sets stops here unless named. Before this list existed, a service's download reached
+   * the client without its file name and a sensitive response without its no-store rule — the
+   * payment-run bank file and the fiscal receipt export among them. {@code Set-Cookie}, {@code
+   * Server} and anything internal still stay behind.
+   */
+  static final java.util.List<String> RELAYED_RESPONSE_HEADERS =
+      java.util.List.of("Content-Disposition", "Cache-Control");
+
+  /** The allowlisted headers present on a service's response, by name, in list order. */
+  static java.util.Map<String, String> relayedResponseHeaders(io.helidon.http.Headers upstream) {
+    java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+    for (String name : RELAYED_RESPONSE_HEADERS) {
+      upstream.first(io.helidon.http.HeaderNames.create(name)).ifPresent(v -> out.put(name, v));
+    }
+    return out;
+  }
 
   private void forward(
       io.helidon.webclient.api.HttpClientRequest req,
@@ -381,6 +402,7 @@ public class ProxyResource {
       int status = upstream.status().code();
       Response.ResponseBuilder rb =
           Response.status(status).header(HttpHeaders.REQUEST_ID, requestId);
+      relayedResponseHeaders(upstream.headers()).forEach(rb::header);
       // Some upstream responses carry no body at all (e.g. a 405 from a path/method mismatch, or
       // any handler that returns a bare status) even when the status isn't 204/205/304.
       // HttpClientResponse.as(String.class) throws IllegalStateException — not an empty string —

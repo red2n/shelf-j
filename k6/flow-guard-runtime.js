@@ -188,7 +188,7 @@ export default function (d) {
   expect(
     call('POST', '/api/tenant-svc/admin/stores', {
       token: a.owner.token,
-      body: { name: 'Pop-up', code: `POP-${uniq()}`, line1: '2 High Street', city: 'Pune', country: 'IN', pincode: '411001' },
+      body: { name: 'Pop-up', code: `POP-${uniq()}`, line1: '2 High Street', city: 'Pune', country: 'IN', pincode: '411001', timezone: 'Asia/Kolkata' },
     }),
     'a suspended tenant cannot open a new store',
     422,

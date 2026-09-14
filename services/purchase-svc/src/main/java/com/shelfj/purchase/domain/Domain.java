@@ -27,7 +27,91 @@ public final class Domain {
   public static final String NAME_IC_SALES = "Sales - Intercompany";
   public static final String NAME_IC_PURCHASES = "Purchases - Intercompany";
 
+  /**
+   * Stock on hand, the asset a goods receipt recognises. The default when the store has no GL
+   * mapping in inventory-svc; a mapped store posts to its own code instead (17.3).
+   */
+  public static final String CODE_STOCK = "1001";
+
+  /**
+   * Goods received not invoiced: the accrual a receipt credits and the invoice debits, so that
+   * between the lorry and the paperwork the liability is visible and after both it nets to zero.
+   */
+  public static final String CODE_GRIR = "2109";
+
+  public static final String NAME_STOCK = "Stock";
+  public static final String NAME_GRIR = "Goods Received Not Invoiced";
+
+  // ── What produced a ledger posting ────────────────────────────────────────────
+  public static final String SOURCE_GOODS_RECEIPT = "GOODS_RECEIPT";
+  public static final String SOURCE_SUPPLIER_INVOICE = "SUPPLIER_INVOICE";
+  public static final String SOURCE_INVOICE_REVERSAL = "INVOICE_REVERSAL";
+  public static final String SOURCE_CREDIT_NOTE = "CREDIT_NOTE";
+  public static final String SOURCE_INTERCOMPANY = "INTERCOMPANY";
+  public static final String SOURCE_SETTLEMENT = "SETTLEMENT";
+  public static final String SOURCE_JOURNAL = "JOURNAL";
+  public static final String SOURCE_SUPPLIER_PAYMENT = "SUPPLIER_PAYMENT";
+  public static final String SOURCE_SALE = "SALE";
+  public static final String SOURCE_SALE_TENDER = "SALE_TENDER";
+  public static final String SOURCE_SALE_REFUND = "SALE_REFUND";
+
+  // ── Sales and tender posting (17.7) ───────────────────────────────────────────
+  public static final String CODE_SALES_CLEARING = "1105";
+  public static final String NAME_SALES_CLEARING = "Sales Receipts Clearing";
+  public static final String CODE_CASH_IN_TILLS = "1210";
+  public static final String NAME_CASH_IN_TILLS = "Cash in Tills";
+  public static final String CODE_CARD_CLEARING = "1250";
+  public static final String NAME_CARD_CLEARING = "Card and Wallet Clearing";
+  public static final String CODE_UNALLOCATED_RECEIPTS = "1299";
+  public static final String NAME_UNALLOCATED_RECEIPTS = "Unallocated Receipts";
+  public static final String CODE_GIFT_CARD_LIABILITY = "2310";
+  public static final String NAME_GIFT_CARD_LIABILITY = "Gift Card and Voucher Liability";
+  public static final String CODE_STORE_CREDIT_LIABILITY = "2320";
+  public static final String NAME_STORE_CREDIT_LIABILITY = "Store Credit Liability";
+  public static final String CODE_SALES = "4010";
+  public static final String NAME_SALES = "Sales";
+
+  /** A confirmed sale as order-svc announced it. */
+  public record SalesOrder(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      String currency,
+      java.math.BigDecimal total,
+      java.math.BigDecimal taxAmount) {}
+
+  /** A captured tender as payment-svc announced it. */
+  public record SalesTender(
+      UUID tenantId,
+      UUID paymentId,
+      UUID orderId,
+      UUID storeId,
+      String method,
+      java.math.BigDecimal amount) {}
+
+  /**
+   * An order whose receipts clearing has not netted to zero: paid but never confirmed, confirmed
+   * but not fully paid, or refunded against a sale the ledger never saw.
+   *
+   * @param balance debit less credit on 1105 for the order; negative means money received that no
+   *     sale has claimed
+   */
+  public record OpenClearing(
+      UUID orderId,
+      UUID storeId,
+      java.math.BigDecimal balance,
+      java.time.LocalDate firstPosted,
+      java.time.LocalDate lastPosted) {}
+
   // ── Supplier ──────────────────────────────────────────────────────────────────
+  /**
+   * A supplier.
+   *
+   * @param remittanceEmail where remittance advice is emailed when a payment run pays it (17.10)
+   * @param bankDetailsChangedAt when its bank details last changed, and {@code
+   *     bankDetailsChangedBy} who changed them: a change shortly before a payment is the pattern
+   *     payment-diversion fraud leaves, so a run flags it
+   */
   public record Supplier(
       UUID id,
       UUID tenantId,
@@ -38,7 +122,27 @@ public final class Domain {
       String currency,
       int paymentTermsDays,
       Instant createdAt,
-      Instant updatedAt) {}
+      Instant updatedAt,
+      String remittanceEmail,
+      String bankAccountName,
+      String bankSortCode,
+      String bankAccountNumber,
+      String bankIban,
+      String bankBic,
+      Instant bankDetailsChangedAt,
+      UUID bankDetailsChangedBy) {
+
+    /** The bank details as one validated value. */
+    public BankAccount.Details bank() {
+      return new BankAccount.Details(
+          bankAccountName, bankSortCode, bankAccountNumber, bankIban, bankBic);
+    }
+
+    /** Whether a payment run can pay this supplier. */
+    public boolean hasBankDetails() {
+      return bank().payable();
+    }
+  }
 
   // ── Purchase Order ────────────────────────────────────────────────────────────
   public static final String PO_DRAFT = "DRAFT";
@@ -185,8 +289,17 @@ public final class Domain {
   /** Every line agreed with the order and the receipt, inside tolerance. */
   public static final String INVOICE_MATCHED = "MATCHED";
 
-  /** At least one line did not. Captured anyway — flagging never blocks. */
+  /** At least one line did not. Captured and posted anyway; blocked for payment until resolved. */
   public static final String INVOICE_FLAGGED = "FLAGGED";
+
+  /** A flagged invoice a manager released for payment, with a reason. */
+  public static final String INVOICE_APPROVED = "APPROVED";
+
+  /**
+   * A flagged invoice a manager refused. Its posting is reversed and the quantities it billed no
+   * longer count against the order, so the supplier's corrected invoice matches cleanly.
+   */
+  public static final String INVOICE_REJECTED = "REJECTED";
 
   /**
    * A supplier's invoice against a purchase order.
@@ -194,7 +307,15 @@ public final class Domain {
    * @param invoiceNumber the supplier's own reference as printed on the document; unique per
    *     supplier case-insensitively, because the commonest way to pay twice is for two people to
    *     type the same paper reference on the same morning
-   * @param status {@link #INVOICE_MATCHED} or {@link #INVOICE_FLAGGED}
+   * @param status {@link #INVOICE_MATCHED}, {@link #INVOICE_FLAGGED}, {@link #INVOICE_APPROVED} or
+   *     {@link #INVOICE_REJECTED}
+   * @param dueDate the invoice date plus the supplier's payment terms
+   * @param statedGross the total printed on the document, when keyed; null when not
+   * @param headerVariances comma-separated header-level variances, empty when the header agreed
+   * @param postedAt when the AP posting was written; null for invoices captured before postings
+   * @param resolvedAt when a flagged invoice was approved or rejected
+   * @param resolvedBy who decided
+   * @param resolutionReason why
    */
   public record SupplierInvoice(
       UUID id,
@@ -210,7 +331,22 @@ public final class Domain {
       String status,
       Instant matchedAt,
       UUID createdBy,
-      Instant createdAt) {}
+      Instant createdAt,
+      LocalDate dueDate,
+      BigDecimal statedGross,
+      String headerVariances,
+      Instant postedAt,
+      Instant resolvedAt,
+      UUID resolvedBy,
+      String resolutionReason,
+      Instant paidAt,
+      UUID paymentRunId) {
+
+    /** Whether the invoice may be paid: matched, or flagged and then approved. */
+    public boolean payable() {
+      return INVOICE_MATCHED.equals(status) || INVOICE_APPROVED.equals(status);
+    }
+  }
 
   /**
    * One line of a supplier invoice, carrying the match outcome it was captured with.
@@ -318,5 +454,39 @@ public final class Domain {
       BigDecimal credit,
       String description,
       UUID sourceRef,
-      Instant createdAt) {}
+      Instant createdAt,
+      UUID journalId,
+      String sourceType,
+      UUID storeId) {}
+
+  /** One journal read back whole: its lines and the header they share. */
+  public record Journal(
+      UUID journalId,
+      LocalDate entryDate,
+      String description,
+      String sourceType,
+      UUID sourceRef,
+      UUID storeId,
+      java.util.List<NominalLedgerEntry> lines) {
+
+    public BigDecimal totalDebit() {
+      return lines.stream().map(NominalLedgerEntry::debit).reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    public BigDecimal totalCredit() {
+      return lines.stream()
+          .map(NominalLedgerEntry::credit)
+          .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+  }
+
+  /** One nominal code's movement and balance over a trial balance's range. */
+  public record TrialBalanceRow(
+      String nominalCode, String nominalName, BigDecimal debit, BigDecimal credit) {
+
+    /** Debit less credit: positive for an asset or expense balance, negative for a liability. */
+    public BigDecimal balance() {
+      return debit.subtract(credit);
+    }
+  }
 }

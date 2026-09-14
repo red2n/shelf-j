@@ -1,3 +1,4 @@
+import 'unit_price.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -216,16 +217,39 @@ class ResolvedPrice {
   final double totalWithVat;
   final String currency;
 
+  /// The price per kg, litre, metre, m² or item of what the shopper pays
+  /// (03.13); null when the item has no declared measure.
+  final UnitPriceInfo? unitPricing;
+
+  /// The promotion that reduced the price, if one did.
+  final String? promotionApplied;
+
+  /// The lowest price of the 30 days before the reduction (03.12, Directive
+  /// 98/6/EC art.6a); null without a promotion.
+  final double? priorPrice;
+
+  /// Whether this may be shown as a reduction at all: pricing-svc says no
+  /// where the law needs a prior price it cannot prove.
+  final bool reductionAnnounceable;
+
   const ResolvedPrice({
     required this.unitPrice,
     required this.totalWithVat,
     required this.currency,
+    this.unitPricing,
+    this.promotionApplied,
+    this.priorPrice,
+    this.reductionAnnounceable = false,
   });
 
   factory ResolvedPrice.fromJson(Map<String, dynamic> j) => ResolvedPrice(
         unitPrice: (j['unitPrice'] as num?)?.toDouble() ?? 0,
         totalWithVat: (j['totalWithVat'] as num?)?.toDouble() ?? 0,
-        currency: j['currency'] as String? ?? 'GBP',
+        currency: j['currency'] as String? ?? '',
+        unitPricing: UnitPriceInfo.fromJson(j['unitPricing']),
+        promotionApplied: j['promotionApplied'] as String?,
+        priorPrice: (j['priorPrice'] as num?)?.toDouble(),
+        reductionAnnounceable: j['reductionAnnounceable'] as bool? ?? false,
       );
 }
 
@@ -357,11 +381,15 @@ class StorePromotion {
   final double value;
   final double? minOrderAmount;
 
+  /// Whether pricing-svc lets the storefront advertise it as a reduction (03.12).
+  final bool reductionAnnounceable;
+
   const StorePromotion({
     required this.name,
     required this.type,
     required this.value,
     this.minOrderAmount,
+    this.reductionAnnounceable = false,
   });
 
   factory StorePromotion.fromJson(Map<String, dynamic> j) => StorePromotion(
@@ -369,6 +397,7 @@ class StorePromotion {
         type: (j['type'] as String? ?? 'PERCENT').toUpperCase(),
         value: (j['value'] as num?)?.toDouble() ?? 0,
         minOrderAmount: (j['minOrderAmount'] as num?)?.toDouble(),
+        reductionAnnounceable: j['reductionAnnounceable'] == true,
       );
 
   /// Short headline, e.g. "20% off" or "£5 off".
@@ -376,6 +405,12 @@ class StorePromotion {
       ? '${value.toStringAsFixed(value % 1 == 0 ? 0 : 2)}% off'
       : '${value.toStringAsFixed(2)} off';
 }
+
+/// The promotions the banner may show (03.12): only those pricing-svc says may be
+/// advertised — never on a missing or garbled answer. Directive 98/6/EC art.6a
+/// lets a reduction be announced only against a proven prior price.
+List<StorePromotion> advertisedPromotions(List<StorePromotion> all) =>
+    all.where((p) => p.reductionAnnounceable).toList();
 
 /// Active promotions for the current tenant (advertised offers). Fails soft to an
 /// empty list so the banner can fall back to evergreen content.

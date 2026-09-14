@@ -10,6 +10,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets/adaptive_nav_shell.dart';
 import 'pos_providers.dart';
 import 'pos_session_providers.dart';
+import 'pos_printer_settings_dialog.dart';
 
 /// [pending] badges the Pending destination so unsynced sales are visible from
 /// anywhere in the terminal, not only once the cashier goes looking.
@@ -132,6 +133,13 @@ class _PosShellState extends ConsumerState<PosShell> {
               icon: const Icon(Icons.logout, size: 18),
               label: const Text('Clock out'),
             ),
+          IconButton(
+            key: const Key('pos-printer'),
+            icon: const Icon(Icons.print_outlined),
+            tooltip: 'Receipt printer',
+            onPressed: () => showDialog<void>(
+                context: context, builder: (_) => const PrinterSettingsDialog()),
+          ),
           IconButton(
             icon: const Icon(Icons.exit_to_app),
             tooltip: 'Sign out',

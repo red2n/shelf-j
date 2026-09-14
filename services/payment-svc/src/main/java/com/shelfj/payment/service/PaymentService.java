@@ -55,6 +55,7 @@ public class PaymentService {
           PaymentTender.METHOD_WALLET);
 
   @Inject PaymentRepository repo;
+  @Inject com.shelfj.service.TenantProfiles profiles;
   @Inject OrderClient orderClient;
   @Inject OrderPaymentGuard guard;
   @Inject com.shelfj.payment.client.TenantStoreClient storeClient;
@@ -134,7 +135,7 @@ public class PaymentService {
             storeId);
 
     return repo.createTender(
-        tender, Events.paymentCaptured(tenantId, tenderId, orderId, req.amount(), method));
+        tender, Events.paymentCaptured(tenantId, tenderId, orderId, req.amount(), method, storeId));
   }
 
   /**
@@ -150,10 +151,8 @@ public class PaymentService {
       throw ApiException.badRequest(
           "PAYMENT_CUSTOMER_REQUIRED", "customerId is required for a STORE_CREDIT tender");
     UUID customerId = UUID.fromString(req.customerId());
-    String currency =
-        req.currency() == null || req.currency().isBlank()
-            ? "GBP"
-            : req.currency().toUpperCase(Locale.ROOT);
+    // The tenant's own currency when the tender names none — never a literal (SJ-D53).
+    String currency = profiles.currencyOr(tenantId, req.currency());
     String key = "sc:" + orderId;
 
     Optional<PaymentTender> existing = repo.findTenderByKey(tenantId, key);
@@ -181,7 +180,7 @@ public class PaymentService {
     return repo.createTender(
         tender,
         Events.paymentCaptured(
-            tenantId, tenderId, orderId, req.amount(), PaymentTender.METHOD_STORE_CREDIT));
+            tenantId, tenderId, orderId, req.amount(), PaymentTender.METHOD_STORE_CREDIT, storeId));
   }
 
   /**
@@ -322,7 +321,15 @@ public class PaymentService {
     // transaction with the payment row locked — checking them here first would be a TOCTOU race
     // letting two concurrent refunds together exceed the original payment.
     return repo.createRefundGuarded(
-        refund, Events.paymentRefunded(tenantId, refundId, orderId, req.amount()));
+        refund,
+        Events.paymentRefunded(
+            tenantId,
+            refundId,
+            orderId,
+            req.amount(),
+            List.of(
+                new com.shelfj.payment.domain.Domain.RefundAllocation(
+                    UUID.fromString(req.paymentId()), method, req.amount(), null))));
   }
 
   /**
@@ -387,6 +394,6 @@ public class PaymentService {
         orderId,
         requestedAmount,
         reason,
-        amt -> Events.paymentRefunded(tenantId, refundBatchId, orderId, amt));
+        (amt, shares) -> Events.paymentRefunded(tenantId, refundBatchId, orderId, amt, shares));
   }
 }

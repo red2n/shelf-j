@@ -337,4 +337,111 @@ class AgeCheckIT {
       }
     }
   }
+
+  // ── 10.8: a date of birth, not an age ─────────────────────────────────────
+
+  @Test
+  @DisplayName("A refusal for the date of birth is recorded with the cut-off it was judged by")
+  void aBirthDateCutOffIsRecorded() throws Exception {
+    String tobacco = ",\"bornBefore\":\"2009-01-01\"";
+    Response refused =
+        record(
+            "CASHIER",
+            STORE_A,
+            body("REFUSED", ",\"reason\":\"BORN_AFTER_CUTOFF\"" + tobacco)
+                .replace("ALCOHOL", "TOBACCO"));
+    assertThat(refused.getStatus(), is(201));
+    String r = refused.readEntity(String.class);
+    assertThat(r, containsString("\"bornBefore\":\"2009-01-01\""));
+    assertThat(r, containsString("\"reason\":\"BORN_AFTER_CUTOFF\""));
+    assertThat(r, containsString("\"bornBeforeStorePolicy\":false"));
+
+    Response policyPass =
+        record(
+            "CASHIER",
+            STORE_A,
+            body(
+                    "PASSED",
+                    ",\"idType\":\"PASSPORT\",\"bornBefore\":\"2008-06-01\",\"bornBeforeStorePolicy\":true")
+                .replace("ALCOHOL", "TOBACCO"));
+    assertThat(policyPass.getStatus(), is(201));
+    String id = field(policyPass.readEntity(String.class), "id");
+    try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT born_before, born_before_policy FROM \"order\".age_verifications WHERE id = ?")) {
+      ps.setObject(1, UUID.fromString(id));
+      try (var rs = ps.executeQuery()) {
+        assertThat(rs.next(), is(true));
+        assertThat(
+            rs.getObject(1, java.time.LocalDate.class), is(java.time.LocalDate.of(2008, 6, 1)));
+        assertThat(rs.getBoolean(2), is(true));
+      }
+    }
+    // An age check with no cut-off still records none.
+    Response plain = record("CASHIER", STORE_A, body("PASSED", ""));
+    assertThat(plain.readEntity(String.class), containsString("\"bornBeforeStorePolicy\":false"));
+  }
+
+  @Test
+  @DisplayName("A cut-off refusal names its date; a malformed or impossible date is refused")
+  void theCutoffIsValidated() {
+    Response noDate =
+        record("CASHIER", STORE_A, body("REFUSED", ",\"reason\":\"BORN_AFTER_CUTOFF\""));
+    assertThat(noDate.getStatus(), is(400));
+    assertThat(noDate.readEntity(String.class), containsString("AGE_CHECK_CUTOFF_REQUIRED"));
+    Response policyNoDate =
+        record("CASHIER", STORE_A, body("PASSED", ",\"bornBeforeStorePolicy\":true"));
+    assertThat(policyNoDate.getStatus(), is(400));
+    assertThat(policyNoDate.readEntity(String.class), containsString("AGE_CHECK_CUTOFF_REQUIRED"));
+
+    for (String bad :
+        new String[] {
+          "01/01/2009",
+          "2009-02-30",
+          "1850-01-01",
+          "2999-01-01",
+          "2009-01-01'; DROP TABLE age_verifications;--",
+          "9".repeat(400)
+        }) {
+      Response r =
+          record(
+              "CASHIER",
+              STORE_A,
+              body("REFUSED", ",\"reason\":\"BORN_AFTER_CUTOFF\",\"bornBefore\":\"" + bad + "\""));
+      assertThat(bad, r.getStatus(), is(400));
+      assertThat(bad, r.readEntity(String.class), containsString("AGE_CHECK_BORN_BEFORE_INVALID"));
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "Cut-off refusals are counted by their reason, and twenty at once are twenty records")
+  void cutoffRefusalsAreCounted() throws Exception {
+    String store = Ids.newId().toString();
+    String refusal =
+        body("REFUSED", ",\"reason\":\"BORN_AFTER_CUTOFF\",\"bornBefore\":\"2009-01-01\"")
+            .replace(STORE_A, store)
+            .replace("ALCOHOL", "TOBACCO");
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(20);
+    try {
+      var futures = new java.util.ArrayList<java.util.concurrent.Future<Integer>>();
+      for (int i = 0; i < 20; i++) {
+        futures.add(pool.submit(() -> record("MANAGER", null, refusal).getStatus()));
+      }
+      for (var f : futures) assertThat(f.get(), is(201));
+    } finally {
+      pool.shutdownNow();
+    }
+    String s =
+        target
+            .path("/admin/pos/age-checks/summary")
+            .queryParam("store", store)
+            .request()
+            .header("X-Tenant-Id", T)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    assertThat(s, containsString("\"refused\":20"));
+    assertThat(s, containsString("\"BORN_AFTER_CUTOFF\":20"));
+  }
 }

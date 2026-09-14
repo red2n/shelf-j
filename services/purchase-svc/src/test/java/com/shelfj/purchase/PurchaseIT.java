@@ -7,6 +7,7 @@ import static org.hamcrest.Matchers.not;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.client.Entity;
@@ -29,6 +30,8 @@ class PurchaseIT {
 
   static {
     PG = PostgresSupport.start();
+    // The tenants this suite acts for, as tenant-svc would describe them (SJ-D53).
+    TenantSvcStub.start().with(PurchaseIT.T, "GBP", "GB").with(PurchaseIT.T2, "USD", "US");
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
     System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
@@ -870,7 +873,9 @@ class PurchaseIT {
     String body = get("/purchase-orders/" + poId, T).readEntity(String.class);
     assertThat(body, containsString("\"currency\":\"KWD\""));
     assertThat(body, containsString("\"totalNet\":2.468"));
-    assertThat(body, not(containsString("2.47")));
+    // On the totals, not the whole body: a timestamp such as "…42.470778Z" contains "2.47" too.
+    assertThat(body, not(containsString("\"totalNet\":2.47")));
+    assertThat(body, not(containsString("\"totalGross\":2.47")));
   }
 
   /**
@@ -1312,5 +1317,34 @@ class PurchaseIT {
             T);
     assertThat(refused.getStatus(), is(400));
     assertThat(outboxPayloads("SupplierInvoiceCaptured").size(), is(1));
+  }
+
+  // ── SJ-D53: a supplier set up in the tenant's own currency and country ──────
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "A supplier without a currency or country takes the tenant's; an undescribed tenant is refused")
+  void aSupplierDefaultsToTheTenantsOwnCurrencyAndCountry() {
+    Response r = post("/suppliers", "{\"name\":\"Chicago Imports\",\"vatRegistered\":false}", T2);
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(201));
+    assertThat(body, containsString("\"currency\":\"USD\""));
+    assertThat(body, containsString("\"countryCode\":\"US\""));
+
+    String nobody = "01a090ae-611e-70f0-8a00-0000000000d9";
+    Response refused =
+        post("/suppliers", "{\"name\":\"Nowhere Ltd\",\"vatRegistered\":false}", nobody);
+    String refusedBody = refused.readEntity(String.class);
+    assertThat(refusedBody, refused.getStatus(), is(503));
+    assertThat(refusedBody, containsString("TENANT_PROFILE_UNAVAILABLE"));
+    assertThat(get("/suppliers", nobody).readEntity(String.class), not(containsString("Nowhere")));
+    // Naming both needs no profile.
+    assertThat(
+        post(
+                "/suppliers",
+                "{\"name\":\"Named Ltd\",\"vatRegistered\":false,\"currency\":\"EUR\",\"countryCode\":\"IE\"}",
+                nobody)
+            .getStatus(),
+        is(201));
   }
 }

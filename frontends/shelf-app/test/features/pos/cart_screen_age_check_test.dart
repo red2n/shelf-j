@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:shelf_app/core/network/api_client.dart';
 import 'package:shelf_app/features/admin/providers/admin_providers.dart';
 import 'package:shelf_app/features/pos/cart_screen.dart';
@@ -116,6 +117,9 @@ List<PosLine> _basket(WidgetTester tester) =>
         .read(posCartProvider);
 
 void main() {
+  // The cut-off is shown as a date in the app's own locale, as the app does.
+  setUpAll(initializeDateFormatting);
+
   testWidgets('an unrestricted item goes straight in, with no prompt',
       (tester) async {
     await _pump(tester);
@@ -300,6 +304,74 @@ void main() {
     await tester.pumpAndSettle();
     await _scan(tester, 'BEER');
 
+    expect(till.requests.where((r) => r.path.endsWith('/pos/age-checks')).length, 1);
+  });
+
+  // ── 10.8: a date of birth, not an age ─────────────────────────────────────
+
+  const tobaccoCutoff = (
+    200,
+    '{"data":{"restricted":true,"category":"TOBACCO","minimumAge":18,"country":"GB",'
+        '"tenantOverride":false,"bornBefore":"2009-01-01","bornBeforeTenantOverride":false}}'
+  );
+
+  testWidgets('a pass for 18 does not cover tobacco under a birth-date cut-off',
+      (tester) async {
+    final till = await _pump(tester);
+    till.ageCheck['v-WINE'] = _alcohol18;
+    till.ageCheck['v-CIGS'] = tobaccoCutoff;
+    await _scan(tester, 'WINE');
+    await tester.tap(find.text('Checked — 18+'));
+    await tester.pumpAndSettle();
+
+    // Shown to be 18 says nothing about the year they were born.
+    await _scan(tester, 'CIGS');
+    expect(find.text('Checked — 18+, born before 1 Jan 2009'), findsOneWidget);
+    expect(_basket(tester), hasLength(1));
+    await tester.tap(find.text('Checked — 18+, born before 1 Jan 2009'));
+    await tester.pumpAndSettle();
+    expect(_basket(tester), hasLength(2));
+
+    final body = recorded(till)!.data as Map<String, dynamic>;
+    expect(body['category'], 'TOBACCO');
+    expect(body['bornBefore'], '2009-01-01');
+    expect(body['bornBeforeStorePolicy'], isFalse);
+  });
+
+  testWidgets('a refusal for the date of birth is written down with the cut-off',
+      (tester) async {
+    final till = await _pump(tester);
+    till.ageCheck['v-CIGS'] = tobaccoCutoff;
+    await _scan(tester, 'CIGS');
+    await tester.tap(find.text('Refuse sale'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Born on or after the cut-off date'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Record refusal'));
+    await tester.pumpAndSettle();
+
+    expect(_basket(tester), isEmpty);
+    final body = recorded(till)!.data as Map<String, dynamic>;
+    expect(body['outcome'], 'REFUSED');
+    expect(body['reason'], 'BORN_AFTER_CUTOFF');
+    expect(body['bornBefore'], '2009-01-01');
+    // The customer's date of birth is never sent anywhere.
+    expect(body.keys.where((k) => k.toLowerCase().contains('birth') && k != 'bornBefore'
+        && k != 'bornBeforeStorePolicy'), isEmpty);
+  });
+
+  testWidgets('one passed cut-off check covers the next pack in the same sale',
+      (tester) async {
+    final till = await _pump(tester);
+    till.ageCheck['v-CIGS'] = tobaccoCutoff;
+    till.ageCheck['v-CIGAR'] = tobaccoCutoff;
+    await _scan(tester, 'CIGS');
+    await tester.tap(find.text('Checked — 18+, born before 1 Jan 2009'));
+    await tester.pumpAndSettle();
+    await _scan(tester, 'CIGAR');
+
+    expect(find.text('Age-restricted item'), findsNothing);
+    expect(_basket(tester), hasLength(2));
     expect(till.requests.where((r) => r.path.endsWith('/pos/age-checks')).length, 1);
   });
 }

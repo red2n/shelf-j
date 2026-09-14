@@ -11,6 +11,7 @@ import jakarta.ws.rs.container.ContainerResponseFilter;
 import jakarta.ws.rs.ext.Provider;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -49,8 +50,10 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
     UUID userId = parseUuid(req.getHeaderString(HttpHeaders.USER_ID));
     Set<String> roles = parseRoles(req.getHeaderString(HttpHeaders.ROLES));
     Set<UUID> storeIds = parseUuids(req.getHeaderString(HttpHeaders.STORE_IDS));
+    Optional<Set<String>> permissions =
+        parsePermissions(req.getHeaderString(HttpHeaders.PERMISSIONS));
 
-    context.set(tenantId, userId, roles, storeIds, requestId);
+    context.set(tenantId, userId, roles, storeIds, permissions.orElse(null), requestId);
     context.setEmail(req.getHeaderString(HttpHeaders.USER_EMAIL));
     // stash for the response filter
     req.setProperty(HttpHeaders.REQUEST_ID, requestId);
@@ -102,6 +105,27 @@ public class TenantContextFilter implements ContainerRequestFilter, ContainerRes
         .map(String::trim)
         .filter(s -> !s.isEmpty())
         .collect(Collectors.toUnmodifiableSet());
+  }
+
+  /**
+   * @param value the raw {@code X-Permissions} header value, comma-separated, or {@code -} for a
+   *     token that names no permission at all
+   * @return empty when the header is absent (the token carried no claim: the roles' defaults
+   *     apply); otherwise the codes named, an empty set for {@code -}
+   */
+  private static Optional<Set<String>> parsePermissions(String value) {
+    if (value == null) {
+      return Optional.empty();
+    }
+    String v = value.trim();
+    if (v.isEmpty() || "-".equals(v)) {
+      return Optional.of(Set.of());
+    }
+    return Optional.of(
+        Arrays.stream(v.split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .collect(Collectors.toUnmodifiableSet()));
   }
 
   /**

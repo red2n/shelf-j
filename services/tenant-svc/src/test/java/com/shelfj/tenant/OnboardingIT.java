@@ -76,7 +76,7 @@ class OnboardingIT {
     Response storeResp =
         post(
             "/onboarding/stores",
-            "{\"name\":\"Main\",\"code\":\"MAIN\"}",
+            "{\"name\":\"Main\",\"code\":\"MAIN\",\"timezone\":\"Europe/London\"}",
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
@@ -102,7 +102,7 @@ class OnboardingIT {
     Response dup =
         post(
             "/onboarding/stores",
-            "{\"name\":\"Dup\",\"code\":\"MAIN\"}",
+            "{\"name\":\"Dup\",\"code\":\"MAIN\",\"timezone\":\"Europe/London\"}",
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
@@ -141,7 +141,7 @@ class OnboardingIT {
     Response first =
         post(
             "/onboarding/stores",
-            "{\"name\":\"First\",\"code\":\"FIRST\"}",
+            "{\"name\":\"First\",\"code\":\"FIRST\",\"timezone\":\"Europe/London\"}",
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
@@ -151,7 +151,7 @@ class OnboardingIT {
     Response second =
         post(
             "/admin/stores",
-            "{\"name\":\"Second\",\"code\":\"SECOND\"}",
+            "{\"name\":\"Second\",\"code\":\"SECOND\",\"timezone\":\"Europe/London\"}",
             "X-Tenant-Id",
             tenantId,
             "X-Roles",
@@ -191,7 +191,7 @@ class OnboardingIT {
     Response attackerStore =
         post(
             "/onboarding/stores",
-            "{\"name\":\"Evil\",\"code\":\"EVIL1\"}",
+            "{\"name\":\"Evil\",\"code\":\"EVIL1\",\"timezone\":\"Europe/London\"}",
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
@@ -216,7 +216,7 @@ class OnboardingIT {
     Response ownerStore =
         post(
             "/onboarding/stores",
-            "{\"name\":\"Main\",\"code\":\"MAIN\"}",
+            "{\"name\":\"Main\",\"code\":\"MAIN\",\"timezone\":\"Europe/London\"}",
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
@@ -250,7 +250,7 @@ class OnboardingIT {
     String tenantA = field(t.readEntity(String.class), "id");
     post(
         "/onboarding/stores",
-        "{\"name\":\"A-store\",\"code\":\"AST\"}",
+        "{\"name\":\"A-store\",\"code\":\"AST\",\"timezone\":\"Europe/London\"}",
         "X-Tenant-Id",
         tenantA,
         "X-User-Id",
@@ -277,7 +277,8 @@ class OnboardingIT {
             "/onboarding",
             """
             {"businessName":"OneShot Co","country":"gb","currency":"gbp",\
-            "storeName":"London HQ","storeCode":"LDN","storeCity":"London","storeCountry":"gb"}""",
+            "storeName":"London HQ","storeCode":"LDN","storeCity":"London","storeCountry":"gb",\
+            "storeTimezone":"Europe/London"}""",
             "X-User-Id",
             OWNER);
     assertThat(resp.getStatus(), is(201));
@@ -301,7 +302,7 @@ class OnboardingIT {
     Response sr =
         post(
             "/onboarding/stores",
-            "{\"name\":\"StaffStore\",\"code\":\"SS1\"}",
+            "{\"name\":\"StaffStore\",\"code\":\"SS1\",\"timezone\":\"Europe/London\"}",
             "X-Tenant-Id",
             tenantId,
             "X-User-Id",
@@ -362,7 +363,7 @@ class OnboardingIT {
     // 5 stores: the first via onboarding (default), the rest via the admin endpoint.
     post(
         "/onboarding/stores",
-        "{\"name\":\"Page Store 1\",\"code\":\"PG1\"}",
+        "{\"name\":\"Page Store 1\",\"code\":\"PG1\",\"timezone\":\"Europe/London\"}",
         "X-Tenant-Id",
         tenantId,
         "X-User-Id",
@@ -373,7 +374,11 @@ class OnboardingIT {
       Response r =
           post(
               "/admin/stores",
-              "{\"name\":\"Page Store " + i + "\",\"code\":\"PG" + i + "\"}",
+              "{\"name\":\"Page Store "
+                  + i
+                  + "\",\"code\":\"PG"
+                  + i
+                  + "\",\"timezone\":\"Europe/London\"}",
               "X-Tenant-Id",
               tenantId,
               "X-Roles",
@@ -543,5 +548,154 @@ class OnboardingIT {
     if (i < 0) throw new AssertionError(name + " not in " + json);
     int start = i + key.length();
     return json.substring(start, json.indexOf('"', start));
+  }
+
+  // ── SJ-D54: a store's time zone is never defaulted ────────────────────────
+
+  private String tenantFor(String owner, String country, String currency) {
+    Response t =
+        post(
+            "/onboarding/tenants",
+            "{\"businessName\":\"Zone Co "
+                + com.shelfj.ids.Ids.newId()
+                + "\",\"country\":\""
+                + country
+                + "\",\"currency\":\""
+                + currency
+                + "\"}",
+            "X-User-Id",
+            owner);
+    assertThat(t.getStatus(), is(201));
+    return field(t.readEntity(String.class), "id");
+  }
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "A store needs a real time zone; an update that leaves it out keeps it (SJ-D54)")
+  void aStoreTimezoneIsRequiredValidatedAndKept() {
+    String owner = com.shelfj.ids.Ids.newId().toString();
+    String tenant = tenantFor(owner, "us", "usd");
+
+    Response none =
+        post(
+            "/onboarding/stores",
+            "{\"name\":\"Main\",\"code\":\"ZMAIN\"}",
+            "X-User-Id",
+            owner,
+            "X-Tenant-Id",
+            tenant);
+    assertThat(none.getStatus(), is(400));
+    assertThat(none.readEntity(String.class), containsString("STORE_TIMEZONE_REQUIRED"));
+    for (String bad :
+        new String[] {
+          "Mars/Olympus", "UTC+01:00", "europe/london", "Europe/London'; DROP TABLE stores;--"
+        }) {
+      Response r =
+          post(
+              "/onboarding/stores",
+              "{\"name\":\"Main\",\"code\":\"ZMAIN\",\"timezone\":\"" + bad + "\"}",
+              "X-User-Id",
+              owner,
+              "X-Tenant-Id",
+              tenant);
+      assertThat(bad, r.getStatus(), is(400));
+      assertThat(bad, r.readEntity(String.class), containsString("STORE_TIMEZONE_INVALID"));
+    }
+
+    Response made =
+        post(
+            "/onboarding/stores",
+            "{\"name\":\"Main\",\"code\":\"ZMAIN\",\"timezone\":\"America/Chicago\"}",
+            "X-User-Id",
+            owner,
+            "X-Tenant-Id",
+            tenant);
+    String madeBody = made.readEntity(String.class);
+    assertThat(madeBody, made.getStatus(), is(201));
+    assertThat(madeBody, containsString("\"timezone\":\"America/Chicago\""));
+    String store = field(madeBody, "id");
+
+    java.util.function.Supplier<jakarta.ws.rs.client.Invocation.Builder> admin =
+        () ->
+            target
+                .path("/admin/stores/" + store)
+                .request()
+                .header("X-Tenant-Id", tenant)
+                .header("X-Roles", "OWNER");
+    Response renamed =
+        admin.get().put(Entity.entity("{\"name\":\"Renamed\"}", MediaType.APPLICATION_JSON));
+    String renamedBody = renamed.readEntity(String.class);
+    assertThat(renamedBody, renamed.getStatus(), is(200));
+    assertThat(
+        "an update without a zone keeps it, not UTC",
+        renamedBody,
+        containsString("\"timezone\":\"America/Chicago\""));
+    Response badZone =
+        admin
+            .get()
+            .put(
+                Entity.entity(
+                    "{\"name\":\"Renamed\",\"timezone\":\"Nowhere/Land\"}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(badZone.getStatus(), is(400));
+    assertThat(badZone.readEntity(String.class), containsString("STORE_TIMEZONE_INVALID"));
+    assertThat(admin.get().get(String.class), containsString("\"timezone\":\"America/Chicago\""));
+    Response moved =
+        admin
+            .get()
+            .put(
+                Entity.entity(
+                    "{\"name\":\"Renamed\",\"timezone\":\"America/Denver\"}",
+                    MediaType.APPLICATION_JSON));
+    assertThat(moved.readEntity(String.class), containsString("\"timezone\":\"America/Denver\""));
+
+    // One-shot onboarding without a zone is refused before the business is created.
+    Response oneShot =
+        post(
+            "/onboarding",
+            "{\"businessName\":\"No Zone\",\"country\":\"au\",\"currency\":\"aud\",\"storeName\":\"Sydney\",\"storeCode\":\"SYD\"}",
+            "X-User-Id",
+            com.shelfj.ids.Ids.newId().toString());
+    assertThat(oneShot.getStatus(), is(400));
+    assertThat(oneShot.readEntity(String.class), containsString("STORE_TIMEZONE_REQUIRED"));
+  }
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "Twenty stores created at once without a zone are twenty refusals and no store")
+  void concurrentStoresWithoutAZoneAreAllRefused() throws Exception {
+    String owner = com.shelfj.ids.Ids.newId().toString();
+    String tenant = tenantFor(owner, "gb", "gbp");
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(20);
+    try {
+      var futures = new java.util.ArrayList<java.util.concurrent.Future<Integer>>();
+      for (int i = 0; i < 20; i++) {
+        String code = "Z" + i;
+        futures.add(
+            pool.submit(
+                () ->
+                    target
+                        .path("/admin/stores")
+                        .request()
+                        .header("X-Tenant-Id", tenant)
+                        .header("X-Roles", "OWNER")
+                        .post(
+                            Entity.entity(
+                                "{\"name\":\"S\",\"code\":\"" + code + "\"}",
+                                MediaType.APPLICATION_JSON))
+                        .getStatus()));
+      }
+      for (var f : futures) assertThat(f.get(), is(400));
+    } finally {
+      pool.shutdownNow();
+    }
+    String stores =
+        target
+            .path("/admin/stores")
+            .request()
+            .header("X-Tenant-Id", tenant)
+            .header("X-Roles", "OWNER")
+            .get(String.class);
+    assertThat(stores, containsString("\"data\":[]"));
   }
 }

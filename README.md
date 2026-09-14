@@ -96,6 +96,8 @@ Everyone — platform operator, business owner, cashier, or customer — ultimat
 
 A person's role decides which of these they land in immediately after signing in, and the Admin/POS/Platform experiences are locked to the roles that should see them — a cashier can't wander into the Admin Console, and a Platform Admin's login is entirely separate from any business's staff login, so the two credentials can never be confused or reused for each other.
 
+A business also defines **roles of its own** on those tiers, each holding fewer of the tier's permissions: a shift lead who is a manager in every way but cannot void a sale or post a journal, a trainee who is a cashier who cannot open the drawer without a sale. A role can only narrow the tier it stands on, never widen it; the login's token carries what the role holds, every gated decision refuses a narrowed role by name, a role redefined reaches its holders at their next sign-in, and a role cannot be deleted while anyone holds it.
+
 ---
 
 ## 5. Setting up a business
@@ -164,7 +166,7 @@ This is the deepest part of the platform — everything about knowing what stock
 - **Picking rules** (e.g. pick the soonest-to-expire batch first, or the oldest-received) can be scoped to a store, category, or specific variant, with a defined zone priority order, and resolved on demand for "which batch/zone should I pick from for this line."
 
 **Costing & the books**
-- Each store/variant carries a configured **costing method** (e.g. FIFO or average cost), and stock activity can be locked behind **accounting periods** once closed, so a closed month's numbers can't shift underneath finance later. Zones can be mapped to a general-ledger code for accounting reconciliation.
+- Each store/variant carries a configured **costing method** (e.g. FIFO or average cost), and postings can be locked behind **accounting periods** once closed: a goods receipt, a supplier invoice, a credit note or a journal dated in a closed month is refused, so a closed month's numbers can't shift underneath finance later. A store can be mapped to a **general-ledger code**, and the ledger uses it — the stock a goods receipt recognises posts to the store's mapped code.
 
 **What the storefront sees:** customers only ever see an in-stock / out-of-stock flag for a store — actual on-hand counts are never exposed publicly.
 
@@ -185,7 +187,8 @@ This is the deepest part of the platform — everything about knowing what stock
 - **Suppliers** are onboarded with a name, country, currency, and VAT-registration flag.
 - A **purchase order** starts as a draft, has lines added (variant, quantity, cost, tax rate) with a running total, and is then submitted to the supplier.
 - When goods turn up, a **goods receipt** is recorded against the PO — confirming actual quantities received, which is what actually creates receivable stock in the relevant store/zone (see [§7](#7-inventory--warehouse-operations)). Partial and short deliveries are handled the same way, line by line.
-- For businesses with related entities trading stock between themselves, **intercompany invoices** raise a matched receivable/payable pair for an inter-org transfer and can be settled once paid, and a read-only **nominal ledger** gives a double-entry view of the resulting postings for reconciliation.
+- **Promotions** scope to the whole shop, to one variant, or to a **category** — a deal on *Drinks* reaches every product filed under *Soft drinks* beneath it, because the catalogue announces where each product sits and pricing keeps that map — and include **mix-and-match** ("any 3 for £10": the dearest units bundle, the rest are charged in full) beside percentage, amount, basket, threshold and buy-X-get-Y deals.
+- The **nominal ledger** is written by the documents: a goods receipt recognises the stock against a goods-received-not-invoiced accrual; a supplier invoice posts the creditor (and VAT input) against that accrual, dated the invoice, due by the supplier's terms, whether or not it matched — a variance blocks *payment*, not the posting; a manager **approves** a flagged invoice for payment or **rejects** it, a rejection reversing the posting line for line and taking the invoice back out of the VAT return; a supplier's credit note reverses the creditor. Finance posts **manual journals** that must balance, reads any journal whole, and reads the **trial balance** per store or for the whole business. For businesses with related entities trading stock between themselves, **intercompany invoices** raise a matched receivable/payable pair for an inter-org transfer and can be settled once paid, on the same ledger.
 
 ---
 
@@ -213,6 +216,8 @@ The POS is built to run like a real till, on whatever screen a shop has — a ta
 - **Building a sale** — items go in by camera scan, a handheld barcode scanner, or manual entry; on wider screens the catalog sits alongside the running sale for tap-to-add, on a phone it opens as a browse sheet instead. Quantities adjust with +/-, lines swipe away to remove, and every sale must carry a customer — either a registered customer looked up by the cashier, or at minimum a walk-in's contact phone number (the till won't complete a sale without one).
 - **Holding a sale** — a sale in progress can be **parked** so the cashier can serve someone else, and **resumed** later (with a warning before discarding one that's been added to since).
 - **No-sale** — opening the drawer without a transaction is its own logged action, distinct from a real sale, for loss-prevention purposes.
+- **Notification channels** — email, in-app and MQTT, and now **SMS** and **mobile push** behind provider seams (Twilio and Firebase Cloud Messaging, simulated until configured); a shopper registers their device from the storefront and the shop's order confirmation reaches it; marketing goes only where consent is recorded.
+- **Receipts** — each till chooses how its receipts come out: the browser's print dialog, an **ESC/POS thermal printer** (over the network, or through a print bridge for a browser till), or a saved file; a test page proves the path, and the record against the order says which way it went.
 - **Tendering** — payment can be **split across multiple methods** in one sale (cash, card, UPI, wallet, gift card, store credit) until the balance clears; cash entry shows change due, gift-card/store-credit entries look up and cap against the actual balance available. A completed sale offers a reprint of the receipt before starting the next one; an "email receipt" option records the customer's address against the sale, though actual email delivery isn't wired up yet.
 - **Till & cash management** — a shift opens with a starting cash float, supports mid-shift **cash drops** and **pay-in/pay-out** movements (each with a reason), and closes with a **Z-report**: the system shows the expected cash, the cashier enters what was actually counted, and the difference is reconciled on the spot. A separate **X-report** gives a read-only mid-shift snapshot without closing anything.
 

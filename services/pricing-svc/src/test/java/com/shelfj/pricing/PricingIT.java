@@ -6,7 +6,9 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
+import com.shelfj.ids.Ids;
 import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.client.Entity;
@@ -26,9 +28,16 @@ import org.junit.jupiter.api.Test;
 class PricingIT {
 
   private static final PostgresSupport PG;
+  private static final TenantSvcStub TENANTS;
 
   static {
     PG = PostgresSupport.start();
+    // A pound tenant and two yen tenants, as tenant-svc would describe them (SJ-D53).
+    TENANTS =
+        TenantSvcStub.start()
+            .with(PricingIT.T, "GBP", "GB")
+            .with(PricingIT.YEN, "JPY", "JP")
+            .with(PricingIT.YEN_BUSY, "JPY", "JP");
     System.setProperty("shelfj.db.url", PG.jdbcUrl());
     System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
     System.setProperty("shelfj.db.user", PG.username());
@@ -39,6 +48,9 @@ class PricingIT {
   }
 
   private static final String T = "01a090ae-611e-702c-a97b-d1b8025478e1";
+  private static final String YEN = "01a090ae-611e-70f0-8a00-0000000000a1";
+  private static final String YEN_BUSY = "01a090ae-611e-70f0-8a00-0000000000a2";
+  private static final String NOBODY = "01a090ae-611e-70f0-8a00-0000000000a3";
   private static final String V = "01a090ae-611e-7037-a4b7-c854f0266ace";
   private static final String S = "01a090ae-611e-703c-a378-a4972ea461c8";
   private static final String ORDER_ID = "01a090ae-611e-7056-8f30-ecdbb48160eb";
@@ -543,6 +555,32 @@ class PricingIT {
         T);
   }
 
+  /**
+   * Seeds one price list carrying several variants. One list, not one per variant: a second list on
+   * the same channel and currency retires the first, and with it every price on it.
+   */
+  private void seedPricedVariants(String[][] variantAndPrice) {
+    post(
+        "/vat-rates",
+        "{\"code\":\"T1\",\"name\":\"Standard Rate\",\"rate\":0.20,"
+            + "\"exempt\":false,\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+        T);
+    Response plR =
+        post(
+            "/admin/price-lists",
+            "{\"name\":\"Basket Test\",\"channel\":\"ALL\",\"currency\":\"GBP\","
+                + "\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            T);
+    String plId = extractId(plR.readEntity(String.class));
+    for (String[] vp : variantAndPrice) {
+      post("/product-vat-categories", "{\"variantId\":\"" + vp[0] + "\",\"vatCode\":\"T1\"}", T);
+      post(
+          "/admin/price-lists/" + plId + "/items",
+          "{\"variantId\":\"" + vp[0] + "\",\"price\":" + vp[1] + ",\"minQty\":1}",
+          T);
+    }
+  }
+
   private String createPromotion(String json) {
     Response r = post("/admin/promotions", json, T);
     assertThat(r.getStatus() + " " + json, r.getStatus(), is(201));
@@ -1039,24 +1077,255 @@ class PricingIT {
     assertThat(r.readEntity(String.class), containsString("PRICING_MISSING_THRESHOLD"));
   }
 
+  @Inject com.shelfj.pricing.messaging.CatalogueEventHandler catalogue;
+
+  private static final String CAT_DRINKS = "01a090ae-611e-7040-8000-000000000001";
+  private static final String CAT_SOFT = "01a090ae-611e-7040-8000-000000000002";
+  private static final String CAT_SNACKS = "01a090ae-611e-7040-8000-000000000003";
+  private static final String PRODUCT_COLA = "01a090ae-611e-7040-8000-000000000010";
+  private static final String PRODUCT_CRISPS = "01a090ae-611e-7040-8000-000000000011";
+  private static final String V_COLA_CAN = "01a090ae-611e-7040-8000-000000000020";
+  private static final String V_COLA_BOTTLE = "01a090ae-611e-7040-8000-000000000021";
+  private static final String V_CRISPS = "01a090ae-611e-7040-8000-000000000022";
+
+  private static String categorised(
+      String eventId, String tenant, String product, String[] path, String[] variants) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\"ProductCategorised\",\"tenantId\":\""
+        + tenant
+        + "\",\"aggregateId\":\""
+        + product
+        + "\",\"occurredAt\":\"2026-09-13T00:00:00Z\",\"productId\":\""
+        + product
+        + "\",\"categoryPath\":["
+        + quoted(path)
+        + "],\"variantIds\":["
+        + quoted(variants)
+        + "]}";
+  }
+
+  private static String variantCreated(
+      String eventId, String tenant, String variant, String product) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\"VariantCreated\",\"tenantId\":\""
+        + tenant
+        + "\",\"aggregateId\":\""
+        + variant
+        + "\",\"occurredAt\":\"2026-09-13T00:00:00Z\",\"productId\":\""
+        + product
+        + "\",\"sku\":\"SKU\"}";
+  }
+
+  private static String quoted(String[] ids) {
+    return java.util.Arrays.stream(ids)
+        .map(i -> "\"" + i + "\"")
+        .collect(java.util.stream.Collectors.joining(","));
+  }
+
+  private String quoteFor(String... variantAndQty) {
+    StringBuilder lines = new StringBuilder();
+    for (int i = 0; i < variantAndQty.length; i += 2) {
+      if (i > 0) lines.append(',');
+      lines
+          .append("{\"variantId\":\"")
+          .append(variantAndQty[i])
+          .append("\",\"qty\":")
+          .append(variantAndQty[i + 1])
+          .append('}');
+    }
+    Response r = post("/prices/quote", "{\"lines\":[" + lines + "]}", T);
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(200));
+    return body;
+  }
+
   /**
-   * CATEGORY scope was in the CHECK constraint, the domain constants, the request schema and the
-   * API guide, and the matching query handled only ALL and VARIANT — so it was accepted, stored,
-   * and never fired. Refusing it says so where the mistake is made.
+   * CATEGORY scope was accepted, stored and never applied, then refused with an explanation; now it
+   * is honoured (03.8) through the catalogue product-svc announces.
    */
   @Test
-  void aCategoryScopeIsRefusedRatherThanSilentlyIgnored() {
-    String id =
-        createPromotion(
-            "{\"name\":\"Category test\",\"type\":\"PERCENT\",\"value\":10,"
-                + "\"startsAt\":\"2020-01-01T00:00:00Z\"}");
-    Response r =
+  void aCategoryScopeReachesTheVariantsUnderIt() {
+    seedPricedVariants(
+        new String[][] {{V_COLA_CAN, "1.00"}, {V_COLA_BOTTLE, "2.00"}, {V_CRISPS, "1.00"}});
+    // Cola sits in Soft drinks, which sits in Drinks; crisps in Snacks.
+    assertThat(
+        catalogue.handle(
+            categorised(
+                Ids.newId().toString(),
+                T,
+                PRODUCT_COLA,
+                new String[] {CAT_SOFT, CAT_DRINKS},
+                new String[] {V_COLA_CAN})),
+        is(true));
+    assertThat(
+        catalogue.handle(
+            categorised(
+                Ids.newId().toString(),
+                T,
+                PRODUCT_CRISPS,
+                new String[] {CAT_SNACKS},
+                new String[] {V_CRISPS})),
+        is(true));
+    // A variant created after its product was categorised still lands under the category.
+    assertThat(
+        catalogue.handle(variantCreated(Ids.newId().toString(), T, V_COLA_BOTTLE, PRODUCT_COLA)),
+        is(true));
+
+    String promo =
+        post(
+                "/admin/promotions",
+                "{\"name\":\"Drinks 10% off\",\"type\":\"PERCENT\",\"value\":10,\"startsAt\":\"2020-01-01T00:00:00Z\"}",
+                T)
+            .readEntity(String.class);
+    String id = extractId(promo);
+    Response scoped =
         post(
             "/admin/promotions/" + id + "/items",
-            "{\"scopeType\":\"CATEGORY\",\"scopeId\":\"" + S + "\"}",
+            "{\"scopeType\":\"CATEGORY\",\"scopeId\":\"" + CAT_DRINKS + "\"}",
             T);
-    assertThat(r.getStatus(), is(400));
-    assertThat(r.readEntity(String.class), containsString("PRICING_CATEGORY_SCOPE_UNSUPPORTED"));
+    assertThat(scoped.readEntity(String.class), scoped.getStatus(), is(201));
+
+    // Scoped to the parent: both cola variants (in the child category) are in, crisps are not.
+    String body = quoteFor(V_COLA_CAN, "2", V_COLA_BOTTLE, "1", V_CRISPS, "3");
+    assertThat(body, containsString("\"totalDiscount\":0.40")); // 10% of 2.00 + 2.00
+    // Re-categorised: cola moves to Snacks, and the drinks promotion lets go of it.
+    assertThat(
+        catalogue.handle(
+            categorised(
+                Ids.newId().toString(),
+                T,
+                PRODUCT_COLA,
+                new String[] {CAT_SNACKS},
+                new String[] {V_COLA_CAN, V_COLA_BOTTLE})),
+        is(true));
+    assertThat(
+        quoteFor(V_COLA_CAN, "2", V_COLA_BOTTLE, "1"), containsString("\"totalDiscount\":0,"));
+    // A category nothing was announced for discounts nothing — not everything.
+    String lonely =
+        extractId(
+            post(
+                    "/admin/promotions",
+                    "{\"name\":\"Nothing here\",\"type\":\"PERCENT\",\"value\":50,\"startsAt\":\"2020-01-01T00:00:00Z\"}",
+                    T)
+                .readEntity(String.class));
+    assertThat(
+        post(
+                "/admin/promotions/" + lonely + "/items",
+                "{\"scopeType\":\"CATEGORY\",\"scopeId\":\"" + Ids.newId() + "\"}",
+                T)
+            .getStatus(),
+        is(201));
+    assertThat(quoteFor(V_CRISPS, "1"), containsString("\"totalDiscount\":0,"));
+    // Redelivered events change nothing; malformed ones are skipped.
+    String again = Ids.newId().toString();
+    assertThat(catalogue.handle(variantCreated(again, T, V_COLA_BOTTLE, PRODUCT_COLA)), is(true));
+    assertThat(catalogue.handle(variantCreated(again, T, V_COLA_BOTTLE, PRODUCT_COLA)), is(false));
+    assertThat(
+        catalogue.handle("{\"eventType\":\"ProductCategorised\",\"tenantId\":\"" + T + "\"}"),
+        is(false));
+    assertThat(catalogue.handle("not json"), is(false));
+    assertThat(catalogue.handle("{\"eventType\":\"SomethingElse\"}"), is(false));
+  }
+
+  @Test
+  void aScopeThatNamesNothingIsRefused() {
+    String id =
+        extractId(
+            post(
+                    "/admin/promotions",
+                    "{\"name\":\"Category test\",\"type\":\"PERCENT\",\"value\":10,\"startsAt\":\"2020-01-01T00:00:00Z\"}",
+                    T)
+                .readEntity(String.class));
+    Response noId = post("/admin/promotions/" + id + "/items", "{\"scopeType\":\"CATEGORY\"}", T);
+    assertThat(noId.getStatus(), is(400));
+    assertThat(noId.readEntity(String.class), containsString("PRICING_INVALID_SCOPE"));
+    assertThat(
+        post(
+                "/admin/promotions/" + id + "/items",
+                "{\"scopeType\":\"CATEGORY\",\"scopeId\":\"drinks\"}",
+                T)
+            .getStatus(),
+        is(400));
+    assertThat(
+        post(
+                "/admin/promotions/" + id + "/items",
+                "{\"scopeType\":\"AISLE\",\"scopeId\":\"" + S + "\"}",
+                T)
+            .getStatus(),
+        is(400));
+  }
+
+  /** Mix and match (03.8): any N from the scope for a price. */
+  @Test
+  void anyThreeForAPriceAcrossACategory() {
+    seedPricedVariants(
+        new String[][] {{V_COLA_CAN, "1.50"}, {V_COLA_BOTTLE, "2.00"}, {V_CRISPS, "1.00"}});
+    assertThat(
+        catalogue.handle(
+            categorised(
+                Ids.newId().toString(),
+                T,
+                PRODUCT_COLA,
+                new String[] {CAT_SOFT, CAT_DRINKS},
+                new String[] {V_COLA_CAN, V_COLA_BOTTLE})),
+        is(true));
+    Response made =
+        post(
+            "/admin/promotions",
+            "{\"name\":\"Any 3 drinks for £4\",\"type\":\"MIX_MATCH\",\"value\":4.00,\"buyQty\":3,\"startsAt\":\"2020-01-01T00:00:00Z\"}",
+            T);
+    String body = made.readEntity(String.class);
+    assertThat(body, made.getStatus(), is(201));
+    assertThat(body, containsString("\"type\":\"MIX_MATCH\""));
+    String id = extractId(body);
+    assertThat(
+        post(
+                "/admin/promotions/" + id + "/items",
+                "{\"scopeType\":\"CATEGORY\",\"scopeId\":\"" + CAT_SOFT + "\"}",
+                T)
+            .getStatus(),
+        is(201));
+    // Two bottles and two cans (7.00 for four): one bundle of the dearest three (2.00+2.00+1.50 =
+    // 5.50 → 4.00, a saving of 1.50); the fourth can in full. Crisps are not in the deal.
+    String q = quoteFor(V_COLA_BOTTLE, "2", V_COLA_CAN, "2", V_CRISPS, "2");
+    assertThat(q, containsString("\"totalDiscount\":1.50"));
+    // Two drinks: no bundle.
+    assertThat(
+        quoteFor(V_COLA_BOTTLE, "1", V_COLA_CAN, "1"), containsString("\"totalDiscount\":0,"));
+    // The shapes that are refused: a bundle of one, no size, a BOGO quantity on it, a size on a
+    // percentage.
+    String base = "\"name\":\"x\",\"startsAt\":\"2020-01-01T00:00:00Z\"";
+    Response one =
+        post(
+            "/admin/promotions",
+            "{" + base + ",\"type\":\"MIX_MATCH\",\"value\":4,\"buyQty\":1}",
+            T);
+    assertThat(one.getStatus(), is(400));
+    assertThat(one.readEntity(String.class), containsString("PRICING_INCOMPLETE_MIX_MATCH"));
+    assertThat(
+        post("/admin/promotions", "{" + base + ",\"type\":\"MIX_MATCH\",\"value\":4}", T)
+            .getStatus(),
+        is(400));
+    assertThat(
+        post(
+                "/admin/promotions",
+                "{" + base + ",\"type\":\"MIX_MATCH\",\"value\":4,\"buyQty\":2.5}",
+                T)
+            .getStatus(),
+        is(400));
+    Response bogoish =
+        post(
+            "/admin/promotions",
+            "{" + base + ",\"type\":\"MIX_MATCH\",\"value\":4,\"buyQty\":3,\"getQty\":1}",
+            T);
+    assertThat(bogoish.getStatus(), is(400));
+    assertThat(bogoish.readEntity(String.class), containsString("PRICING_INVALID_PROMOTION_SHAPE"));
+    assertThat(
+        post("/admin/promotions", "{" + base + ",\"type\":\"PERCENT\",\"value\":4,\"buyQty\":3}", T)
+            .getStatus(),
+        is(400));
   }
 
   /**
@@ -1208,9 +1477,16 @@ class PricingIT {
 
   private static String invoiceEvent(
       String eventId, String tenant, String vat, String net, String date) {
+    return invoiceEvent("SupplierInvoiceCaptured", eventId, tenant, vat, net, date);
+  }
+
+  private static String invoiceEvent(
+      String type, String eventId, String tenant, String vat, String net, String date) {
     return "{\"eventId\":\""
         + eventId
-        + "\",\"eventType\":\"SupplierInvoiceCaptured\",\"tenantId\":\""
+        + "\",\"eventType\":\""
+        + type
+        + "\",\"tenantId\":\""
         + tenant
         + "\",\"invoiceId\":\""
         + eventId
@@ -1266,5 +1542,148 @@ class PricingIT {
     // No output VAT was recorded in this test, so box 5 is |0 - 30| = 30.00: a reclaim.
     assertThat(body, containsString("\"box5\":30.00"));
     assertThat(body, containsString("\"fitToFile\":true"));
+  }
+
+  @Test
+  void aRejectedInvoiceLeavesBoxFour() {
+    // 07.7: an invoice a manager rejected was reversed in purchase-svc's ledger; its input VAT
+    // must leave the return too, or the business reclaims VAT on a bill it refused to pay.
+    String captured = com.shelfj.ids.Ids.newId().toString();
+    assertThat(
+        invoiceEvents.handle(invoiceEvent(captured, T, "40.00", "200.00", "2023-05-10")), is(true));
+    String rejection = com.shelfj.ids.Ids.newId().toString();
+    assertThat(
+        invoiceEvents.handle(
+            invoiceEvent("SupplierInvoiceRejected", rejection, T, "40.00", "200.00", "2023-05-10")),
+        is(true));
+    // Redelivered: the reversal is projected once.
+    assertThat(
+        invoiceEvents.handle(
+            invoiceEvent("SupplierInvoiceRejected", rejection, T, "40.00", "200.00", "2023-05-10")),
+        is(false));
+    // A malformed rejection is skipped, not thrown.
+    assertThat(
+        invoiceEvents.handle(
+            "{\"eventType\":\"SupplierInvoiceRejected\",\"tenantId\":\"" + T + "\"}"),
+        is(false));
+
+    Response vr =
+        getAs("/vat-return?from=2023-04-01T00:00:00Z&to=2023-07-01T00:00:00Z", T, "OWNER");
+    assertThat(vr.getStatus(), is(200));
+    String body = vr.readEntity(String.class);
+    assertThat(body, containsString("\"box4\":0.00"));
+    assertThat(body, containsString("\"box7\":0.00"));
+  }
+
+  // ── SJ-D53: the tenant's own currency and country, never a literal ──────────
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "A price list or VAT status without a currency or country is in the tenant's own")
+  void defaultsAreTheTenantsOwn() {
+    Response pl =
+        post(
+            "/admin/price-lists",
+            "{\"name\":\"Yen list\",\"channel\":\"ALL\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            YEN);
+    String body = pl.readEntity(String.class);
+    assertThat(body, pl.getStatus(), is(201));
+    assertThat(body, containsString("\"currency\":\"JPY\""));
+
+    // A code keyed in lower case is stored as the code.
+    Response lower =
+        post(
+            "/admin/price-lists",
+            "{\"name\":\"Lower\",\"channel\":\"POS\",\"currency\":\" jpy \",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            YEN);
+    assertThat(lower.readEntity(String.class), containsString("\"currency\":\"JPY\""));
+
+    Response vat =
+        post(
+            "/customer-vat-status",
+            "{\"customerId\":\"01a090ae-611e-70f0-8a00-0000000000c1\",\"vatRegistered\":false,\"reverseChargeEligible\":false}",
+            YEN);
+    String vatBody = vat.readEntity(String.class);
+    assertThat(vatBody, vat.getStatus(), is(200));
+    assertThat(vatBody, containsString("\"countryCode\":\"JP\""));
+  }
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "A tenant tenant-svc cannot describe is refused with 503 and nothing is stored")
+  void anUndescribedTenantIsRefusedNotGuessed() {
+    Response pl =
+        post(
+            "/admin/price-lists",
+            "{\"name\":\"Guess\",\"channel\":\"ALL\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            NOBODY);
+    String body = pl.readEntity(String.class);
+    assertThat(body, pl.getStatus(), is(503));
+    assertThat(body, containsString("TENANT_PROFILE_UNAVAILABLE"));
+    assertThat(body, not(containsString("GBP")));
+    Response vat =
+        post(
+            "/customer-vat-status",
+            "{\"customerId\":\"01a090ae-611e-70f0-8a00-0000000000c2\",\"vatRegistered\":false,\"reverseChargeEligible\":false}",
+            NOBODY);
+    assertThat(vat.getStatus(), is(503));
+    String listed = get("/admin/price-lists", NOBODY).readEntity(String.class);
+    assertThat(listed, not(containsString("Guess")));
+    // Naming the currency needs no profile at all.
+    Response named =
+        post(
+            "/admin/price-lists",
+            "{\"name\":\"Named\",\"channel\":\"ALL\",\"currency\":\"EUR\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            NOBODY);
+    assertThat(named.getStatus(), is(201));
+  }
+
+  @Test
+  @org.junit.jupiter.api.DisplayName(
+      "Twenty price lists at once are all in yen, and the profile is then served from cache")
+  void concurrentDefaultsAgreeAndTheProfileIsCached() throws Exception {
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(20);
+    try {
+      var start = new java.util.concurrent.CountDownLatch(1);
+      var futures = new java.util.ArrayList<java.util.concurrent.Future<String>>();
+      for (int i = 0; i < 20; i++) {
+        int n = i;
+        futures.add(
+            pool.submit(
+                () -> {
+                  start.await();
+                  try (Response r =
+                      post(
+                          "/admin/price-lists",
+                          "{\"name\":\"Busy "
+                              + n
+                              + "\",\"channel\":\"ONLINE\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+                          YEN_BUSY)) {
+                    return r.getStatus() + " " + r.readEntity(String.class);
+                  }
+                }));
+      }
+      start.countDown();
+      for (var f : futures) {
+        String out = f.get(60, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(out, out.startsWith("201"), is(true));
+        assertThat(out, containsString("\"currency\":\"JPY\""));
+      }
+    } finally {
+      pool.shutdownNow();
+    }
+    int before = TENANTS.requests();
+    for (int i = 0; i < 20; i++) {
+      try (Response r =
+          post(
+              "/admin/price-lists",
+              "{\"name\":\"Later "
+                  + i
+                  + "\",\"channel\":\"POS\",\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+              YEN_BUSY)) {
+        assertThat(r.getStatus(), is(201));
+      }
+    }
+    assertThat(TENANTS.requests(), is(before));
   }
 }

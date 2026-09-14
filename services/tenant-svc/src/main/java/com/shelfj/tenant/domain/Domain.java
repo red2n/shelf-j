@@ -72,8 +72,43 @@ public final class Domain {
     public static final String TYPE_DEFAULT = "DEFAULT";
   }
 
+  /**
+   * One staff member's role at one store.
+   *
+   * @param role the role as assigned: a built-in tier, or a tenant's custom role code (20.10)
+   * @param baseTier the tier the role stands on — what iam-svc binds and the token carries
+   */
   public record StaffAssignment(
-      UUID id, UUID tenantId, UUID userId, UUID storeId, String role, Instant createdAt) {}
+      UUID id,
+      UUID tenantId,
+      UUID userId,
+      UUID storeId,
+      String role,
+      String baseTier,
+      Instant createdAt) {}
+
+  /** The built-in roles a staff member may be assigned directly. */
+  public static final java.util.Set<String> STAFF_TIERS =
+      java.util.Set.of("OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
+
+  /**
+   * A tenant's custom role (20.10): a name of its own, standing on one tier and holding a subset of
+   * that tier's permissions.
+   *
+   * @param code the tenant's code, upper snake case, unique per tenant
+   * @param baseTier MANAGER, STOREKEEPER or CASHIER
+   * @param permissions the permission codes held; a subset of the tier's defaults
+   */
+  public record TenantRole(
+      UUID id,
+      UUID tenantId,
+      String code,
+      String name,
+      String baseTier,
+      java.util.Set<String> permissions,
+      String description,
+      Instant createdAt,
+      Instant updatedAt) {}
 
   /** Paired result of creating a store and its default zone atomically. */
   public record StoreWithZone(Store store, Zone defaultZone) {}
@@ -177,4 +212,103 @@ public final class Domain {
       InstrumentVerification latest,
       boolean certified,
       String standing) {}
+
+  /**
+   * A legal obligation as it reaches one country: the obligation's own window, narrowed to the
+   * country's membership of the regime it comes through (V9). A British business is not bound by EU
+   * law made after 31 January 2020.
+   */
+  public record LegalObligation(
+      String code,
+      String scopeKind,
+      String scope,
+      java.time.LocalDate effectiveFrom,
+      java.time.LocalDate effectiveTo,
+      String citation,
+      String summary) {
+    public static final String IN_FORCE = "IN_FORCE";
+    public static final String UPCOMING = "UPCOMING";
+
+    /** IN_FORCE on {@code day}, or UPCOMING when it has not taken effect by then. */
+    public String statusOn(java.time.LocalDate day) {
+      return effectiveFrom.isAfter(day) ? UPCOMING : IN_FORCE;
+    }
+
+    /** True when the obligation had stopped applying before {@code day}. */
+    public boolean endedBefore(java.time.LocalDate day) {
+      return effectiveTo != null && effectiveTo.isBefore(day);
+    }
+
+    /** False for a window that closed before it opened: a membership that ended first. */
+    public boolean everApplies() {
+      return effectiveTo == null || !effectiveTo.isBefore(effectiveFrom);
+    }
+  }
+
+  /** The obligations that bind a country on a day, in force first and then those still to come. */
+  public record ObligationSheet(
+      String country, java.time.LocalDate on, java.util.List<LegalObligation> obligations) {}
+
+  // ── security incidents (21.15) ─────────────────────────────────────────────
+
+  /** A security incident on the platform register. */
+  public record SecurityIncident(
+      UUID id,
+      String kind,
+      String title,
+      String summary,
+      Instant awareAt,
+      Instant openedAt,
+      UUID openedBy,
+      boolean affectsAllTenants,
+      java.util.List<UUID> tenantIds) {}
+
+  /** One entry in an incident's append-only timeline. */
+  public record IncidentEvent(
+      UUID id,
+      UUID incidentId,
+      String kind,
+      Instant occurredAt,
+      Instant recordedAt,
+      UUID recordedBy,
+      String reference,
+      String note) {}
+
+  /** A statutory reporting stage for a kind of incident, as reference data (V11). */
+  public record ReportingStage(
+      String incidentKind,
+      String stage,
+      String anchor,
+      String dueAfter,
+      int position,
+      String citation,
+      String summary) {}
+
+  /** A stage as it stands: due, overdue, done, waiting on its anchor, or with no fixed time. */
+  public record StageStatus(
+      String stage, String summary, String citation, Instant dueAt, Instant doneAt, String state) {}
+
+  /** An incident with its timeline, its stages as they stand, and how its notices stand. */
+  public record IncidentSheet(
+      SecurityIncident incident,
+      java.util.List<IncidentEvent> events,
+      java.util.List<StageStatus> stages,
+      boolean closed,
+      int noticesIssued,
+      int noticesAcknowledged) {}
+
+  /** A notice to one business about an incident, and whether it has been acknowledged. */
+  public record SecurityNotice(
+      UUID id,
+      UUID tenantId,
+      UUID incidentId,
+      String title,
+      String body,
+      Instant issuedAt,
+      UUID issuedBy,
+      Instant acknowledgedAt,
+      UUID acknowledgedBy) {}
+
+  /** What issuing notices did: how many were new, how many exist, how many are acknowledged. */
+  public record NoticeIssue(int issued, int total, int acknowledged) {}
 }

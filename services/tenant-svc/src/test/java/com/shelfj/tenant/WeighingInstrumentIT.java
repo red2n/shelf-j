@@ -131,7 +131,7 @@ class WeighingInstrumentIT {
                         + suffix
                         + "-"
                         + Ids.newId()
-                        + "\",\"country\":\"GB\"}",
+                        + "\",\"country\":\"GB\",\"timezone\":\"Europe/London\"}",
                     MediaType.APPLICATION_JSON));
     String body = r.readEntity(String.class);
     assertThat(body, r.getStatus(), is(201));

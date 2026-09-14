@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 
 import com.shelfj.ids.Ids;
+import com.shelfj.notification.messaging.SupplierRemittanceHandler;
 import com.shelfj.notification.repo.NotificationRepository;
 import com.shelfj.notification.service.NotificationErasure;
 import com.shelfj.notification.service.Notifier;
@@ -46,6 +47,7 @@ class NotificationIT {
   @Inject Notifier notifier;
   @Inject NotificationRepository notifications;
   @Inject NotificationErasure erasure;
+  @Inject SupplierRemittanceHandler remittances;
 
   @AfterAll
   static void stopDb() {
@@ -291,5 +293,65 @@ class NotificationIT {
                         + "\"body\":\"On its way\",\"type\":\"ORDER_CONFIRMATION\"}",
                     jakarta.ws.rs.core.MediaType.APPLICATION_JSON));
     assertThat(r.getStatus(), is(202));
+  }
+
+  // ── 17.10: remittance advice ──────────────────────────────────────────────
+
+  private static String remittance(UUID eventId, String email, String type) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\""
+        + type
+        + "\",\"tenantId\":\""
+        + T
+        + "\",\"supplierId\":\"01a090ae-611e-7a2b-8c3d-4e5f60718293\",\"supplierName\":\"Acme Ltd\","
+        + (email == null ? "" : "\"remittanceEmail\":\"" + email + "\",")
+        + "\"runReference\":\"PAY260913-3F9A1C\",\"paymentDate\":\"2026-09-13\",\"currency\":\"GBP\","
+        + "\"total\":35.00,\"items\":[{\"type\":\"INVOICE\",\"reference\":\"INV-A1\","
+        + "\"documentDate\":\"2026-07-15\",\"amount\":40.00},{\"type\":\"CREDIT_NOTE\","
+        + "\"reference\":\"CN-A\",\"amount\":5.00}]}";
+  }
+
+  /**
+   * A paid supplier is sent one advice naming what the payment settles, however often it arrives.
+   */
+  @Test
+  void aRemittanceAdviceIsSentOncePerPayment() {
+    UUID event = Ids.newId();
+    String json = remittance(event, "accounts@acme.example", "SupplierRemittanceIssued");
+    remittances.handle(json);
+    remittances.handle(json);
+    String[] sent = logged(event, "SUPPLIER_REMITTANCE");
+    assertThat(sent[0], is("accounts@acme.example"));
+    assertThat(sent[1], is("Remittance advice PAY260913-3F9A1C"));
+    assertThat(sent[2].contains("Invoice INV-A1 of 2026-07-15: GBP 40.00"), is(true));
+    assertThat(sent[2].contains("Less credit note CN-A: -GBP 5.00"), is(true));
+    assertThat(sent[2].contains("Total paid: GBP 35.00"), is(true));
+    assertThat(notifications.alreadyNotified(event, "SUPPLIER_REMITTANCE"), is(true));
+    try (var c = java.sql.DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
+        var ps =
+            c.prepareStatement(
+                "SELECT count(*) FROM notification.notification_log WHERE event_id = ?")) {
+      ps.setObject(1, event);
+      try (var rs = ps.executeQuery()) {
+        rs.next();
+        assertThat(rs.getLong(1), is(1L));
+      }
+    } catch (java.sql.SQLException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  /** No address, the wrong event, or a payload that is not one: nothing sent, nothing thrown. */
+  @Test
+  void aRemittanceWithNowhereToGoOrMalformedIsSkipped() {
+    UUID noEmail = Ids.newId();
+    remittances.handle(remittance(noEmail, null, "SupplierRemittanceIssued"));
+    assertThat(notifications.alreadyNotified(noEmail, "SUPPLIER_REMITTANCE"), is(false));
+    UUID other = Ids.newId();
+    remittances.handle(remittance(other, "accounts@acme.example", "SupplierInvoiceRejected"));
+    assertThat(notifications.alreadyNotified(other, "SUPPLIER_REMITTANCE"), is(false));
+    remittances.handle("{not json");
+    remittances.handle("{\"eventType\":\"SupplierRemittanceIssued\",\"eventId\":\"not-a-uuid\"}");
   }
 }

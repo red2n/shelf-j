@@ -28,9 +28,18 @@ public interface OutboxStore {
   /**
    * A pending outbox row: where to publish and what.
    *
-   * @param id the outbox row's primary key, used as the Kafka record key
+   * @param id the outbox row's primary key
+   * @param aggregateId the aggregate the event is about, used as the Kafka record key so every
+   *     event about one aggregate lands on one partition and is consumed in the order it was
+   *     written — two redefinitions of one role in one second must not arrive swapped
    * @param topic destination Kafka topic
    * @param payload the serialized event JSON, sent verbatim as the Kafka record value
    */
-  record PendingOutbox(UUID id, String topic, String payload) {}
+  record PendingOutbox(UUID id, UUID aggregateId, String topic, String payload) {
+
+    /** The record key: the aggregate when the row names one, else the row itself. */
+    public String key() {
+      return (aggregateId != null ? aggregateId : id).toString();
+    }
+  }
 }

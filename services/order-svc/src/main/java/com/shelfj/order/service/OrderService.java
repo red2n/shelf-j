@@ -67,6 +67,7 @@ public class OrderService {
   @Inject com.shelfj.order.repo.FiscalReceiptRepository receiptRepo;
   @Inject com.shelfj.order.repo.SalesAnalyticsRepository salesAnalyticsRepo;
   @Inject TenantStatusRepository tenantStatusRepo;
+  @Inject com.shelfj.service.TenantProfiles profiles;
   @Inject StoreStatusRepository storeStatusRepo;
   @Inject com.shelfj.order.config.ServiceConfig config;
   @Inject com.shelfj.order.client.PricingClient pricing;
@@ -77,6 +78,18 @@ public class OrderService {
   @Inject FiscalService fiscal;
 
   // ── Orders ────────────────────────────────────────────────────────────────
+
+  /** OrderFulfilled for the whole order, each line carrying its net revenue (19.7). */
+  private static com.shelfj.service.OutboxRow fulfilledWithRevenue(
+      UUID tenantId, Order order, List<OrderItem> lines) {
+    return Events.orderFulfilled(
+        tenantId,
+        order.id(),
+        order.storeId(),
+        lines,
+        com.shelfj.order.domain.LineRevenue.unitNet(order, lines),
+        java.util.Currency.getInstance(order.currency()).getDefaultFractionDigits());
+  }
 
   private static boolean isBlank(String s) {
     return s == null || s.isBlank();
@@ -96,22 +109,21 @@ public class OrderService {
    * rejected rather than silently overridden — a client asking to be billed in a currency the
    * tenant does not trade in is a bug on the caller's side, and silently correcting it would hide a
    * mispriced basket. When the projection has no row yet (a tenant onboarded before this projection
-   * existed, or event-delivery lag) the request's currency is honoured if given, else the
-   * configured platform default — the same fail-open convention the status projection uses.
+   * existed, or event-delivery lag) the tenant's currency is read from tenant-svc instead, and the
+   * same rule applies. There is no platform default any more (SJ-D53): a configured "GBP" stamped
+   * pounds onto a yen tenant's order whenever the projection lagged; when neither source can
+   * answer, the order is refused with 503 rather than guessed.
    *
    * @param tenantId the tenant the row belongs to
    * @param requested the client-supplied currency, or {@code null} when the request omitted it
    * @return the ISO-4217 code to persist, upper-cased
    * @throws ApiException 400 {@code ORDER_CURRENCY_MISMATCH} if {@code requested} contradicts the
-   *     tenant's own currency
+   *     tenant's own currency; 503 {@code TENANT_PROFILE_UNAVAILABLE} when it cannot be read
    */
   private String resolveCurrency(UUID tenantId, String requested) {
     String asked = isBlank(requested) ? null : requested.trim().toUpperCase(Locale.ROOT);
-    String tenantCurrency = tenantStatusRepo.findCurrency(tenantId).orElse(null);
-
-    if (tenantCurrency == null) {
-      return asked != null ? asked : config.defaultCurrency().toUpperCase(Locale.ROOT);
-    }
+    String tenantCurrency =
+        tenantStatusRepo.findCurrency(tenantId).orElseGet(() -> profiles.requireCurrency(tenantId));
     if (asked != null && !asked.equals(tenantCurrency)) {
       throw ApiException.badRequest(
           "ORDER_CURRENCY_MISMATCH",
@@ -749,6 +761,7 @@ public class OrderService {
             order.channel(),
             order.customerId(),
             order.total(),
+            order.taxAmount(),
             order.currency());
     Order confirmed =
         isTillSale(order.channel(), order.fulfilmentType())
@@ -757,8 +770,7 @@ public class OrderService {
                 orderId,
                 userId,
                 confirmEvent,
-                Events.orderFulfilled(
-                    tenantId, orderId, order.storeId(), repo.findOrderItems(tenantId, orderId)))
+                fulfilledWithRevenue(tenantId, order, repo.findOrderItems(tenantId, orderId)))
             : repo.transitionOrderStatus(
                 tenantId,
                 orderId,
@@ -1218,6 +1230,11 @@ public class OrderService {
         wanted.merge(Parsing.uuid(line.variantId(), "variantId"), line.qty(), BigDecimal::add);
       }
     }
+    // The lines' prices are read before the handover, so each part handed over carries its own
+    // share of the order's net revenue (19.7).
+    var unitNet =
+        com.shelfj.order.domain.LineRevenue.unitNet(order, repo.findOrderItems(tenantId, orderId));
+    int scale = java.util.Currency.getInstance(order.currency()).getDefaultFractionDigits();
     return repo.fulfilLines(
         tenantId,
         orderId,
@@ -1241,7 +1258,9 @@ public class OrderService {
                                 BigDecimal.ZERO,
                                 null,
                                 null))
-                    .toList()));
+                    .toList(),
+                unitNet,
+                scale));
   }
 
   // ── Returns ───────────────────────────────────────────────────────────────
@@ -1312,7 +1331,9 @@ public class OrderService {
             method,
             Return.STATUS_COMPLETED,
             Instant.now(),
-            Instant.now());
+            Instant.now(),
+            // The audit trail (20.11) names who took the goods back; a return never used to.
+            ctx.userId());
 
     return repo.createReturn(
         ret,
@@ -1721,8 +1742,7 @@ public class OrderService {
     // written by the one that completes the sale; a partial tender or a redelivery writes nothing.
     var fulfilEvent =
         isTillSale(order.channel(), order.fulfilmentType())
-            ? Events.orderFulfilled(
-                tenantId, orderId, order.storeId(), repo.findOrderItems(tenantId, orderId))
+            ? fulfilledWithRevenue(tenantId, order, repo.findOrderItems(tenantId, orderId))
             : null;
     boolean completed =
         repo.applyPaymentCaptured(
@@ -1738,6 +1758,7 @@ public class OrderService {
                 order.channel(),
                 order.customerId(),
                 order.total(),
+                order.taxAmount(),
                 order.currency()),
             fulfilEvent);
 
@@ -1829,6 +1850,14 @@ public class OrderService {
       throw ApiException.badRequest(
           "AGE_CHECK_ID_TYPE_ON_REFUSAL", "an id type is recorded on a sale that went ahead");
     }
+    java.time.LocalDate bornBefore = ageCheckCutoff(req.bornBefore());
+    boolean cutoffPolicy = Boolean.TRUE.equals(req.bornBeforeStorePolicy());
+    if (bornBefore == null
+        && (cutoffPolicy || AgeVerification.REASON_BORN_AFTER_CUTOFF.equals(reason))) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_CUTOFF_REQUIRED",
+          "a refusal for the date of birth, or a cut-off policy, names the cut-off in bornBefore");
+    }
     var record =
         new AgeVerification(
             Ids.newId(),
@@ -1841,12 +1870,38 @@ public class OrderService {
             req.minimumAge(),
             req.country().trim().toUpperCase(Locale.ROOT),
             Boolean.TRUE.equals(req.storePolicy()),
+            bornBefore,
+            cutoffPolicy,
             outcome,
             reason,
             idType,
             req.orderId() == null ? null : Parsing.uuid(req.orderId(), "orderId"),
             Instant.now());
     return repo.recordAgeVerification(record);
+  }
+
+  /**
+   * The cut-off an age check was judged against, as product-svc gave it: a date between 1900 and
+   * today, since a later one refuses nobody born yet.
+   */
+  private static java.time.LocalDate ageCheckCutoff(String raw) {
+    if (raw == null || raw.isBlank()) return null;
+    java.time.LocalDate date;
+    try {
+      date = java.time.LocalDate.parse(raw.trim());
+    } catch (java.time.format.DateTimeParseException e) {
+      throw new ApiException(
+          400,
+          "AGE_CHECK_BORN_BEFORE_INVALID",
+          "bornBefore is a date written yyyy-mm-dd",
+          java.util.List.of(),
+          e);
+    }
+    if (date.getYear() < 1900 || date.isAfter(java.time.LocalDate.now(java.time.ZoneOffset.UTC))) {
+      throw ApiException.badRequest(
+          "AGE_CHECK_BORN_BEFORE_INVALID", "bornBefore is a date between 1900 and today");
+    }
+    return date;
   }
 
   private static String blankToNull(String s) {

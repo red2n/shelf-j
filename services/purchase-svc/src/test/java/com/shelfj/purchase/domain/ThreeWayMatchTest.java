@@ -173,12 +173,111 @@ class ThreeWayMatchTest {
   }
 
   @Test
+  @DisplayName("Upper and lower price bands are separate: 5% over allowed, 1% under not")
+  void asymmetricPriceBands() {
+    var band = new Tolerance(d("5"), d("1"), null, BigDecimal.ZERO, null, BigDecimal.ZERO);
+    var positions = List.of(pos(A, "100", "60", "0", "2.00"));
+    assertThat(
+        ThreeWayMatch.match(List.of(line(A, "60", "2.10")), positions, band).get(0).variances(),
+        is(empty()));
+    assertThat(
+        ThreeWayMatch.match(List.of(line(A, "60", "1.98")), positions, band).get(0).variances(),
+        is(empty()));
+    assertThat(
+        ThreeWayMatch.match(List.of(line(A, "60", "1.97")), positions, band).get(0).variances(),
+        contains(ThreeWayMatch.PRICE_BELOW_ORDER));
+  }
+
+  @Test
+  @DisplayName("Percentage and absolute together: the stricter governs")
+  void absoluteCapsPercentage() {
+    // 5% of 2,000 is 100; the absolute limit of 20 is tighter, and wins.
+    var band = new Tolerance(d("5"), d("5"), d("20"), BigDecimal.ZERO, null, BigDecimal.ZERO);
+    var dear = List.of(pos(A, "10", "10", "0", "2000.00"));
+    assertThat(
+        ThreeWayMatch.match(List.of(line(A, "10", "2020.00")), dear, band).get(0).variances(),
+        is(empty()));
+    assertThat(
+        ThreeWayMatch.match(List.of(line(A, "10", "2020.01")), dear, band).get(0).variances(),
+        contains(ThreeWayMatch.PRICE_ABOVE_ORDER));
+    // 5% of 2.00 is 0.10; the absolute limit of 20 is looser, so the percentage wins there.
+    var cheap = List.of(pos(A, "10", "10", "0", "2.00"));
+    assertThat(
+        ThreeWayMatch.match(List.of(line(A, "10", "2.10")), cheap, band).get(0).variances(),
+        is(empty()));
+    assertThat(
+        ThreeWayMatch.match(List.of(line(A, "10", "2.11")), cheap, band).get(0).variances(),
+        contains(ThreeWayMatch.PRICE_ABOVE_ORDER));
+  }
+
+  @Test
+  @DisplayName("A quantity absolute limit caps the percentage the same way")
+  void qtyAbsolute() {
+    // 10% of 600 received is 60 units; two units is the limit that governs.
+    var band =
+        new Tolerance(BigDecimal.ZERO, BigDecimal.ZERO, null, d("10"), d("2"), BigDecimal.ZERO);
+    var positions = List.of(pos(A, "1000", "600", "0", "2.50"));
+    assertThat(
+        ThreeWayMatch.match(List.of(line(A, "602", "2.50")), positions, band).get(0).variances(),
+        is(empty()));
+    assertThat(
+        ThreeWayMatch.match(List.of(line(A, "603", "2.50")), positions, band).get(0).variances(),
+        contains(ThreeWayMatch.INVOICED_ABOVE_RECEIVED));
+  }
+
+  @Test
+  @DisplayName("An absolute limit with a zero percentage is still exact: zero means exact")
+  void zeroPercentIsExactEvenWithAbsolute() {
+    var band =
+        new Tolerance(
+            BigDecimal.ZERO, BigDecimal.ZERO, d("5"), BigDecimal.ZERO, d("5"), BigDecimal.ZERO);
+    var positions = List.of(pos(A, "100", "60", "0", "2.00"));
+    assertThat(
+        ThreeWayMatch.match(List.of(line(A, "61", "2.01")), positions, band).get(0).variances(),
+        containsInAnyOrder(ThreeWayMatch.INVOICED_ABOVE_RECEIVED, ThreeWayMatch.PRICE_ABOVE_ORDER));
+  }
+
+  @Test
+  @DisplayName(
+      "The stated total is checked against the lines plus VAT, to the configured allowance")
+  void statedTotal() {
+    assertThat(Tolerance.EXACT.totalMismatch(d("180.00"), d("180.00")), is(false));
+    assertThat(Tolerance.EXACT.totalMismatch(d("180.01"), d("180.00")), is(true));
+    assertThat(Tolerance.EXACT.totalMismatch(d("179.99"), d("180.00")), is(true));
+    var penny =
+        new Tolerance(BigDecimal.ZERO, BigDecimal.ZERO, null, BigDecimal.ZERO, null, d("0.01"));
+    assertThat(penny.totalMismatch(d("180.01"), d("180.00")), is(false));
+    assertThat(penny.totalMismatch(d("180.02"), d("180.00")), is(true));
+  }
+
+  @Test
+  @DisplayName("The two-argument form is symmetric and has no absolute limits")
+  void legacyForm() {
+    var t = new Tolerance(d("5"), d("10"));
+    assertThat(t.priceUpperPercent(), is(d("5")));
+    assertThat(t.priceLowerPercent(), is(d("5")));
+    assertThat(t.pricePercent(), is(d("5")));
+    assertThat(t.priceAbsolute(), is((BigDecimal) null));
+    assertThat(t.qtyPercent(), is(d("10")));
+    assertThat(t.qtyAbsolute(), is((BigDecimal) null));
+  }
+
+  @Test
   @DisplayName("A negative tolerance is refused at construction, not silently treated as zero")
   void negativeToleranceRefused() {
     org.junit.jupiter.api.Assertions.assertThrows(
         IllegalArgumentException.class, () -> new Tolerance(d("-1"), BigDecimal.ZERO));
     org.junit.jupiter.api.Assertions.assertThrows(
         IllegalArgumentException.class, () -> new Tolerance(BigDecimal.ZERO, null));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () -> new Tolerance(d("1"), d("1"), d("-1"), d("1"), null, BigDecimal.ZERO));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () -> new Tolerance(d("1"), d("1"), null, d("1"), d("-1"), BigDecimal.ZERO));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () -> new Tolerance(d("1"), d("1"), null, d("1"), null, d("-0.01")));
   }
 
   // ── multi-currency and precision ────────────────────────────────────────────

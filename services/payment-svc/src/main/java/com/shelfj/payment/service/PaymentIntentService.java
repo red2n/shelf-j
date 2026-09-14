@@ -64,10 +64,8 @@ public class PaymentIntentService {
     allowedReturnUrls = allowedReturnUrlsConfig.orElse("");
   }
 
-  /** Currency to record when the order names none; only reachable for pre-SJ-D2 data. */
-  @Inject
-  @ConfigProperty(name = "shelfj.payment.currency.default", defaultValue = "GBP")
-  String defaultCurrency;
+  /** The tenant's currency, for an order that names none — only pre-SJ-D2 data (SJ-D53). */
+  @Inject com.shelfj.service.TenantProfiles profiles;
 
   /**
    * Opens an intent with the configured provider for an ONLINE order.
@@ -92,7 +90,9 @@ public class PaymentIntentService {
 
     String returnUrl = resolveReturnUrl(req.returnUrl());
     String currency =
-        order.currency() == null || order.currency().isBlank() ? defaultCurrency : order.currency();
+        order.currency() == null || order.currency().isBlank()
+            ? profiles.requireCurrency(tenantId)
+            : order.currency();
 
     UUID intentId = Ids.newId();
     Instant now = Instant.now();
@@ -343,7 +343,12 @@ public class PaymentIntentService {
         intent.id(),
         tender,
         Events.paymentCaptured(
-            intent.tenantId(), tenderId, intent.orderId(), amount, PaymentTender.METHOD_CARD));
+            intent.tenantId(),
+            tenderId,
+            intent.orderId(),
+            amount,
+            PaymentTender.METHOD_CARD,
+            intent.storeId()));
   }
 
   /**

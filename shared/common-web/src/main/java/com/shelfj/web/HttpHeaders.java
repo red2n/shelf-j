@@ -39,6 +39,14 @@ public final class HttpHeaders {
    */
   public static final String STORE_IDS = "X-Store-Ids";
 
+  /**
+   * The permissions the caller's token carries (20.10), comma-separated; {@code -} when the token
+   * names none. Absent when the token carries no permission claim at all, in which case a service
+   * judges the caller by the defaults of their roles. Stamped by the gateway from the verified
+   * token, never trusted from a client.
+   */
+  public static final String PERMISSIONS = "X-Permissions";
+
   /** Idempotency key for retryable writes (checkout, payment capture, stock receipt). */
   public static final String IDEMPOTENCY_KEY = "Idempotency-Key";
 }

@@ -19,6 +19,7 @@ import com.shelfj.service.OutboxRow;
 import com.shelfj.web.ApiException;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -108,10 +109,39 @@ public class InventoryRepository extends BaseOutboxRepository {
       String refType,
       UUID refId,
       OutboxRow event) {
+    return receiveOnce(dedupeId, consumerName, batch, refType, refId, event, false);
+  }
+
+  /**
+   * A customer return received back, taking back the revenue and cost its sale recorded (19.7), in
+   * the receipt's own transaction.
+   */
+  public boolean receiveReturnOnce(
+      UUID dedupeId, String consumerName, Batch batch, UUID orderId, OutboxRow event) {
+    return receiveOnce(dedupeId, consumerName, batch, "RETURN", orderId, event, true);
+  }
+
+  private boolean receiveOnce(
+      UUID dedupeId,
+      String consumerName,
+      Batch batch,
+      String refType,
+      UUID refId,
+      OutboxRow event,
+      boolean reverseRevenue) {
     return inTx(
         c -> {
           if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
             return false;
+          }
+          if (reverseRevenue) {
+            reverseRevenueTx(
+                c,
+                batch.tenantId(),
+                batch.storeId(),
+                batch.variantId(),
+                refId,
+                batch.receivedQty());
           }
           insertBatch(c, batch);
           insertMovement(
@@ -418,21 +448,37 @@ public class InventoryRepository extends BaseOutboxRepository {
    * {@link #consume} deduped on {@code dedupeId}: mark + consume commit in ONE transaction (see
    * {@link #receiveOnce}). Returns false if already processed. Used by the OrderFulfilled consumer
    * so a redelivered event can't double-deduct a line whose reservation was already consumed.
+   *
+   * @param netAmount the line's revenue net of VAT and discounts, recorded beside the draw-down in
+   *     the same transaction (19.7); null when the sale carried none
    */
   public boolean consumeOnce(
-      UUID dedupeId, String consumerName, UUID tenantId, UUID reservationId) {
+      UUID dedupeId, String consumerName, UUID tenantId, UUID reservationId, BigDecimal netAmount) {
     return inTx(
         c -> {
           if (!markProcessedIfNewTx(c, dedupeId, consumerName)) {
             return false;
           }
-          consumeTx(c, tenantId, reservationId);
+          Reservation r = consumeTx(c, tenantId, reservationId);
+          if (netAmount != null) {
+            insertSaleRevenueTx(
+                c,
+                tenantId,
+                r.storeId(),
+                r.variantId(),
+                r.orderId(),
+                r.qty(),
+                netAmount,
+                null,
+                "SALE");
+          }
           return true;
         },
         "consume reservation (deduped)");
   }
 
-  private void consumeTx(Connection c, UUID tenantId, UUID reservationId) throws SQLException {
+  private Reservation consumeTx(Connection c, UUID tenantId, UUID reservationId)
+      throws SQLException {
     Reservation r = loadReservationForUpdate(c, tenantId, reservationId);
     if (!Reservation.HELD.equals(r.status())) {
       throw ApiException.unprocessable("RESERVATION_NOT_HELD", "Reservation is " + r.status());
@@ -472,6 +518,7 @@ public class InventoryRepository extends BaseOutboxRepository {
             reservationId,
             com.shelfj.inventory.service.Events.stockDeducted(
                 tenantId, r.storeId(), r.variantId(), reservationId, r.qty())));
+    return r;
   }
 
   // ---------------------------------------------------------------- deductSale (Gap #50 POS→SIM)
@@ -543,6 +590,13 @@ public class InventoryRepository extends BaseOutboxRepository {
         "deduct return to vendor (deduped)");
   }
 
+  /**
+   * FIFO-deducts a fulfilled order line, recording what the line earned beside the stock it drew
+   * (19.7), in the same transaction and under the same dedupe mark.
+   *
+   * @param netAmount the line's revenue net of VAT and discounts, or null when the sale carried
+   *     none
+   */
   public boolean deductSaleOnce(
       UUID dedupeId,
       String consumerName,
@@ -551,6 +605,7 @@ public class InventoryRepository extends BaseOutboxRepository {
       UUID variantId,
       BigDecimal qty,
       UUID orderId,
+      BigDecimal netAmount,
       OutboxRow event) {
     return inTx(
         c -> {
@@ -568,6 +623,10 @@ public class InventoryRepository extends BaseOutboxRepository {
               orderId,
               MovementAttribution.system());
           checkThresholdTx(c, tenantId, storeId, variantId);
+          if (netAmount != null) {
+            insertSaleRevenueTx(
+                c, tenantId, storeId, variantId, orderId, qty, netAmount, null, "SALE");
+          }
           insertOutbox(c, event);
           return true;
         },
@@ -2307,5 +2366,108 @@ public class InventoryRepository extends BaseOutboxRepository {
               com.shelfj.inventory.service.Events.stockBelowThreshold(
                   tenantId, storeId, variantId, available, threshold)));
     }
+  }
+
+  // ---------------------------------------------------------------- sale revenue (19.7)
+
+  private static void insertSaleRevenueTx(
+      Connection c,
+      UUID tenantId,
+      UUID storeId,
+      UUID variantId,
+      UUID orderId,
+      BigDecimal qty,
+      BigDecimal netAmount,
+      BigDecimal costAmount,
+      String kind)
+      throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO sale_revenue"
+                + " (id, tenant_id, store_id, variant_id, order_id, qty, net_amount, cost_amount, kind)"
+                + " VALUES (?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, Ids.newId());
+      ps.setObject(2, tenantId);
+      ps.setObject(3, storeId);
+      ps.setObject(4, variantId);
+      ps.setObject(5, orderId);
+      ps.setBigDecimal(6, qty);
+      ps.setBigDecimal(7, netAmount);
+      ps.setBigDecimal(8, costAmount);
+      ps.setString(9, kind);
+      ps.executeUpdate();
+    }
+  }
+
+  /** Cost prices are held to {@code inventory_batches.cost_price NUMERIC(18,2)}. */
+  private static final int COST_SCALE = 2;
+
+  /**
+   * Takes back the revenue and the cost of {@code qty} returned units, at the averages the order's
+   * line recorded: its net revenue per unit, and the cost per unit of the costed batches its sale
+   * drew down. Never more than the line still has unreturned, however many returns arrive. A sale
+   * that recorded no revenue has nothing to take back.
+   */
+  private static void reverseRevenueTx(
+      Connection c, UUID tenantId, UUID storeId, UUID variantId, UUID orderId, BigDecimal qty)
+      throws SQLException {
+    if (qty == null || qty.signum() <= 0) return;
+    BigDecimal soldQty;
+    BigDecimal soldNet;
+    BigDecimal unreturned;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT COALESCE(SUM(qty) FILTER (WHERE kind = 'SALE'), 0) AS sold_qty,"
+                + " COALESCE(SUM(net_amount) FILTER (WHERE kind = 'SALE'), 0) AS sold_net,"
+                + " COALESCE(SUM(qty), 0) AS unreturned"
+                + " FROM sale_revenue WHERE tenant_id = ? AND order_id = ? AND variant_id = ?")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        // An aggregate always answers one row; the check is for the reader, not the database.
+        if (!rs.next()) return;
+        soldQty = rs.getBigDecimal("sold_qty");
+        soldNet = rs.getBigDecimal("sold_net");
+        unreturned = rs.getBigDecimal("unreturned");
+      }
+    }
+    if (soldQty.signum() <= 0 || unreturned.signum() <= 0) return;
+    BigDecimal back = qty.min(unreturned);
+    // The currency's scale is the one order-svc sent the sale in; this service does not know it.
+    BigDecimal netBack =
+        soldNet.multiply(back).divide(soldQty, soldNet.scale(), RoundingMode.HALF_UP);
+    BigDecimal costBack = null;
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT SUM(-m.qty * b.cost_price) AS cost, SUM(-m.qty) AS q"
+                + "  FROM stock_movements m JOIN inventory_batches b ON b.id = m.batch_id"
+                + " WHERE m.tenant_id = ? AND m.type = 'SALE' AND m.ref_type = 'ORDER'"
+                + "   AND m.ref_id = ? AND m.variant_id = ? AND b.cost_price IS NOT NULL")) {
+      ps.setObject(1, tenantId);
+      ps.setObject(2, orderId);
+      ps.setObject(3, variantId);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next()) {
+          BigDecimal costedQty = rs.getBigDecimal("q");
+          if (costedQty != null && costedQty.signum() > 0) {
+            costBack =
+                rs.getBigDecimal("cost")
+                    .multiply(back)
+                    .divide(costedQty, COST_SCALE, RoundingMode.HALF_UP);
+          }
+        }
+      }
+    }
+    insertSaleRevenueTx(
+        c,
+        tenantId,
+        storeId,
+        variantId,
+        orderId,
+        back.negate(),
+        netBack.negate(),
+        costBack == null ? null : costBack.negate(),
+        "RETURN");
   }
 }

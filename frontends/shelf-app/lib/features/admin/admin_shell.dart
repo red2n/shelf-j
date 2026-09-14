@@ -78,6 +78,23 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Legal obligations',
+      icon: Icons.gavel_outlined,
+      selectedIcon: Icons.gavel,
+    ),
+    route: '/admin/obligations',
+    storekeeperVisible: true,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Security notices',
+      icon: Icons.shield_outlined,
+      selectedIcon: Icons.shield,
+    ),
+    route: '/admin/security-notices',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Stores',
       icon: Icons.store_outlined,
       selectedIcon: Icons.store,
@@ -116,6 +133,14 @@ const _navItems = [
       selectedIcon: Icons.bar_chart,
     ),
     route: '/admin/reports',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
+      label: 'Audit',
+      icon: Icons.manage_search_outlined,
+      selectedIcon: Icons.manage_search,
+    ),
+    route: '/admin/audit',
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(

@@ -716,6 +716,54 @@ public class CustomerRepository extends BaseOutboxRepository {
    * @param customerId the customer whose addresses to list
    * @return the addresses, empty when none are on file
    */
+  /**
+   * Inserts an address unless the customer already holds {@code max}. The count is taken after
+   * locking the customer's row, so two inserts racing for the last place serialise and the second
+   * sees the first: the cap holds under concurrency rather than by hope.
+   *
+   * @param a the address to persist; its {@code id} must already be a UUIDv7
+   * @param max the most addresses one customer may hold
+   * @return the address as stored
+   * @throws ApiException {@code CUSTOMER_ADDRESS_LIMIT} (409) when the book is full
+   */
+  public CustomerAddress createAddressCapped(CustomerAddress a, int max) {
+    return inTx(
+        conn -> {
+          try (PreparedStatement lock =
+              conn.prepareStatement(
+                  "SELECT id FROM customers WHERE tenant_id = ? AND id = ? FOR UPDATE")) {
+            lock.setObject(1, a.tenantId());
+            lock.setObject(2, a.customerId());
+            try (ResultSet rs = lock.executeQuery()) {
+              if (!rs.next()) {
+                throw ApiException.notFound("CUSTOMER_NOT_FOUND", "Customer not found");
+              }
+            }
+          }
+          try (PreparedStatement count =
+              conn.prepareStatement(
+                  "SELECT count(*) FROM customer_addresses WHERE tenant_id = ? AND"
+                      + " customer_id = ?")) {
+            count.setObject(1, a.tenantId());
+            count.setObject(2, a.customerId());
+            try (ResultSet rs = count.executeQuery()) {
+              rs.next();
+              if (rs.getLong(1) >= max) {
+                throw ApiException.conflict(
+                    "CUSTOMER_ADDRESS_LIMIT",
+                    "an address book holds at most " + max + " addresses");
+              }
+            }
+          }
+          if (a.isDefault()) {
+            clearDefaultAddresses(conn, a.tenantId(), a.customerId());
+          }
+          insertAddress(conn, a);
+          return a;
+        },
+        "create address (capped)");
+  }
+
   public List<CustomerAddress> listAddresses(UUID tenantId, UUID customerId) {
     return query(
         "SELECT id, tenant_id, customer_id, type, line1, line2, city, state, country,"

@@ -322,6 +322,104 @@ class PromotionEngineTest {
     assertThat(out.appliedPromotionIds(), hasSize(0));
   }
 
+  // ── mix and match (03.8) ───────────────────────────────────────────────────
+
+  @Test
+  void anyThreeForTenTakesTheDifferenceOffTheDearestThree() {
+    // 4.00, 4.00, 4.00 and 2.00 in scope: the bundle is the three at 4.00 (12.00 → 10.00), the
+    // 2.00 unit is charged in full. Putting the 2.00 in the bundle would save only 0.00.
+    var promo = mixMatch("Any 3 for £10", 3, "10.00");
+    SCOPES.put(promo.id(), Set.of(SHIRT, MUG));
+    var out = run(List.of(line(SHIRT, 3, "4.00"), line(MUG, 1, "2.00")), List.of(promo));
+    assertThat(out.totalDiscount(), is(bd("2.00")));
+    assertThat(out.lineDiscounts(), hasSize(1));
+    assertThat(out.lineDiscounts().get(0).variantId(), is(SHIRT));
+  }
+
+  @Test
+  void wholeBundlesOnlyAndTheRestInFull() {
+    // Five units on a bundle of three: one bundle, two left at full price.
+    var promo = mixMatch("Any 3 for £10", 3, "10.00");
+    var out = run(List.of(line(SHIRT, 5, "4.00")), List.of(promo));
+    assertThat(out.totalDiscount(), is(bd("2.00")));
+    // Two units: no bundle, no discount.
+    assertThat(run(List.of(line(SHIRT, 2, "4.00")), List.of(promo)).totalDiscount(), is(ZERO));
+    // Six: two bundles.
+    assertThat(
+        run(List.of(line(SHIRT, 6, "4.00")), List.of(promo)).totalDiscount(), is(bd("4.00")));
+  }
+
+  @Test
+  void aBundleSplitsItsSavingAcrossTheLinesByPrice() {
+    // 6.00 + 3.00 + 3.00 = 12.00 for 9.00: a saving of 3.00, split 1.50 / 1.50 by price, and
+    // the two 3.00 units are on one line.
+    var promo = mixMatch("Any 3 for £9", 3, "9.00");
+    var out = run(List.of(line(SHIRT, 1, "6.00"), line(MUG, 2, "3.00")), List.of(promo));
+    assertThat(out.totalDiscount(), is(bd("3.00")));
+    BigDecimal shirt = discountOn(out, SHIRT);
+    BigDecimal mug = discountOn(out, MUG);
+    assertThat(shirt, is(bd("1.50")));
+    assertThat(mug, is(bd("1.50")));
+  }
+
+  @Test
+  void aBundlePricedAboveItsUnitsSavesNothing() {
+    var promo = mixMatch("Any 2 for £20", 2, "20.00");
+    var out = run(List.of(line(SHIRT, 2, "4.00")), List.of(promo));
+    assertThat(out.totalDiscount(), is(ZERO));
+    assertThat(out.appliedPromotionIds(), hasSize(0));
+  }
+
+  @Test
+  void mixMatchCountsAcrossTheScopeOnly() {
+    var promo = mixMatch("Any 2 for £5", 2, "5.00");
+    SCOPES.put(promo.id(), Set.of(MUG));
+    // Three shirts out of scope, one mug in scope: no bundle.
+    assertThat(
+        run(List.of(line(SHIRT, 3, "4.00"), line(MUG, 1, "4.00")), List.of(promo)).totalDiscount(),
+        is(ZERO));
+  }
+
+  @Test
+  void anEmptyScopeDiscountsNothingNotEverything() {
+    // A category scope that resolved to no variant used to mean "everything".
+    var promo = percent("10% off nothing", 10);
+    SCOPES.put(promo.id(), Set.of());
+    assertThat(run(List.of(line(SHIRT, 2, "10.00")), List.of(promo)).totalDiscount(), is(ZERO));
+    var mm = mixMatch("Any 2 for £5", 2, "5.00");
+    SCOPES.put(mm.id(), Set.of());
+    assertThat(run(List.of(line(SHIRT, 2, "10.00")), List.of(mm)).totalDiscount(), is(ZERO));
+  }
+
+  @Test
+  void aFractionalQuantityBundlesWholeUnitsOnly() {
+    var promo = mixMatch("Any 2 for £5", 2, "5.00");
+    // 2.5 kg on a "any 2 for" deal: two units bundle, the half is charged in full.
+    assertThat(
+        run(List.of(line(SHIRT, 1, "4.00"), line(MUG, 1, "4.00")), List.of(promo)).totalDiscount(),
+        is(bd("3.00")));
+    var out =
+        engine.apply(
+            List.of(new BasketLine(SHIRT, bd("2.5"), bd("4.00"))),
+            List.of(promo),
+            Map.of(),
+            List.of(),
+            Map.of());
+    assertThat(out.totalDiscount(), is(bd("3.00")));
+  }
+
+  private static BigDecimal discountOn(PromotionOutcome out, UUID variant) {
+    return out.lineDiscounts().stream()
+        .filter(d -> variant.equals(d.variantId()))
+        .map(d -> d.amount())
+        .reduce(ZERO, BigDecimal::add);
+  }
+
+  private static Promotion mixMatch(String name, int bundle, String price) {
+    return withQuantities(
+        base(name, Promotion.TYPE_MIX_MATCH, bd(price)), new BigDecimal(bundle), null, null);
+  }
+
   // ── helpers ────────────────────────────────────────────────────────────────
 
   private static final BigDecimal ZERO = BigDecimal.ZERO;
@@ -392,28 +490,37 @@ class PromotionEngineTest {
   }
 
   private static Promotion bogo(String name, int buy, int get, int pct) {
-    Promotion p = base(name, Promotion.TYPE_BOGO, BigDecimal.ONE);
-    return new Promotion(
-        p.id(),
-        p.tenantId(),
-        null,
-        name,
-        Promotion.TYPE_BOGO,
-        BigDecimal.ONE,
-        null,
-        "ALL",
-        true,
-        p.startsAt(),
-        null,
-        p.createdAt(),
-        p.priority(),
-        false,
-        null,
-        null,
-        null,
+    return withQuantities(
+        base(name, Promotion.TYPE_BOGO, BigDecimal.ONE),
         new BigDecimal(buy),
         new BigDecimal(get),
         new BigDecimal(pct));
+  }
+
+  /** The same promotion with the BOGO / mix-and-match quantities set. */
+  private static Promotion withQuantities(
+      Promotion p, BigDecimal buyQty, BigDecimal getQty, BigDecimal getDiscountPct) {
+    return new Promotion(
+        p.id(),
+        p.tenantId(),
+        p.storeId(),
+        p.name(),
+        p.type(),
+        p.value(),
+        p.minOrderAmount(),
+        p.channel(),
+        p.active(),
+        p.startsAt(),
+        p.endsAt(),
+        p.createdAt(),
+        p.priority(),
+        p.exclusive(),
+        p.couponCode(),
+        p.maxRedemptions(),
+        p.maxPerCustomer(),
+        buyQty,
+        getQty,
+        getDiscountPct);
   }
 
   private static Promotion withPriority(Promotion p, int priority) {

@@ -134,7 +134,10 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   private static boolean isInfrastructure(String path) {
     return pathEqualsOrUnder(path, "/health")
         || pathEqualsOrUnder(path, "/metrics")
-        || pathEqualsOrUnder(path, "/openapi");
+        || pathEqualsOrUnder(path, "/openapi")
+        // RFC 9116: where to report a vulnerability. Public by definition — the researcher has no
+        // account — and exactly this one document, not anything else under /.well-known.
+        || "/.well-known/security.txt".equals(path);
   }
 
   /**
@@ -192,6 +195,38 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   }
 
   /**
+   * The shopper's own address book: {@code /customers/me/addresses} and {@code
+   * /customers/me/addresses/{id}} (12.10). Keyed on the token's login like {@code /customers/me},
+   * so the only book reachable is the caller's; another shopper's address id is not found there.
+   * Matched by shape, so nothing else that may appear under {@code /customers/me/} later is
+   * admitted by accident.
+   *
+   * @param path the service-local request path
+   * @return {@code true} for the book or one id-addressed address in it
+   */
+  private static boolean isCustomerSelfAddress(String path) {
+    if (!path.startsWith("/customers/me/addresses")) return false;
+    String rest = path.substring("/customers/me/addresses".length());
+    if (rest.isEmpty()) return true;
+    return rest.startsWith("/") && looksLikeUuid(rest.substring(1));
+  }
+
+  /**
+   * The caller's own push devices (13.7): {@code /notifications/devices} and one id-addressed
+   * device under it. Keyed on the token's login in notification-svc, so a shopper or a member of
+   * staff registers and removes their own devices and nobody else's; matched by shape.
+   *
+   * @param path the service-local request path
+   * @return {@code true} for the device list or one id-addressed device in it
+   */
+  private static boolean isOwnDevice(String path) {
+    if (!path.startsWith("/notifications/devices")) return false;
+    String rest = path.substring("/notifications/devices".length());
+    if (rest.isEmpty()) return true;
+    return rest.startsWith("/") && looksLikeUuid(rest.substring(1));
+  }
+
+  /**
    * Reads reachable without a staff role. The counterpart of {@link #isOpenMutation}, and curated
    * the same way: every entry is either something the public storefront genuinely needs, or a
    * service-to-service read that carries no identity headers.
@@ -243,6 +278,10 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         || "/customers/me".equals(path)
         || "/customers/me/export".equals(path)
         || "/customers/me/marketing".equals(path)
+        // The shopper's own address book, same shape and same reason (12.10).
+        || isCustomerSelfAddress(path)
+        // The caller's own push devices (13.7): a login reads the devices it registered.
+        || isOwnDevice(path)
         // Storefront promotions, the read side of what /prices/resolve already exposes.
         || "/promotions".equals(path)
         // The caller's own principal — it describes the caller, so it leaks nothing new.
@@ -326,6 +365,11 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // The shopper's own preference centre. Same shape and same reason as /customers/me: the
         // login comes from the token, so the only preferences reachable are the caller's.
         || "/customers/me/marketing".equals(path)
+        // The shopper's own profile is the same path as the claim, PUT rather than POST; the
+        // address book is the shopper's own, keyed on the login, id-addressed by shape (12.10).
+        || isCustomerSelfAddress(path)
+        // The caller's own push devices (13.7): registering and removing them is the login's own.
+        || isOwnDevice(path)
         // The opt-out link in a marketing message. Deliberately unauthenticated: the token is the
         // capability, and PECR reg.23 asks for a simple means of refusing — one that works from a
         // forwarded email, on a device that was never signed in, for a customer who has no
@@ -416,6 +460,8 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     // Mutations on stores/tenant stay management-only via requiresManagement.
     if ("GET".equalsIgnoreCase(method)) {
       if ("/admin/tenant".equals(path)) return true;
+      // The laws the business trades under: the till obeys them, so every staff role reads them.
+      if ("/admin/tenant/obligations".equals(path)) return true;
       if (pathEqualsOrUnder(path, "/admin/stores")) return true;
       if ("/admin/products/variants/resolve".equals(path)) return true;
     }

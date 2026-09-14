@@ -56,6 +56,7 @@ public class MeResource {
             user.tenantId() == null ? null : user.tenantId().toString(),
             user.type(),
             List.copyOf(ctx.roles()),
+            ctx.permissions().stream().sorted().toList(),
             user.email(),
             user.phone(),
             user.status(),

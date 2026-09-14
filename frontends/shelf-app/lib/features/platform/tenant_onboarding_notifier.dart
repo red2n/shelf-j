@@ -119,7 +119,8 @@ class TenantOnboardingNotifier extends StateNotifier<TenantOnboardingState> {
           if (storeCity != null && storeCity.isNotEmpty) 'storeCity': storeCity,
           if (storeCountry != null && storeCountry.isNotEmpty) 'storeCountry': storeCountry,
           if (storePincode != null && storePincode.isNotEmpty) 'storePincode': storePincode,
-          'storeTimezone': storeTimezone ?? 'Asia/Kolkata',
+          if (storeTimezone != null && storeTimezone.isNotEmpty)
+            'storeTimezone': storeTimezone,
         },
         options: Options(
           headers: {'Authorization': 'Bearer ${state.newUserToken}'},

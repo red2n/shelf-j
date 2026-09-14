@@ -39,8 +39,8 @@ import java.util.UUID;
  * idempotent (releasing a non-HELD reservation is a no-op).
  *
  * <p>Expected fulfil/return/void payload shape: {@code {eventId, eventType, tenantId, orderId,
- * storeId, items: [{variantId, qty}]}}. Cancelled payload: {@code {eventType, tenantId, orderId,
- * reason}}.
+ * storeId, items: [{variantId, qty, netAmount?}]}}, netAmount on fulfilled lines only (19.7).
+ * Cancelled payload: {@code {eventType, tenantId, orderId, reason}}.
  */
 @ApplicationScoped
 class OrderEventHandler {
@@ -105,15 +105,16 @@ class OrderEventHandler {
       JsonObject line = items.getJsonObject(i);
       UUID variantId = UUID.fromString(line.getString("variantId"));
       BigDecimal qty = new BigDecimal(line.get("qty").toString());
+      BigDecimal netAmount = netAmount(line);
       UUID dedupeId = lineDedupeId(eventId, i);
       try {
         if (fulfil) {
           Reservation hold = takeMatchingHold(holds, variantId, qty);
           if (hold != null) {
-            service.consumeOnce(dedupeId, CONSUMER_NAME, tenantId, hold.id());
+            service.consumeOnce(dedupeId, CONSUMER_NAME, tenantId, hold.id(), netAmount);
           } else {
             service.deductSaleFromOrderOnce(
-                dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId);
+                dedupeId, CONSUMER_NAME, tenantId, storeId, variantId, qty, orderId, netAmount);
           }
         } else if (voided) {
           service.receiveVoidFromOrderOnce(
@@ -183,6 +184,19 @@ class OrderEventHandler {
       // Already released/consumed or transient — the TTL sweeper is the backstop.
       LOG.log(Level.WARNING, "release of hold {0} failed: {1}", reservationId, e.getMessage());
     }
+  }
+
+  /**
+   * What the line earned, net of VAT and discounts (19.7), or null when the event carried none or
+   * carried something that is not an amount. Revenue is reporting; a bad figure must never stop the
+   * stock the line sold from being deducted, so it is dropped here and the sale counts as unpriced.
+   */
+  static BigDecimal netAmount(JsonObject line) {
+    if (!(line.get("netAmount") instanceof jakarta.json.JsonNumber n)) {
+      return null;
+    }
+    BigDecimal amount = n.bigDecimalValue();
+    return amount.signum() < 0 ? null : amount;
   }
 
   /** Deterministic per-line dedupe id: stable across redeliveries of the same event. */

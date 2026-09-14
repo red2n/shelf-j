@@ -110,7 +110,42 @@ public final class Domain {
    * level (India varies by state).
    */
   public record AgeRestrictionRule(
-      UUID tenantId, String country, String category, int minimumAge, String note) {}
+      UUID tenantId,
+      String country,
+      String category,
+      int minimumAge,
+      String note,
+      java.time.LocalDate bornBefore,
+      java.time.LocalDate bornBeforeFrom) {
+
+    /** A rule with no birth-date cut-off, as every rule was before the generational tobacco ban. */
+    public AgeRestrictionRule(
+        UUID tenantId, String country, String category, int minimumAge, String note) {
+      this(tenantId, country, category, minimumAge, note, null, null);
+    }
+  }
+
+  /**
+   * A birth-date cut-off in force: refuse anyone born on or after {@code bornBefore}.
+   *
+   * @param tenantPolicy true when the tenant adopted it, false when it is the law
+   */
+  public record BirthCutoff(java.time.LocalDate bornBefore, boolean tenantPolicy) {}
+
+  /**
+   * What the till must ask before selling an item in a country (10.8).
+   *
+   * @param ageFromTenant true when the minimum age is the tenant's stricter policy
+   * @param bornBefore the cut-off in force today, or null when there is none
+   * @param bornBeforeFromTenant true when that cut-off is the tenant's policy rather than the law
+   */
+  public record AgeCheck(
+      String country,
+      String category,
+      int minimumAge,
+      boolean ageFromTenant,
+      java.time.LocalDate bornBefore,
+      boolean bornBeforeFromTenant) {}
 
   /** How a variant is sold, and the declarations attached to it. */
   public record VariantCompliance(
@@ -312,4 +347,53 @@ public final class Domain {
       UUID categoryId,
       Instant createdAt,
       Instant updatedAt) {}
+
+  /**
+   * What an online offer must show about a product under GPSR art.19 (01.12): its manufacturer, the
+   * person responsible for it in the EU when the manufacturer is outside, and its warnings — or the
+   * business's statement that none apply. Absent fields are null.
+   */
+  public record ProductSafety(
+      UUID tenantId,
+      UUID productId,
+      String manufacturerName,
+      String manufacturerAddress,
+      String manufacturerContact,
+      String manufacturerCountry,
+      String responsiblePersonName,
+      String responsiblePersonAddress,
+      String responsiblePersonContact,
+      String warnings,
+      boolean noWarnings,
+      Instant updatedAt,
+      UUID updatedBy) {}
+
+  /** An active online product with its safety statement, or null when none was made. */
+  public record ListedProductSafety(UUID productId, String name, ProductSafety safety) {}
+
+  /**
+   * A product's safety statement as it stands against the law: whether its market requires one for
+   * an online offer today, and what an offer would still lack.
+   */
+  public record SafetySheet(
+      UUID productId, ProductSafety safety, boolean required, java.util.List<String> missing) {}
+
+  /** An online product that its market requires safety information for, and what it lacks. */
+  public record MissingSafety(UUID productId, String name, java.util.List<String> missing) {}
+
+  /**
+   * The quantity one price buys, in the unit a unit price is shown per (03.13): KG, L, M, SQM, or
+   * EA for goods sold by number.
+   */
+  public record UnitMeasure(String unit, java.math.BigDecimal quantity) {}
+
+  /** What a variant says about how it is sold, as the catalogue re-announces it. */
+  public record VariantMeasureSource(
+      UUID variantId,
+      UUID productId,
+      String soldBy,
+      java.math.BigDecimal netContent,
+      String netContentUom,
+      boolean catchWeight,
+      long version) {}
 }

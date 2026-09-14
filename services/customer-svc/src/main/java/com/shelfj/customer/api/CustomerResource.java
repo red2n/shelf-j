@@ -152,6 +152,91 @@ public class CustomerResource {
    *     login; {@code 503} when order-svc could not be reached, rather than a partial export
    */
   @Operation(
+      summary = "Update the caller's own profile",
+      description =
+          "The signed-in shopper's name, phone, date of birth and gender. The record is found by"
+              + " the token's login, so no other profile is reachable; the email is the login's"
+              + " and cannot be changed here (12.10).")
+  @APIResponse(responseCode = "200", description = "The updated record")
+  @APIResponse(responseCode = "400", description = "A blank name or an oversized field")
+  @APIResponse(responseCode = "401", description = "No authenticated login")
+  @APIResponse(responseCode = "404", description = "This shop holds no record for the caller")
+  @Tag(name = "Customers")
+  @PUT
+  @Path("/me")
+  public ApiResponse<?> updateMine(UpdateCustomerRequest req) {
+    Validations.validate(req);
+    var customer = service.updateMine(ctx.requireTenantId(), ctx.requireUserId(), req);
+    return ApiResponse.ok(Mappers.toCustomer(customer), ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @Operation(
+      summary = "The caller's own address book",
+      description = "Every address the signed-in shopper keeps at this shop (12.10).")
+  @APIResponse(responseCode = "200", description = "The addresses, empty when none")
+  @APIResponse(responseCode = "404", description = "This shop holds no record for the caller")
+  @Tag(name = "Addresses")
+  @GET
+  @Path("/me/addresses")
+  public ApiResponse<?> myAddresses() {
+    var addresses =
+        service.listMyAddresses(ctx.requireTenantId(), ctx.requireUserId()).stream()
+            .map(Mappers::toAddress)
+            .toList();
+    return ApiResponse.ok(addresses, ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @Operation(
+      summary = "Add an address to the caller's own book",
+      description =
+          "At most ten per shopper; marking one default clears the previous default (12.10).")
+  @APIResponse(responseCode = "201", description = "Address added")
+  @APIResponse(
+      responseCode = "400",
+      description = "A missing line or country, or an oversized field")
+  @APIResponse(responseCode = "404", description = "This shop holds no record for the caller")
+  @APIResponse(responseCode = "409", description = "The address book is full")
+  @Tag(name = "Addresses")
+  @POST
+  @Path("/me/addresses")
+  public Response addMyAddress(AddAddressRequest req) {
+    Validations.validate(req);
+    var address = service.addMyAddress(ctx.requireTenantId(), ctx.requireUserId(), req);
+    return Response.status(Response.Status.CREATED)
+        .entity(ApiResponse.ok(Mappers.toAddress(address), ApiResponse.Meta.of(ctx.requestId())))
+        .build();
+  }
+
+  @Operation(
+      summary = "Replace one of the caller's own addresses",
+      description = "Another shopper's address is not found, not forbidden (12.10).")
+  @APIResponse(responseCode = "200", description = "Address updated")
+  @APIResponse(responseCode = "404", description = "No such address in the caller's book")
+  @Tag(name = "Addresses")
+  @PUT
+  @Path("/me/addresses/{addressId}")
+  public ApiResponse<?> updateMyAddress(
+      @PathParam("addressId") UUID addressId, AddAddressRequest req) {
+    Validations.validate(req);
+    var address =
+        service.updateMyAddress(ctx.requireTenantId(), ctx.requireUserId(), addressId, req);
+    return ApiResponse.ok(Mappers.toAddress(address), ApiResponse.Meta.of(ctx.requestId()));
+  }
+
+  @Operation(
+      summary = "Remove one of the caller's own addresses",
+      description = "Another shopper's address is not found, not forbidden (12.10).")
+  @APIResponse(responseCode = "204", description = "Address removed")
+  @APIResponse(responseCode = "404", description = "No such address in the caller's book")
+  @Tag(name = "Addresses")
+  @DELETE
+  @Path("/me/addresses/{addressId}")
+  public Response deleteMyAddress(@PathParam("addressId") UUID addressId) {
+    service.deleteMyAddress(ctx.requireTenantId(), ctx.requireUserId(), addressId);
+    return Response.noContent().build();
+  }
+
+  @Operation(
       summary = "Export the caller's own data",
       description =
           "UK GDPR art.20: the personal data this shop holds about the signed-in shopper, in a"
@@ -196,6 +281,7 @@ public class CustomerResource {
   @GET
   @Path("/{id}/export")
   public ApiResponse<?> exportCustomer(@PathParam("id") UUID id) {
+    ctx.requirePermission(com.shelfj.web.Permissions.CUSTOMERS_PRIVACY);
     UUID tenantId = ctx.requireTenantId();
     var customer = service.get(tenantId, id);
     return ApiResponse.ok(
@@ -452,6 +538,7 @@ public class CustomerResource {
   @Path("/{id}")
   public Response anonymize(@PathParam("id") UUID id) {
     ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
+    ctx.requirePermission(com.shelfj.web.Permissions.CUSTOMERS_PRIVACY);
     UUID tenantId = ctx.requireTenantId();
     service.anonymize(tenantId, id);
     return Response.noContent().build();
@@ -723,8 +810,7 @@ public class CustomerResource {
   @GET
   @Path("/{id}/store-credit")
   public ApiResponse<?> getStoreCredit(
-      @PathParam("id") UUID customerId,
-      @QueryParam("currency") @DefaultValue("GBP") String currency) {
+      @PathParam("id") UUID customerId, @QueryParam("currency") String currency) {
     UUID tenantId = ctx.requireTenantId();
     return ApiResponse.ok(
         Mappers.toStoreCredit(service.getStoreCredit(tenantId, customerId, currency, ctx)),
@@ -737,7 +823,8 @@ public class CustomerResource {
    * <p>Not idempotent — calling it twice issues twice.
    *
    * @param customerId the customer to credit
-   * @param req the amount, optional currency (defaults to GBP), originating order and reason
+   * @param req the amount, optional currency (the tenant's own when omitted), originating order and
+   *     reason
    * @return the account with its new balance
    * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist
    */
@@ -765,7 +852,8 @@ public class CustomerResource {
    * retry a store-credit tender safely.
    *
    * @param customerId the customer to debit
-   * @param req the amount, optional currency (defaults to GBP), order being paid and reason
+   * @param req the amount, optional currency (the tenant's own when omitted), order being paid and
+   *     reason
    * @return the account with its new balance
    * @throws com.shelfj.web.ApiException {@code 404} when the customer does not exist; {@code 422}
    *     when the balance is insufficient

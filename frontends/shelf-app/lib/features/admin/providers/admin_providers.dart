@@ -40,7 +40,7 @@ class OrderSummary {
         fulfilmentType: j['fulfilmentType'] as String? ?? 'INSTORE',
         status: j['status'] as String? ?? '-',
         total: (j['total'] as num?)?.toDouble() ?? 0,
-        currency: j['currency'] as String? ?? 'INR',
+        currency: j['currency'] as String? ?? '',
         createdAt: j['createdAt'] as String? ?? '',
         paymentMethod: j['paymentMethod'] as String?,
       );
@@ -125,8 +125,8 @@ class TenantInfo {
         id: j['id'] as String? ?? '',
         name: j['name'] as String? ?? '-',
         status: j['status'] as String? ?? '-',
-        currency: j['currency'] as String? ?? 'INR',
-        country: j['country'] as String? ?? '-',
+        currency: j['currency'] as String? ?? '',
+        country: j['country'] as String? ?? '',
       );
 }
 
@@ -595,7 +595,12 @@ class StaffMember {
   final String id;
   final String userId;
   final String storeId;
+
+  /// The role as assigned: a built-in tier or one of the tenant's own codes.
   final String role;
+
+  /// The tier the assignment stands on; equals [role] for a built-in one.
+  final String baseTier;
   final String assignedAt;
 
   const StaffMember({
@@ -603,17 +608,96 @@ class StaffMember {
     required this.userId,
     required this.storeId,
     required this.role,
+    String? baseTier,
     required this.assignedAt,
-  });
+  }) : baseTier = baseTier ?? role;
+
+  bool get customRole => role != baseTier;
 
   factory StaffMember.fromJson(Map<String, dynamic> j) => StaffMember(
         id: j['id'] as String? ?? '',
         userId: j['userId'] as String? ?? '-',
         storeId: j['storeId'] as String? ?? '-',
         role: j['role'] as String? ?? '-',
+        baseTier: j['baseTier'] as String?,
         assignedAt: j['assignedAt'] as String? ?? '',
       );
 }
+
+// ── Roles (20.10): the built-in tiers beside the tenant's own ─────────────────
+
+/// A role the tenant's staff can hold: one of the four built-in tiers, or a
+/// role of the tenant's own standing on a tier with a subset of its permissions.
+class TenantRole {
+  final String code;
+  final String name;
+  final String baseTier;
+  final List<String> permissions;
+  final String? description;
+  final bool custom;
+
+  const TenantRole({
+    required this.code,
+    required this.name,
+    required this.baseTier,
+    required this.permissions,
+    this.description,
+    required this.custom,
+  });
+
+  factory TenantRole.fromJson(Map<String, dynamic> j) => TenantRole(
+        code: j['code'] as String? ?? '',
+        name: j['name'] as String? ?? '',
+        baseTier: j['baseTier'] as String? ?? '',
+        permissions: ((j['permissions'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        description: j['description'] as String?,
+        custom: j['custom'] == true,
+      );
+}
+
+/// One permission from the catalogue, with the tiers that hold it by default.
+class PermissionInfo {
+  final String code;
+  final String description;
+  final List<String> defaultFor;
+
+  const PermissionInfo({
+    required this.code,
+    required this.description,
+    required this.defaultFor,
+  });
+
+  factory PermissionInfo.fromJson(Map<String, dynamic> j) => PermissionInfo(
+        code: j['code'] as String? ?? '',
+        description: j['description'] as String? ?? '',
+        defaultFor: ((j['defaultFor'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+      );
+}
+
+final rolesProvider = FutureProvider.autoDispose<List<TenantRole>>((ref) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.tenant}/admin/roles');
+  final data = (resp.data['data'] as List?) ?? [];
+  return data.map((e) => TenantRole.fromJson(e as Map<String, dynamic>)).toList();
+});
+
+final permissionCatalogueProvider =
+    FutureProvider.autoDispose<List<PermissionInfo>>((ref) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.tenant}/admin/roles/permissions');
+  final data = (resp.data['data'] as List?) ?? [];
+  return data
+      .map((e) => PermissionInfo.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
 
 /// All staff assignments for the tenant (walks the cursor-paginated admin list).
 final staffProvider = FutureProvider.autoDispose<List<StaffMember>>((ref) async {
@@ -1636,16 +1720,107 @@ final stockTurnGroupingProvider = StateProvider<String>((ref) => 'STORE');
 /// rather than being omitted.
 final stockTurnReportProvider =
     FutureProvider.autoDispose<StockTurnReport>((ref) async {
-  final range = ref.watch(reportDateRangeProvider);
   final resp = await ref.read(apiClientProvider).dio.get(
-    '/${ApiConstants.inventory}/admin/inventory/reports/stock-turn',
-    queryParameters: {
-      'from': _dayStartInstant(range.from),
-      'to': _dayEndInstant(range.to),
-      'groupBy': ref.watch(stockTurnGroupingProvider),
-    },
-  );
+        '/${ApiConstants.inventory}/admin/inventory/reports/stock-turn',
+        queryParameters: _costedWindow(ref, stockTurnGroupingProvider),
+      );
   return StockTurnReport.fromJson(
+      Map<String, dynamic>.from(resp.data['data'] as Map));
+});
+
+/// The window and grouping the two reports costed from the movement ledger
+/// both require — stock turn and gross margin reject a call without from/to.
+Map<String, dynamic> _costedWindow(Ref ref, StateProvider<String> grouping) {
+  final range = ref.watch(reportDateRangeProvider);
+  return {
+    'from': _dayStartInstant(range.from),
+    'to': _dayEndInstant(range.to),
+    'groupBy': ref.watch(grouping),
+  };
+}
+
+// ── Gross margin and GMROI (19.7) ────────────────────────────────────────────
+
+/// One line of the gross-margin report. [marginPercent] is null when nothing
+/// was earned and [gmroi] when nothing was held — neither is a zero.
+class GrossMarginRow {
+  final String groupKey;
+  final double revenue;
+  final double cogs;
+  final double grossMargin;
+  final double? marginPercent;
+  final double averageValue;
+  final double? gmroi;
+  final double? annualisedGmroi;
+  final double uncostedSaleQty;
+
+  /// Sold with no revenue recorded; its cost is still in [cogs].
+  final double unpricedSaleQty;
+
+  const GrossMarginRow({
+    required this.groupKey,
+    required this.revenue,
+    required this.cogs,
+    required this.grossMargin,
+    this.marginPercent,
+    required this.averageValue,
+    this.gmroi,
+    this.annualisedGmroi,
+    required this.uncostedSaleQty,
+    required this.unpricedSaleQty,
+  });
+
+  factory GrossMarginRow.fromJson(Map<String, dynamic> j) {
+    double amount(String k) => (j[k] as num?)?.toDouble() ?? 0;
+    double? ratio(String k) => (j[k] as num?)?.toDouble();
+    return GrossMarginRow(
+      groupKey: j['groupKey'] as String? ?? '-',
+      revenue: amount('revenue'),
+      cogs: amount('cogs'),
+      grossMargin: amount('grossMargin'),
+      marginPercent: ratio('marginPercent'),
+      averageValue: amount('averageValue'),
+      gmroi: ratio('gmroi'),
+      annualisedGmroi: ratio('annualisedGmroi'),
+      uncostedSaleQty: amount('uncostedSaleQty'),
+      unpricedSaleQty: amount('unpricedSaleQty'),
+    );
+  }
+}
+
+class GrossMarginReport {
+  /// Lowest margin first — the end of the list worth acting on.
+  final List<GrossMarginRow> rows;
+  final bool historyComplete;
+  final int windowDays;
+
+  const GrossMarginReport(
+      {required this.rows,
+      required this.historyComplete,
+      required this.windowDays});
+
+  factory GrossMarginReport.fromJson(Map<String, dynamic> j) =>
+      GrossMarginReport(
+        rows: [
+          for (final e in (j['rows'] as List?) ?? const [])
+            GrossMarginRow.fromJson(e as Map<String, dynamic>)
+        ],
+        historyComplete: j['historyComplete'] as bool? ?? true,
+        windowDays: (j['windowDays'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// STORE (compare sites) · VARIANT (find the lines that earn least).
+final grossMarginGroupingProvider = StateProvider<String>((ref) => 'STORE');
+
+/// Gross margin and GMROI over the report window (19.7).
+final grossMarginReportProvider =
+    FutureProvider.autoDispose<GrossMarginReport>((ref) async {
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.inventory}/admin/inventory/reports/gross-margin',
+        queryParameters: _costedWindow(ref, grossMarginGroupingProvider),
+      );
+  return GrossMarginReport.fromJson(
       Map<String, dynamic>.from(resp.data['data'] as Map));
 });
 
@@ -1874,4 +2049,124 @@ final salesByStaffReportProvider =
   return rows
       .map((e) => SalesByStaffRow.fromJson(e as Map<String, dynamic>))
       .toList();
+});
+
+// ── The trial balance (17.1): every nominal code's movement over a range ─────
+
+/// One nominal code on the trial balance. [balance] is debit less credit:
+/// positive for an asset or expense, negative for a liability or income.
+class TrialBalanceRow {
+  final String nominalCode;
+  final String nominalName;
+  final double debit;
+  final double credit;
+  final double balance;
+
+  const TrialBalanceRow({
+    required this.nominalCode,
+    required this.nominalName,
+    required this.debit,
+    required this.credit,
+    required this.balance,
+  });
+
+  factory TrialBalanceRow.fromJson(Map<String, dynamic> j) => TrialBalanceRow(
+        nominalCode: j['nominalCode'] as String? ?? '',
+        nominalName: j['nominalName'] as String? ?? '',
+        debit: (j['debit'] as num?)?.toDouble() ?? 0,
+        credit: (j['credit'] as num?)?.toDouble() ?? 0,
+        balance: (j['balance'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// The trial balance purchase-svc computes over its nominal ledger. [balanced]
+/// is the ledger's own invariant — every posting it writes balances — so
+/// `false` is a fault to investigate, not a figure to report, and the screen
+/// says so rather than printing two totals that disagree in the same font.
+class TrialBalance {
+  final List<TrialBalanceRow> rows;
+  final double totalDebit;
+  final double totalCredit;
+  final bool balanced;
+  final String? from;
+  final String? to;
+
+  const TrialBalance({
+    required this.rows,
+    required this.totalDebit,
+    required this.totalCredit,
+    required this.balanced,
+    this.from,
+    this.to,
+  });
+
+  factory TrialBalance.fromJson(Map<String, dynamic> j) => TrialBalance(
+        rows: ((j['rows'] as List?) ?? [])
+            .map((e) => TrialBalanceRow.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        totalDebit: (j['totalDebit'] as num?)?.toDouble() ?? 0,
+        totalCredit: (j['totalCredit'] as num?)?.toDouble() ?? 0,
+        balanced: j['balanced'] != false,
+        from: j['from'] as String?,
+        to: j['to'] as String?,
+      );
+}
+
+/// The trial balance for the selected range. Unlike the reporting-svc reports
+/// this endpoint takes plain dates (yyyy-MM-dd, inclusive at both ends), so the
+/// picker's values go through as they are.
+// ── Sales clearing (17.7): sales whose takings did not clear ────────────────
+
+/// An order left open on 1105 Sales Receipts Clearing. [balance] is debit less
+/// credit: negative means money was taken that no confirmed sale has claimed,
+/// positive a sale confirmed for more than was taken.
+class SalesClearingItem {
+  final String orderId;
+  final String? storeId;
+  final double balance;
+  final String? firstPosted;
+  final String? lastPosted;
+
+  const SalesClearingItem({
+    required this.orderId,
+    this.storeId,
+    required this.balance,
+    this.firstPosted,
+    this.lastPosted,
+  });
+
+  factory SalesClearingItem.fromJson(Map<String, dynamic> j) => SalesClearingItem(
+        orderId: j['orderId'] as String? ?? '',
+        storeId: j['storeId'] as String?,
+        balance: (j['balance'] as num?)?.toDouble() ?? 0,
+        firstPosted: j['firstPosted'] as String?,
+        lastPosted: j['lastPosted'] as String?,
+      );
+}
+
+final salesClearingProvider =
+    FutureProvider.autoDispose<List<SalesClearingItem>>((ref) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.purchase}/nominal-ledger/sales-clearing');
+  final data = (resp.data['data'] as List?) ?? const [];
+  return data
+      .map((e) => SalesClearingItem.fromJson(Map<String, dynamic>.from(e as Map)))
+      .toList();
+});
+
+final trialBalanceProvider =
+    FutureProvider.autoDispose<TrialBalance>((ref) async {
+  final range = ref.watch(reportDateRangeProvider);
+  final params = <String, dynamic>{};
+  if (range.from != null && range.from!.isNotEmpty) params['from'] = range.from;
+  if (range.to != null && range.to!.isNotEmpty) params['to'] = range.to;
+  final resp = await ref.read(apiClientProvider).dio.get(
+        '/${ApiConstants.purchase}/nominal-ledger/trial-balance',
+        queryParameters: params.isEmpty ? null : params,
+      );
+  final body = resp.data['data'];
+  return TrialBalance.fromJson(
+      body is Map ? Map<String, dynamic>.from(body) : const {});
 });

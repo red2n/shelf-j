@@ -310,7 +310,11 @@ public class CatalogResource {
               + " Japan and 21 in the US — the restriction belongs to the product, the age belongs"
               + " to the jurisdiction.\n\n"
               + "A tenant's own rule wins over the statutory default, and may only ever be"
-              + " stricter. `minimumAge` null means the item is not restricted at all.")
+              + " stricter. `minimumAge` null means the item is not restricted at all.\n\n"
+              + "`bornBefore` is a date of birth rather than an age: when present, refuse anyone"
+              + " born on or after it however old they are. The UK's generational tobacco ban"
+              + " takes effect on 1 Jan 2027 and appears here from that day; a business that"
+              + " adopts it, or an earlier date, sees its own at once.")
   @APIResponse(responseCode = "200", description = "The check to perform, or no restriction")
   @APIResponse(
       responseCode = "400",
@@ -331,6 +335,8 @@ public class CatalogResource {
                 false,
                 null,
                 null,
+                false,
+                null,
                 false)
             : new AgeCheckResponse(
                 variantId.toString(),
@@ -338,7 +344,9 @@ public class CatalogResource {
                 true,
                 rule.category(),
                 rule.minimumAge(),
-                rule.tenantId() != null));
+                rule.ageFromTenant(),
+                rule.bornBefore() == null ? null : rule.bornBefore().toString(),
+                rule.bornBeforeFromTenant()));
   }
 
   /**
@@ -361,5 +369,29 @@ public class CatalogResource {
   @Path("/variants/{variantId}/compliance")
   public ApiResponse<VariantComplianceResponse> compliance(@PathParam("variantId") UUID variantId) {
     return ApiResponse.ok(Mappers.toCompliance(service.complianceOf(requireTenant(), variantId)));
+  }
+
+  /**
+   * What the online offer shows about a product's safety (01.12).
+   *
+   * <p>Open to shoppers deliberately, like the allergen declaration: GPSR art.19 requires it to be
+   * shown with the offer, before anyone signs in.
+   *
+   * @param id the product id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such product for this tenant
+   */
+  @Operation(
+      summary = "A product's safety information, as the online offer shows it",
+      description =
+          "The manufacturer, the EU responsible person where the manufacturer is outside the EU, and"
+              + " the warnings or the statement that none apply (Regulation (EU) 2023/988 art.19).")
+  @APIResponse(responseCode = "404", description = "No such product for this tenant")
+  @Tag(name = "Catalog")
+  @GET
+  @Path("/products/{id}/safety-information")
+  public ApiResponse<com.shelfj.product.dto.Dtos.SafetyInformationResponse> safetyInformation(
+      @PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        Mappers.toSafetyInformation(service.safetyInformation(requireTenant(), id)));
   }
 }

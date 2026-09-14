@@ -13,8 +13,8 @@ public final class Domain {
   private Domain() {}
 
   /**
-   * HMRC VAT rate. code: T1=Standard 20%, T5=Reduced 5%, T0=Zero 0%, TX=Exempt. Per HMRC VAT Notice
-   * 700.
+   * HMRC VAT rate. code: T1=the business's standard rate, T5=reduced, T0=zero, TX=exempt — each set
+   * by the business, never assumed (SJ-D56). Per HMRC VAT Notice 700.
    */
   public record VatRate(
       UUID id,
@@ -89,7 +89,7 @@ public final class Domain {
 
   /**
    * Time-bounded promotional discount. type=PERCENT: value is percentage off (e.g. 10 = 10% off).
-   * type=FLAT: value is flat amount off in base currency (GBP).
+   * type=FLAT: value is flat amount off in the price list's currency.
    */
   public record Promotion(
       UUID id,
@@ -130,6 +130,13 @@ public final class Domain {
 
     /** Buy {@code buyQty}, get {@code getQty} at {@code getDiscountPct} off (100 = free). */
     public static final String TYPE_BOGO = "BOGO";
+
+    /**
+     * Mix and match (03.8): any {@code buyQty} units from the scope for {@code value} — "any 3 for
+     * £10". Whole bundles only; the dearest units make up the bundles; the leftover units are
+     * charged in full.
+     */
+    public static final String TYPE_MIX_MATCH = "MIX_MATCH";
 
     /** True when this promotion must be presented rather than applying on its own. */
     public boolean requiresCoupon() {
@@ -263,7 +270,11 @@ public final class Domain {
       BigDecimal totalWithVat,
       String currency,
       UUID priceListId,
-      String promotionApplied) {}
+      String promotionApplied,
+      UnitPrice unitPricing,
+      boolean unitPriceRequired,
+      PriorPrice priorPrice,
+      boolean priorPriceRequired) {}
 
   /**
    * HMRC MTD VAT return. Boxes per VAT Notice 700 s.17: 1=output VAT, 2=EU acquisitions VAT
@@ -432,6 +443,9 @@ public final class Domain {
     /** Shown, never stored: an active markdown past its date. */
     public static final String STATUS_EXPIRED = "EXPIRED";
 
+    /** Reduced because it is near its date: the only reason art.6a(3) can reach. */
+    public static final String REASON_SHORT_DATED = "SHORT_DATED";
+
     public static final java.util.Set<String> REASONS =
         java.util.Set.of("SHORT_DATED", "CLEARANCE", "DAMAGED_PACK", "OVERSTOCK");
 
@@ -522,4 +536,136 @@ public final class Domain {
     public static final String STATUS_ACCEPTED = "ACCEPTED";
     public static final String STATUS_REJECTED = "REJECTED";
   }
+
+  // ── unit pricing (03.13) ───────────────────────────────────────────────────
+
+  /** What one price buys, in a standard unit: KG, L, M, SQM, or EA for goods sold by number. */
+  public record Measure(String unit, BigDecimal quantity) {}
+
+  /**
+   * A unit price: the price per one standard unit, how much one price buys, and how it reads (per
+   * kg, per litre, each).
+   */
+  public record UnitPrice(BigDecimal amount, String unit, BigDecimal quantity, String label) {}
+
+  /**
+   * A shelf-edge label (03.13): the regular selling price and its unit price and, while a promotion
+   * applies, the promotional price and its unit price beside it.
+   */
+  public record ShelfLabel(
+      UUID variantId,
+      boolean priced,
+      String currency,
+      BigDecimal regularPrice,
+      UnitPrice regularUnitPrice,
+      BigDecimal promotionalPrice,
+      UnitPrice promotionalUnitPrice,
+      String promotionName,
+      boolean measureDeclared,
+      boolean unitPriceRequired,
+      BigDecimal priorPrice,
+      String priorPriceStatus,
+      boolean priorPriceRequired) {}
+
+  /** A priced variant with no declared measure, so no unit price can be shown. */
+  public record UnitPriceGap(UUID variantId, UUID productId, boolean catalogued) {}
+
+  public record UnitPriceGaps(boolean required, java.util.List<UnitPriceGap> gaps) {}
+
+  // ── prior price (03.12) ────────────────────────────────────────────────────
+
+  /**
+   * One row of the applied-price ledger: what a shopper was offered for a variant on a channel (and
+   * at a store, where a store-scoped promotion applies) from {@code appliedFrom} until the next
+   * row.
+   */
+  public record AppliedPrice(
+      UUID id,
+      UUID tenantId,
+      UUID variantId,
+      String channel,
+      UUID storeId,
+      boolean priced,
+      BigDecimal price,
+      BigDecimal netPrice,
+      BigDecimal regularPrice,
+      String promotionName,
+      String currency,
+      Instant appliedFrom,
+      /** Null when certain; else from when what was offered cannot be known, until the next row. */
+      Instant uncertainSince,
+      Instant recordedAt,
+      String cause) {
+
+    /** Offered below its own regular price. */
+    public boolean reduced() {
+      return priced && price.compareTo(regularPrice) < 0;
+    }
+
+    /** The same finding, uncertain from {@code since}. */
+    public AppliedPrice withUncertainSince(Instant since) {
+      return new AppliedPrice(
+          id,
+          tenantId,
+          variantId,
+          channel,
+          storeId,
+          priced,
+          price,
+          netPrice,
+          regularPrice,
+          promotionName,
+          currency,
+          appliedFrom,
+          since,
+          recordedAt,
+          cause);
+    }
+  }
+
+  /** A queued evaluation: the variant (null for all), as of when, and why. */
+  public record PriceEvaluation(
+      UUID id, UUID tenantId, UUID variantId, Instant asOf, String cause, Instant enqueuedAt) {}
+
+  /**
+   * A reduction's prior price as the ledger shows it: the status, the lowest price applied in the
+   * window before the reduction began, when it began, and whether less than the full window of
+   * history exists.
+   */
+  public record PriorPrice(
+      String status,
+      BigDecimal priorPrice,
+      /** The same before VAT, for a till that shows prices net of it. */
+      BigDecimal priorPriceNet,
+      Instant reductionStartedAt,
+      boolean shortHistory) {}
+
+  /**
+   * What a reduced-price sticker may say at the till (03.12): the price it was reduced from, only
+   * where that is the prior price the law asks for, or where the law does not ask.
+   *
+   * @param wasPrice the price the till may strike through, before VAT; null when none may be shown
+   * @param priorPrice the lowest price of the 30 days before, VAT included, where the law asks
+   * @param priorPriceStatus as {@link PriorPrice#status}, where the law asks
+   * @param priorPriceRequired whether art.6a binds the store's offers
+   * @param perishableExempt whether it is exempt as short-dated goods, where art.6a(3) is law
+   */
+  public record MarkdownReduction(
+      BigDecimal wasPrice,
+      BigDecimal priorPrice,
+      String priorPriceStatus,
+      boolean priorPriceRequired,
+      boolean perishableExempt) {}
+
+  /** A reduction on offer as the ledger records it, with its prior price. */
+  public record Reduction(
+      UUID variantId,
+      String channel,
+      UUID storeId,
+      BigDecimal price,
+      BigDecimal regularPrice,
+      String promotionName,
+      String currency,
+      PriorPrice prior,
+      boolean required) {}
 }

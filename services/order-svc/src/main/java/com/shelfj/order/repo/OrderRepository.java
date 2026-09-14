@@ -1139,8 +1139,8 @@ public class OrderRepository extends BaseOutboxRepository {
           try (PreparedStatement ps =
               c.prepareStatement(
                   "INSERT INTO returns"
-                      + " (id,tenant_id,order_id,store_id,reason,refund_amount,refund_method,status)"
-                      + " VALUES (?,?,?,?,?,?,?,?)")) {
+                      + " (id,tenant_id,order_id,store_id,reason,refund_amount,refund_method,"
+                      + "status,created_by) VALUES (?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, ret.id());
             ps.setObject(2, ret.tenantId());
             ps.setObject(3, ret.orderId());
@@ -1149,6 +1149,7 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setBigDecimal(6, ret.refundAmount());
             ps.setString(7, ret.refundMethod());
             ps.setString(8, ret.status());
+            ps.setObject(9, ret.createdBy());
             ps.executeUpdate();
           }
           for (ReturnItem item : items) {
@@ -1183,7 +1184,7 @@ public class OrderRepository extends BaseOutboxRepository {
   public List<Return> findReturns(UUID tenantId, UUID orderId) {
     return query(
         "SELECT id, tenant_id, order_id, store_id, reason, refund_amount, refund_method,"
-            + " status, created_at, completed_at"
+            + " status, created_at, completed_at, created_by"
             + " FROM returns WHERE tenant_id=? AND order_id=? ORDER BY created_at",
         ps -> {
           ps.setObject(1, tenantId);
@@ -2074,7 +2075,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getString("refund_method"),
         rs.getString("status"),
         toInstant(rs.getObject("created_at", OffsetDateTime.class)),
-        toInstant(rs.getObject("completed_at", OffsetDateTime.class)));
+        toInstant(rs.getObject("completed_at", OffsetDateTime.class)),
+        rs.getObject("created_by", UUID.class));
   }
 
   private ReturnItem mapReturnItem(ResultSet rs) throws SQLException {
@@ -2693,8 +2695,8 @@ public class OrderRepository extends BaseOutboxRepository {
                   "INSERT INTO age_verifications"
                       + " (id, tenant_id, store_id, cashier_id, pos_session_id, variant_id,"
                       + "  category, minimum_age, country, store_policy, outcome, reason,"
-                      + "  id_type, order_id, checked_at)"
-                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                      + "  id_type, order_id, checked_at, born_before, born_before_policy)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             ps.setObject(1, v.id());
             ps.setObject(2, v.tenantId());
             ps.setObject(3, v.storeId());
@@ -2710,6 +2712,8 @@ public class OrderRepository extends BaseOutboxRepository {
             ps.setString(13, v.idType());
             ps.setObject(14, v.orderId());
             ps.setObject(15, v.checkedAt().atOffset(java.time.ZoneOffset.UTC));
+            ps.setObject(16, v.bornBefore());
+            ps.setBoolean(17, v.bornBeforePolicy());
             ps.executeUpdate();
           }
           return v;
@@ -2742,8 +2746,8 @@ public class OrderRepository extends BaseOutboxRepository {
     StringBuilder sql =
         new StringBuilder(
             "SELECT id, tenant_id, store_id, cashier_id, pos_session_id, variant_id, category,"
-                + " minimum_age, country, store_policy, outcome, reason, id_type, order_id,"
-                + " checked_at FROM age_verifications WHERE tenant_id=?");
+                + " minimum_age, country, store_policy, born_before, born_before_policy, outcome,"
+                + " reason, id_type, order_id, checked_at FROM age_verifications WHERE tenant_id=?");
     if (storeId != null) sql.append(" AND store_id=?");
     if (outcome != null) sql.append(" AND outcome=?");
     if (from != null) sql.append(" AND checked_at >= ?");
@@ -2842,6 +2846,8 @@ public class OrderRepository extends BaseOutboxRepository {
         rs.getInt("minimum_age"),
         rs.getString("country"),
         rs.getBoolean("store_policy"),
+        rs.getObject("born_before", java.time.LocalDate.class),
+        rs.getBoolean("born_before_policy"),
         rs.getString("outcome"),
         rs.getString("reason"),
         rs.getString("id_type"),

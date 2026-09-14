@@ -40,6 +40,9 @@ dependencies:
   url_launcher: ^6.3.0
   # web-only browser API bindings (Blob/URL) for POS receipt printing
   web: ^1.1.0
+  # where a native build keeps a saved receipt or export (documents directory) — the
+  # non-web half of lib/shared/util/file_download.dart. Web downloads instead.
+  path_provider: ^2.1.6
   # MQTT-over-WebSocket for live admin push (shortage alerts etc. from notification-svc's
   # MqttChannel) — see lib/features/admin/providers/live_alerts_provider.dart. Web-only for now
   # (MqttBrowserClient); native mobile/desktop would need MqttServerClient behind a conditional

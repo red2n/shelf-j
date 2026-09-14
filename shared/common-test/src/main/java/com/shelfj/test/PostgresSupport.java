@@ -57,6 +57,20 @@ public final class PostgresSupport implements AutoCloseable {
           + "  OR column_default ILIKE '%uuid_v7%')"
           + " ORDER BY 1";
 
+  /**
+   * SJ-D54: a column holding a currency, country, time zone or locale must not default to a
+   * literal. SJ-D53 took those literals out of the code and left 'GBP', 'USD' and 'GB' in thirteen
+   * column defaults, where an insert that forgot the column was filled in with the wrong one
+   * silently.
+   */
+  private static final String LITERAL_TENANT_DEFAULTS =
+      "SELECT table_schema || '.' || table_name || '.' || column_name || ' DEFAULT ' || column_default"
+          + " FROM information_schema.columns"
+          + " WHERE table_schema NOT IN ('pg_catalog', 'information_schema')"
+          + " AND column_name ~ '(^|_)(currency|country|country_code|timezone|time_zone|locale)$'"
+          + " AND column_default ~ '^''[^'']+''(::[a-z ]+)?$'"
+          + " ORDER BY 1";
+
   private final PostgreSQLContainer<?> container;
 
   private PostgresSupport(PostgreSQLContainer<?> container) {
@@ -88,6 +102,24 @@ public final class PostgresSupport implements AutoCloseable {
    * @return this, for chaining after {@link #start()}
    * @throws org.flywaydb.core.api.FlywayException if a migration fails to apply
    */
+  /**
+   * Points a service's Helidon test at this database and switches discovery and Kafka off: the
+   * static block every integration test opens with.
+   *
+   * @param schema the service's schema, e.g. {@code "purchase"}
+   * @return this, for chaining
+   */
+  public PostgresSupport wire(String schema) {
+    System.setProperty("shelfj.db.url", jdbcUrl());
+    System.setProperty("shelfj.db.migration-url", jdbcUrl());
+    System.setProperty("shelfj.db.user", username());
+    System.setProperty("shelfj.db.password", password());
+    System.setProperty("shelfj.db.schema", schema);
+    System.setProperty("shelfj.consul.enabled", "false");
+    System.setProperty("shelfj.kafka.enabled", "false");
+    return this;
+  }
+
   public PostgresSupport migrate(String location) {
     Flyway.configure()
         .dataSource(container.getJdbcUrl(), container.getUsername(), container.getPassword())
@@ -148,6 +180,13 @@ public final class PostgresSupport implements AutoCloseable {
                 + defaults
                 + ". Drop the DEFAULT and bind Ids.newId(); see docs/coding-standards.md §3.");
       }
+      List<String> literals = literalTenantDefaults();
+      if (!literals.isEmpty()) {
+        throw new AssertionError(
+            "currency, country or time zone columns defaulting to a literal: "
+                + literals
+                + ". Drop the DEFAULT and bind the tenant's own (TenantProfiles); see SJ-D53/SJ-D54.");
+      }
       Map<String, Long> offenders = nonV7Ids();
       if (!offenders.isEmpty()) {
         throw new AssertionError(
@@ -166,9 +205,21 @@ public final class PostgresSupport implements AutoCloseable {
    *     logs a warning and keeps running
    */
   public List<String> idGeneratingDefaults() {
+    return columnsMatching(ID_GENERATING_DEFAULTS);
+  }
+
+  /**
+   * @return every currency, country, time zone or locale column, in any schema, whose default is a
+   *     literal (SJ-D54)
+   */
+  public List<String> literalTenantDefaults() {
+    return columnsMatching(LITERAL_TENANT_DEFAULTS);
+  }
+
+  private List<String> columnsMatching(String sql) {
     List<String> offenders = new ArrayList<>();
     try (Connection c = dataSource().getConnection();
-        PreparedStatement ps = c.prepareStatement(ID_GENERATING_DEFAULTS);
+        PreparedStatement ps = c.prepareStatement(sql);
         ResultSet rs = ps.executeQuery()) {
       while (rs.next()) {
         offenders.add(rs.getString(1));

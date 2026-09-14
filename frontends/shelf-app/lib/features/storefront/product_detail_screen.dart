@@ -6,7 +6,9 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'storefront_providers.dart';
 import 'storefront_widgets.dart';
+import 'unit_price.dart';
 import 'allergen_summary.dart';
+import 'product_safety_section.dart';
 
 class ProductDetailScreen extends ConsumerWidget {
   final String productId;
@@ -54,6 +56,8 @@ class ProductDetailScreen extends ConsumerWidget {
               Text(product.description!,
                   style: TextStyle(color: cs.onSurfaceVariant)),
             ],
+            // Shown with the offer, before anyone signs in (GPSR art.19).
+            ProductSafetySection(productId: product.id),
             const SizedBox(height: 24),
             Text('Options',
                 style: Theme.of(context)
@@ -172,9 +176,17 @@ class _VariantRow extends ConsumerWidget {
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('${p.currency} ${p.totalWithVat.toStringAsFixed(2)}',
-                    style:
-                        TextStyle(color: cs.primary, fontWeight: FontWeight.bold)),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text('${p.currency} ${p.totalWithVat.toStringAsFixed(2)}',
+                        style: TextStyle(
+                            color: cs.primary, fontWeight: FontWeight.bold)),
+                    WasPriceText(price: p),
+                    UnitPriceText(price: p),
+                  ],
+                ),
                 const SizedBox(width: 8),
                 FilledButton(
                   onPressed: () => addLine(p.totalWithVat, p.currency),

@@ -42,7 +42,15 @@ public final class Mappers {
         s.currency(),
         s.paymentTermsDays(),
         s.createdAt(),
-        s.updatedAt());
+        s.updatedAt(),
+        s.remittanceEmail(),
+        s.bankAccountName(),
+        s.bankSortCode(),
+        com.shelfj.purchase.domain.BankAccount.masked(s.bankAccountNumber()),
+        com.shelfj.purchase.domain.BankAccount.masked(s.bankIban()),
+        s.bankBic(),
+        s.hasBankDetails(),
+        s.bankDetailsChangedAt());
   }
 
   /**
@@ -126,6 +134,19 @@ public final class Mappers {
         inv.status(),
         inv.createdBy(),
         inv.createdAt(),
+        inv.dueDate(),
+        inv.statedGross(),
+        inv.headerVariances() == null || inv.headerVariances().isBlank()
+            ? java.util.List.of()
+            : java.util.List.of(inv.headerVariances().split(",")),
+        inv.postedAt(),
+        inv.payable(),
+        inv.resolvedAt(),
+        inv.resolvedBy(),
+        inv.resolutionReason(),
+        inv.paidAt(),
+        inv.paymentRunId(),
+        inv.paidAt() != null,
         rows);
   }
 
@@ -238,6 +259,9 @@ public final class Mappers {
     return new NominalLedgerEntryResponse(
         e.id(),
         e.tenantId(),
+        e.journalId(),
+        e.sourceType(),
+        e.storeId(),
         e.entryDate(),
         e.nominalCode(),
         e.nominalName(),
@@ -294,5 +318,113 @@ public final class Mappers {
                     new com.shelfj.purchase.dto.Dtos.VendorReturnLineResponse(
                         l.id(), l.variantId(), l.qty(), l.unitPrice(), l.vatCode(), l.lineNet()))
             .toList());
+  }
+
+  /**
+   * Converts a journal to its wire form: the header its lines share and the lines.
+   *
+   * @param j the journal
+   * @return its API representation
+   */
+  public static Dtos.JournalResponse toDto(Domain.Journal j) {
+    return new Dtos.JournalResponse(
+        j.journalId(),
+        j.entryDate(),
+        j.description(),
+        j.sourceType(),
+        j.sourceRef(),
+        j.storeId(),
+        j.totalDebit(),
+        j.totalCredit(),
+        j.lines().stream().map(Mappers::toDto).toList());
+  }
+
+  /**
+   * Converts trial balance rows to the wire form, with the totals and whether they agree.
+   *
+   * @param rows one per nominal code
+   * @param from the range start, or null
+   * @param to the range end, or null
+   * @param storeId the store filter, or null
+   * @return the trial balance
+   */
+  public static Dtos.TrialBalanceResponse toTrialBalance(
+      java.util.List<Domain.TrialBalanceRow> rows,
+      java.time.LocalDate from,
+      java.time.LocalDate to,
+      java.util.UUID storeId) {
+    java.math.BigDecimal debit = java.math.BigDecimal.ZERO;
+    java.math.BigDecimal credit = java.math.BigDecimal.ZERO;
+    var out = new java.util.ArrayList<Dtos.TrialBalanceRowResponse>(rows.size());
+    for (Domain.TrialBalanceRow r : rows) {
+      debit = debit.add(r.debit());
+      credit = credit.add(r.credit());
+      out.add(
+          new Dtos.TrialBalanceRowResponse(
+              r.nominalCode(), r.nominalName(), r.debit(), r.credit(), r.balance()));
+    }
+    return new Dtos.TrialBalanceResponse(
+        from, to, storeId, out, debit, credit, debit.compareTo(credit) == 0);
+  }
+
+  /**
+   * Converts a payment run to its wire form: the run, what it pays each supplier, and any supplier
+   * it does not pay. Bank details never appear here; they reach the bank file alone.
+   */
+  public static Dtos.PaymentRunResponse toDto(com.shelfj.purchase.domain.PaymentRuns.View v) {
+    var r = v.run();
+    return new Dtos.PaymentRunResponse(
+        r.id(),
+        r.reference(),
+        r.status(),
+        r.payUpTo(),
+        r.paymentDate(),
+        r.currency(),
+        r.total(),
+        r.proposedBy(),
+        r.proposedAt(),
+        r.approvedBy(),
+        r.approvedAt(),
+        r.paidBy(),
+        r.paidAt(),
+        r.cancelledBy(),
+        r.cancelledAt(),
+        r.cancelReason(),
+        v.proposal().payments().stream()
+            .map(
+                p -> {
+                  var s = v.suppliers().get(p.supplierId());
+                  return new Dtos.PaymentRunSupplierResponse(
+                      p.supplierId(),
+                      p.name(),
+                      p.net(),
+                      s != null && s.remittanceEmail() != null,
+                      p.warnings(),
+                      p.documents().stream()
+                          .map(
+                              d ->
+                                  new Dtos.PaymentRunDocumentResponse(
+                                      d.type(),
+                                      d.documentId(),
+                                      d.storeId(),
+                                      d.reference(),
+                                      d.documentDate(),
+                                      d.dueDate(),
+                                      d.amount()))
+                          .toList());
+                })
+            .toList(),
+        v.proposal().excluded().stream()
+            .map(
+                e ->
+                    new Dtos.PaymentRunExcludedResponse(
+                        e.supplierId(), e.name(), e.reason(), e.net()))
+            .toList());
+  }
+
+  /** An order left open on the sales receipts clearing account, in wire form. */
+  public static Dtos.SalesClearingResponse toDto(Domain.OpenClearing o) {
+    return new Dtos.SalesClearingResponse(
+        o.orderId(), o.storeId(), o.balance(), o.firstPosted(), o.lastPosted());
   }
 }

@@ -75,7 +75,8 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
     // A void is a management action: the shared filter refuses anyone else, so the menu
     // offers it to an owner or manager rather than showing a button that always fails.
     final auth = ref.watch(authNotifierProvider).value;
-    final canVoid = auth is AuthAuthenticated && auth.isManager;
+    final canVoid =
+        auth is AuthAuthenticated && auth.isManager && auth.hasPermission('sales.void');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

@@ -105,7 +105,7 @@ public final class Dtos {
       boolean vatRegistered,
       @Schema(description = "True if this customer is eligible for reverse-charge VAT.")
           boolean reverseChargeEligible,
-      @Schema(description = "ISO 3166-1 alpha-2 country code. Defaults to GB.")
+      @Schema(description = "ISO 3166-1 alpha-2 country code. The tenant's own when omitted.")
           String countryCode) {}
 
   @Schema(name = "CustomerVatStatusResponse")
@@ -126,7 +126,8 @@ public final class Dtos {
   public record CreatePriceListRequest(
       @NotBlank String name,
       @Schema(description = "ALL, ONLINE, or POS. Defaults to ALL.") String channel,
-      @Schema(description = "ISO 4217 currency code. Defaults to GBP.") String currency,
+      @Schema(description = "ISO 4217 currency code. The tenant's own when omitted.")
+          String currency,
       @Schema(
               description =
                   "ISO-8601 instant this price list takes effect, e.g."
@@ -202,7 +203,134 @@ public final class Dtos {
       BigDecimal totalWithVat,
       String currency,
       UUID priceListId,
-      @Schema(description = "Name of the promotion applied, if any.") String promotionApplied) {}
+      @Schema(description = "Name of the promotion applied, if any.") String promotionApplied,
+      @Schema(
+              description =
+                  "The unit price of totalWithVat — per kg, litre, metre, m² or item — when the"
+                      + " variant's measure is declared; null otherwise.")
+          UnitPriceResponse unitPricing,
+      @Schema(description = "Whether a unit price is law for this business's offers today.")
+          boolean unitPriceRequired,
+      @Schema(
+              description =
+                  "While a promotion applies: the lowest price, VAT included, applied in the 30 days"
+                      + " before the reduction began (Directive 98/6/EC art.6a); null otherwise.")
+          BigDecimal priorPrice,
+      @Schema(
+              description =
+                  "NOT_REDUCED; ANNOUNCEABLE; NO_HISTORY (no price recorded before the reduction);"
+                      + " SHORT_HISTORY (under 30 days recorded before it); NOT_LOWER (the prior"
+                      + " price is not above today's); PENDING (a change is still being recorded);"
+                      + " UNCERTAIN (the 30 days cross a span the record could not establish). Null"
+                      + " without a promotion.")
+          String priorPriceStatus,
+      @Schema(description = "When the reduction, or its first progressive step, began.")
+          String reductionStartedAt,
+      @Schema(description = "Whether art.6a binds this business's announcements today.")
+          boolean priorPriceRequired,
+      @Schema(
+              description =
+                  "Whether this price may be announced as a reduction: a promotion applies and, where"
+                      + " art.6a binds, its prior price is known and above today's.")
+          boolean reductionAnnounceable) {}
+
+  @Schema(
+      name = "AppliedPriceResponse",
+      description = "One row of the applied-price ledger (03.12).")
+  public record AppliedPriceResponse(
+      UUID id,
+      String channel,
+      UUID storeId,
+      boolean priced,
+      BigDecimal price,
+      @Schema(description = "The same before VAT.") BigDecimal netPrice,
+      BigDecimal regularPrice,
+      String promotionName,
+      String currency,
+      String appliedFrom,
+      @Schema(
+              description =
+                  "Set when what was offered from this moment until the next row could not be"
+                      + " established; no reduction whose 30 days cross it is announced.")
+          String uncertainSince,
+      String recordedAt,
+      String cause) {}
+
+  @Schema(name = "PriceHistoryResponse")
+  public record PriceHistoryResponse(
+      UUID variantId,
+      @Schema(description = "Evaluations due and not yet recorded for this business.") int pending,
+      List<AppliedPriceResponse> rows) {}
+
+  @Schema(
+      name = "ReductionResponse",
+      description = "A reduction on offer, with its prior price (03.12).")
+  public record ReductionResponse(
+      UUID variantId,
+      String channel,
+      @Schema(description = "The store a store-scoped promotion applies at; null business-wide.")
+          UUID storeId,
+      @Schema(description = "What the shopper is offered, VAT included.") BigDecimal price,
+      BigDecimal regularPrice,
+      String promotionName,
+      String currency,
+      BigDecimal priorPrice,
+      String priorPriceStatus,
+      String reductionStartedAt,
+      boolean priorPriceRequired,
+      boolean reductionAnnounceable) {}
+
+  @Schema(name = "ReductionsResponse")
+  public record ReductionsResponse(
+      String channel,
+      @Schema(description = "Evaluations due and not yet recorded for this business.") int pending,
+      List<ReductionResponse> rows) {}
+
+  @Schema(name = "UnitPriceResponse", description = "A unit price (03.13).")
+  public record UnitPriceResponse(
+      @Schema(description = "The price per one standard unit.") BigDecimal amount,
+      @Schema(description = "KG, L, M, SQM, or EA for goods sold by number.") String unit,
+      @Schema(description = "How much of the unit one price buys.") BigDecimal quantity,
+      @Schema(description = "How it reads beside the price: per kg, per litre, each.")
+          String label) {}
+
+  @Schema(name = "ShelfLabelRequest")
+  public record ShelfLabelRequest(
+      @Schema(description = "1 to 200 variant UUIDs.") List<String> variantIds,
+      @Schema(description = "UUID of the store; selects its prices and promotions.") String storeId,
+      @Schema(description = "POS (the default) or ONLINE.") String channel) {}
+
+  @Schema(name = "ShelfLabelResponse")
+  public record ShelfLabelResponse(
+      UUID variantId,
+      @Schema(description = "False when no price is in force for the variant.") boolean priced,
+      String currency,
+      @Schema(description = "The regular selling price, VAT included.") BigDecimal regularPrice,
+      UnitPriceResponse regularUnitPrice,
+      @Schema(description = "While a promotion applies, the promotional price.")
+          BigDecimal promotionalPrice,
+      UnitPriceResponse promotionalUnitPrice,
+      String promotionName,
+      boolean measureDeclared,
+      boolean unitPriceRequired,
+      @Schema(description = "The reduction's prior price (art.6a), while a promotion applies.")
+          BigDecimal priorPrice,
+      String priorPriceStatus,
+      boolean priorPriceRequired,
+      @Schema(
+              description =
+                  "Whether the label may show the promotional price as a reduction with a was price.")
+          boolean reductionAnnounceable) {}
+
+  @Schema(name = "UnitPriceGapResponse")
+  public record UnitPriceGapResponse(
+      UUID variantId,
+      UUID productId,
+      @Schema(description = "Whether the catalogue has announced the variant at all.")
+          boolean catalogued) {}
+
+  @Schema(name = "UnitPriceGapsResponse")
+  public record UnitPriceGapsResponse(boolean required, List<UnitPriceGapResponse> gaps) {}
 
   /**
    * Resolve many lines in one call instead of one HTTP round trip per line — order-svc's checkout
@@ -304,15 +432,21 @@ public final class Dtos {
       Integer maxPerCustomer,
       BigDecimal buyQty,
       BigDecimal getQty,
-      BigDecimal getDiscountPct) {}
+      BigDecimal getDiscountPct,
+      @Schema(
+              description =
+                  "On the storefront's list only: whether it may be advertised as a reduction. A"
+                      + " basket, coupon or multi-buy offer always may; an item reduction only while"
+                      + " every reduced price on the storefront can be announced (03.12).")
+          Boolean reductionAnnounceable) {}
 
   @Schema(name = "AddPromotionItemRequest")
   public record AddPromotionItemRequest(
       @Schema(
               description =
-                  "ALL or VARIANT. CATEGORY is rejected: pricing-svc has no variant→category"
-                      + " mapping, because product-svc publishes no catalogue event, and a"
-                      + " category promotion was previously accepted and silently never applied.")
+                  "ALL, VARIANT or CATEGORY. A CATEGORY scope resolves to the variants of every"
+                      + " product whose category path carries it — a parent reaches its children's"
+                      + " products — through the catalogue product-svc announces (03.8).")
           @NotBlank
           String scopeType,
       @Schema(description = "UUID of the variant; null when scopeType is ALL.") String scopeId) {}
@@ -357,7 +491,12 @@ public final class Dtos {
       @Schema(description = "VAT on netTotal, at this variant's rate.") BigDecimal vatAmount,
       @Schema(description = "The VAT code applied.") String vatCode,
       @Schema(description = "The markdown the line was priced at, when a sticker was scanned.")
-          UUID markdownId) {}
+          UUID markdownId,
+      @Schema(
+              description =
+                  "The unit price of what this line charges per one, discounts and VAT in; null"
+                      + " when the variant's measure is not declared (03.13).")
+          UnitPriceResponse unitPricing) {}
 
   @Schema(name = "AppliedPromotionResponse", description = "One promotion that took money off.")
   public record AppliedPromotionResponse(
@@ -673,7 +812,22 @@ public final class Dtos {
       BigDecimal originalPrice,
       String currency,
       String expiryDate,
-      BigDecimal remainingQty) {}
+      BigDecimal remainingQty,
+      @Schema(
+              description =
+                  "The price the till may strike through, before VAT (03.12); null when the law does"
+                      + " not let the sticker be presented as reduced from one.")
+          BigDecimal wasPrice,
+      @Schema(description = "Whether the till may present the sticker price as a reduction.")
+          boolean reductionAnnounceable,
+      @Schema(
+              description =
+                  "The lowest price of the 30 days before, VAT included, where art.6a binds.")
+          BigDecimal priorPrice,
+      String priorPriceStatus,
+      boolean priorPriceRequired,
+      @Schema(description = "Exempt as short-dated goods where the law takes up art.6a(3).")
+          boolean perishableExempt) {}
 
   @Schema(name = "MarkdownRedemptionLineRequest")
   public record MarkdownRedemptionLineRequest(

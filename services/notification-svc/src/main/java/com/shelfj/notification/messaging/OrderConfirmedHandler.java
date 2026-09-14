@@ -43,7 +43,8 @@ class OrderConfirmedHandler {
       orderId = UUID.fromString(obj.getString("orderId"));
       customerId = UUID.fromString(obj.getString("customerId"));
       total = obj.getJsonNumber("total").bigDecimalValue();
-      currency = obj.getString("currency", "GBP");
+      // order-svc always sends the order's currency; one without is malformed, not pounds (SJ-D53).
+      currency = obj.getString("currency");
     } catch (RuntimeException e) {
       LOG.log(Level.WARNING, "Malformed OrderConfirmed payload skipped: " + e.getMessage());
       return;
@@ -70,5 +71,27 @@ class OrderConfirmedHandler {
         email,
         "Your order is confirmed",
         body);
+
+    // And to the phone in their pocket, when the shopper registered one here (13.7). A login with
+    // no device, or a customer with no login, gets the email alone; a push that fails is logged,
+    // never retried into the email's idempotency.
+    customers
+        .loginIdOf(tenantId, customerId)
+        .ifPresent(
+            login -> {
+              try {
+                notifier.notifyOnce(
+                    eventId,
+                    "ORDER_CONFIRMATION_PUSH",
+                    tenantId,
+                    customerId,
+                    login.toString(),
+                    "Your order is confirmed",
+                    "Order " + orderId + " — " + currency + " " + total.toPlainString(),
+                    "PUSH");
+              } catch (RuntimeException e) {
+                LOG.log(Level.DEBUG, "No push for order {0}: {1}", orderId, e.getMessage());
+              }
+            });
   }
 }

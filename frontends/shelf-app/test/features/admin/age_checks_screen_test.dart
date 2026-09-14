@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shelf_app/core/network/api_client.dart';
 import 'package:shelf_app/features/admin/age_checks_screen.dart';
+import 'package:shelf_app/features/pos/pos_age_check.dart';
 import 'package:shelf_app/features/admin/providers/admin_providers.dart';
 
 // The age-check register a manager shows a licensing officer: counts, the
@@ -102,5 +103,27 @@ void main() {
     expect(find.byIcon(Icons.edit), findsNothing);
     expect(find.byIcon(Icons.delete), findsNothing);
     expect(find.widgetWithText(FilledButton, 'Save'), findsNothing);
+  });
+
+  test('a check against a birth-date cut-off keeps the date and whose rule it was',
+      () {
+    final r = AgeCheckRecord.fromJson({
+      'id': 'c-1',
+      'storeId': 's-1',
+      'variantId': 'v-1',
+      'category': 'TOBACCO',
+      'minimumAge': 18,
+      'country': 'GB',
+      'storePolicy': false,
+      'bornBefore': '2009-01-01',
+      'bornBeforeStorePolicy': true,
+      'outcome': 'REFUSED',
+      'reason': 'BORN_AFTER_CUTOFF',
+    });
+    expect(r.bornBefore, '2009-01-01');
+    expect(r.bornBeforeStorePolicy, isTrue);
+    expect(ageRefusalReasons[r.reason], 'Born on or after the cut-off date');
+    // A check with no cut-off has none.
+    expect(AgeCheckRecord.fromJson({'outcome': 'PASSED'}).bornBefore, isNull);
   });
 }

@@ -1,6 +1,7 @@
 package com.shelfj.order.mapper;
 
 import com.shelfj.order.domain.Domain;
+import com.shelfj.order.domain.Domain.AuditEvent;
 import com.shelfj.order.domain.Domain.ExceptionRow;
 import com.shelfj.order.domain.Domain.GiftCard;
 import com.shelfj.order.domain.Domain.GiftCardTransaction;
@@ -275,9 +276,29 @@ public final class Mappers {
         r.refundAmount(),
         r.refundMethod(),
         r.status(),
+        str(r.createdBy()),
         ts(r.createdAt()),
         ts(r.completedAt()),
         items.stream().map(Mappers::toDto).toList());
+  }
+
+  /**
+   * Converts an audit-trail event to its wire form.
+   *
+   * @param e the event
+   * @return its API representation
+   */
+  public static Dtos.AuditEventResponse toDto(AuditEvent e) {
+    return new Dtos.AuditEventResponse(
+        str(e.id()),
+        e.type(),
+        ts(e.occurredAt()),
+        str(e.actorId()),
+        str(e.storeId()),
+        str(e.orderId()),
+        e.amount(),
+        e.reason(),
+        e.detail());
   }
 
   /**
@@ -523,6 +544,8 @@ public final class Mappers {
         v.minimumAge(),
         v.country(),
         v.storePolicy(),
+        v.bornBefore() == null ? null : v.bornBefore().toString(),
+        v.bornBeforePolicy(),
         v.outcome(),
         v.reason(),
         v.idType(),

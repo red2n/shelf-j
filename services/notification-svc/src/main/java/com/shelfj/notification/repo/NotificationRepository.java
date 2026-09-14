@@ -2,6 +2,7 @@ package com.shelfj.notification.repo;
 
 import com.shelfj.ids.Ids;
 import com.shelfj.notification.domain.Domain.NotificationLog;
+import com.shelfj.notification.domain.Domain.PushDevice;
 import com.shelfj.notification.domain.Domain.ShortageAlert;
 import com.shelfj.service.BaseJdbcRepository;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -190,25 +191,125 @@ public class NotificationRepository extends BaseJdbcRepository {
 
   /** Recent in-app notifications for a tenant, newest first, optionally filtered by recipient. */
   public List<NotificationLog> listRecent(UUID tenantId, String recipient, int limit) {
+    return listRecent(tenantId, recipient, null, limit);
+  }
+
+  /** The feed, optionally narrowed to one recipient and one channel (13.7). */
+  public List<NotificationLog> listRecent(
+      UUID tenantId, String recipient, String channel, int limit) {
     StringBuilder sb =
         new StringBuilder(
             "SELECT id, tenant_id, event_id, type, channel, recipient, subject, body, status,"
                 + " created_at FROM notification_log WHERE tenant_id = ?");
     if (recipient != null) sb.append(" AND recipient = ?");
+    if (channel != null) sb.append(" AND channel = ?");
     sb.append(" ORDER BY created_at DESC LIMIT ?");
     return query(
         sb.toString(),
         ps -> {
-          ps.setObject(1, tenantId);
-          if (recipient != null) {
-            ps.setString(2, recipient);
-            ps.setInt(3, limit);
-          } else {
-            ps.setInt(2, limit);
-          }
+          int i = 1;
+          ps.setObject(i++, tenantId);
+          if (recipient != null) ps.setString(i++, recipient);
+          if (channel != null) ps.setString(i++, channel);
+          ps.setInt(i, limit);
         },
         NotificationRepository::mapNotification,
         "list notifications");
+  }
+
+  // ── push devices (13.7) ───────────────────────────────────────────────────
+
+  /** How many devices one login holds here — the cap is decided by the caller. */
+  public long countDevices(UUID tenantId, UUID userId) {
+    return query(
+            "SELECT count(*) FROM push_devices WHERE tenant_id = ? AND user_id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, userId);
+            },
+            rs -> rs.getLong(1),
+            "count devices")
+        .get(0);
+  }
+
+  /**
+   * Registers a device, or refreshes it when the same token is registered again: a token belongs to
+   * one device, and the login that last presented it is the one it reaches.
+   */
+  public PushDevice registerDevice(PushDevice d) {
+    exec(
+        "INSERT INTO push_devices (id, tenant_id, user_id, platform, token)"
+            + " VALUES (?,?,?,?,?)"
+            + " ON CONFLICT (tenant_id, token) DO UPDATE SET user_id = EXCLUDED.user_id,"
+            + " platform = EXCLUDED.platform, last_seen_at = now()",
+        ps -> {
+          ps.setObject(1, d.id());
+          ps.setObject(2, d.tenantId());
+          ps.setObject(3, d.userId());
+          ps.setString(4, d.platform());
+          ps.setString(5, d.token());
+        },
+        "register device");
+    return query(
+            "SELECT id, tenant_id, user_id, platform, token, registered_at, last_seen_at"
+                + " FROM push_devices WHERE tenant_id = ? AND token = ?",
+            ps -> {
+              ps.setObject(1, d.tenantId());
+              ps.setString(2, d.token());
+            },
+            NotificationRepository::mapDevice,
+            "read device")
+        .get(0);
+  }
+
+  public List<PushDevice> devicesFor(UUID tenantId, UUID userId) {
+    return query(
+        "SELECT id, tenant_id, user_id, platform, token, registered_at, last_seen_at"
+            + " FROM push_devices WHERE tenant_id = ? AND user_id = ? ORDER BY last_seen_at DESC",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, userId);
+        },
+        NotificationRepository::mapDevice,
+        "list devices");
+  }
+
+  /** Removes one of a login's own devices; another login's is not found. */
+  public boolean deleteDevice(UUID tenantId, UUID userId, UUID id) {
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "DELETE FROM push_devices WHERE tenant_id = ? AND user_id = ? AND id = ?")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, userId);
+            ps.setObject(3, id);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "delete device");
+  }
+
+  /** Forgets a device the provider no longer knows, whoever registered it. */
+  public void forgetDevice(UUID tenantId, UUID id) {
+    exec(
+        "DELETE FROM push_devices WHERE tenant_id = ? AND id = ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setObject(2, id);
+        },
+        "forget device");
+  }
+
+  private static PushDevice mapDevice(ResultSet rs) throws SQLException {
+    return new PushDevice(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("user_id", UUID.class),
+        rs.getString("platform"),
+        rs.getString("token"),
+        rs.getObject("registered_at", java.time.OffsetDateTime.class).toInstant(),
+        rs.getObject("last_seen_at", java.time.OffsetDateTime.class).toInstant());
   }
 
   private static NotificationLog mapNotification(ResultSet rs) throws SQLException {

@@ -24,4 +24,10 @@ public final class ErrorCodes {
 
   /** A request body was required but missing. */
   public static final String BODY_REQUIRED = "BODY_REQUIRED";
+
+  /**
+   * A request body was not the JSON the request takes — malformed, or a field of the wrong type
+   * (see {@link RequestBodyExceptionMapper}).
+   */
+  public static final String REQUEST_BODY_INVALID = "REQUEST_BODY_INVALID";
 }

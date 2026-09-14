@@ -55,9 +55,15 @@ import java.util.UUID;
 public class PricingService {
 
   @Inject PricingRepository repo;
+  @Inject com.shelfj.service.TenantProfiles profiles;
+  @Inject com.shelfj.service.Jurisdictions jurisdictions;
+  @Inject AppliedPriceService appliedPrices;
   @Inject PromotionEngine engine;
   @Inject MarkdownService markdowns;
   @Inject TaxReportRepository taxReportRepo;
+
+  /** No rate is configured for the VAT code a price needs, so it is not quoted (SJ-D56). */
+  public static final String VAT_RATE_NOT_CONFIGURED = "PRICING_VAT_RATE_NOT_CONFIGURED";
 
   // ── VAT Rates ─────────────────────────────────────────────────────────────
 
@@ -179,7 +185,9 @@ public class PricingService {
             Instant.now(),
             null,
             Instant.now());
-    return repo.upsertProductVatCategory(pvc);
+    ProductVatCategory saved = repo.upsertProductVatCategory(pvc);
+    appliedPrices.catchUp(ctx.tenantId());
+    return saved;
   }
 
   /**
@@ -222,7 +230,7 @@ public class PricingService {
             req.vatNumber(),
             req.vatRegistered(),
             req.reverseChargeEligible(),
-            req.countryCode() != null ? req.countryCode() : "GB",
+            profiles.countryOr(ctx.tenantId(), req.countryCode()),
             Instant.now(),
             Instant.now());
     return repo.upsertCustomerVatStatus(cvs);
@@ -249,8 +257,8 @@ public class PricingService {
   /**
    * Creates a price list, active from the moment it is created.
    *
-   * @param req the name, channel (defaulting to ALL), currency (defaulting to GBP) and effective
-   *     window
+   * @param req the name, channel (defaulting to ALL), currency (the tenant's own when omitted) and
+   *     effective window
    * @param ctx caller context; supplies the tenant
    * @return the created price list
    */
@@ -261,7 +269,7 @@ public class PricingService {
             ctx.tenantId(),
             req.name(),
             req.channel() != null ? req.channel() : PriceList.CHANNEL_ALL,
-            req.currency() != null ? req.currency() : "GBP",
+            profiles.currencyOr(ctx.tenantId(), req.currency()),
             Parsing.instant(req.effectiveFrom(), "effectiveFrom"),
             req.effectiveTo() != null ? Parsing.instant(req.effectiveTo(), "effectiveTo") : null,
             true,
@@ -318,6 +326,14 @@ public class PricingService {
    */
   public PriceListItem upsertPriceListItem(
       TenantContext ctx, UUID priceListId, UpsertPriceListItemRequest req) {
+    PriceListItem saved = setPrice(ctx, priceListId, req);
+    appliedPrices.catchUp(ctx.tenantId());
+    return saved;
+  }
+
+  /** Sets one price, queuing its evaluation (03.12) without working it. */
+  private PriceListItem setPrice(
+      TenantContext ctx, UUID priceListId, UpsertPriceListItemRequest req) {
     getPriceList(ctx, priceListId);
     PriceListItem item =
         new PriceListItem(
@@ -354,12 +370,14 @@ public class PricingService {
     for (var r : req.items()) {
       try {
         com.shelfj.web.Validations.validate(r);
-        upsertPriceListItem(ctx, priceListId, r);
+        setPrice(ctx, priceListId, r);
         upserted++;
       } catch (Exception e) {
         errors.add("variantId=" + r.variantId() + ": " + e.getMessage());
       }
     }
+    // One catch-up for the upload, not one per row: the sweeper drains the rest (03.12).
+    if (upserted > 0) appliedPrices.catchUp(ctx.tenantId());
     return new BatchUpsertResult(upserted, errors);
   }
 
@@ -395,7 +413,48 @@ public class PricingService {
    *     for the variant
    */
   public ResolvedPrice resolvePrice(ResolvePriceRequest req, TenantContext ctx) {
-    UUID tenantId = ctx.tenantId();
+    return resolve(req, ctx, true);
+  }
+
+  /** As {@link #resolvePrice}; without promotions, the regular price a shelf label shows beside. */
+  private ResolvedPrice resolve(
+      ResolvePriceRequest req, TenantContext ctx, boolean withPromotions) {
+    return resolveAt(ctx.tenantId(), req, withPromotions, Instant.now(), withPromotions);
+  }
+
+  /**
+   * The price a shopper is offered as of {@code at}: the price lists in force then and the
+   * promotions running then, by today's switches and prices. Without a request context.
+   *
+   * @param withPriorPrice whether to read the reduction's prior price from the ledger (03.12)
+   */
+  public ResolvedPrice resolveAt(
+      UUID tenantId,
+      ResolvePriceRequest req,
+      boolean withPromotions,
+      Instant at,
+      boolean withPriorPrice) {
+    return price(tenantId, req, withPromotions, at, withPriorPrice, false);
+  }
+
+  /**
+   * The price as it stood at {@code at} (03.12), rebuilt from what had been made, switched and
+   * priced by then: the applied-price ledger evaluates each change after it commits, and must not
+   * read a later list, promotion, scope, switch, list price or VAT assignment into an earlier
+   * moment.
+   */
+  public ResolvedPrice resolveAsRecorded(
+      UUID tenantId, ResolvePriceRequest req, boolean withPromotions, Instant at) {
+    return price(tenantId, req, withPromotions, at, false, true);
+  }
+
+  private ResolvedPrice price(
+      UUID tenantId,
+      ResolvePriceRequest req,
+      boolean withPromotions,
+      Instant at,
+      boolean withPriorPrice,
+      boolean asRecorded) {
     UUID variantId = UUID.fromString(req.variantId());
     BigDecimal qty = req.qty() != null ? req.qty() : BigDecimal.ONE;
     String channel =
@@ -403,8 +462,14 @@ public class PricingService {
             ? req.channel().toUpperCase(java.util.Locale.ROOT)
             : PriceList.CHANNEL_ALL;
 
+    // SJ-D55: a quantity tier is a volume price, never a reason a fraction of a unit has no price.
+    // A weighed line arrives as its weight (0.375 kg), and the list price's minimum quantity is 1,
+    // so a fraction is matched as one; a list holding only a bulk tier still refuses a single item.
     PriceListItem baseItem =
-        repo.resolveBasePrice(tenantId, variantId, channel, qty)
+        (asRecorded
+                ? repo.resolveBasePriceAsOf(
+                    tenantId, variantId, channel, qty.max(BigDecimal.ONE), at)
+                : repo.resolveBasePrice(tenantId, variantId, channel, qty.max(BigDecimal.ONE), at))
             .orElseThrow(
                 () ->
                     ApiException.notFound(
@@ -424,16 +489,21 @@ public class PricingService {
             ? null
             : Parsing.uuid(req.storeId(), "storeId");
     List<Promotion> candidates =
-        repo.findCandidatePromotions(tenantId, storeId, channel, Instant.now()).stream()
-            .filter(p -> !p.isBasketLevel())
-            // A coupon promotion is not applied to a browsing price: the customer has not
-            // presented it, and this endpoint takes no codes.
-            .filter(p -> !p.requiresCoupon())
-            .toList();
+        (withPromotions
+                ? (asRecorded
+                    ? repo.findCandidatePromotionsAsOf(tenantId, storeId, channel, at)
+                    : repo.findCandidatePromotions(tenantId, storeId, channel, at))
+                : List.<Promotion>of())
+            .stream()
+                .filter(p -> !p.isBasketLevel())
+                // A coupon promotion is not applied to a browsing price: the customer has not
+                // presented it, and this endpoint takes no codes.
+                .filter(p -> !p.requiresCoupon())
+                .toList();
     if (!candidates.isEmpty()) {
       var scopes =
           repo.findPromotionVariantScopes(
-              tenantId, candidates.stream().map(Promotion::id).toList());
+              tenantId, candidates.stream().map(Promotion::id).toList(), asRecorded ? at : null);
       var outcome =
           engine.apply(
               List.of(new BasketLine(variantId, qty, unitPrice)),
@@ -454,36 +524,26 @@ public class PricingService {
       }
     }
 
-    String vatCode =
-        repo.findProductVatCategory(tenantId, variantId)
-            .map(ProductVatCategory::vatCode)
-            .orElse(VatRate.T1);
-
-    VatRate vatRate =
-        repo.findVatRate(tenantId, vatCode)
-            .orElse(
-                new VatRate(
-                    null,
-                    tenantId,
-                    VatRate.T1,
-                    "Standard Rate",
-                    new BigDecimal("0.20"),
-                    false,
-                    null,
-                    Instant.now(),
-                    null,
-                    Instant.now()));
-
-    BigDecimal vatAmount =
-        vatRate.exempt()
-            ? BigDecimal.ZERO
-            : unitPrice.multiply(vatRate.rate()).setScale(2, RoundingMode.HALF_UP);
+    String vatCode = vatCodeFor(tenantId, variantId, asRecorded ? at : null);
+    VatRate vatRate = rateFor(tenantId, vatCode, asRecorded ? at : null);
+    BigDecimal vatAmount = vatOn(unitPrice, vatRate);
     BigDecimal totalWithVat = unitPrice.add(vatAmount);
 
-    String currency = "GBP";
-    var pl = repo.findPriceList(tenantId, baseItem.priceListId());
-    if (pl.isPresent()) currency = pl.get().currency();
+    // The price list's own currency; the tenant's when the list is gone — never a literal (SJ-D53).
+    String currency =
+        repo.findPriceList(tenantId, baseItem.priceListId())
+            .map(PriceList::currency)
+            .orElseGet(() -> profiles.requireCurrency(tenantId));
 
+    // 03.13: the unit price of what the shopper pays — VAT and any promotion in — per kilogram,
+    // litre, metre, square metre or item. Shown whenever the measure is declared; whether it is
+    // law here only decides whether its absence is a gap.
+    var unitPricing =
+        UnitPricing.of(totalWithVat, repo.findMeasure(tenantId, variantId).orElse(null), currency);
+    // The ledger records prices, not what may be said about them: the law is read only for a
+    // shopper.
+    PriorPrices.Rules rules =
+        asRecorded ? PriorPrices.Rules.STRICT : reductionRules(tenantId, storeId);
     return new ResolvedPrice(
         variantId,
         unitPrice,
@@ -493,7 +553,252 @@ public class PricingService {
         totalWithVat,
         currency,
         baseItem.priceListId(),
-        promoApplied);
+        promoApplied,
+        unitPricing,
+        asRecorded || unitPriceRequired(tenantId, storeId),
+        withPriorPrice && promoApplied != null
+            ? appliedPrices.priorPrice(
+                tenantId,
+                variantId,
+                channel,
+                storeId,
+                totalWithVat,
+                resolveAt(tenantId, req, false, at, false).totalWithVat(),
+                at,
+                rules.progressive())
+            : null,
+        rules.required());
+  }
+
+  /** A variant's VAT code; with {@code asOf}, as assigned by then. The standard code when none. */
+  private String vatCodeFor(UUID tenantId, UUID variantId, Instant asOf) {
+    return repo.findProductVatCategory(tenantId, variantId, asOf)
+        .map(ProductVatCategory::vatCode)
+        .orElse(VatRate.T1);
+  }
+
+  /**
+   * The rate a VAT code carries; with {@code asOf}, as configured by then. Never a literal rate
+   * (SJ-D56): a business that charges no VAT sets its standard rate exempt, and until a rate is set
+   * nothing is quoted.
+   *
+   * @throws ApiException 409 {@code PRICING_VAT_RATE_NOT_CONFIGURED} when the code has no rate
+   */
+  private VatRate rateFor(UUID tenantId, String vatCode, Instant asOf) {
+    return repo.findVatRate(tenantId, vatCode, asOf)
+        .orElseThrow(
+            () ->
+                ApiException.conflict(
+                    VAT_RATE_NOT_CONFIGURED,
+                    "no VAT rate is configured for code "
+                        + vatCode
+                        + "; set this business's rate under Pricing, VAT rates — exempt if it"
+                        + " charges no VAT"));
+  }
+
+  private static BigDecimal vatOn(BigDecimal net, VatRate rate) {
+    return rate.exempt()
+        ? BigDecimal.ZERO
+        : net.multiply(rate.rate()).setScale(2, RoundingMode.HALF_UP);
+  }
+
+  /**
+   * What art.6a asks of an offer today (03.12), from every country whose law reaches it: the
+   * business's own and, at a store, that store's — with no store, every store's. Its prior price
+   * binds when any of them binds it; a member-state option applies only when every country that
+   * binds has taken it up. When the rules cannot be read, the strictest reading: a reduction is
+   * never announced on a guess that the law does not apply.
+   */
+  PriorPrices.Rules reductionRules(UUID tenantId, UUID storeId) {
+    try {
+      java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+      List<String> bound = new java.util.ArrayList<>();
+      for (String country : jurisdictions.countriesTrading(tenantId, storeId)) {
+        if (jurisdictions.inForceIn(
+            tenantId, country, PriorPrices.PRICE_REDUCTION_PRIOR_PRICE, today)) {
+          bound.add(country);
+        }
+      }
+      if (bound.isEmpty()) return PriorPrices.Rules.NOT_BOUND;
+      return new PriorPrices.Rules(
+          true,
+          takenUpEverywhere(tenantId, bound, PriorPrices.PRICE_REDUCTION_PROGRESSIVE, today),
+          takenUpEverywhere(tenantId, bound, PriorPrices.PRICE_REDUCTION_PERISHABLE_EXEMPT, today));
+    } catch (ApiException e) {
+      return PriorPrices.Rules.STRICT;
+    }
+  }
+
+  private boolean takenUpEverywhere(
+      UUID tenantId, List<String> countries, String option, java.time.LocalDate day) {
+    return countries.stream().allMatch(c -> jurisdictions.inForceIn(tenantId, c, option, day));
+  }
+
+  /**
+   * Whether a unit price is law for an offer today, in any country whose law reaches it. When the
+   * rules cannot be read it is taken to be — a price is never refused over it, and a missing unit
+   * price is never excused.
+   */
+  boolean unitPriceRequired(UUID tenantId, UUID storeId) {
+    try {
+      return jurisdictions.inForceWhereTrading(
+          tenantId,
+          storeId,
+          UnitPricing.UNIT_PRICING,
+          java.time.LocalDate.now(java.time.ZoneOffset.UTC));
+    } catch (ApiException e) {
+      return true;
+    }
+  }
+
+  /**
+   * What a reduced-price sticker may say at the till (03.12). Where art.6a does not bind, or binds
+   * but every country it binds in exempts short-dated goods and the sticker is for that, the price
+   * it was reduced from. Otherwise only the prior price the ledger proves for the variant at the
+   * till, against the sticker's price with VAT; none when it proves none.
+   */
+  public com.shelfj.pricing.domain.Domain.MarkdownReduction markdownReduction(
+      UUID tenantId, com.shelfj.pricing.domain.Domain.Markdown m) {
+    PriorPrices.Rules rules = reductionRules(tenantId, m.storeId());
+    boolean exempt =
+        rules.required()
+            && rules.perishableExempt()
+            && com.shelfj.pricing.domain.Domain.Markdown.REASON_SHORT_DATED.equals(m.reason());
+    if (!rules.required() || exempt) {
+      return new com.shelfj.pricing.domain.Domain.MarkdownReduction(
+          m.originalPrice(), null, null, rules.required(), exempt);
+    }
+    Instant now = Instant.now();
+    var req =
+        new ResolvePriceRequest(
+            m.variantId().toString(),
+            m.storeId() == null ? null : m.storeId().toString(),
+            PriceList.CHANNEL_POS,
+            BigDecimal.ONE,
+            null);
+    BigDecimal regular;
+    try {
+      regular = resolveAt(tenantId, req, false, now, false).totalWithVat();
+    } catch (ApiException e) {
+      if (e.status() != 404) throw e;
+      return new com.shelfj.pricing.domain.Domain.MarkdownReduction(
+          null, null, PriorPrices.NO_HISTORY, true, false);
+    }
+    VatRate rate = rateFor(tenantId, vatCodeFor(tenantId, m.variantId(), null), null);
+    BigDecimal gross = m.markdownPrice().add(vatOn(m.markdownPrice(), rate));
+    var prior =
+        appliedPrices.priorPrice(
+            tenantId,
+            m.variantId(),
+            PriceList.CHANNEL_POS,
+            m.storeId(),
+            gross,
+            regular,
+            now,
+            rules.progressive());
+    return new com.shelfj.pricing.domain.Domain.MarkdownReduction(
+        PriorPrices.ANNOUNCEABLE.equals(prior.status()) ? prior.priorPriceNet() : null,
+        prior.priorPrice(),
+        prior.status(),
+        true,
+        false);
+  }
+
+  /**
+   * Whether the storefront may advertise a promotion as a reduction (03.12). Art.6a governs the
+   * announcement of a reduced price: an unconditional percentage or amount off an item. A basket
+   * threshold, a coupon or a multi-buy is a condition, not a reduced price. Where art.6a binds, an
+   * item promotion is advertised only while every reduced price on the storefront can be announced
+   * with its prior price — a banner cannot say "20% off" over a product whose own page may not call
+   * its price reduced.
+   */
+  public boolean advertisable(UUID tenantId, Promotion p) {
+    boolean itemReduction =
+        (Promotion.TYPE_PERCENT.equals(p.type()) || Promotion.TYPE_FLAT.equals(p.type()))
+            && !p.requiresCoupon();
+    if (!itemReduction) return true;
+    if (!reductionRules(tenantId, p.storeId()).required()) return true;
+    return appliedPrices.reductionsAnnounceable(tenantId, store -> reductionRules(tenantId, store));
+  }
+
+  /** The reductions on offer on a channel, each with its prior price (03.12). */
+  public List<com.shelfj.pricing.domain.Domain.Reduction> reductions(
+      UUID tenantId, String channel) {
+    return appliedPrices.reductions(
+        tenantId,
+        channel,
+        store -> reductionRules(tenantId, store),
+        AppliedPriceService.REDUCTIONS_LIMIT);
+  }
+
+  /**
+   * Shelf-edge labels (03.13): for each variant, the regular price and its unit price and, while a
+   * promotion applies at that store and channel, the promotional price and its unit price.
+   *
+   * @throws ApiException 400 {@code PRICING_LABELS_INVALID} for no variants, more than 200, or a
+   *     variant id that is not one
+   */
+  public List<com.shelfj.pricing.domain.Domain.ShelfLabel> shelfLabels(
+      List<String> variantIds, String storeId, String channel, TenantContext ctx) {
+    if (variantIds == null || variantIds.isEmpty() || variantIds.size() > 200) {
+      throw ApiException.badRequest("PRICING_LABELS_INVALID", "variantIds lists 1 to 200 variants");
+    }
+    UUID tenantId = ctx.tenantId();
+    UUID store = storeId == null || storeId.isBlank() ? null : Parsing.uuid(storeId, "storeId");
+    boolean required = unitPriceRequired(tenantId, store);
+    List<com.shelfj.pricing.domain.Domain.ShelfLabel> out = new java.util.ArrayList<>();
+    for (String id : variantIds.stream().distinct().toList()) {
+      UUID variantId = Parsing.uuid(id, "variantIds");
+      var regularReq = new ResolvePriceRequest(id, storeId, channel, BigDecimal.ONE, null);
+      ResolvedPrice regular;
+      try {
+        regular = resolve(regularReq, ctx, false);
+      } catch (ApiException e) {
+        if (e.status() != 404) throw e;
+        out.add(
+            new com.shelfj.pricing.domain.Domain.ShelfLabel(
+                variantId,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                repo.findMeasure(tenantId, variantId).isPresent(),
+                required,
+                null,
+                null,
+                reductionRules(tenantId, store).required()));
+        continue;
+      }
+      ResolvedPrice offered = resolve(regularReq, ctx, true);
+      boolean promoted =
+          offered.promotionApplied() != null
+              && offered.totalWithVat().compareTo(regular.totalWithVat()) != 0;
+      out.add(
+          new com.shelfj.pricing.domain.Domain.ShelfLabel(
+              variantId,
+              true,
+              regular.currency(),
+              regular.totalWithVat(),
+              regular.unitPricing(),
+              promoted ? offered.totalWithVat() : null,
+              promoted ? offered.unitPricing() : null,
+              promoted ? offered.promotionApplied() : null,
+              regular.unitPricing() != null,
+              required,
+              promoted && offered.priorPrice() != null ? offered.priorPrice().priorPrice() : null,
+              promoted && offered.priorPrice() != null ? offered.priorPrice().status() : null,
+              offered.priorPriceRequired()));
+    }
+    return out;
+  }
+
+  /** Priced variants with no declared measure, and whether a unit price is law here. */
+  public com.shelfj.pricing.domain.Domain.UnitPriceGaps unitPriceGaps(UUID tenantId) {
+    return new com.shelfj.pricing.domain.Domain.UnitPriceGaps(
+        unitPriceRequired(tenantId, null), repo.unitPriceGaps(tenantId, 500));
   }
 
   /**
@@ -620,7 +925,8 @@ public class PricingService {
         if (currency == null) currency = md.currency();
       } else {
         var baseItem =
-            repo.resolveBasePrice(tenantId, variantId, channel, qty)
+            // SJ-D55: a fraction of a unit is matched against the tiers as one.
+            repo.resolveBasePrice(tenantId, variantId, channel, qty.max(BigDecimal.ONE))
                 .orElseThrow(
                     () ->
                         ApiException.notFound(
@@ -745,6 +1051,12 @@ public class PricingService {
               : net.multiply(rate.rate()).setScale(2, RoundingMode.HALF_UP);
       vatTotal = vatTotal.add(vat);
 
+      BigDecimal paidPerOne = net.add(vat).divide(b.qty(), 6, RoundingMode.HALF_UP);
+      var unitPricing =
+          UnitPricing.of(
+              paidPerOne,
+              repo.findMeasure(tenantId, b.variantId()).orElse(null),
+              currency != null ? currency : profiles.requireCurrency(tenantId));
       lineResponses.add(
           new QuoteLineResponse(
               b.variantId(),
@@ -755,7 +1067,8 @@ public class PricingService {
               net,
               vat,
               vatCodes.get(i),
-              lineMarkdowns.get(i)));
+              lineMarkdowns.get(i),
+              com.shelfj.pricing.mapper.Mappers.toUnitPrice(unitPricing)));
     }
 
     BigDecimal totalDiscount = outcome.totalDiscount();
@@ -778,7 +1091,7 @@ public class PricingService {
         basketDiscount,
         vatTotal,
         total,
-        currency != null ? currency : "GBP",
+        currency != null ? currency : profiles.requireCurrency(ctx.requireTenantId()),
         appliedResponses,
         outcome.rejectedCoupons());
   }
@@ -788,19 +1101,7 @@ public class PricingService {
    * does.
    */
   private VatRate vatRateFor(UUID tenantId, String vatCode) {
-    return repo.findVatRate(tenantId, vatCode)
-        .orElse(
-            new VatRate(
-                null,
-                tenantId,
-                VatRate.T1,
-                "Standard Rate",
-                new BigDecimal("0.20"),
-                false,
-                null,
-                Instant.now(),
-                null,
-                Instant.now()));
+    return rateFor(tenantId, vatCode, null);
   }
 
   /**
@@ -823,12 +1124,13 @@ public class PricingService {
       UUID customerId,
       List<AppliedPromotionResponse> applied,
       String currency) {
+    String cur = profiles.currencyOr(ctx.requireTenantId(), currency);
     Map<UUID, BigDecimal> perPromotion = new java.util.LinkedHashMap<>();
     for (var a : applied) perPromotion.merge(a.promotionId(), a.amount(), BigDecimal::add);
     int recorded = 0;
     for (var e : perPromotion.entrySet()) {
-      if (repo.recordRedemption(
-          ctx.tenantId(), e.getKey(), orderId, customerId, e.getValue(), currency)) recorded++;
+      if (repo.recordRedemption(ctx.tenantId(), e.getKey(), orderId, customerId, e.getValue(), cur))
+        recorded++;
     }
     return recorded;
   }
@@ -888,7 +1190,8 @@ public class PricingService {
           Promotion.TYPE_BASKET_PERCENT,
           Promotion.TYPE_BASKET_FLAT,
           Promotion.TYPE_SPEND_THRESHOLD,
-          Promotion.TYPE_BOGO);
+          Promotion.TYPE_BOGO,
+          Promotion.TYPE_MIX_MATCH);
 
   private static void validatePromotionShape(String type, CreatePromotionRequest req) {
     if (!PROMOTION_TYPES.contains(type))
@@ -910,10 +1213,24 @@ public class PricingService {
           || req.getDiscountPct().compareTo(new BigDecimal("100")) > 0)
         throw ApiException.badRequest(
             "PRICING_INCOMPLETE_BOGO", "getDiscountPct must be between 0 and 100 (100 = free)");
+    } else if (Promotion.TYPE_MIX_MATCH.equals(type)) {
+      // "Any N for a price": buyQty is the bundle size and value the bundle price. A bundle of one
+      // is a unit price, and a bundle with no size would apply to nothing.
+      if (req.buyQty() == null
+          || req.buyQty().compareTo(new BigDecimal("2")) < 0
+          || req.buyQty().stripTrailingZeros().scale() > 0)
+        throw ApiException.badRequest(
+            "PRICING_INCOMPLETE_MIX_MATCH",
+            "MIX_MATCH requires buyQty — the bundle size, a whole number of at least 2 — and value,"
+                + " the bundle price");
+      if (req.getQty() != null || req.getDiscountPct() != null)
+        throw ApiException.badRequest(
+            "PRICING_INVALID_PROMOTION_SHAPE",
+            "getQty / getDiscountPct belong to a BOGO; a MIX_MATCH has a bundle size and a price");
     } else if (req.buyQty() != null || req.getQty() != null || req.getDiscountPct() != null) {
       throw ApiException.badRequest(
           "PRICING_INVALID_PROMOTION_SHAPE",
-          "buyQty / getQty / getDiscountPct belong to a BOGO — got type " + type);
+          "buyQty / getQty / getDiscountPct belong to a BOGO or a MIX_MATCH — got type " + type);
     }
 
     if (Promotion.TYPE_SPEND_THRESHOLD.equals(type) && req.minOrderAmount() == null)
@@ -1028,21 +1345,23 @@ public class PricingService {
   public PromotionItem addPromotionItem(
       TenantContext ctx, UUID promotionId, AddPromotionItemRequest req) {
     String scopeType = req.scopeType().toUpperCase(java.util.Locale.ROOT);
-    if (PromotionItem.SCOPE_CATEGORY.equals(scopeType))
+    boolean needsId =
+        PromotionItem.SCOPE_VARIANT.equals(scopeType)
+            || PromotionItem.SCOPE_CATEGORY.equals(scopeType);
+    if (!needsId && !PromotionItem.SCOPE_ALL.equals(scopeType))
       throw ApiException.badRequest(
-          "PRICING_CATEGORY_SCOPE_UNSUPPORTED",
-          "category-scoped promotions cannot be honoured yet: pricing-svc has no variant→category"
-              + " mapping, because product-svc publishes no catalogue event. Scope to VARIANT or"
-              + " ALL. Previously such a promotion was accepted and silently never applied.");
-    if (!PromotionItem.SCOPE_VARIANT.equals(scopeType)
-        && !PromotionItem.SCOPE_ALL.equals(scopeType))
+          "PRICING_INVALID_SCOPE",
+          "scopeType must be VARIANT, CATEGORY or ALL — got: " + scopeType);
+    if (needsId && (req.scopeId() == null || req.scopeId().isBlank()))
       throw ApiException.badRequest(
-          "PRICING_INVALID_SCOPE", "scopeType must be VARIANT or ALL — got: " + scopeType);
-    if (PromotionItem.SCOPE_VARIANT.equals(scopeType)
-        && (req.scopeId() == null || req.scopeId().isBlank()))
-      throw ApiException.badRequest(
-          "PRICING_INVALID_SCOPE", "a VARIANT scope needs a scopeId naming the variant");
-    UUID scopeId = req.scopeId() != null ? UUID.fromString(req.scopeId()) : null;
+          "PRICING_INVALID_SCOPE",
+          "a "
+              + scopeType
+              + " scope needs a scopeId naming the "
+              + scopeType.toLowerCase(java.util.Locale.ROOT));
+    // A CATEGORY scope (03.8) resolves to variants at quote time through the catalogue product-svc
+    // announces; a category nothing has been announced for discounts nothing, not everything.
+    UUID scopeId = needsId ? Parsing.uuid(req.scopeId(), "scopeId") : null;
     PromotionItem pi =
         new PromotionItem(
             Ids.newId(), ctx.tenantId(), promotionId, scopeType, scopeId, Instant.now());

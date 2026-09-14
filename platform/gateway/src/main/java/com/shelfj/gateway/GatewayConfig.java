@@ -151,6 +151,30 @@ public class GatewayConfig {
   @ConfigProperty(name = "shelfj.redis.password", defaultValue = "redis_dev_change_me")
   String redisPassword;
 
+  /**
+   * {@code /.well-known/security.txt} (RFC 9116). Published only when a contact and an expiry are
+   * both configured and valid; there is no default, because an invented contact is worse than none.
+   */
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.security-txt.contact")
+  java.util.Optional<String> securityTxtContact;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.security-txt.expires")
+  java.util.Optional<String> securityTxtExpires;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.security-txt.policy")
+  java.util.Optional<String> securityTxtPolicy;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.security-txt.canonical")
+  java.util.Optional<String> securityTxtCanonical;
+
+  @Inject
+  @ConfigProperty(name = "shelfj.gateway.security-txt.preferred-languages")
+  java.util.Optional<String> securityTxtPreferredLanguages;
+
   /** Parsed once at startup — these are consulted on every proxied request. */
   private java.util.Set<String> routableServiceSet;
 
@@ -264,5 +288,17 @@ public class GatewayConfig {
 
   public String jwtIssuer() {
     return jwtIssuer;
+  }
+
+  /**
+   * @return the security.txt settings as configured, each possibly absent
+   */
+  public SecurityTxt.Settings securityTxt() {
+    return new SecurityTxt.Settings(
+        securityTxtContact,
+        securityTxtExpires,
+        securityTxtPolicy,
+        securityTxtCanonical,
+        securityTxtPreferredLanguages);
   }
 }

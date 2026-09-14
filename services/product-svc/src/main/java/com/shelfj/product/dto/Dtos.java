@@ -42,7 +42,12 @@ public final class Dtos {
       @Schema(description = "Whether the storefront shows this product. Defaults to true.")
           Boolean sellableOnline,
       @Schema(description = "Whether POS can sell this product. Defaults to true.")
-          Boolean sellablePos) {}
+          Boolean sellablePos,
+      @Schema(
+              description =
+                  "The manufacturer, EU responsible person and warnings (GPSR art.19). Required to"
+                      + " offer the product online where the regulation binds the business.")
+          SafetyInformationRequest safetyInformation) {}
 
   /** Replace a product's store assortment. Empty/null = sold at all stores. */
   @Schema(
@@ -164,7 +169,15 @@ public final class Dtos {
       @Schema(description = "Null when the item is not age-restricted.") String category,
       @Schema(description = "Null when the item is not age-restricted.") Integer minimumAge,
       @Schema(description = "True when the rule came from the tenant rather than the statute.")
-          boolean tenantOverride) {}
+          boolean tenantOverride,
+      @Schema(
+              description =
+                  "Present when a birth-date cut-off is in force: refuse anyone born on or after"
+                      + " this date (yyyy-mm-dd), whatever their age — the UK's generational"
+                      + " tobacco ban from 1 Jan 2027, or a business's own earlier policy.")
+          String bornBefore,
+      @Schema(description = "True when that cut-off is the tenant's policy rather than the law.")
+          boolean bornBeforeTenantOverride) {}
 
   @Schema(name = "AgeRestrictionRuleResponse")
   public record AgeRestrictionRuleResponse(
@@ -173,7 +186,16 @@ public final class Dtos {
       int minimumAge,
       String note,
       @Schema(description = "True when this tenant set it, false when it is the statutory default.")
-          boolean tenantOverride) {}
+          boolean tenantOverride,
+      @Schema(
+              description =
+                  "Refuse anyone born on or after this date; null when there is no cut-off.")
+          String bornBefore,
+      @Schema(
+              description =
+                  "The day a statutory cut-off takes effect; null for a tenant's own, which applies"
+                      + " at once.")
+          String bornBeforeFrom) {}
 
   @Schema(name = "SetAgeRestrictionRuleRequest")
   public record SetAgeRestrictionRuleRequest(
@@ -184,7 +206,12 @@ public final class Dtos {
                   "Must be at or above the statutory minimum — a business may be stricter, never laxer.")
           @NotNull
           Integer minimumAge,
-      @Schema(description = "Why this differs from the statutory default.") String reason) {}
+      @Schema(description = "Why this differs from the statutory default.") String reason,
+      @Schema(
+              description =
+                  "Optional: refuse anyone born on or after this date (yyyy-mm-dd), whatever their"
+                      + " age. May be earlier than a statutory cut-off, never later.")
+          String bornBefore) {}
 
   @Schema(name = "CreateVariantRequest")
   public record CreateVariantRequest(
@@ -430,7 +457,7 @@ public final class Dtos {
    *
    * @param storeId destination store UUID for stock receipt (optional — if absent no stock is
    *     received)
-   * @param currency ISO-4217 currency for price list creation (defaults to GBP when absent)
+   * @param currency ISO-4217 currency for price list creation (the tenant's own when absent)
    */
   @Schema(name = "SupplierCsvImportRequest")
   public record SupplierCsvImportRequest(
@@ -442,7 +469,9 @@ public final class Dtos {
               description =
                   "Destination store UUID for stock receipt; if absent no stock is received.")
           String storeId,
-      @Schema(description = "ISO-4217 currency for price-list creation. Defaults to GBP.")
+      @Schema(
+              description =
+                  "ISO-4217 currency for price-list creation. The tenant's own when omitted.")
           String currency) {}
 
   @Schema(name = "BulkImportError")
@@ -676,4 +705,54 @@ public final class Dtos {
       @Schema(description = "UUID of the category within that set.") String categoryId,
       String createdAt,
       String updatedAt) {}
+
+  @Schema(name = "CatalogueRepublishResponse")
+  public record CatalogueRepublishResponse(
+      @Schema(description = "How many products were announced.") int announced) {}
+
+  // ── Product safety information (01.12, GPSR art.19) ───────────────────────
+
+  @Schema(
+      name = "SafetyInformationRequest",
+      description =
+          "What an online offer shows about a product: the manufacturer, the EU responsible person"
+              + " when the manufacturer is outside the EU, and its warnings or a statement that none"
+              + " apply. Blank fields are absent.")
+  public record SafetyInformationRequest(
+      String manufacturerName,
+      @Schema(description = "Postal address.") String manufacturerAddress,
+      @Schema(description = "An e-mail address or an https:// URL.") String manufacturerContact,
+      @Schema(description = "ISO 3166-1 alpha-2.") String manufacturerCountry,
+      String responsiblePersonName,
+      String responsiblePersonAddress,
+      String responsiblePersonContact,
+      @Schema(description = "Warnings or safety information, as the shopper should read them.")
+          String warnings,
+      @Schema(description = "True to state that no warning applies; not together with warnings.")
+          Boolean noWarnings) {}
+
+  @Schema(name = "SafetyInformationResponse")
+  public record SafetyInformationResponse(
+      String productId,
+      @Schema(description = "Whether anything has been stated for this product.") boolean recorded,
+      String manufacturerName,
+      String manufacturerAddress,
+      String manufacturerContact,
+      String manufacturerCountry,
+      String responsiblePersonName,
+      String responsiblePersonAddress,
+      String responsiblePersonContact,
+      String warnings,
+      boolean noWarnings,
+      @Schema(description = "Whether the business's market requires it for an online offer today.")
+          boolean required,
+      @Schema(
+              description =
+                  "What an online offer still lacks; empty when complete or not required.")
+          List<String> missing,
+      String updatedAt) {}
+
+  @Schema(name = "MissingSafetyInformationResponse")
+  public record MissingSafetyInformationResponse(
+      String productId, String name, List<String> missing) {}
 }

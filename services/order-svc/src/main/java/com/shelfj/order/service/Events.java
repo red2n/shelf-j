@@ -49,7 +49,8 @@ final class Events {
    * OrderConfirmed carries an {@code eventId} (consumer dedupe) plus the buyer and settled amount
    * so downstream consumers can react to the sale without a callback to order-svc — customer-svc
    * accrues loyalty from {@code customerId}/{@code total} (guest orders send {@code
-   * customerId:null} and earn nothing). Emitted exactly once, at full payment (see
+   * customerId:null} and earn nothing), and purchase-svc posts the sale to the ledger from {@code
+   * total} and {@code taxAmount} (17.7). Emitted exactly once, at full payment (see
    * OrderRepository.applyPaymentCaptured).
    */
   static OutboxRow orderConfirmed(
@@ -59,10 +60,13 @@ final class Events {
       String channel,
       UUID customerId,
       BigDecimal total,
+      BigDecimal taxAmount,
       String currency) {
     String customerPart = customerId != null ? "\"" + customerId + "\"" : "null";
     String amount = total != null ? total.toPlainString() : "0";
-    String cur = currency != null ? currency : "GBP";
+    // The VAT inside the total, so the ledger can post revenue net of it (17.7).
+    String tax = taxAmount != null ? taxAmount.toPlainString() : "0";
+    String cur = java.util.Objects.requireNonNull(currency, "an order always carries its currency");
     return new OutboxRow(
         "OrderConfirmed",
         "shelfj.order.order-confirmed",
@@ -82,6 +86,8 @@ final class Events {
             + customerPart
             + ",\"total\":"
             + amount
+            + ",\"taxAmount\":"
+            + tax
             + ",\"currency\":\""
             + esc(cur)
             + "\"}");
@@ -103,6 +109,25 @@ final class Events {
 
   static OutboxRow orderFulfilled(
       UUID tenantId, UUID orderId, UUID storeId, List<OrderItem> items) {
+    return orderFulfilled(tenantId, orderId, storeId, items, java.util.Map.of(), 2);
+  }
+
+  /**
+   * OrderFulfilled with each line's revenue, net of VAT and of the order's discounts ({@code
+   * netAmount}), so inventory-svc can set it against the cost of the batches the line draws down
+   * (19.7). A line with no price known carries none, and the gross-margin report counts it as
+   * unpriced rather than as free.
+   *
+   * @param unitNet net revenue per unit by variant, from {@code LineRevenue.unitNet}
+   * @param scale the currency's minor-unit digits
+   */
+  static OutboxRow orderFulfilled(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      List<OrderItem> items,
+      java.util.Map<UUID, BigDecimal> unitNet,
+      int scale) {
     // eventId is required by inventory-svc's OrderEventHandler for per-line dedupe — without it,
     // every OrderFulfilled is dropped as a malformed event and stock is never deducted.
     StringBuilder sb = new StringBuilder();
@@ -120,8 +145,12 @@ final class Events {
       sb.append("{\"variantId\":\"")
           .append(items.get(i).variantId())
           .append("\",\"qty\":")
-          .append(items.get(i).qty().toPlainString())
-          .append('}');
+          .append(items.get(i).qty().toPlainString());
+      BigDecimal net =
+          com.shelfj.order.domain.LineRevenue.forQty(
+              unitNet, items.get(i).variantId(), items.get(i).qty(), scale);
+      if (net != null) sb.append(",\"netAmount\":").append(net.toPlainString());
+      sb.append('}');
     }
     sb.append("]}");
     return new OutboxRow(

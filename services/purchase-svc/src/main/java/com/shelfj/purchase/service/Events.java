@@ -133,38 +133,118 @@ final class Events {
    * event and is recorded once.
    */
   static OutboxRow supplierInvoiceCaptured(UUID tenantId, Domain.SupplierInvoice inv) {
-    String json =
-        "{\"eventId\":\""
-            + inv.id()
-            + "\",\"eventType\":\"SupplierInvoiceCaptured\",\"tenantId\":\""
-            + tenantId
-            + "\",\"invoiceId\":\""
-            + inv.id()
-            + "\",\"poId\":\""
-            + inv.poId()
-            + "\",\"supplierId\":\""
-            + inv.supplierId()
-            + "\",\"invoiceNumber\":\""
-            + inv.invoiceNumber().replace("\\", "\\\\").replace("\"", "\\\"")
-            + "\",\"invoiceDate\":\""
-            + inv.invoiceDate()
-            + "\",\"currency\":\""
-            + inv.currency()
-            + "\",\"netAmount\":"
-            + inv.netAmount().toPlainString()
-            + ",\"vatAmount\":"
-            + inv.vatAmount().toPlainString()
-            + ",\"grossAmount\":"
-            + inv.grossAmount().toPlainString()
-            + ",\"status\":\""
-            + inv.status()
-            + "\"}";
     return new OutboxRow(
         "SupplierInvoiceCaptured",
         "shelfj.purchase.supplier-invoice-captured",
         tenantId,
         inv.id(),
-        json);
+        invoiceJson(
+            "SupplierInvoiceCaptured",
+            inv.id(),
+            tenantId,
+            inv,
+            ",\"status\":\"" + inv.status() + "\""));
+  }
+
+  /**
+   * A flagged invoice was rejected: its input VAT must leave the return, and its posting has been
+   * reversed here. Same topic as capture, so the consumer that projected the invoice reverses it.
+   *
+   * @param tenantId the owning tenant
+   * @param inv the rejected invoice, its figures as captured
+   * @param eventId the event's own id — derived from the invoice id so a retried rejection is one
+   *     event, not two
+   * @return the outbox row
+   */
+  static OutboxRow supplierInvoiceRejected(
+      UUID tenantId, Domain.SupplierInvoice inv, UUID eventId) {
+    return new OutboxRow(
+        "SupplierInvoiceRejected",
+        "shelfj.purchase.supplier-invoice-captured",
+        tenantId,
+        inv.id(),
+        invoiceJson("SupplierInvoiceRejected", eventId, tenantId, inv, ""));
+  }
+
+  /** The figures pricing-svc projects, the same for a capture and for its reversal. */
+  private static String invoiceJson(
+      String type, UUID eventId, UUID tenantId, Domain.SupplierInvoice inv, String extra) {
+    return "{\"eventId\":\""
+        + eventId
+        + "\",\"eventType\":\""
+        + type
+        + "\",\"tenantId\":\""
+        + tenantId
+        + "\",\"invoiceId\":\""
+        + inv.id()
+        + "\",\"poId\":\""
+        + inv.poId()
+        + "\",\"supplierId\":\""
+        + inv.supplierId()
+        + "\",\"invoiceNumber\":\""
+        + EventPayload.esc(inv.invoiceNumber())
+        + "\",\"invoiceDate\":\""
+        + inv.invoiceDate()
+        + "\",\"currency\":\""
+        + inv.currency()
+        + "\",\"netAmount\":"
+        + inv.netAmount().toPlainString()
+        + ",\"vatAmount\":"
+        + inv.vatAmount().toPlainString()
+        + ",\"grossAmount\":"
+        + inv.grossAmount().toPlainString()
+        + extra
+        + "}";
+  }
+
+  /**
+   * A payment run paid a supplier (17.10): the advice notification-svc emails to the supplier's
+   * remittance address — which invoices the payment settles, which credit notes it offsets, the
+   * total. One per supplier per run; the event id is derived from the two, so a retried payment is
+   * one advice, not two.
+   *
+   * @param items the documents the run settled for this supplier
+   * @return the outbox row, keyed by the run so a run's advices are delivered in order
+   */
+  static OutboxRow supplierRemittanceIssued(
+      UUID tenantId,
+      com.shelfj.purchase.domain.PaymentRuns.PaymentRun run,
+      Domain.Supplier supplier,
+      java.util.List<com.shelfj.purchase.domain.PaymentRuns.Item> items,
+      java.math.BigDecimal total) {
+    UUID eventId = com.shelfj.ids.Ids.derived(run.id(), "remittance:" + supplier.id());
+    var lines = jakarta.json.Json.createArrayBuilder();
+    for (var item : items) {
+      var line =
+          jakarta.json.Json.createObjectBuilder()
+              .add("type", item.itemType())
+              .add("reference", item.reference())
+              .add("amount", item.amount());
+      if (item.documentDate() != null) line.add("documentDate", item.documentDate().toString());
+      lines.add(line);
+    }
+    var json =
+        jakarta.json.Json.createObjectBuilder()
+            .add("eventId", eventId.toString())
+            .add("eventType", "SupplierRemittanceIssued")
+            .add("tenantId", tenantId.toString())
+            .add("aggregateId", run.id().toString())
+            .add("occurredAt", java.time.Instant.now().toString())
+            .add("runId", run.id().toString())
+            .add("runReference", run.reference())
+            .add("supplierId", supplier.id().toString())
+            .add("supplierName", supplier.name())
+            .add("paymentDate", run.paymentDate().toString())
+            .add("currency", run.currency())
+            .add("total", total)
+            .add("items", lines);
+    if (supplier.remittanceEmail() != null) json.add("remittanceEmail", supplier.remittanceEmail());
+    return new OutboxRow(
+        "SupplierRemittanceIssued",
+        "shelfj.purchase.supplier-remittance-issued",
+        tenantId,
+        run.id(),
+        json.build().toString());
   }
 
   static OutboxRow intercompanyInvoiceRaised(UUID tenantId, UUID invoiceId) {

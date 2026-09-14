@@ -94,6 +94,9 @@ public class ProductService {
   @Inject ComplianceRepository complianceRepo;
   @Inject com.shelfj.product.client.InventoryClient inventoryClient;
   @Inject com.shelfj.product.client.PricingClient pricingClient;
+  @Inject com.shelfj.service.TenantProfiles profiles;
+  @Inject com.shelfj.service.Jurisdictions jurisdictions;
+  @Inject com.shelfj.product.repo.ProductSafetyRepository safetyRepo;
 
   // ─────────────────────────────────────────────────────────────────── brands
 
@@ -207,9 +210,16 @@ public class ProductService {
    * @throws ApiException a 404 when no such category exists in this tenant
    */
   public Category updateCategory(UUID tenantId, UUID id, UpdateCategoryRequest req) {
-    getCategory(tenantId, id);
+    Category existing = getCategory(tenantId, id);
     UUID parentId = parseOptionalUuid(req.parentId(), "parentId");
-    return categoryRepo.updateCategory(tenantId, id, req.name().trim(), parentId);
+    Category updated = categoryRepo.updateCategory(tenantId, id, req.name().trim(), parentId);
+    // A category moved under a new parent changes the path of every product beneath it; the
+    // whole catalogue is re-announced rather than the subtree computed, because a tenant's
+    // catalogue is hundreds of products and the arithmetic is not worth being wrong about.
+    if (!java.util.Objects.equals(existing.parentId(), parentId)) {
+      republishCatalogue(tenantId);
+    }
+    return updated;
   }
 
   /**
@@ -237,6 +247,13 @@ public class ProductService {
   public Product createProduct(UUID tenantId, CreateProductRequest req) {
     UUID id = Ids.newId();
     Instant now = Instant.now();
+    var safety =
+        req.safetyInformation() == null
+            ? null
+            : SafetyInformationRules.normalise(tenantId, id, req.safetyInformation(), null, now);
+    if (req.sellableOnline() == null || req.sellableOnline()) {
+      requireListable(tenantId, safety);
+    }
     var product =
         new Product(
             id,
@@ -257,7 +274,10 @@ public class ProductService {
             tenantId,
             id,
             Events.productCreated(tenantId, id, product.name()));
-    return repo.createProductWithOutbox(product, event);
+    return repo.createProductWithOutbox(
+        product,
+        List.of(event, categorised(tenantId, id, product.categoryId(), List.of())),
+        safety);
   }
 
   /**
@@ -293,7 +313,87 @@ public class ProductService {
             tenantId,
             productId,
             Events.productUpdated(tenantId, productId, updated.status()));
-    return repo.updateProductWithOutbox(updated, event);
+    // Always announced, not only when the category changed: a consumer that missed an earlier
+    // announcement catches up on the next, and a category removed is a change too.
+    List<UUID> variantIds =
+        repo.listVariants(tenantId, productId).stream().map(Variant::id).toList();
+    return repo.updateProductWithOutbox(
+        updated,
+        List.of(event, categorised(tenantId, productId, updated.categoryId(), variantIds)),
+        stored -> {
+          if (updated.sellableOnline() && Product.STATUS_ACTIVE.equals(updated.status())) {
+            requireListable(tenantId, stored);
+          }
+        });
+  }
+
+  // ── the catalogue event (03.8) ─────────────────────────────────────────────
+
+  /**
+   * The category path a product sits on, from its own category up to the root. Empty when it has
+   * none; a cycle or a missing parent ends the walk rather than the request.
+   */
+  List<UUID> categoryPath(UUID tenantId, UUID categoryId) {
+    List<UUID> path = new java.util.ArrayList<>();
+    UUID current = categoryId;
+    while (current != null && path.size() < 32 && !path.contains(current)) {
+      path.add(current);
+      current = categoryRepo.findCategory(tenantId, current).map(Category::parentId).orElse(null);
+    }
+    return path;
+  }
+
+  private OutboxRow categorised(
+      UUID tenantId, UUID productId, UUID categoryId, List<UUID> variantIds) {
+    return new OutboxRow(
+        "ProductCategorised",
+        "shelfj.catalog.product-categorised",
+        tenantId,
+        productId,
+        Events.productCategorised(
+            tenantId, productId, categoryPath(tenantId, categoryId), variantIds));
+  }
+
+  /**
+   * Re-announces every active product's category path and variants (03.8), for a consumer that
+   * arrived after the catalogue did — pricing-svc's projection, built on this branch, starts empty
+   * for a tenant whose products predate it. Also how a category moved in the tree reaches the
+   * products beneath it.
+   *
+   * @param tenantId owning tenant
+   * @return how many products were announced
+   */
+  public int republishCatalogue(UUID tenantId) {
+    var products = repo.listCatalogueForRepublish(tenantId);
+    var variantsByProduct = repo.listVariantIdsByProduct(tenantId);
+    List<OutboxRow> events = new java.util.ArrayList<>(products.size());
+    for (var p : products) {
+      events.add(
+          categorised(
+              tenantId,
+              p.productId(),
+              p.categoryId(),
+              variantsByProduct.getOrDefault(p.productId(), List.of())));
+    }
+    // Each variant's measure too (03.13), so pricing-svc's unit prices catch up with the catalogue.
+    int announced = events.size();
+    for (var v : complianceRepo.listMeasureSources(tenantId)) {
+      events.add(
+          new OutboxRow(
+              "VariantMeasured",
+              "shelfj.catalog.variant-measured",
+              tenantId,
+              v.variantId(),
+              Events.variantMeasured(
+                  tenantId,
+                  v.variantId(),
+                  v.productId(),
+                  v.soldBy(),
+                  measureOf(v.soldBy(), v.netContent(), v.netContentUom(), v.catchWeight()),
+                  v.version())));
+    }
+    if (!events.isEmpty()) repo.appendOutbox(events);
+    return announced;
   }
 
   /** Delist a product (soft) — sets status DELISTED, publishes ProductDelisted. */
@@ -808,7 +908,7 @@ public class ProductService {
    */
   public Domain.VariantCompliance updateCompliance(
       UUID tenantId, UUID variantId, VariantComplianceRequest req) {
-    getVariant(tenantId, variantId);
+    var variant = getVariant(tenantId, variantId);
 
     String origin = null;
     if (req.countryOfOrigin() != null && !req.countryOfOrigin().isBlank()) {
@@ -864,7 +964,32 @@ public class ProductService {
             uom,
             req.tareWeight(),
             catchWeight);
-    if (!complianceRepo.updateCompliance(tenantId, updated)) {
+    // 03.13: the unit price is computed from this measure. Food is always sold in a quantity, so
+    // where unit pricing is law a food item must say how much its price buys — a single loose item
+    // states 1 EA — rather than leave the shopper a price with no unit price and no reason why.
+    var measure = measureOf(soldBy, req.netContent(), uom, catchWeight);
+    boolean food =
+        Boolean.TRUE.equals(req.food())
+            || req.food() == null
+                && current != null
+                && !Domain.VariantCompliance.NOT_APPLICABLE.equals(current.allergenStatus());
+    if (food && measure == null && unitPricingRequired(tenantId)) {
+      throw ApiException.badRequest(
+          "PRODUCT_UNIT_PRICE_MEASURE_REQUIRED",
+          "A food item needs its net content in a unit of weight, volume, length, area or count"
+              + " (1 EA for a single loose item), so its unit price can be shown (Price Marking"
+              + " Order 2004; Directive 98/6/EC art.3)");
+    }
+    java.util.function.LongFunction<OutboxRow> measured =
+        version ->
+            new OutboxRow(
+                "VariantMeasured",
+                "shelfj.catalog.variant-measured",
+                tenantId,
+                variantId,
+                Events.variantMeasured(
+                    tenantId, variantId, variant.productId(), soldBy, measure, version));
+    if (!complianceRepo.updateCompliance(tenantId, updated, measured)) {
       throw ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found");
     }
 
@@ -888,7 +1013,7 @@ public class ProductService {
    * line scanned, and resolving a store to its country through tenant-svc would put a second
    * network hop in front of a queue. The caller already knows which store it is.
    */
-  public Domain.AgeRestrictionRule ageCheck(UUID tenantId, UUID variantId, String country) {
+  public Domain.AgeCheck ageCheck(UUID tenantId, UUID variantId, String country) {
     var c = complianceOf(tenantId, variantId);
     if (c.restrictionCategory() == null) {
       return null;
@@ -906,8 +1031,63 @@ public class ProductService {
     boolean override =
         complianceRepo.rulesFor(tenantId, cc).stream()
             .anyMatch(r -> r.category().equals(c.restrictionCategory()) && r.tenantId() != null);
-    return new Domain.AgeRestrictionRule(
-        override ? tenantId : null, cc, c.restrictionCategory(), age, null);
+    // A date of birth, not an age (10.8): the law's cut-off once its day has come, or the
+    // tenant's own when it adopted one, whichever refuses more people.
+    var cutoff =
+        complianceRepo.birthCutoff(
+            tenantId, cc, c.restrictionCategory(), java.time.LocalDate.now(clock));
+    return new Domain.AgeCheck(
+        cc,
+        c.restrictionCategory(),
+        age,
+        override,
+        cutoff == null ? null : cutoff.bornBefore(),
+        cutoff != null && cutoff.tenantPolicy());
+  }
+
+  /**
+   * The day rules that take effect on a date are judged by; UTC, the UK's own offset in January.
+   */
+  java.time.Clock clock = java.time.Clock.systemUTC();
+
+  /**
+   * A cut-off earlier than this would refuse everyone alive; it is a typing error, not a policy.
+   */
+  private static final java.time.LocalDate EARLIEST_CUTOFF = java.time.LocalDate.of(1900, 1, 1);
+
+  private java.time.LocalDate tenantBornBefore(String raw, String country, String category) {
+    if (raw == null || raw.isBlank()) {
+      return null;
+    }
+    java.time.LocalDate date;
+    try {
+      date = java.time.LocalDate.parse(raw.trim());
+    } catch (java.time.format.DateTimeParseException e) {
+      throw new ApiException(
+          400,
+          "PRODUCT_INVALID_BORN_BEFORE",
+          "bornBefore must be a date written yyyy-mm-dd",
+          java.util.List.of(),
+          e);
+    }
+    if (date.isBefore(EARLIEST_CUTOFF) || date.isAfter(java.time.LocalDate.now(clock))) {
+      throw ApiException.badRequest(
+          "PRODUCT_INVALID_BORN_BEFORE",
+          "bornBefore must be a date between 1900 and today; a later one refuses nobody born yet");
+    }
+    var law = complianceRepo.statutoryBornBefore(country, category);
+    if (law != null && date.isAfter(law)) {
+      throw ApiException.badRequest(
+          "PRODUCT_BORN_BEFORE_LAXER",
+          "The law refuses anyone born on or after "
+              + law
+              + " for "
+              + category
+              + " in "
+              + country
+              + "; a tenant cut-off may be earlier, never later");
+    }
+    return date;
   }
 
   /**
@@ -950,7 +1130,15 @@ public class ProductService {
               + statutory
               + "; a tenant rule may be stricter, never laxer");
     }
-    var rule = new Domain.AgeRestrictionRule(tenantId, cc, category, age, trimToNull(req.reason()));
+    var rule =
+        new Domain.AgeRestrictionRule(
+            tenantId,
+            cc,
+            category,
+            age,
+            trimToNull(req.reason()),
+            tenantBornBefore(req.bornBefore(), cc, category),
+            null);
     complianceRepo.upsertTenantRule(rule, actor);
     return rule;
   }
@@ -1376,6 +1564,9 @@ public class ProductService {
     }
 
     // ── 2. products + variants ───────────────────────────────────────────────
+    // A row carries no safety information, so where GPSR binds the business an import may add a
+    // product for the till but not offer one online (01.12). Asked once for the whole import.
+    Boolean safetyRequired = null;
     if (req.products() != null) {
       for (var p : req.products()) {
         try {
@@ -1421,6 +1612,17 @@ public class ProductService {
           if (existing.isPresent()) {
             productId = existing.get().id();
           } else {
+            if (p.sellableOnline() == null || p.sellableOnline()) {
+              if (safetyRequired == null) safetyRequired = safetyRequired(tenantId);
+              if (safetyRequired) {
+                errors.add(
+                    new BulkImportError(
+                        "product:" + p.name(),
+                        "PRODUCT_SAFETY_INFORMATION_REQUIRED: import it with sellableOnline false,"
+                            + " then add its safety information before offering it online"));
+                continue;
+              }
+            }
             productId = Ids.newId();
             var product =
                 new com.shelfj.product.domain.Domain.Product(
@@ -2198,7 +2400,7 @@ public class ProductService {
                           v.variantId(), parsed.skuPrice().get(v.sku())))
               .toList();
       if (!priceItems.isEmpty()) {
-        String cur = (req.currency() != null && !req.currency().isBlank()) ? req.currency() : "GBP";
+        String cur = profiles.currencyOr(tenantId, req.currency());
         var r = pricingClient.batchSetPrices(tenantId, cur, rolesHeader, priceItems);
         pricesSet = r.upserted();
         priceErrors = r.errors().isEmpty() ? null : r.errors();
@@ -2405,5 +2607,139 @@ public class ProductService {
     }
     sb.append("}");
     return sb.length() > 2 ? sb.toString() : null;
+  }
+
+  // ── product safety information (01.12, GPSR art.19) ────────────────────────
+
+  /** Whether GPSR binds this business's online offers today. */
+  boolean safetyRequired(UUID tenantId) {
+    return jurisdictions.inForce(
+        tenantId, SafetyInformationRules.GPSR_ONLINE_OFFER, java.time.LocalDate.now(clock));
+  }
+
+  /**
+   * Refuses to offer a product online without what GPSR art.19 requires, where it binds the
+   * business.
+   *
+   * @param safety the statement as it would stand, or null
+   * @throws ApiException 400 {@code PRODUCT_SAFETY_INFORMATION_REQUIRED}, the missing items in the
+   *     details; 503 when the jurisdiction rules cannot be read — nothing is assumed
+   */
+  void requireListable(UUID tenantId, com.shelfj.product.domain.Domain.ProductSafety safety) {
+    if (!safetyRequired(tenantId)) return;
+    List<String> missing =
+        SafetyInformationRules.missing(safety, manufacturerInside(tenantId, safety));
+    if (!missing.isEmpty()) {
+      throw new ApiException(
+          400,
+          "PRODUCT_SAFETY_INFORMATION_REQUIRED",
+          "An online offer in this business's market must show the manufacturer, the EU"
+              + " responsible person when the manufacturer is outside the EU, and any warnings"
+              + " (Regulation (EU) 2023/988 art.19). Missing: "
+              + String.join(", ", missing),
+          missing);
+    }
+  }
+
+  /** Whether the manufacturer's country is inside the regime, asked of the jurisdiction rules. */
+  private boolean manufacturerInside(
+      UUID tenantId, com.shelfj.product.domain.Domain.ProductSafety safety) {
+    return safety != null
+        && safety.manufacturerCountry() != null
+        && jurisdictions.inForceIn(
+            tenantId,
+            safety.manufacturerCountry(),
+            SafetyInformationRules.GPSR_ONLINE_OFFER,
+            java.time.LocalDate.now(clock));
+  }
+
+  /**
+   * A product's safety statement as it stands against the law.
+   *
+   * @throws ApiException 404 {@code PRODUCT_NOT_FOUND}
+   */
+  public com.shelfj.product.domain.Domain.SafetySheet safetyInformation(
+      UUID tenantId, UUID productId) {
+    getProduct(tenantId, productId);
+    return sheet(tenantId, productId, safetyRepo.find(tenantId, productId).orElse(null));
+  }
+
+  /**
+   * Replaces a product's safety statement. Refused when the product is offered online and the
+   * statement would not do for that.
+   *
+   * @throws ApiException 404 {@code PRODUCT_NOT_FOUND}; 400 for a malformed statement or {@code
+   *     PRODUCT_SAFETY_INFORMATION_REQUIRED}
+   */
+  public com.shelfj.product.domain.Domain.SafetySheet setSafetyInformation(
+      UUID tenantId,
+      UUID productId,
+      com.shelfj.product.dto.Dtos.SafetyInformationRequest req,
+      UUID actor) {
+    var safety =
+        SafetyInformationRules.normalise(
+            tenantId,
+            productId,
+            req,
+            actor,
+            Instant.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+    safetyRepo.save(
+        safety,
+        listed -> {
+          if (listed) requireListable(tenantId, safety);
+        });
+    return sheet(tenantId, productId, safety);
+  }
+
+  /**
+   * Active online products that their market requires safety information for and that lack some, by
+   * name; empty where the regulation does not bind the business.
+   */
+  public List<com.shelfj.product.domain.Domain.MissingSafety> missingSafetyInformation(
+      UUID tenantId) {
+    if (!safetyRequired(tenantId)) return List.of();
+    List<com.shelfj.product.domain.Domain.MissingSafety> out = new java.util.ArrayList<>();
+    for (var listed : safetyRepo.listedOnline(tenantId, 500)) {
+      List<String> missing =
+          SafetyInformationRules.missing(
+              listed.safety(), manufacturerInside(tenantId, listed.safety()));
+      if (!missing.isEmpty()) {
+        out.add(
+            new com.shelfj.product.domain.Domain.MissingSafety(
+                listed.productId(), listed.name(), missing));
+      }
+    }
+    return out;
+  }
+
+  private com.shelfj.product.domain.Domain.SafetySheet sheet(
+      UUID tenantId, UUID productId, com.shelfj.product.domain.Domain.ProductSafety safety) {
+    boolean required = safetyRequired(tenantId);
+    return new com.shelfj.product.domain.Domain.SafetySheet(
+        productId,
+        safety,
+        required,
+        required
+            ? SafetyInformationRules.missing(safety, manufacturerInside(tenantId, safety))
+            : List.of());
+  }
+
+  // ── unit pricing (03.13) ───────────────────────────────────────────────────
+
+  /** The measure a variant's unit price is shown per, or null when none can be stated. */
+  Domain.UnitMeasure measureOf(
+      String soldBy, java.math.BigDecimal netContent, String uom, boolean catchWeight) {
+    return UnitMeasures.of(
+        soldBy,
+        netContent,
+        uom,
+        catchWeight,
+        uomRepo::classOf,
+        uomRepo::findStandardConversionFactor);
+  }
+
+  /** Whether a unit price is law for this business's offers today, by the jurisdiction rules. */
+  boolean unitPricingRequired(UUID tenantId) {
+    return jurisdictions.inForce(tenantId, "UNIT_PRICING", java.time.LocalDate.now(clock));
   }
 }

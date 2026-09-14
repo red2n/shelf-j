@@ -207,4 +207,20 @@ public class UomRepository extends BaseJdbcRepository {
         rs.getString("to_uom"),
         rs.getBigDecimal("factor"));
   }
+
+  /**
+   * The class a unit code belongs to (WEIGHT, VOLUME, LENGTH, AREA, EACH, TIME).
+   *
+   * @param code a unit code such as G or ML
+   * @return the class, or empty for a code nobody defined
+   */
+  public java.util.Optional<String> classOf(String code) {
+    return query(
+            "SELECT class_code FROM uom_definitions WHERE code = ?",
+            ps -> ps.setString(1, code),
+            rs -> rs.getString(1),
+            "uom class of a code")
+        .stream()
+        .findFirst();
+  }
 }

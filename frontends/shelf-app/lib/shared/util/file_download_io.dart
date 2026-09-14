@@ -1,15 +1,25 @@
-import 'package:flutter/foundation.dart';
+import 'dart:io';
 
-/// Non-web stub.
-///
-/// Saving a generated file is a browser gesture — blob plus a synthetic anchor
-/// click — with no analogue on Android or iOS, which the app also declares as
-/// targets. A native build would share the bytes or write to the documents
-/// directory instead; that is separate work.
-///
-/// This exists so those builds get nothing happening rather than a crash: the
-/// previous code reached `package:web` from the top of `reports_screen.dart`, so
-/// merely opening Admin → Reports would have failed to build for mobile.
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+/// Non-web half of the file seam: a native build keeps the file in the app's
+/// documents folder and says where (09.12, the "native save" a receipt or an
+/// export lacked). The web half downloads instead and returns null.
+Future<String?> saveTextFile(String filename, String content,
+    {String mimeType = 'text/plain'}) async {
+  final dir = await getApplicationDocumentsDirectory();
+  final safe = filename.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+  final file = File('${dir.path}${Platform.pathSeparator}$safe');
+  await file.writeAsString(content, flush: true);
+  return file.path;
+}
+
+/// Fire-and-forget save, for callers that only ever wanted the file out of
+/// the app. Failures are logged, never thrown into a button handler.
 void downloadTextFile(String filename, String content, {String mimeType = 'text/plain'}) {
-  debugPrint('Download of $filename (${content.length} chars) is web-only on this build.');
+  saveTextFile(filename, content, mimeType: mimeType).then(
+    (path) => debugPrint('Saved $filename to $path'),
+    onError: (Object e) => debugPrint('Could not save $filename: $e'),
+  );
 }

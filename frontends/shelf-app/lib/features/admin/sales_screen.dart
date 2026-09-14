@@ -5,6 +5,7 @@ import '../../core/constants.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/reference_fields.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
@@ -235,7 +236,7 @@ class _IssueGiftCardDialog extends ConsumerStatefulWidget {
 class _IssueGiftCardDialogState extends ConsumerState<_IssueGiftCardDialog> {
   String? _storeId;
   final _amountCtrl = TextEditingController();
-  String _currency = 'INR';
+  String? _currency;
   bool _loading = false;
   String? _error;
 
@@ -258,7 +259,12 @@ class _IssueGiftCardDialogState extends ConsumerState<_IssueGiftCardDialog> {
     try {
       final resp = await ref.read(apiClientProvider).dio.post(
         '/${ApiConstants.order}/gift-cards',
-        data: {'storeId': _storeId, 'amount': amount, 'currency': _currency},
+        data: {
+          'storeId': _storeId,
+          'amount': amount,
+          // Omitted, order-svc issues it in the tenant's own currency (SJ-D53).
+          if (_currency != null) 'currency': _currency,
+        },
       );
       final card = resp.data['data'] as Map<String, dynamic>;
       if (!mounted) return;
@@ -331,15 +337,9 @@ class _IssueGiftCardDialogState extends ConsumerState<_IssueGiftCardDialog> {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _currency,
-                    decoration: const InputDecoration(labelText: 'Currency'),
-                    items: const [
-                      DropdownMenuItem(value: 'INR', child: Text('INR')),
-                      DropdownMenuItem(value: 'USD', child: Text('USD')),
-                      DropdownMenuItem(value: 'GBP', child: Text('GBP')),
-                    ],
-                    onChanged: (v) => setState(() => _currency = v!),
+                  child: CurrencyField(
+                    value: _currency ?? ref.watch(tenantInfoProvider).value?.currency,
+                    onChanged: (v) => setState(() => _currency = v),
                   ),
                 ),
               ],

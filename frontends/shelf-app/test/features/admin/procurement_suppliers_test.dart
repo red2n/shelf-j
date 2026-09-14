@@ -84,7 +84,7 @@ void main() {
     expect(find.text('Edit supplier'), findsOneWidget);
     // Prefilled from the record, JPY included though the picker never offered it.
     expect(find.widgetWithText(TextFormField, 'Yen By Mistake'), findsOneWidget);
-    expect(find.text('JPY'), findsWidgets);
+    expect(find.text('JPY — Japanese Yen'), findsOneWidget);
     expect(find.widgetWithText(TextFormField, '30'), findsOneWidget);
 
     await tester.enterText(find.widgetWithText(TextFormField, '30'), '45');

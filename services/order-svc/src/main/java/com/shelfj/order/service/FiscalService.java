@@ -66,6 +66,7 @@ public class FiscalService {
   @Inject TseProviders tseProviders;
   @Inject PtSigningKey ptKey;
   @Inject TenantClient tenants;
+  @Inject com.shelfj.service.TenantProfiles profiles;
   @Inject ProductClient products;
 
   /** The software producer's tax id for a Portuguese file's header; the tenant's own when unset. */
@@ -405,7 +406,9 @@ public class FiscalService {
                             new RegisterSnapshot.ProductName(v.productName(), v.sku(), v.unit()))));
     String currency =
         docs.isEmpty()
-            ? (tenant == null || tenant.currency() == null ? "EUR" : tenant.currency())
+            ? (tenant == null || tenant.currency() == null
+                ? profiles.requireCurrency(tenantId)
+                : tenant.currency())
             : docs.get(0).currency();
     return new RegisterSnapshot(
         settings,

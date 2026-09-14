@@ -236,6 +236,8 @@ public final class Domain {
       int minimumAge,
       String country,
       boolean storePolicy,
+      java.time.LocalDate bornBefore,
+      boolean bornBeforePolicy,
       String outcome,
       String reason,
       String idType,
@@ -243,9 +245,14 @@ public final class Domain {
       Instant checkedAt) {
 
     public static final String OUTCOME_PASSED = "PASSED";
+
+    /** Refused for the date of birth: born on or after the cut-off, whatever the age (10.8). */
+    public static final String REASON_BORN_AFTER_CUTOFF = "BORN_AFTER_CUTOFF";
+
     public static final String OUTCOME_REFUSED = "REFUSED";
     public static final java.util.Set<String> REASONS =
-        java.util.Set.of("UNDER_AGE", "NO_ID", "ID_REJECTED", "PROXY_SALE", "OTHER");
+        java.util.Set.of(
+            "UNDER_AGE", "NO_ID", "ID_REJECTED", "PROXY_SALE", REASON_BORN_AFTER_CUTOFF, "OTHER");
     public static final java.util.Set<String> ID_TYPES =
         java.util.Set.of(
             "PASSPORT", "DRIVING_LICENCE", "PASS_CARD", "MILITARY_ID", "NATIONAL_ID", "OTHER");
@@ -455,7 +462,8 @@ public final class Domain {
       String refundMethod,
       String status,
       Instant createdAt,
-      Instant completedAt) {
+      Instant completedAt,
+      UUID createdBy) {
     public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_COMPLETED = "COMPLETED";
     public static final String STATUS_REJECTED = "REJECTED";
@@ -717,4 +725,31 @@ public final class Domain {
       UUID variantId,
       java.math.BigDecimal onHandQty,
       Instant updatedAt) {}
+
+  // ── Business audit trail (20.11) ──────────────────────────────────────────
+
+  /**
+   * One sensitive action read back from the append-only log that recorded it: who did what, when,
+   * at which store, to which order, with what money and reason. {@code detail} is the log's own
+   * qualifier — the role that authorised a discount, the status a cancel came from, the refund
+   * method of a return, the supervisor who authorised a no-sale.
+   */
+  public record AuditEvent(
+      UUID id,
+      String type,
+      Instant occurredAt,
+      UUID actorId,
+      UUID storeId,
+      UUID orderId,
+      BigDecimal amount,
+      String reason,
+      String detail) {
+    public static final String TYPE_DISCOUNT = "DISCOUNT";
+    public static final String TYPE_VOID = "VOID";
+    public static final String TYPE_NO_SALE = "NO_SALE";
+    public static final String TYPE_CANCEL = "CANCEL";
+    public static final String TYPE_RETURN = "RETURN";
+    public static final java.util.List<String> TYPES =
+        java.util.List.of(TYPE_DISCOUNT, TYPE_VOID, TYPE_NO_SALE, TYPE_CANCEL, TYPE_RETURN);
+  }
 }

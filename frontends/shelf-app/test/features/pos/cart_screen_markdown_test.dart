@@ -35,6 +35,7 @@ class _FakeApiClient implements ApiClient {
 final _live = '210000100224${ean13CheckDigit('210000100224')}';
 final _expired = '210000200150${ean13CheckDigit('210000200150')}';
 final _unknown = '210000900999${ean13CheckDigit('210000900999')}';
+final _unannounced = '210000300180${ean13CheckDigit('210000300180')}';
 
 class _Till implements HttpClientAdapter {
   final List<RequestOptions> requests = [];
@@ -56,7 +57,11 @@ class _Till implements HttpClientAdapter {
       final code = parts.last;
       if (code == _live) {
         body =
-            '{"data":{"markdownId":"md-1","variantId":"v-YOG","storeId":"store-1","labelCode":"$_live","markdownPrice":2.24,"originalPrice":2.99,"currency":"GBP","expiryDate":"2026-09-14","remainingQty":6}}';
+            '{"data":{"markdownId":"md-1","variantId":"v-YOG","storeId":"store-1","labelCode":"$_live","markdownPrice":2.24,"originalPrice":2.99,"currency":"GBP","expiryDate":"2026-09-14","remainingQty":6,"wasPrice":2.99,"reductionAnnounceable":true}}';
+      } else if (code == _unannounced) {
+        // 03.12: the list price is known, but no prior price is proven, so there is no was price.
+        body =
+            '{"data":{"markdownId":"md-2","variantId":"v-YOG","storeId":"store-1","labelCode":"$_unannounced","markdownPrice":1.80,"originalPrice":2.99,"currency":"GBP","expiryDate":"2026-09-14","remainingQty":3,"reductionAnnounceable":false,"priorPriceStatus":"SHORT_HISTORY","priorPriceRequired":true}}';
       } else if (code == _expired) {
         status = 409;
         body =
@@ -153,6 +158,7 @@ void main() {
       expect(line.name, 'Greek yoghurt 500g');
       expect(find.byKey(const Key('reduced-md-1')), findsOneWidget);
       expect(find.text('was 2.99'), findsOneWidget);
+      expect(find.text('REDUCED'), findsOneWidget);
       expect(find.text('GBP 2.24'), findsWidgets);
       // The sticker was asked about; the catalogue was not.
       expect(
@@ -169,6 +175,23 @@ void main() {
       );
       // Not weighed, not asked: the sticker prices the pack.
       expect(till.requests.any((r) => r.path.endsWith('/compliance')), isFalse);
+    },
+  );
+
+  testWidgets(
+    'a sticker the law will not let be called reduced rings up at its price, with no was price',
+    (tester) async {
+      await _pump(tester);
+      await _scan(tester, _unannounced);
+
+      final line = _basket(tester).single;
+      expect(line.markdownId, 'md-2');
+      expect(line.unitPrice, 1.80);
+      expect(line.originalPrice, isNull,
+          reason: 'the list price is not a prior price pricing-svc proved');
+      expect(find.text('was 2.99'), findsNothing);
+      expect(find.text('REDUCED'), findsNothing);
+      expect(find.text('MARKDOWN'), findsOneWidget);
     },
   );
 

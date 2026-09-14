@@ -53,6 +53,7 @@ public class CustomerService {
   public static final String ORDER_CONFIRMED_CONSUMER = "customer-svc/order-confirmed";
 
   @Inject CustomerRepository repo;
+  @Inject com.shelfj.service.TenantProfiles profiles;
   @Inject com.shelfj.customer.client.OrderClient orders;
   @Inject MarketingConsentService marketing;
 
@@ -598,6 +599,66 @@ public class CustomerService {
     repo.deleteAddress(tenantId, customerId, addressId);
   }
 
+  // ── the shopper's own profile and address book (12.10) ────────────────────
+
+  /** How many addresses one shopper may keep. A shop's address book is not a free-text store. */
+  static final int MAX_ADDRESSES = 10;
+
+  /**
+   * Updates the signed-in shopper's own profile. The record is found by the token's login, so a
+   * caller can reach no profile but their own; the email is the login's and is not writable here.
+   *
+   * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when this shop holds no record for the
+   *     login — the shopper claims one first with {@code POST /customers/me}
+   */
+  public Customer updateMine(UUID tenantId, UUID loginId, UpdateCustomerRequest req) {
+    return update(tenantId, getByLogin(tenantId, loginId).id(), req);
+  }
+
+  /** The signed-in shopper's own address book. */
+  public List<CustomerAddress> listMyAddresses(UUID tenantId, UUID loginId) {
+    return listAddresses(tenantId, getByLogin(tenantId, loginId).id());
+  }
+
+  /**
+   * Adds an address to the signed-in shopper's own book, capped at {@link #MAX_ADDRESSES}. The cap
+   * is decided under the customer's row lock, so two adds racing for the last place cannot both
+   * take it.
+   *
+   * @throws ApiException {@code CUSTOMER_ADDRESS_LIMIT} (409) when the book is full
+   */
+  public CustomerAddress addMyAddress(UUID tenantId, UUID loginId, AddAddressRequest req) {
+    Customer mine = getByLogin(tenantId, loginId);
+    String type =
+        req.type() == null || req.type().isBlank() ? CustomerAddress.TYPE_HOME : req.type();
+    var address =
+        new CustomerAddress(
+            Ids.newId(),
+            tenantId,
+            mine.id(),
+            type,
+            req.line1(),
+            req.line2(),
+            req.city(),
+            req.state(),
+            req.country(),
+            req.pincode(),
+            Boolean.TRUE.equals(req.isDefault()),
+            Instant.now());
+    return repo.createAddressCapped(address, MAX_ADDRESSES);
+  }
+
+  /** Replaces one of the signed-in shopper's own addresses; another shopper's is not found. */
+  public CustomerAddress updateMyAddress(
+      UUID tenantId, UUID loginId, UUID addressId, AddAddressRequest req) {
+    return updateAddress(tenantId, getByLogin(tenantId, loginId).id(), addressId, req);
+  }
+
+  /** Removes one of the signed-in shopper's own addresses; another shopper's is not found. */
+  public void deleteMyAddress(UUID tenantId, UUID loginId, UUID addressId) {
+    deleteAddress(tenantId, getByLogin(tenantId, loginId).id(), addressId);
+  }
+
   // ── loyalty ───────────────────────────────────────────────────────────────
 
   /**
@@ -815,6 +876,18 @@ public class CustomerService {
   // ── store credit ──────────────────────────────────────────────────────────
 
   /**
+   * The currency a store-credit account is held in: the one named, upper-cased, or the tenant's own
+   * (SJ-D53). Store credit is kept per currency, so reading, issuing and redeeming must agree on
+   * which account a request means.
+   *
+   * @throws ApiException 400 {@code CURRENCY_INVALID} for a named code that is not one; 503 {@code
+   *     TENANT_PROFILE_UNAVAILABLE} when none is named and the tenant's cannot be read
+   */
+  private String storeCreditCurrency(UUID tenantId, String requested) {
+    return profiles.currencyOr(tenantId, requested);
+  }
+
+  /**
    * Reads a store-credit balance, with tenant scoping but <strong>no</strong> object-level
    * authorization.
    *
@@ -823,14 +896,14 @@ public class CustomerService {
    *
    * @param tenantId owning tenant
    * @param customerId the customer whose balance to read
-   * @param currency ISO-4217 code; blank or {@code null} defaults to {@code GBP}
+   * @param currency ISO-4217 code; blank or {@code null} means the tenant's own currency
    * @return the store-credit account, real or a zero-balance stand-in
    * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists in this
    *     tenant
    */
   public StoreCreditAccount getStoreCredit(UUID tenantId, UUID customerId, String currency) {
     get(tenantId, customerId);
-    String cur = currency == null || currency.isBlank() ? "GBP" : currency.toUpperCase(Locale.ROOT);
+    String cur = storeCreditCurrency(tenantId, currency);
     return repo.findStoreCreditAccount(tenantId, customerId, cur)
         .orElseGet(
             () ->
@@ -849,7 +922,7 @@ public class CustomerService {
    *
    * @param tenantId owning tenant
    * @param customerId the customer whose balance to read
-   * @param currency ISO-4217 code; blank or {@code null} defaults to {@code GBP}
+   * @param currency ISO-4217 code; blank or {@code null} means the tenant's own currency
    * @param ctx caller context; staff may read anyone in the tenant, a customer only themselves
    * @return the store-credit account, real or a zero-balance stand-in
    * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists or the
@@ -868,7 +941,8 @@ public class CustomerService {
    *
    * @param tenantId owning tenant
    * @param customerId the customer to credit
-   * @param req the amount, optional currency (defaults to GBP), originating order and reason
+   * @param req the amount, optional currency (the tenant's own when omitted), originating order and
+   *     reason
    * @return the account with its new balance
    * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists in this
    *     tenant
@@ -876,10 +950,7 @@ public class CustomerService {
   public StoreCreditAccount issueStoreCredit(
       UUID tenantId, UUID customerId, IssueStoreCreditRequest req) {
     get(tenantId, customerId);
-    String cur =
-        req.currency() == null || req.currency().isBlank()
-            ? "GBP"
-            : req.currency().toUpperCase(Locale.ROOT);
+    String cur = storeCreditCurrency(tenantId, req.currency());
     UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
     String payload =
         Json.createObjectBuilder()
@@ -908,7 +979,8 @@ public class CustomerService {
    *
    * @param tenantId owning tenant
    * @param customerId the customer to debit
-   * @param req the amount, optional currency (defaults to GBP), order being paid and reason
+   * @param req the amount, optional currency (the tenant's own when omitted), order being paid and
+   *     reason
    * @return the account with its new balance
    * @throws ApiException {@code CUSTOMER_NOT_FOUND} (404) when no such customer exists; a 422 when
    *     the balance is insufficient
@@ -916,10 +988,7 @@ public class CustomerService {
   public StoreCreditAccount redeemStoreCredit(
       UUID tenantId, UUID customerId, RedeemStoreCreditRequest req) {
     get(tenantId, customerId);
-    String cur =
-        req.currency() == null || req.currency().isBlank()
-            ? "GBP"
-            : req.currency().toUpperCase(Locale.ROOT);
+    String cur = storeCreditCurrency(tenantId, req.currency());
     UUID orderId = req.orderId() == null ? null : UUID.fromString(req.orderId());
     String payload =
         Json.createObjectBuilder()

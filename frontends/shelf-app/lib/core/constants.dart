@@ -67,6 +67,10 @@ class StorageKeys {
   /// cashier holding an offline receipt — printed without its legal number —
   /// can find the number the server issued on replay. Device-local, capped.
   static const String posOfflineSynced = 'pos_offline_synced';
+
+  /// This till's receipt printer (09.12): how receipts are produced here, the
+  /// printer's address, the paper width. Device-local, like the printer is.
+  static const String posPrinter = 'pos_printer';
 }
 
 /// Backend role codes (iam-svc seed). Do not invent client-only roles.

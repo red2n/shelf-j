@@ -84,13 +84,38 @@ public final class Dtos {
                       + " business, which PECR reg.22 allows only with recorded consent and which"
                       + " is refused outright without it. A marketing send must name the customer,"
                       + " because consent belongs to a person rather than to an address.")
-          String category) {}
+          String category,
+      @Schema(
+              description =
+                  "EMAIL (the default: the deployment's configured channel), SMS (recipient is an"
+                      + " E.164 number), PUSH (recipient is the login whose devices are pushed to)"
+                      + " or APP (the in-app feed only).")
+          String channel) {}
 
   @Schema(name = "SendNotificationResponse")
   public record SendNotificationResponse(
       @Schema(description = "Event id used for dedupe.") String eventId,
       String type,
-      @Schema(description = "SENT when delivered or already delivered.") String status) {}
+      @Schema(description = "SENT when delivered or already delivered.") String status,
+      @Schema(description = "The channel it went out on.") String channel) {}
+
+  @Schema(
+      name = "RegisterDeviceRequest",
+      description = "A device the caller holds, for push (13.7).")
+  public record RegisterDeviceRequest(
+      @Schema(description = "ANDROID, IOS or WEB.") @jakarta.validation.constraints.NotBlank
+          String platform,
+      @Schema(description = "The push provider's token for the device.")
+          @jakarta.validation.constraints.NotBlank
+          @jakarta.validation.constraints.Size(min = 20, max = 4096)
+          String token) {}
+
+  @Schema(name = "PushDeviceResponse")
+  public record PushDeviceResponse(
+      String id, String platform, String tokenSuffix, String registeredAt, String lastSeenAt) {}
+
+  @Schema(name = "ChannelStatusResponse", description = "One channel and what carries it here.")
+  public record ChannelStatusResponse(String channel, String provider, boolean configured) {}
 
   @Schema(
       name = "MarketingAllowance",

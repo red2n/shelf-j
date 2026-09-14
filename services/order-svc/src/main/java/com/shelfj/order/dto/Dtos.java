@@ -236,6 +236,10 @@ public final class Dtos {
       BigDecimal refundAmount,
       String refundMethod,
       String status,
+      @Schema(
+              description =
+                  "The member of staff who took the goods back; null before the audit trail.")
+          String createdBy,
       String createdAt,
       String completedAt,
       List<ReturnItemResponse> items) {}
@@ -448,7 +452,12 @@ public final class Dtos {
 
   @Schema(name = "GenerateReceiptRequest")
   public record GenerateReceiptRequest(
-      @Schema(description = "PRINT or EMAIL.") @NotBlank String receiptType,
+      @Schema(
+              description =
+                  "How the receipt came out: PRINT (browser), THERMAL (ESC/POS), SAVE (file) or EMAIL.")
+          @NotBlank
+          @Size(max = 20)
+          String receiptType,
       @Schema(description = "Required when receiptType is EMAIL.") String emailedTo,
       Integer printCount) {}
 
@@ -632,13 +641,22 @@ public final class Dtos {
           String country,
       @Schema(description = "True when the age came from the shop's own stricter policy.")
           Boolean storePolicy,
+      @Schema(
+              description =
+                  "The birth-date cut-off that applied (yyyy-mm-dd), copied from product-svc's"
+                      + " answer: anyone born on or after it is refused. Absent when the rule had"
+                      + " none. The customer's own date of birth is never sent.")
+          String bornBefore,
+      @Schema(description = "True when the cut-off was the shop's own policy rather than the law.")
+          Boolean bornBeforeStorePolicy,
       @jakarta.validation.constraints.NotBlank
           @Schema(description = "PASSED — the sale went ahead; REFUSED — it did not.")
           String outcome,
       @Schema(
               description =
                   "Required on a refusal, absent on a pass: UNDER_AGE, NO_ID, ID_REJECTED,"
-                      + " PROXY_SALE (buying for someone under age) or OTHER.")
+                      + " PROXY_SALE (buying for someone under age), BORN_AFTER_CUTOFF (born on"
+                      + " or after the cut-off, which needs bornBefore) or OTHER.")
           String reason,
       @Schema(
               description =
@@ -660,6 +678,8 @@ public final class Dtos {
       int minimumAge,
       String country,
       boolean storePolicy,
+      String bornBefore,
+      boolean bornBeforeStorePolicy,
       String outcome,
       String reason,
       String idType,
@@ -810,4 +830,29 @@ public final class Dtos {
           String period,
       @Schema(description = "Letters, digits and hyphens, at most 16; blank for none.")
           String prefix) {}
+
+  // ── Business audit trail (20.11) ──────────────────────────────────────────
+
+  @Schema(
+      name = "AuditEventResponse",
+      description =
+          "One sensitive action from an append-only log: who, what, when, where, how much and"
+              + " why.")
+  public record AuditEventResponse(
+      String id,
+      @Schema(description = "DISCOUNT, VOID, NO_SALE, CANCEL or RETURN.") String type,
+      String occurredAt,
+      @Schema(description = "The member of staff responsible; null when the log recorded nobody.")
+          String actorId,
+      String storeId,
+      @Schema(description = "The order acted on; null for a no-sale.") String orderId,
+      @Schema(description = "The discount granted or the refund made; null for the rest.")
+          BigDecimal amount,
+      String reason,
+      @Schema(
+              description =
+                  "The log's own qualifier: the role that authorised a discount, the status a"
+                      + " cancel came from, a return's refund method, the supervisor who"
+                      + " authorised a no-sale.")
+          String detail) {}
 }

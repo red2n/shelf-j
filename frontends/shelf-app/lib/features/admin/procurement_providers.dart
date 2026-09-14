@@ -13,6 +13,19 @@ class Supplier {
   final String? currency;
   final int paymentTermsDays;
 
+  /// Where remittance advice is emailed when a payment run pays it (17.10).
+  final String? remittanceEmail;
+  final String? bankAccountName;
+  final String? bankSortCode;
+
+  /// Only the last four digits ever reach the app; the full number goes to
+  /// the bank file alone.
+  final String? bankAccountNumberMasked;
+  final String? bankIbanMasked;
+  final String? bankBic;
+  final bool hasBankDetails;
+  final String? bankDetailsChangedAt;
+
   const Supplier({
     required this.id,
     required this.name,
@@ -21,6 +34,14 @@ class Supplier {
     this.countryCode,
     this.currency,
     required this.paymentTermsDays,
+    this.remittanceEmail,
+    this.bankAccountName,
+    this.bankSortCode,
+    this.bankAccountNumberMasked,
+    this.bankIbanMasked,
+    this.bankBic,
+    this.hasBankDetails = false,
+    this.bankDetailsChangedAt,
   });
 
   factory Supplier.fromJson(Map<String, dynamic> j) => Supplier(
@@ -31,6 +52,14 @@ class Supplier {
     countryCode: j['countryCode'] as String?,
     currency: j['currency'] as String?,
     paymentTermsDays: (j['paymentTermsDays'] as num?)?.toInt() ?? 0,
+    remittanceEmail: j['remittanceEmail'] as String?,
+    bankAccountName: j['bankAccountName'] as String?,
+    bankSortCode: j['bankSortCode'] as String?,
+    bankAccountNumberMasked: j['bankAccountNumberMasked'] as String?,
+    bankIbanMasked: j['bankIbanMasked'] as String?,
+    bankBic: j['bankBic'] as String?,
+    hasBankDetails: j['hasBankDetails'] == true,
+    bankDetailsChangedAt: j['bankDetailsChangedAt'] as String?,
   );
 }
 
@@ -352,6 +381,26 @@ class SupplierInvoice {
   final String status;
   final List<InvoiceMatchLine> lines;
 
+  /// Invoice date plus the supplier's payment terms — what accounts payable
+  /// schedules by.
+  final String? dueDate;
+
+  /// The total printed on the supplier's document, when the capturer keyed it.
+  final double? statedGross;
+
+  /// Header-level variances: `TOTAL_MISMATCH` when the supplier's own total does
+  /// not equal their own lines plus VAT.
+  final List<String> headerVariances;
+
+  /// When the AP posting was written; null for invoices captured before the
+  /// ledger was wired in.
+  final String? postedAt;
+
+  /// Whether it may be paid: MATCHED, or FLAGGED and then APPROVED.
+  final bool payable;
+  final String? resolvedAt;
+  final String? resolutionReason;
+
   const SupplierInvoice({
     required this.id,
     required this.poId,
@@ -363,9 +412,19 @@ class SupplierInvoice {
     required this.grossAmount,
     required this.status,
     required this.lines,
+    this.dueDate,
+    this.statedGross,
+    this.headerVariances = const [],
+    this.postedAt,
+    this.payable = false,
+    this.resolvedAt,
+    this.resolutionReason,
   });
 
+  /// Awaiting a manager's decision.
   bool get flagged => status == 'FLAGGED';
+  bool get approved => status == 'APPROVED';
+  bool get rejected => status == 'REJECTED';
 
   factory SupplierInvoice.fromJson(Map<String, dynamic> j) => SupplierInvoice(
     id: j['id'] as String? ?? '',
@@ -380,6 +439,15 @@ class SupplierInvoice {
     lines: ((j['lines'] as List?) ?? const [])
         .map((e) => InvoiceMatchLine.fromJson(e as Map<String, dynamic>))
         .toList(),
+    dueDate: j['dueDate'] as String?,
+    statedGross: (j['statedGross'] as num?)?.toDouble(),
+    headerVariances: ((j['headerVariances'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+    postedAt: j['postedAt'] as String?,
+    payable: j['payable'] == true,
+    resolvedAt: j['resolvedAt'] as String?,
+    resolutionReason: j['resolutionReason'] as String?,
   );
 }
 
@@ -394,3 +462,157 @@ final supplierInvoicesProvider =
           .map((e) => SupplierInvoice.fromJson(e as Map<String, dynamic>))
           .toList();
     });
+
+// ── Supplier payment runs (17.10) ────────────────────────────────────────────
+
+/// An invoice a run pays, or a supplier credit note it offsets.
+class PaymentRunDocument {
+  final String type;
+  final String documentId;
+  final String reference;
+  final String? documentDate;
+  final String? dueDate;
+  final double amount;
+
+  const PaymentRunDocument({
+    required this.type,
+    required this.documentId,
+    required this.reference,
+    this.documentDate,
+    this.dueDate,
+    required this.amount,
+  });
+
+  bool get isCredit => type == 'CREDIT_NOTE';
+
+  factory PaymentRunDocument.fromJson(Map<String, dynamic> j) =>
+      PaymentRunDocument(
+        type: j['type'] as String? ?? 'INVOICE',
+        documentId: j['documentId'] as String? ?? '',
+        reference: j['reference'] as String? ?? '-',
+        documentDate: j['documentDate'] as String?,
+        dueDate: j['dueDate'] as String?,
+        amount: (j['amount'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// What a run pays one supplier, and anything a reviewer should check first.
+class PaymentRunSupplier {
+  final String supplierId;
+  final String name;
+  final double net;
+  final bool remittanceEmailOnFile;
+  final List<String> warnings;
+  final List<PaymentRunDocument> documents;
+
+  const PaymentRunSupplier({
+    required this.supplierId,
+    required this.name,
+    required this.net,
+    required this.remittanceEmailOnFile,
+    this.warnings = const [],
+    this.documents = const [],
+  });
+
+  factory PaymentRunSupplier.fromJson(Map<String, dynamic> j) =>
+      PaymentRunSupplier(
+        supplierId: j['supplierId'] as String? ?? '',
+        name: j['name'] as String? ?? '-',
+        net: (j['net'] as num?)?.toDouble() ?? 0,
+        remittanceEmailOnFile: j['remittanceEmailOnFile'] == true,
+        warnings: ((j['warnings'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        documents: ((j['documents'] as List?) ?? const [])
+            .map((e) => PaymentRunDocument.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+/// A supplier with something due that the run does not pay, and why.
+class PaymentRunExcluded {
+  final String supplierId;
+  final String name;
+  final String reason;
+  final double net;
+
+  const PaymentRunExcluded({
+    required this.supplierId,
+    required this.name,
+    required this.reason,
+    required this.net,
+  });
+
+  factory PaymentRunExcluded.fromJson(Map<String, dynamic> j) =>
+      PaymentRunExcluded(
+        supplierId: j['supplierId'] as String? ?? '',
+        name: j['name'] as String? ?? '-',
+        reason: j['reason'] as String? ?? '',
+        net: (j['net'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// A payment run: PROPOSED, APPROVED, PAID or CANCELLED.
+class PaymentRun {
+  final String id;
+  final String reference;
+  final String status;
+  final String payUpTo;
+  final String paymentDate;
+  final String currency;
+  final double total;
+  final String? proposedBy;
+  final String? cancelReason;
+  final List<PaymentRunSupplier> suppliers;
+  final List<PaymentRunExcluded> excluded;
+
+  const PaymentRun({
+    required this.id,
+    required this.reference,
+    required this.status,
+    required this.payUpTo,
+    required this.paymentDate,
+    required this.currency,
+    required this.total,
+    this.proposedBy,
+    this.cancelReason,
+    this.suppliers = const [],
+    this.excluded = const [],
+  });
+
+  bool get proposed => status == 'PROPOSED';
+  bool get approved => status == 'APPROVED';
+  bool get paid => status == 'PAID';
+  bool get cancelled => status == 'CANCELLED';
+
+  factory PaymentRun.fromJson(Map<String, dynamic> j) => PaymentRun(
+    id: j['id'] as String? ?? '',
+    reference: j['reference'] as String? ?? '-',
+    status: j['status'] as String? ?? '-',
+    payUpTo: j['payUpTo'] as String? ?? '',
+    paymentDate: j['paymentDate'] as String? ?? '',
+    currency: j['currency'] as String? ?? '',
+    total: (j['total'] as num?)?.toDouble() ?? 0,
+    proposedBy: j['proposedBy'] as String?,
+    cancelReason: j['cancelReason'] as String?,
+    suppliers: ((j['suppliers'] as List?) ?? const [])
+        .map((e) => PaymentRunSupplier.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    excluded: ((j['excluded'] as List?) ?? const [])
+        .map((e) => PaymentRunExcluded.fromJson(e as Map<String, dynamic>))
+        .toList(),
+  );
+}
+
+final paymentRunsProvider = FutureProvider.autoDispose<List<PaymentRun>>((
+  ref,
+) async {
+  final resp = await ref
+      .read(apiClientProvider)
+      .dio
+      .get('/${ApiConstants.purchase}/payment-runs');
+  final data = (resp.data['data'] as List?) ?? [];
+  return data
+      .map((e) => PaymentRun.fromJson(e as Map<String, dynamic>))
+      .toList();
+});

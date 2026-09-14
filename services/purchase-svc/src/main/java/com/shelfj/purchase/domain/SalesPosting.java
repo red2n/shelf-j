@@ -1,0 +1,139 @@
+package com.shelfj.purchase.domain;
+
+import com.shelfj.purchase.domain.Domain.NominalLedgerEntry;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * The journals a sale writes (17.7): the pure part, so every rule can be tested without a database.
+ *
+ * <p>A sale is posted through a receipts clearing account. Each tender debits the account the money
+ * is held in — cash in the tills, card and wallet clearing until the acquirer settles, or the gift
+ * card or store credit liability it reduces — and credits clearing. The confirmed sale debits
+ * clearing with the total and credits sales net of VAT and VAT output. A sale paid in full nets
+ * clearing to zero for its order; what does not is the reconciliation exception the clearing report
+ * lists. A refund credits the control account each refunded tender came from and debits sales and
+ * VAT in the sale's own VAT ratio — or clearing, when the ledger never saw the sale confirmed.
+ */
+public final class SalesPosting {
+
+  private SalesPosting() {}
+
+  /** The account a tender's money sits in. */
+  public record Control(String code, String name) {}
+
+  public static final Control CASH_IN_TILLS =
+      new Control(Domain.CODE_CASH_IN_TILLS, Domain.NAME_CASH_IN_TILLS);
+  public static final Control CARD_CLEARING =
+      new Control(Domain.CODE_CARD_CLEARING, Domain.NAME_CARD_CLEARING);
+  public static final Control GIFT_CARD_LIABILITY =
+      new Control(Domain.CODE_GIFT_CARD_LIABILITY, Domain.NAME_GIFT_CARD_LIABILITY);
+  public static final Control STORE_CREDIT_LIABILITY =
+      new Control(Domain.CODE_STORE_CREDIT_LIABILITY, Domain.NAME_STORE_CREDIT_LIABILITY);
+  public static final Control UNALLOCATED_RECEIPTS =
+      new Control(Domain.CODE_UNALLOCATED_RECEIPTS, Domain.NAME_UNALLOCATED_RECEIPTS);
+
+  /** One tender's part of a refund. */
+  public record Allocation(String method, BigDecimal amount) {}
+
+  /**
+   * Where a tender's money is held. A method nobody mapped goes to unallocated receipts rather than
+   * to a guessed account, so it shows on the trial balance as something to look at.
+   */
+  public static Control controlFor(String method) {
+    String m = method == null ? "" : method.trim().toUpperCase(Locale.ROOT);
+    return switch (m) {
+      case "CASH" -> CASH_IN_TILLS;
+      case "CARD", "UPI", "WALLET" -> CARD_CLEARING;
+      case "GIFT_CARD", "VOUCHER" -> GIFT_CARD_LIABILITY;
+      case "STORE_CREDIT" -> STORE_CREDIT_LIABILITY;
+      default -> UNALLOCATED_RECEIPTS;
+    };
+  }
+
+  /**
+   * The confirmed sale: Dr clearing with the total, Cr sales with the total less VAT, Cr VAT
+   * output. A sale worth nothing posts nothing; VAT is held between zero and the total.
+   */
+  public static List<NominalLedgerEntry> sale(
+      UUID tenantId, UUID orderId, UUID storeId, BigDecimal total, BigDecimal tax, LocalDate date) {
+    if (total == null || total.signum() <= 0) return List.of();
+    BigDecimal vat = tax == null ? BigDecimal.ZERO : tax.max(BigDecimal.ZERO).min(total);
+    return LedgerPosting.of(tenantId, date, "Sale " + orderId, Domain.SOURCE_SALE, orderId, storeId)
+        .debit(Domain.CODE_SALES_CLEARING, Domain.NAME_SALES_CLEARING, total)
+        .credit(Domain.CODE_SALES, Domain.NAME_SALES, total.subtract(vat))
+        .credit(Domain.CODE_VAT_OUTPUT, Domain.NAME_VAT_OUTPUT, vat)
+        .build();
+  }
+
+  /** One tender: Dr its control account, Cr clearing. A tender of nothing posts nothing. */
+  public static List<NominalLedgerEntry> tender(
+      UUID tenantId, UUID orderId, UUID storeId, String method, BigDecimal amount, LocalDate date) {
+    if (amount == null || amount.signum() <= 0) return List.of();
+    Control control = controlFor(method);
+    String how = method == null || method.isBlank() ? "an unrecorded method" : method;
+    return LedgerPosting.of(
+            tenantId,
+            date,
+            "Tender (" + how + ") for sale " + orderId,
+            Domain.SOURCE_SALE_TENDER,
+            orderId,
+            storeId)
+        .debit(control.code(), control.name(), amount)
+        .credit(Domain.CODE_SALES_CLEARING, Domain.NAME_SALES_CLEARING, amount)
+        .build();
+  }
+
+  /**
+   * A refund: Cr each tender's control account with its share; Dr sales and VAT output in the
+   * sale's own ratio of VAT to total, the VAT rounded to the minor unit and sales taking the
+   * remainder — or Dr clearing when the sale was never confirmed. Shares of nothing are ignored.
+   *
+   * @param saleTotal the confirmed sale's total, when there is one
+   * @param saleTax the VAT inside it
+   * @param confirmed whether the ledger has the sale
+   */
+  public static List<NominalLedgerEntry> refund(
+      UUID tenantId,
+      UUID orderId,
+      UUID storeId,
+      List<Allocation> allocations,
+      BigDecimal saleTotal,
+      BigDecimal saleTax,
+      boolean confirmed,
+      LocalDate date) {
+    Map<Control, BigDecimal> byControl = new LinkedHashMap<>();
+    BigDecimal refunded = BigDecimal.ZERO;
+    for (Allocation a : allocations) {
+      if (a.amount() == null || a.amount().signum() <= 0) continue;
+      byControl.merge(controlFor(a.method()), a.amount(), BigDecimal::add);
+      refunded = refunded.add(a.amount());
+    }
+    if (refunded.signum() <= 0) return List.of();
+    LedgerPosting p =
+        LedgerPosting.of(
+            tenantId,
+            date,
+            "Refund for sale " + orderId,
+            Domain.SOURCE_SALE_REFUND,
+            orderId,
+            storeId);
+    if (confirmed && saleTotal != null && saleTotal.signum() > 0) {
+      BigDecimal tax = saleTax == null ? BigDecimal.ZERO : saleTax.max(BigDecimal.ZERO);
+      BigDecimal vat =
+          refunded.multiply(tax).divide(saleTotal, 2, RoundingMode.HALF_UP).min(refunded);
+      p.debit(Domain.CODE_SALES, Domain.NAME_SALES, refunded.subtract(vat))
+          .debit(Domain.CODE_VAT_OUTPUT, Domain.NAME_VAT_OUTPUT, vat);
+    } else {
+      p.debit(Domain.CODE_SALES_CLEARING, Domain.NAME_SALES_CLEARING, refunded);
+    }
+    byControl.forEach((control, amount) -> p.credit(control.code(), control.name(), amount));
+    return p.build();
+  }
+}

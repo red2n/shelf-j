@@ -49,5 +49,13 @@
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
+
+        <!-- The request helpers (TestRequests, PermissionGate) build JAX-RS calls; every service
+             already has the API through Helidon, so it is provided here, never shipped. -->
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 </project>

@@ -26,6 +26,7 @@ public final class Mappers {
   public static CustomerResponse toCustomer(Customer c) {
     return new CustomerResponse(
         c.id().toString(),
+        c.loginId() == null ? null : c.loginId().toString(),
         c.email(),
         c.phone(),
         c.firstName(),
