@@ -457,6 +457,8 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     // Mutations on stores/tenant stay management-only via requiresManagement.
     if ("GET".equalsIgnoreCase(method)) {
       if ("/admin/tenant".equals(path)) return true;
+      // The laws the business trades under: the till obeys them, so every staff role reads them.
+      if ("/admin/tenant/obligations".equals(path)) return true;
       if (pathEqualsOrUnder(path, "/admin/stores")) return true;
       if ("/admin/products/variants/resolve".equals(path)) return true;
     }

@@ -212,4 +212,40 @@ public final class Domain {
       InstrumentVerification latest,
       boolean certified,
       String standing) {}
+
+  /**
+   * A legal obligation as it reaches one country: the obligation's own window, narrowed to the
+   * country's membership of the regime it comes through (V9). A British business is not bound by EU
+   * law made after 31 January 2020.
+   */
+  public record LegalObligation(
+      String code,
+      String scopeKind,
+      String scope,
+      java.time.LocalDate effectiveFrom,
+      java.time.LocalDate effectiveTo,
+      String citation,
+      String summary) {
+    public static final String IN_FORCE = "IN_FORCE";
+    public static final String UPCOMING = "UPCOMING";
+
+    /** IN_FORCE on {@code day}, or UPCOMING when it has not taken effect by then. */
+    public String statusOn(java.time.LocalDate day) {
+      return effectiveFrom.isAfter(day) ? UPCOMING : IN_FORCE;
+    }
+
+    /** True when the obligation had stopped applying before {@code day}. */
+    public boolean endedBefore(java.time.LocalDate day) {
+      return effectiveTo != null && effectiveTo.isBefore(day);
+    }
+
+    /** False for a window that closed before it opened: a membership that ended first. */
+    public boolean everApplies() {
+      return effectiveTo == null || !effectiveTo.isBefore(effectiveFrom);
+    }
+  }
+
+  /** The obligations that bind a country on a day, in force first and then those still to come. */
+  public record ObligationSheet(
+      String country, java.time.LocalDate on, java.util.List<LegalObligation> obligations) {}
 }

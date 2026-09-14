@@ -172,6 +172,39 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cigs, cashi
     truthy('the register counts refusals for the date of birth', (summary.refusedByReason || {}).BORN_AFTER_CUTOFF >= 1, summary);
   });
 
+  group('2c legal obligations: which laws bind which business', () => {
+    const OBL = '/api/tenant-svc/admin/tenant/obligations';
+    const sheet = (token, q) => call('GET', `${OBL}${q || ''}`, { token });
+    const list = (res) => ((data(res) || {}).obligations || []);
+    const find = (res, code) => list(res).find((o) => o.code === code) || {};
+
+    const gb = sheet(owner);
+    expect(gb, "the owner reads the laws for the business's own country", 200);
+    truthy('a British business: UK GDPR and unit pricing in force', data(gb).country === 'GB' && find(gb, 'UK_GDPR').status === 'IN_FORCE' && find(gb, 'UNIT_PRICING').status === 'IN_FORCE', list(gb).map((o) => o.code));
+    truthy('and no EU law made after the UK left', !list(gb).some((o) => o.scope === 'EU'), list(gb).map((o) => o.code));
+    truthy('the tobacco birth-date ban listed with its day', find(gb, 'TOBACCO_BIRTH_COHORT').effectiveFrom === '2027-01-01', find(gb, 'TOBACCO_BIRTH_COHORT'));
+    expect(sheet(cashierA.token), 'a cashier reads them too: the till obeys them', 200);
+
+    const deSheet = sheet(deCashier.token);
+    truthy('a German business inherits EU law and its own', data(deSheet).country === 'DE' && find(deSheet, 'GPSR_ONLINE_OFFER').scope === 'EU' && find(deSheet, 'E_INVOICING_RECEIVE').status === 'IN_FORCE' && !find(deSheet, 'UNIT_PRICING').code, list(deSheet).map((o) => o.code));
+    const ptSheet = sheet(pt.owner.token);
+    truthy("a Portuguese business gets EU law, its own, and not Germany's", find(ptSheet, 'GDPR').code && find(ptSheet, 'CERTIFIED_BILLING').code && !find(ptSheet, 'FISCAL_TSE').code, list(ptSheet).map((o) => o.code));
+    truthy('while a member, EU law reached a British business, with the day it stopped', find(sheet(owner, '?on=2019-06-01'), 'GDPR').effectiveTo === '2020-01-31');
+    truthy('on 1 Jan 2027 the tobacco ban is in force', find(sheet(owner, '?on=2027-01-01'), 'TOBACCO_BIRTH_COHORT').status === 'IN_FORCE');
+    truthy("asked about France, a British business sees France's", find(sheet(owner, '?country=FR'), 'E_INVOICING_RECEIVE').effectiveFrom === '2026-09-01');
+
+    expect(sheet(shopper.token), 'a shopper cannot read them', [401, 403]);
+    expect(call('GET', OBL, {}), 'nor a guest', 401);
+    expect(sheet(owner, '?country=GBR'), 'a country that is not one is refused', 400, 'COUNTRY_INVALID');
+    expect(sheet(owner, `?country=${encodeURIComponent("GB' OR '1'='1")}`), 'SQL in the country is a refused country', 400, 'COUNTRY_INVALID');
+    expect(sheet(owner, '?on=2026-02-30'), 'an impossible date is refused', 400, 'OBLIGATION_DATE_INVALID');
+    expect(call('POST', OBL, { token: owner, body: {} }), 'nothing writes a rule through the API', [403, 404, 405]);
+
+    const params = { headers: { Authorization: `Bearer ${cashierA.token}` }, tags: { name: 'GET obligations burst' } };
+    const burst = http.batch(Array.from({ length: 20 }, () => ['GET', `${BASE}${OBL}`, null, params]));
+    truthy('twenty reads at once all answer with the same rules', burst.every((r) => r.status === 200) && new Set(burst.map((r) => JSON.stringify(data(r)))).size === 1, burst.map((r) => r.status));
+  });
+
   group('3 weighing instruments: the register', () => {
     const base = `/api/tenant-svc/admin/stores/${storeA.id}/weighing-instruments`;
     // No default parameter and no object spread inside the arrow: k6's parser refuses that shape.

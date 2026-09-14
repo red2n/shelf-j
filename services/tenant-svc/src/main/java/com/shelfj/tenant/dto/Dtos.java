@@ -42,7 +42,11 @@ public final class Dtos {
       String pincode,
       @Schema(description = "Store latitude, for geo/delivery-area features.") BigDecimal geoLat,
       @Schema(description = "Store longitude, for geo/delivery-area features.") BigDecimal geoLng,
-      String timezone,
+      @Schema(
+              description =
+                  "Required: the IANA zone the store trades in, such as Europe/London. Never"
+                      + " defaulted — no country has one right answer.")
+          String timezone,
       @Schema(description = "Free-form business hours (e.g. serialized weekly schedule).")
           String businessHours,
       @Schema(
@@ -63,7 +67,7 @@ public final class Dtos {
       String pincode,
       @Schema(description = "Store latitude, for geo/delivery-area features.") BigDecimal geoLat,
       @Schema(description = "Store longitude, for geo/delivery-area features.") BigDecimal geoLng,
-      String timezone,
+      @Schema(description = "IANA zone; null keeps the store's current zone.") String timezone,
       String businessHours,
       Boolean showPrices,
       @Schema(
@@ -235,7 +239,10 @@ public final class Dtos {
       String storeCity,
       String storeCountry,
       String storePincode,
-      @Schema(description = "Defaults to UTC.") String storeTimezone) {}
+      @Schema(
+              description =
+                  "Required: the IANA zone the first store trades in, such as Europe/London.")
+          String storeTimezone) {}
 
   @Schema(name = "OnboardResponse")
   public record OnboardResponse(TenantResponse tenant, StoreResponse store) {}
@@ -403,4 +410,28 @@ public final class Dtos {
       InstrumentVerificationResponse latestVerification,
       String createdAt,
       String updatedAt) {}
+
+  // ── Legal obligations ─────────────────────────────────────────────────────
+
+  @org.eclipse.microprofile.openapi.annotations.media.Schema(name = "ObligationResponse")
+  public record ObligationResponse(
+      @org.eclipse.microprofile.openapi.annotations.media.Schema(
+              description = "Stable code a service checks, such as PRICE_REDUCTION_PRIOR_PRICE.")
+          String code,
+      @org.eclipse.microprofile.openapi.annotations.media.Schema(
+              description = "EU for a regime's law, or the country's own code.")
+          String scope,
+      String effectiveFrom,
+      @org.eclipse.microprofile.openapi.annotations.media.Schema(
+              description = "The last day it applies; null while it still does.")
+          String effectiveTo,
+      String citation,
+      String summary,
+      @org.eclipse.microprofile.openapi.annotations.media.Schema(
+              description = "IN_FORCE on the day asked about, or UPCOMING.")
+          String status) {}
+
+  @org.eclipse.microprofile.openapi.annotations.media.Schema(name = "ObligationsResponse")
+  public record ObligationsResponse(
+      String country, String on, java.util.List<ObligationResponse> obligations) {}
 }

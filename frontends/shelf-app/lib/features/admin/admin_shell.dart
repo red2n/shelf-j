@@ -78,6 +78,15 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Legal obligations',
+      icon: Icons.gavel_outlined,
+      selectedIcon: Icons.gavel,
+    ),
+    route: '/admin/obligations',
+    storekeeperVisible: true,
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Stores',
       icon: Icons.store_outlined,
       selectedIcon: Icons.store,

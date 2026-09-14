@@ -147,6 +147,10 @@ Withdrawals and recalls across every store. Visible to storekeepers as well as m
 
 The register a licensing officer asks to see. Filters: one store or all, a date range (the last 30 days by default), and all / refusals / passed. Three counts — checks, sales that went ahead, refused — with the refusals broken down by reason, then the register itself: each check's category, minimum age and country (marked when the age was the store's own stricter policy), when it was made, and either why it was refused or what was shown. A check made against a birth-date cut-off shows the date it was judged by, and whether that was store policy. Nothing on the screen edits or deletes a record: the server keeps it append-only, and an empty register is shown with the observation that a shop selling restricted items which has never refused anyone has not been checking.
 
+### 4.2d Legal obligations
+
+The laws the business trades under, as the platform tracks them: **In force in <country>** and **Coming**, each with what it asks in a sentence, the instrument behind it, whether it is EU or national law, and its day — *Since 6 Apr 2026* or *From 1 Jan 2027*, with *until* when a window has closed (EU law stopped reaching a British business on 31 Jan 2020). The business's own country; every staff role can open it, because the till obeys these laws. Nothing is editable: the rules change with the law. An empty list says the platform tracks no obligations for that country yet, not that none apply, and the page says it is not legal advice.
+
 ### 4.3 Stores
 
 - A list of stores/warehouses: name, code, city/country, "Prices shown" vs. **Catalog mode** badge, active/inactive toggle.

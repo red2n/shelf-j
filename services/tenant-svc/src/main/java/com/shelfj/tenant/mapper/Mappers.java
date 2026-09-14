@@ -240,4 +240,24 @@ public final class Mappers {
         ts(i.createdAt()),
         ts(i.updatedAt()));
   }
+
+  /** The obligations that bind a country on a day, in wire form. */
+  public static com.shelfj.tenant.dto.Dtos.ObligationsResponse toObligations(
+      com.shelfj.tenant.domain.Domain.ObligationSheet sheet) {
+    return new com.shelfj.tenant.dto.Dtos.ObligationsResponse(
+        sheet.country(),
+        sheet.on().toString(),
+        sheet.obligations().stream()
+            .map(
+                o ->
+                    new com.shelfj.tenant.dto.Dtos.ObligationResponse(
+                        o.code(),
+                        o.scope(),
+                        o.effectiveFrom().toString(),
+                        o.effectiveTo() == null ? null : o.effectiveTo().toString(),
+                        o.citation(),
+                        o.summary(),
+                        o.statusOn(sheet.on())))
+            .toList());
+  }
 }

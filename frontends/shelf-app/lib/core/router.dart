@@ -158,6 +158,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
+            path: '/admin/obligations',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.ObligationsScreen(),
+            ),
+          ),
+          GoRoute(
             path: '/admin/audit',
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,

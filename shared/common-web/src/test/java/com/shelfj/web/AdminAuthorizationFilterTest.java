@@ -147,6 +147,22 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("GET", "/suppliers"));
   }
 
+  /** The laws a business trades under are read by the staff who obey them, never by a shopper. */
+  @Test
+  void legalObligationsAreReadByStaffNotShoppers() throws Exception {
+    for (String role : new String[] {"CASHIER", "STOREKEEPER"}) {
+      ctx.set(null, null, Set.of(role), null, null);
+      assertNotAborted(invoke("GET", "/admin/tenant/obligations"));
+      // Reading is all staff may do there; nothing below management writes under /admin/tenant.
+      assertAborted(invoke("POST", "/admin/tenant/obligations"), 403);
+    }
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    assertAborted(invoke("GET", "/admin/tenant/obligations"), 403);
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    // Only the exact path: nothing beneath or beside it is widened.
+    assertAborted(invoke("GET", "/admin/tenant/obligations/extra"), 403);
+  }
+
   /** A CUSTOMER is not staff — that is the whole point, since storefront tokens carry it. */
   @Test
   void aCustomerRoleIsNotStaff() throws Exception {

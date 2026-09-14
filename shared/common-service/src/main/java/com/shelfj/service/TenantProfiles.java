@@ -1,12 +1,6 @@
 package com.shelfj.service;
 
-import com.shelfj.discovery.ConsulClient;
-import com.shelfj.discovery.ServiceInstance;
 import com.shelfj.web.ApiException;
-import com.shelfj.web.HttpHeaders;
-import io.helidon.http.HeaderNames;
-import io.helidon.webclient.api.HttpClientResponse;
-import io.helidon.webclient.api.WebClient;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -57,17 +51,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 public class TenantProfiles {
 
   private static final Logger LOG = System.getLogger(TenantProfiles.class.getName());
-  private static final String TENANT_SERVICE = "tenant-svc";
-
-  /**
-   * {@code GET /admin/tenant} sits in the staff-operable tier, so the lowest staff role reaches it;
-   * stamped explicitly, for the reason SJ-D13 established — a call carrying no identity is one
-   * routing mistake away from an impersonation.
-   */
-  private static final String INTERNAL_ROLE = "STOREKEEPER";
-
   static final Duration TTL = Duration.ofMinutes(5);
-  private static final int ATTEMPTS = 3;
   private static final Pattern CURRENCY = Pattern.compile("[A-Z]{3}");
   private static final Pattern COUNTRY = Pattern.compile("[A-Z]{2}");
 
@@ -88,16 +72,8 @@ public class TenantProfiles {
 
   @PostConstruct
   void init() {
-    WebClient web =
-        WebClient.builder()
-            .connectTimeout(Duration.ofSeconds(2))
-            .readTimeout(Duration.ofSeconds(5))
-            .build();
-    ConsulClient consul =
-        settings.consulEnabled()
-            ? new ConsulClient(settings.consulHost(), settings.consulPort())
-            : null;
-    fetch = tenantId -> fetchOverHttp(web, consul, tenantId);
+    TenantSvcClient client = new TenantSvcClient(settings, tenantSvcUrl);
+    fetch = tenantId -> client.get(tenantId, "/admin/tenant", Map.of());
   }
 
   /** For tests: a fetch function standing in for tenant-svc, and a clock to age the cache with. */
@@ -221,31 +197,5 @@ public class TenantProfiles {
 
   private static String upper(String s) {
     return s == null ? null : s.trim().toUpperCase(Locale.ROOT);
-  }
-
-  private Optional<String> fetchOverHttp(WebClient web, ConsulClient consul, UUID tenantId) {
-    String base = tenantSvcUrl.filter(u -> !u.isBlank()).orElse(null);
-    if (base == null && consul != null) {
-      base = consul.resolve(TENANT_SERVICE).map(ServiceInstance::baseUri).orElse(null);
-    }
-    if (base == null) {
-      LOG.log(Level.WARNING, "tenant-svc could not be located for tenant {0}", tenantId);
-      return Optional.empty();
-    }
-    for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-      try (HttpClientResponse res =
-          web.get(base + "/admin/tenant")
-              .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
-              .header(HeaderNames.create(HttpHeaders.ROLES), INTERNAL_ROLE)
-              .request()) {
-        int status = res.status().code();
-        if (status == 200) return Optional.of(res.as(String.class));
-        LOG.log(Level.WARNING, "tenant profile for {0}: HTTP {1}", tenantId, status);
-        if (status < 500) return Optional.empty();
-      } catch (RuntimeException e) {
-        LOG.log(Level.WARNING, "tenant profile for {0} failed: {1}", tenantId, e.getMessage());
-      }
-    }
-    return Optional.empty();
   }
 }

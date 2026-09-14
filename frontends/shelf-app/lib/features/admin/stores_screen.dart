@@ -761,7 +761,8 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
   late final TextEditingController _stateCtrl;
   late final TextEditingController _countryCtrl;
   late final TextEditingController _pincodeCtrl;
-  late final TextEditingController _timezoneCtrl;
+  // The store's own zone; never a default (SJ-D54).
+  String? _timezone;
   late bool _showPrices;
   late List<String> _payMethods;
   bool _loading = false;
@@ -777,7 +778,7 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
     _stateCtrl = TextEditingController(text: s.state ?? '');
     _countryCtrl = TextEditingController(text: s.country ?? '');
     _pincodeCtrl = TextEditingController(text: s.pincode ?? '');
-    _timezoneCtrl = TextEditingController(text: s.timezone ?? 'UTC');
+    _timezone = s.timezone;
     _showPrices = s.showPrices;
     _payMethods = [...s.enabledPaymentMethods];
   }
@@ -790,7 +791,6 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
     _stateCtrl.dispose();
     _countryCtrl.dispose();
     _pincodeCtrl.dispose();
-    _timezoneCtrl.dispose();
     super.dispose();
   }
 
@@ -817,7 +817,8 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
           'pincode': _orNull(_pincodeCtrl.text),
           'geoLat': s.geoLat,
           'geoLng': s.geoLng,
-          'timezone': _orNull(_timezoneCtrl.text) ?? 'UTC',
+          // Null keeps the store's zone; the server never fills one in.
+          'timezone': _timezone,
           'businessHours': s.businessHours,
           'showPrices': _showPrices,
           'enabledPaymentMethods': _payMethods,
@@ -932,12 +933,9 @@ class _EditStoreDialogState extends ConsumerState<_EditStoreDialog> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                TextFormField(
-                  controller: _timezoneCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Timezone',
-                    prefixIcon: Icon(Icons.schedule),
-                  ),
+                TimezoneField(
+                  value: _timezone,
+                  onChanged: (v) => setState(() => _timezone = v),
                 ),
                 const SizedBox(height: 8),
                 const Divider(),

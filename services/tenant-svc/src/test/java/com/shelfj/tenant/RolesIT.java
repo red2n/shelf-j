@@ -65,7 +65,7 @@ class RolesIT {
             "/admin/stores",
             "{\"name\":\"Main\",\"code\":\"MAIN-"
                 + Ids.newId().toString().substring(0, 8)
-                + "\",\"line1\":\"1 High St\",\"country\":\"GB\",\"city\":\"London\",\"postcode\":\"E1 6AN\"}",
+                + "\",\"line1\":\"1 High St\",\"country\":\"GB\",\"city\":\"London\",\"postcode\":\"E1 6AN\",\"timezone\":\"Europe/London\"}",
             tenantId,
             OWNER,
             "OWNER");

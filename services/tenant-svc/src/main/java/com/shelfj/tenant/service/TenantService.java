@@ -107,6 +107,8 @@ public class TenantService {
    * the store call never needs it from the JWT — avoids the Kafka async race entirely.
    */
   public TenantWithStore onboard(UUID ownerUserId, OnboardRequest req) {
+    // Checked before the tenant exists: a refused zone must not leave a business with no store.
+    requireTimezone(req.storeTimezone());
     // 1. create tenant (generates tenantId internally)
     CreateTenantRequest tenantReq =
         new CreateTenantRequest(req.businessName(), req.legalName(), req.country(), req.currency());
@@ -126,7 +128,7 @@ public class TenantService {
             req.storePincode(),
             null,
             null,
-            req.storeTimezone() == null ? "UTC" : req.storeTimezone(),
+            req.storeTimezone(),
             null,
             null,
             null);
@@ -164,6 +166,31 @@ public class TenantService {
     return createStoreInternal(tenantId, req, false);
   }
 
+  private static final java.util.Set<String> ZONES = java.time.ZoneId.getAvailableZoneIds();
+
+  /**
+   * The IANA zone a store trades in. Required and never defaulted (SJ-D54): no country has one
+   * right answer, and a store on the wrong clock opens its tills and dates its receipts an hour
+   * out.
+   *
+   * @throws ApiException 400 {@code STORE_TIMEZONE_REQUIRED} when absent, {@code
+   *     STORE_TIMEZONE_INVALID} when it is not an IANA zone
+   */
+  private static String requireTimezone(String zone) {
+    if (zone == null || zone.isBlank()) {
+      throw ApiException.badRequest(
+          "STORE_TIMEZONE_REQUIRED",
+          "timezone is required: the IANA zone the store trades in, such as Europe/London");
+    }
+    String trimmed = zone.trim();
+    if (!ZONES.contains(trimmed)) {
+      throw ApiException.badRequest(
+          "STORE_TIMEZONE_INVALID",
+          "timezone must be an IANA zone such as Europe/London or Asia/Kolkata");
+    }
+    return trimmed;
+  }
+
   private StoreWithZone createStoreInternal(
       UUID tenantId, CreateStoreRequest req, boolean isDefault) {
     UUID storeId = Ids.newId();
@@ -184,7 +211,7 @@ public class TenantService {
             req.pincode(),
             req.geoLat(),
             req.geoLng(),
-            req.timezone() == null ? "UTC" : req.timezone(),
+            requireTimezone(req.timezone()),
             req.businessHours(),
             "ACTIVE",
             isDefault,
@@ -694,7 +721,10 @@ public class TenantService {
         req.pincode(),
         req.geoLat(),
         req.geoLng(),
-        req.timezone() == null ? "UTC" : req.timezone(),
+        // An update that leaves the zone out keeps it; it used to reset it to UTC (SJ-D54).
+        req.timezone() == null || req.timezone().isBlank()
+            ? existing.timezone()
+            : requireTimezone(req.timezone()),
         req.businessHours(),
         // keep current value when the client omits the flag
         req.showPrices() == null ? existing.showPrices() : req.showPrices(),

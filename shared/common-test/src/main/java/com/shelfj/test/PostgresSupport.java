@@ -57,6 +57,20 @@ public final class PostgresSupport implements AutoCloseable {
           + "  OR column_default ILIKE '%uuid_v7%')"
           + " ORDER BY 1";
 
+  /**
+   * SJ-D54: a column holding a currency, country, time zone or locale must not default to a
+   * literal. SJ-D53 took those literals out of the code and left 'GBP', 'USD' and 'GB' in thirteen
+   * column defaults, where an insert that forgot the column was filled in with the wrong one
+   * silently.
+   */
+  private static final String LITERAL_TENANT_DEFAULTS =
+      "SELECT table_schema || '.' || table_name || '.' || column_name || ' DEFAULT ' || column_default"
+          + " FROM information_schema.columns"
+          + " WHERE table_schema NOT IN ('pg_catalog', 'information_schema')"
+          + " AND column_name ~ '(^|_)(currency|country|country_code|timezone|time_zone|locale)$'"
+          + " AND column_default ~ '^''[^'']+''(::[a-z ]+)?$'"
+          + " ORDER BY 1";
+
   private final PostgreSQLContainer<?> container;
 
   private PostgresSupport(PostgreSQLContainer<?> container) {
@@ -166,6 +180,13 @@ public final class PostgresSupport implements AutoCloseable {
                 + defaults
                 + ". Drop the DEFAULT and bind Ids.newId(); see docs/coding-standards.md §3.");
       }
+      List<String> literals = literalTenantDefaults();
+      if (!literals.isEmpty()) {
+        throw new AssertionError(
+            "currency, country or time zone columns defaulting to a literal: "
+                + literals
+                + ". Drop the DEFAULT and bind the tenant's own (TenantProfiles); see SJ-D53/SJ-D54.");
+      }
       Map<String, Long> offenders = nonV7Ids();
       if (!offenders.isEmpty()) {
         throw new AssertionError(
@@ -184,9 +205,21 @@ public final class PostgresSupport implements AutoCloseable {
    *     logs a warning and keeps running
    */
   public List<String> idGeneratingDefaults() {
+    return columnsMatching(ID_GENERATING_DEFAULTS);
+  }
+
+  /**
+   * @return every currency, country, time zone or locale column, in any schema, whose default is a
+   *     literal (SJ-D54)
+   */
+  public List<String> literalTenantDefaults() {
+    return columnsMatching(LITERAL_TENANT_DEFAULTS);
+  }
+
+  private List<String> columnsMatching(String sql) {
     List<String> offenders = new ArrayList<>();
     try (Connection c = dataSource().getConnection();
-        PreparedStatement ps = c.prepareStatement(ID_GENERATING_DEFAULTS);
+        PreparedStatement ps = c.prepareStatement(sql);
         ResultSet rs = ps.executeQuery()) {
       while (rs.next()) {
         offenders.add(rs.getString(1));
