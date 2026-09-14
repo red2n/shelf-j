@@ -375,8 +375,25 @@ public class ProductService {
               p.categoryId(),
               variantsByProduct.getOrDefault(p.productId(), List.of())));
     }
+    // Each variant's measure too (03.13), so pricing-svc's unit prices catch up with the catalogue.
+    int announced = events.size();
+    for (var v : complianceRepo.listMeasureSources(tenantId)) {
+      events.add(
+          new OutboxRow(
+              "VariantMeasured",
+              "shelfj.catalog.variant-measured",
+              tenantId,
+              v.variantId(),
+              Events.variantMeasured(
+                  tenantId,
+                  v.variantId(),
+                  v.productId(),
+                  v.soldBy(),
+                  measureOf(v.soldBy(), v.netContent(), v.netContentUom(), v.catchWeight()),
+                  v.version())));
+    }
     if (!events.isEmpty()) repo.appendOutbox(events);
-    return events.size();
+    return announced;
   }
 
   /** Delist a product (soft) — sets status DELISTED, publishes ProductDelisted. */
@@ -891,7 +908,7 @@ public class ProductService {
    */
   public Domain.VariantCompliance updateCompliance(
       UUID tenantId, UUID variantId, VariantComplianceRequest req) {
-    getVariant(tenantId, variantId);
+    var variant = getVariant(tenantId, variantId);
 
     String origin = null;
     if (req.countryOfOrigin() != null && !req.countryOfOrigin().isBlank()) {
@@ -947,7 +964,32 @@ public class ProductService {
             uom,
             req.tareWeight(),
             catchWeight);
-    if (!complianceRepo.updateCompliance(tenantId, updated)) {
+    // 03.13: the unit price is computed from this measure. Food is always sold in a quantity, so
+    // where unit pricing is law a food item must say how much its price buys — a single loose item
+    // states 1 EA — rather than leave the shopper a price with no unit price and no reason why.
+    var measure = measureOf(soldBy, req.netContent(), uom, catchWeight);
+    boolean food =
+        Boolean.TRUE.equals(req.food())
+            || req.food() == null
+                && current != null
+                && !Domain.VariantCompliance.NOT_APPLICABLE.equals(current.allergenStatus());
+    if (food && measure == null && unitPricingRequired(tenantId)) {
+      throw ApiException.badRequest(
+          "PRODUCT_UNIT_PRICE_MEASURE_REQUIRED",
+          "A food item needs its net content in a unit of weight, volume, length, area or count"
+              + " (1 EA for a single loose item), so its unit price can be shown (Price Marking"
+              + " Order 2004; Directive 98/6/EC art.3)");
+    }
+    java.util.function.LongFunction<OutboxRow> measured =
+        version ->
+            new OutboxRow(
+                "VariantMeasured",
+                "shelfj.catalog.variant-measured",
+                tenantId,
+                variantId,
+                Events.variantMeasured(
+                    tenantId, variantId, variant.productId(), soldBy, measure, version));
+    if (!complianceRepo.updateCompliance(tenantId, updated, measured)) {
       throw ApiException.notFound("VARIANT_NOT_FOUND", "Variant not found");
     }
 
@@ -2680,5 +2722,24 @@ public class ProductService {
         required
             ? SafetyInformationRules.missing(safety, manufacturerInside(tenantId, safety))
             : List.of());
+  }
+
+  // ── unit pricing (03.13) ───────────────────────────────────────────────────
+
+  /** The measure a variant's unit price is shown per, or null when none can be stated. */
+  Domain.UnitMeasure measureOf(
+      String soldBy, java.math.BigDecimal netContent, String uom, boolean catchWeight) {
+    return UnitMeasures.of(
+        soldBy,
+        netContent,
+        uom,
+        catchWeight,
+        uomRepo::classOf,
+        uomRepo::findStandardConversionFactor);
+  }
+
+  /** Whether a unit price is law for this business's offers today, by the jurisdiction rules. */
+  boolean unitPricingRequired(UUID tenantId) {
+    return jurisdictions.inForce(tenantId, "UNIT_PRICING", java.time.LocalDate.now(clock));
   }
 }

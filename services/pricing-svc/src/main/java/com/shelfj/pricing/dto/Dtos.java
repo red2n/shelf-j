@@ -203,7 +203,52 @@ public final class Dtos {
       BigDecimal totalWithVat,
       String currency,
       UUID priceListId,
-      @Schema(description = "Name of the promotion applied, if any.") String promotionApplied) {}
+      @Schema(description = "Name of the promotion applied, if any.") String promotionApplied,
+      @Schema(
+              description =
+                  "The unit price of totalWithVat — per kg, litre, metre, m² or item — when the"
+                      + " variant's measure is declared; null otherwise.")
+          UnitPriceResponse unitPricing,
+      @Schema(description = "Whether a unit price is law for this business's offers today.")
+          boolean unitPriceRequired) {}
+
+  @Schema(name = "UnitPriceResponse", description = "A unit price (03.13).")
+  public record UnitPriceResponse(
+      @Schema(description = "The price per one standard unit.") BigDecimal amount,
+      @Schema(description = "KG, L, M, SQM, or EA for goods sold by number.") String unit,
+      @Schema(description = "How much of the unit one price buys.") BigDecimal quantity,
+      @Schema(description = "How it reads beside the price: per kg, per litre, each.")
+          String label) {}
+
+  @Schema(name = "ShelfLabelRequest")
+  public record ShelfLabelRequest(
+      @Schema(description = "1 to 200 variant UUIDs.") List<String> variantIds,
+      @Schema(description = "UUID of the store; selects its prices and promotions.") String storeId,
+      @Schema(description = "POS (the default) or ONLINE.") String channel) {}
+
+  @Schema(name = "ShelfLabelResponse")
+  public record ShelfLabelResponse(
+      UUID variantId,
+      @Schema(description = "False when no price is in force for the variant.") boolean priced,
+      String currency,
+      @Schema(description = "The regular selling price, VAT included.") BigDecimal regularPrice,
+      UnitPriceResponse regularUnitPrice,
+      @Schema(description = "While a promotion applies, the promotional price.")
+          BigDecimal promotionalPrice,
+      UnitPriceResponse promotionalUnitPrice,
+      String promotionName,
+      boolean measureDeclared,
+      boolean unitPriceRequired) {}
+
+  @Schema(name = "UnitPriceGapResponse")
+  public record UnitPriceGapResponse(
+      UUID variantId,
+      UUID productId,
+      @Schema(description = "Whether the catalogue has announced the variant at all.")
+          boolean catalogued) {}
+
+  @Schema(name = "UnitPriceGapsResponse")
+  public record UnitPriceGapsResponse(boolean required, List<UnitPriceGapResponse> gaps) {}
 
   /**
    * Resolve many lines in one call instead of one HTTP round trip per line — order-svc's checkout
@@ -358,7 +403,12 @@ public final class Dtos {
       @Schema(description = "VAT on netTotal, at this variant's rate.") BigDecimal vatAmount,
       @Schema(description = "The VAT code applied.") String vatCode,
       @Schema(description = "The markdown the line was priced at, when a sticker was scanned.")
-          UUID markdownId) {}
+          UUID markdownId,
+      @Schema(
+              description =
+                  "The unit price of what this line charges per one, discounts and VAT in; null"
+                      + " when the variant's measure is not declared (03.13).")
+          UnitPriceResponse unitPricing) {}
 
   @Schema(name = "AppliedPromotionResponse", description = "One promotion that took money off.")
   public record AppliedPromotionResponse(

@@ -56,6 +56,7 @@ public class PricingService {
 
   @Inject PricingRepository repo;
   @Inject com.shelfj.service.TenantProfiles profiles;
+  @Inject com.shelfj.service.Jurisdictions jurisdictions;
   @Inject PromotionEngine engine;
   @Inject MarkdownService markdowns;
   @Inject TaxReportRepository taxReportRepo;
@@ -396,6 +397,12 @@ public class PricingService {
    *     for the variant
    */
   public ResolvedPrice resolvePrice(ResolvePriceRequest req, TenantContext ctx) {
+    return resolve(req, ctx, true);
+  }
+
+  /** As {@link #resolvePrice}; without promotions, the regular price a shelf label shows beside. */
+  private ResolvedPrice resolve(
+      ResolvePriceRequest req, TenantContext ctx, boolean withPromotions) {
     UUID tenantId = ctx.tenantId();
     UUID variantId = UUID.fromString(req.variantId());
     BigDecimal qty = req.qty() != null ? req.qty() : BigDecimal.ONE;
@@ -404,8 +411,11 @@ public class PricingService {
             ? req.channel().toUpperCase(java.util.Locale.ROOT)
             : PriceList.CHANNEL_ALL;
 
+    // SJ-D55: a quantity tier is a volume price, never a reason a fraction of a unit has no price.
+    // A weighed line arrives as its weight (0.375 kg), and the list price's minimum quantity is 1,
+    // so a fraction is matched as one; a list holding only a bulk tier still refuses a single item.
     PriceListItem baseItem =
-        repo.resolveBasePrice(tenantId, variantId, channel, qty)
+        repo.resolveBasePrice(tenantId, variantId, channel, qty.max(BigDecimal.ONE))
             .orElseThrow(
                 () ->
                     ApiException.notFound(
@@ -425,12 +435,15 @@ public class PricingService {
             ? null
             : Parsing.uuid(req.storeId(), "storeId");
     List<Promotion> candidates =
-        repo.findCandidatePromotions(tenantId, storeId, channel, Instant.now()).stream()
-            .filter(p -> !p.isBasketLevel())
-            // A coupon promotion is not applied to a browsing price: the customer has not
-            // presented it, and this endpoint takes no codes.
-            .filter(p -> !p.requiresCoupon())
-            .toList();
+        (withPromotions
+                ? repo.findCandidatePromotions(tenantId, storeId, channel, Instant.now())
+                : List.<Promotion>of())
+            .stream()
+                .filter(p -> !p.isBasketLevel())
+                // A coupon promotion is not applied to a browsing price: the customer has not
+                // presented it, and this endpoint takes no codes.
+                .filter(p -> !p.requiresCoupon())
+                .toList();
     if (!candidates.isEmpty()) {
       var scopes =
           repo.findPromotionVariantScopes(
@@ -487,6 +500,11 @@ public class PricingService {
             .map(PriceList::currency)
             .orElseGet(() -> profiles.requireCurrency(tenantId));
 
+    // 03.13: the unit price of what the shopper pays — VAT and any promotion in — per kilogram,
+    // litre, metre, square metre or item. Shown whenever the measure is declared; whether it is
+    // law here only decides whether its absence is a gap.
+    var unitPricing =
+        UnitPricing.of(totalWithVat, repo.findMeasure(tenantId, variantId).orElse(null), currency);
     return new ResolvedPrice(
         variantId,
         unitPrice,
@@ -496,7 +514,85 @@ public class PricingService {
         totalWithVat,
         currency,
         baseItem.priceListId(),
-        promoApplied);
+        promoApplied,
+        unitPricing,
+        unitPriceRequired(tenantId));
+  }
+
+  /**
+   * Whether a unit price is law for this business's offers today. When the rules cannot be read it
+   * is taken to be — a price is never refused over it, and a missing unit price is never excused.
+   */
+  boolean unitPriceRequired(UUID tenantId) {
+    try {
+      return jurisdictions.inForce(
+          tenantId, UnitPricing.UNIT_PRICING, java.time.LocalDate.now(java.time.ZoneOffset.UTC));
+    } catch (ApiException e) {
+      return true;
+    }
+  }
+
+  /**
+   * Shelf-edge labels (03.13): for each variant, the regular price and its unit price and, while a
+   * promotion applies at that store and channel, the promotional price and its unit price.
+   *
+   * @throws ApiException 400 {@code PRICING_LABELS_INVALID} for no variants, more than 200, or a
+   *     variant id that is not one
+   */
+  public List<com.shelfj.pricing.domain.Domain.ShelfLabel> shelfLabels(
+      List<String> variantIds, String storeId, String channel, TenantContext ctx) {
+    if (variantIds == null || variantIds.isEmpty() || variantIds.size() > 200) {
+      throw ApiException.badRequest("PRICING_LABELS_INVALID", "variantIds lists 1 to 200 variants");
+    }
+    UUID tenantId = ctx.tenantId();
+    boolean required = unitPriceRequired(tenantId);
+    List<com.shelfj.pricing.domain.Domain.ShelfLabel> out = new java.util.ArrayList<>();
+    for (String id : variantIds.stream().distinct().toList()) {
+      UUID variantId = Parsing.uuid(id, "variantIds");
+      var regularReq = new ResolvePriceRequest(id, storeId, channel, BigDecimal.ONE, null);
+      ResolvedPrice regular;
+      try {
+        regular = resolve(regularReq, ctx, false);
+      } catch (ApiException e) {
+        if (e.status() != 404) throw e;
+        out.add(
+            new com.shelfj.pricing.domain.Domain.ShelfLabel(
+                variantId,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                repo.findMeasure(tenantId, variantId).isPresent(),
+                required));
+        continue;
+      }
+      ResolvedPrice offered = resolve(regularReq, ctx, true);
+      boolean promoted =
+          offered.promotionApplied() != null
+              && offered.totalWithVat().compareTo(regular.totalWithVat()) != 0;
+      out.add(
+          new com.shelfj.pricing.domain.Domain.ShelfLabel(
+              variantId,
+              true,
+              regular.currency(),
+              regular.totalWithVat(),
+              regular.unitPricing(),
+              promoted ? offered.totalWithVat() : null,
+              promoted ? offered.unitPricing() : null,
+              promoted ? offered.promotionApplied() : null,
+              regular.unitPricing() != null,
+              required));
+    }
+    return out;
+  }
+
+  /** Priced variants with no declared measure, and whether a unit price is law here. */
+  public com.shelfj.pricing.domain.Domain.UnitPriceGaps unitPriceGaps(UUID tenantId) {
+    return new com.shelfj.pricing.domain.Domain.UnitPriceGaps(
+        unitPriceRequired(tenantId), repo.unitPriceGaps(tenantId, 500));
   }
 
   /**
@@ -623,7 +719,8 @@ public class PricingService {
         if (currency == null) currency = md.currency();
       } else {
         var baseItem =
-            repo.resolveBasePrice(tenantId, variantId, channel, qty)
+            // SJ-D55: a fraction of a unit is matched against the tiers as one.
+            repo.resolveBasePrice(tenantId, variantId, channel, qty.max(BigDecimal.ONE))
                 .orElseThrow(
                     () ->
                         ApiException.notFound(
@@ -748,6 +845,12 @@ public class PricingService {
               : net.multiply(rate.rate()).setScale(2, RoundingMode.HALF_UP);
       vatTotal = vatTotal.add(vat);
 
+      BigDecimal paidPerOne = net.add(vat).divide(b.qty(), 6, RoundingMode.HALF_UP);
+      var unitPricing =
+          UnitPricing.of(
+              paidPerOne,
+              repo.findMeasure(tenantId, b.variantId()).orElse(null),
+              currency != null ? currency : profiles.requireCurrency(tenantId));
       lineResponses.add(
           new QuoteLineResponse(
               b.variantId(),
@@ -758,7 +861,8 @@ public class PricingService {
               net,
               vat,
               vatCodes.get(i),
-              lineMarkdowns.get(i)));
+              lineMarkdowns.get(i),
+              com.shelfj.pricing.mapper.Mappers.toUnitPrice(unitPricing)));
     }
 
     BigDecimal totalDiscount = outcome.totalDiscount();

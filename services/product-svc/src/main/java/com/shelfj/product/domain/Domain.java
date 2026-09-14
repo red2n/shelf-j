@@ -380,4 +380,20 @@ public final class Domain {
 
   /** An online product that its market requires safety information for, and what it lacks. */
   public record MissingSafety(UUID productId, String name, java.util.List<String> missing) {}
+
+  /**
+   * The quantity one price buys, in the unit a unit price is shown per (03.13): KG, L, M, SQM, or
+   * EA for goods sold by number.
+   */
+  public record UnitMeasure(String unit, java.math.BigDecimal quantity) {}
+
+  /** What a variant says about how it is sold, as the catalogue re-announces it. */
+  public record VariantMeasureSource(
+      UUID variantId,
+      UUID productId,
+      String soldBy,
+      java.math.BigDecimal netContent,
+      String netContentUom,
+      boolean catchWeight,
+      long version) {}
 }

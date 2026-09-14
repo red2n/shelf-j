@@ -270,7 +270,9 @@ public final class Domain {
       BigDecimal totalWithVat,
       String currency,
       UUID priceListId,
-      String promotionApplied) {}
+      String promotionApplied,
+      UnitPrice unitPricing,
+      boolean unitPriceRequired) {}
 
   /**
    * HMRC MTD VAT return. Boxes per VAT Notice 700 s.17: 1=output VAT, 2=EU acquisitions VAT
@@ -529,4 +531,36 @@ public final class Domain {
     public static final String STATUS_ACCEPTED = "ACCEPTED";
     public static final String STATUS_REJECTED = "REJECTED";
   }
+
+  // ── unit pricing (03.13) ───────────────────────────────────────────────────
+
+  /** What one price buys, in a standard unit: KG, L, M, SQM, or EA for goods sold by number. */
+  public record Measure(String unit, BigDecimal quantity) {}
+
+  /**
+   * A unit price: the price per one standard unit, how much one price buys, and how it reads (per
+   * kg, per litre, each).
+   */
+  public record UnitPrice(BigDecimal amount, String unit, BigDecimal quantity, String label) {}
+
+  /**
+   * A shelf-edge label (03.13): the regular selling price and its unit price and, while a promotion
+   * applies, the promotional price and its unit price beside it.
+   */
+  public record ShelfLabel(
+      UUID variantId,
+      boolean priced,
+      String currency,
+      BigDecimal regularPrice,
+      UnitPrice regularUnitPrice,
+      BigDecimal promotionalPrice,
+      UnitPrice promotionalUnitPrice,
+      String promotionName,
+      boolean measureDeclared,
+      boolean unitPriceRequired) {}
+
+  /** A priced variant with no declared measure, so no unit price can be shown. */
+  public record UnitPriceGap(UUID variantId, UUID productId, boolean catalogued) {}
+
+  public record UnitPriceGaps(boolean required, java.util.List<UnitPriceGap> gaps) {}
 }

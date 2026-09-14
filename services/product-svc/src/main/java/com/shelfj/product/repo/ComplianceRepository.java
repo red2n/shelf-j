@@ -5,7 +5,8 @@ import com.shelfj.product.domain.Domain.Allergen;
 import com.shelfj.product.domain.Domain.BirthCutoff;
 import com.shelfj.product.domain.Domain.VariantAllergen;
 import com.shelfj.product.domain.Domain.VariantCompliance;
-import com.shelfj.service.BaseJdbcRepository;
+import com.shelfj.service.BaseOutboxRepository;
+import com.shelfj.service.OutboxRow;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -21,7 +22,7 @@ import java.util.UUID;
  * keeping visible in one file.
  */
 @ApplicationScoped
-public class ComplianceRepository extends BaseJdbcRepository {
+public class ComplianceRepository extends BaseOutboxRepository {
 
   // ── the regulated list ──────────────────────────────────────────────────────
 
@@ -191,8 +192,14 @@ public class ComplianceRepository extends BaseJdbcRepository {
     return rows.isEmpty() ? null : rows.get(0);
   }
 
-  /** Returns false when the variant does not belong to this tenant, rather than silently no-op. */
-  public boolean updateCompliance(UUID tenantId, VariantCompliance v) {
+  /**
+   * Returns false when the variant does not belong to this tenant, rather than silently no-op.
+   *
+   * @param eventFor the announcement committed with the update, given the measure version the
+   *     update took under the row's lock (03.13: pricing-svc keeps only a newer measure)
+   */
+  public boolean updateCompliance(
+      UUID tenantId, VariantCompliance v, java.util.function.LongFunction<OutboxRow> eventFor) {
     return inTx(
         c -> {
           try (var st =
@@ -200,8 +207,9 @@ public class ComplianceRepository extends BaseJdbcRepository {
                   "UPDATE product_variants SET country_of_origin = ?, origin_detail = ?,"
                       + " restriction_category = ?, ingredients = ?, sold_by = ?,"
                       + " net_content = ?, net_content_uom = ?, tare_weight = ?,"
-                      + " catch_weight = ?, updated_at = now()"
-                      + " WHERE tenant_id = ? AND id = ?")) {
+                      + " catch_weight = ?, measure_version = measure_version + 1,"
+                      + " updated_at = now()"
+                      + " WHERE tenant_id = ? AND id = ? RETURNING measure_version")) {
             st.setString(1, v.countryOfOrigin());
             st.setString(2, v.originDetail());
             st.setString(3, v.restrictionCategory());
@@ -213,10 +221,38 @@ public class ComplianceRepository extends BaseJdbcRepository {
             st.setBoolean(9, v.catchWeight());
             st.setObject(10, tenantId);
             st.setObject(11, v.variantId());
-            return st.executeUpdate() > 0;
+            try (ResultSet rs = st.executeQuery()) {
+              if (!rs.next()) return false;
+              insertOutbox(c, eventFor.apply(rs.getLong(1)));
+            }
           }
+          return true;
         },
         "update variant compliance");
+  }
+
+  /**
+   * How every active variant of the tenant is sold, for re-announcing measures with the catalogue.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   */
+  public List<com.shelfj.product.domain.Domain.VariantMeasureSource> listMeasureSources(
+      UUID tenantId) {
+    return query(
+        "SELECT id, product_id, sold_by, net_content, net_content_uom, catch_weight,"
+            + " measure_version"
+            + " FROM product_variants WHERE tenant_id = ? AND status = 'ACTIVE' ORDER BY id",
+        ps -> ps.setObject(1, tenantId),
+        rs ->
+            new com.shelfj.product.domain.Domain.VariantMeasureSource(
+                rs.getObject("id", UUID.class),
+                rs.getObject("product_id", UUID.class),
+                rs.getString("sold_by"),
+                rs.getBigDecimal("net_content"),
+                rs.getString("net_content_uom"),
+                rs.getBoolean("catch_weight"),
+                rs.getLong("measure_version")),
+        "list variant measures");
   }
 
   // ── age restriction ─────────────────────────────────────────────────────────

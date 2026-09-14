@@ -144,7 +144,45 @@ public final class Mappers {
         rp.totalWithVat(),
         rp.currency(),
         rp.priceListId(),
-        rp.promotionApplied());
+        rp.promotionApplied(),
+        toUnitPrice(rp.unitPricing()),
+        rp.unitPriceRequired());
+  }
+
+  /** A unit price in its wire form, or null. */
+  public static com.shelfj.pricing.dto.Dtos.UnitPriceResponse toUnitPrice(
+      com.shelfj.pricing.domain.Domain.UnitPrice u) {
+    return u == null
+        ? null
+        : new com.shelfj.pricing.dto.Dtos.UnitPriceResponse(
+            u.amount(), u.unit(), u.quantity(), u.label());
+  }
+
+  public static com.shelfj.pricing.dto.Dtos.ShelfLabelResponse toShelfLabel(
+      com.shelfj.pricing.domain.Domain.ShelfLabel l) {
+    return new com.shelfj.pricing.dto.Dtos.ShelfLabelResponse(
+        l.variantId(),
+        l.priced(),
+        l.currency(),
+        l.regularPrice(),
+        toUnitPrice(l.regularUnitPrice()),
+        l.promotionalPrice(),
+        toUnitPrice(l.promotionalUnitPrice()),
+        l.promotionName(),
+        l.measureDeclared(),
+        l.unitPriceRequired());
+  }
+
+  public static com.shelfj.pricing.dto.Dtos.UnitPriceGapsResponse toUnitPriceGaps(
+      com.shelfj.pricing.domain.Domain.UnitPriceGaps g) {
+    return new com.shelfj.pricing.dto.Dtos.UnitPriceGapsResponse(
+        g.required(),
+        g.gaps().stream()
+            .map(
+                x ->
+                    new com.shelfj.pricing.dto.Dtos.UnitPriceGapResponse(
+                        x.variantId(), x.productId(), x.catalogued()))
+            .toList());
   }
 
   /**

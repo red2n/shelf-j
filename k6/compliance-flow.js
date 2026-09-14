@@ -19,6 +19,7 @@ import {
   priceVariants,
   receive,
   must,
+  poll,
 } from './lib/shelfj.js';
 
 export const options = {
@@ -186,7 +187,7 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cigs, cashi
     expect(sheet(cashierA.token), 'a cashier reads them too: the till obeys them', 200);
 
     const deSheet = sheet(deCashier.token);
-    truthy('a German business inherits EU law and its own', data(deSheet).country === 'DE' && find(deSheet, 'GPSR_ONLINE_OFFER').scope === 'EU' && find(deSheet, 'E_INVOICING_RECEIVE').status === 'IN_FORCE' && !find(deSheet, 'UNIT_PRICING').code, list(deSheet).map((o) => o.code));
+    truthy('a German business inherits EU law and its own', data(deSheet).country === 'DE' && find(deSheet, 'GPSR_ONLINE_OFFER').scope === 'EU' && find(deSheet, 'E_INVOICING_RECEIVE').status === 'IN_FORCE' && find(deSheet, 'UNIT_PRICING').scope === 'EU', list(deSheet).map((o) => o.code));
     const ptSheet = sheet(pt.owner.token);
     truthy("a Portuguese business gets EU law, its own, and not Germany's", find(ptSheet, 'GDPR').code && find(ptSheet, 'CERTIFIED_BILLING').code && !find(ptSheet, 'FISCAL_TSE').code, list(ptSheet).map((o) => o.code));
     truthy('while a member, EU law reached a British business, with the day it stopped', find(sheet(owner, '?on=2019-06-01'), 'GDPR').effectiveTo === '2020-01-31');
@@ -281,6 +282,87 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cigs, cashi
     const after = data(call('GET', `${P}/${race}`, { token: deOwner }));
     const afterSheet = data(sheet(deOwner, race));
     truthy('and the product is never left online without its safety information', !(after.sellableOnline && (afterSheet.missing || []).length > 0), { online: after.sellableOnline, missing: afterSheet.missing });
+  });
+
+  group('2e unit pricing: a price per kilogram, litre or item beside every price', () => {
+    const PR = '/api/pricing-svc';
+    const compliance = (token, id, body) => call('PUT', `/api/product-svc/admin/products/variants/${id}/compliance`, { token, body });
+    const resolveAs = (opts, id) => call('POST', `${PR}/prices/resolve`, { ...opts, body: { variantId: id, channel: 'ONLINE', qty: 1 } });
+    const near = (a, b) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 0.006;
+
+    expect(compliance(owner, variantId, { soldBy: 'EACH', netContent: 750, netContentUom: 'ML' }), 'the owner declares a 750 ml bottle', 200);
+    let r = null;
+    const took = poll(45, () => {
+      r = resolveAs({ storefront: tenant.tenantId }, variantId);
+      return r.status === 200 && data(r).unitPricing && data(r).unitPricing.unit === 'L';
+    });
+    truthy('the guest quote carries a price per litre once pricing-svc has the measure', took >= 0, r && data(r));
+    const price = data(r);
+    truthy('...the price paid divided by 0.75 litre', near(price.unitPricing.amount, price.totalWithVat / 0.75) && price.unitPricing.label === 'per litre', price);
+    truthy('...and a unit price is law for a British business', price.unitPriceRequired === true, price);
+
+    const quoted = call('POST', `${PR}/prices/quote`, { token: owner, body: { lines: [{ variantId, qty: 2 }] } });
+    expect(quoted, 'the basket is quoted', 200);
+    const line = (data(quoted).lines || [])[0] || {};
+    truthy('the basket line carries the same unit price', line.unitPricing && near(line.unitPricing.amount, price.unitPricing.amount), line);
+
+    const labels = call('POST', `${PR}/prices/shelf-labels`, { token: cashierA.token, body: { variantIds: [variantId, variantId] } });
+    expect(labels, 'a cashier makes shelf-edge labels', 200);
+    const label = (data(labels) || [])[0] || {};
+    truthy('one label, the regular price with its unit price', (data(labels) || []).length === 1 && near(label.regularPrice, price.totalWithVat) && label.regularUnitPrice && near(label.regularUnitPrice.amount, price.unitPricing.amount), data(labels));
+    expect(call('POST', `${PR}/prices/shelf-labels`, { token: shopper.token, body: { variantIds: [variantId] } }), 'a shopper cannot make labels', 403);
+    expect(call('POST', `${PR}/prices/shelf-labels`, { body: { variantIds: [variantId] } }), 'nor a guest', 401);
+    expect(call('POST', `${PR}/prices/shelf-labels`, { token: cashierA.token, body: { variantIds: [] } }), 'no variants is refused', 400, 'PRICING_LABELS_INVALID');
+    const many = Array.from({ length: 201 }, (_, k) => `01890000-0000-7000-8000-${String(k).padStart(12, '0')}`);
+    expect(call('POST', `${PR}/prices/shelf-labels`, { token: cashierA.token, body: { variantIds: many } }), 'more than 200 is refused', 400, 'PRICING_LABELS_INVALID');
+    expect(call('POST', `${PR}/prices/shelf-labels`, { token: cashierA.token, body: { variantIds: ["x' OR '1'='1"] } }), 'SQL for a variant id is refused', 400);
+
+    // An item priced with no measure is a named gap until one is declared.
+    const loose = sellableVariant(tenant, 'Compliance Loose Item').variantId;
+    priceVariants(tenant, [variantId, loose], '12.00');
+    const gapsHave = (id) => ((data(call('GET', `${PR}/admin/unit-pricing/gaps`, { token: owner })).gaps) || []).some((g) => g.variantId === id);
+    truthy('a priced item without a measure is on the gaps list', poll(30, () => gapsHave(loose)) >= 0);
+    truthy('...and the list says a unit price is law here', data(call('GET', `${PR}/admin/unit-pricing/gaps`, { token: owner })).required === true);
+    expect(call('GET', `${PR}/admin/unit-pricing/gaps`, { token: cashierA.token }), 'a cashier cannot read the gaps', 403);
+    expect(compliance(owner, loose, { soldBy: 'WEIGHT', netContentUom: 'KG' }), 'the owner declares it sold by the kilogram', 200);
+    truthy('...and it leaves the gaps list', poll(45, () => !gapsHave(loose)) >= 0);
+
+    // Food states its measure where a unit price is law.
+    const cheese = sellableVariant(tenant, 'Compliance Cheese').variantId;
+    expect(compliance(owner, cheese, { food: true }), 'food with no measure is refused', 400, 'PRODUCT_UNIT_PRICE_MEASURE_REQUIRED');
+    expect(compliance(owner, cheese, { food: true, netContent: 0, netContentUom: 'G' }), 'nor a measure of nothing', 400, 'PRODUCT_UNIT_PRICE_MEASURE_REQUIRED');
+    expect(compliance(owner, cheese, { food: true, netContent: 1, netContentUom: 'EA' }), 'a single item states 1 EA', 200);
+    expect(compliance(cashierA.token, cheese, { food: true, netContent: 1, netContentUom: 'EA' }), 'a cashier cannot declare it', 403);
+
+    // EU law reaches a German business too.
+    const deQuote = resolveAs({ token: deCashier.token }, deVariant);
+    truthy('a German business is told a unit price is law (Directive 98/6/EC)', deQuote.status === 200 && data(deQuote).unitPriceRequired === true, data(deQuote));
+
+    // SJ-D55: a weighed line under one kilogram is priced, per kilogram, rather than refused.
+    const deli = sellableVariant(tenant, 'Compliance Deli Cheese').variantId;
+    priceVariants(tenant, [variantId, loose, deli], '12.00');
+    expect(compliance(owner, deli, { soldBy: 'WEIGHT', netContentUom: 'KG' }), 'the deli cheese is sold by the kilogram', 200);
+    truthy('pricing-svc has its per-kg measure', poll(45, () => {
+      const q = data(resolveAs({ storefront: tenant.tenantId }, deli));
+      return q.unitPricing && q.unitPricing.unit === 'KG';
+    }) >= 0);
+    const weighed = call('POST', `${PR}/prices/quote`, { token: cashierA.token, body: { lines: [{ variantId: deli, qty: 0.375 }] } });
+    expect(weighed, '375 g is quoted rather than refused (SJ-D55)', 200);
+    const wl = (data(weighed).lines || [])[0] || {};
+    truthy('...at 0.375 of the kilogram price, with its unit price per kg', near(wl.lineTotal, 4.5) && wl.unitPricing && wl.unitPricing.unit === 'KG' && near(wl.unitPricing.amount, (wl.netTotal + wl.vatAmount) / 0.375), wl);
+
+    // Twenty saves at once: pricing-svc ends on the measure product-svc stored, never an older one.
+    const headers = { Authorization: `Bearer ${owner}`, 'Content-Type': 'application/json' };
+    const rush = http.batch(Array.from({ length: 20 }, (_, k) => ['PUT', `${BASE}/api/product-svc/admin/products/variants/${loose}/compliance`, JSON.stringify({ soldBy: 'EACH', netContent: 100 + k, netContentUom: 'G' }), { headers, tags: { name: 'PUT compliance rush' } }]));
+    truthy('all twenty saves answer', rush.every((x) => x.status === 200), rush.map((x) => x.status));
+    const stored = data(call('GET', `/api/product-svc/catalog/variants/${loose}/compliance`, { storefront: tenant.tenantId }));
+    const storedKg = Number(stored.netContent) / 1000;
+    let last = null;
+    const settled = poll(45, () => {
+      last = data(resolveAs({ storefront: tenant.tenantId }, loose));
+      return last.unitPricing && last.unitPricing.unit === 'KG' && Math.abs(last.unitPricing.quantity - storedKg) < 1e-9;
+    });
+    truthy('pricing-svc settles on the stored measure', settled >= 0, { stored: stored.netContent, quoted: last && last.unitPricing });
   });
 
   group('3 weighing instruments: the register', () => {

@@ -26,6 +26,7 @@ public class CatalogueEventHandler {
 
   private static final Logger LOG = System.getLogger(CatalogueEventHandler.class.getName());
   static final String CONSUMER = "pricing-svc/catalogue";
+  static final java.util.Set<String> MEASURE_UNITS = java.util.Set.of("KG", "L", "M", "SQM", "EA");
 
   @Inject PricingRepository repo;
 
@@ -67,6 +68,32 @@ public class CatalogueEventHandler {
                   variantId,
                   UUID.fromString(obj.getString("productId")));
           if (done) LOG.log(Level.INFO, "Catalogue: variant {0} placed", variantId);
+          yield done;
+        }
+        case "VariantMeasured" -> {
+          // 03.13: the measure a unit price is computed from, or nulls when none is declared.
+          UUID variantId = UUID.fromString(obj.getString("aggregateId"));
+          String unit = obj.isNull("unit") ? null : obj.getString("unit");
+          java.math.BigDecimal quantity =
+              obj.isNull("quantity") ? null : new java.math.BigDecimal(obj.getString("quantity"));
+          long version = obj.getJsonNumber("version").longValueExact();
+          if (version < 0
+              || (unit == null) != (quantity == null)
+              || unit != null && (!MEASURE_UNITS.contains(unit) || quantity.signum() <= 0)) {
+            throw new IllegalArgumentException("measure " + unit + " " + quantity);
+          }
+          boolean done =
+              repo.projectVariantMeasuredOnce(
+                  UUID.fromString(obj.getString("eventId")),
+                  CONSUMER,
+                  UUID.fromString(obj.getString("tenantId")),
+                  variantId,
+                  UUID.fromString(obj.getString("productId")),
+                  obj.isNull("soldBy") ? null : obj.getString("soldBy"),
+                  unit,
+                  quantity,
+                  version);
+          if (done) LOG.log(Level.INFO, "Catalogue: variant {0} measured", variantId);
           yield done;
         }
         default -> false;

@@ -24,9 +24,15 @@ class CatalogueEventConsumer extends BaseKafkaConsumer {
       defaultValue = "shelfj.catalog.variant-created")
   String variantCreated;
 
+  @Inject
+  @ConfigProperty(
+      name = "shelfj.kafka.topics.variant-measured",
+      defaultValue = "shelfj.catalog.variant-measured")
+  String variantMeasured;
+
   @Override
   protected List<String> topics() {
-    return List.of(categorised, variantCreated);
+    return List.of(categorised, variantCreated, variantMeasured);
   }
 
   @Override

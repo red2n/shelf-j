@@ -1607,4 +1607,99 @@ public class PricingRepository extends BaseOutboxRepository {
       ps.executeUpdate();
     }
   }
+
+  // ── unit pricing (03.13) ───────────────────────────────────────────────────
+
+  /**
+   * Records a variant's measure once per event, placing the variant if it was not yet known.
+   *
+   * @param unit KG, L, M, SQM or EA; null with quantity when none is declared
+   * @param version product-svc's version of the measure; an older one never replaces a newer
+   * @return true when the measure now stands, false for an event already seen or superseded
+   */
+  public boolean projectVariantMeasuredOnce(
+      UUID eventId,
+      String consumer,
+      UUID tenantId,
+      UUID variantId,
+      UUID productId,
+      String soldBy,
+      String unit,
+      BigDecimal quantity,
+      long version) {
+    return inTx(
+        c -> {
+          if (!markProcessedIfNewTx(c, eventId, consumer)) return false;
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO catalogue_variants (tenant_id, variant_id, product_id, sold_by,"
+                      + " measure_unit, measure_quantity, measure_version, measured_at, updated_at)"
+                      + " VALUES (?, ?, ?, ?, ?, ?, ?, now(), now()) ON CONFLICT (tenant_id, variant_id)"
+                      + " DO UPDATE SET product_id = EXCLUDED.product_id, sold_by = EXCLUDED.sold_by,"
+                      + " measure_unit = EXCLUDED.measure_unit,"
+                      + " measure_quantity = EXCLUDED.measure_quantity,"
+                      + " measure_version = EXCLUDED.measure_version,"
+                      + " measured_at = EXCLUDED.measured_at, updated_at = now()"
+                      + " WHERE catalogue_variants.measure_version IS NULL"
+                      + " OR EXCLUDED.measure_version > catalogue_variants.measure_version")) {
+            ps.setObject(1, tenantId);
+            ps.setObject(2, variantId);
+            ps.setObject(3, productId);
+            ps.setString(4, soldBy);
+            ps.setString(5, unit);
+            ps.setBigDecimal(6, quantity);
+            ps.setLong(7, version);
+            return ps.executeUpdate() > 0;
+          }
+        },
+        "project variant measured");
+  }
+
+  /**
+   * A variant's declared measure.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   */
+  public Optional<com.shelfj.pricing.domain.Domain.Measure> findMeasure(
+      UUID tenantId, UUID variantId) {
+    return query(
+            "SELECT measure_unit, measure_quantity FROM catalogue_variants"
+                + " WHERE tenant_id = ? AND variant_id = ? AND measure_unit IS NOT NULL",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, variantId);
+            },
+            rs ->
+                new com.shelfj.pricing.domain.Domain.Measure(rs.getString(1), rs.getBigDecimal(2)),
+            "find variant measure")
+        .stream()
+        .findFirst();
+  }
+
+  /**
+   * Variants with a price in a list in force now and no declared measure, by variant id.
+   *
+   * @param tenantId owning tenant; the first condition of the query
+   */
+  public List<com.shelfj.pricing.domain.Domain.UnitPriceGap> unitPriceGaps(
+      UUID tenantId, int limit) {
+    return query(
+        "SELECT DISTINCT pli.variant_id, cv.product_id, cv.variant_id IS NOT NULL AS catalogued"
+            + " FROM price_list_items pli"
+            + " JOIN price_lists pl ON pl.id = pli.price_list_id AND pl.tenant_id = pli.tenant_id"
+            + " LEFT JOIN catalogue_variants cv"
+            + " ON cv.tenant_id = pli.tenant_id AND cv.variant_id = pli.variant_id"
+            + " WHERE pli.tenant_id = ? AND pl.active = TRUE AND pl.effective_from <= now()"
+            + " AND (pl.effective_to IS NULL OR pl.effective_to > now())"
+            + " AND cv.measure_unit IS NULL"
+            + " ORDER BY pli.variant_id LIMIT ?",
+        ps -> {
+          ps.setObject(1, tenantId);
+          ps.setInt(2, limit);
+        },
+        rs ->
+            new com.shelfj.pricing.domain.Domain.UnitPriceGap(
+                rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getBoolean(3)),
+        "unit price gaps");
+  }
 }

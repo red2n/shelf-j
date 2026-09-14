@@ -1,3 +1,4 @@
+import 'unit_price.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -216,16 +217,22 @@ class ResolvedPrice {
   final double totalWithVat;
   final String currency;
 
+  /// The price per kg, litre, metre, m² or item of what the shopper pays
+  /// (03.13); null when the item has no declared measure.
+  final UnitPriceInfo? unitPricing;
+
   const ResolvedPrice({
     required this.unitPrice,
     required this.totalWithVat,
     required this.currency,
+    this.unitPricing,
   });
 
   factory ResolvedPrice.fromJson(Map<String, dynamic> j) => ResolvedPrice(
         unitPrice: (j['unitPrice'] as num?)?.toDouble() ?? 0,
         totalWithVat: (j['totalWithVat'] as num?)?.toDouble() ?? 0,
         currency: j['currency'] as String? ?? '',
+        unitPricing: UnitPriceInfo.fromJson(j['unitPricing']),
       );
 }
 

@@ -1,3 +1,4 @@
+import 'unit_price.dart';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -218,9 +219,16 @@ class _StorefrontCartScreenState extends ConsumerState<StorefrontCartScreen> {
               final l = cart[i];
               return ListTile(
                 title: Text(l.productName),
-                subtitle: Text(showPrices
-                    ? '${l.sku}  ·  ${l.currency} ${l.unitPrice.toStringAsFixed(2)}'
-                    : l.sku),
+                subtitle: showPrices
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('${l.sku}  ·  ${l.currency} ${l.unitPrice.toStringAsFixed(2)}'),
+                          CartLineUnitPrice(variantId: l.variantId),
+                        ],
+                      )
+                    : Text(l.sku),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [

@@ -1,3 +1,4 @@
+import 'unit_price.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -221,6 +222,7 @@ class OfferPriceAdd extends ConsumerWidget {
               style: TextStyle(
                   color: cs.primary, fontWeight: FontWeight.bold, fontSize: 15),
             ),
+            UnitPriceText(price: offer.price),
             if (hasAvailData) StockBadge(inStock: inStock),
           ],
         );

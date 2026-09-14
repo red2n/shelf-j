@@ -220,4 +220,35 @@ public class PriceResolveResource {
                 new RecordRedemptionsResponse(recorded), ApiResponse.Meta.of(ctx.requestId())))
         .build();
   }
+
+  /**
+   * Shelf-edge labels (03.13): the regular price with its unit price and, while a promotion
+   * applies, the promotional price with its own. Staff only, by the shared filter: it is not a
+   * shopper's question.
+   *
+   * @param req 1 to 200 variants, the store and the channel (POS by default)
+   */
+  @Operation(
+      summary = "Shelf-edge labels with unit prices",
+      description =
+          "For each variant: the regular selling price (VAT included) and its unit price per kg,"
+              + " litre, metre, m² or item; and while a promotion applies at the store, the"
+              + " promotional price and its unit price beside it. A variant with no price in force"
+              + " comes back priced=false rather than failing the batch.")
+  @APIResponse(responseCode = "200", description = "One label per distinct variant, in order")
+  @APIResponse(responseCode = "400", description = "No variants, more than 200, or a bad id")
+  @POST
+  @Path("/shelf-labels")
+  public Response shelfLabels(com.shelfj.pricing.dto.Dtos.ShelfLabelRequest req) {
+    if (req == null) {
+      throw com.shelfj.web.ApiException.badRequest(
+          "PRICING_LABELS_INVALID", "variantIds lists 1 to 200 variants");
+    }
+    String channel = req.channel() == null || req.channel().isBlank() ? "POS" : req.channel();
+    var labels =
+        svc.shelfLabels(req.variantIds(), req.storeId(), channel, ctx).stream()
+            .map(Mappers::toShelfLabel)
+            .toList();
+    return Response.ok(ApiResponse.ok(labels)).build();
+  }
 }

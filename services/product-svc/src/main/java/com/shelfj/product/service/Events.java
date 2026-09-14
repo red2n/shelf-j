@@ -50,6 +50,35 @@ final class Events {
         .collect(java.util.stream.Collectors.joining(",", "[", "]"));
   }
 
+  /**
+   * A variant's measure as its unit price needs it (03.13): the standard unit and the quantity one
+   * price buys, or nulls when none is declared.
+   */
+  static String variantMeasured(
+      UUID tenantId,
+      UUID variantId,
+      UUID productId,
+      String soldBy,
+      com.shelfj.product.domain.Domain.UnitMeasure measure,
+      long version) {
+    return EventPayload.base("VariantMeasured", tenantId, variantId)
+        + ",\"version\":"
+        + version
+        + ",\"productId\":\""
+        + productId
+        + "\",\"soldBy\":\""
+        + EventPayload.esc(soldBy)
+        + "\""
+        + (measure == null
+            ? ",\"unit\":null,\"quantity\":null"
+            : ",\"unit\":\""
+                + measure.unit()
+                + "\",\"quantity\":\""
+                + measure.quantity().toPlainString()
+                + "\"")
+        + "}";
+  }
+
   static String productDelisted(UUID tenantId, UUID productId) {
     return EventPayload.base("ProductDelisted", tenantId, productId) + "}";
   }
