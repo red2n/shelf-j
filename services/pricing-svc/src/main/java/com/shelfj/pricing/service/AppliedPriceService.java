@@ -164,7 +164,8 @@ public class AppliedPriceService {
           null,
           e.cause());
     } catch (ApiException x) {
-      if (x.status() != 404) throw x;
+      // No price in force, or no VAT rate to charge it with (SJ-D56): nothing is offered.
+      if (x.status() != 404 && !PricingService.VAT_RATE_NOT_CONFIGURED.equals(x.code())) throw x;
       return new AppliedPrice(
           null,
           e.tenantId(),

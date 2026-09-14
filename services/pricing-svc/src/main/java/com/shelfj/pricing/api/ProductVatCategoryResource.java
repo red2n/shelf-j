@@ -46,9 +46,12 @@ public class ProductVatCategoryResource {
       summary = "Assign a VAT category to a variant",
       description = "Sets the HMRC VAT code applied to a product variant's price resolution.")
   @APIResponse(responseCode = "200", description = "VAT category assigned")
+  @APIResponse(responseCode = "403", description = "Not a manager, owner or platform admin")
   @APIResponse(responseCode = "404", description = "VAT code not found")
   @POST
   public Response upsert(UpsertProductVatCategoryRequest req) {
+    // What a product is taxed at is a management decision, not a till's (SJ-D56).
+    ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER");
     Validations.validate(req);
     return Response.status(200)
         .entity(ApiResponse.ok(Mappers.toDto(svc.upsertProductVatCategory(req, ctx))))
@@ -58,8 +61,9 @@ public class ProductVatCategoryResource {
   /**
    * Reads a variant's VAT assignment.
    *
-   * <p>Reports absence as a 404, unlike price resolution, which quietly falls back to the standard
-   * rate: the admin screen needs to know a product was never categorised.
+   * <p>Reports absence as a 404, unlike price resolution, which charges an uncategorised variant
+   * the business's standard rate (T1): the admin screen needs to know a product was never
+   * categorised.
    *
    * @param variantId the variant to look up
    * @return the assignment

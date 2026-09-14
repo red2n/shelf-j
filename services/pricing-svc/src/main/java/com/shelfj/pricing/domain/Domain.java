@@ -13,8 +13,8 @@ public final class Domain {
   private Domain() {}
 
   /**
-   * HMRC VAT rate. code: T1=Standard 20%, T5=Reduced 5%, T0=Zero 0%, TX=Exempt. Per HMRC VAT Notice
-   * 700.
+   * HMRC VAT rate. code: T1=the business's standard rate, T5=reduced, T0=zero, TX=exempt — each set
+   * by the business, never assumed (SJ-D56). Per HMRC VAT Notice 700.
    */
   public record VatRate(
       UUID id,

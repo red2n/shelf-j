@@ -62,6 +62,9 @@ public class PricingService {
   @Inject MarkdownService markdowns;
   @Inject TaxReportRepository taxReportRepo;
 
+  /** No rate is configured for the VAT code a price needs, so it is not quoted (SJ-D56). */
+  public static final String VAT_RATE_NOT_CONFIGURED = "PRICING_VAT_RATE_NOT_CONFIGURED";
+
   // ── VAT Rates ─────────────────────────────────────────────────────────────
 
   /**
@@ -574,21 +577,23 @@ public class PricingService {
         .orElse(VatRate.T1);
   }
 
-  /** The rate a VAT code carries; with {@code asOf}, as configured by then. */
+  /**
+   * The rate a VAT code carries; with {@code asOf}, as configured by then. Never a literal rate
+   * (SJ-D56): a business that charges no VAT sets its standard rate exempt, and until a rate is set
+   * nothing is quoted.
+   *
+   * @throws ApiException 409 {@code PRICING_VAT_RATE_NOT_CONFIGURED} when the code has no rate
+   */
   private VatRate rateFor(UUID tenantId, String vatCode, Instant asOf) {
     return repo.findVatRate(tenantId, vatCode, asOf)
-        .orElse(
-            new VatRate(
-                null,
-                tenantId,
-                VatRate.T1,
-                "Standard Rate",
-                new BigDecimal("0.20"),
-                false,
-                null,
-                Instant.now(),
-                null,
-                Instant.now()));
+        .orElseThrow(
+            () ->
+                ApiException.conflict(
+                    VAT_RATE_NOT_CONFIGURED,
+                    "no VAT rate is configured for code "
+                        + vatCode
+                        + "; set this business's rate under Pricing, VAT rates — exempt if it"
+                        + " charges no VAT"));
   }
 
   private static BigDecimal vatOn(BigDecimal net, VatRate rate) {

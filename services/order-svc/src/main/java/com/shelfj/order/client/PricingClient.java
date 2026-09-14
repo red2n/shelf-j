@@ -124,10 +124,12 @@ public class PricingClient {
         throw ApiException.unprocessable(
             "ORDER_PRICE_UNRESOLVED", "no active price configured for variant " + variantId);
       }
+      String body = res.as(String.class);
+      var refused = relayedRefusal(status, body);
+      if (refused.isPresent()) throw refused.get();
       if (status != 200) {
         throw unavailable("pricing-svc returned HTTP " + status, null);
       }
-      String body = res.as(String.class);
       try (JsonReader reader = Json.createReader(new StringReader(body))) {
         JsonObject data = reader.readObject().getJsonObject("data");
         BigDecimal unitPrice = data.getJsonNumber("unitPrice").bigDecimalValue();
@@ -290,16 +292,10 @@ public class PricingClient {
         throw ApiException.unprocessable(
             "ORDER_PRICE_UNRESOLVED", "no active price configured for one or more order lines");
       }
-      if (status == 400 || status == 409) {
-        // The basket itself was refused — a sticker for another product, a sticker with no packs
-        // left — and the cashier needs the reason, not a 503 (05.4).
-        String code = errorCode(payload);
-        if (code != null) {
-          throw status == 400
-              ? ApiException.badRequest(code, errorMessage(payload))
-              : ApiException.conflict(code, errorMessage(payload));
-        }
-      }
+      // The basket itself was refused — a sticker for another product, a sticker with no packs
+      // left, no VAT rate to charge (05.4, SJ-D56) — and the cashier needs the reason, not a 503.
+      var refused = relayedRefusal(status, payload);
+      if (refused.isPresent()) throw refused.get();
       if (status != 200) throw unavailable("pricing-svc returned HTTP " + status, null);
       try (JsonReader reader = Json.createReader(new StringReader(payload))) {
         JsonObject data = reader.readObject().getJsonObject("data");
@@ -567,10 +563,12 @@ public class PricingClient {
         throw ApiException.unprocessable(
             "ORDER_PRICE_UNRESOLVED", "no active price configured for one or more order lines");
       }
+      String body = res.as(String.class);
+      var refused = relayedRefusal(status, body);
+      if (refused.isPresent()) throw refused.get();
       if (status != 200) {
         throw unavailable("pricing-svc returned HTTP " + status, null);
       }
-      String body = res.as(String.class);
       try (JsonReader reader = Json.createReader(new StringReader(body))) {
         JsonArray results = reader.readObject().getJsonObject("data").getJsonArray("results");
         List<ResolvedLine> resolved = new ArrayList<>(results.size());
@@ -593,6 +591,26 @@ public class PricingClient {
       throw unavailable("pricing-svc circuit open — too many recent failures", e);
     } catch (RuntimeException e) {
       throw unavailable("pricing-svc unreachable", e);
+    }
+  }
+
+  /**
+   * A refusal pricing-svc explained — an error code on a 400 or a 409 — relayed with its status,
+   * code and message, so the till and the shop see the reason (no VAT rate configured, a sticker
+   * for another product) rather than a 503. Empty for anything else, including a body that cannot
+   * be read.
+   */
+  static java.util.Optional<ApiException> relayedRefusal(int status, String payload) {
+    if (status != 400 && status != 409) return java.util.Optional.empty();
+    try {
+      String code = errorCode(payload);
+      if (code == null || code.isBlank()) return java.util.Optional.empty();
+      return java.util.Optional.of(
+          status == 400
+              ? ApiException.badRequest(code, errorMessage(payload))
+              : ApiException.conflict(code, errorMessage(payload)));
+    } catch (RuntimeException e) {
+      return java.util.Optional.empty();
     }
   }
 

@@ -6,6 +6,7 @@ import {
   ALL_CHECKS_PASS,
   call,
   data,
+  ensureStandardVat,
   expect,
   onboardTenant,
   poll,
@@ -75,6 +76,11 @@ export default function ({ tenant, rival, shopper }) {
 
   // ── price resolution follows the list's lifecycle ──────────────────────────
   const resolve = (qty, opts = { token: t }) => call('POST', '/api/pricing-svc/prices/resolve', { ...opts, body: { variantId, storeId, channel: 'POS', qty } });
+  // SJ-D56: the VAT rate above has its own code; an uncategorised kettle is charged the standard rate
+  // (T1), and until the business sets one nothing is quoted — not a guessed 20%.
+  expect(resolve(1), '[-] no standard VAT rate yet: no price is quoted', 409, 'PRICING_VAT_RATE_NOT_CONFIGURED');
+  expect(resolve(1, { storefront: tenant.tenantId }), '[-] ...to a guest shopper either', 409, 'PRICING_VAT_RATE_NOT_CONFIGURED');
+  ensureStandardVat(tenant);
   const one = resolve(1);
   expect(one, '[+] resolve a price', 200);
   truthy('[+] one kettle costs 49.99 GBP', Number(data(one).unitPrice) === 49.99 && data(one).currency === 'GBP', data(one));

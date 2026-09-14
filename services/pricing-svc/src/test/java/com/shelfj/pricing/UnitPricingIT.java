@@ -520,6 +520,13 @@ class UnitPricingIT {
         is(200));
 
     Shop bulk = shop("GBP", "GB");
+    // Its own standard rate: nothing is quoted without one (SJ-D56).
+    post(
+            "/vat-rates",
+            "{\"code\":\"T1\",\"name\":\"Standard\",\"rate\":0.20,\"exempt\":false,\"effectiveFrom\":\"2024-01-01T00:00:00Z\"}",
+            bulk,
+            "OWNER")
+        .close();
     String screws = Ids.newId().toString();
     String list =
         id(

@@ -70,3 +70,10 @@ jobs:
       - name: Flutter test
         working-directory: frontends/shelf-app
         run: flutter test
+
+      # SJ-D58: analyze and test run on the VM, where a conditional import's native half is the only
+      # half compiled. A function missing from the web half (saveTextFile) passed both and broke every
+      # web build for a day and a half, unseen, while images shipped the last good bundle. Compile it.
+      - name: Flutter web compiles
+        working-directory: frontends/shelf-app
+        run: flutter build web --release --no-wasm-dry-run

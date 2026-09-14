@@ -282,7 +282,31 @@ export function sellableVariant(tenant, name) {
  * An active all-channel price list in the tenant's own currency — order-svc resolves prices from
  * it and refuses an order whose currency differs from the tenant's.
  */
+// The standard VAT rate a test business in each country charges. pricing-svc never assumes one
+// (SJ-D56): a business sets its own, exempt if it charges none — as Kuwait's and a US seller's do.
+const STANDARD_VAT = { GB: 0.2, IN: 0.18, US: 0, DE: 0.19, PT: 0.23, FR: 0.2, JP: 0.1, KW: 0 };
+
+/** Sets the business's standard VAT rate (T1) unless it already has one: nothing is quoted without it. */
+export function ensureStandardVat(tenant) {
+  if (tenant.standardVat) return;
+  const token = tenant.owner.token;
+  if (call('GET', '/api/pricing-svc/vat-rates/T1', { token }).status !== 200) {
+    const rate = STANDARD_VAT[tenant.country];
+    if (rate === undefined) throw new Error(`no standard VAT rate known for ${tenant.country}`);
+    must(
+      call('POST', '/api/pricing-svc/vat-rates', {
+        token,
+        body: { code: 'T1', name: 'Standard rate', rate, exempt: rate === 0, effectiveFrom: '2020-01-01T00:00:00Z' },
+      }),
+      201,
+      'standard VAT rate'
+    );
+  }
+  tenant.standardVat = true;
+}
+
 export function priceVariants(tenant, variantIds, price = '25.00') {
+  ensureStandardVat(tenant);
   const t = tenant.owner.token;
   const list = must(
     call('POST', '/api/pricing-svc/admin/price-lists', {

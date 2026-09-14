@@ -9,6 +9,7 @@ import '../../shared/widgets/loading_view.dart';
 import 'price_reductions_tab.dart';
 import 'pricing_providers.dart';
 import 'unit_pricing_tabs.dart';
+import 'vat_rate_form.dart';
 import 'providers/admin_providers.dart';
 import 'widgets/variant_picker.dart';
 
@@ -27,6 +28,13 @@ class PricingScreen extends ConsumerWidget {
             child: Text(
               'Pricing',
               style: Theme.of(context).textTheme.headlineMedium,
+            ),
+          ),
+          // SJ-D56: nothing is quoted until the standard rate is set; say so wherever pricing opens.
+          StandardVatBanner(
+            onAdd: () => showDialog(
+              context: context,
+              builder: (_) => const _VatRateDialog(initialCode: standardVatCode),
             ),
           ),
           const TabBar(
@@ -1321,7 +1329,7 @@ class _VatRatesTab extends ConsumerWidget {
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       subtitle: Text(
-                        r.exempt ? 'Exempt' : '${r.rate.toStringAsFixed(2)}%',
+                        r.exempt ? 'Exempt' : '${vatPercentText(r.rate)}%',
                       ),
                       trailing: const Icon(Icons.edit_outlined, size: 18),
                     ),
@@ -1338,7 +1346,8 @@ class _VatRatesTab extends ConsumerWidget {
 
 class _VatRateDialog extends ConsumerStatefulWidget {
   final VatRate? existing;
-  const _VatRateDialog({this.existing});
+  final String? initialCode;
+  const _VatRateDialog({this.existing, this.initialCode});
 
   @override
   ConsumerState<_VatRateDialog> createState() => _VatRateDialogState();
@@ -1360,9 +1369,9 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
   void initState() {
     super.initState();
     final e = widget.existing;
-    _codeCtrl = TextEditingController(text: e?.code ?? '');
+    _codeCtrl = TextEditingController(text: e?.code ?? widget.initialCode ?? '');
     _nameCtrl = TextEditingController(text: e?.name ?? '');
-    _rateCtrl = TextEditingController(text: e?.rate.toString() ?? '');
+    _rateCtrl = TextEditingController(text: e == null ? '' : vatPercentText(e.rate));
     _descCtrl = TextEditingController(text: e?.description ?? '');
     _exempt = e?.exempt ?? false;
   }
@@ -1377,9 +1386,14 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
   }
 
   Future<void> _submit() async {
-    final rate = double.tryParse(_rateCtrl.text.trim()) ?? 0;
+    // Typed as a percentage, stored as the fraction; never a guessed zero (SJ-D56).
+    final rate = _exempt ? 0.0 : vatFractionFromPercent(_rateCtrl.text);
     if (_codeCtrl.text.trim().isEmpty || _nameCtrl.text.trim().isEmpty) {
       setState(() => _error = 'Code and name are required.');
+      return;
+    }
+    if (rate == null) {
+      setState(() => _error = 'Enter the rate as a percentage from 0 to 100, such as 20.');
       return;
     }
     setState(() {
@@ -1390,7 +1404,7 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
     final body = {
       'code': _codeCtrl.text.trim().toUpperCase(),
       'name': _nameCtrl.text.trim(),
-      'rate': _exempt ? 0 : rate,
+      'rate': rate,
       'exempt': _exempt,
       'description': _descCtrl.text.trim().isEmpty
           ? null
@@ -1434,7 +1448,8 @@ class _VatRateDialogState extends ConsumerState<_VatRateDialog> {
               textCapitalization: TextCapitalization.characters,
               decoration: const InputDecoration(
                 labelText: 'Code *',
-                hintText: 'STANDARD',
+                hintText: standardVatCode,
+                helperText: '$standardVatCode is the standard rate every uncategorised item is charged',
               ),
             ),
             const SizedBox(height: 12),

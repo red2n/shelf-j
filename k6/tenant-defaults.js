@@ -19,6 +19,7 @@ import {
   priceVariants,
   receive,
   sellableVariant,
+  staffUser,
   truthy,
 } from './lib/shelfj.js';
 
@@ -40,10 +41,15 @@ export function setup() {
   const { variantId } = sellableVariant(yen, 'Yen widget');
   priceVariants(yen, [variantId], '500');
   must(receive(yen, yen.stores[0].id, variantId, 20, '300'), [200, 201], 'receive stock');
-  return { yen, pound, dinar, variantId };
+  // SJ-D56: a French business that has not set its VAT rate, with a product priced and in stock.
+  const bare = onboardTenant('defaults-no-vat', { country: 'FR', currency: 'EUR' });
+  const bareVariant = sellableVariant(bare, 'Bare widget').variantId;
+  must(receive(bare, bare.stores[0].id, bareVariant, 20, '3.00'), [200, 201], 'receive bare stock');
+  const bareCashier = staffUser(bare, 'CASHIER', [bare.stores[0].id]);
+  return { yen, pound, dinar, variantId, bare, bareVariant, bareCashier };
 }
 
-export default function ({ yen, pound, dinar, variantId }) {
+export default function ({ yen, pound, dinar, variantId, bare, bareVariant, bareCashier }) {
   const today = new Date().toISOString().slice(0, 10);
   const stamp = Date.now();
   const store = yen.stores[0];
@@ -104,6 +110,42 @@ export default function ({ yen, pound, dinar, variantId }) {
   const params = { headers: { Authorization: `Bearer ${yen.owner.token}`, 'Content-Type': 'application/json' }, tags: { name: 'POST /admin/price-lists' } };
   const burst = http.batch(Array.from({ length: 20 }, (_, i) => ['POST', `${BASE}/api/pricing-svc/admin/price-lists`, JSON.stringify({ name: `burst ${stamp} ${i}`, channel: 'POS', effectiveFrom: from }), params]));
   truthy('[abuse] twenty price lists at once are all created in yen', burst.every((r) => r.status === 201 && data(r).currency === 'JPY'), burst.map((r) => `${r.status} ${data(r).currency}`));
+
+  // ── SJ-D56: no VAT rate is ever assumed ─────────────────────────────────────
+  const bareOwner = bare.owner.token;
+  const bareStore = bare.stores[0].id;
+  const bareList = must(call('POST', '/api/pricing-svc/admin/price-lists', { token: bareOwner, body: { name: `no vat ${stamp}`, effectiveFrom: from } }), 201, 'bare price list');
+  must(call('POST', `/api/pricing-svc/admin/price-lists/${bareList.id}/items`, { token: bareOwner, body: { variantId: bareVariant, price: 10, minQty: 1 } }), [200, 201], 'bare price');
+  const shopperQuote = () => call('POST', '/api/pricing-svc/prices/resolve', { storefront: bare.tenantId, body: { variantId: bareVariant, channel: 'ONLINE', qty: 1 } });
+  const tillSale = () => call('POST', '/api/order-svc/orders', { token: bareOwner, idem: true, body: { storeId: bareStore, channel: 'POS', items: [{ variantId: bareVariant, qty: 1 }] } });
+  expect(shopperQuote(), '[-] no standard VAT rate set: a shopper is quoted nothing, and told why', 409, 'PRICING_VAT_RATE_NOT_CONFIGURED');
+  expect(call('POST', '/api/pricing-svc/prices/quote', { token: bareOwner, body: { channel: 'POS', lines: [{ variantId: bareVariant, qty: 1 }] } }), '[-] ...nor is a basket', 409, 'PRICING_VAT_RATE_NOT_CONFIGURED');
+  expect(tillSale(), '[-] ...and a till sale is refused with that reason, not a 503', 409, 'PRICING_VAT_RATE_NOT_CONFIGURED');
+  const vatBody = (rate) => ({ code: 'T1', name: 'Taux normal', rate, exempt: false, effectiveFrom: '2020-01-01T00:00:00Z' });
+  expect(call('POST', '/api/pricing-svc/vat-rates', { token: bareCashier.token, body: vatBody(0.2) }), '[-] a cashier cannot set what sales are taxed at', 403);
+  expect(call('POST', '/api/pricing-svc/vat-rates', { token: bareOwner, body: vatBody(20) }), '[-] a percentage sent where the fraction belongs is refused', 400, 'VALIDATION_FAILED');
+  const shoppers = http.batch(Array.from({ length: 20 }, () => ['POST', `${BASE}/api/pricing-svc/prices/resolve`, JSON.stringify({ variantId: bareVariant, channel: 'ONLINE', qty: 1 }), { headers: { 'Content-Type': 'application/json', 'X-Storefront-Tenant': bare.tenantId }, tags: { name: 'POST resolve no vat' } }]));
+  truthy('[abuse] twenty shoppers at once are all refused by name, none with a server error', shoppers.every((r) => r.status === 409 && errorCode(r) === 'PRICING_VAT_RATE_NOT_CONFIGURED'), shoppers.map((r) => `${r.status} ${errorCode(r)}`));
+  const ownerHeaders = { headers: { Authorization: `Bearer ${bareOwner}`, 'Content-Type': 'application/json' }, tags: { name: 'POST vat-rates rush' } };
+  const setting = http.batch(Array.from({ length: 20 }, () => ['POST', `${BASE}/api/pricing-svc/vat-rates`, JSON.stringify(vatBody(0.2)), ownerHeaders]));
+  truthy('[abuse] twenty owners setting the rate at once make exactly one', setting.filter((r) => r.status === 201).length === 1 && setting.every((r) => r.status === 201 || r.status === 409), setting.map((r) => r.status));
+  // SJ-D57: a body that is not the JSON a request takes is refused by name on every service, never a 500.
+  const ownerJson = { headers: { Authorization: `Bearer ${bareOwner}`, 'Content-Type': 'application/json' } };
+  const garbled = [
+    ['pricing-svc', `${BASE}/api/pricing-svc/vat-rates`, JSON.stringify({ ...vatBody(0.2), rate: 'twenty' })],
+    ['pricing-svc', `${BASE}/api/pricing-svc/admin/price-lists`, '{not json'],
+    ['order-svc', `${BASE}/api/order-svc/orders`, JSON.stringify({ storeId: bareStore, channel: 'POS', items: 'one widget' })],
+    ['product-svc', `${BASE}/api/product-svc/admin/products`, JSON.stringify({ name: { first: 'Bare' } })],
+    ['customer-svc', `${BASE}/api/customer-svc/customers`, '["not", "an", "object"]'],
+    ['purchase-svc', `${BASE}/api/purchase-svc/suppliers`, '{"name": "x", '],
+  ];
+  const refusedBodies = garbled.map(([svc, url, body]) => [svc, http.post(url, body, { ...ownerJson, tags: { name: `POST garbled ${svc}` } })]);
+  truthy('[abuse] a garbled or mistyped body is 400 REQUEST_BODY_INVALID on every service, not a 500', refusedBodies.every(([, r]) => r.status === 400 && errorCode(r) === 'REQUEST_BODY_INVALID'), refusedBodies.map(([svc, r]) => `${svc} ${r.status} ${errorCode(r)}`));
+
+  const priced = shopperQuote();
+  expect(priced, '[+] once the owner has set 20%, the shopper is quoted', 200);
+  truthy('[+] ...at 20%, the business\'s own rate', Math.abs(data(priced).vatRate - 0.2) < 1e-9 && Math.abs(data(priced).totalWithVat - 12) < 0.006, data(priced));
+  expect(tillSale(), '[+] ...and the till sale goes through', 201);
 
   completed.add(1);
 }
