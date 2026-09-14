@@ -174,7 +174,15 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
     // /orders/mine, and /orders/export, which names a subject and is staff-only — and a literal
     // matched here would sail past the role check straight to a resource that expects the filter
     // to have done its job. A negative test found exactly that on /orders/export before it shipped.
-    if (!looksLikeUuid(first)) return "mine".equals(first) && slash < 0;
+    if (!looksLikeUuid(first)) {
+      if ("mine".equals(first)) return slash < 0;
+      // /orders/recall-notices/mine: the shopper's own recall notices (05.10), keyed on the
+      // token's login in order-svc like /orders/mine. Only that literal child; the list under
+      // /orders/recall-notices names a recall and is staff-only.
+      return "recall-notices".equals(first)
+          && slash >= 0
+          && "mine".equals(rest.substring(slash + 1));
+    }
     if (slash < 0) return true;
     String tail = rest.substring(slash + 1);
     // fiscal-receipt: the till prints the legal receipt number from here, and a customer may read
@@ -407,7 +415,27 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
         // hold TTL via POST /orders itself (an existing open mutation), so this carve-out grants no
         // capability beyond what placing an order already permits.
         || "/inventory/reservations".equals(path)
-        || (path.startsWith("/inventory/reservations/") && path.endsWith("/release"));
+        || (path.startsWith("/inventory/reservations/") && path.endsWith("/release"))
+        // The buyer choosing the remedy on a recall notice (05.10). Not unguarded: order-svc
+        // answers 404 for a notice not issued to the caller's login, so a notice id cannot be
+        // probed; staff use the same shape for a buyer at the counter.
+        || isRecallNoticeRemedy(path);
+  }
+
+  /**
+   * {@code POST /orders/recall-notices/{id}/remedy} and nothing else under a notice.
+   *
+   * @param path the service-local request path
+   * @return {@code true} for exactly that shape
+   */
+  private static boolean isRecallNoticeRemedy(String path) {
+    String prefix = "/orders/recall-notices/";
+    if (!path.startsWith(prefix)) return false;
+    String rest = path.substring(prefix.length());
+    int slash = rest.indexOf('/');
+    return slash > 0
+        && looksLikeUuid(rest.substring(0, slash))
+        && "remedy".equals(rest.substring(slash + 1));
   }
 
   /**

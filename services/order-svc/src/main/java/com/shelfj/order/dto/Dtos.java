@@ -221,7 +221,12 @@ public final class Dtos {
       @NotBlank String reason,
       @Schema(description = "Defaults to refunding via the order's original payment method.")
           String refundMethod,
-      @NotNull @Valid List<ReturnItemRequest> items) {}
+      @NotNull @Valid List<ReturnItemRequest> items,
+      @Schema(
+              description =
+                  "The recall notice this refund settles (05.10): the notice is marked refunded"
+                      + " in the same transaction. Must be a notice about this order.")
+          String recallNoticeId) {}
 
   @Schema(name = "ReturnItemResponse")
   public record ReturnItemResponse(

@@ -11,6 +11,7 @@ import '../../core/network/api_client.dart';
 
 final _staffBase = '/${ApiConstants.inventory}/admin/inventory/recalls';
 final _setupBase = '/${ApiConstants.inventory}/admin/recalls';
+final _noticesBase = '/${ApiConstants.order}/orders/recall-notices';
 
 // ── Models ───────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,9 @@ class RecallSummary {
   final int storesOutstanding;
   final double qtyHeld;
 
+  /// Orders that drew on the packs in scope, found as the recall opened.
+  final int ordersAffected;
+
   const RecallSummary({
     required this.id,
     required this.reference,
@@ -35,6 +39,7 @@ class RecallSummary {
     this.storesAffected = 0,
     this.storesOutstanding = 0,
     this.qtyHeld = 0,
+    this.ordersAffected = 0,
   });
 
   factory RecallSummary.fromJson(Map<String, dynamic> j) => RecallSummary(
@@ -47,6 +52,7 @@ class RecallSummary {
     storesAffected: (j['storesAffected'] as num?)?.toInt() ?? 0,
     storesOutstanding: (j['storesOutstanding'] as num?)?.toInt() ?? 0,
     qtyHeld: (j['qtyHeld'] as num?)?.toDouble() ?? 0,
+    ordersAffected: (j['ordersAffected'] as num?)?.toInt() ?? 0,
   );
 }
 
@@ -197,6 +203,15 @@ class RecallDetail {
   final List<RecallStoreAction> storeActions;
   final List<RecallStoreProgress> stores;
 
+  /// What a buyer may choose from (GPSR art.37); empty for a withdrawal.
+  final List<String> remedies;
+  final String? singleRemedyReason;
+  final String? contactPhone;
+  final String? contactUrl;
+  final String? soldFrom;
+  final int ordersAffected;
+  final double qtySold;
+
   const RecallDetail({
     required this.id,
     required this.reference,
@@ -213,6 +228,13 @@ class RecallDetail {
     this.batches = const [],
     this.storeActions = const [],
     this.stores = const [],
+    this.remedies = const [],
+    this.singleRemedyReason,
+    this.contactPhone,
+    this.contactUrl,
+    this.soldFrom,
+    this.ordersAffected = 0,
+    this.qtySold = 0,
   });
 
   bool get isOpen => status == 'OPEN';
@@ -234,8 +256,165 @@ class RecallDetail {
     batches: _list(j['batches'], RecallHeldBatch.fromJson),
     storeActions: _list(j['storeActions'], RecallStoreAction.fromJson),
     stores: _list(j['stores'], RecallStoreProgress.fromJson),
+    remedies: _strings(j['remedies']),
+    singleRemedyReason: j['singleRemedyReason'] as String?,
+    contactPhone: j['contactPhone'] as String?,
+    contactUrl: j['contactUrl'] as String?,
+    soldFrom: j['soldFrom'] as String?,
+    ordersAffected: (j['ordersAffected'] as num?)?.toInt() ?? 0,
+    qtySold: (j['qtySold'] as num?)?.toDouble() ?? 0,
   );
 }
+
+/// One line of the order a recall notice is about, as inventory-svc matched it.
+class RecallNoticeLine {
+  final String variantId;
+  final String? productName;
+  final String? sku;
+  final String? batchNo;
+  final String? expiryDate;
+  final double qty;
+
+  const RecallNoticeLine({
+    required this.variantId,
+    this.productName,
+    this.sku,
+    this.batchNo,
+    this.expiryDate,
+    required this.qty,
+  });
+
+  factory RecallNoticeLine.fromJson(Map<String, dynamic> j) => RecallNoticeLine(
+    variantId: j['variantId'] as String? ?? '',
+    productName: j['productName'] as String?,
+    sku: j['sku'] as String?,
+    batchNo: j['batchNo'] as String?,
+    expiryDate: j['expiryDate'] as String?,
+    qty: (j['qty'] as num?)?.toDouble() ?? 0,
+  );
+
+  /// "Crunchy peanut butter, lot L1, best before 2026-10-01".
+  String describe() => [
+    productName ?? 'the product',
+    if (batchNo != null) 'lot $batchNo',
+    if (expiryDate != null) 'best before $expiryDate',
+  ].join(', ');
+}
+
+/// A recall's notice to the buyer of one order (05.10), as order-svc holds it.
+class RecallNotice {
+  final String id;
+  final String recallId;
+  final String reference;
+  final String hazard;
+  final String reason;
+  final String customerNotice;
+  final List<String> remedies;
+  final String? singleRemedyReason;
+  final String? contactPhone;
+  final String? contactUrl;
+  final String orderId;
+  final String storeId;
+  final String channel;
+  final bool buyerIdentified;
+  final DateTime? soldAt;
+
+  /// ISSUED, UNIDENTIFIED, REMEDY_CHOSEN or RESOLVED.
+  final String status;
+  final String? remedy;
+  final String? remedyChosenVia;
+  final String? resolution;
+  final String? returnId;
+  final String? resolutionNotes;
+  final List<RecallNoticeLine> lines;
+
+  const RecallNotice({
+    required this.id,
+    required this.recallId,
+    required this.reference,
+    required this.hazard,
+    required this.reason,
+    required this.customerNotice,
+    this.remedies = const [],
+    this.singleRemedyReason,
+    this.contactPhone,
+    this.contactUrl,
+    required this.orderId,
+    required this.storeId,
+    required this.channel,
+    this.buyerIdentified = false,
+    this.soldAt,
+    required this.status,
+    this.remedy,
+    this.remedyChosenVia,
+    this.resolution,
+    this.returnId,
+    this.resolutionNotes,
+    this.lines = const [],
+  });
+
+  bool get isResolved => status == 'RESOLVED';
+
+  factory RecallNotice.fromJson(Map<String, dynamic> j) => RecallNotice(
+    id: j['id'] as String? ?? '',
+    recallId: j['recallId'] as String? ?? '',
+    reference: j['reference'] as String? ?? '-',
+    hazard: j['hazard'] as String? ?? 'OTHER',
+    reason: j['reason'] as String? ?? '',
+    customerNotice: j['customerNotice'] as String? ?? '',
+    remedies: _strings(j['remedies']),
+    singleRemedyReason: j['singleRemedyReason'] as String?,
+    contactPhone: j['contactPhone'] as String?,
+    contactUrl: j['contactUrl'] as String?,
+    orderId: j['orderId'] as String? ?? '',
+    storeId: j['storeId'] as String? ?? '',
+    channel: j['channel'] as String? ?? 'POS',
+    buyerIdentified: j['buyerIdentified'] as bool? ?? false,
+    soldAt: _time(j['soldAt']),
+    status: j['status'] as String? ?? 'ISSUED',
+    remedy: j['remedy'] as String?,
+    remedyChosenVia: j['remedyChosenVia'] as String?,
+    resolution: j['resolution'] as String?,
+    returnId: j['returnId'] as String?,
+    resolutionNotes: j['resolutionNotes'] as String?,
+    lines: _list(j['lines'], RecallNoticeLine.fromJson),
+  );
+}
+
+/// How a recall's buyers stand.
+class RecallBuyersProgress {
+  final int notices;
+  final int identified;
+  final int unidentified;
+  final int remedyChosen;
+  final int resolved;
+  final Map<String, int> chosen;
+
+  const RecallBuyersProgress({
+    this.notices = 0,
+    this.identified = 0,
+    this.unidentified = 0,
+    this.remedyChosen = 0,
+    this.resolved = 0,
+    this.chosen = const {},
+  });
+
+  factory RecallBuyersProgress.fromJson(Map<String, dynamic> j) =>
+      RecallBuyersProgress(
+        notices: (j['notices'] as num?)?.toInt() ?? 0,
+        identified: (j['identified'] as num?)?.toInt() ?? 0,
+        unidentified: (j['unidentified'] as num?)?.toInt() ?? 0,
+        remedyChosen: (j['remedyChosen'] as num?)?.toInt() ?? 0,
+        resolved: (j['resolved'] as num?)?.toInt() ?? 0,
+        chosen: {
+          for (final e in ((j['chosen'] as Map?) ?? const {}).entries)
+            '${e.key}': (e.value as num?)?.toInt() ?? 0,
+        },
+      );
+}
+
+List<String> _strings(Object? v) =>
+    v is List ? [for (final e in v) '$e'] : const <String>[];
 
 List<T> _list<T>(Object? v, T Function(Map<String, dynamic>) from) => v is List
     ? [
@@ -256,6 +435,38 @@ String hazardLabel(String hazard) => switch (hazard) {
   'QUALITY' => 'Quality defect',
   _ => 'Other safety issue',
 };
+
+String remedyLabel(String remedy) => switch (remedy) {
+  'REFUND' => 'a refund',
+  'REPLACEMENT' => 'a replacement',
+  'REPAIR' => 'a repair',
+  _ => remedy.toLowerCase(),
+};
+
+/// "a refund or a replacement" — the choice, in words.
+String remediesLabel(List<String> remedies) {
+  final words = [for (final r in remedies) remedyLabel(r)];
+  if (words.length <= 1) return words.join();
+  return '${words.sublist(0, words.length - 1).join(', ')} or ${words.last}';
+}
+
+String resolutionLabel(String resolution) => switch (resolution) {
+  'REFUNDED' => 'Refunded',
+  'REPLACED' => 'Replacement given',
+  'REPAIRED' => 'Repaired',
+  'DECLINED' => 'Wanted nothing',
+  _ => resolution,
+};
+
+/// What a notice says about its buyer, in one phrase.
+String noticeProgressLabel(RecallNotice n) {
+  if (n.isResolved) return resolutionLabel(n.resolution ?? '');
+  if (n.remedy != null) {
+    return 'Chose ${remedyLabel(n.remedy!)}'
+        '${n.remedyChosenVia == 'STAFF' ? ' at the counter' : ''}';
+  }
+  return n.buyerIdentified ? 'Told' : 'Buyer not known';
+}
 
 String dispositionLabel(String disposition) => switch (disposition) {
   'RETURNED_TO_SUPPLIER' => 'Returned to supplier',
@@ -306,6 +517,35 @@ final recallDetailProvider = FutureProvider.autoDispose
       );
     });
 
+/// A recall's notices to buyers, from order-svc, which knows who placed each
+/// order. Up to a hundred; the progress figures count every one.
+final recallNoticesProvider = FutureProvider.autoDispose
+    .family<List<RecallNotice>, String>((ref, recallId) async {
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get(
+            _noticesBase,
+            queryParameters: {'recallId': recallId, 'limit': 100},
+          );
+      final data = (resp.data['data'] as List?) ?? const [];
+      return [
+        for (final e in data)
+          if (e is Map) RecallNotice.fromJson(e.cast<String, dynamic>()),
+      ];
+    });
+
+final recallBuyersProgressProvider = FutureProvider.autoDispose
+    .family<RecallBuyersProgress, String>((ref, recallId) async {
+      final resp = await ref
+          .read(apiClientProvider)
+          .dio
+          .get('$_noticesBase/progress', queryParameters: {'recallId': recallId});
+      return RecallBuyersProgress.fromJson(
+        (resp.data['data'] as Map).cast<String, dynamic>(),
+      );
+    });
+
 // ── Writes ───────────────────────────────────────────────────────────────────
 
 Future<RecallDetail> openRecall(
@@ -318,7 +558,14 @@ Future<RecallDetail> openRecall(
   required String source,
   String? sourceReference,
   required List<RecallScopeLine> items,
+  List<String> remedies = const [],
+  String? singleRemedyReason,
+  String? contactPhone,
+  String? contactUrl,
+  String? soldFrom,
 }) async {
+  String? text(String? v) =>
+      v == null || v.trim().isEmpty ? null : v.trim();
   final resp = await dio.post(
     _setupBase,
     data: {
@@ -332,6 +579,11 @@ Future<RecallDetail> openRecall(
       if (sourceReference != null && sourceReference.trim().isNotEmpty)
         'sourceReference': sourceReference.trim(),
       'items': [for (final i in items) i.toJson()],
+      if (remedies.isNotEmpty) 'remedies': remedies,
+      'singleRemedyReason': ?text(singleRemedyReason),
+      'contactPhone': ?text(contactPhone),
+      'contactUrl': ?text(contactUrl),
+      'soldFrom': ?text(soldFrom),
     },
   );
   return RecallDetail.fromJson(
@@ -380,3 +632,48 @@ Future<void> cancelRecall(
   required String recallId,
   required String reason,
 }) => dio.post('$_setupBase/$recallId/cancel', data: {'reason': reason.trim()});
+
+/// Staff record the remedy a buyer chose at the counter.
+Future<RecallNotice> chooseRecallRemedy(
+  Dio dio, {
+  required String noticeId,
+  required String remedy,
+}) async {
+  final resp = await dio.post(
+    '$_noticesBase/$noticeId/remedy',
+    data: {'remedy': remedy},
+  );
+  return RecallNotice.fromJson((resp.data['data'] as Map).cast<String, dynamic>());
+}
+
+/// Staff settle a notice other than by a refund: REPLACED, REPAIRED or DECLINED.
+Future<RecallNotice> resolveRecallNotice(
+  Dio dio, {
+  required String noticeId,
+  required String resolution,
+  String? notes,
+}) async {
+  final resp = await dio.post(
+    '$_noticesBase/$noticeId/resolve',
+    data: {
+      'resolution': resolution,
+      if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+    },
+  );
+  return RecallNotice.fromJson((resp.data['data'] as Map).cast<String, dynamic>());
+}
+
+/// The refund: a return of the recalled lines against the order, naming the
+/// notice, so the goods, the money and the notice are settled together.
+Future<void> refundRecallNotice(Dio dio, {required RecallNotice notice}) =>
+    dio.post(
+      '/${ApiConstants.order}/orders/${notice.orderId}/returns',
+      data: {
+        'reason': 'Product safety recall ${notice.reference}',
+        'recallNoticeId': notice.id,
+        'items': [
+          for (final l in notice.lines)
+            {'variantId': l.variantId, 'qty': l.qty},
+        ],
+      },
+    );

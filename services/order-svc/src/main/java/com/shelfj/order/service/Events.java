@@ -5,18 +5,86 @@ import static com.shelfj.events.EventPayload.esc;
 import com.shelfj.ids.Ids;
 import com.shelfj.order.domain.Domain.OrderItem;
 import com.shelfj.order.domain.Domain.ReturnItem;
+import com.shelfj.order.domain.RecallNotice.Line;
+import com.shelfj.order.domain.RecallNotice.Notice;
 import com.shelfj.service.OutboxRow;
+import jakarta.json.Json;
+import jakarta.json.JsonArrayBuilder;
+import jakarta.json.JsonObjectBuilder;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 /**
  * Builds {@link OutboxRow} instances for all events published by order-svc. Request-supplied
  * strings (channel, cancel reason) are escaped — they must not be able to corrupt event JSON.
+ * Public for the one builder a consumer in another package needs; the rest stay package-private.
  */
-final class Events {
+public final class Events {
+
+  static final String TOPIC_RECALL_NOTICE_ISSUED = "shelfj.order.recall-notice-issued";
 
   private Events() {}
+
+  /**
+   * A recall notice issued to a buyer this service could identify (05.10): everything
+   * notification-svc needs to write to them under GPSR art.36, and the ids it resolves an address
+   * from. Built with the JSON API because the notice is free text with line breaks in it.
+   */
+  public static OutboxRow recallNoticeIssued(Notice n, List<Line> lines) {
+    JsonArrayBuilder remedies = Json.createArrayBuilder();
+    n.remedies().stream().map(Enum::name).sorted().forEach(remedies::add);
+    JsonArrayBuilder items = Json.createArrayBuilder();
+    for (Line l : lines) {
+      JsonObjectBuilder line =
+          Json.createObjectBuilder().add("variantId", l.variantId().toString()).add("qty", l.qty());
+      nullable(line, "productName", l.productName());
+      nullable(line, "sku", l.sku());
+      nullable(line, "batchNo", l.batchNo());
+      nullable(line, "expiryDate", l.expiryDate() == null ? null : l.expiryDate().toString());
+      items.add(line);
+    }
+    JsonObjectBuilder b =
+        Json.createObjectBuilder()
+            .add("eventId", Ids.newId().toString())
+            .add("eventType", "RecallNoticeIssued")
+            .add("tenantId", n.tenantId().toString())
+            .add("aggregateId", n.id().toString())
+            .add("occurredAt", Instant.now().toString())
+            .add("noticeId", n.id().toString())
+            .add("recallId", n.recallId().toString())
+            .add("reference", n.reference())
+            .add("hazard", n.hazard())
+            .add("reason", n.reason())
+            .add("customerNotice", n.customerNotice())
+            .add("remedies", remedies)
+            .add("orderId", n.orderId().toString())
+            .add("storeId", n.storeId().toString())
+            .add("channel", n.channel())
+            .add("soldAt", n.soldAt().toString())
+            .add("lines", items);
+    nullable(b, "singleRemedyReason", n.singleRemedyReason());
+    nullable(b, "contactPhone", n.contactPhone());
+    nullable(b, "contactUrl", n.contactUrl());
+    nullable(b, "customerId", n.customerId() == null ? null : n.customerId().toString());
+    nullable(b, "loginId", n.loginId() == null ? null : n.loginId().toString());
+    nullable(b, "buyerPhone", n.buyerPhone());
+    return new OutboxRow(
+        "RecallNoticeIssued",
+        TOPIC_RECALL_NOTICE_ISSUED,
+        n.tenantId(),
+        n.id(),
+        b.build().toString());
+  }
+
+  private static void nullable(JsonObjectBuilder b, String name, String value) {
+    if (value == null) {
+      b.addNull(name);
+    } else {
+      b.add(name, value);
+    }
+  }
 
   static OutboxRow orderPlaced(
       UUID tenantId, UUID orderId, String channel, UUID customerId, UUID loginId, UUID storeId) {

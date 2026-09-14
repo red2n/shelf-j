@@ -394,6 +394,7 @@ public class OrderRepository extends BaseOutboxRepository {
 
   private static void redactCustomerInTx(Connection c, UUID tenantId, UUID customerId, UUID loginId)
       throws SQLException {
+    RecallNoticeRepository.redactBuyerTx(c, tenantId, customerId, loginId);
     // Settled orders only: an open delivery still needs its address to arrive.
     try (PreparedStatement ps =
         c.prepareStatement(
@@ -1119,6 +1120,23 @@ public class OrderRepository extends BaseOutboxRepository {
    * @return the return as stored
    */
   public Return createReturn(Return ret, List<ReturnItem> items, OutboxRow event) {
+    return createReturn(ret, items, event, null);
+  }
+
+  /** A step that runs inside the return's transaction, after the return is written. */
+  @FunctionalInterface
+  public interface ReturnStep {
+    void run(Connection c) throws SQLException;
+  }
+
+  /**
+   * {@link #createReturn(Return, List, OutboxRow)} with a step that commits with the return or not
+   * at all — the recall notice a refund settles (05.10).
+   *
+   * @param afterReturn the step, or null for none
+   */
+  public Return createReturn(
+      Return ret, List<ReturnItem> items, OutboxRow event, ReturnStep afterReturn) {
     return inTx(
         c -> {
           // Lock each purchased line and re-check the cumulative returned quantity inside this
@@ -1167,6 +1185,9 @@ public class OrderRepository extends BaseOutboxRepository {
               ps.setString(7, item.condition());
               ps.executeUpdate();
             }
+          }
+          if (afterReturn != null) {
+            afterReturn.run(c);
           }
           insertOutbox(c, event);
           return ret;

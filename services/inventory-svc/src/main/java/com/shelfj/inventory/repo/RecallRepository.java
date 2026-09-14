@@ -6,6 +6,8 @@ import com.shelfj.inventory.domain.Domain.MoveType;
 import com.shelfj.inventory.domain.Domain.MovementAttribution;
 import com.shelfj.inventory.domain.Recall;
 import com.shelfj.inventory.domain.Recall.ActiveItem;
+import com.shelfj.inventory.domain.Recall.AffectedOrder;
+import com.shelfj.inventory.domain.Recall.AffectedSale;
 import com.shelfj.inventory.domain.Recall.Detail;
 import com.shelfj.inventory.domain.Recall.Disposition;
 import com.shelfj.inventory.domain.Recall.Hazard;
@@ -14,7 +16,9 @@ import com.shelfj.inventory.domain.Recall.HeldBatch;
 import com.shelfj.inventory.domain.Recall.Kind;
 import com.shelfj.inventory.domain.Recall.Match;
 import com.shelfj.inventory.domain.Recall.QuarantinedOn;
+import com.shelfj.inventory.domain.Recall.Reach;
 import com.shelfj.inventory.domain.Recall.Release;
+import com.shelfj.inventory.domain.Recall.Remedy;
 import com.shelfj.inventory.domain.Recall.Scope;
 import com.shelfj.inventory.domain.Recall.Source;
 import com.shelfj.inventory.domain.Recall.Status;
@@ -30,6 +34,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -61,7 +66,34 @@ public class RecallRepository extends BaseOutboxRepository {
   private static final String HEADER_COLUMNS =
       "r.id, r.tenant_id, r.reference, r.kind, r.hazard, r.reason, r.customer_notice, r.source,"
           + " r.source_reference, r.status, r.opened_by, r.opened_at, r.ended_by, r.ended_at,"
-          + " r.end_notes";
+          + " r.end_notes, r.remedies, r.single_remedy_reason, r.contact_phone, r.contact_url,"
+          + " r.sold_from";
+
+  /** How far a recall reached, as subqueries on a recalls row aliased {@code r}. */
+  private static final String REACH_COLUMNS =
+      " (SELECT COUNT(DISTINCT s.order_id) FROM recall_sales s"
+          + "   WHERE s.tenant_id = r.tenant_id AND s.recall_id = r.id) AS orders_affected,"
+          + " (SELECT COALESCE(SUM(s.qty), 0) FROM recall_sales s"
+          + "   WHERE s.tenant_id = r.tenant_id AND s.recall_id = r.id) AS qty_sold";
+
+  /**
+   * Every sale of a scoped variant that drew on a batch, live or archived: which order took it,
+   * from which lot and date. A movement this service could not tie to a batch names no lot and is
+   * not a sale of any pack in particular, so it is left out.
+   */
+  private static final String SALES_OF_VARIANTS =
+      "SELECT m.ref_id AS order_id, m.store_id, m.variant_id, m.batch_id, ABS(m.qty) AS qty,"
+          + " m.created_at, b.batch_no, b.expiry_date"
+          + " FROM (SELECT id, tenant_id, store_id, variant_id, batch_id, type, qty, ref_type,"
+          + "         ref_id, created_at FROM stock_movements"
+          + "       UNION ALL"
+          + "       SELECT id, tenant_id, store_id, variant_id, batch_id, type, qty, ref_type,"
+          + "         ref_id, created_at FROM stock_movements_archive) m"
+          + " JOIN inventory_batches b ON b.tenant_id = m.tenant_id AND b.id = m.batch_id"
+          + " WHERE m.tenant_id = ? AND m.variant_id = ANY (?) AND m.type = 'SALE'"
+          + " AND m.ref_type = 'ORDER' AND m.ref_id IS NOT NULL"
+          + " AND (CAST(? AS date) IS NULL OR m.created_at >= CAST(? AS date))"
+          + " ORDER BY m.created_at, m.id";
 
   /** A held batch nobody has released. Expects the recall_batches row aliased {@code rb}. */
   private static final String NOT_RELEASED =
@@ -85,11 +117,18 @@ public class RecallRepository extends BaseOutboxRepository {
 
   /**
    * Opens a recall and takes every batch in its scope off sale, in one transaction, so no sale or
-   * reservation can draw on a batch between the recall existing and the batch being held.
+   * reservation can draw on a batch between the recall existing and the batch being held. The sales
+   * that already drew on those packs are found in the same transaction and kept as the record of
+   * who was reached; a recall that tells buyers announces each order.
    *
    * @param openedEvent builds the announcement from the stores whose stock was held
+   * @param saleAffectedEvent builds the announcement of one order that drew on packs in scope
    */
-  public Detail open(Header header, List<Scope> scope, Function<Set<UUID>, OutboxRow> openedEvent) {
+  public Detail open(
+      Header header,
+      List<Scope> scope,
+      Function<Set<UUID>, OutboxRow> openedEvent,
+      Function<AffectedOrder, OutboxRow> saleAffectedEvent) {
     inTx(
         c -> {
           try {
@@ -119,10 +158,101 @@ public class RecallRepository extends BaseOutboxRepository {
             }
           }
           insertOutbox(c, openedEvent.apply(stores));
+          List<AffectedSale> sales = findAffectedSales(c, header, scope);
+          for (AffectedSale sale : sales) {
+            insertSale(c, header, sale);
+          }
+          if (header.tellsBuyers()) {
+            for (AffectedOrder order : byOrder(sales)) {
+              insertOutbox(c, saleAffectedEvent.apply(order));
+            }
+          }
           return null;
         },
         "open recall");
     return find(header.tenantId(), header.id()).orElseThrow();
+  }
+
+  /**
+   * The sales that drew on packs in a recall's scope, classified as its batches are: a sale from a
+   * batch whose lot or date is not known cannot be ruled out, so its buyer is told too.
+   */
+  private static List<AffectedSale> findAffectedSales(Connection c, Header h, List<Scope> scope)
+      throws SQLException {
+    Object[] variants = scope.stream().map(Scope::variantId).distinct().toArray();
+    List<AffectedSale> out = new ArrayList<>();
+    try (PreparedStatement ps = c.prepareStatement(SALES_OF_VARIANTS)) {
+      ps.setObject(1, h.tenantId());
+      ps.setArray(2, c.createArrayOf("uuid", variants));
+      if (h.soldFrom() == null) {
+        ps.setNull(3, Types.DATE);
+        ps.setNull(4, Types.DATE);
+      } else {
+        ps.setObject(3, h.soldFrom());
+        ps.setObject(4, h.soldFrom());
+      }
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) {
+          UUID variantId = rs.getObject("variant_id", UUID.class);
+          String batchNo = rs.getString("batch_no");
+          LocalDate expiry = rs.getObject("expiry_date", LocalDate.class);
+          Match match = Recall.classify(scope, variantId, batchNo, expiry);
+          if (match == null) {
+            continue;
+          }
+          out.add(
+              new AffectedSale(
+                  rs.getObject("order_id", UUID.class),
+                  rs.getObject("store_id", UUID.class),
+                  variantId,
+                  rs.getObject("batch_id", UUID.class),
+                  batchNo,
+                  expiry,
+                  rs.getBigDecimal("qty"),
+                  instant(rs, "created_at"),
+                  match));
+        }
+      }
+    }
+    return out;
+  }
+
+  /** The sales grouped by order, in the order they were made. */
+  static List<AffectedOrder> byOrder(List<AffectedSale> sales) {
+    Map<UUID, List<AffectedSale>> lines = new LinkedHashMap<>();
+    for (AffectedSale sale : sales) {
+      lines.computeIfAbsent(sale.orderId(), k -> new ArrayList<>()).add(sale);
+    }
+    List<AffectedOrder> out = new ArrayList<>();
+    for (var entry : lines.entrySet()) {
+      AffectedSale first = entry.getValue().get(0);
+      out.add(
+          new AffectedOrder(
+              entry.getKey(), first.storeId(), first.soldAt(), List.copyOf(entry.getValue())));
+    }
+    return out;
+  }
+
+  private static void insertSale(Connection c, Header h, AffectedSale s) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "INSERT INTO recall_sales (id, tenant_id, recall_id, order_id, store_id, variant_id,"
+                + " batch_id, batch_no, expiry_date, qty, sold_at, match_type)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
+      ps.setObject(1, Ids.newId());
+      ps.setObject(2, h.tenantId());
+      ps.setObject(3, h.id());
+      ps.setObject(4, s.orderId());
+      ps.setObject(5, s.storeId());
+      ps.setObject(6, s.variantId());
+      ps.setObject(7, s.batchId());
+      ps.setString(8, s.batchNo());
+      ps.setObject(9, s.expiryDate());
+      ps.setBigDecimal(10, s.qty());
+      ps.setObject(11, utc(s.soldAt()));
+      ps.setString(12, s.match().name());
+      ps.executeUpdate();
+    }
   }
 
   /**
@@ -200,7 +330,22 @@ public class RecallRepository extends BaseOutboxRepository {
                 h,
                 listScope(tenantId, recallId),
                 listHeldBatches(tenantId, recallId),
-                listStoreActions(tenantId, recallId)));
+                listStoreActions(tenantId, recallId),
+                reach(tenantId, recallId)));
+  }
+
+  private Reach reach(UUID tenantId, UUID recallId) {
+    return query(
+            "SELECT" + REACH_COLUMNS + " FROM recalls r WHERE r.tenant_id = ? AND r.id = ?",
+            ps -> {
+              ps.setObject(1, tenantId);
+              ps.setObject(2, recallId);
+            },
+            RecallRepository::mapReach,
+            "recall reach")
+        .stream()
+        .findFirst()
+        .orElse(Reach.NONE);
   }
 
   /**
@@ -234,7 +379,8 @@ public class RecallRepository extends BaseOutboxRepository {
                     + " (SELECT COALESCE(SUM(rb.qty_at_quarantine), 0) FROM recall_batches rb"
                     + "   WHERE rb.tenant_id = r.tenant_id AND rb.recall_id = r.id AND"
                     + NOT_RELEASED
-                    + ") AS qty_held"
+                    + ") AS qty_held,"
+                    + REACH_COLUMNS
                     + " FROM recalls r WHERE r.tenant_id = ?");
     if (status != null) sql.append(" AND r.status = ?");
     if (after != null) sql.append(" AND (r.opened_at, r.id) < (?, ?)");
@@ -257,7 +403,8 @@ public class RecallRepository extends BaseOutboxRepository {
                 rs.getInt("scope_lines"),
                 rs.getInt("stores_affected"),
                 rs.getInt("stores_outstanding"),
-                rs.getBigDecimal("qty_held")),
+                rs.getBigDecimal("qty_held"),
+                mapReach(rs)),
         "list recalls");
   }
 
@@ -535,8 +682,9 @@ public class RecallRepository extends BaseOutboxRepository {
     try (PreparedStatement ps =
         c.prepareStatement(
             "INSERT INTO recalls (id, tenant_id, reference, kind, hazard, reason, customer_notice,"
-                + " source, source_reference, status, opened_by, opened_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                + " source, source_reference, status, opened_by, opened_at, remedies,"
+                + " single_remedy_reason, contact_phone, contact_url, sold_from)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
       ps.setObject(1, h.id());
       ps.setObject(2, h.tenantId());
       ps.setString(3, h.reference());
@@ -549,6 +697,11 @@ public class RecallRepository extends BaseOutboxRepository {
       ps.setString(10, h.status().name());
       ps.setObject(11, h.openedBy());
       ps.setObject(12, utc(h.openedAt()));
+      ps.setString(13, Remedy.csv(h.remedies()));
+      ps.setString(14, h.singleRemedyReason());
+      ps.setString(15, h.contactPhone());
+      ps.setString(16, h.contactUrl());
+      ps.setObject(17, h.soldFrom());
       ps.executeUpdate();
     }
   }
@@ -841,7 +994,16 @@ public class RecallRepository extends BaseOutboxRepository {
         instant(rs, "opened_at"),
         rs.getObject("ended_by", UUID.class),
         instant(rs, "ended_at"),
-        rs.getString("end_notes"));
+        rs.getString("end_notes"),
+        Remedy.parse(rs.getString("remedies")),
+        rs.getString("single_remedy_reason"),
+        rs.getString("contact_phone"),
+        rs.getString("contact_url"),
+        rs.getObject("sold_from", LocalDate.class));
+  }
+
+  private static Reach mapReach(ResultSet rs) throws SQLException {
+    return new Reach(rs.getInt("orders_affected"), rs.getBigDecimal("qty_sold"));
   }
 
   private static Scope mapScope(ResultSet rs) throws SQLException {

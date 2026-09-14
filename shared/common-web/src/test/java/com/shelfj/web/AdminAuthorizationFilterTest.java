@@ -479,4 +479,32 @@ class AdminAuthorizationFilterTest {
     ctx.set(null, null, Set.of("CASHIER"), null, null);
     assertNotAborted(invoke("GET", "/orders/export"));
   }
+
+  // ── 05.10: a recall's notices to buyers ──────────────────────────────────────
+
+  @Test
+  void recallNoticesOpenOnlyTheShoppersOwnShapes() throws Exception {
+    ctx.set(null, null, Set.of("CUSTOMER"), null, null);
+    // Their own notices, and their choice of remedy on one — object-level checks in order-svc.
+    assertNotAborted(invoke("GET", "/orders/recall-notices/mine"));
+    assertNotAborted(
+        invoke("POST", "/orders/recall-notices/01a09509-72ec-72e9-9f08-94a93df26a36/remedy"));
+    // A recall's whole list, its progress, and settling a notice are staff work.
+    assertAborted(invoke("GET", "/orders/recall-notices"), 403);
+    assertAborted(invoke("GET", "/orders/recall-notices/progress"), 403);
+    assertAborted(
+        invoke("POST", "/orders/recall-notices/01a09509-72ec-72e9-9f08-94a93df26a36/resolve"), 403);
+    // Matched by shape: a literal where the id goes, or a deeper child, is not the shape.
+    assertAborted(invoke("POST", "/orders/recall-notices/mine/remedy"), 403);
+    assertAborted(invoke("GET", "/orders/recall-notices/mine/all"), 403);
+    assertAborted(
+        invoke("POST", "/orders/recall-notices/01a09509-72ec-72e9-9f08-94a93df26a36/remedy/x"),
+        403);
+    assertAborted(invoke("GET", "/orders/recall-noticesX/mine"), 403);
+    ctx.set(null, null, Set.of("CASHIER"), null, null);
+    assertNotAborted(invoke("GET", "/orders/recall-notices"));
+    assertNotAborted(invoke("GET", "/orders/recall-notices/progress"));
+    assertNotAborted(
+        invoke("POST", "/orders/recall-notices/01a09509-72ec-72e9-9f08-94a93df26a36/resolve"));
+  }
 }

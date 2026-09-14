@@ -251,6 +251,30 @@ class JwtAuthFilterTest {
             com.auth0.jwt.algorithms.Algorithm.HMAC256("unit-test-secret-of-at-least-32-chars!!"));
   }
 
+  /**
+   * Runs the filter for a signed-in shopper naming a shop through the storefront header.
+   *
+   * @param headerRead whether the path is one the filter reads the storefront header for; a path
+   *     outside the whitelist never asks for it, and a strict stub would object to the unused one
+   * @return the tenant the filter derived, or null
+   */
+  private String tenantDerivedFor(String method, String path, boolean headerRead)
+      throws IOException {
+    headers.clear();
+    when(uriInfo.getPath()).thenReturn(path);
+    when(requestContext.getMethod()).thenReturn(method);
+    when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + customerToken());
+    if (headerRead) {
+      when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
+    } else {
+      lenient()
+          .when(requestContext.getHeaderString("X-Storefront-Tenant"))
+          .thenReturn("tenant-abc");
+    }
+    filter.filter(requestContext);
+    return headers.getFirst("X-Tenant-Id");
+  }
+
   @Test
   void customerTokenReachesItsOwnProfileAndAddressBookFromAStorefront() throws IOException {
     // 12.10. The first live run of the account flow got NO_TENANT on PUT /customers/me: the
@@ -266,14 +290,8 @@ class JwtAuthFilterTest {
       {"DELETE", "api/notification-svc/notifications/devices/01a09509-72ec-72e9-9f08-94a93df26a36"},
     };
     for (String[] c : cases) {
-      headers.clear();
-      when(uriInfo.getPath()).thenReturn(c[1]);
-      when(requestContext.getMethod()).thenReturn(c[0]);
-      when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + customerToken());
-      when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
-      filter.filter(requestContext);
       org.junit.jupiter.api.Assertions.assertEquals(
-          "tenant-abc", headers.getFirst("X-Tenant-Id"), c[0] + " " + c[1]);
+          "tenant-abc", tenantDerivedFor(c[0], c[1], true), c[0] + " " + c[1]);
     }
   }
 
@@ -316,14 +334,35 @@ class JwtAuthFilterTest {
           "api/order-svc/orders/01a09509-72ec-72e9-9f08-94a93df26a36/history",
           "api/order-svc/orders/01a09509-72ec-72e9-9f08-94a93df26a36/fiscal-receipt"
         }) {
-      headers.clear();
-      when(uriInfo.getPath()).thenReturn(path);
-      when(requestContext.getMethod()).thenReturn("GET");
-      when(requestContext.getHeaderString("Authorization")).thenReturn("Bearer " + customerToken());
-      when(requestContext.getHeaderString("X-Storefront-Tenant")).thenReturn("tenant-abc");
-      filter.filter(requestContext);
       org.junit.jupiter.api.Assertions.assertEquals(
-          "tenant-abc", headers.getFirst("X-Tenant-Id"), path);
+          "tenant-abc", tenantDerivedFor("GET", path, true), path);
+    }
+  }
+
+  @Test
+  void customerTokenReachesItsOwnRecallNoticesAndNothingElseUnderThem() throws IOException {
+    // 05.10: the shopper's notices and their choice of remedy get the storefront tenant; a recall's
+    // list, its progress and settling a notice do not — those are staff work through the normal
+    // door — and neither does a literal where the id goes.
+    String[][] allowed = {
+      {"GET", "api/order-svc/orders/recall-notices/mine"},
+      {"POST", "api/order-svc/orders/recall-notices/01a09509-72ec-72e9-9f08-94a93df26a36/remedy"},
+    };
+    for (String[] c : allowed) {
+      org.junit.jupiter.api.Assertions.assertEquals(
+          "tenant-abc", tenantDerivedFor(c[0], c[1], true), c[0] + " " + c[1]);
+    }
+    String[][] refused = {
+      {"GET", "api/order-svc/orders/recall-notices"},
+      {"GET", "api/order-svc/orders/recall-notices/progress"},
+      {"POST", "api/order-svc/orders/recall-notices/01a09509-72ec-72e9-9f08-94a93df26a36/resolve"},
+      {"POST", "api/order-svc/orders/recall-notices/mine/remedy"},
+      {"GET", "api/order-svc/orders/recall-notices/mine/all"},
+      {"POST", "api/order-svc/orders/recall-notices/mine"},
+    };
+    for (String[] c : refused) {
+      org.junit.jupiter.api.Assertions.assertNull(
+          tenantDerivedFor(c[0], c[1], false), c[0] + " " + c[1]);
     }
   }
 
