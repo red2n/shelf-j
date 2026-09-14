@@ -1,3 +1,4 @@
+import 'product_safety_dialog.dart';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -49,6 +50,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Online products listed before EU product safety law was enforced here (01.12).
+              const MissingSafetyBanner(),
               Row(
                 children: [
                   Expanded(
@@ -506,6 +509,13 @@ class _WideTable extends StatelessWidget {
                               SizedBox(width: 8),
                               Text('Product image'),
                             ])),
+                        const PopupMenuItem(
+                            value: 'safety',
+                            child: Row(children: [
+                              Icon(Icons.health_and_safety_outlined, size: 18),
+                              SizedBox(width: 8),
+                              Text('Safety information'),
+                            ])),
                         if (active)
                           PopupMenuItem(
                               value: 'delist',
@@ -524,6 +534,9 @@ class _WideTable extends StatelessWidget {
                           onAssortment(p);
                         } else if (v == 'image') {
                           onImage(p);
+                        } else if (v == 'safety') {
+                          showProductSafetyDialog(context,
+                              productId: p.id, productName: p.name);
                         } else {
                           onDelist(p);
                         }
@@ -614,6 +627,13 @@ class _NarrowList extends StatelessWidget {
                           SizedBox(width: 8),
                           Text('Product image'),
                         ])),
+                    const PopupMenuItem(
+                        value: 'safety',
+                        child: Row(children: [
+                          Icon(Icons.health_and_safety_outlined, size: 18),
+                          SizedBox(width: 8),
+                          Text('Safety information'),
+                        ])),
                     if (active)
                       PopupMenuItem(
                           value: 'delist',
@@ -632,6 +652,9 @@ class _NarrowList extends StatelessWidget {
                       onAssortment(p);
                     } else if (v == 'image') {
                       onImage(p);
+                    } else if (v == 'safety') {
+                      showProductSafetyDialog(context,
+                          productId: p.id, productName: p.name);
                     } else {
                       onDelist(p);
                     }
@@ -691,6 +714,7 @@ class _ProductDialogState extends State<_ProductDialog> {
   String? _categoryId;
   bool _online = true;
   bool _pos = true;
+  final _safety = SafetyInformationForm();
   bool _loading = false;
   String? _error;
 
@@ -698,6 +722,7 @@ class _ProductDialogState extends State<_ProductDialog> {
   void dispose() {
     _nameCtrl.dispose();
     _descCtrl.dispose();
+    _safety.dispose();
     super.dispose();
   }
 
@@ -795,6 +820,14 @@ class _ProductDialogState extends State<_ProductDialog> {
                       ),
                     ],
                   ),
+                  ExpansionTile(
+                    key: const Key('new-product-safety'),
+                    tilePadding: EdgeInsets.zero,
+                    title: const Text('Safety information'),
+                    subtitle: const Text(
+                        'Needed to offer it online where EU product safety law applies'),
+                    children: [SafetyInformationFields(form: _safety)],
+                  ),
                   const SizedBox(height: 20),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
@@ -840,6 +873,7 @@ class _ProductDialogState extends State<_ProductDialog> {
         'categoryId': _categoryId,
         'sellableOnline': _online,
         'sellablePos': _pos,
+        if (!_safety.isEmpty) 'safetyInformation': _safety.toJson(),
       });
       if (mounted) Navigator.pop(context);
     } catch (e) {

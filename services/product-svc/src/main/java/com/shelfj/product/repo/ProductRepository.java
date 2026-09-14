@@ -106,9 +106,21 @@ public class ProductRepository extends BaseOutboxRepository {
    * @return the product
    */
   public Product createProductWithOutbox(Product p, List<OutboxRow> events) {
+    return createProductWithOutbox(p, events, null);
+  }
+
+  /**
+   * Inserts a product, its safety statement when one was made (01.12), and its events, in one
+   * transaction.
+   *
+   * @param safety the statement, or null
+   */
+  public Product createProductWithOutbox(
+      Product p, List<OutboxRow> events, com.shelfj.product.domain.Domain.ProductSafety safety) {
     return inTx(
         c -> {
           insertProduct(c, p);
+          if (safety != null) ProductSafetyRepository.upsert(c, safety);
           for (OutboxRow e : events) insertOutbox(c, e);
           return p;
         },
@@ -191,9 +203,35 @@ public class ProductRepository extends BaseOutboxRepository {
    * @return the product
    */
   public Product updateProductWithOutbox(Product p, List<OutboxRow> events) {
+    return updateProductWithOutbox(p, events, safety -> {});
+  }
+
+  /**
+   * Updates a product under a lock on it, after {@code guard} has seen its safety statement as it
+   * stands (01.12): a statement cleared at the same moment cannot leave the product online without
+   * one.
+   *
+   * @param guard sees the stored statement, possibly null, and throws to refuse the update
+   */
+  public Product updateProductWithOutbox(
+      Product p,
+      List<OutboxRow> events,
+      java.util.function.Consumer<com.shelfj.product.domain.Domain.ProductSafety> guard) {
     Product updated =
         inTx(
             c -> {
+              try (PreparedStatement lock =
+                  c.prepareStatement(
+                      "SELECT id FROM products WHERE tenant_id = ? AND id = ? FOR UPDATE")) {
+                lock.setObject(1, p.tenantId());
+                lock.setObject(2, p.id());
+                try (ResultSet rs = lock.executeQuery()) {
+                  if (!rs.next())
+                    throw ApiException.notFound(
+                        "PRODUCT_NOT_FOUND", "No such product in this tenant");
+                }
+              }
+              guard.accept(ProductSafetyRepository.find(c, p.tenantId(), p.id()).orElse(null));
               try (PreparedStatement ps =
                   c.prepareStatement(
                       "UPDATE products SET name=?, description=?, brand_id=?, category_id=?,"

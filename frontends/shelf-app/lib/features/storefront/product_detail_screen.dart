@@ -7,6 +7,7 @@ import '../../shared/widgets/loading_view.dart';
 import 'storefront_providers.dart';
 import 'storefront_widgets.dart';
 import 'allergen_summary.dart';
+import 'product_safety_section.dart';
 
 class ProductDetailScreen extends ConsumerWidget {
   final String productId;
@@ -54,6 +55,8 @@ class ProductDetailScreen extends ConsumerWidget {
               Text(product.description!,
                   style: TextStyle(color: cs.onSurfaceVariant)),
             ],
+            // Shown with the offer, before anyone signs in (GPSR art.19).
+            ProductSafetySection(productId: product.id),
             const SizedBox(height: 24),
             Text('Options',
                 style: Theme.of(context)

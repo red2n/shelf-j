@@ -370,4 +370,28 @@ public class CatalogResource {
   public ApiResponse<VariantComplianceResponse> compliance(@PathParam("variantId") UUID variantId) {
     return ApiResponse.ok(Mappers.toCompliance(service.complianceOf(requireTenant(), variantId)));
   }
+
+  /**
+   * What the online offer shows about a product's safety (01.12).
+   *
+   * <p>Open to shoppers deliberately, like the allergen declaration: GPSR art.19 requires it to be
+   * shown with the offer, before anyone signs in.
+   *
+   * @param id the product id (path parameter)
+   * @throws com.shelfj.web.ApiException {@code 404} no such product for this tenant
+   */
+  @Operation(
+      summary = "A product's safety information, as the online offer shows it",
+      description =
+          "The manufacturer, the EU responsible person where the manufacturer is outside the EU, and"
+              + " the warnings or the statement that none apply (Regulation (EU) 2023/988 art.19).")
+  @APIResponse(responseCode = "404", description = "No such product for this tenant")
+  @Tag(name = "Catalog")
+  @GET
+  @Path("/products/{id}/safety-information")
+  public ApiResponse<com.shelfj.product.dto.Dtos.SafetyInformationResponse> safetyInformation(
+      @PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        Mappers.toSafetyInformation(service.safetyInformation(requireTenant(), id)));
+  }
 }

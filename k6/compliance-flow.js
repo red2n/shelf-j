@@ -205,6 +205,84 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cigs, cashi
     truthy('twenty reads at once all answer with the same rules', burst.every((r) => r.status === 200) && new Set(burst.map((r) => JSON.stringify(data(r)))).size === 1, burst.map((r) => r.status));
   });
 
+  group('2d product safety information: what an EU online offer must show', () => {
+    const P = '/api/product-svc/admin/products';
+    // Letters, not long digit runs: a random card-shaped number would be refused by the gateway's card guard.
+    const tag = () => `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+    const EU = { manufacturerName: 'Atelier Lumière SAS', manufacturerAddress: '12 rue de la Paix, 75002 Paris', manufacturerContact: 'securite@lumiere.fr', manufacturerCountry: 'fr', warnings: 'Keep away from open flame.' };
+    const CN = { manufacturerName: 'Shenzhen Toys Ltd', manufacturerAddress: '1 Nanshan Road, Shenzhen', manufacturerContact: 'https://toys.example.cn/safety', manufacturerCountry: 'CN', noWarnings: true };
+    const REP = { responsiblePersonName: 'EU Rep BV', responsiblePersonAddress: 'Keizersgracht 1, Amsterdam', responsiblePersonContact: 'rep@eurep.nl' };
+    const deOwner = de.owner.token;
+    const create = (token, name, online, safetyInformation) => call('POST', P, { token, body: { name: `${name} ${tag()}`, sellableOnline: online, sellablePos: true, safetyInformation } });
+    const sheet = (token, id) => call('GET', `${P}/${id}/safety-information`, { token });
+    const state = (token, id, body) => call('PUT', `${P}/${id}/safety-information`, { token, body });
+    const update = (token, id, online) => call('PUT', `${P}/${id}`, { token, body: { name: `Renamed ${tag()}`, sellableOnline: online, sellablePos: true } });
+    const details = (res) => {
+      try {
+        return (JSON.parse(res.body).error || {}).details || [];
+      } catch (_) {
+        return [];
+      }
+    };
+
+    const bare = create(deOwner, 'Candle', true, undefined);
+    expect(bare, 'a German business cannot offer a product online without its safety information', 400, 'PRODUCT_SAFETY_INFORMATION_REQUIRED');
+    truthy('the refusal names what is missing', ['MANUFACTURER_NAME', 'MANUFACTURER_ADDRESS', 'MANUFACTURER_CONTACT', 'MANUFACTURER_COUNTRY', 'WARNINGS'].every((m) => details(bare).includes(m)), details(bare));
+    const candle = create(deOwner, 'Candle', true, EU);
+    expect(candle, 'with a French manufacturer and its warnings it is offered online', 201);
+    const candleId = data(candle).id;
+    const s = data(sheet(deOwner, candleId));
+    truthy('its sheet: required here, nothing missing, the country upper-cased', s.required === true && (s.missing || []).length === 0 && s.manufacturerCountry === 'FR', s);
+    const shown = call('GET', `/api/product-svc/catalog/products/${candleId}/safety-information`, { storefront: de.tenantId });
+    expect(shown, 'a guest sees it with the offer', 200);
+    truthy('...the manufacturer and the warnings', data(shown).manufacturerName === 'Atelier Lumière SAS' && data(shown).warnings === 'Keep away from open flame.', data(shown));
+
+    const noRep = create(deOwner, 'Toy', true, CN);
+    expect(noRep, 'a Chinese manufacturer with no EU responsible person is refused', 400, 'PRODUCT_SAFETY_INFORMATION_REQUIRED');
+    truthy('...naming the responsible person, not the manufacturer', details(noRep).includes('RESPONSIBLE_PERSON_NAME') && !details(noRep).includes('MANUFACTURER_NAME'), details(noRep));
+    expect(create(deOwner, 'Toy', true, { ...CN, ...REP }), 'with one it is offered online', 201);
+
+    const lamp = must(create(deOwner, 'Lamp', false, undefined), 201, 'till-only lamp').id;
+    expect(update(deOwner, lamp, true), 'a till-only product cannot go online without it', 400, 'PRODUCT_SAFETY_INFORMATION_REQUIRED');
+    expect(state(deOwner, lamp, EU), 'the owner states it', 200);
+    expect(update(deOwner, lamp, true), 'then it goes online', 200);
+    expect(state(deOwner, lamp, { manufacturerName: 'Atelier Lumière SAS' }), 'the statement of an online product cannot be thinned', 400, 'PRODUCT_SAFETY_INFORMATION_REQUIRED');
+
+    const kettle = create(owner, 'Kettle', true, undefined);
+    expect(kettle, 'a British business is not bound', 201);
+    truthy('...and its sheet says so', data(sheet(owner, data(kettle).id)).required === false);
+    const missing = data(call('GET', `${P}/safety-information/missing`, { token: deOwner }));
+    truthy('none of these online products is on the missing list', Array.isArray(missing) && ![candleId, lamp].some((id) => missing.some((m) => m.productId === id)), missing);
+
+    expect(state(deCashier.token, lamp, EU), 'a cashier cannot state it', 403);
+    expect(sheet(rival.owner.token, candleId), "another business cannot read this business's statement", 404);
+    expect(state(rival.owner.token, candleId, EU), 'nor write it', 404);
+    expect(sheet(shopper.token, candleId), 'nor a shopper through the admin path', 403);
+    expect(call('GET', `${P}/${candleId}/safety-information`, {}), 'nor a guest', 401);
+
+    const mug = must(create(deOwner, 'Mug', false, undefined), 201, 'offline mug').id;
+    expect(state(deOwner, mug, { manufacturerContact: 'javascript:alert(1)' }), 'a script is not a contact', 400, 'SAFETY_CONTACT_INVALID');
+    expect(state(deOwner, mug, { manufacturerContact: 'http://insecure.example' }), 'nor a plain http link', 400, 'SAFETY_CONTACT_INVALID');
+    expect(state(deOwner, mug, { manufacturerCountry: "FR' OR '1'='1" }), 'SQL in the country is a refused country', 400, 'SAFETY_COUNTRY_INVALID');
+    expect(state(deOwner, mug, { manufacturerName: 'x'.repeat(201) }), 'a name over 200 characters is refused', 400, 'SAFETY_TEXT_INVALID');
+    expect(state(deOwner, mug, { warnings: 'Hot', noWarnings: true }), 'warnings and none-apply together are refused', 400, 'SAFETY_WARNINGS_CONFLICT');
+    expect(state(deOwner, '01890000-0000-7000-8000-000000000000', EU), 'a product that does not exist', 404);
+
+    const imported = call('POST', '/api/product-svc/admin/import', { token: deOwner, body: { products: [{ name: `Imported ${tag()}`, variants: [{ sku: `GPSR-${tag()}` }] }] } });
+    truthy('a bulk import cannot offer a product online without it', imported.status < 300 && String(imported.body).includes('PRODUCT_SAFETY_INFORMATION_REQUIRED'), String(imported.body).slice(0, 300));
+
+    // Twenty at once: half putting a till-only product online, half thinning its statement.
+    const race = must(create(deOwner, 'Race', false, EU), 201, 'race product').id;
+    const headers = { Authorization: `Bearer ${deOwner}`, 'Content-Type': 'application/json' };
+    const rush = http.batch(Array.from({ length: 20 }, (_, k) => (k % 2
+      ? ['PUT', `${BASE}${P}/${race}`, JSON.stringify({ name: `Race ${tag()}`, sellableOnline: true, sellablePos: true }), { headers, tags: { name: 'PUT product online race' } }]
+      : ['PUT', `${BASE}${P}/${race}/safety-information`, JSON.stringify({ manufacturerName: 'Atelier Lumière SAS' }), { headers, tags: { name: 'PUT safety information race' } }])));
+    truthy('none of the twenty is a server error', rush.every((r) => r.status < 500), rush.map((r) => r.status));
+    const after = data(call('GET', `${P}/${race}`, { token: deOwner }));
+    const afterSheet = data(sheet(deOwner, race));
+    truthy('and the product is never left online without its safety information', !(after.sellableOnline && (afterSheet.missing || []).length > 0), { online: after.sellableOnline, missing: afterSheet.missing });
+  });
+
   group('3 weighing instruments: the register', () => {
     const base = `/api/tenant-svc/admin/stores/${storeA.id}/weighing-instruments`;
     // No default parameter and no object spread inside the arrow: k6's parser refuses that shape.

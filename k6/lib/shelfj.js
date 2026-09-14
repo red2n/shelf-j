@@ -243,13 +243,25 @@ export function setStoreStatus(tenant, storeId, status) {
 // ── catalogue and stock ───────────────────────────────────────────────────────
 
 /** A product with one variant, sellable online and at the till. Returns { productId, variantId, sku }. */
+/**
+ * What an online offer shows about a product (01.12): an EU manufacturer and no warnings. Sent for
+ * every tenant; where EU product safety law binds one, a product cannot be offered online without it.
+ */
+export const SAFETY_INFORMATION = {
+  manufacturerName: 'k6 Manufacturing GmbH',
+  manufacturerAddress: 'Teststraße 1, 10115 Berlin',
+  manufacturerContact: 'safety@k6.shelfj.test',
+  manufacturerCountry: 'DE',
+  noWarnings: true,
+};
+
 export function sellableVariant(tenant, name) {
   const t = tenant.owner.token;
   const run = uniq();
   const product = must(
     call('POST', '/api/product-svc/admin/products', {
       token: t,
-      body: { name: `${name} ${run}`, sellableOnline: true, sellablePos: true },
+      body: { name: `${name} ${run}`, sellableOnline: true, sellablePos: true, safetyInformation: SAFETY_INFORMATION },
     }),
     201,
     `create product ${name}`

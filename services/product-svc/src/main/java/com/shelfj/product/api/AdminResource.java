@@ -2000,4 +2000,60 @@ public class AdminResource {
     return ApiResponse.ok(
         Mappers.toAgeRule(service.setAgeRule(ctx.requireTenantId(), req, ctx.userId())));
   }
+
+  // ── product safety information (01.12, GPSR art.19) ────────────────────────
+
+  @Operation(
+      summary = "A product's safety information",
+      description =
+          "The manufacturer, the EU responsible person and the warnings an online offer shows, with"
+              + " whether the business's market requires them today and what is still missing.")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @Tag(name = "Products")
+  @GET
+  @Path("/products/{id}/safety-information")
+  public ApiResponse<com.shelfj.product.dto.Dtos.SafetyInformationResponse> safetyInformation(
+      @PathParam("id") UUID id) {
+    return ApiResponse.ok(
+        Mappers.toSafetyInformation(service.safetyInformation(ctx.requireTenantId(), id)));
+  }
+
+  @Operation(
+      summary = "State a product's safety information",
+      description =
+          "Replaces the statement. Contacts are an e-mail address or an https:// URL, the country"
+              + " ISO 3166-1 alpha-2; warnings, or noWarnings to state that none apply. Refused with"
+              + " PRODUCT_SAFETY_INFORMATION_REQUIRED when the product is offered online where GPSR"
+              + " binds the business and the statement would not do.")
+  @APIResponse(responseCode = "400", description = "Malformed, or not enough for an online offer")
+  @APIResponse(responseCode = "404", description = "No such product")
+  @Tag(name = "Products")
+  @PUT
+  @Path("/products/{id}/safety-information")
+  public ApiResponse<com.shelfj.product.dto.Dtos.SafetyInformationResponse> setSafetyInformation(
+      @PathParam("id") UUID id, com.shelfj.product.dto.Dtos.SafetyInformationRequest req) {
+    if (req == null) {
+      throw com.shelfj.web.ApiException.badRequest(
+          "SAFETY_INFORMATION_REQUIRED", "a body is required");
+    }
+    return ApiResponse.ok(
+        Mappers.toSafetyInformation(
+            service.setSafetyInformation(ctx.requireTenantId(), id, req, ctx.userId())));
+  }
+
+  @Operation(
+      summary = "Online products missing safety information",
+      description =
+          "Active products offered online that GPSR requires safety information for and that lack"
+              + " some, with what each lacks. Empty where the regulation does not bind the business.")
+  @Tag(name = "Products")
+  @GET
+  @Path("/products/safety-information/missing")
+  public ApiResponse<List<com.shelfj.product.dto.Dtos.MissingSafetyInformationResponse>>
+      missingSafetyInformation() {
+    return ApiResponse.ok(
+        service.missingSafetyInformation(ctx.requireTenantId()).stream()
+            .map(Mappers::toMissingSafety)
+            .toList());
+  }
 }

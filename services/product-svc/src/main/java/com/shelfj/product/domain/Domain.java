@@ -347,4 +347,37 @@ public final class Domain {
       UUID categoryId,
       Instant createdAt,
       Instant updatedAt) {}
+
+  /**
+   * What an online offer must show about a product under GPSR art.19 (01.12): its manufacturer, the
+   * person responsible for it in the EU when the manufacturer is outside, and its warnings — or the
+   * business's statement that none apply. Absent fields are null.
+   */
+  public record ProductSafety(
+      UUID tenantId,
+      UUID productId,
+      String manufacturerName,
+      String manufacturerAddress,
+      String manufacturerContact,
+      String manufacturerCountry,
+      String responsiblePersonName,
+      String responsiblePersonAddress,
+      String responsiblePersonContact,
+      String warnings,
+      boolean noWarnings,
+      Instant updatedAt,
+      UUID updatedBy) {}
+
+  /** An active online product with its safety statement, or null when none was made. */
+  public record ListedProductSafety(UUID productId, String name, ProductSafety safety) {}
+
+  /**
+   * A product's safety statement as it stands against the law: whether its market requires one for
+   * an online offer today, and what an offer would still lack.
+   */
+  public record SafetySheet(
+      UUID productId, ProductSafety safety, boolean required, java.util.List<String> missing) {}
+
+  /** An online product that its market requires safety information for, and what it lacks. */
+  public record MissingSafety(UUID productId, String name, java.util.List<String> missing) {}
 }

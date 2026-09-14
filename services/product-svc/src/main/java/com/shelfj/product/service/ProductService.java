@@ -95,6 +95,8 @@ public class ProductService {
   @Inject com.shelfj.product.client.InventoryClient inventoryClient;
   @Inject com.shelfj.product.client.PricingClient pricingClient;
   @Inject com.shelfj.service.TenantProfiles profiles;
+  @Inject com.shelfj.service.Jurisdictions jurisdictions;
+  @Inject com.shelfj.product.repo.ProductSafetyRepository safetyRepo;
 
   // ─────────────────────────────────────────────────────────────────── brands
 
@@ -245,6 +247,13 @@ public class ProductService {
   public Product createProduct(UUID tenantId, CreateProductRequest req) {
     UUID id = Ids.newId();
     Instant now = Instant.now();
+    var safety =
+        req.safetyInformation() == null
+            ? null
+            : SafetyInformationRules.normalise(tenantId, id, req.safetyInformation(), null, now);
+    if (req.sellableOnline() == null || req.sellableOnline()) {
+      requireListable(tenantId, safety);
+    }
     var product =
         new Product(
             id,
@@ -266,7 +275,9 @@ public class ProductService {
             id,
             Events.productCreated(tenantId, id, product.name()));
     return repo.createProductWithOutbox(
-        product, List.of(event, categorised(tenantId, id, product.categoryId(), List.of())));
+        product,
+        List.of(event, categorised(tenantId, id, product.categoryId(), List.of())),
+        safety);
   }
 
   /**
@@ -308,7 +319,12 @@ public class ProductService {
         repo.listVariants(tenantId, productId).stream().map(Variant::id).toList();
     return repo.updateProductWithOutbox(
         updated,
-        List.of(event, categorised(tenantId, productId, updated.categoryId(), variantIds)));
+        List.of(event, categorised(tenantId, productId, updated.categoryId(), variantIds)),
+        stored -> {
+          if (updated.sellableOnline() && Product.STATUS_ACTIVE.equals(updated.status())) {
+            requireListable(tenantId, stored);
+          }
+        });
   }
 
   // ── the catalogue event (03.8) ─────────────────────────────────────────────
@@ -1506,6 +1522,9 @@ public class ProductService {
     }
 
     // ── 2. products + variants ───────────────────────────────────────────────
+    // A row carries no safety information, so where GPSR binds the business an import may add a
+    // product for the till but not offer one online (01.12). Asked once for the whole import.
+    Boolean safetyRequired = null;
     if (req.products() != null) {
       for (var p : req.products()) {
         try {
@@ -1551,6 +1570,17 @@ public class ProductService {
           if (existing.isPresent()) {
             productId = existing.get().id();
           } else {
+            if (p.sellableOnline() == null || p.sellableOnline()) {
+              if (safetyRequired == null) safetyRequired = safetyRequired(tenantId);
+              if (safetyRequired) {
+                errors.add(
+                    new BulkImportError(
+                        "product:" + p.name(),
+                        "PRODUCT_SAFETY_INFORMATION_REQUIRED: import it with sellableOnline false,"
+                            + " then add its safety information before offering it online"));
+                continue;
+              }
+            }
             productId = Ids.newId();
             var product =
                 new com.shelfj.product.domain.Domain.Product(
@@ -2535,5 +2565,120 @@ public class ProductService {
     }
     sb.append("}");
     return sb.length() > 2 ? sb.toString() : null;
+  }
+
+  // ── product safety information (01.12, GPSR art.19) ────────────────────────
+
+  /** Whether GPSR binds this business's online offers today. */
+  boolean safetyRequired(UUID tenantId) {
+    return jurisdictions.inForce(
+        tenantId, SafetyInformationRules.GPSR_ONLINE_OFFER, java.time.LocalDate.now(clock));
+  }
+
+  /**
+   * Refuses to offer a product online without what GPSR art.19 requires, where it binds the
+   * business.
+   *
+   * @param safety the statement as it would stand, or null
+   * @throws ApiException 400 {@code PRODUCT_SAFETY_INFORMATION_REQUIRED}, the missing items in the
+   *     details; 503 when the jurisdiction rules cannot be read — nothing is assumed
+   */
+  void requireListable(UUID tenantId, com.shelfj.product.domain.Domain.ProductSafety safety) {
+    if (!safetyRequired(tenantId)) return;
+    List<String> missing =
+        SafetyInformationRules.missing(safety, manufacturerInside(tenantId, safety));
+    if (!missing.isEmpty()) {
+      throw new ApiException(
+          400,
+          "PRODUCT_SAFETY_INFORMATION_REQUIRED",
+          "An online offer in this business's market must show the manufacturer, the EU"
+              + " responsible person when the manufacturer is outside the EU, and any warnings"
+              + " (Regulation (EU) 2023/988 art.19). Missing: "
+              + String.join(", ", missing),
+          missing);
+    }
+  }
+
+  /** Whether the manufacturer's country is inside the regime, asked of the jurisdiction rules. */
+  private boolean manufacturerInside(
+      UUID tenantId, com.shelfj.product.domain.Domain.ProductSafety safety) {
+    return safety != null
+        && safety.manufacturerCountry() != null
+        && jurisdictions.inForceIn(
+            tenantId,
+            safety.manufacturerCountry(),
+            SafetyInformationRules.GPSR_ONLINE_OFFER,
+            java.time.LocalDate.now(clock));
+  }
+
+  /**
+   * A product's safety statement as it stands against the law.
+   *
+   * @throws ApiException 404 {@code PRODUCT_NOT_FOUND}
+   */
+  public com.shelfj.product.domain.Domain.SafetySheet safetyInformation(
+      UUID tenantId, UUID productId) {
+    getProduct(tenantId, productId);
+    return sheet(tenantId, productId, safetyRepo.find(tenantId, productId).orElse(null));
+  }
+
+  /**
+   * Replaces a product's safety statement. Refused when the product is offered online and the
+   * statement would not do for that.
+   *
+   * @throws ApiException 404 {@code PRODUCT_NOT_FOUND}; 400 for a malformed statement or {@code
+   *     PRODUCT_SAFETY_INFORMATION_REQUIRED}
+   */
+  public com.shelfj.product.domain.Domain.SafetySheet setSafetyInformation(
+      UUID tenantId,
+      UUID productId,
+      com.shelfj.product.dto.Dtos.SafetyInformationRequest req,
+      UUID actor) {
+    var safety =
+        SafetyInformationRules.normalise(
+            tenantId,
+            productId,
+            req,
+            actor,
+            Instant.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+    safetyRepo.save(
+        safety,
+        listed -> {
+          if (listed) requireListable(tenantId, safety);
+        });
+    return sheet(tenantId, productId, safety);
+  }
+
+  /**
+   * Active online products that their market requires safety information for and that lack some, by
+   * name; empty where the regulation does not bind the business.
+   */
+  public List<com.shelfj.product.domain.Domain.MissingSafety> missingSafetyInformation(
+      UUID tenantId) {
+    if (!safetyRequired(tenantId)) return List.of();
+    List<com.shelfj.product.domain.Domain.MissingSafety> out = new java.util.ArrayList<>();
+    for (var listed : safetyRepo.listedOnline(tenantId, 500)) {
+      List<String> missing =
+          SafetyInformationRules.missing(
+              listed.safety(), manufacturerInside(tenantId, listed.safety()));
+      if (!missing.isEmpty()) {
+        out.add(
+            new com.shelfj.product.domain.Domain.MissingSafety(
+                listed.productId(), listed.name(), missing));
+      }
+    }
+    return out;
+  }
+
+  private com.shelfj.product.domain.Domain.SafetySheet sheet(
+      UUID tenantId, UUID productId, com.shelfj.product.domain.Domain.ProductSafety safety) {
+    boolean required = safetyRequired(tenantId);
+    return new com.shelfj.product.domain.Domain.SafetySheet(
+        productId,
+        safety,
+        required,
+        required
+            ? SafetyInformationRules.missing(safety, manufacturerInside(tenantId, safety))
+            : List.of());
   }
 }

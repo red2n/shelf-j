@@ -505,4 +505,32 @@ public final class Mappers {
   private static String ts(Instant i) {
     return i == null ? null : i.toString();
   }
+
+  // ── product safety information (01.12) ────────────────────────────────────
+
+  public static com.shelfj.product.dto.Dtos.SafetyInformationResponse toSafetyInformation(
+      com.shelfj.product.domain.Domain.SafetySheet sheet) {
+    var s = sheet.safety();
+    return new com.shelfj.product.dto.Dtos.SafetyInformationResponse(
+        sheet.productId().toString(),
+        s != null,
+        s == null ? null : s.manufacturerName(),
+        s == null ? null : s.manufacturerAddress(),
+        s == null ? null : s.manufacturerContact(),
+        s == null ? null : s.manufacturerCountry(),
+        s == null ? null : s.responsiblePersonName(),
+        s == null ? null : s.responsiblePersonAddress(),
+        s == null ? null : s.responsiblePersonContact(),
+        s == null ? null : s.warnings(),
+        s != null && s.noWarnings(),
+        sheet.required(),
+        sheet.missing(),
+        s == null ? null : ts(s.updatedAt()));
+  }
+
+  public static com.shelfj.product.dto.Dtos.MissingSafetyInformationResponse toMissingSafety(
+      com.shelfj.product.domain.Domain.MissingSafety m) {
+    return new com.shelfj.product.dto.Dtos.MissingSafetyInformationResponse(
+        m.productId().toString(), m.name(), m.missing());
+  }
 }

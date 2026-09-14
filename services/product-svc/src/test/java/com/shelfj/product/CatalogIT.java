@@ -7,6 +7,7 @@ import static org.hamcrest.Matchers.not;
 
 import com.shelfj.test.PostgresSupport;
 import com.shelfj.test.RedisSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.client.Entity;
@@ -45,6 +46,13 @@ class CatalogIT {
     System.setProperty("shelfj.redis.host", REDIS.host());
     System.setProperty("shelfj.redis.port", String.valueOf(REDIS.port()));
     System.setProperty("shelfj.redis.password", "");
+    // The tenants this suite acts for, as tenant-svc describes them: British, so GPSR's
+    // online-offer
+    // rule does not bind them and creating a product asks nothing more (01.12).
+    TenantSvcStub.start()
+        .with(CatalogIT.TENANT_A, "GBP", "GB")
+        .with(CatalogIT.TENANT_B, "GBP", "GB")
+        .with("01a090ae-611e-7011-ae7d-1bd68c966ff6", "GBP", "GB");
   }
 
   private static final String TENANT_A = "01a090ae-611e-700b-bde4-50df0324c37c";

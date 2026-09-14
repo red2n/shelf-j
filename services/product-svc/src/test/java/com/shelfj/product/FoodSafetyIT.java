@@ -7,6 +7,7 @@ import static org.hamcrest.Matchers.not;
 
 import com.shelfj.test.PostgresSupport;
 import com.shelfj.test.RedisSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.client.Entity;
@@ -30,6 +31,7 @@ class FoodSafetyIT {
 
   private static final PostgresSupport PG;
   private static final RedisSupport REDIS;
+  private static final TenantSvcStub STUB;
 
   static {
     PG = PostgresSupport.start();
@@ -45,6 +47,18 @@ class FoodSafetyIT {
     System.setProperty("shelfj.redis.host", REDIS.host());
     System.setProperty("shelfj.redis.port", String.valueOf(REDIS.port()));
     System.setProperty("shelfj.redis.password", "");
+    // British tenants: GPSR's online-offer rule does not bind them (01.12).
+    STUB =
+        TenantSvcStub.start()
+            .with(FoodSafetyIT.T, "GBP", "GB")
+            .with(FoodSafetyIT.OTHER, "GBP", "GB");
+  }
+
+  /** A tenant minted for one test, described to tenant-svc's stub before it creates anything. */
+  private static String britishTenant() {
+    String tenant = com.shelfj.ids.Ids.newId().toString();
+    STUB.with(tenant, "GBP", "GB");
+    return tenant;
   }
 
   private static final String T = "01a090ae-611e-7029-867a-5082a55a290f";
@@ -520,7 +534,7 @@ class FoodSafetyIT {
   @Test
   @DisplayName("The generational tobacco ban is a date of birth, and the till sees it from its day")
   void theGenerationalBanTakesEffectOnItsDay() throws Exception {
-    String tenant = com.shelfj.ids.Ids.newId().toString();
+    String tenant = britishTenant();
     String cig = tobacco(tenant);
 
     String rules =
@@ -570,7 +584,7 @@ class FoodSafetyIT {
   @Test
   @DisplayName("A business may adopt a cut-off early or an earlier one, never a later one")
   void aTenantCutoffIsStricterNeverLaxer() {
-    String tenant = com.shelfj.ids.Ids.newId().toString();
+    String tenant = britishTenant();
     String cig = tobacco(tenant);
     String rule = "{\"country\":\"GB\",\"category\":\"TOBACCO\",\"minimumAge\":18,\"bornBefore\":";
 

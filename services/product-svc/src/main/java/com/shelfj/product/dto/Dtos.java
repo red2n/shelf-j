@@ -42,7 +42,12 @@ public final class Dtos {
       @Schema(description = "Whether the storefront shows this product. Defaults to true.")
           Boolean sellableOnline,
       @Schema(description = "Whether POS can sell this product. Defaults to true.")
-          Boolean sellablePos) {}
+          Boolean sellablePos,
+      @Schema(
+              description =
+                  "The manufacturer, EU responsible person and warnings (GPSR art.19). Required to"
+                      + " offer the product online where the regulation binds the business.")
+          SafetyInformationRequest safetyInformation) {}
 
   /** Replace a product's store assortment. Empty/null = sold at all stores. */
   @Schema(
@@ -704,4 +709,50 @@ public final class Dtos {
   @Schema(name = "CatalogueRepublishResponse")
   public record CatalogueRepublishResponse(
       @Schema(description = "How many products were announced.") int announced) {}
+
+  // ── Product safety information (01.12, GPSR art.19) ───────────────────────
+
+  @Schema(
+      name = "SafetyInformationRequest",
+      description =
+          "What an online offer shows about a product: the manufacturer, the EU responsible person"
+              + " when the manufacturer is outside the EU, and its warnings or a statement that none"
+              + " apply. Blank fields are absent.")
+  public record SafetyInformationRequest(
+      String manufacturerName,
+      @Schema(description = "Postal address.") String manufacturerAddress,
+      @Schema(description = "An e-mail address or an https:// URL.") String manufacturerContact,
+      @Schema(description = "ISO 3166-1 alpha-2.") String manufacturerCountry,
+      String responsiblePersonName,
+      String responsiblePersonAddress,
+      String responsiblePersonContact,
+      @Schema(description = "Warnings or safety information, as the shopper should read them.")
+          String warnings,
+      @Schema(description = "True to state that no warning applies; not together with warnings.")
+          Boolean noWarnings) {}
+
+  @Schema(name = "SafetyInformationResponse")
+  public record SafetyInformationResponse(
+      String productId,
+      @Schema(description = "Whether anything has been stated for this product.") boolean recorded,
+      String manufacturerName,
+      String manufacturerAddress,
+      String manufacturerContact,
+      String manufacturerCountry,
+      String responsiblePersonName,
+      String responsiblePersonAddress,
+      String responsiblePersonContact,
+      String warnings,
+      boolean noWarnings,
+      @Schema(description = "Whether the business's market requires it for an online offer today.")
+          boolean required,
+      @Schema(
+              description =
+                  "What an online offer still lacks; empty when complete or not required.")
+          List<String> missing,
+      String updatedAt) {}
+
+  @Schema(name = "MissingSafetyInformationResponse")
+  public record MissingSafetyInformationResponse(
+      String productId, String name, List<String> missing) {}
 }
