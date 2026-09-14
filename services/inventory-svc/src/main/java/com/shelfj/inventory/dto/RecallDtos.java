@@ -57,7 +57,36 @@ public final class RecallDtos {
           @Size(max = 120)
           String sourceReference,
       @Schema(description = "What is affected. At most 100 lines.") @NotEmpty @Valid
-          List<ScopeLineRequest> items) {}
+          List<ScopeLineRequest> items,
+      @Schema(
+              description =
+                  "What a buyer may choose from (GPSR art.37). Required for a RECALL; at least two"
+                      + " where the EU's rule binds, or one with singleRemedyReason.",
+              enumeration = {"REPAIR", "REPLACEMENT", "REFUND"})
+          @Size(max = 3)
+          List<
+                  @Pattern(
+                      regexp = "REPAIR|REPLACEMENT|REFUND",
+                      message = "remedy is not recognised")
+                  String>
+              remedies,
+      @Schema(description = "Why only one remedy is offered, where the law asks for two.")
+          @Size(max = 500)
+          String singleRemedyReason,
+      @Schema(description = "A free number a buyer can call (GPSR art.36(2)(f)).")
+          @Size(max = 40)
+          @Pattern(
+              regexp = "[+0-9 ()-]*",
+              message = "contactPhone may hold digits, spaces, +, - and brackets")
+          String contactPhone,
+      @Schema(description = "An online service where a buyer gets more; https or http.")
+          @Size(max = 500)
+          String contactUrl,
+      @Schema(
+              description =
+                  "ISO date. Buyers of sales on or after this day are told; none means every sale"
+                      + " of the packs in scope.")
+          String soldFrom) {}
 
   @Schema(
       name = "RecallScopeLineRequest",
@@ -165,7 +194,10 @@ public final class RecallDtos {
       int scopeLines,
       int storesAffected,
       int storesOutstanding,
-      BigDecimal qtyHeld) {}
+      BigDecimal qtyHeld,
+      @Schema(description = "Orders that drew on the packs in scope, found as the recall opened.")
+          int ordersAffected,
+      BigDecimal qtySold) {}
 
   @Schema(name = "Recall")
   public record RecallResponse(
@@ -186,7 +218,15 @@ public final class RecallDtos {
       List<ScopeLineResponse> items,
       List<HeldBatchResponse> batches,
       List<StoreActionResponse> storeActions,
-      List<StoreProgressResponse> stores) {}
+      List<StoreProgressResponse> stores,
+      @Schema(enumeration = {"REPAIR", "REPLACEMENT", "REFUND"}) List<String> remedies,
+      String singleRemedyReason,
+      String contactPhone,
+      String contactUrl,
+      String soldFrom,
+      @Schema(description = "Orders that drew on the packs in scope, found as the recall opened.")
+          int ordersAffected,
+      BigDecimal qtySold) {}
 
   @Schema(
       name = "ActiveRecallItem",

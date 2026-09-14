@@ -73,6 +73,27 @@ public class ProductClient {
   @Fallback(fallbackMethod = "unavailable")
   public Optional<Map<UUID, VariantName>> names(
       UUID tenantId, Collection<UUID> ids, TenantContext ctx) {
+    return fetch(tenantId, ids, String.join(",", ctx.roles()), ctx.userId());
+  }
+
+  /**
+   * The same lookup outside any request, for a consumer naming the lines of a recall notice
+   * (05.10). The lookup is a staff read in product-svc; with no caller to forward, the service asks
+   * as a member of staff, the way notification-svc reads a customer's address.
+   *
+   * @param tenantId the tenant the event belongs to
+   * @param ids the variants to name
+   * @return names by variant id; empty when product-svc could not be reached
+   */
+  @Retry(maxRetries = 2, delay = 200)
+  @CircuitBreaker(requestVolumeThreshold = 5, failureRatio = 0.6, delay = 5000)
+  @Fallback(fallbackMethod = "unavailableAsSystem")
+  public Optional<Map<UUID, VariantName>> namesAsSystem(UUID tenantId, Collection<UUID> ids) {
+    return fetch(tenantId, ids, "CASHIER", null);
+  }
+
+  private Optional<Map<UUID, VariantName>> fetch(
+      UUID tenantId, Collection<UUID> ids, String roles, UUID userId) {
     if (ids.isEmpty()) {
       return Optional.of(Map.of());
     }
@@ -86,9 +107,9 @@ public class ProductClient {
             .get(instance.baseUri() + "/admin/products/variants/resolve")
             .queryParam("ids", joined)
             .header(HeaderNames.create(HttpHeaders.TENANT_ID), tenantId.toString())
-            .header(HeaderNames.create(HttpHeaders.ROLES), String.join(",", ctx.roles()));
-    if (ctx.userId() != null) {
-      req = req.header(HeaderNames.create(HttpHeaders.USER_ID), ctx.userId().toString());
+            .header(HeaderNames.create(HttpHeaders.ROLES), roles);
+    if (userId != null) {
+      req = req.header(HeaderNames.create(HttpHeaders.USER_ID), userId.toString());
     }
     try (HttpClientResponse res = req.request()) {
       String body = res.as(String.class);
@@ -124,6 +145,11 @@ public class ProductClient {
   @SuppressWarnings("unused")
   Optional<Map<UUID, VariantName>> unavailable(
       UUID tenantId, Collection<UUID> ids, TenantContext ctx) {
+    return unavailableAsSystem(tenantId, ids);
+  }
+
+  @SuppressWarnings("unused")
+  Optional<Map<UUID, VariantName>> unavailableAsSystem(UUID tenantId, Collection<UUID> ids) {
     LOG.log(System.Logger.Level.WARNING, "product-svc unavailable; variant names not resolved");
     return Optional.empty();
   }

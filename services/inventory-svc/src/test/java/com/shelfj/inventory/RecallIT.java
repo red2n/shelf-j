@@ -1,14 +1,20 @@
 package com.shelfj.inventory;
 
+import static com.shelfj.test.Envelopes.created;
+import static com.shelfj.test.Envelopes.find;
+import static com.shelfj.test.Envelopes.ok;
+import static com.shelfj.test.Envelopes.okArray;
+import static com.shelfj.test.Envelopes.scalar;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 
 import com.shelfj.ids.Ids;
+import com.shelfj.inventory.service.InventoryService;
 import com.shelfj.test.PostgresSupport;
+import com.shelfj.test.TenantSvcStub;
 import io.helidon.microprofile.testing.junit5.HelidonTest;
 import jakarta.inject.Inject;
-import jakarta.json.Json;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import jakarta.ws.rs.client.Entity;
@@ -16,11 +22,16 @@ import jakarta.ws.rs.client.Invocation;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import java.io.StringReader;
 import java.math.BigDecimal;
-import java.sql.DriverManager;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -28,21 +39,27 @@ import org.junit.jupiter.api.Test;
  * Recalls against real Postgres: opening one takes every pack in scope off sale at every store,
  * holds a pack it cannot rule out, and holds stock that arrives later; a store's final disposition
  * takes the stock off the books; a recall closes only when no store still holds recalled stock;
- * cancelling puts stock back only where nothing else holds it. Kafka and Consul disabled, so events
- * are asserted in the outbox.
+ * cancelling puts stock back only where nothing else holds it. A recall finds the sales that drew
+ * on its packs and announces each order to whoever knows the buyer (05.10), and offers a remedy and
+ * a contact — two remedies and plain words where GPSR binds. Kafka and Consul disabled, so events
+ * are asserted in the outbox; tenant-svc is a stub.
  */
 @HelidonTest
 class RecallIT {
 
   private static final PostgresSupport PG;
+  private static final TenantSvcStub TENANTS;
 
   static {
     PG = PostgresSupport.start();
-    System.setProperty("shelfj.db.url", PG.jdbcUrl());
-    System.setProperty("shelfj.db.migration-url", PG.jdbcUrl());
-    System.setProperty("shelfj.db.user", PG.username());
-    System.setProperty("shelfj.db.password", PG.password());
-    System.setProperty("shelfj.db.schema", "inventory");
+    // A British business and a German one: GPSR's recall-notice rule reaches the German.
+    TENANTS =
+        TenantSvcStub.start()
+            .with(RecallIT.T, "GBP", "GB")
+            .with(RecallIT.OTHER, "GBP", "GB")
+            .with(RecallIT.DE, "EUR", "DE")
+            .withObligation("DE", "GPSR_RECALL_NOTICE", "EU", "2024-12-13", null);
+    PG.wire("inventory");
     System.setProperty("shelfj.consul.enabled", "false");
     System.setProperty("shelfj.kafka.enabled", "false");
     System.setProperty("shelfj.inventory.food-safety.overdue-sweeper.enabled", "false");
@@ -50,14 +67,246 @@ class RecallIT {
 
   private static final String T = "01a090ae-611e-700f-b645-a14095230b77";
   private static final String OTHER = "01a090ae-611e-701d-9d60-a9d7516ed03b";
+  private static final String DE = "01a090ae-611e-701e-8f3a-2c1d6b7e9a10";
   private static final String MANAGER = "01a090ae-611e-7031-ace6-811d51dcecba";
   private static final String STAFF = "01a090ae-611e-7032-8c9c-1dc9a2769104";
 
   @Inject WebTarget target;
+  @Inject InventoryService inventoryService;
 
   @AfterAll
   static void stopDb() {
+    TENANTS.close();
     PG.stop();
+  }
+
+  // ── the buyers (05.10) ─────────────────────────────────────────────────────
+
+  @Test
+  void aRecallFindsEveryBuyerOfThePacksInScopeAndAnnouncesEachOrderOnce() {
+    String storeA = uuid();
+    String storeB = uuid();
+    String storeC = uuid();
+    String variant = uuid();
+    receive(storeA, variant, "10", "L1", "2026-10-01");
+    receive(storeB, variant, "5", "L2", "2026-10-01");
+    receive(storeC, variant, "4", null, "2026-10-01");
+    String orderA = sell(storeA, variant, "3");
+    String orderB = sell(storeB, variant, "2");
+    String orderC = sell(storeC, variant, "1");
+
+    JsonObject recall = created(open("BUY-1", "RECALL", lotLine(variant, "L1")));
+    // The order that drew lot L1 and the one that drew a pack with no lot; not the one from L2.
+    assertThat(recall.getInt("ordersAffected"), is(2));
+    assertThat(recall.getJsonNumber("qtySold").bigDecimalValue().toPlainString(), is("4.000"));
+    assertThat(recall.getJsonArray("remedies").toString(), is("[\"REFUND\",\"REPLACEMENT\"]"));
+    assertThat(recall.getString("contactPhone"), is("0800 100 200"));
+
+    String toA = outboxPayload("RecallSaleAffected", orderA);
+    assertThat(toA, containsString("\"recallId\":\"" + recall.getString("id") + "\""));
+    assertThat(toA, containsString("\"reference\":\"BUY-1\""));
+    assertThat(toA, containsString("\"customerNotice\":\"Do not eat."));
+    assertThat(toA, containsString("\"remedies\":[\"REFUND\",\"REPLACEMENT\"]"));
+    assertThat(toA, containsString("\"contactPhone\":\"0800 100 200\""));
+    assertThat(toA, containsString("\"storeId\":\"" + storeA + "\""));
+    assertThat(toA, containsString("\"batchNo\":\"L1\""));
+    assertThat(toA, containsString("\"qty\":3.000"));
+    assertThat(toA, containsString("\"match\":\"IN_SCOPE\""));
+    String toC = outboxPayload("RecallSaleAffected", orderC);
+    assertThat(toC, containsString("\"match\":\"LOT_UNKNOWN\""));
+    assertThat(toC, containsString("\"batchNo\":null"));
+    assertThat(outboxPayload("RecallSaleAffected", orderB), is((String) null));
+    assertThat(
+        scalar(
+            PG,
+            "SELECT COUNT(*) FROM inventory.recall_sales WHERE recall_id = '"
+                + recall.getString("id")
+                + "'"),
+        is("2"));
+
+    // A withdrawal records who was reached, for the manager weighing whether to recall, and
+    // announces nobody: the L2 sale, and again the sale from the pack with no lot, which no lot
+    // can rule out. A recall of sales from tomorrow finds none.
+    JsonObject withdrawal = created(open("BUY-2", "WITHDRAWAL", lotLine(variant, "L2")));
+    assertThat(withdrawal.getInt("ordersAffected"), is(2));
+    assertThat(withdrawal.getJsonArray("remedies").size(), is(0));
+    assertThat(outboxPayload("RecallSaleAffected", orderB), is((String) null));
+    JsonObject later =
+        created(
+            send(
+                "POST",
+                "/admin/recalls",
+                openJson("BUY-3", "RECALL", lotLine(variant, "L1"), "Do not eat.")
+                    .replace("\"items\"", "\"soldFrom\":\"2099-01-01\",\"items\""),
+                T,
+                "OWNER",
+                MANAGER,
+                null));
+    assertThat(later.getInt("ordersAffected"), is(0));
+    assertThat(later.getString("soldFrom"), is("2099-01-01"));
+
+    JsonArray listed =
+        okArray(send("GET", "/admin/inventory/recalls", null, T, "OWNER", MANAGER, null));
+    assertThat(find(listed, "id", recall.getString("id")).getInt("ordersAffected"), is(2));
+  }
+
+  @Test
+  void aRecallNeedsARemedyAndAContactAndWhereGpsrBindsTwoRemediesAndPlainWords() {
+    String variant = uuid();
+    String line = lotLine(variant, "L1");
+    String base =
+        "{\"reference\":\"%s\",\"kind\":\"RECALL\",\"hazard\":\"ALLERGEN\","
+            + "\"reason\":\"Undeclared peanut\",\"source\":\"FSA\","
+            + "\"customerNotice\":\"%s\",%s\"items\":["
+            + line
+            + "]}";
+    String plain = "Do not eat. Bring it back.";
+
+    // A British business: one remedy and a number suffice, but not none of either.
+    refused(T, base.formatted("GB-1", plain, ""), "RECALL_REMEDIES_REQUIRED");
+    refused(
+        T, base.formatted("GB-2", plain, "\"remedies\":[\"REFUND\"],"), "RECALL_CONTACT_REQUIRED");
+    refused(
+        T,
+        base.formatted("GB-3", plain, "\"remedies\":[\"REFUND\"],\"contactUrl\":\"ftp://x\","),
+        "RECALL_CONTACT_URL_INVALID");
+    refused(
+        T,
+        base.formatted("GB-4", plain, "\"remedies\":[\"CASH\"],\"contactPhone\":\"0800\","),
+        "VALIDATION_FAILED");
+    refused(
+        T,
+        base.formatted("GB-5", plain, "\"remedies\":[\"REFUND\"],\"contactPhone\":\"call me\","),
+        "VALIDATION_FAILED");
+    JsonObject gb =
+        created(
+            send(
+                "POST",
+                "/admin/recalls",
+                base.formatted(
+                    "GB-6",
+                    "A precautionary recall. Do not eat.",
+                    "\"remedies\":[\"REFUND\"],\"contactPhone\":\"0800 100 200\","),
+                T,
+                "OWNER",
+                MANAGER,
+                null));
+    assertThat(gb.getJsonArray("remedies").toString(), is("[\"REFUND\"]"));
+
+    // A German business is bound by GPSR: two remedies unless a reason, and no soft words.
+    refused(
+        DE,
+        base.formatted(
+            "DE-1", plain, "\"remedies\":[\"REFUND\"],\"contactPhone\":\"0800 100 200\","),
+        "RECALL_REMEDIES_INSUFFICIENT");
+    Response soft =
+        send(
+            "POST",
+            "/admin/recalls",
+            base.formatted(
+                "DE-2",
+                "A precautionary recall. Do not eat.",
+                "\"remedies\":[\"REFUND\",\"REPLACEMENT\"],\"contactPhone\":\"0800 100 200\","),
+            DE,
+            "OWNER",
+            MANAGER,
+            null);
+    assertThat(soft.getStatus(), is(400));
+    String softBody = soft.readEntity(String.class);
+    assertThat(softBody, containsString("RECALL_NOTICE_MINIMISES_RISK"));
+    assertThat(softBody, containsString("precautionary"));
+    JsonObject one =
+        created(
+            send(
+                "POST",
+                "/admin/recalls",
+                base.formatted(
+                    "DE-3",
+                    plain,
+                    "\"remedies\":[\"REFUND\"],\"singleRemedyReason\":\"Food cannot be repaired or replaced once opened\",\"contactUrl\":\"https://recall.example.de\","),
+                DE,
+                "OWNER",
+                MANAGER,
+                null));
+    assertThat(one.getString("singleRemedyReason"), containsString("cannot be repaired"));
+    assertThat(one.getString("contactUrl"), is("https://recall.example.de"));
+    // A withdrawal offers nothing and needs nothing.
+    assertThat(created(open("DE-4", "WITHDRAWAL", line)).getJsonArray("remedies").size(), is(0));
+    // Nobody but management opens one.
+    assertThat(
+        send(
+                "POST",
+                "/admin/recalls",
+                base.formatted(
+                    "GB-7", plain, "\"remedies\":[\"REFUND\"],\"contactPhone\":\"0800\","),
+                T,
+                "CASHIER",
+                STAFF,
+                null)
+            .getStatus(),
+        is(403));
+  }
+
+  @Test
+  void twentyOpensOfOneNoticeMakeOneRecallAndItsBuyersAreAnnouncedOnce() throws Exception {
+    String store = uuid();
+    String variant = uuid();
+    receive(store, variant, "10", "L9", "2026-10-01");
+    String order = sell(store, variant, "2");
+    ExecutorService pool = Executors.newFixedThreadPool(20);
+    try {
+      CountDownLatch go = new CountDownLatch(1);
+      List<Future<Integer>> results = new ArrayList<>();
+      for (int i = 0; i < 20; i++) {
+        results.add(
+            pool.submit(
+                () -> {
+                  go.await();
+                  return open("RACE-1", "RECALL", lotLine(variant, "L9")).getStatus();
+                }));
+      }
+      go.countDown();
+      int opened = 0;
+      int refused = 0;
+      for (Future<Integer> f : results) {
+        int status = f.get();
+        if (status == 201) opened++;
+        else if (status == 409) refused++;
+      }
+      assertThat(opened, is(1));
+      assertThat(refused, is(19));
+    } finally {
+      pool.shutdownNow();
+    }
+    assertThat(
+        scalar(
+            PG,
+            "SELECT COUNT(*) FROM inventory.outbox WHERE event_type = 'RecallSaleAffected'"
+                + " AND aggregate_id = '"
+                + order
+                + "'"),
+        is("1"));
+  }
+
+  private void refused(String tenant, String json, String code) {
+    Response r = send("POST", "/admin/recalls", json, tenant, "OWNER", MANAGER, null);
+    String body = r.readEntity(String.class);
+    assertThat(body, r.getStatus(), is(400));
+    assertThat(body, containsString(code));
+  }
+
+  /** A till sale of the variant at the store, as the OrderFulfilled consumer records it. */
+  private String sell(String store, String variant, String qty) {
+    UUID order = Ids.newId();
+    inventoryService.deductSaleFromOrderOnce(
+        Ids.newId(),
+        "it",
+        UUID.fromString(T),
+        UUID.fromString(store),
+        UUID.fromString(variant),
+        new BigDecimal(qty),
+        order);
+    return order.toString();
   }
 
   // ── opening ────────────────────────────────────────────────────────────────
@@ -92,7 +341,7 @@ class RecallIT {
     assertThat(payload, containsString("\"reference\":\"FSA-PRIN-01\""));
 
     JsonArray active =
-        dataArray(send("GET", "/admin/inventory/recalls/active", null, T, "CASHIER", STAFF, null));
+        okArray(send("GET", "/admin/inventory/recalls/active", null, T, "CASHIER", STAFF, null));
     JsonObject line = find(active, "recallId", recall.getString("id"));
     assertThat(line.getString("variantId"), is(variant));
     assertThat(line.getString("batchNo"), is("L1"));
@@ -196,6 +445,7 @@ class RecallIT {
     assertThat(remainingQty(aBatch), is("0.000"));
     assertThat(
         scalar(
+            PG,
             "SELECT qty || '|' || ref_type || '|' || reason_code || '|' || actor_id"
                 + " FROM inventory.stock_movements WHERE batch_id = '"
                 + aBatch
@@ -203,6 +453,7 @@ class RecallIT {
         is("-10.000|RECALL|RECALL_WITHDRAWAL|" + STAFF));
     assertThat(
         scalar(
+            PG,
             "SELECT count(*) FROM inventory.outbox WHERE event_type = 'StockAdjusted'"
                 + " AND payload LIKE '%"
                 + storeA
@@ -214,14 +465,14 @@ class RecallIT {
     assertThat(stillB.readEntity(String.class), containsString(storeB));
 
     created(action(recallId, storeB, "3", "RETURNED_TO_SUPPLIER", null));
-    JsonObject closed = data(close(recallId));
+    JsonObject closed = ok(close(recallId));
     assertThat(closed.getString("status"), is("CLOSED"));
     JsonObject progressA = find(closed.getJsonArray("stores"), "storeId", storeA);
     assertThat(progressA.getJsonNumber("qtyFound").bigDecimalValue().toPlainString(), is("9.000"));
     assertThat(progressA.getBoolean("outstanding"), is(false));
 
     JsonArray active =
-        dataArray(send("GET", "/admin/inventory/recalls/active", null, T, "CASHIER", STAFF, null));
+        okArray(send("GET", "/admin/inventory/recalls/active", null, T, "CASHIER", STAFF, null));
     assertThat(
         active.stream().anyMatch(v -> recallId.equals(v.asJsonObject().getString("recallId"))),
         is(false));
@@ -246,7 +497,7 @@ class RecallIT {
 
     assertThat(cancel(every).getStatus(), is(200));
     assertThat(materialStatus(batch), is("RECALLED"));
-    assertThat(data(cancel(byLot)).getString("status"), is("CANCELLED"));
+    assertThat(ok(cancel(byLot)).getString("status"), is("CANCELLED"));
     assertThat(materialStatus(batch), is("AVAILABLE"));
     assertThat(onHand(store, variant), is("8.000"));
   }
@@ -331,7 +582,7 @@ class RecallIT {
         send("GET", "/admin/inventory/recalls/" + recallId, null, OTHER, "OWNER", MANAGER, null);
     assertThat(foreignRead.getStatus(), is(404));
     JsonArray foreignActive =
-        dataArray(
+        okArray(
             send("GET", "/admin/inventory/recalls/active", null, OTHER, "CASHIER", STAFF, null));
     assertThat(foreignActive.size(), is(0));
 
@@ -370,6 +621,9 @@ class RecallIT {
         + kind
         + "\",\"hazard\":\"ALLERGEN\",\"reason\":\"Undeclared peanut\",\"source\":\"FSA\""
         + (notice == null ? "" : ",\"customerNotice\":\"" + notice + "\"")
+        + ("RECALL".equals(kind)
+            ? ",\"remedies\":[\"REFUND\",\"REPLACEMENT\"],\"contactPhone\":\"0800 100 200\""
+            : "")
         + ",\"items\":["
         + line
         + "]}";
@@ -380,7 +634,7 @@ class RecallIT {
   }
 
   private JsonObject get(String recallId) {
-    return data(
+    return ok(
         send("GET", "/admin/inventory/recalls/" + recallId, null, T, "STOREKEEPER", STAFF, null));
   }
 
@@ -468,14 +722,6 @@ class RecallIT {
     return out;
   }
 
-  private static JsonObject find(JsonArray array, String key, String value) {
-    return array.stream()
-        .map(v -> v.asJsonObject())
-        .filter(o -> value.equals(o.getString(key)))
-        .findFirst()
-        .orElseThrow(() -> new AssertionError(key + "=" + value + " not in " + array));
-  }
-
   private Response send(
       String method,
       String path,
@@ -493,46 +739,23 @@ class RecallIT {
         : b.method(method, Entity.entity(json, MediaType.APPLICATION_JSON));
   }
 
-  private static JsonObject created(Response r) {
-    String body = r.readEntity(String.class);
-    assertThat(body, r.getStatus(), is(201));
-    return parse(body).getJsonObject("data");
-  }
-
-  private static JsonObject data(Response r) {
-    String body = r.readEntity(String.class);
-    assertThat(body, r.getStatus(), is(200));
-    return parse(body).getJsonObject("data");
-  }
-
-  private static JsonArray dataArray(Response r) {
-    String body = r.readEntity(String.class);
-    assertThat(body, r.getStatus(), is(200));
-    return parse(body).getJsonArray("data");
-  }
-
-  private static JsonObject parse(String body) {
-    try (var reader = Json.createReader(new StringReader(body))) {
-      return reader.readObject();
-    }
-  }
-
   private static String uuid() {
     return Ids.newId().toString();
   }
 
   private static String materialStatus(String batchId) {
     return scalar(
-        "SELECT material_status FROM inventory.inventory_batches WHERE id = '" + batchId + "'");
+        PG, "SELECT material_status FROM inventory.inventory_batches WHERE id = '" + batchId + "'");
   }
 
   private static String remainingQty(String batchId) {
     return scalar(
-        "SELECT remaining_qty FROM inventory.inventory_batches WHERE id = '" + batchId + "'");
+        PG, "SELECT remaining_qty FROM inventory.inventory_batches WHERE id = '" + batchId + "'");
   }
 
   private static String onHand(String store, String variant) {
     return scalar(
+        PG,
         "SELECT COALESCE(SUM(remaining_qty), 0) FROM inventory.inventory_batches"
             + " WHERE store_id = '"
             + store
@@ -543,24 +766,11 @@ class RecallIT {
 
   private static String outboxPayload(String eventType, String aggregateId) {
     return scalar(
+        PG,
         "SELECT payload FROM inventory.outbox WHERE event_type = '"
             + eventType
             + "' AND aggregate_id = '"
             + aggregateId
             + "'");
-  }
-
-  private static String scalar(String sql) {
-    try (var c = DriverManager.getConnection(PG.jdbcUrl(), PG.username(), PG.password());
-        var st = c.createStatement();
-        var rs = st.executeQuery(sql)) {
-      if (!rs.next()) {
-        return null;
-      }
-      Object value = rs.getObject(1);
-      return value instanceof BigDecimal d ? d.toPlainString() : String.valueOf(value);
-    } catch (java.sql.SQLException e) {
-      throw new IllegalStateException(e);
-    }
   }
 }

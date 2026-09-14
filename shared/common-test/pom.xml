@@ -57,5 +57,10 @@
             <artifactId>jakarta.ws.rs-api</artifactId>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>jakarta.json</groupId>
+            <artifactId>jakarta.json-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 </project>
