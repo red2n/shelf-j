@@ -7,6 +7,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_error.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import 'price_reductions_tab.dart';
 import 'providers/admin_providers.dart';
 import 'widgets/variant_picker.dart';
 
@@ -41,6 +42,9 @@ class ShelfLabelView {
   final String? promotionName;
   final bool measureDeclared;
   final bool unitPriceRequired;
+  final double? priorPrice;
+  final String? priorPriceStatus;
+  final bool reductionAnnounceable;
 
   const ShelfLabelView({
     required this.variantId,
@@ -53,6 +57,9 @@ class ShelfLabelView {
     this.promotionName,
     required this.measureDeclared,
     required this.unitPriceRequired,
+    this.priorPrice,
+    this.priorPriceStatus,
+    this.reductionAnnounceable = false,
   });
 
   factory ShelfLabelView.fromJson(Map<String, dynamic> j) => ShelfLabelView(
@@ -66,6 +73,9 @@ class ShelfLabelView {
         promotionName: j['promotionName'] as String?,
         measureDeclared: j['measureDeclared'] as bool? ?? false,
         unitPriceRequired: j['unitPriceRequired'] as bool? ?? false,
+        priorPrice: (j['priorPrice'] as num?)?.toDouble(),
+        priorPriceStatus: j['priorPriceStatus'] as String?,
+        reductionAnnounceable: j['reductionAnnounceable'] as bool? ?? false,
       );
 }
 
@@ -251,13 +261,19 @@ class _ShelfLabelsTabState extends ConsumerState<ShelfLabelsTab> {
                   Text(
                       '${_money(l.promotionalUnitPrice!.amount, l.currency)} ${l.promotionalUnitPrice!.label}',
                       key: const Key('label-promo-unit')),
-                Text('${l.promotionName ?? 'Promotion'} · was ${_money(l.regularPrice!, l.currency)}',
-                    style: small),
-                if (l.regularUnitPrice != null)
+                // 03.12: the was price is the lowest of the 30 days before the reduction, shown
+                // only when pricing-svc says the reduction may be announced.
+                if (l.reductionAnnounceable && l.priorPrice != null)
                   Text(
-                      'was ${_money(l.regularUnitPrice!.amount, l.currency)} ${l.regularUnitPrice!.label}',
-                      key: const Key('label-regular-unit'),
-                      style: small),
+                      '${l.promotionName ?? 'Promotion'} · was ${_money(l.priorPrice!, l.currency)}',
+                      key: const Key('label-was'),
+                      style: small)
+                else
+                  Text(
+                    'Not to be shown as a reduction: ${reductionReason(l.priorPriceStatus)}.',
+                    key: const Key('label-not-announceable'),
+                    style: small?.copyWith(color: theme.colorScheme.error),
+                  ),
               ] else ...[
                 Text(_money(l.regularPrice!, l.currency), key: const Key('label-price'), style: big),
                 if (l.regularUnitPrice != null)

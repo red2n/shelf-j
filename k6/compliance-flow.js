@@ -365,6 +365,97 @@ export default function ({ tenant, rival, storeA, storeB, variantId, cigs, cashi
     truthy('pricing-svc settles on the stored measure', settled >= 0, { stored: stored.netContent, quoted: last && last.unitPricing });
   });
 
+  group('2f prior price: a reduction announced only against the lowest price of the 30 days before', () => {
+    const PR = '/api/pricing-svc';
+    const deOwner = de.owner.token;
+    const resolveAs = (opts, id) => call('POST', `${PR}/prices/resolve`, { ...opts, body: { variantId: id, channel: 'ONLINE', qty: 1 } });
+    const near = (a, b) => typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 0.006;
+    // A promotion scoped to one variant, so the other groups' sales keep their prices.
+    const promote = (token, id, name, percent) => {
+      const p = must(call('POST', `${PR}/admin/promotions`, { token, body: { name, type: 'PERCENT', value: percent, startsAt: '2020-01-01T00:00:00Z' } }), 201, `promotion ${name}`);
+      must(call('POST', `${PR}/admin/promotions/${p.id}/items`, { token, body: { scopeType: 'VARIANT', scopeId: id } }), 201, `scope ${name}`);
+      return p.id;
+    };
+    // The worker records a change within seconds; until it has, a reduction is PENDING.
+    const recorded = (opts, id) => {
+      let last = null;
+      poll(45, () => {
+        last = data(resolveAs(opts, id));
+        return !!(last && last.priorPriceStatus && last.priorPriceStatus !== 'PENDING');
+      });
+      return last;
+    };
+
+    // A German business: a price set today and reduced today proves nothing about the 30 days before.
+    const riesling = sellableVariant(de, 'Prior Price Riesling').variantId;
+    const deList = priceVariants(de, [riesling], '10.00');
+    const before = data(resolveAs({ storefront: de.tenantId }, riesling));
+    truthy('a German price carries the prior-price rule, unreduced', before && before.priorPriceRequired === true && before.reductionAnnounceable === false, before);
+    promote(deOwner, riesling, 'Prior Price Too Soon', 20);
+    const fresh = recorded({ storefront: de.tenantId }, riesling);
+    truthy('reduced the day it was priced: SHORT_HISTORY, not announceable', fresh && fresh.priorPriceStatus === 'SHORT_HISTORY' && fresh.reductionAnnounceable === false, fresh);
+    truthy('...its prior price still reported, the price before the promotion', fresh && near(fresh.priorPrice, before.totalWithVat) && fresh.totalWithVat < before.totalWithVat, { fresh, before });
+
+    const labels = call('POST', `${PR}/prices/shelf-labels`, { token: deCashier.token, body: { variantIds: [riesling], channel: 'ONLINE' } });
+    expect(labels, 'a cashier makes its shelf label', 200);
+    const label = (data(labels) || [])[0] || {};
+    truthy('...which may not show a was price either', label.reductionAnnounceable === false && label.priorPriceStatus === 'SHORT_HISTORY', label);
+
+    const history = call('GET', `${PR}/admin/prices/history?variantId=${riesling}`, { token: deOwner });
+    expect(history, 'the owner reads the applied-price history', 200);
+    const online = ((data(history) || {}).rows || []).filter((x) => x.channel === 'ONLINE');
+    truthy('...newest first: the promotional price over the price that was set', online.length >= 2 && online[0].promotionName === 'Prior Price Too Soon' && online.some((x) => x.cause === 'PRICE_SET'), online);
+    truthy('...every row certain', online.every((x) => x.uncertainSince === undefined), online);
+    expect(call('GET', `${PR}/admin/prices/history?variantId=${riesling}`, { token: deCashier.token }), 'a cashier cannot read the history', 403);
+    expect(call('GET', `${PR}/admin/prices/history?variantId=${encodeURIComponent("x' OR '1'='1")}`, { token: deOwner }), 'SQL for a variant id is refused', 400);
+    truthy('a rival business sees none of it', (((data(call('GET', `${PR}/admin/prices/history?variantId=${riesling}`, { token: rival.owner.token })) || {}).rows) || []).length === 0);
+
+    const reductions = call('GET', `${PR}/admin/prices/reductions?channel=ONLINE`, { token: deOwner });
+    expect(reductions, 'the owner reads the reductions on offer', 200);
+    const listed = (((data(reductions) || {}).rows) || []).find((x) => x.variantId === riesling);
+    truthy('...the Riesling listed as not announceable, and why', listed && listed.priorPriceStatus === 'SHORT_HISTORY' && listed.reductionAnnounceable === false, data(reductions));
+    expect(call('GET', `${PR}/admin/prices/reductions?channel=CARRIER_PIGEON`, { token: deOwner }), 'an unknown channel is refused', 400, 'PRICING_CHANNEL_INVALID');
+    expect(call('GET', `${PR}/admin/prices/reductions`, { token: deCashier.token }), 'a cashier cannot read the reductions', 403);
+
+    const banner = data(call('GET', `${PR}/promotions`, { storefront: de.tenantId })) || [];
+    const tooSoon = banner.find((p) => p.name === 'Prior Price Too Soon');
+    truthy('the storefront banner may not advertise the item promotion', tooSoon && tooSoon.reductionAnnounceable === false, banner);
+
+    // Reduced-price stickers at the German till.
+    const sticker = (reason) => {
+      const m = must(call('POST', `${PR}/markdowns`, { token: deOwner, body: { storeId: de.stores[0].id, variantId: riesling, batchNo: `K6-${reason}-${Date.now()}`.slice(0, 32), expiryDate: new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10), qty: 2, percentOff: 25, reason } }), 201, `sticker ${reason}`);
+      return data(call('GET', `${PR}/prices/markdown-labels/${m.labelCode}`, { token: deCashier.token }));
+    };
+    const shortDated = sticker('SHORT_DATED');
+    truthy('a short-dated sticker may show its original price (art.6a(3), PAngV §11(4))', shortDated && shortDated.perishableExempt === true && shortDated.reductionAnnounceable === true && near(shortDated.wasPrice, 10), shortDated);
+    const damaged = sticker('DAMAGED_PACK');
+    truthy('a damaged pack is not about to spoil: no was price without a proven prior price', damaged && damaged.perishableExempt === false && damaged.reductionAnnounceable === false && damaged.wasPrice === undefined, damaged);
+
+    // A British business is not bound by art.6a.
+    const cheddar = sellableVariant(tenant, 'Prior Price Cheddar').variantId;
+    priceVariants(tenant, [cheddar], '12.00');
+    promote(owner, cheddar, 'Prior Price British', 10);
+    const british = recorded({ storefront: tenant.tenantId }, cheddar);
+    truthy('a British reduction may be announced against the regular price', british && british.priorPriceRequired === false && british.reductionAnnounceable === true, british);
+    const gbBanner = (data(call('GET', `${PR}/promotions`, { storefront: tenant.tenantId })) || []).find((p) => p.name === 'Prior Price British');
+    truthy('...and its banner may advertise it', gbBanner && gbBanner.reductionAnnounceable === true, gbBanner);
+
+    // Twenty price sets at once: every one recorded in order, ending certain on the price a shopper is offered.
+    const headers = { Authorization: `Bearer ${deOwner}`, 'Content-Type': 'application/json' };
+    const rush = http.batch(Array.from({ length: 20 }, (_, k) => ['POST', `${BASE}${PR}/admin/price-lists/${deList}/items`, JSON.stringify({ variantId: riesling, price: k % 2 === 0 ? 10 : 11, minQty: 1 }), { headers, tags: { name: 'POST price rush' } }]));
+    truthy('all twenty price sets answer', rush.every((x) => x.status < 300), rush.map((x) => x.status));
+    let settled = null;
+    const done = poll(60, () => {
+      const h = data(call('GET', `${PR}/admin/prices/history?variantId=${riesling}`, { token: deOwner }));
+      const offered = data(resolveAs({ storefront: de.tenantId }, riesling));
+      const latest = ((h && h.rows) || []).find((x) => x.channel === 'ONLINE' && !x.storeId);
+      settled = { pending: h && h.pending, latest, offered: offered && offered.totalWithVat };
+      return h && h.pending === 0 && latest && near(latest.price, offered.totalWithVat);
+    });
+    truthy('the ledger settles on what a shopper is offered', done >= 0, settled);
+    truthy('...and ends certain', settled && settled.latest && settled.latest.uncertainSince === undefined, settled);
+  });
+
   group('3 weighing instruments: the register', () => {
     const base = `/api/tenant-svc/admin/stores/${storeA.id}/weighing-instruments`;
     // No default parameter and no object spread inside the arrow: k6's parser refuses that shape.

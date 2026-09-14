@@ -210,7 +210,81 @@ public final class Dtos {
                       + " variant's measure is declared; null otherwise.")
           UnitPriceResponse unitPricing,
       @Schema(description = "Whether a unit price is law for this business's offers today.")
-          boolean unitPriceRequired) {}
+          boolean unitPriceRequired,
+      @Schema(
+              description =
+                  "While a promotion applies: the lowest price, VAT included, applied in the 30 days"
+                      + " before the reduction began (Directive 98/6/EC art.6a); null otherwise.")
+          BigDecimal priorPrice,
+      @Schema(
+              description =
+                  "NOT_REDUCED; ANNOUNCEABLE; NO_HISTORY (no price recorded before the reduction);"
+                      + " SHORT_HISTORY (under 30 days recorded before it); NOT_LOWER (the prior"
+                      + " price is not above today's); PENDING (a change is still being recorded);"
+                      + " UNCERTAIN (the 30 days cross a span the record could not establish). Null"
+                      + " without a promotion.")
+          String priorPriceStatus,
+      @Schema(description = "When the reduction, or its first progressive step, began.")
+          String reductionStartedAt,
+      @Schema(description = "Whether art.6a binds this business's announcements today.")
+          boolean priorPriceRequired,
+      @Schema(
+              description =
+                  "Whether this price may be announced as a reduction: a promotion applies and, where"
+                      + " art.6a binds, its prior price is known and above today's.")
+          boolean reductionAnnounceable) {}
+
+  @Schema(
+      name = "AppliedPriceResponse",
+      description = "One row of the applied-price ledger (03.12).")
+  public record AppliedPriceResponse(
+      UUID id,
+      String channel,
+      UUID storeId,
+      boolean priced,
+      BigDecimal price,
+      @Schema(description = "The same before VAT.") BigDecimal netPrice,
+      BigDecimal regularPrice,
+      String promotionName,
+      String currency,
+      String appliedFrom,
+      @Schema(
+              description =
+                  "Set when what was offered from this moment until the next row could not be"
+                      + " established; no reduction whose 30 days cross it is announced.")
+          String uncertainSince,
+      String recordedAt,
+      String cause) {}
+
+  @Schema(name = "PriceHistoryResponse")
+  public record PriceHistoryResponse(
+      UUID variantId,
+      @Schema(description = "Evaluations due and not yet recorded for this business.") int pending,
+      List<AppliedPriceResponse> rows) {}
+
+  @Schema(
+      name = "ReductionResponse",
+      description = "A reduction on offer, with its prior price (03.12).")
+  public record ReductionResponse(
+      UUID variantId,
+      String channel,
+      @Schema(description = "The store a store-scoped promotion applies at; null business-wide.")
+          UUID storeId,
+      @Schema(description = "What the shopper is offered, VAT included.") BigDecimal price,
+      BigDecimal regularPrice,
+      String promotionName,
+      String currency,
+      BigDecimal priorPrice,
+      String priorPriceStatus,
+      String reductionStartedAt,
+      boolean priorPriceRequired,
+      boolean reductionAnnounceable) {}
+
+  @Schema(name = "ReductionsResponse")
+  public record ReductionsResponse(
+      String channel,
+      @Schema(description = "Evaluations due and not yet recorded for this business.") int pending,
+      List<ReductionResponse> rows) {}
 
   @Schema(name = "UnitPriceResponse", description = "A unit price (03.13).")
   public record UnitPriceResponse(
@@ -238,7 +312,15 @@ public final class Dtos {
       UnitPriceResponse promotionalUnitPrice,
       String promotionName,
       boolean measureDeclared,
-      boolean unitPriceRequired) {}
+      boolean unitPriceRequired,
+      @Schema(description = "The reduction's prior price (art.6a), while a promotion applies.")
+          BigDecimal priorPrice,
+      String priorPriceStatus,
+      boolean priorPriceRequired,
+      @Schema(
+              description =
+                  "Whether the label may show the promotional price as a reduction with a was price.")
+          boolean reductionAnnounceable) {}
 
   @Schema(name = "UnitPriceGapResponse")
   public record UnitPriceGapResponse(
@@ -350,7 +432,13 @@ public final class Dtos {
       Integer maxPerCustomer,
       BigDecimal buyQty,
       BigDecimal getQty,
-      BigDecimal getDiscountPct) {}
+      BigDecimal getDiscountPct,
+      @Schema(
+              description =
+                  "On the storefront's list only: whether it may be advertised as a reduction. A"
+                      + " basket, coupon or multi-buy offer always may; an item reduction only while"
+                      + " every reduced price on the storefront can be announced (03.12).")
+          Boolean reductionAnnounceable) {}
 
   @Schema(name = "AddPromotionItemRequest")
   public record AddPromotionItemRequest(
@@ -724,7 +812,22 @@ public final class Dtos {
       BigDecimal originalPrice,
       String currency,
       String expiryDate,
-      BigDecimal remainingQty) {}
+      BigDecimal remainingQty,
+      @Schema(
+              description =
+                  "The price the till may strike through, before VAT (03.12); null when the law does"
+                      + " not let the sticker be presented as reduced from one.")
+          BigDecimal wasPrice,
+      @Schema(description = "Whether the till may present the sticker price as a reduction.")
+          boolean reductionAnnounceable,
+      @Schema(
+              description =
+                  "The lowest price of the 30 days before, VAT included, where art.6a binds.")
+          BigDecimal priorPrice,
+      String priorPriceStatus,
+      boolean priorPriceRequired,
+      @Schema(description = "Exempt as short-dated goods where the law takes up art.6a(3).")
+          boolean perishableExempt) {}
 
   @Schema(name = "MarkdownRedemptionLineRequest")
   public record MarkdownRedemptionLineRequest(

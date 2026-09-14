@@ -29,6 +29,7 @@ public class CatalogueEventHandler {
   static final java.util.Set<String> MEASURE_UNITS = java.util.Set.of("KG", "L", "M", "SQM", "EA");
 
   @Inject PricingRepository repo;
+  @Inject com.shelfj.pricing.service.AppliedPriceService appliedPrices;
 
   /**
    * @param json the payload
@@ -56,6 +57,7 @@ public class CatalogueEventHandler {
                   ids(obj, "categoryPath"),
                   ids(obj, "variantIds"));
           if (done) LOG.log(Level.INFO, "Catalogue: product {0} categorised", productId);
+          if (done) appliedPrices.catchUp(UUID.fromString(obj.getString("tenantId")));
           yield done;
         }
         case "VariantCreated" -> {
@@ -68,6 +70,7 @@ public class CatalogueEventHandler {
                   variantId,
                   UUID.fromString(obj.getString("productId")));
           if (done) LOG.log(Level.INFO, "Catalogue: variant {0} placed", variantId);
+          if (done) appliedPrices.catchUp(UUID.fromString(obj.getString("tenantId")));
           yield done;
         }
         case "VariantMeasured" -> {
@@ -94,6 +97,7 @@ public class CatalogueEventHandler {
                   quantity,
                   version);
           if (done) LOG.log(Level.INFO, "Catalogue: variant {0} measured", variantId);
+          if (done) appliedPrices.catchUp(UUID.fromString(obj.getString("tenantId")));
           yield done;
         }
         default -> false;

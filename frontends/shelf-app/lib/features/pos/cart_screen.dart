@@ -695,7 +695,8 @@ class _SaleLine extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      'REDUCED',
+                      // A sticker the law will not let be called reduced is still a markdown.
+                      line.originalPrice != null ? 'REDUCED' : 'MARKDOWN',
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: Theme.of(
                           context,

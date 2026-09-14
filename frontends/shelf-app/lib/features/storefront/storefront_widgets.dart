@@ -222,6 +222,7 @@ class OfferPriceAdd extends ConsumerWidget {
               style: TextStyle(
                   color: cs.primary, fontWeight: FontWeight.bold, fontSize: 15),
             ),
+            WasPriceText(price: offer.price),
             UnitPriceText(price: offer.price),
             if (hasAvailData) StockBadge(inStock: inStock),
           ],

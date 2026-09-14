@@ -45,12 +45,18 @@ public class PromotionResource {
    */
   @Operation(
       summary = "List active promotions",
-      description = "All currently-active promotions for the tenant.")
+      description =
+          "All currently-active promotions for the tenant, each saying whether the storefront may"
+              + " advertise it as a reduction (03.12).")
   @APIResponse(responseCode = "200", description = "List of active promotions")
   @GET
   public Response list() {
+    var tenantId = ctx.tenantId();
     return Response.ok(
-            ApiResponse.ok(svc.listActivePromotions(ctx).stream().map(Mappers::toDto).toList()))
+            ApiResponse.ok(
+                svc.listActivePromotions(ctx).stream()
+                    .map(p -> Mappers.toDto(p, svc.advertisable(tenantId, p)))
+                    .toList()))
         .build();
   }
 }

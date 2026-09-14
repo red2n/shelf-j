@@ -317,7 +317,8 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
     super.dispose();
   }
 
-  List<_Offer> _offersFrom(List<StorePromotion> promos) {
+  List<_Offer> _offersFrom(List<StorePromotion> all) {
+    final promos = advertisedPromotions(all);
     if (promos.isEmpty) return _fallbackOffers;
     return [
       for (var i = 0; i < promos.length; i++)

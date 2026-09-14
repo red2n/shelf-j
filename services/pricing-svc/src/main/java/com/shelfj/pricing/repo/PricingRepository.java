@@ -70,6 +70,8 @@ public class PricingRepository extends BaseOutboxRepository {
                   sqle);
             throw sqle;
           }
+          com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+              c, r.tenantId(), null, null, "VAT_RATE_SET");
           return r;
         },
         "create vat rate");
@@ -98,13 +100,23 @@ public class PricingRepository extends BaseOutboxRepository {
    * @return the rate, or empty when the code is not configured
    */
   public Optional<VatRate> findVatRate(UUID tenantId, String code) {
+    return findVatRate(tenantId, code, null);
+  }
+
+  /**
+   * As {@link #findVatRate(UUID, String)}; with {@code asOf}, a rate made after it did not yet
+   * exist (03.12).
+   */
+  public Optional<VatRate> findVatRate(UUID tenantId, String code, Instant asOf) {
     var list =
         query(
             "SELECT id,tenant_id,code,name,rate,exempt,description,effective_from,effective_to,created_at"
-                + " FROM vat_rates WHERE tenant_id=? AND code=?",
+                + " FROM vat_rates WHERE tenant_id=? AND code=?"
+                + (asOf == null ? "" : " AND created_at <= ?"),
             ps -> {
               ps.setObject(1, tenantId);
               ps.setString(2, code);
+              if (asOf != null) ps.setObject(3, toOdt(asOf));
             },
             this::mapVatRate,
             "find vat rate");
@@ -118,21 +130,30 @@ public class PricingRepository extends BaseOutboxRepository {
    * @return the rate as stored
    */
   public VatRate updateVatRate(VatRate r) {
-    exec(
-        "UPDATE vat_rates SET name=?,rate=?,exempt=?,description=?,effective_from=?,effective_to=?"
-            + " WHERE tenant_id=? AND code=?",
-        ps -> {
-          ps.setString(1, r.name());
-          ps.setBigDecimal(2, r.rate());
-          ps.setBoolean(3, r.exempt());
-          ps.setString(4, r.description());
-          ps.setObject(5, toOdt(r.effectiveFrom()));
-          ps.setObject(6, toOdt(r.effectiveTo()));
-          ps.setObject(7, r.tenantId());
-          ps.setString(8, r.code());
+    return inTx(
+        c -> {
+          try (var ps =
+              c.prepareStatement(
+                  "UPDATE vat_rates SET name=?,rate=?,exempt=?,description=?,effective_from=?,"
+                      + "effective_to=? WHERE tenant_id=? AND code=?")) {
+            ps.setString(1, r.name());
+            ps.setBigDecimal(2, r.rate());
+            ps.setBoolean(3, r.exempt());
+            ps.setString(4, r.description());
+            ps.setObject(5, toOdt(r.effectiveFrom()));
+            ps.setObject(6, toOdt(r.effectiveTo()));
+            ps.setObject(7, r.tenantId());
+            ps.setString(8, r.code());
+            ps.executeUpdate();
+          }
+          // A rate overwritten in place is exactly what the ledger exists to remember (03.12). It
+          // applies from now, whatever its effective date says, so it is evaluated as of now; and
+          // it cannot be read as of before, so an earlier evaluation still queued is uncertain.
+          com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+              c, r.tenantId(), null, null, "VAT_RATE_CHANGED", true);
+          return r;
         },
         "update vat rate");
-    return r;
   }
 
   private VatRate mapVatRate(java.sql.ResultSet rs) throws java.sql.SQLException {
@@ -169,13 +190,20 @@ public class PricingRepository extends BaseOutboxRepository {
                       + " ON CONFLICT (tenant_id,variant_id)"
                       + " DO UPDATE SET vat_code=EXCLUDED.vat_code,"
                       + "  effective_from=EXCLUDED.effective_from,"
-                      + "  effective_to=NULL")) {
+                      + "  effective_to=NULL"
+                      + " RETURNING (xmax = 0) AS inserted")) {
             ps.setObject(1, pvc.id());
             ps.setObject(2, pvc.tenantId());
             ps.setObject(3, pvc.variantId());
             ps.setString(4, pvc.vatCode());
             ps.setObject(5, toOdt(pvc.effectiveFrom()));
-            ps.executeUpdate();
+            boolean inserted;
+            try (var rs = ps.executeQuery()) {
+              inserted = rs.next() && rs.getBoolean("inserted");
+            }
+            // A category replaced in place cannot be read as of before (03.12); a new one can.
+            com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+                c, pvc.tenantId(), pvc.variantId(), null, "VAT_CATEGORY_SET", !inserted);
           }
           return pvc;
         },
@@ -191,13 +219,24 @@ public class PricingRepository extends BaseOutboxRepository {
    *     treats that as the standard rate
    */
   public Optional<ProductVatCategory> findProductVatCategory(UUID tenantId, UUID variantId) {
+    return findProductVatCategory(tenantId, variantId, null);
+  }
+
+  /**
+   * As {@link #findProductVatCategory(UUID, UUID)}; with {@code asOf}, an assignment made after it
+   * did not yet exist (03.12).
+   */
+  public Optional<ProductVatCategory> findProductVatCategory(
+      UUID tenantId, UUID variantId, Instant asOf) {
     var list =
         query(
             "SELECT id,tenant_id,variant_id,vat_code,effective_from,effective_to,created_at"
-                + " FROM product_vat_categories WHERE tenant_id=? AND variant_id=?",
+                + " FROM product_vat_categories WHERE tenant_id=? AND variant_id=?"
+                + (asOf == null ? "" : " AND created_at <= ?"),
             ps -> {
               ps.setObject(1, tenantId);
               ps.setObject(2, variantId);
+              if (asOf != null) ps.setObject(3, toOdt(asOf));
             },
             rs -> {
               OffsetDateTime effTo = rs.getObject("effective_to", OffsetDateTime.class);
@@ -318,6 +357,12 @@ public class PricingRepository extends BaseOutboxRepository {
                   sqle);
             throw sqle;
           }
+          com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+              c, pl.tenantId(), null, later(pl.effectiveFrom()), "PRICE_LIST_STARTS");
+          if (pl.effectiveTo() != null) {
+            com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+                c, pl.tenantId(), null, later(pl.effectiveTo()), "PRICE_LIST_ENDS");
+          }
           return pl;
         },
         "create price list");
@@ -402,25 +447,74 @@ public class PricingRepository extends BaseOutboxRepository {
   public PriceListItem upsertPriceListItem(PriceListItem item, OutboxRow event) {
     return inTx(
         c -> {
+          // 03.12: an item priced before its history was kept starts it with the price it stood at.
+          try (var ps =
+              c.prepareStatement(
+                  "SELECT pli.id, pli.price, pli.updated_at FROM price_list_items pli"
+                      + " WHERE pli.tenant_id = ? AND pli.price_list_id = ? AND pli.variant_id = ?"
+                      + " AND pli.min_qty = ? AND NOT EXISTS (SELECT 1 FROM price_list_item_prices v"
+                      + " WHERE v.tenant_id = pli.tenant_id AND v.price_list_item_id = pli.id)"
+                      + " FOR UPDATE OF pli")) {
+            ps.setObject(1, item.tenantId());
+            ps.setObject(2, item.priceListId());
+            ps.setObject(3, item.variantId());
+            ps.setBigDecimal(4, item.minQty());
+            try (var rs = ps.executeQuery()) {
+              if (rs.next()) {
+                insertItemPriceTx(
+                    c,
+                    item.tenantId(),
+                    rs.getObject("id", UUID.class),
+                    rs.getBigDecimal("price"),
+                    rs.getObject("updated_at", OffsetDateTime.class));
+              }
+            }
+          }
+          UUID itemId;
           try (var ps =
               c.prepareStatement(
                   "INSERT INTO price_list_items"
                       + " (id,tenant_id,price_list_id,variant_id,price,min_qty)"
                       + " VALUES (?,?,?,?,?,?)"
                       + " ON CONFLICT (tenant_id,price_list_id,variant_id,min_qty)"
-                      + " DO UPDATE SET price=EXCLUDED.price, updated_at=now()")) {
+                      + " DO UPDATE SET price=EXCLUDED.price, updated_at=now()"
+                      + " RETURNING id")) {
             ps.setObject(1, item.id());
             ps.setObject(2, item.tenantId());
             ps.setObject(3, item.priceListId());
             ps.setObject(4, item.variantId());
             ps.setBigDecimal(5, item.price());
             ps.setBigDecimal(6, item.minQty());
-            ps.executeUpdate();
+            try (var rs = ps.executeQuery()) {
+              rs.next();
+              itemId = rs.getObject("id", UUID.class);
+            }
           }
+          // Stamped once the row is locked, so two writers' prices are ordered as they committed.
+          insertItemPriceTx(c, item.tenantId(), itemId, item.price(), null);
           insertOutbox(c, event);
+          com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+              c, item.tenantId(), item.variantId(), null, "PRICE_SET");
           return item;
         },
         "upsert price list item");
+  }
+
+  /** Appends a price to a list item's history, from {@code validFrom} or, when null, from now. */
+  private static void insertItemPriceTx(
+      java.sql.Connection c, UUID tenantId, UUID itemId, BigDecimal price, OffsetDateTime validFrom)
+      throws java.sql.SQLException {
+    try (var ps =
+        c.prepareStatement(
+            "INSERT INTO price_list_item_prices (id, tenant_id, price_list_item_id, price, valid_from)"
+                + " VALUES (?, ?, ?, ?, COALESCE(?::timestamptz, clock_timestamp()))")) {
+      ps.setObject(1, com.shelfj.ids.Ids.newId());
+      ps.setObject(2, tenantId);
+      ps.setObject(3, itemId);
+      ps.setBigDecimal(4, price);
+      ps.setObject(5, validFrom);
+      ps.executeUpdate();
+    }
   }
 
   /**
@@ -438,16 +532,7 @@ public class PricingRepository extends BaseOutboxRepository {
           ps.setObject(1, tenantId);
           ps.setObject(2, priceListId);
         },
-        rs ->
-            new PriceListItem(
-                rs.getObject("id", UUID.class),
-                rs.getObject("tenant_id", UUID.class),
-                rs.getObject("price_list_id", UUID.class),
-                rs.getObject("variant_id", UUID.class),
-                rs.getBigDecimal("price"),
-                rs.getBigDecimal("min_qty"),
-                rs.getObject("created_at", OffsetDateTime.class).toInstant(),
-                rs.getObject("updated_at", OffsetDateTime.class).toInstant()),
+        PricingRepository::mapPriceListItem,
         "list price list items");
   }
 
@@ -465,39 +550,117 @@ public class PricingRepository extends BaseOutboxRepository {
    */
   public Optional<PriceListItem> resolveBasePrice(
       UUID tenantId, UUID variantId, String channel, BigDecimal qty) {
+    return resolveBasePrice(tenantId, variantId, channel, qty, Instant.now());
+  }
+
+  /**
+   * As {@link #resolveBasePrice(UUID, UUID, String, BigDecimal)}, with the price lists in force at
+   * {@code at} (03.12: the applied-price ledger evaluates a scheduled start or end as of its
+   * moment).
+   */
+  public Optional<PriceListItem> resolveBasePrice(
+      UUID tenantId, UUID variantId, String channel, BigDecimal qty, Instant at) {
+    return basePrice(tenantId, variantId, channel, qty, at, false);
+  }
+
+  /**
+   * As {@link #resolveBasePrice(UUID, UUID, String, BigDecimal, Instant)}, as the lists stood at
+   * {@code at}: made by then, switched on then, and at the price each item carried then (03.12).
+   */
+  public Optional<PriceListItem> resolveBasePriceAsOf(
+      UUID tenantId, UUID variantId, String channel, BigDecimal qty, Instant at) {
+    return basePrice(tenantId, variantId, channel, qty, at, true);
+  }
+
+  private Optional<PriceListItem> basePrice(
+      UUID tenantId, UUID variantId, String channel, BigDecimal qty, Instant at, boolean asOf) {
+    String price = asOf ? "h.price" : "pli.price";
     var list =
         query(
-            "SELECT pli.id, pli.tenant_id, pli.price_list_id, pli.variant_id,"
-                + "  pli.price, pli.min_qty, pli.created_at, pli.updated_at"
+            "SELECT pli.id, pli.tenant_id, pli.price_list_id, pli.variant_id, "
+                + price
+                + " AS price, pli.min_qty, pli.created_at, pli.updated_at"
                 + " FROM price_list_items pli"
                 + " JOIN price_lists pl ON pl.id = pli.price_list_id"
+                + (asOf ? ITEM_PRICE_AS_OF : "")
                 + " WHERE pli.tenant_id = ?"
                 + "   AND pli.variant_id = ?"
                 + "   AND (pl.channel = ? OR pl.channel = 'ALL')"
-                + "   AND pl.active = TRUE"
-                + "   AND pl.effective_from <= now()"
-                + "   AND (pl.effective_to IS NULL OR pl.effective_to > now())"
+                + (asOf
+                    ? "   AND "
+                        + activeAsOf("pl", "PRICE_LIST")
+                        + "   AND pl.created_at <= ? AND pli.created_at <= ? AND h.price IS NOT NULL"
+                    : "   AND pl.active = TRUE")
+                + "   AND pl.effective_from <= ?"
+                + "   AND (pl.effective_to IS NULL OR pl.effective_to > ?)"
                 + "   AND pli.min_qty <= ?"
-                + " ORDER BY pli.min_qty DESC, pli.price ASC"
+                + " ORDER BY pli.min_qty DESC, "
+                + price
+                + " ASC"
                 + " LIMIT 1",
             ps -> {
-              ps.setObject(1, tenantId);
-              ps.setObject(2, variantId);
-              ps.setString(3, channel);
-              ps.setBigDecimal(4, qty);
+              int i = 1;
+              if (asOf) ps.setObject(i++, toOdt(at));
+              ps.setObject(i++, tenantId);
+              ps.setObject(i++, variantId);
+              ps.setString(i++, channel);
+              if (asOf) {
+                for (int k = 0; k < 4; k++) ps.setObject(i++, toOdt(at));
+              }
+              ps.setObject(i++, toOdt(at));
+              ps.setObject(i++, toOdt(at));
+              ps.setBigDecimal(i, qty);
             },
-            rs ->
-                new PriceListItem(
-                    rs.getObject("id", UUID.class),
-                    rs.getObject("tenant_id", UUID.class),
-                    rs.getObject("price_list_id", UUID.class),
-                    rs.getObject("variant_id", UUID.class),
-                    rs.getBigDecimal("price"),
-                    rs.getBigDecimal("min_qty"),
-                    rs.getObject("created_at", OffsetDateTime.class).toInstant(),
-                    rs.getObject("updated_at", OffsetDateTime.class).toInstant()),
+            PricingRepository::mapPriceListItem,
             "resolve base price");
     return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+  }
+
+  private static PriceListItem mapPriceListItem(java.sql.ResultSet rs)
+      throws java.sql.SQLException {
+    return new PriceListItem(
+        rs.getObject("id", UUID.class),
+        rs.getObject("tenant_id", UUID.class),
+        rs.getObject("price_list_id", UUID.class),
+        rs.getObject("variant_id", UUID.class),
+        rs.getBigDecimal("price"),
+        rs.getBigDecimal("min_qty"),
+        rs.getObject("created_at", OffsetDateTime.class).toInstant(),
+        rs.getObject("updated_at", OffsetDateTime.class).toInstant());
+  }
+
+  /** The price each list item carried at a moment: from its history, or as it is with none. */
+  private static final String ITEM_PRICE_AS_OF =
+      " CROSS JOIN LATERAL (SELECT COALESCE("
+          + "(SELECT v.price FROM price_list_item_prices v WHERE v.tenant_id = pli.tenant_id"
+          + " AND v.price_list_item_id = pli.id AND v.valid_from <= ?"
+          + " ORDER BY v.valid_from DESC, v.id DESC LIMIT 1),"
+          + " CASE WHEN NOT EXISTS (SELECT 1 FROM price_list_item_prices v"
+          + " WHERE v.tenant_id = pli.tenant_id AND v.price_list_item_id = pli.id)"
+          + " THEN pli.price END) AS price) h";
+
+  /**
+   * Whether a price list or promotion was switched on at a moment (03.12): as the last switch
+   * thrown by then left it; before its first switch, the opposite of what that switched it to;
+   * never switched, as it is. Binds the moment twice.
+   */
+  private static String activeAsOf(String alias, String subjectType) {
+    String subject =
+        " FROM promotion_status_changes s WHERE s.tenant_id = "
+            + alias
+            + ".tenant_id AND s.subject_type = '"
+            + subjectType
+            + "' AND s.subject_id = "
+            + alias
+            + ".id";
+    return "COALESCE((SELECT s.active"
+        + subject
+        + " AND s.changed_at <= ? ORDER BY s.changed_at DESC, s.id DESC LIMIT 1),"
+        + " (SELECT NOT s.active"
+        + subject
+        + " AND s.changed_at > ? ORDER BY s.changed_at, s.id LIMIT 1), "
+        + alias
+        + ".active)";
   }
 
   /**
@@ -562,6 +725,12 @@ public class PricingRepository extends BaseOutboxRepository {
             ps.executeUpdate();
           }
           insertOutbox(c, event);
+          com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+              c, p.tenantId(), null, later(p.startsAt()), "PROMOTION_STARTS");
+          if (p.endsAt() != null) {
+            com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+                c, p.tenantId(), null, later(p.endsAt()), "PROMOTION_ENDS");
+          }
           return p;
         },
         "create promotion");
@@ -615,6 +784,12 @@ public class PricingRepository extends BaseOutboxRepository {
             ps.setObject(7, change.changedBy());
             ps.executeUpdate();
           }
+          com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+              c,
+              change.tenantId(),
+              null,
+              Instant.now(),
+              change.subjectType() + (change.active() ? "_ACTIVATED" : "_DEACTIVATED"));
           return true;
         },
         "set active");
@@ -680,6 +855,20 @@ public class PricingRepository extends BaseOutboxRepository {
    */
   public List<Promotion> findCandidatePromotions(
       UUID tenantId, UUID storeId, String channel, Instant now) {
+    return candidatePromotions(tenantId, storeId, channel, now, false);
+  }
+
+  /**
+   * As {@link #findCandidatePromotions}, as they stood at {@code at}: made and switched on by then
+   * (03.12).
+   */
+  public List<Promotion> findCandidatePromotionsAsOf(
+      UUID tenantId, UUID storeId, String channel, Instant at) {
+    return candidatePromotions(tenantId, storeId, channel, at, true);
+  }
+
+  private List<Promotion> candidatePromotions(
+      UUID tenantId, UUID storeId, String channel, Instant now, boolean asOf) {
     return query(
         "SELECT p.id, p.tenant_id, p.store_id, p.name, p.type, p.value,"
             + "  p.min_order_amount, p.channel, p.active, p.starts_at, p.ends_at, p.created_at,"
@@ -687,7 +876,9 @@ public class PricingRepository extends BaseOutboxRepository {
             + "  p.buy_qty, p.get_qty, p.get_discount_pct"
             + " FROM promotions p"
             + " WHERE p.tenant_id = ?"
-            + "   AND p.active = TRUE"
+            + (asOf
+                ? "   AND " + activeAsOf("p", "PROMOTION") + " AND p.created_at <= ?"
+                : "   AND p.active = TRUE")
             + "   AND p.starts_at <= ?"
             + "   AND (p.ends_at IS NULL OR p.ends_at > ?)"
             + "   AND (p.channel = ? OR p.channel = 'ALL')"
@@ -697,6 +888,9 @@ public class PricingRepository extends BaseOutboxRepository {
         ps -> {
           int i = 1;
           ps.setObject(i++, tenantId);
+          if (asOf) {
+            for (int k = 0; k < 3; k++) ps.setObject(i++, toOdt(now));
+          }
           ps.setObject(i++, toOdt(now));
           ps.setObject(i++, toOdt(now));
           ps.setString(i++, channel);
@@ -720,6 +914,15 @@ public class PricingRepository extends BaseOutboxRepository {
    * one, store it, and never fire it.
    */
   public Map<UUID, Set<UUID>> findPromotionVariantScopes(UUID tenantId, List<UUID> promotionIds) {
+    return findPromotionVariantScopes(tenantId, promotionIds, null);
+  }
+
+  /**
+   * As {@link #findPromotionVariantScopes(UUID, List)}; with {@code asOf}, only the scope rows
+   * added by then (03.12).
+   */
+  public Map<UUID, Set<UUID>> findPromotionVariantScopes(
+      UUID tenantId, List<UUID> promotionIds, Instant asOf) {
     if (promotionIds.isEmpty()) return Map.of();
     String placeholders = String.join(",", java.util.Collections.nCopies(promotionIds.size(), "?"));
     Map<UUID, Set<UUID>> out = new java.util.LinkedHashMap<>();
@@ -728,11 +931,13 @@ public class PricingRepository extends BaseOutboxRepository {
         "SELECT promotion_id, scope_type, scope_id FROM promotion_items"
             + " WHERE tenant_id = ? AND promotion_id IN ("
             + placeholders
-            + ")",
+            + ")"
+            + (asOf == null ? "" : " AND created_at <= ?"),
         ps -> {
           int i = 1;
           ps.setObject(i++, tenantId);
           for (UUID id : promotionIds) ps.setObject(i++, id);
+          if (asOf != null) ps.setObject(i, toOdt(asOf));
         },
         rs -> {
           UUID promo = rs.getObject("promotion_id", UUID.class);
@@ -871,18 +1076,62 @@ public class PricingRepository extends BaseOutboxRepository {
    * @return the scope row as stored
    */
   public PromotionItem addPromotionItem(PromotionItem pi) {
-    exec(
-        "INSERT INTO promotion_items (id,tenant_id,promotion_id,scope_type,scope_id)"
-            + " VALUES (?,?,?,?,?)",
-        ps -> {
-          ps.setObject(1, pi.id());
-          ps.setObject(2, pi.tenantId());
-          ps.setObject(3, pi.promotionId());
-          ps.setString(4, pi.scopeType());
-          ps.setObject(5, pi.scopeId());
+    return inTx(
+        c -> {
+          if (PromotionItem.SCOPE_CATEGORY.equals(pi.scopeType()))
+            lockCategoryScopes(c, pi.tenantId());
+          try (var ps =
+              c.prepareStatement(
+                  "INSERT INTO promotion_items (id,tenant_id,promotion_id,scope_type,scope_id)"
+                      + " VALUES (?,?,?,?,?)")) {
+            ps.setObject(1, pi.id());
+            ps.setObject(2, pi.tenantId());
+            ps.setObject(3, pi.promotionId());
+            ps.setString(4, pi.scopeType());
+            ps.setObject(5, pi.scopeId());
+            ps.executeUpdate();
+          }
+          com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+              c, pi.tenantId(), null, Instant.now(), "PROMOTION_SCOPED");
+          return pi;
         },
         "add promotion item");
-    return pi;
+  }
+
+  /**
+   * Queues the evaluation a catalogue change needs (03.12): only where a category-scoped promotion
+   * exists, because the catalogue decides nothing else about a price; and then as an overwrite,
+   * because the catalogue keeps no history to read an earlier moment from. Scopes are never
+   * removed, so a scope that could reach an earlier moment exists now; the lock orders this check
+   * against a scope being added.
+   */
+  private static void enqueueCatalogueChange(
+      java.sql.Connection c, UUID tenantId, UUID variantId, String cause)
+      throws java.sql.SQLException {
+    lockCategoryScopes(c, tenantId);
+    try (var ps =
+        c.prepareStatement(
+            "SELECT EXISTS (SELECT 1 FROM promotion_items WHERE tenant_id = ? AND scope_type = ?)")) {
+      ps.setObject(1, tenantId);
+      ps.setString(2, PromotionItem.SCOPE_CATEGORY);
+      try (var rs = ps.executeQuery()) {
+        if (!rs.next() || !rs.getBoolean(1)) return;
+      }
+    }
+    com.shelfj.pricing.repo.AppliedPriceRepository.enqueue(
+        c, tenantId, variantId, null, cause, true);
+  }
+
+  /**
+   * Orders a tenant's category scopes and catalogue changes (03.12): a catalogue change either sees
+   * a category scope committed, or commits before one is added and is then read by its evaluation.
+   */
+  private static void lockCategoryScopes(java.sql.Connection c, UUID tenantId)
+      throws java.sql.SQLException {
+    try (var ps = c.prepareStatement("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))")) {
+      ps.setString(1, "category-scopes|" + tenantId);
+      ps.execute();
+    }
   }
 
   private Promotion mapPromotion(java.sql.ResultSet rs) throws java.sql.SQLException {
@@ -1181,6 +1430,12 @@ public class PricingRepository extends BaseOutboxRepository {
         rs.getString("override_reason"),
         overriddenBy,
         rs.getObject("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  /** A scheduled moment, or now when it has already passed. */
+  private static Instant later(Instant moment) {
+    Instant now = Instant.now();
+    return moment == null || moment.isBefore(now) ? now : moment;
   }
 
   private static OffsetDateTime toOdt(Instant instant) {
@@ -1569,8 +1824,11 @@ public class PricingRepository extends BaseOutboxRepository {
             ps.setArray(3, c.createArrayOf("uuid", categoryPath.toArray()));
             ps.executeUpdate();
           }
-          for (UUID variantId : variantIds)
+          for (UUID variantId : variantIds) {
             upsertCatalogueVariantTx(c, tenantId, variantId, productId);
+            // A category-scoped promotion may now reach, or no longer reach, the variant (03.12).
+            enqueueCatalogueChange(c, tenantId, variantId, "CATEGORISED");
+          }
           return true;
         },
         "project product categorised");
@@ -1588,6 +1846,8 @@ public class PricingRepository extends BaseOutboxRepository {
         c -> {
           if (!markProcessedIfNewTx(c, eventId, consumer)) return false;
           upsertCatalogueVariantTx(c, tenantId, variantId, productId);
+          // A category-scoped promotion may now reach the variant (03.12).
+          enqueueCatalogueChange(c, tenantId, variantId, "CATALOGUED");
           return true;
         },
         "project variant created");
@@ -1649,8 +1909,11 @@ public class PricingRepository extends BaseOutboxRepository {
             ps.setString(5, unit);
             ps.setBigDecimal(6, quantity);
             ps.setLong(7, version);
-            return ps.executeUpdate() > 0;
+            if (ps.executeUpdate() == 0) return false;
           }
+          // The variant may have been placed under a product, and so under its categories (03.12).
+          enqueueCatalogueChange(c, tenantId, variantId, "CATALOGUED");
+          return true;
         },
         "project variant measured");
   }

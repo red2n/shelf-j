@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
@@ -114,6 +116,41 @@ public class Jurisdictions {
   public boolean inForceIn(UUID tenantId, String country, String code, LocalDate day) {
     return obligations(tenantId, country).stream()
         .anyMatch(o -> o.code().equals(code) && o.inForceOn(day));
+  }
+
+  /**
+   * The countries whose law reaches an offer: the business's own and, at one of its stores, that
+   * store's. With no store — or a store that is not the business's — every store's, since an offer
+   * made nowhere in particular is made wherever the business trades. A store that records no
+   * country trades in the business's own.
+   *
+   * @throws ApiException 503 {@code TENANT_PROFILE_UNAVAILABLE} or {@code
+   *     TENANT_STORES_UNAVAILABLE}
+   */
+  public Set<String> countriesTrading(UUID tenantId, UUID storeId) {
+    Set<String> out = new TreeSet<>();
+    out.add(profiles.requireCountry(tenantId));
+    TenantProfiles.Stores stores = profiles.stores(tenantId, storeId);
+    if (stores.has(storeId)) {
+      String country = stores.countries().get(storeId);
+      if (country != null) out.add(country);
+    } else {
+      out.addAll(stores.countries().values());
+    }
+    return Set.copyOf(out);
+  }
+
+  /**
+   * Whether an obligation binds any country an offer reaches, by {@link #countriesTrading}: a store
+   * across a border cannot trade outside the law of the country it stands in.
+   *
+   * @throws ApiException 503 when the tenant, its stores or any country's rules cannot be read
+   */
+  public boolean inForceWhereTrading(UUID tenantId, UUID storeId, String code, LocalDate day) {
+    for (String country : countriesTrading(tenantId, storeId)) {
+      if (inForceIn(tenantId, country, code, day)) return true;
+    }
+    return false;
   }
 
   /**

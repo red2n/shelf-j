@@ -55,6 +55,38 @@ class UnitPriceText extends StatelessWidget {
   }
 }
 
+/// "Summer · was £12.00" under a reduced price — only when pricing-svc says the
+/// reduction may be announced (03.12). Where the law needs a prior price it
+/// cannot prove, the price is shown as it is, with no claim of a reduction.
+class WasPriceText extends StatelessWidget {
+  final ResolvedPrice price;
+
+  const WasPriceText({super.key, required this.price});
+
+  @override
+  Widget build(BuildContext context) {
+    final prior = price.priorPrice;
+    if (!price.reductionAnnounceable || prior == null || prior <= price.totalWithVat) {
+      return const SizedBox.shrink();
+    }
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Text.rich(
+      TextSpan(children: [
+        if (price.promotionApplied != null) TextSpan(text: '${price.promotionApplied} \u00b7 '),
+        const TextSpan(text: 'was '),
+        TextSpan(
+          text: AppFormat.money(prior, currencyCode: price.currency),
+          style: const TextStyle(decoration: TextDecoration.lineThrough),
+        ),
+      ]),
+      key: const Key('was-price'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: 12, color: muted),
+    );
+  }
+}
+
 /// A cart line's unit price, from the same price the line was added at.
 class CartLineUnitPrice extends ConsumerWidget {
   final String variantId;

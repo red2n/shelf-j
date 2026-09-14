@@ -183,6 +183,7 @@ class _VariantRow extends ConsumerWidget {
                     Text('${p.currency} ${p.totalWithVat.toStringAsFixed(2)}',
                         style: TextStyle(
                             color: cs.primary, fontWeight: FontWeight.bold)),
+                    WasPriceText(price: p),
                     UnitPriceText(price: p),
                   ],
                 ),

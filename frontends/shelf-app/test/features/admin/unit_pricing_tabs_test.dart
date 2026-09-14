@@ -73,14 +73,18 @@ const _labels = '{"data":['
     '{"variantId":"v1","priced":true,"currency":"GBP","regularPrice":1.8,'
     '"regularUnitPrice":{"amount":2.4,"unit":"L","quantity":0.75,"label":"per litre"},'
     '"promotionalPrice":0.9,"promotionalUnitPrice":{"amount":1.2,"unit":"L","quantity":0.75,"label":"per litre"},'
-    '"promotionName":"Half price","measureDeclared":true,"unitPriceRequired":true},'
+    '"promotionName":"Half price","measureDeclared":true,"unitPriceRequired":true,'
+    '"priorPrice":1.8,"priorPriceStatus":"ANNOUNCEABLE","reductionAnnounceable":true},'
     '{"variantId":"v2","priced":true,"currency":"GBP","regularPrice":2.4,"measureDeclared":false,"unitPriceRequired":true},'
+    '{"variantId":"v4","priced":true,"currency":"GBP","regularPrice":3.0,"promotionalPrice":2.0,'
+    '"promotionName":"Fake sale","measureDeclared":true,"unitPriceRequired":true,'
+    '"priorPrice":1.9,"priorPriceStatus":"NOT_LOWER","reductionAnnounceable":false},'
     '{"variantId":"v3","priced":false,"measureDeclared":false,"unitPriceRequired":true}]}';
 
 void main() {
   testWidgets('labels are asked for the variants on the sheet and show both prices with their unit prices',
       (tester) async {
-    final api = await _pump(tester, const ShelfLabelsTab(initialVariantIds: ['v1', 'v2', 'v3']),
+    final api = await _pump(tester, const ShelfLabelsTab(initialVariantIds: ['v1', 'v2', 'v3', 'v4']),
         (a) => a.labels = _labels);
     expect(find.text('Rioja 75cl'), findsOneWidget, reason: 'chips show names, not ids');
 
@@ -89,13 +93,18 @@ void main() {
 
     final post = api.requests.singleWhere((r) => r.method == 'POST');
     expect(post.path, '/pricing-svc/prices/shelf-labels');
-    expect(post.data, {'variantIds': ['v1', 'v2', 'v3'], 'channel': 'POS'});
+    expect(post.data, {'variantIds': ['v1', 'v2', 'v3', 'v4'], 'channel': 'POS'});
 
     final rioja = find.byKey(const Key('label-v1'));
     expect(find.descendant(of: rioja, matching: find.text(_gbp(0.9))), findsOneWidget);
     expect(find.descendant(of: rioja, matching: find.text('${_gbp(1.2)} per litre')), findsOneWidget);
     expect(find.descendant(of: rioja, matching: find.text('Half price · was ${_gbp(1.8)}')), findsOneWidget);
-    expect(find.descendant(of: rioja, matching: find.text('was ${_gbp(2.4)} per litre')), findsOneWidget);
+
+    // 03.12: a promotion whose prior price is not above today's is not labelled a reduction.
+    final fake = find.byKey(const Key('label-v4'));
+    expect(find.descendant(of: fake, matching: find.text(_gbp(2.0))), findsOneWidget);
+    expect(find.descendant(of: fake, matching: find.textContaining('was')), findsNothing);
+    expect(find.descendant(of: fake, matching: find.textContaining('sold at this price or less within the last 30 days')), findsOneWidget);
     expect(find.descendant(of: rioja, matching: find.byKey(const Key('label-no-measure'))), findsNothing);
 
     final carrots = find.byKey(const Key('label-v2'));

@@ -146,7 +146,62 @@ public final class Mappers {
         rp.priceListId(),
         rp.promotionApplied(),
         toUnitPrice(rp.unitPricing()),
-        rp.unitPriceRequired());
+        rp.unitPriceRequired(),
+        rp.priorPrice() == null ? null : rp.priorPrice().priorPrice(),
+        rp.priorPrice() == null ? null : rp.priorPrice().status(),
+        rp.priorPrice() == null || rp.priorPrice().reductionStartedAt() == null
+            ? null
+            : rp.priorPrice().reductionStartedAt().toString(),
+        rp.priorPriceRequired(),
+        announceable(
+            rp.promotionApplied() != null,
+            rp.priorPriceRequired(),
+            rp.priorPrice() == null ? null : rp.priorPrice().status()));
+  }
+
+  /**
+   * Whether a price may be announced as a reduction: a promotion applies and, where art.6a binds,
+   * its prior price is known and above today's (03.12).
+   */
+  static boolean announceable(boolean promoted, boolean required, String status) {
+    return com.shelfj.pricing.service.PriorPrices.announceable(promoted, required, status);
+  }
+
+  public static com.shelfj.pricing.dto.Dtos.AppliedPriceResponse toAppliedPrice(
+      com.shelfj.pricing.domain.Domain.AppliedPrice a) {
+    return new com.shelfj.pricing.dto.Dtos.AppliedPriceResponse(
+        a.id(),
+        a.channel(),
+        a.storeId(),
+        a.priced(),
+        a.price(),
+        a.netPrice(),
+        a.regularPrice(),
+        a.promotionName(),
+        a.currency(),
+        a.appliedFrom().toString(),
+        a.uncertainSince() == null ? null : a.uncertainSince().toString(),
+        a.recordedAt() == null ? null : a.recordedAt().toString(),
+        a.cause());
+  }
+
+  /** A reduction on offer in its wire form. */
+  public static com.shelfj.pricing.dto.Dtos.ReductionResponse toReduction(
+      com.shelfj.pricing.domain.Domain.Reduction r) {
+    var prior = r.prior();
+    return new com.shelfj.pricing.dto.Dtos.ReductionResponse(
+        r.variantId(),
+        r.channel(),
+        r.storeId(),
+        r.price(),
+        r.regularPrice(),
+        r.promotionName(),
+        r.currency(),
+        prior.priorPrice(),
+        prior.status(),
+        prior.reductionStartedAt() == null ? null : prior.reductionStartedAt().toString(),
+        r.required(),
+        announceable(true, r.required(), prior.status()));
   }
 
   /** A unit price in its wire form, or null. */
@@ -170,7 +225,11 @@ public final class Mappers {
         toUnitPrice(l.promotionalUnitPrice()),
         l.promotionName(),
         l.measureDeclared(),
-        l.unitPriceRequired());
+        l.unitPriceRequired(),
+        l.priorPrice(),
+        l.priorPriceStatus(),
+        l.priorPriceRequired(),
+        announceable(l.promotionalPrice() != null, l.priorPriceRequired(), l.priorPriceStatus()));
   }
 
   public static com.shelfj.pricing.dto.Dtos.UnitPriceGapsResponse toUnitPriceGaps(
@@ -192,6 +251,14 @@ public final class Mappers {
    * @return its API representation
    */
   public static PromotionResponse toDto(Promotion p) {
+    return toDto(p, null);
+  }
+
+  /**
+   * As {@link #toDto(Promotion)}, saying whether the storefront may advertise it as a reduction
+   * (03.12).
+   */
+  public static PromotionResponse toDto(Promotion p, Boolean reductionAnnounceable) {
     return new PromotionResponse(
         p.id(),
         p.tenantId(),
@@ -212,7 +279,8 @@ public final class Mappers {
         p.maxPerCustomer(),
         p.buyQty(),
         p.getQty(),
-        p.getDiscountPct());
+        p.getDiscountPct(),
+        reductionAnnounceable);
   }
 
   /**
@@ -511,7 +579,9 @@ public final class Mappers {
    * @param m a live markdown a sticker named
    * @return what the till needs
    */
-  public static Dtos.MarkdownLabelResponse toLabelDto(com.shelfj.pricing.domain.Domain.Markdown m) {
+  public static Dtos.MarkdownLabelResponse toLabelDto(
+      com.shelfj.pricing.domain.Domain.Markdown m,
+      com.shelfj.pricing.domain.Domain.MarkdownReduction r) {
     return new Dtos.MarkdownLabelResponse(
         m.id(),
         m.variantId(),
@@ -521,6 +591,12 @@ public final class Mappers {
         m.originalPrice(),
         m.currency(),
         m.expiryDate().toString(),
-        m.remainingQty());
+        m.remainingQty(),
+        r.wasPrice(),
+        r.wasPrice() != null,
+        r.priorPrice(),
+        r.priorPriceStatus(),
+        r.priorPriceRequired(),
+        r.perishableExempt());
   }
 }

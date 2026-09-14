@@ -6,6 +6,7 @@ import '../../core/network/api_error.dart';
 import '../../shared/widgets/reference_fields.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
+import 'price_reductions_tab.dart';
 import 'pricing_providers.dart';
 import 'unit_pricing_tabs.dart';
 import 'providers/admin_providers.dart';
@@ -17,7 +18,7 @@ class PricingScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 6,
+      length: 7,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -38,6 +39,7 @@ class PricingScreen extends ConsumerWidget {
               Tab(text: 'VAT Return'),
               Tab(text: 'Shelf Labels'),
               Tab(text: 'Unit Pricing'),
+              Tab(text: 'Reductions'),
             ],
           ),
           const Expanded(
@@ -49,6 +51,7 @@ class PricingScreen extends ConsumerWidget {
                 _VatReturnTab(),
                 ShelfLabelsTab(),
                 UnitPricingGapsTab(),
+                PriceReductionsTab(),
               ],
             ),
           ),

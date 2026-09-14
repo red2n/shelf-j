@@ -84,4 +84,26 @@ void main() {
     expect(pricing.last!.data, {'variantId': 'eggs', 'channel': 'ONLINE', 'qty': 1});
     expect(find.text('${AppFormat.money(0.1, currencyCode: 'GBP')} each'), findsOneWidget);
   });
+
+  testWidgets('an announceable reduction shows its promotion and the 30-day prior price, struck through',
+      (tester) async {
+    final p = _price('{"unitPrice":8,"totalWithVat":9.6,"currency":"EUR","promotionApplied":"Summer",'
+        '"priorPrice":12.0,"priorPriceStatus":"ANNOUNCEABLE","reductionAnnounceable":true}');
+    await _pump(tester, WasPriceText(price: p));
+    final text = tester.widget<Text>(find.byKey(const Key('was-price')));
+    expect(text.textSpan!.toPlainText(), 'Summer · was ${AppFormat.money(12.0, currencyCode: 'EUR')}');
+  });
+
+  testWidgets('a reduction the law does not let be announced shows no was price', (tester) async {
+    for (final body in [
+      '{"unitPrice":8,"totalWithVat":9.6,"currency":"EUR","promotionApplied":"Fake sale","priorPrice":9.0,"priorPriceStatus":"NOT_LOWER","reductionAnnounceable":false}',
+      '{"unitPrice":8,"totalWithVat":9.6,"currency":"EUR","promotionApplied":"New","priorPriceStatus":"NO_HISTORY","reductionAnnounceable":false}',
+      '{"unitPrice":8,"totalWithVat":9.6,"currency":"EUR","promotionApplied":"New","priorPrice":12.0,"priorPriceStatus":"SHORT_HISTORY","reductionAnnounceable":false}',
+      '{"unitPrice":8,"totalWithVat":9.6,"currency":"EUR"}',
+      '{"unitPrice":8,"totalWithVat":9.6,"currency":"EUR","priorPrice":9.0,"reductionAnnounceable":true}',
+    ]) {
+      await _pump(tester, WasPriceText(price: _price(body)));
+      expect(find.byKey(const Key('was-price')), findsNothing, reason: body);
+    }
+  });
 }

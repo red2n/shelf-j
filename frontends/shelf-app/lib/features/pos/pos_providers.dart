@@ -37,7 +37,8 @@ class PosLine {
   /// pricing-svc can count the sticker down. Null for a line at the list price.
   final String? markdownId;
 
-  /// The list price the sticker reduced from, shown struck through.
+  /// The price the sticker may be shown reduced from, struck through — only what
+  /// pricing-svc says the law allows (03.12); null when it allows none.
   final double? originalPrice;
 
   const PosLine({
@@ -230,7 +231,7 @@ Future<PosLine?> scanMarkdownLabel(WidgetRef ref, String rawCode) async {
         (m['markdownPrice'] as num?)?.toDouble() ?? markdownLabelPrice(code),
     currency: m['currency'] as String? ?? '',
     markdownId: m['markdownId'] as String?,
-    originalPrice: (m['originalPrice'] as num?)?.toDouble(),
+    originalPrice: (m['wasPrice'] as num?)?.toDouble(),
   );
 }
 

@@ -144,4 +144,71 @@ class JurisdictionsTest {
                 () -> noProfile.inForce(TENANT, "GDPR", LocalDate.of(2019, 1, 1)))
             .code());
   }
+
+  @Test
+  @DisplayName(
+      "An offer at a store reaches its country and the business's; with no store, every store's")
+  void theCountriesAnOfferReaches() {
+    UUID de = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f1");
+    UUID none = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f2");
+    UUID fr = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f3");
+    UUID stranger = UUID.fromString("01a090ae-611e-702c-a97b-d1b8025478f4");
+    TenantProfiles profiles =
+        TenantProfiles.forTest(
+            id -> Optional.of("{\"data\":{\"currency\":\"GBP\",\"country\":\"GB\"}}"),
+            (t, after) ->
+                Optional.of(
+                    "{\"data\":[{\"id\":\""
+                        + de
+                        + "\",\"country\":\"DE\"},{\"id\":\""
+                        + none
+                        + "\"},{\"id\":\""
+                        + fr
+                        + "\",\"country\":\"FR\"}],\"meta\":{}}"),
+            Clock.systemUTC());
+    String euOnly =
+        "{\"data\":{\"obligations\":[{\"code\":\"PRICE_REDUCTION_PRIOR_PRICE\",\"scope\":\"EU\","
+            + "\"effectiveFrom\":\"2022-05-28\"}]}}";
+    var j =
+        Jurisdictions.forTest(
+            profiles,
+            (t, c) -> Optional.of("GB".equals(c) ? "{\"data\":{\"obligations\":[]}}" : euOnly),
+            new Hands());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        java.util.Set.of("GB", "DE", "FR"), j.countriesTrading(TENANT, null));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        java.util.Set.of("GB", "DE"), j.countriesTrading(TENANT, de));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        java.util.Set.of("GB"), j.countriesTrading(TENANT, none));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        java.util.Set.of("GB", "DE", "FR"),
+        j.countriesTrading(TENANT, stranger),
+        "a store that is not the business's cannot narrow the law to the business's own country");
+
+    LocalDate day = LocalDate.of(2026, 9, 14);
+    assertTrue(j.inForceWhereTrading(TENANT, de, "PRICE_REDUCTION_PRIOR_PRICE", day));
+    assertFalse(j.inForceWhereTrading(TENANT, none, "PRICE_REDUCTION_PRIOR_PRICE", day));
+    assertTrue(
+        j.inForceWhereTrading(TENANT, null, "PRICE_REDUCTION_PRIOR_PRICE", day),
+        "online, a British business with a German shop is bound");
+    assertFalse(
+        j.inForce(TENANT, "PRICE_REDUCTION_PRIOR_PRICE", day),
+        "the business's own country alone is unchanged");
+  }
+
+  @Test
+  @DisplayName("Stores that cannot be read refuse the question rather than narrow it")
+  void unreadableStoresRefuse() {
+    TenantProfiles profiles =
+        TenantProfiles.forTest(
+            id -> Optional.of("{\"data\":{\"currency\":\"GBP\",\"country\":\"GB\"}}"),
+            (t, after) -> Optional.empty(),
+            Clock.systemUTC());
+    var j = Jurisdictions.forTest(profiles, (t, c) -> Optional.of(RULES), new Hands());
+    ApiException e =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            ApiException.class,
+            () -> j.inForceWhereTrading(TENANT, null, "GDPR", LocalDate.of(2019, 1, 1)));
+    org.junit.jupiter.api.Assertions.assertEquals(503, e.status());
+  }
 }

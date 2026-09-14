@@ -10,10 +10,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * A stand-in for tenant-svc's {@code GET /admin/tenant} and {@code GET /admin/tenant/obligations}
- * in a service's integration tests, where discovery is off. Each tenant answers with the currency
- * and country it was registered with; an unregistered tenant is {@code 404}, so a test that forgets
- * to register one sees the refusal a real unknown tenant would get rather than a borrowed default.
+ * A stand-in for tenant-svc's {@code GET /admin/tenant}, {@code GET /admin/tenant/obligations} and
+ * {@code GET /admin/stores} in a service's integration tests, where discovery is off. Each tenant
+ * answers with the currency and country it was registered with; an unregistered tenant is {@code
+ * 404}, so a test that forgets to register one sees the refusal a real unknown tenant would get
+ * rather than a borrowed default.
  *
  * <p>Start it in the test's static initialiser, before Helidon boots: it points {@code
  * shelfj.clients.tenant-svc.url} at itself.
@@ -23,6 +24,7 @@ public final class TenantSvcStub implements AutoCloseable {
   private final HttpServer server;
   private final Map<String, String> profiles = new ConcurrentHashMap<>();
   private final Map<String, java.util.List<String>> obligations = new ConcurrentHashMap<>();
+  private final Map<String, java.util.List<String>> stores = new ConcurrentHashMap<>();
   private final java.util.concurrent.atomic.AtomicInteger requests =
       new java.util.concurrent.atomic.AtomicInteger();
 
@@ -67,6 +69,22 @@ public final class TenantSvcStub implements AutoCloseable {
                     + "\",\"obligations\":["
                     + String.join(",", stub.obligations.getOrDefault(country, java.util.List.of()))
                     + "]}}");
+          });
+      // A tenant's stores, one page; a tenant with none registered has none.
+      server.createContext(
+          "/admin/stores",
+          exchange -> {
+            String tenant = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
+            reply(
+                exchange,
+                200,
+                "{\"data\":["
+                    + String.join(
+                        ",",
+                        tenant == null
+                            ? java.util.List.of()
+                            : stub.stores.getOrDefault(tenant, java.util.List.of()))
+                    + "],\"meta\":{\"nextCursor\":null}}");
           });
       server.setExecutor(
           java.util.concurrent.Executors.newCachedThreadPool(
@@ -118,6 +136,23 @@ public final class TenantSvcStub implements AutoCloseable {
                 + effectiveFrom
                 + "\""
                 + (effectiveTo == null ? "" : ",\"effectiveTo\":\"" + effectiveTo + "\"")
+                + "}");
+    return this;
+  }
+
+  /**
+   * Registers one of a tenant's stores, as tenant-svc's {@code GET /admin/stores} lists it.
+   *
+   * @param country the store's country, or null when it records none
+   */
+  public TenantSvcStub withStore(String tenantId, String storeId, String country) {
+    stores
+        .computeIfAbsent(tenantId, t -> new java.util.concurrent.CopyOnWriteArrayList<>())
+        .add(
+            "{\"id\":\""
+                + storeId
+                + "\",\"country\":"
+                + (country == null ? "null" : "\"" + country + "\"")
                 + "}");
     return this;
   }

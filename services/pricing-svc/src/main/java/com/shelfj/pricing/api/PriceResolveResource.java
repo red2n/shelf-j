@@ -151,8 +151,10 @@ public class PriceResolveResource {
   @Path("/markdown-labels/{code}")
   public Response markdownLabel(@PathParam("code") String code) {
     ctx.requireAnyRole("PLATFORM_ADMIN", "OWNER", "MANAGER", "STOREKEEPER", "CASHIER");
+    var tenantId = ctx.requireTenantId();
+    var markdown = markdowns.lookupLabel(tenantId, code);
     return Response.ok(
-            ApiResponse.ok(Mappers.toLabelDto(markdowns.lookupLabel(ctx.requireTenantId(), code))))
+            ApiResponse.ok(Mappers.toLabelDto(markdown, svc.markdownReduction(tenantId, markdown))))
         .build();
   }
 

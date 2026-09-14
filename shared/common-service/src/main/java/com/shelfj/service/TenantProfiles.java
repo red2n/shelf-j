@@ -7,18 +7,24 @@ import jakarta.inject.Inject;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
+import jakarta.json.JsonValue;
 import java.io.StringReader;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -60,6 +66,37 @@ public class TenantProfiles {
 
   private record Cached(Profile profile, Instant expiresAt) {}
 
+  /**
+   * A tenant's stores, and the country each trades in where one is recorded. A store can sit across
+   * a border from the business that owns it, and the law of the store's country reaches what it
+   * sells.
+   *
+   * @param ids every store of the tenant
+   * @param countries the upper-cased country of each store that records one
+   */
+  public record Stores(Set<UUID> ids, Map<UUID, String> countries) {
+
+    /** Whether the store is one of the tenant's. */
+    public boolean has(UUID storeId) {
+      return storeId != null && ids.contains(storeId);
+    }
+  }
+
+  /** One page of {@code GET /admin/stores}. */
+  record StorePage(List<UUID> ids, Map<UUID, String> countries, String nextCursor) {}
+
+  private record CachedStores(Stores stores, Instant readAt) {}
+
+  /**
+   * How soon a store the cache does not know is looked for again: soon enough that a store opened a
+   * minute ago is found, seldom enough that a made-up store id cannot turn every request into a
+   * read of tenant-svc.
+   */
+  static final Duration REREAD = Duration.ofSeconds(30);
+
+  /** A tenant with more pages of stores than this is refused rather than half-read. */
+  private static final int MAX_STORE_PAGES = 100;
+
   @Inject ServiceSettings settings;
 
   @Inject
@@ -67,13 +104,22 @@ public class TenantProfiles {
   Optional<String> tenantSvcUrl;
 
   private final Map<UUID, Cached> cache = new ConcurrentHashMap<>();
+  private final Map<UUID, CachedStores> storeCache = new ConcurrentHashMap<>();
   private Clock clock = Clock.systemUTC();
   private Function<UUID, Optional<String>> fetch;
+  private BiFunction<UUID, String, Optional<String>> storesFetch =
+      (tenantId, after) -> Optional.empty();
 
   @PostConstruct
   void init() {
     TenantSvcClient client = new TenantSvcClient(settings, tenantSvcUrl);
     fetch = tenantId -> client.get(tenantId, "/admin/tenant", Map.of());
+    storesFetch =
+        (tenantId, after) ->
+            client.get(
+                tenantId,
+                "/admin/stores",
+                after == null ? Map.of("limit", "100") : Map.of("limit", "100", "after", after));
   }
 
   /** For tests: a fetch function standing in for tenant-svc, and a clock to age the cache with. */
@@ -82,6 +128,105 @@ public class TenantProfiles {
     p.fetch = fetch;
     p.clock = clock;
     return p;
+  }
+
+  /** For tests: as {@link #forTest(Function, Clock)}, with pages of stores by cursor. */
+  static TenantProfiles forTest(
+      Function<UUID, Optional<String>> fetch,
+      BiFunction<UUID, String, Optional<String>> storesFetch,
+      Clock clock) {
+    TenantProfiles p = forTest(fetch, clock);
+    p.storesFetch = storesFetch;
+    return p;
+  }
+
+  /**
+   * The tenant's stores and their countries, from the cache or tenant-svc. Cached for {@link #TTL};
+   * a store the cache does not know is looked for again at most every {@link #REREAD}. A failed
+   * read is not cached.
+   *
+   * @param including a store the caller is acting at, or null
+   * @throws ApiException 503 {@code TENANT_STORES_UNAVAILABLE} when they cannot be read
+   */
+  public Stores stores(UUID tenantId, UUID including) {
+    Instant now = clock.instant();
+    CachedStores hit = storeCache.get(tenantId);
+    boolean fresh = hit != null && hit.readAt().plus(TTL).isAfter(now);
+    boolean lookAgain =
+        fresh
+            && including != null
+            && !hit.stores().has(including)
+            && !hit.readAt().plus(REREAD).isAfter(now);
+    if (fresh && !lookAgain) return hit.stores();
+    Stores read =
+        readStores(tenantId)
+            .orElseThrow(
+                () ->
+                    new ApiException(
+                        503,
+                        "TENANT_STORES_UNAVAILABLE",
+                        "the tenant's stores could not be read from tenant-svc; nothing was assumed,"
+                            + " try again",
+                        List.of()));
+    storeCache.put(tenantId, new CachedStores(read, now));
+    return read;
+  }
+
+  private Optional<Stores> readStores(UUID tenantId) {
+    Set<UUID> ids = new HashSet<>();
+    Map<UUID, String> countries = new HashMap<>();
+    String after = null;
+    for (int page = 0; page < MAX_STORE_PAGES; page++) {
+      Optional<StorePage> read =
+          storesFetch.apply(tenantId, after).flatMap(TenantProfiles::parseStores);
+      if (read.isEmpty()) return Optional.empty();
+      ids.addAll(read.get().ids());
+      countries.putAll(read.get().countries());
+      if (read.get().nextCursor() == null) {
+        return Optional.of(new Stores(Set.copyOf(ids), Map.copyOf(countries)));
+      }
+      after = read.get().nextCursor();
+    }
+    LOG.log(Level.WARNING, "more than {0} pages of stores for {1}", MAX_STORE_PAGES, tenantId);
+    return Optional.empty();
+  }
+
+  /**
+   * Reads one page of {@code GET /admin/stores}: each store's id and, when it records one, its
+   * country, upper-cased but not otherwise judged — a country the rules cannot read is refused
+   * where the rules are asked, not quietly dropped here.
+   */
+  static Optional<StorePage> parseStores(String body) {
+    try (JsonReader reader = Json.createReader(new StringReader(body))) {
+      JsonObject root = reader.readObject();
+      if (!root.containsKey("data") || root.isNull("data")) return Optional.empty();
+      List<UUID> ids = new ArrayList<>();
+      Map<UUID, String> countries = new HashMap<>();
+      for (JsonValue value : root.getJsonArray("data")) {
+        JsonObject store = value.asJsonObject();
+        UUID id = UUID.fromString(store.getString("id"));
+        ids.add(id);
+        String country =
+            store.containsKey("country") && !store.isNull("country")
+                ? upper(store.getString("country"))
+                : null;
+        if (country != null && !country.isEmpty()) countries.put(id, country);
+      }
+      JsonObject meta =
+          root.containsKey("meta") && !root.isNull("meta") ? root.getJsonObject("meta") : null;
+      String next =
+          meta != null && meta.containsKey("nextCursor") && !meta.isNull("nextCursor")
+              ? meta.getString("nextCursor")
+              : null;
+      return Optional.of(
+          new StorePage(
+              List.copyOf(ids),
+              Map.copyOf(countries),
+              next == null || next.isBlank() ? null : next));
+    } catch (RuntimeException e) {
+      LOG.log(Level.WARNING, "unreadable page of stores: {0}", e.getMessage());
+      return Optional.empty();
+    }
   }
 
   /**
