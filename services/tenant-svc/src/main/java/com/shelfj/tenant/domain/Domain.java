@@ -248,4 +248,67 @@ public final class Domain {
   /** The obligations that bind a country on a day, in force first and then those still to come. */
   public record ObligationSheet(
       String country, java.time.LocalDate on, java.util.List<LegalObligation> obligations) {}
+
+  // ── security incidents (21.15) ─────────────────────────────────────────────
+
+  /** A security incident on the platform register. */
+  public record SecurityIncident(
+      UUID id,
+      String kind,
+      String title,
+      String summary,
+      Instant awareAt,
+      Instant openedAt,
+      UUID openedBy,
+      boolean affectsAllTenants,
+      java.util.List<UUID> tenantIds) {}
+
+  /** One entry in an incident's append-only timeline. */
+  public record IncidentEvent(
+      UUID id,
+      UUID incidentId,
+      String kind,
+      Instant occurredAt,
+      Instant recordedAt,
+      UUID recordedBy,
+      String reference,
+      String note) {}
+
+  /** A statutory reporting stage for a kind of incident, as reference data (V11). */
+  public record ReportingStage(
+      String incidentKind,
+      String stage,
+      String anchor,
+      String dueAfter,
+      int position,
+      String citation,
+      String summary) {}
+
+  /** A stage as it stands: due, overdue, done, waiting on its anchor, or with no fixed time. */
+  public record StageStatus(
+      String stage, String summary, String citation, Instant dueAt, Instant doneAt, String state) {}
+
+  /** An incident with its timeline, its stages as they stand, and how its notices stand. */
+  public record IncidentSheet(
+      SecurityIncident incident,
+      java.util.List<IncidentEvent> events,
+      java.util.List<StageStatus> stages,
+      boolean closed,
+      int noticesIssued,
+      int noticesAcknowledged) {}
+
+  /** A notice to one business about an incident, and whether it has been acknowledged. */
+  public record SecurityNotice(
+      UUID id,
+      UUID tenantId,
+      UUID incidentId,
+      String title,
+      String body,
+      Instant issuedAt,
+      UUID issuedBy,
+      Instant acknowledgedAt,
+      UUID acknowledgedBy) {}
+
+  /** What issuing notices did: how many were new, how many exist, how many are acknowledged. */
+  public record NoticeIssue(int issued, int total, int acknowledged) {}
 }

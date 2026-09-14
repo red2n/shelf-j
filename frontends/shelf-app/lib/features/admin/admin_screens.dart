@@ -10,6 +10,7 @@ export 'food_safety_screen.dart';
 export 'recalls_screen.dart';
 export 'age_checks_screen.dart';
 export 'obligations_screen.dart';
+export 'security_notices_screen.dart';
 export 'audit_trail_screen.dart';
 export 'stores_screen.dart';
 export 'orders_screen.dart';

@@ -1,18 +1,30 @@
 package com.shelfj.tenant.mapper;
 
 import com.shelfj.tenant.domain.Domain.DeliveryArea;
+import com.shelfj.tenant.domain.Domain.IncidentSheet;
+import com.shelfj.tenant.domain.Domain.NoticeIssue;
+import com.shelfj.tenant.domain.Domain.SecurityNotice;
 import com.shelfj.tenant.domain.Domain.StaffAssignment;
+import com.shelfj.tenant.domain.Domain.StageStatus;
 import com.shelfj.tenant.domain.Domain.Store;
 import com.shelfj.tenant.domain.Domain.Tenant;
 import com.shelfj.tenant.domain.Domain.TenantInventoryConfig;
 import com.shelfj.tenant.domain.Domain.Zone;
 import com.shelfj.tenant.dto.Dtos.DeliveryAreaResponse;
+import com.shelfj.tenant.dto.Dtos.IncidentEventResponse;
+import com.shelfj.tenant.dto.Dtos.IncidentResponse;
+import com.shelfj.tenant.dto.Dtos.IncidentStageResponse;
+import com.shelfj.tenant.dto.Dtos.IncidentSummaryResponse;
+import com.shelfj.tenant.dto.Dtos.NoticesIssuedResponse;
+import com.shelfj.tenant.dto.Dtos.SecurityNoticeResponse;
 import com.shelfj.tenant.dto.Dtos.StaffResponse;
 import com.shelfj.tenant.dto.Dtos.StoreResponse;
 import com.shelfj.tenant.dto.Dtos.TenantInventoryConfigResponse;
 import com.shelfj.tenant.dto.Dtos.TenantResponse;
 import com.shelfj.tenant.dto.Dtos.ZoneResponse;
+import com.shelfj.tenant.service.IncidentRules;
 import java.time.Instant;
+import java.util.UUID;
 
 /** Entity → DTO conversion (never expose entities over HTTP). */
 public final class Mappers {
@@ -259,5 +271,74 @@ public final class Mappers {
                         o.summary(),
                         o.statusOn(sheet.on())))
             .toList());
+  }
+
+  // ── Security incidents (21.15) ────────────────────────────────────────────
+
+  public static IncidentResponse toIncident(IncidentSheet s) {
+    var i = s.incident();
+    return new IncidentResponse(
+        i.id().toString(),
+        i.kind(),
+        i.title(),
+        i.summary(),
+        ts(i.awareAt()),
+        ts(i.openedAt()),
+        i.affectsAllTenants(),
+        i.tenantIds().stream().map(UUID::toString).toList(),
+        s.closed() ? "CLOSED" : "OPEN",
+        s.stages().stream()
+            .map(
+                st ->
+                    new IncidentStageResponse(
+                        st.stage(),
+                        st.summary(),
+                        st.citation(),
+                        ts(st.dueAt()),
+                        ts(st.doneAt()),
+                        st.state()))
+            .toList(),
+        s.events().stream()
+            .map(
+                e ->
+                    new IncidentEventResponse(
+                        e.id().toString(),
+                        e.kind(),
+                        ts(e.occurredAt()),
+                        ts(e.recordedAt()),
+                        e.reference(),
+                        e.note()))
+            .toList(),
+        s.noticesIssued(),
+        s.noticesAcknowledged());
+  }
+
+  public static IncidentSummaryResponse toIncidentSummary(IncidentSheet s) {
+    StageStatus next = IncidentRules.next(s.stages());
+    var i = s.incident();
+    return new IncidentSummaryResponse(
+        i.id().toString(),
+        i.kind(),
+        i.title(),
+        ts(i.awareAt()),
+        s.closed() ? "CLOSED" : "OPEN",
+        next == null ? null : next.stage(),
+        next == null ? null : ts(next.dueAt()),
+        s.stages().stream().anyMatch(st -> "OVERDUE".equals(st.state())));
+  }
+
+  public static NoticesIssuedResponse toNoticesIssued(NoticeIssue n) {
+    return new NoticesIssuedResponse(n.issued(), n.total(), n.acknowledged());
+  }
+
+  public static SecurityNoticeResponse toSecurityNotice(SecurityNotice n) {
+    return new SecurityNoticeResponse(
+        n.id().toString(),
+        n.incidentId().toString(),
+        n.title(),
+        n.body(),
+        ts(n.issuedAt()),
+        ts(n.acknowledgedAt()),
+        n.acknowledgedAt() != null);
   }
 }

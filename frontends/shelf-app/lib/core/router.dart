@@ -106,6 +106,13 @@ final routerProvider = Provider<GoRouter>((ref) {
               builder: (_) => platform_lib.TenantsScreen(),
             ),
           ),
+          GoRoute(
+            path: '/platform/security',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: platform_lib.loadLibrary,
+              builder: (_) => platform_lib.SecurityIncidentsScreen(),
+            ),
+          ),
         ],
       ),
 
@@ -162,6 +169,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (_, _) => DeferredWidget(
               libraryLoader: admin_lib.loadLibrary,
               builder: (_) => admin_lib.ObligationsScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/admin/security-notices',
+            builder: (_, _) => DeferredWidget(
+              libraryLoader: admin_lib.loadLibrary,
+              builder: (_) => admin_lib.SecurityNoticesScreen(),
             ),
           ),
           GoRoute(

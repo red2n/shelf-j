@@ -87,6 +87,14 @@ const _navItems = [
   ),
   _AdminNavItem(
     destination: AdaptiveNavDestination(
+      label: 'Security notices',
+      icon: Icons.shield_outlined,
+      selectedIcon: Icons.shield,
+    ),
+    route: '/admin/security-notices',
+  ),
+  _AdminNavItem(
+    destination: AdaptiveNavDestination(
       label: 'Stores',
       icon: Icons.store_outlined,
       selectedIcon: Icons.store,

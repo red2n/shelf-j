@@ -434,4 +434,98 @@ public final class Dtos {
   @org.eclipse.microprofile.openapi.annotations.media.Schema(name = "ObligationsResponse")
   public record ObligationsResponse(
       String country, String on, java.util.List<ObligationResponse> obligations) {}
+
+  // ── Security incidents (21.15) ────────────────────────────────────────────
+
+  @Schema(name = "CreateIncidentRequest")
+  public record CreateIncidentRequest(
+      @Schema(description = "EXPLOITED_VULNERABILITY, SEVERE_INCIDENT or PERSONAL_DATA_BREACH.")
+          @NotBlank
+          String kind,
+      @NotBlank String title,
+      @NotBlank String summary,
+      @Schema(description = "ISO-8601 instant the platform became aware; every clock runs from it.")
+          @NotBlank
+          String awareAt,
+      @Schema(description = "The businesses affected; absent or empty means every business.")
+          List<String> tenantIds) {}
+
+  @Schema(name = "RecordIncidentEventRequest")
+  public record RecordIncidentEventRequest(
+      @Schema(
+              description =
+                  "EARLY_WARNING_SENT, NOTIFICATION_SENT, MITIGATION_AVAILABLE, FINAL_REPORT_SENT,"
+                      + " NOTE or CLOSED.")
+          @NotBlank
+          String kind,
+      @Schema(description = "When it happened, ISO-8601; now when absent.") String occurredAt,
+      @Schema(description = "The authority's reference, such as a single reporting platform case.")
+          String reference,
+      String note) {}
+
+  @Schema(name = "IssueNoticesRequest")
+  public record IssueNoticesRequest(
+      @Schema(description = "What the businesses affected are told, and what they should do.")
+          @NotBlank
+          String message) {}
+
+  @Schema(name = "IncidentStageResponse")
+  public record IncidentStageResponse(
+      String stage,
+      String summary,
+      String citation,
+      @Schema(description = "Null while the clock waits on its anchor or the law sets no time.")
+          String dueAt,
+      String doneAt,
+      @Schema(description = "DONE, DUE, OVERDUE, WAITING or NO_DEADLINE.") String state) {}
+
+  @Schema(name = "IncidentEventResponse")
+  public record IncidentEventResponse(
+      String id,
+      String kind,
+      String occurredAt,
+      String recordedAt,
+      String reference,
+      String note) {}
+
+  @Schema(name = "IncidentResponse")
+  public record IncidentResponse(
+      String id,
+      String kind,
+      String title,
+      String summary,
+      String awareAt,
+      String openedAt,
+      boolean affectsAllTenants,
+      List<String> tenantIds,
+      @Schema(description = "OPEN or CLOSED.") String status,
+      List<IncidentStageResponse> stages,
+      List<IncidentEventResponse> events,
+      int noticesIssued,
+      int noticesAcknowledged) {}
+
+  @Schema(name = "IncidentSummaryResponse")
+  public record IncidentSummaryResponse(
+      String id,
+      String kind,
+      String title,
+      String awareAt,
+      String status,
+      @Schema(description = "The unfinished stage due soonest; null when no clock is running.")
+          String nextStage,
+      String nextDueAt,
+      @Schema(description = "True when any stage is past its deadline.") boolean overdue) {}
+
+  @Schema(name = "NoticesIssuedResponse")
+  public record NoticesIssuedResponse(int issued, int total, int acknowledged) {}
+
+  @Schema(name = "SecurityNoticeResponse")
+  public record SecurityNoticeResponse(
+      String id,
+      String incidentId,
+      String title,
+      String body,
+      String issuedAt,
+      String acknowledgedAt,
+      boolean acknowledged) {}
 }

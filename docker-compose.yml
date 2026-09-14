@@ -934,6 +934,12 @@ services:
       shelfj.redis.host: redis
       shelfj.redis.port: "6379"
       shelfj.redis.password: ${REDIS_PASSWORD:-redis_dev_change_me}
+      # /.well-known/security.txt (RFC 9116). Empty means not published — see .env.example.
+      shelfj.gateway.security-txt.contact: ${SECURITY_TXT_CONTACT:-}
+      shelfj.gateway.security-txt.expires: ${SECURITY_TXT_EXPIRES:-}
+      shelfj.gateway.security-txt.policy: ${SECURITY_TXT_POLICY:-}
+      shelfj.gateway.security-txt.canonical: ${SECURITY_TXT_CANONICAL:-}
+      shelfj.gateway.security-txt.preferred-languages: ${SECURITY_TXT_PREFERRED_LANGUAGES:-}
     mem_limit: ${GATEWAY_MEM_LIMIT:-700m}
     # 0.0.0.0 binding: reachable from other devices on the LAN (needed for
     # phone/tablet testing of the storefront/POS). Host firewall is the only thing

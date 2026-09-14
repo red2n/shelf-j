@@ -229,6 +229,20 @@ class AdminAuthorizationFilterTest {
     assertNotAborted(invoke("GET", "/openapi"));
   }
 
+  /**
+   * RFC 9116's security.txt is read by someone with no account. Exactly that document: a sibling
+   * under /.well-known, a path beneath it, or a write to it stays where the defaults put it.
+   */
+  @Test
+  void theVulnerabilityDisclosureFileIsPublicAndNothingBesideIt() throws Exception {
+    assertNotAborted(invoke("GET", "/.well-known/security.txt"));
+    assertNotAborted(invoke("HEAD", "/.well-known/security.txt"));
+    assertAborted(invoke("GET", "/.well-known/security.txt/extra"), 403);
+    assertAborted(invoke("GET", "/.well-known/openid-configuration"), 403);
+    assertAborted(invoke("GET", "/.well-known/security.txt.bak"), 403);
+    assertAborted(invoke("POST", "/.well-known/security.txt"), 403);
+  }
+
   /** CORS preflight carries no credentials by design; denying it breaks every browser client. */
   @Test
   void corsPreflightIsNotDenied() throws Exception {

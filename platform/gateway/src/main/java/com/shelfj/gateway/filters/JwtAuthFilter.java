@@ -48,7 +48,10 @@ public class JwtAuthFilter implements ContainerRequestFilter {
           // clicking it may be on a device that was never signed in, may have no password at all,
           // and must not be made to prove who they are in order to be left alone. The token in the
           // link is the whole capability, and it can only ever withdraw permission.
-          "api/customer-svc/marketing/unsubscribe");
+          "api/customer-svc/marketing/unsubscribe",
+          // RFC 9116: whoever found a vulnerability has no account; the file holds only the
+          // contact a deployment chose to publish.
+          ".well-known/security.txt");
 
   /**
    * Public storefront access (guest shopping). These tenant-scoped paths expose only public data

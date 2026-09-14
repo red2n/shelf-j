@@ -79,10 +79,12 @@ A two-step wizard, shown full-screen right after registration, with a visible st
 |---|---|
 | **Platform Overview** | See above. |
 | **Tenants** | A table (wide) / card list (narrow) of every business on the platform: name, legal name, country, currency, status, created date. A per-tenant menu to **activate/deactivate** (with a confirmation explaining that a deactivated tenant and all its users immediately lose access — this is what triggers the storefront's "currently unavailable" notice). An **"Onboard New Tenant"** button opens a 2-step dialog: create the owner's login, then the business + first store in one form; success shows a "tenant is live" confirmation with the owner's email to hand off. |
+| **Security incidents** | The register the Cyber Resilience Act and GDPR art.33(2) ask the platform to keep. Filter open / closed / all; each incident shows its kind, when the platform became aware, and its next deadline, marked *Overdue* in the error colour when a stage is past due. **Open incident** takes the kind (actively exploited vulnerability, severe incident, personal data breach), a title, what happened, when the platform became aware (UTC), and the businesses affected — none chosen means every business, and the dialog will not submit while the business list cannot be loaded, so a failed read never widens an incident to everyone. An incident opens to its stages, each with what the law asks, its citation and *Due*, *Overdue since*, *Done*, *Waiting* or *No fixed time*; its timeline with each report's reference; and how many notices were issued and acknowledged. **Record** offers only the events that incident can still have; **Tell businesses** sends the notice once per business. Refusals (too early for the final report, a stage already recorded, closing with stages outstanding) are shown in the dialog as the server words them. Nothing is edited or deleted. |
 
 **Flows:**
 - *Monitor tenants:* Tenants list → inspect status → activate or deactivate.
 - *Assisted onboarding:* Tenants screen → "Onboard New Tenant" → owner credentials → business + first store → hand off.
+- *Report an incident:* Security incidents → Open incident → record the early warning and the notification with the authority's references as they are made → the measure and the final report → Tell businesses → Close.
 
 **Notable features:** two independent, hard-separated login surfaces (platform vs. store) so credentials never cross over; deactivating a tenant immediately locks out its storefront and (implicitly) its admin/POS logins.
 
@@ -150,6 +152,10 @@ The register a licensing officer asks to see. Filters: one store or all, a date 
 ### 4.2d Legal obligations
 
 The laws the business trades under, as the platform tracks them: **In force in <country>** and **Coming**, each with what it asks in a sentence, the instrument behind it, whether it is EU or national law, and its day — *Since 6 Apr 2026* or *From 1 Jan 2027*, with *until* when a window has closed (EU law stopped reaching a British business on 31 Jan 2020). The business's own country; every staff role can open it, because the till obeys these laws. Nothing is editable: the rules change with the law. An empty list says the platform tracks no obligations for that country yet, not that none apply, and the page says it is not legal advice.
+
+### 4.2e Security notices (management)
+
+What the platform has told this business about a security incident that affects it: each notice's title, when it was sent, and what the business should do — for a personal data breach, that as controller it has 72 hours to tell its supervisory authority. **Acknowledge** records who confirmed they read it, once; an acknowledged notice shows when. Owners and managers only; a business sees only its own notices.
 
 ### 4.3 Stores
 
@@ -359,11 +365,15 @@ Navigation: **Shop · Cart** (with a live item-count badge). A sticky cart bar (
 | `/onboarding` | Business setup wizard (2 steps) |
 | `/platform/overview` | Platform Overview (dashboard) |
 | `/platform/tenants` | Tenants list + onboarding dialog |
+| `/platform/security` | Security incidents register |
 | `/admin/dashboard` | Dashboard |
 | `/admin/catalog` | Catalog (Products / Categories / Import tabs) |
 | `/admin/inventory` | Inventory (Levels / Batches tabs) + Receive Stock |
 | `/admin/food-safety` | Food safety: Today / Diary, plus Setup / Reviews for managers |
 | `/admin/recalls` | Recalls: list, detail with store actions; open / close / cancel for managers |
+| `/admin/age-checks` | Age checks register (management) |
+| `/admin/obligations` | Legal obligations |
+| `/admin/security-notices` | Security notices (management) |
 | `/admin/stores` | Stores + Zones |
 | `/admin/orders` | Orders (all channels) + Return/Refund + Collect Payment |
 | `/admin/procurement` | Procurement (Purchase Orders / Suppliers tabs) |

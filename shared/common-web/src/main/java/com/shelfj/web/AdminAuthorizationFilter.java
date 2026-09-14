@@ -134,7 +134,10 @@ public class AdminAuthorizationFilter implements ContainerRequestFilter {
   private static boolean isInfrastructure(String path) {
     return pathEqualsOrUnder(path, "/health")
         || pathEqualsOrUnder(path, "/metrics")
-        || pathEqualsOrUnder(path, "/openapi");
+        || pathEqualsOrUnder(path, "/openapi")
+        // RFC 9116: where to report a vulnerability. Public by definition — the researcher has no
+        // account — and exactly this one document, not anything else under /.well-known.
+        || "/.well-known/security.txt".equals(path);
   }
 
   /**

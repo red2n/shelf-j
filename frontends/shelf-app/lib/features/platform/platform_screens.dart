@@ -4,4 +4,5 @@
 library;
 
 export 'platform_dashboard_screen.dart';
+export 'security_incidents_screen.dart';
 export 'tenants_screen.dart';
