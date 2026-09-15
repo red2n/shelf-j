@@ -75,6 +75,16 @@ final statusReportPickerProvider = Provider<Future<String?> Function()>(
 /// The largest status report sent; purchase-svc refuses anything bigger.
 const maxStatusReportChars = 2000000;
 
+/// A real calendar date as YYYY-MM-DD: 2026-02-30 is refused, not rolled into
+/// March.
+String? validIsoDate(String? v) {
+  final t = v?.trim() ?? '';
+  if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(t)) return 'Use YYYY-MM-DD';
+  final parsed = DateTime.tryParse(t);
+  if (parsed == null || _isoDate(parsed) != t) return 'Not a date';
+  return null;
+}
+
 String _isoDate(DateTime d) =>
     '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
@@ -665,16 +675,6 @@ class _ProposePaymentRunDialogState
     super.dispose();
   }
 
-  /// A real calendar date as YYYY-MM-DD: 2026-02-30 is refused, not rolled
-  /// into March.
-  static String? validDate(String? v) {
-    final t = v?.trim() ?? '';
-    if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(t)) return 'Use YYYY-MM-DD';
-    final parsed = DateTime.tryParse(t);
-    if (parsed == null || _isoDate(parsed) != t) return 'Not a date';
-    return null;
-  }
-
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() {
@@ -745,7 +745,7 @@ class _ProposePaymentRunDialogState
                   helperText: 'YYYY-MM-DD',
                   prefixIcon: Icon(Icons.event_outlined),
                 ),
-                validator: validDate,
+                validator: validIsoDate,
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -755,7 +755,7 @@ class _ProposePaymentRunDialogState
                   helperText: 'Today or later',
                   prefixIcon: Icon(Icons.today_outlined),
                 ),
-                validator: validDate,
+                validator: validIsoDate,
               ),
             ],
           ),

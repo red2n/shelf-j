@@ -151,4 +151,13 @@ final class Events {
                 "userId":"%s","role":"%s"}"""
         .formatted(Ids.newId(), tenantId, userId, Instant.now(), userId, esc(role));
   }
+
+  /** A business's data is due for erasure: every service erases what it holds (21.14). */
+  static String tenantDataErasureDue(UUID eventId, UUID tenantId, UUID switchId, String intent) {
+    return String.format(
+        "{\"eventId\":\"%s\",\"eventType\":\"TenantDataErasureDue\",\"tenantId\":\"%s\","
+            + "\"aggregateId\":\"%s\",\"occurredAt\":\"%s\",\"switchId\":\"%s\","
+            + "\"intent\":\"%s\"}",
+        eventId, tenantId, tenantId, java.time.Instant.now(), switchId, intent);
+  }
 }

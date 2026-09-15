@@ -287,7 +287,7 @@ Staff/customer auth, JWT issuance, and POS cashier session lifecycle.
 ### tenant-svc — Tenants, Stores, Zones, Staff
 Owns the Tenant→Store→Zone hierarchy and tenant onboarding (see §1).
 - **API:** `/onboarding` self-serve signup + tenant/store creation + status checklist; `/admin` tenant/store/zone CRUD + status, staff assign/list/remove, inventory-config; `/platform` cross-tenant list + suspend/reactivate; `/storefront` public config/store lookup.
-- **Tables:** `tenants`, `stores`, `zones`, `staff_assignments`, `tenant_inventory_config`.
+- **Tables:** `tenants`, `stores`, `zones`, `staff_assignments`, `tenant_inventory_config`, `tenant_switches` and `tenant_erasure_evidence` (21.14: a business's notice to leave and what each service erased, both kept at erasure).
 - **Events:** publishes `TenantCreated`, `TenantStatusChanged`, `StoreCreated`, `StoreStatusChanged`, `ZoneCreated`, `StaffAssigned`, `UserRoleGranted`; consumes `RetentionRunCompleted` from order-svc, customer-svc and notification-svc (21.16: the one register of every purge, keyed by event id).
 - **Notable:** source of truth for store/zone data every other service projects locally.
 
@@ -315,7 +315,7 @@ Price resolution, promotions, and UK-style VAT computation/reporting.
 ### cart-svc — Storefront Cart
 Server-side shopping cart for the online channel: session-scoped and customer carts, with merge-on-login. Every call requires a verified token (cart paths are **not** on the gateway's public storefront whitelist); the current Flutter storefront keeps its pre-checkout cart on-device and does not call this service.
 - **API:** `/cart` create/get, `/cart/items` add/update/remove, `/cart/merge`.
-- **Tables:** `carts`, `cart_items`, local `tenant_status`/`store_status` projections.
+- **Tables:** `carts`, `cart_items`, local `tenant_status`/`store_status` projections, `outbox` (21.14: the evidence of a departed business's erasure).
 - **Events:** consumes `OrderPlaced` (close cart), `TenantStatusChanged`/`StoreStatusChanged` (**flow-guard**: rejects cart mutations early if the tenant/store is suspended).
 
 ### order-svc — Orders & Checkout (saga coordinator)
@@ -357,7 +357,7 @@ Thin fan-in service: consumes events, records notifications, and exposes read fe
 ### reporting-svc — Cross-Store Analytics (CQRS read model)
 Pure projection service built by consuming inventory and sales events.
 - **API:** inventory — `/admin/reports/inventory/on-hand`, `/supply-demand` (nets against open in-transit supply), `/movement-stats` (bucketed daily/weekly/monthly); sales — `/admin/reports/sales/summary` (gross/refunded/net revenue + order count per currency), `/admin/reports/sales/by-day` (daily revenue buckets).
-- **Tables:** `inventory_projection`, `movement_events`, `open_supply_lines`, `sales_facts`.
+- **Tables:** `inventory_projection`, `movement_events`, `open_supply_lines`, `sales_facts`, `outbox` (21.14: the evidence of a departed business's erasure).
 - **Events:** consumes `StockReceived`, `StockDeducted`, `StockAdjusted`, `TransferOrderShipped/Received` (stock projections) and `OrderConfirmed`, `PaymentRefunded` (sales projection, net of refunds); publishes nothing.
 - **Notable:** no writes of its own beyond reacting to other services' Kafka streams.
 
@@ -495,6 +495,17 @@ For the full screen-by-screen, persona-by-persona tour of what's actually on eac
 - **Tests:** unit for `service/` logic + Testcontainers integration for the core flow. Not done without it.
 
 ---
+
+
+### Tenant data: export, import and erasure (21.14)
+
+A business can take all its data out, bring it into a fresh business, and have it erased when it leaves (EU Data Act ch.VI). The machinery is shared, in common-service, so no service writes its own:
+
+- **`TenantDataSpec`**: each service declares what it holds for a business in one bean (`config/ExportableData`): its schema, and only what is *not* exported (tables and columns, each with the reason), how a table without `tenant_id` is tied to its business (`user_roles` through `users`), what an import does not load, what is kept at erasure, and which tables are derived projections. Everything else in the schema is exported.
+- **`TenantDataCatalog`**: built from the schema's own catalog (`information_schema`, primary keys and foreign keys for `current_schema()`) and the spec; pure, and unit-tested. It orders tables after the tables they refer to (an import loads front to back, an erasure deletes back to front) and reports as a problem, never a silent omission, a table it cannot tie to a business, one with no primary key, a key column excluded, a cycle of references, or an exclusion naming something the schema no longer has.
+- **`TenantDataRepository` and `TenantDataResource`**: the manifest with counts and checksums, key-ordered pages, and the all-or-nothing import that gives rows the importing business's id, behind `/admin/tenant-data` for the owner. Identifiers come only from the catalog and are quoted; values travel as one `jsonb` parameter. An incomplete catalog refuses every export.
+- **Erasure**: `BaseTenantDataErasureConsumer` in every service reads tenant-svc's `TenantDataErasureDue`; `TenantDataErasureHandler` erases every table the business's rows sit in, exported or not, and writes `TenantDataErased` with the counts in the same transaction. An append-only table enforced by trigger (pricing-svc's price history) lets through only a delete of the business named in `shelfj.erasing_tenant` for that transaction.
+- **Proof**: `TenantDataChecks.assertExportable` runs in one integration test per service, so a migration that adds a table without deciding how it leaves fails that service's build; pricing-svc's `TenantDataIT` exports a business, erases it and imports it into another that reads back every table's checksum; `scripts/restore-rehearsal.sh` rehearses a whole-database restore, timed ([RESTORE-REHEARSAL.md](RESTORE-REHEARSAL.md)).
 
 ## 15. Local development
 
