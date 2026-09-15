@@ -135,6 +135,27 @@ public final class TenantSvcStub implements AutoCloseable {
   }
 
   /**
+   * Gives a registered tenant the e-invoicing identity {@code GET /admin/tenant} returns: its VAT
+   * identifier and its Peppol participant identifier. Nulls leave a field out.
+   */
+  public TenantSvcStub withIdentity(
+      String tenantId, String vatNumber, String einvoiceScheme, String einvoiceId) {
+    profiles.computeIfPresent(
+        tenantId,
+        (id, json) ->
+            json.substring(0, json.length() - 2)
+                + field("vatNumber", vatNumber)
+                + field("einvoiceScheme", einvoiceScheme)
+                + field("einvoiceId", einvoiceId)
+                + "}}");
+    return this;
+  }
+
+  private static String field(String name, String value) {
+    return value == null ? "" : ",\"" + name + "\":\"" + value + "\"";
+  }
+
+  /**
    * Registers an obligation that reaches a country, as tenant-svc's {@code GET
    * /admin/tenant/obligations} lists it.
    *

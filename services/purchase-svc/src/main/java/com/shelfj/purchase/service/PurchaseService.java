@@ -112,6 +112,8 @@ public class PurchaseService {
     // Where a supplier is paid is a finance decision (17.10): a storekeeper may add a supplier,
     // not the account its money goes to.
     if (!bank.empty()) ctx.requirePermission(Permissions.FINANCE_PAYMENTS);
+    com.shelfj.einvoice.ElectronicAddress address =
+        einvoiceAddress(req.einvoiceScheme(), req.einvoiceId());
     Instant now = Instant.now();
     Supplier s =
         new Supplier(
@@ -132,8 +134,24 @@ public class PurchaseService {
             bank.iban(),
             bank.bic(),
             bank.empty() ? null : now,
-            bank.empty() ? null : ctx.userId());
+            bank.empty() ? null : ctx.userId(),
+            address == null ? null : address.scheme(),
+            address == null ? null : address.id());
     return repo.createSupplier(s);
+  }
+
+  /**
+   * A supplier's e-invoicing address as entered, or null for none.
+   *
+   * @throws ApiException {@code PURCHASE_EINVOICE_ADDRESS_INVALID} (400)
+   */
+  private static com.shelfj.einvoice.ElectronicAddress einvoiceAddress(String scheme, String id) {
+    try {
+      return com.shelfj.einvoice.ElectronicAddress.parse(scheme, id);
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(
+          400, "PURCHASE_EINVOICE_ADDRESS_INVALID", e.getMessage(), List.of(), e);
+    }
   }
 
   /**
@@ -191,6 +209,14 @@ public class PurchaseService {
         req.remittanceEmail() == null
             ? existing.remittanceEmail()
             : validEmailOrNull(req.remittanceEmail());
+    // Both halves omitted leaves the address as it was; both empty removes it.
+    com.shelfj.einvoice.ElectronicAddress address =
+        req.einvoiceScheme() != null || req.einvoiceId() != null
+            ? einvoiceAddress(req.einvoiceScheme(), req.einvoiceId())
+            : existing.einvoiceId() == null
+                ? null
+                : new com.shelfj.einvoice.ElectronicAddress(
+                    existing.einvoiceScheme(), existing.einvoiceId());
     Supplier updated =
         new Supplier(
             existing.id(),
@@ -212,7 +238,9 @@ public class PurchaseService {
             bank.iban(),
             bank.bic(),
             bankChangedAt,
-            bankChangedBy);
+            bankChangedBy,
+            address == null ? null : address.scheme(),
+            address == null ? null : address.id());
     if (!repo.updateSupplier(updated)) {
       throw ApiException.notFound("PURCHASE_SUPPLIER_NOT_FOUND", "Supplier not found: " + id);
     }

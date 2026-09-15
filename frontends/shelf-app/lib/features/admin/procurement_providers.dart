@@ -26,6 +26,11 @@ class Supplier {
   final bool hasBankDetails;
   final String? bankDetailsChangedAt;
 
+  /// Where the supplier's e-invoices come from (07.13): a Peppol electronic
+  /// address scheme and the identifier within it.
+  final String? einvoiceScheme;
+  final String? einvoiceId;
+
   const Supplier({
     required this.id,
     required this.name,
@@ -42,6 +47,8 @@ class Supplier {
     this.bankBic,
     this.hasBankDetails = false,
     this.bankDetailsChangedAt,
+    this.einvoiceScheme,
+    this.einvoiceId,
   });
 
   factory Supplier.fromJson(Map<String, dynamic> j) => Supplier(
@@ -60,6 +67,8 @@ class Supplier {
     bankBic: j['bankBic'] as String?,
     hasBankDetails: j['hasBankDetails'] == true,
     bankDetailsChangedAt: j['bankDetailsChangedAt'] as String?,
+    einvoiceScheme: j['einvoiceScheme'] as String?,
+    einvoiceId: j['einvoiceId'] as String?,
   );
 }
 

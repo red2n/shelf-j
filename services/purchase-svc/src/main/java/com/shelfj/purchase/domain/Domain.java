@@ -148,7 +148,9 @@ public final class Domain {
       String bankIban,
       String bankBic,
       Instant bankDetailsChangedAt,
-      UUID bankDetailsChangedBy) {
+      UUID bankDetailsChangedBy,
+      String einvoiceScheme,
+      String einvoiceId) {
 
     /** The bank details as one validated value. */
     public BankAccount.Details bank() {
@@ -159,6 +161,31 @@ public final class Domain {
     /** Whether a payment run can pay this supplier. */
     public boolean hasBankDetails() {
       return bank().payable();
+    }
+
+    /** The same supplier, now known to send e-invoices from this electronic address. */
+    public Supplier withEinvoiceAddress(String scheme, String identifier, Instant at) {
+      return new Supplier(
+          id,
+          tenantId,
+          name,
+          vatNumber,
+          vatRegistered,
+          countryCode,
+          currency,
+          paymentTermsDays,
+          createdAt,
+          at,
+          remittanceEmail,
+          bankAccountName,
+          bankSortCode,
+          bankAccountNumber,
+          bankIban,
+          bankBic,
+          bankDetailsChangedAt,
+          bankDetailsChangedBy,
+          scheme,
+          identifier);
     }
   }
 

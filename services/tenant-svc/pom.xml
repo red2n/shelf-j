@@ -76,6 +76,11 @@
             <groupId>com.shelfj</groupId>
             <artifactId>common-service</artifactId>
         </dependency>
+        <!-- 07.13/18.9: the business's e-invoicing address is checked against Peppol's scheme list -->
+        <dependency>
+            <groupId>com.shelfj</groupId>
+            <artifactId>einvoice</artifactId>
+        </dependency>
 
         <!-- Persistence -->
         <dependency>

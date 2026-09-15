@@ -112,6 +112,13 @@ class TenantInfo {
   final String status;
   final String currency;
   final String country;
+  final String? legalName;
+
+  /// How the business's e-invoices name it (07.13): its VAT identifier, and
+  /// the Peppol electronic address suppliers send to.
+  final String? vatNumber;
+  final String? einvoiceScheme;
+  final String? einvoiceId;
 
   const TenantInfo({
     required this.id,
@@ -119,7 +126,14 @@ class TenantInfo {
     required this.status,
     required this.currency,
     required this.country,
+    this.legalName,
+    this.vatNumber,
+    this.einvoiceScheme,
+    this.einvoiceId,
   });
+
+  bool get hasElectronicAddress =>
+      (einvoiceScheme ?? '').isNotEmpty && (einvoiceId ?? '').isNotEmpty;
 
   factory TenantInfo.fromJson(Map<String, dynamic> j) => TenantInfo(
         id: j['id'] as String? ?? '',
@@ -127,6 +141,10 @@ class TenantInfo {
         status: j['status'] as String? ?? '-',
         currency: j['currency'] as String? ?? '',
         country: j['country'] as String? ?? '',
+        legalName: j['legalName'] as String?,
+        vatNumber: j['vatNumber'] as String?,
+        einvoiceScheme: j['einvoiceScheme'] as String?,
+        einvoiceId: j['einvoiceId'] as String?,
       );
 }
 

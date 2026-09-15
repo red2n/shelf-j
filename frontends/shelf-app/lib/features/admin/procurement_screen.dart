@@ -11,6 +11,7 @@ import '../../shared/widgets/reference_fields.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/loading_view.dart';
 import 'providers/admin_providers.dart';
+import 'einvoice_tab.dart';
 import 'payment_runs_tab.dart';
 import 'procurement_providers.dart';
 import 'resolve_invoice_dialog.dart';
@@ -24,7 +25,7 @@ class ProcurementScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final canPay = canRunPayments(ref.watch(authNotifierProvider).value);
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Builder(
         // A Builder gives this subtree a context below DefaultTabController,
         // so DefaultTabController.of(context) below can find it.
@@ -47,6 +48,7 @@ class ProcurementScreen extends ConsumerWidget {
                   tabs: [
                     Tab(text: 'Purchase Orders'),
                     Tab(text: 'Invoices'),
+                    Tab(text: 'E-invoices'),
                     Tab(text: 'Suppliers'),
                     Tab(text: 'Payments'),
                   ],
@@ -56,6 +58,7 @@ class ProcurementScreen extends ConsumerWidget {
                     children: [
                       _PurchaseOrdersTab(),
                       _SupplierInvoicesTab(),
+                      EInvoicesTab(),
                       _SuppliersTab(),
                       PaymentRunsTab(),
                     ],
@@ -68,7 +71,7 @@ class ProcurementScreen extends ConsumerWidget {
             // per tab.
             floatingActionButton: ListenableBuilder(
               listenable: tabController,
-              builder: (context, _) => tabController.index == 3
+              builder: (context, _) => tabController.index == 4
                   ? (canPay
                         ? FloatingActionButton.extended(
                             onPressed: () => showDialog(
@@ -79,7 +82,7 @@ class ProcurementScreen extends ConsumerWidget {
                             label: const Text('Propose run'),
                           )
                         : const SizedBox.shrink())
-                  : tabController.index == 2
+                  : tabController.index == 3
                   ? FloatingActionButton.extended(
                       onPressed: () => showDialog(
                         context: context,
@@ -87,6 +90,13 @@ class ProcurementScreen extends ConsumerWidget {
                       ),
                       icon: const Icon(Icons.add),
                       label: const Text('Add supplier'),
+                    )
+                  : tabController.index == 2
+                  ? FloatingActionButton.extended(
+                      key: const Key('einvoice-upload'),
+                      onPressed: () => uploadEInvoiceFlow(context, ref),
+                      icon: const Icon(Icons.upload_file_outlined),
+                      label: const Text('Upload e-invoice'),
                     )
                   : FloatingActionButton.extended(
                       onPressed: () => showDialog(
@@ -589,6 +599,8 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
   final _accountCtrl = TextEditingController();
   final _ibanCtrl = TextEditingController();
   final _bicCtrl = TextEditingController();
+  final _einvoiceSchemeCtrl = TextEditingController();
+  final _einvoiceIdCtrl = TextEditingController();
   bool _clearBank = false;
   // Empty until chosen; a new supplier starts in the tenant's own country and
   // currency, an existing one in its own (SJ-D53).
@@ -612,6 +624,8 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
       _currency = e.currency ?? _currency;
       _vatRegistered = e.vatRegistered;
       _emailCtrl.text = e.remittanceEmail ?? '';
+      _einvoiceSchemeCtrl.text = e.einvoiceScheme ?? '';
+      _einvoiceIdCtrl.text = e.einvoiceId ?? '';
       // Bank details are never prefilled: the app only holds the last four
       // digits, and a set is replaced whole or left alone.
     }
@@ -628,6 +642,8 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
     _accountCtrl.dispose();
     _ibanCtrl.dispose();
     _bicCtrl.dispose();
+    _einvoiceSchemeCtrl.dispose();
+    _einvoiceIdCtrl.dispose();
     super.dispose();
   }
 
@@ -696,6 +712,13 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
         },
         if (canBank && _editing && _clearBank && !bank)
           'clearBankDetails': true,
+        // On an edit both empty removes the address; on a create it is absent.
+        'einvoiceScheme': _editing
+            ? _einvoiceSchemeCtrl.text.trim()
+            : _text(_einvoiceSchemeCtrl),
+        'einvoiceId': _editing
+            ? _einvoiceIdCtrl.text.trim()
+            : _text(_einvoiceIdCtrl),
       };
       if (_editing) {
         await dio.put(
@@ -770,16 +793,25 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                   children: [
                     Expanded(
                       child: CountryField(
-                        value: _country ??
-                            (_editing ? null : ref.watch(tenantInfoProvider).value?.country),
+                        value:
+                            _country ??
+                            (_editing
+                                ? null
+                                : ref.watch(tenantInfoProvider).value?.country),
                         onChanged: (v) => setState(() => _country = v),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: CurrencyField(
-                        value: _currency ??
-                            (_editing ? null : ref.watch(tenantInfoProvider).value?.currency),
+                        value:
+                            _currency ??
+                            (_editing
+                                ? null
+                                : ref
+                                      .watch(tenantInfoProvider)
+                                      .value
+                                      ?.currency),
                         onChanged: (v) => setState(() => _currency = v),
                       ),
                     ),
@@ -806,6 +838,14 @@ class _SupplierDialogState extends ConsumerState<_SupplierDialog> {
                     controller: _vatCtrl,
                     decoration: const InputDecoration(labelText: 'VAT number'),
                   ),
+                const SizedBox(height: 12),
+                ElectronicAddressFields(
+                  scheme: _einvoiceSchemeCtrl,
+                  id: _einvoiceIdCtrl,
+                  keyPrefix: 'supplier',
+                  label: 'E-invoicing address',
+                  helperText: 'Where its e-invoices come from (Peppol)',
+                ),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _emailCtrl,
