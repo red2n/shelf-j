@@ -156,7 +156,7 @@ Platform admin login: `https://app.storeql.com/#/platform/login`.
 - **`shelf-j-web`'s API base is baked in at CI build time**, not runtime-configurable.
   Two things both work correctly regardless of what's baked in: if `SHELFJ_API_BASE`
   was never set as a GitHub Actions repo variable, the published image bakes the
-  relative default `/api` — the bundle's nginx (`infra/nginx-spa.conf`) then proxies
+  relative default `/api` — the bundle's nginx (`infra/nginx-spa.conf.template`, rendered with `SHELFJ_API_ORIGIN`) then proxies
   same-origin `/api/` calls straight to the `gateway` k8s Service, which works fine
   inside the cluster network exactly like it does in docker-compose. If you do set
   `SHELFJ_API_BASE=https://api.storeql.com/api` as a GitHub Actions variable (per

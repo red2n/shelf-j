@@ -9,3 +9,4 @@ export 'cart_screen.dart';
 export 'orders_screen.dart';
 export 'privacy_screen.dart';
 export 'account_screen.dart';
+export 'accessibility_screen.dart';

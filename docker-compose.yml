@@ -996,11 +996,16 @@ services:
     # Default 8088 to avoid clashing with the dev `flutter run` server (40015).
     # 0.0.0.0 binding: same reasoning as gateway — reachable from other devices on the LAN.
     ports: ["${UI_HOST_PORT:-8088}:8080"]
-    # Bind-mount (not baked into the image) so the /api/ proxy fix applies even to
-    # images already published to ghcr.io/red2n — required for `redeploy.sh --pull`,
-    # which never rebuilds this image locally.
+    # Bind-mount (not baked into the image) so the /api/ proxy and the security headers apply
+    # even to images already published to ghcr.io/red2n — required for `redeploy.sh --pull`,
+    # which never rebuilds this image locally. A template: the entrypoint renders it with the
+    # environment below into conf.d/default.conf.
     volumes:
-      - ./infra/nginx-spa.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/nginx-spa.conf.template:/etc/nginx/templates/default.conf.template:ro
+    environment:
+      # The gateway origin the bundle calls, for the Content-Security-Policy's connect-src.
+      # Match the SHELFJ_API_BASE the bundle was built with; empty for a relative /api build.
+      SHELFJ_API_ORIGIN: "${UI_API_ORIGIN:-http://localhost:8090}"
     networks: [shelfj_network]
     depends_on:
       gateway: { condition: service_started }

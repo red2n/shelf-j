@@ -63,7 +63,7 @@ grep PLATFORM_ADMIN .env
 ```bash
 export JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64   # only if rebuilding backend jars
 mvn clean install -DskipTests                        # backend: all 14 services + gateway + config
-(cd frontends/shelf-app && flutter build web --release \
+(cd frontends/shelf-app && flutter build web --release --no-web-resources-cdn \
     --dart-define=SHELFJ_API_BASE=http://localhost:8090/api)   # web UI bundle
 ```
 

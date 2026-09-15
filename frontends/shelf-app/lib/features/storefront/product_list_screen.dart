@@ -52,6 +52,10 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
       }
       await Future.delayed(const Duration(milliseconds: 500));
       if (!mounted) return;
+      try {
+        await ref.read(customerPrefsProvider.notifier).ready;
+      } catch (_) {} // storage unreadable: ask, as a first visit would
+      if (!mounted) return;
       final asked = ref.read(customerPrefsProvider).genderAsked;
       if (!asked) showGenderPickerSheet(context);
     });
@@ -65,7 +69,8 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
     final selectedCategory = ref.watch(selectedStorefrontCategoryProvider);
     final inStockOnly = ref.watch(storefrontInStockOnlyProvider);
     final productsAsync = ref.watch(
-        storefrontProductsProvider((query: _query, categoryId: selectedCategory)));
+      storefrontProductsProvider((query: _query, categoryId: selectedCategory)),
+    );
     final width = MediaQuery.sizeOf(context).width;
     final cols = width < 600
         ? 1
@@ -87,18 +92,20 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: SearchBar(
-              hintText: 'Search products…',
-              leading: const Icon(Icons.search),
-              onSubmitted: (v) => setState(() => _query = v),
+            // The bar's own tap target carries no name, and the field inside only a hint (12.11).
+            child: Semantics(
+              label: 'Search products',
+              child: SearchBar(
+                hintText: 'Search products…',
+                leading: const Icon(Icons.search),
+                onSubmitted: (v) => setState(() => _query = v),
+              ),
             ),
           ),
         ),
 
         // Browse by category + in-stock filter
-        SliverToBoxAdapter(
-          child: _FilterRow(inStockOnly: inStockOnly),
-        ),
+        SliverToBoxAdapter(child: _FilterRow(inStockOnly: inStockOnly)),
 
         // Products
         productsAsync.when(
@@ -158,7 +165,8 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                         ? const _AdRow()
                         : _ProductRow(
                             key: ValueKey((item as StoreProduct).id),
-                            product: item);
+                            product: item,
+                          );
                   },
                 ),
               );
@@ -179,7 +187,8 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                       ? const _AdCard()
                       : _ProductCard(
                           key: ValueKey((item as StoreProduct).id),
-                          product: item);
+                          product: item,
+                        );
                 },
               ),
             );
@@ -224,9 +233,11 @@ class _StoreSwitcher extends ConsumerWidget {
                     for (final s in stores)
                       DropdownMenuItem(
                         value: s.id,
-                        child: Text(s.name,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                        child: Text(
+                          s.name,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
                       ),
                   ],
                   onChanged: (v) {
@@ -264,12 +275,24 @@ class _Offer {
 class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
   // Evergreen content shown when the tenant has no live promotions configured.
   static const _fallbackOffers = [
-    _Offer('Everyday Low Prices', 'Stock up and save on the essentials',
-        Icons.local_offer_outlined, [Color(0xFF1A5276), Color(0xFF2E86C1)]),
-    _Offer('Free Delivery over £25', 'On all online orders, no code needed',
-        Icons.local_shipping_outlined, [Color(0xFF117A65), Color(0xFF45B39D)]),
-    _Offer('Fresh New Arrivals', 'Just landed in store — shop the latest',
-        Icons.auto_awesome_outlined, [Color(0xFF7D3C98), Color(0xFFAF7AC5)]),
+    _Offer(
+      'Everyday Low Prices',
+      'Stock up and save on the essentials',
+      Icons.local_offer_outlined,
+      [Color(0xFF1A5276), Color(0xFF2E86C1)],
+    ),
+    _Offer(
+      'Free Delivery over £25',
+      'On all online orders, no code needed',
+      Icons.local_shipping_outlined,
+      [Color(0xFF117A65), Color(0xFF45B39D)],
+    ),
+    _Offer(
+      'Fresh New Arrivals',
+      'Just landed in store — shop the latest',
+      Icons.auto_awesome_outlined,
+      [Color(0xFF7D3C98), Color(0xFFAF7AC5)],
+    ),
   ];
 
   // Rotating palette for live promotions so each banner reads distinctly.
@@ -292,22 +315,39 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
   Timer? _timer;
   // Set while the user is dragging so auto-rotation doesn't fight the gesture.
   bool _paused = false;
+  // Set by the pause button: the offers move by themselves, so they can be stopped (WCAG 2.2.2).
+  bool _stopped = false;
 
   @override
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (_paused || !_controller.hasClients || _offers.length < 2) return;
+      if (_paused ||
+          _stopped ||
+          !_controller.hasClients ||
+          _offers.length < 2) {
+        return;
+      }
+      // A device set to reduce motion gets offers that stay still (WCAG 2.2.2 and 2.3.3).
+      if (mounted && (MediaQuery.maybeDisableAnimationsOf(context) ?? false)) {
+        return;
+      }
       final next = (_page + 1) % _offers.length;
-      _controller.animateToPage(next,
-          duration: const Duration(milliseconds: 450), curve: Curves.easeInOut);
+      _controller.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeInOut,
+      );
     });
   }
 
   void _goTo(int i) {
     if (!_controller.hasClients) return;
-    _controller.animateToPage(i,
-        duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+    _controller.animateToPage(
+      i,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
   }
 
   @override
@@ -348,7 +388,11 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
     // Give the banner more room on wide viewports so it doesn't read as a
     // squashed strip across a desktop-width shell.
     final width = MediaQuery.sizeOf(context).width;
-    final height = width < 600 ? 150.0 : (width < 1024 ? 170.0 : 190.0);
+    // Enlarged text makes the banner taller rather than cutting its words off (WCAG 1.4.4).
+    final textScale =
+        (MediaQuery.textScalerOf(context).scale(20) / 20).clamp(1.0, 2.0);
+    final height =
+        (width < 600 ? 150.0 : (width < 1024 ? 170.0 : 190.0)) * textScale;
     return Column(
       children: [
         const SizedBox(height: 12),
@@ -403,25 +447,34 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(o.title,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.bold)),
+                                  Text(
+                                    o.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                   const SizedBox(height: 6),
-                                  Text(o.subtitle,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          color: Colors.white.withAlpha(220),
-                                          fontSize: 13)),
+                                  Text(
+                                    o.subtitle,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: Colors.white.withAlpha(220),
+                                      fontSize: 13,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
-                            Icon(o.icon,
-                                color: Colors.white.withAlpha(220), size: 48),
+                            Icon(
+                              o.icon,
+                              color: Colors.white.withAlpha(220),
+                              size: 48,
+                            ),
                           ],
                         ),
                       ),
@@ -435,31 +488,45 @@ class _OffersCarouselState extends ConsumerState<_OffersCarousel> {
         const SizedBox(height: 10),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(_offers.length, (i) {
-            final active = i == _page;
-            return Semantics(
-              button: true,
-              label: 'Offer ${i + 1} of ${_offers.length}',
-              child: InkWell(
-                onTap: () => _goTo(i),
-                customBorder: const CircleBorder(),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    width: active ? 18 : 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: active
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.outlineVariant,
-                      borderRadius: BorderRadius.circular(3),
+          children: [
+            ...List.generate(_offers.length, (i) {
+              final active = i == _page;
+              return Semantics(
+                button: true,
+                label: 'Offer ${i + 1} of ${_offers.length}',
+                child: InkWell(
+                  onTap: () => _goTo(i),
+                  customBorder: const CircleBorder(),
+                  // At least 24 by 24 to hit, however small the dot (WCAG 2.2, 2.5.8).
+                  child: SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Center(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 250),
+                        width: active ? 18 : 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: active
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.outlineVariant,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
                     ),
                   ),
                 ),
+              );
+            }),
+            if (_offers.length > 1)
+              IconButton(
+                key: const Key('offers-pause'),
+                iconSize: 18,
+                tooltip: _stopped ? 'Play offers' : 'Pause offers',
+                icon: Icon(_stopped ? Icons.play_arrow : Icons.pause),
+                onPressed: () => setState(() => _stopped = !_stopped),
               ),
-            );
-          }),
+          ],
         ),
       ],
     );
@@ -488,11 +555,21 @@ class _FilterRow extends ConsumerWidget {
             loading: () => const [],
             error: (_, _) => const [],
             data: (categories) => [
-              _categoryChip(context, ref,
-                  label: 'All', value: null, selected: selected == null),
+              _categoryChip(
+                context,
+                ref,
+                label: 'All',
+                value: null,
+                selected: selected == null,
+              ),
               for (final c in categories)
-                _categoryChip(context, ref,
-                    label: c.name, value: c.id, selected: selected == c.id),
+                _categoryChip(
+                  context,
+                  ref,
+                  label: c.name,
+                  value: c.id,
+                  selected: selected == c.id,
+                ),
             ],
           ),
           // Divider spacer
@@ -520,8 +597,13 @@ class _FilterRow extends ConsumerWidget {
     );
   }
 
-  Widget _categoryChip(BuildContext context, WidgetRef ref,
-      {required String label, required String? value, required bool selected}) {
+  Widget _categoryChip(
+    BuildContext context,
+    WidgetRef ref, {
+    required String label,
+    required String? value,
+    required bool selected,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: ChoiceChip(
@@ -547,9 +629,11 @@ class _EmptyProducts extends ConsumerWidget {
         children: [
           Icon(Icons.storefront_outlined, size: 64, color: cs.outlineVariant),
           const SizedBox(height: 16),
-          Text(filtered
-              ? 'No products in this category'
-              : 'No products available yet'),
+          Text(
+            filtered
+                ? 'No products in this category'
+                : 'No products available yet',
+          ),
         ],
       ),
     );
@@ -562,32 +646,41 @@ class _ProductCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => context.go('/store/products/${product.id}'),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: ProductImageThumb(
-                  productId: product.id, label: product.name, fontSize: 36),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 6, 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(product.name,
+    return Semantics(
+      button: true,
+      hint: 'Opens the product details',
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => context.go('/store/products/${product.id}'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: ProductImageThumb(
+                  productId: product.id,
+                  label: product.name,
+                  fontSize: 36,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 6, 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.name,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  OfferPriceAdd(product: product),
-                ],
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    OfferPriceAdd(product: product),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -602,42 +695,50 @@ class _ProductRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      margin: EdgeInsets.zero,
-      child: InkWell(
-        onTap: () => context.go('/store/products/${product.id}'),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 72,
-                height: 72,
-                child: ProductImageThumb(
-                  productId: product.id,
-                  label: product.name,
-                  fontSize: 24,
-                  borderRadius: BorderRadius.circular(8),
+    return Semantics(
+      button: true,
+      hint: 'Opens the product details',
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        margin: EdgeInsets.zero,
+        child: InkWell(
+          onTap: () => context.go('/store/products/${product.id}'),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 72,
+                  height: 72,
+                  child: ProductImageThumb(
+                    productId: product.id,
+                    label: product.name,
+                    fontSize: 24,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(product.name,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        product.name,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                            fontWeight: FontWeight.w600, fontSize: 15)),
-                    const SizedBox(height: 4),
-                    OfferPriceAdd(product: product),
-                  ],
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      OfferPriceAdd(product: product),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -658,6 +759,17 @@ const _kAdGradient = LinearGradient(
 Future<void> _openAd() =>
     launchUrl(Uri.parse(_kAdUrl), mode: LaunchMode.externalApplication);
 
+/// A sponsored tile is read as one link — the brand, what it offers, and that it is sponsored and
+/// opens elsewhere (12.11). Merged, because the name would otherwise sit on a child node the link
+/// does not carry; the tile holds no control of its own to swallow.
+Widget _adLink(Widget tile) => MergeSemantics(
+      child: Semantics(
+        link: true,
+        hint: 'Sponsored. Opens in a new window',
+        child: tile,
+      ),
+    );
+
 /// Grid-card variant of the sponsored ad tile.
 class _AdCard extends StatelessWidget {
   const _AdCard();
@@ -665,48 +777,53 @@ class _AdCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: _openAd,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: Stack(
-                children: [
-                  Container(
-                    decoration: const BoxDecoration(gradient: _kAdGradient),
-                    alignment: Alignment.center,
-                    child: Icon(Icons.inventory_2_outlined,
-                        size: 48, color: Colors.white.withAlpha(180)),
-                  ),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: _AdBadge(cs: cs),
-                  ),
-                ],
+    return _adLink(
+      Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: _openAd,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    Container(
+                      decoration: const BoxDecoration(gradient: _kAdGradient),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.inventory_2_outlined,
+                        size: 48,
+                        color: Colors.white.withAlpha(180),
+                      ),
+                    ),
+                    Positioned(top: 8, right: 8, child: _AdBadge(cs: cs)),
+                  ],
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 6, 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(_kAdBrand,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 6, 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      _kAdBrand,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  Text('Smart stock & storefront platform',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Smart stock & storefront platform',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11, color: cs.outline)),
-                ],
+                      style: TextStyle(fontSize: 11, color: cs.outline),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -720,55 +837,66 @@ class _AdRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      margin: EdgeInsets.zero,
-      child: InkWell(
-        onTap: _openAd,
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 72,
-                height: 72,
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: _kAdGradient,
-                    borderRadius: BorderRadius.circular(8),
+    return _adLink(
+      Card(
+        clipBehavior: Clip.antiAlias,
+        margin: EdgeInsets.zero,
+        child: InkWell(
+          onTap: _openAd,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 72,
+                  height: 72,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: _kAdGradient,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.inventory_2_outlined,
+                      size: 32,
+                      color: Colors.white,
+                    ),
                   ),
-                  alignment: Alignment.center,
-                  child: const Icon(Icons.inventory_2_outlined,
-                      size: 32, color: Colors.white),
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(_kAdBrand,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              _kAdBrand,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  fontWeight: FontWeight.w600, fontSize: 15)),
-                        ),
-                        _AdBadge(cs: cs),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text('Smart stock & storefront platform',
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                          _AdBadge(cs: cs),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Smart stock & storefront platform',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12, color: cs.outline)),
-                  ],
+                        style: TextStyle(fontSize: 12, color: cs.outline),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -788,12 +916,15 @@ class _AdBadge extends StatelessWidget {
         color: cs.secondaryContainer,
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text('AD',
-          style: TextStyle(
-              color: cs.onSecondaryContainer,
-              fontSize: 9,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.5)),
+      child: Text(
+        'AD',
+        style: TextStyle(
+          color: cs.onSecondaryContainer,
+          fontSize: 9,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.5,
+        ),
+      ),
     );
   }
 }
@@ -810,11 +941,16 @@ class _NoStorefront extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.store_mall_directory_outlined,
-                size: 64, color: cs.outlineVariant),
+            Icon(
+              Icons.store_mall_directory_outlined,
+              size: 64,
+              color: cs.outlineVariant,
+            ),
             const SizedBox(height: 16),
-            Text('No store selected',
-                style: Theme.of(context).textTheme.titleLarge),
+            Text(
+              'No store selected',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
             const SizedBox(height: 8),
             Text(
               'Open this storefront with a tenant in the URL, e.g.\n'

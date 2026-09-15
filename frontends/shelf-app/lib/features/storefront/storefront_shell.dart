@@ -45,11 +45,18 @@ class StorefrontShell extends ConsumerWidget {
     ref.listen<bool>(storefrontJustAuthenticatedProvider, (_, justAuth) {
       if (!justAuth) return;
       ref.read(storefrontJustAuthenticatedProvider.notifier).state = false;
-      final asked = ref.read(customerPrefsProvider).prefsAsked;
-      if (!asked) {
-        WidgetsBinding.instance.addPostFrameCallback(
-            (_) => showPreferencesSheet(context));
-      }
+      // Only once the stored answer has loaded, or a shopper who answered is asked again (SJ-D62).
+      ref
+          .read(customerPrefsProvider.notifier)
+          .ready
+          .catchError((_) {})
+          .then((_) {
+        if (!context.mounted || ref.read(customerPrefsProvider).prefsAsked) {
+          return;
+        }
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => showPreferencesSheet(context));
+      });
     });
 
     return AdaptiveNavShell(
@@ -139,32 +146,51 @@ class _CartBar extends ConsumerWidget {
       elevation: 8,
       child: SafeArea(
         top: false,
-        child: InkWell(
+        child: Semantics(
+          button: true,
+          label: showPrices
+              ? '$count item${count == 1 ? '' : 's'} in the cart, $currency ${total.toStringAsFixed(2)}. View cart'
+              : '$count item${count == 1 ? '' : 's'} in the cart. View cart',
+          excludeSemantics: true,
           onTap: () => context.go('/store/cart'),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                Badge(
-                  label: Text('$count'),
-                  child: Icon(Icons.shopping_bag, color: cs.onPrimary),
-                ),
-                const SizedBox(width: 16),
-                Text(
-                  showPrices
-                      ? '$currency ${total.toStringAsFixed(2)}'
-                      : '$count item${count == 1 ? '' : 's'}',
-                  style: TextStyle(
-                      color: cs.onPrimary,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold),
-                ),
-                const Spacer(),
-                Text('View cart',
-                    style: TextStyle(
-                        color: cs.onPrimary, fontWeight: FontWeight.w600)),
-                Icon(Icons.chevron_right, color: cs.onPrimary),
-              ],
+          child: InkWell(
+            onTap: () => context.go('/store/cart'),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Badge(
+                    label: Text('$count'),
+                    child: Icon(Icons.shopping_bag, color: cs.onPrimary),
+                  ),
+                  const SizedBox(width: 16),
+                  // Both texts wrap rather than run off the bar when text is enlarged (WCAG 1.4.4).
+                  Expanded(
+                    child: Text(
+                      showPrices
+                          ? '$currency ${total.toStringAsFixed(2)}'
+                          : '$count item${count == 1 ? '' : 's'}',
+                      style: TextStyle(
+                        color: cs.onPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      'View cart',
+                      textAlign: TextAlign.end,
+                      style: TextStyle(
+                        color: cs.onPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  Icon(Icons.chevron_right, color: cs.onPrimary),
+                ],
+              ),
             ),
           ),
         ),
@@ -189,12 +215,15 @@ class _AccountAction extends ConsumerWidget {
           if (v == 'signin') {
             showDialog(
                 context: context, builder: (_) => const StorefrontAuthDialog());
+          } else if (v == 'accessibility') {
+            context.go('/store/accessibility');
           } else if (v == 'feedback') {
             showFeedbackSheet(context);
           }
         },
         itemBuilder: (_) => const [
           PopupMenuItem(value: 'signin', child: Text('Sign in')),
+          PopupMenuItem(value: 'accessibility', child: Text('Accessibility')),
           PopupMenuItem(value: 'feedback', child: Text('Send feedback')),
         ],
       );
@@ -211,6 +240,8 @@ class _AccountAction extends ConsumerWidget {
           showPreferencesSheet(context);
         } else if (v == 'privacy') {
           context.go('/store/privacy');
+        } else if (v == 'accessibility') {
+          context.go('/store/accessibility');
         } else if (v == 'feedback') {
           showFeedbackSheet(context);
         } else if (v == 'logout') {
@@ -230,6 +261,8 @@ class _AccountAction extends ConsumerWidget {
         const PopupMenuItem(value: 'preferences', child: Text('My preferences')),
         const PopupMenuItem(
             value: 'privacy', child: Text('Privacy & marketing')),
+        const PopupMenuItem(
+            value: 'accessibility', child: Text('Accessibility')),
         const PopupMenuItem(value: 'feedback', child: Text('Send feedback')),
         const PopupMenuItem(value: 'logout', child: Text('Sign out')),
         const PopupMenuDivider(),
